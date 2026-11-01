@@ -20,9 +20,11 @@ import { OfflineAccessError, clearAccess, clearFailedAccess, ensureAccess, type 
 // even see the sign-in form. AccountError below is also static — it's a tiny
 // wrapper, not worth its own chunk.
 import { SignIn } from './screens/SignIn';
+import { signInSearch, signInSearchFor } from './lib/signInRedirect';
 import { LaunchError } from './screens/LaunchError';
 import { SessionNotice } from './components/SessionNotice';
 import { RouteError } from './components/RouteError';
+import { NotFound } from './screens/NotFound';
 
 /**
  * Shared chrome: the two drifting orbs behind every screen, and the session
@@ -60,6 +62,8 @@ const indexRoute = createRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/signin',
+  // #1384: `redirect` is the location the guard turned the household away from.
+  validateSearch: signInSearch,
   component: SignIn,
 });
 
@@ -103,9 +107,13 @@ const homeRoute = createRoute({
 });
 
 /** Shared auth guard for every signed-in-only screen below. */
-async function requireSignedIn() {
+/** The slice of the router's `beforeLoad` context the guards read. */
+type GuardContext = { location: Parameters<typeof signInSearchFor>[0] };
+
+async function requireSignedIn({ location }: GuardContext) {
   const state = await waitForAuthReady();
-  if (state.status !== 'signedIn') throw redirect({ to: '/signin' });
+  // #1384: carry the email link the household opened through sign-in.
+  if (state.status !== 'signedIn') throw redirect({ to: '/signin', search: signInSearchFor(location) });
 }
 
 /**
@@ -149,8 +157,8 @@ function refuseIfOffline(access: AccessState): void {
  * with no id resolved would silently render a real, wrong household instead
  * of failing. Redirecting away is what keeps that query from ever firing.
  */
-async function requireActiveTribe() {
-  await requireSignedIn();
+async function requireActiveTribe(ctx: GuardContext) {
+  await requireSignedIn(ctx);
   const access = await ensureAccess();
   refuseIfOffline(access); // #812: no signal is not a launch failure, see above
   if (access.error !== null) return; // let the screen's own query surface the error via LaunchError
@@ -178,8 +186,8 @@ export function pickGuardRedirect(access: AccessState): '/home' | '/no-tribes' |
   return '/home'; // exactly 1
 }
 
-async function requireOperatorForPick() {
-  await requireSignedIn();
+async function requireOperatorForPick(ctx: GuardContext) {
+  await requireSignedIn(ctx);
   const access = await ensureAccess();
   // Same split as requireActiveTribe: /pick is reachable by deep link too, and
   // an operator opening one with no signal gets the offline screen rather than
@@ -329,24 +337,40 @@ const kinDetailRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/KinDetail'), 'KinDetail'),
 });
 
+/**
+ * #1291. Add New Kin creates the record first and uploads the picked photo
+ * after (there is no kinId to sign a folder for until the record exists). If
+ * that upload fails the Kin is real, so the household lands here, on its edit
+ * screen, with `?photo=failed` telling KinEdit to say the photo did not take.
+ * Any other value, or any other key, is dropped. Exported for router.test.ts.
+ */
+export function kinEditSearch(search: Record<string, unknown>): { photo?: 'failed' } {
+  return search['photo'] === 'failed' ? { photo: 'failed' } : {};
+}
+
 const kinEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kin/$kinId/edit',
   beforeLoad: requireActiveTribe,
+  validateSearch: kinEditSearch,
   component: lazyRouteComponent(() => import('./screens/KinEdit'), 'KinEdit'),
 });
 
-/** #1303: `/kintales?tale=<id>` is how a completed visit points at its KinTale. */
+/**
+ * `/kintales?tale=<id>` opens the feed with that tale in the featured slot
+ * (Home's Recent KinTales cards link here). A blank or non-string value is
+ * dropped, so a hand-edited URL lands on the plain feed instead of an error.
+ */
 export function kinTalesSearch(search: Record<string, unknown>): { tale?: string } {
   const tale = search['tale'];
-  return typeof tale === 'string' && tale.length > 0 ? { tale } : {};
+  return typeof tale === 'string' && tale.trim() !== '' ? { tale: tale.trim() } : {};
 }
 const kinTalesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kintales',
   validateSearch: kinTalesSearch,
   beforeLoad: requireActiveTribe,
-  component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTales'),
+  component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTalesRoute'),
 });
 
 const invoicesRoute = createRoute({
@@ -434,6 +458,8 @@ export const router = createRouter({
   // components/RouteError.tsx for the two arms and which of them withholds
   // Sign out.
   defaultErrorComponent: RouteError,
+  // #1293: an unknown path used to render the library's bare "Not Found".
+  defaultNotFoundComponent: NotFound,
 });
 /**
  * Re-launch when the connection comes back (#812).

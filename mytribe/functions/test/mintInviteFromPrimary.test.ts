@@ -110,24 +110,51 @@ describe('mintInviteFromPrimaryHandler', () => {
   });
 
   describe('AUNTIE_OS_REVIEW_BASE_URL guard', () => {
-    it('throws failed-precondition, and writes nothing, when AUNTIE_NOTIFY_EMAIL is set but the review base URL is not', async () => {
-      process.env.AUNTIE_NOTIFY_EMAIL = 'auntie@tribetails.com';
+    // #1277: this used to refuse the whole invite. The review URL only builds
+    // the business's own notice, so the household's invite now goes out and
+    // the gap is recorded for the operator instead.
+    it('still mints and sends the invite when AUNTIE_NOTIFY_EMAIL is set but the review base URL is not; only the Auntie notice is skipped, and recorded', async () => {
+      process.env.AUNTIE_NOTIFY_EMAIL = 'e2e-admin@tribetails.com';
       memberGet.mockResolvedValue({ exists: true, data: () => ({ role: 'PRIMARY', status: 'ACTIVE', permissions: {} }) });
       const { mintInviteFromPrimaryHandler } = await import('../src/membership/mintInviteFromPrimary');
-      await expect(
-        mintInviteFromPrimaryHandler({
-          auth: { uid: 'u-prim', token: { email: 'p@x.com' } },
-          data: { familyId: 'f1', invitedEmail: 'a@b.com', secondaryLabel: 'Co-Parent', permissions: validPermissions },
-        } as any),
-      ).rejects.toMatchObject({
-        code: 'failed-precondition',
-        message: expect.stringContaining('AUNTIE_OS_REVIEW_BASE_URL'),
+      const r = await mintInviteFromPrimaryHandler({
+        auth: { uid: 'u-prim', token: { email: 'pawsome@hanasamku.com' } },
+        data: { familyId: 'f1', invitedEmail: 'catch@hanasamku.com', secondaryLabel: 'Co-Parent', permissions: validPermissions },
+      } as any);
+      expect(r.inviteId).toBe('i-new');
+      expect(inviteAdd).toHaveBeenCalledTimes(1);
+      const templates = sendMock.mock.calls.map((c) => c[0]);
+      expect(templates).toEqual(['invite.secondary', 'invite.primary-receipt']);
+      // Not stamped as notified: no notice went out.
+      const update = refUpdate.mock.calls[0]![0] as Record<string, unknown>;
+      expect(update.status).toBe('EMAIL_SENT');
+      expect(update).not.toHaveProperty('auntieNotifiedAt');
+      const skipped = auditMock.mock.calls.map((c) => c[0]).find((a) => a.event === 'MEMBERSHIP_INVITE_AUNTIE_NOTICE_SKIPPED');
+      expect(skipped).toMatchObject({
+        status: 'FAILURE',
+        familyId: 'f1',
+        payload: { function: 'mintInviteFromPrimary', inviteId: 'i-new', missingVar: 'AUNTIE_OS_REVIEW_BASE_URL' },
       });
-      expect(inviteAdd).not.toHaveBeenCalled();
-      expect(sendMock).not.toHaveBeenCalled();
-      expect(auditMock).not.toHaveBeenCalled();
     });
-
+    it('a failed audit write for the skipped notice does not fail the invite', async () => {
+      process.env.AUNTIE_NOTIFY_EMAIL = 'e2e-admin@tribetails.com';
+      auditMock.mockImplementation(async (a: { event: string }) => {
+        if (a.event === 'MEMBERSHIP_INVITE_AUNTIE_NOTICE_SKIPPED') throw new Error('audit down');
+        return 'a';
+      });
+      memberGet.mockResolvedValue({ exists: true, data: () => ({ role: 'PRIMARY', status: 'ACTIVE', permissions: {} }) });
+      const { mintInviteFromPrimaryHandler } = await import('../src/membership/mintInviteFromPrimary');
+      try {
+        const r = await mintInviteFromPrimaryHandler({
+          auth: { uid: 'u-prim', token: { email: 'pawsome@hanasamku.com' } },
+          data: { familyId: 'f1', invitedEmail: 'catch@hanasamku.com', secondaryLabel: 'Co-Parent', permissions: validPermissions },
+        } as any);
+        expect(r.inviteId).toBe('i-new');
+      } finally {
+        auditMock.mockReset();
+        auditMock.mockResolvedValue('a');
+      }
+    });
     it('does NOT guard AUNTIE_OS_REVIEW_BASE_URL when AUNTIE_NOTIFY_EMAIL is unset (the auntie-notify email is never sent)', async () => {
       // AUNTIE_NOTIFY_EMAIL stays unset (default from beforeEach); the invite
       // still mints normally and must not be blocked by a var this run never
@@ -157,6 +184,8 @@ describe('mintInviteFromPrimaryHandler', () => {
       const data = auntieNotifyCall![2] as Record<string, unknown>;
       // trailing slash stripped, not doubled
       expect(data.auntieReviewUrl).toBe('https://auntie.tribetails.com/review/invites/i-new');
+      expect(refUpdate.mock.calls[0]![0]).toHaveProperty('auntieNotifiedAt');
+      expect(auditMock.mock.calls.map((c) => c[0].event)).not.toContain('MEMBERSHIP_INVITE_AUNTIE_NOTICE_SKIPPED');
     });
   });
 });

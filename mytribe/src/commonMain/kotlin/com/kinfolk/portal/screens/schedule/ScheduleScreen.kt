@@ -209,7 +209,7 @@ fun ScheduleScreen(
                             SectLabel("VISIT REPLAYS")
                             replayCandidates.forEach { v ->
                                 Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                                    Text(v.serviceType ?: "Kin Care Visit", style = type.heritageTitle)
+                                    Text(v.serviceLabel ?: "Kin Care Visit", style = type.heritageTitle)
                                     Text((v.departedAtIso ?: v.startTimeIso).orEmpty(), style = type.sansLabel)
                                     com.kinfolk.portal.components.RouteMap(
                                         route           = v.gpsRoute,
@@ -397,9 +397,10 @@ private fun VisitRow(b: Booking, index: Int, onClick: (() -> Unit)? = null) {
     ) {
         KinCalendarBadge(bookingCalendarBadge(b), accent = VisitAccents[index % VisitAccents.size])
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            val title = b.title ?: b.serviceType ?: "Booking"
-            if (b.serviceType != null && b.title != null) {
-                Text("SERVICE TYPE · ${b.serviceType.uppercase()}", style = type.sansMeta.copy(fontSize = 10.sp))
+            // #1297: the service's name, never its stored code, and no prefix.
+            val title = com.kinfolk.portal.util.visitTitle(b.title, b.serviceLabel) ?: "Booking"
+            com.kinfolk.portal.util.serviceEyebrow(b.title, b.serviceLabel)?.let { eyebrow ->
+                Text(eyebrow.uppercase(), style = type.sansMeta.copy(fontSize = 10.sp))
             }
             Text(title, style = type.sansBody.copy(fontWeight = FontWeight.SemiBold))
             Text(bookingWhenLabel(b), style = type.sansLabel)
@@ -451,7 +452,7 @@ private fun EnvelopeRow(kinCares: List<Booking>, index: Int, onClick: () -> Unit
     ) {
         KinCalendarBadge(next?.let { bookingCalendarBadge(it) }, accent = VisitAccents[index % VisitAccents.size])
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(head?.serviceType ?: head?.title ?: "Booking", style = type.sansBody.copy(fontWeight = FontWeight.SemiBold))
+            Text(head?.serviceLabel ?: com.kinfolk.portal.util.visitTitle(head?.title, null) ?: "Booking", style = type.sansBody.copy(fontWeight = FontWeight.SemiBold))
             Text("$count visits", style = type.sansLabel.copy(color = KinfolkBrand.KinTeal))
             Text("Next ${next?.let { bookingWhenLabel(it) }.orEmpty()}", style = type.sansMeta)
         }
@@ -572,7 +573,7 @@ private fun LiveVisitCard(
         contentPadding = PaddingValues(KinfolkSpacing.l),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-            Text(visit.serviceType ?: "Visit in progress", style = type.heritageTitle)
+            Text(visit.serviceLabel ?: "Visit in progress", style = type.heritageTitle)
             Text(
                 if (live.isEmpty()) "Waiting for first GPS ping…" else "${live.size} pings · live",
                 style = type.sansLabel,

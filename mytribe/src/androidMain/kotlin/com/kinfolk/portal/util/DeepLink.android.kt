@@ -18,6 +18,10 @@ internal var androidInitialShareToken: String? = null
 @Volatile
 internal var androidInitialSecureResetParams: SecureResetParams? = null
 
+/** #1293: the launch link matched the manifest but named nothing the app can open. */
+@Volatile
+internal var androidInitialUnknownLink: Boolean = false
 actual fun readInitialClaimInviteId(): String? = androidInitialClaimInviteId
 actual fun readInitialShareToken(): String? = androidInitialShareToken
 actual fun readInitialSecureResetParams(): SecureResetParams? = androidInitialSecureResetParams
+actual fun readInitialUnknownLink(): Boolean = androidInitialUnknownLink

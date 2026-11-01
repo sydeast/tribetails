@@ -18,6 +18,12 @@ import kotlinx.serialization.Serializable
 @Serializable data object NoTribesRoute
 @Serializable data class TribePickerRoute(val isOperator: Boolean)
 @Serializable data class LaunchErrorRoute(val message: String)
+/**
+ * The app was opened by a link it recognises as ours but could not place (#1293):
+ * `/share/` with no token, `/claim/` with no invite, a path the manifest claims
+ * but no screen owns. The twin of the portal web's not-found page.
+ */
+@Serializable data object NotFoundRoute
 
 // ---- Unauth terminal deep-link destinations ----
 /**
@@ -39,7 +45,8 @@ import kotlinx.serialization.Serializable
 // ---- Tab destinations (bottom nav) ----
 @Serializable data object HomeRoute
 @Serializable data object ScheduleRoute
-@Serializable data object KinTalesRoute
+/** [taleId]: open the feed with that tale first (#1363). Null is the plain feed. */
+@Serializable data class KinTalesRoute(val taleId: String? = null)
 @Serializable data object KinRoute
 @Serializable data object InvoicesRoute
 

@@ -89,8 +89,11 @@ fun KinCareDetailScreen(
     portalApi: PortalApi,
     onBack: () -> Unit,
     nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
-    /** #1303: a completed visit's KinTale lives on the KinTales tab. */
-    onOpenKinTales: () -> Unit = {},
+    /**
+     * #1303: a completed visit's KinTale lives on the KinTales tab. #1363: the
+     * link hands over the tale's id, so the tab opens on that tale.
+     */
+    onOpenKinTale: (taleId: String) -> Unit = {},
     /** #1303: and its bill on the invoice screen. */
     onOpenInvoice: (invoiceId: String) -> Unit = {},
 ) {
@@ -221,7 +224,7 @@ fun KinCareDetailScreen(
                 KinCareDetailBody(
                     replayVisit = replayVisit,
                     replayLoading = replayLoading,
-                    onOpenKinTales = onOpenKinTales,
+                    onOpenKinTale = onOpenKinTale,
                     onOpenInvoice = onOpenInvoice,
                     kinCare = b,
                     noteInput = noteInput,
@@ -343,7 +346,7 @@ fun KinCareDetailScreen(
 private fun KinCareDetailBody(
     replayVisit: com.kinfolk.portal.portal.Visit?,
     replayLoading: Boolean,
-    onOpenKinTales: () -> Unit,
+    onOpenKinTale: (taleId: String) -> Unit,
     onOpenInvoice: (invoiceId: String) -> Unit,
     kinCare: Booking,
     noteInput: String,
@@ -379,9 +382,9 @@ private fun KinCareDetailBody(
             contentPadding = PaddingValues(KinfolkSpacing.l),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                Text(kinCare.title ?: kinCare.serviceType ?: "Booking", style = type.heritageTitle)
+                Text(com.kinfolk.portal.util.visitTitle(kinCare.title, kinCare.serviceLabel) ?: "Booking", style = type.heritageTitle)
                 Text(bookingWhenLabel(kinCare).ifEmpty { "TBD" }, style = type.sansLabel)
-                ReviewRow("KinCare Duration", kinCare.serviceType ?: "TBD")
+                ReviewRow("KinCare Duration", kinCare.serviceLabel ?: "TBD")
                 ReviewRow("Auntie", kinCare.auntieDisplayName ?: "Pending")
                 ReviewRow(
                     "Kin",
@@ -463,8 +466,8 @@ private fun KinCareDetailBody(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                     Text("After the visit", style = type.heritageSection)
-                    if (kinCare.kinTaleId != null) {
-                        KinGhostButton(label = "Read the KinTale", onClick = onOpenKinTales, modifier = Modifier.fillMaxWidth())
+                    kinCare.kinTaleId?.let { taleId ->
+                        KinGhostButton(label = "Read the KinTale", onClick = { onOpenKinTale(taleId) }, modifier = Modifier.fillMaxWidth())
                     }
                     kinCare.invoiceId?.let { invoiceId ->
                         KinGhostButton(label = "See the invoice", onClick = { onOpenInvoice(invoiceId) }, modifier = Modifier.fillMaxWidth())

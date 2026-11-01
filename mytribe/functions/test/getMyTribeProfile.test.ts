@@ -77,6 +77,39 @@ describe('getMyTribeProfileHandler', () => {
     expect(res.homeAccess.customFields[0].label).toBe('Alarm Code');
   });
 
+  // #1325: the clinic id is a database id and must never be what a client shows.
+  it('#1325: resolves the chosen vet clinic to its name, address and phone', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3': { displayName: 'X', customFields: [{ key: 'vetClinicId', label: 'Vet Clinic', value: 'clinicA' }] },
+        'families/3/homeAccess/current': null,
+        'vet_clinics/clinicA': { name: 'Banfield Pet Hospital', phone: '+18055550123', address: '1 Main St', isEmergency: false, archived: true, verified: false },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    const res = await getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    // Archived and unapproved clinics still resolve for the household linked to them.
+    expect(res.vetClinic).toEqual({ id: 'clinicA', name: 'Banfield Pet Hospital', phone: '+18055550123', address: '1 Main St', isEmergency: false });
+  });
+  it('#1325: vetClinic is null with no clinic chosen, or when the linked row is gone', async () => {
+    const none = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'families/3': FAMILY_DOC, 'families/3/homeAccess/current': null },
+    });
+    mocks.dbFn.mockReturnValue(none.db);
+    const { getMyTribeProfileHandler } = await import('../src/portal/getMyTribeProfile');
+    expect((await getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any)).vetClinic).toBeNull();
+    const gone = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3': { displayName: 'X', customFields: [{ key: 'vetClinicId', label: 'Vet Clinic', value: 'deleted' }] },
+        'families/3/homeAccess/current': null,
+      },
+    });
+    mocks.dbFn.mockReturnValue(gone.db);
+    expect((await getMyTribeProfileHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any)).vetClinic).toBeNull();
+  });
   it('handles missing homeAccess doc (legacy primary)', async () => {
     const ctx = buildDbMock({
       docs: {

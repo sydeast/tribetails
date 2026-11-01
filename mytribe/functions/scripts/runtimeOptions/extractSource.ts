@@ -1,13 +1,13 @@
 /**
  * Statically extracts, from real source, every runtime-options declaration
- * `index.ts` re-exports: the fleet default (`setGlobalOptions`), the named
+ * `index.ts` exports through its `FUNCTIONS` table: the fleet default (`setGlobalOptions`), the named
  * constants it can spread (`lib/runtimeOptions.ts`), and each function's own
  * options object. Nothing here evaluates code — it walks the TypeScript AST
  * and reads literal values, which is exactly what `setGlobalOptions` and
  * every trigger factory call in this codebase are: plain object literals,
- * optionally spreading one of three named constants (see `model.ts`'s
- * `applyFragments` for why that's the only spread shape this needs to
- * handle — verified by grep before writing this, not assumed).
+ * optionally spreading a named constant exported by `lib/runtimeOptions.ts`
+ * (resolved later by `model.ts`'s `applyFragments`) or a top-level object
+ * const declared in the same file (inlined here, #1388).
  *
  * FAILS LOUDLY BY DESIGN. An export this can't resolve — a module it can't
  * find, a call shape it doesn't recognize, a runtime-option value that isn't
@@ -83,6 +83,107 @@ function lineOf(sourceFile: ts.SourceFile, node: ts.Node): number {
   return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 }
 
+/** One hop of a `...NAME` chain, for cycle detection and error messages. */
+interface SpreadLink {
+  key: string; // `<file>#<name>`: unique across modules
+  label: string; // `NAME`, what a reader sees
+}
+
+/** `import { NAME } from './x'` / `import { ORIG as NAME } from './x'` in this file. */
+function findNamedImport(
+  sourceFile: ts.SourceFile,
+  name: string,
+): { originalName: string; modulePath: string } | undefined {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier))
+      continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (element.name.text === name) {
+        return {
+          originalName: (element.propertyName ?? element.name).text,
+          modulePath: statement.moduleSpecifier.text,
+        };
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolves `...NAME` inside an options literal to fragments, in this order,
+ * which is JS's own scoping order (#1388):
+ *
+ * 1. A top-level const declared in this same file (`emailFrameSettings.ts`'s
+ *    `const OPTS = { region, cors } as const`) is inlined in source order.
+ * 2. A name imported from `lib/runtimeOptions.ts` stays a `spread` fragment
+ *    for `model.ts`'s `applyFragments` to look up among the named constants.
+ * 3. A name imported from any other relative module (`HOURLY_TICK` from
+ *    `lib/notificationSchedule.ts`) is followed to that module's const and
+ *    inlined, its own spreads resolved relative to that module.
+ * 4. Anything else (a name with no declaration and no import) stays a
+ *    `spread` fragment, so `applyFragments` reports it by name.
+ *
+ * A local or imported const whose initializer is not an object literal, an
+ * import from a package, and a spread cycle all throw, naming the file.
+ */
+function spreadToFragments(
+  name: string,
+  context: string,
+  sourceFile: ts.SourceFile | undefined,
+  spreadChain: readonly SpreadLink[],
+): OptionsFragment[] {
+  if (!sourceFile) return [{ kind: 'spread', constant: name }];
+  let owner = sourceFile;
+  let constName = name;
+  const local = findLocalConst(sourceFile, name);
+  let target = local;
+  if (!target) {
+    const imported = findNamedImport(sourceFile, name);
+    if (!imported) return [{ kind: 'spread', constant: name }];
+    if (!imported.modulePath.startsWith('.')) {
+      throw new ExtractionError(
+        `spreads "...${name}" imported from package "${imported.modulePath}" in ` +
+          `${sourceFile.fileName}; the extractor only follows relative imports`,
+        context,
+      );
+    }
+    const absPath = resolveModuleFile(imported.modulePath, dirname(sourceFile.fileName));
+    if (absPath === RUNTIME_OPTIONS_TS) return [{ kind: 'spread', constant: name }];
+    owner = parseFile(absPath);
+    constName = imported.originalName;
+    target = findLocalConst(owner, constName);
+    if (!target) {
+      throw new ExtractionError(
+        `spreads "...${name}" imported from "${imported.modulePath}", but ${absPath} declares no ` +
+          `top-level const "${constName}"`,
+        context,
+      );
+    }
+  }
+  const link: SpreadLink = { key: `${owner.fileName}#${constName}`, label: constName };
+  if (spreadChain.some((l) => l.key === link.key)) {
+    throw new ExtractionError(
+      `const "${constName}" spreads itself (${[...spreadChain, link].map((l) => l.label).join(' -> ')})`,
+      context,
+    );
+  }
+  if (!target.object) {
+    throw new ExtractionError(
+      `spreads ${local ? 'file-local' : 'imported'} const "${constName}" ` +
+        `(${target.fileName}:${target.line}), whose initializer is not an object literal ` +
+        `(${target.initializerText}); the extractor only inlines ` +
+        `\`const ${constName} = { ... }\` (optionally \`as const\`)`,
+      context,
+    );
+  }
+  return objectLiteralToFragments(target.object, `${context} (via ...${name})`, owner, [
+    ...spreadChain,
+    link,
+  ]);
+}
+
 /**
  * Walks one options `ObjectLiteralExpression`'s properties in source order.
  * Only properties whose key is one of the six `RuntimeKey`s are kept —
@@ -96,6 +197,8 @@ function lineOf(sourceFile: ts.SourceFile, node: ts.Node): number {
 function objectLiteralToFragments(
   obj: ts.ObjectLiteralExpression,
   context: string,
+  sourceFile?: ts.SourceFile,
+  spreadChain: readonly SpreadLink[] = [],
 ): OptionsFragment[] {
   const fragments: OptionsFragment[] = [];
   for (const prop of obj.properties) {
@@ -106,7 +209,7 @@ function objectLiteralToFragments(
           context,
         );
       }
-      fragments.push({ kind: 'spread', constant: prop.expression.text });
+      fragments.push(...spreadToFragments(prop.expression.text, context, sourceFile, spreadChain));
       continue;
     }
     if (ts.isPropertyAssignment(prop)) {
@@ -155,7 +258,7 @@ export function extractGlobalFragments(sourceFile: ts.SourceFile): OptionsFragme
           'index.ts',
         );
       }
-      found = objectLiteralToFragments(arg, 'index.ts:setGlobalOptions');
+      found = objectLiteralToFragments(arg, 'index.ts:setGlobalOptions', sourceFile);
       return;
     }
     ts.forEachChild(node, visit);
@@ -190,6 +293,8 @@ export function extractNamedConstants(
       constants[decl.name.text] = objectLiteralToFragments(
         init,
         `lib/runtimeOptions.ts:${decl.name.text}`,
+        sourceFile,
+        [{ key: `${sourceFile.fileName}#${decl.name.text}`, label: decl.name.text }],
       );
     }
   }
@@ -207,33 +312,63 @@ export function extractNamedConstants(
   return flat;
 }
 
-/** `export { a, b } from './module'` entries in `index.ts`, in source order. */
+/**
+ * The entries of `index.ts`'s `FUNCTIONS` table, in source order: each
+ * `name: () => require('./module'),` is one deployed function, defined by the
+ * export `name` of that module (#1337 replaced `export { name } from` with
+ * this so a cold start loads one module rather than all of them).
+ *
+ * Anything else inside the table, or no table at all, THROWS. A drift tool
+ * that read an empty list here would report "no drift" on a fleet it never
+ * looked at, which is the outcome this file's header exists to prevent.
+ */
 export function extractIndexExports(
   sourceFile: ts.SourceFile,
 ): { name: string; modulePath: string; line: number }[] {
-  const exports: { name: string; modulePath: string; line: number }[] = [];
+  let table: ts.ObjectLiteralExpression | undefined;
   for (const statement of sourceFile.statements) {
-    if (!ts.isExportDeclaration(statement)) continue;
-    const moduleSpecifier = statement.moduleSpecifier;
-    if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier)) continue; // no module: skip
-    if (statement.isTypeOnly) continue; // `export type { Foo } from './types'`: not a runtime value
-    if (!statement.exportClause || !ts.isNamedExports(statement.exportClause)) continue;
-    for (const element of statement.exportClause.elements) {
-      if (element.isTypeOnly) continue; // `export { type Foo, health } from './x'`
-      // `export { a as b }` isn't used anywhere in this codebase (verified by
-      // grep before writing this), so the deployed name is always the local
-      // name. If that ever changes, `element.name` (not `propertyName`) is
-      // still correct: it's the identifier the deploy actually registers.
-      exports.push({
-        name: element.name.text,
-        modulePath: moduleSpecifier.text,
-        line: lineOf(sourceFile, element),
-      });
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (ts.isIdentifier(decl.name) && decl.name.text === 'FUNCTIONS' && decl.initializer) {
+        let init = decl.initializer;
+        if (ts.isAsExpression(init) || ts.isSatisfiesExpression(init)) init = init.expression;
+        if (!ts.isObjectLiteralExpression(init)) {
+          throw new ExtractionError('FUNCTIONS is not an object literal', 'index.ts');
+        }
+        table = init;
+      }
     }
+  }
+  if (!table) throw new ExtractionError('no `const FUNCTIONS = { ... }` table found', 'index.ts');
+  const exports: { name: string; modulePath: string; line: number }[] = [];
+  for (const property of table.properties) {
+    const where = `index.ts:${lineOf(sourceFile, property)}`;
+    if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) {
+      throw new ExtractionError('expected `name: () => require(...)`', where);
+    }
+    const loader = property.initializer;
+    const call = ts.isArrowFunction(loader) ? loader.body : undefined;
+    if (
+      !call ||
+      !ts.isCallExpression(call) ||
+      !ts.isIdentifier(call.expression) ||
+      call.expression.text !== 'require' ||
+      call.arguments.length !== 1 ||
+      !ts.isStringLiteral(call.arguments[0])
+    ) {
+      throw new ExtractionError(
+        `${property.name.text} is not \`() => require('<string literal>')\``,
+        where,
+      );
+    }
+    exports.push({
+      name: property.name.text,
+      modulePath: call.arguments[0].text,
+      line: lineOf(sourceFile, property),
+    });
   }
   return exports;
 }
-
 const V2_ARG_STYLE: Record<string, 'optsOrHandler' | 'optsHandler' | 'scheduleOptsHandler'> = {
   onCall: 'optsOrHandler',
   onRequest: 'optsOrHandler',
@@ -253,26 +388,38 @@ function calleeName(expr: ts.LeftHandSideExpression): string | undefined {
 }
 
 /**
- * Resolves an identifier used as an options argument back to its own
- * top-level `const` in the same module, e.g. a file that builds its options
- * object once and passes it by name. Only reached when the call's argument
- * isn't already an inline object literal.
+ * Finds a top-level `const <name> = ...` in this module. Used both for an
+ * identifier passed as the whole options argument (a file that builds its
+ * options object once and passes it by name) and for a `...<name>` spread
+ * inside an options literal (#1388). `object` is the initializer with any
+ * `as const` / `satisfies` / parentheses unwrapped, or undefined when the
+ * initializer is something else (a call, a ternary), which callers report
+ * as an unsupported construct rather than skip.
  */
-function resolveLocalConst(
+function findLocalConst(
   sourceFile: ts.SourceFile,
   name: string,
-): ts.ObjectLiteralExpression | undefined {
+):
+  | { object?: ts.ObjectLiteralExpression; fileName: string; line: number; initializerText: string }
+  | undefined {
   for (const statement of sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue;
     for (const decl of statement.declarationList.declarations) {
-      if (
-        ts.isIdentifier(decl.name) &&
-        decl.name.text === name &&
-        decl.initializer &&
-        ts.isObjectLiteralExpression(decl.initializer)
+      if (!ts.isIdentifier(decl.name) || decl.name.text !== name || !decl.initializer) continue;
+      let init: ts.Expression = decl.initializer;
+      while (
+        ts.isAsExpression(init) ||
+        ts.isSatisfiesExpression(init) ||
+        ts.isParenthesizedExpression(init)
       ) {
-        return decl.initializer;
+        init = init.expression;
       }
+      return {
+        object: ts.isObjectLiteralExpression(init) ? init : undefined,
+        fileName: sourceFile.fileName,
+        line: lineOf(sourceFile, decl),
+        initializerText: decl.initializer.getText(sourceFile).slice(0, 60),
+      };
     }
   }
   return undefined;
@@ -284,10 +431,14 @@ function optionsExpressionToFragments(
   context: string,
 ): OptionsFragment[] {
   if (!expr) return [];
-  if (ts.isObjectLiteralExpression(expr)) return objectLiteralToFragments(expr, context);
+  if (ts.isObjectLiteralExpression(expr))
+    return objectLiteralToFragments(expr, context, sourceFile);
   if (ts.isIdentifier(expr)) {
-    const local = resolveLocalConst(sourceFile, expr.text);
-    if (local) return objectLiteralToFragments(local, context);
+    const local = findLocalConst(sourceFile, expr.text);
+    if (local?.object)
+      return objectLiteralToFragments(local.object, context, sourceFile, [
+        { key: `${sourceFile.fileName}#${expr.text}`, label: expr.text },
+      ]);
   }
   throw new ExtractionError(
     `options argument is not an object literal or a resolvable local const (${expr.getText()})`,
@@ -514,7 +665,7 @@ function toRepoRelativePath(absPath: string): string {
 }
 
 /**
- * Extracts every function `index.ts` re-exports. Parses each distinct module
+ * Extracts every function `index.ts` exports. Parses each distinct module
  * file exactly once (several exports commonly share a file, e.g.
  * `notificationPrefs.ts` exports both `getMyNotificationPrefs` and
  * `saveMyNotificationPrefs`).

@@ -316,11 +316,24 @@ of the built `lib/`, read **statically** so lazy requires inside handler bodies
 are in it. Shared code widens correctly rather than being mapped per file:
 `src/lib/logger.ts` is in all 227 closures and `src/lib/auditEvents.ts` in 196.
 
+The scan lexes each `lib/` file, so `require()` written in a comment or a
+string is prose, not code (#1390; tsc keeps comments, and one comment saying
+"lowered to require()," had sent every release to the full fleet). `await
+import('...')` in code is an edge like `require` (#1393; before that a module
+loaded only through `import()` was missing from the graph). The lexer is never
+trusted to remove an edge: a literal specifier in a comment that resolves still
+joins the graph, so a misread can only widen a deploy. It prints how many calls
+it read in code and how many mentions it set aside, every run.
+
 It refuses to narrow, and falls back to the full (still batched) fleet, whenever
 it cannot attribute a change: a `src/index.ts` edit (the barrel can repoint an
 export at a different module while touching neither), a delete or a rename, a
-`package.json` change outside its `scripts` block, a `require()` it cannot read
-statically, or a source file with no built counterpart. It says which, every
+`package.json` change outside its `scripts` block, a `require()` or `import()` in
+code whose argument is anything but one string literal (`require(x)`,
+`require('./a' + b)`, a template with a substitution), `require` used as a value
+rather than called, a `lib/` file the lexer cannot read cleanly (a string or
+regex that runs into a newline, a comment or template still open at end of file,
+unbalanced brackets), or a source file with no built counterpart. It says which, every
 time. A correct slow deploy beats a clever wrong one, and every uncertain case
 resolves towards deploying *more* functions, never fewer.
 
@@ -641,11 +654,20 @@ tool exists to force before anyone touches the fleet again.
 npm --prefix mytribe/functions run runtime-options:expected
 ```
 
-Prints the resolved expected shape for all ~285 functions as JSON. Useful on
+Prints the resolved expected shape for all ~296 functions as JSON. Useful on
 its own, since it's "what does source currently declare, exactly" with inheritance
 already resolved, and it fails loudly (nonzero exit, every unresolved export
 named) if a future function's options object uses a shape the extractor
 hasn't been taught, rather than silently skipping it.
+
+A `...NAME` spread inside an options object resolves the way JS scoping
+does (#1388): a top-level `const NAME = { ... }` in the same file is
+inlined; a name imported from `lib/runtimeOptions.ts` is one of the named
+constants; a name imported from any other relative module (`HOURLY_TICK`
+from `lib/notificationSchedule.ts`) is followed to that module's const.
+A const whose initializer is not an object literal, a spread imported from
+a package, or a spread cycle is reported against that one function with its
+file and line; the other functions still print, and the exit is nonzero.
 
 **Then get the deployed shape.** Three ways, in order of preference:
 
@@ -748,7 +770,9 @@ Unit tests for the resolver and the diff live beside the code:
 `scripts/runtimeOptions/model.test.ts` (fixtures: inheriting the global, one
 per named constant, a deployed shape disagreeing on every field at once) and
 `scripts/runtimeOptions/extractSource.test.ts` (fixtures for every call shape
-the extractor recognizes). Both run under `npm --prefix mytribe/functions
+the extractor recognizes, plus a run of `extractAll()` and `resolveAll()` over
+the real `src/index.ts` that must finish with zero errors, so a new options
+shape fails CI before it fails this check mid-release). Both run under `npm --prefix mytribe/functions
 test`.
 
 ### Every release is tagged

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { wrapCallable } from '../lib/wrapCallable';
 import { loadMember, requirePrimary } from '../lib/memberGate';
-import { resolveInviteEmailConfig, sendPrimaryInviteEmails } from '../lib/inviteEmails';
+import { recordAuntieNoticeSkipped, resolveInviteEmailConfig, sendPrimaryInviteEmails } from '../lib/inviteEmails';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { INVITE_TTL_DAYS, SECONDARY_LABEL_MAX } from '../lib/schema';
@@ -49,15 +49,13 @@ function sanitizeLabel(s: string): string {
 export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>): Promise<{ inviteId: string }> {
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const args = Args.parse(req.data);
-  // Fail loud before any Firestore write, and before the authz check below —
-  // matching createShareLink's guard-before-authz shape. See requireBaseUrl
-  // for the full rationale. AUNTIE_OS_REVIEW_BASE_URL is only guarded when
-  // this run will actually use it (AUNTIE_NOTIFY_EMAIL set): the invite doc,
-  // and the invite.secondary mail, already exist by the point the
-  // auntie-notify template is sent below (it needs the invite id), so this
-  // check has to run up here, ahead of them, rather than at its own point of
-  // use.
-  const { claimBaseUrl, auntieNotify } = resolveInviteEmailConfig();
+  // Fail loud before any Firestore write, and before the authz check below,
+  // matching createShareLink's guard-before-authz shape: without
+  // CLAIM_LINK_BASE_URL the invitee's email has no working link. See
+  // requireBaseUrl for the full rationale. A missing AUNTIE_OS_REVIEW_BASE_URL
+  // does NOT refuse (#1277): it only drops the business's own notice, which
+  // is recorded for the operator once the invite exists (lib/inviteEmails.ts).
+  const { claimBaseUrl, auntieNotify, auntieNotifySkipped } = resolveInviteEmailConfig();
   const member = await loadMember(args.familyId, req.auth.uid);
   requirePrimary(member);
   const proposedPermissions = { ...args.permissions, kintales_only: true };
@@ -74,7 +72,7 @@ export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>
     expiresAt,
   });
   // Send emails (handled inline; trigger version is alternative)
-  await sendPrimaryInviteEmails({
+  const { auntieNotified } = await sendPrimaryInviteEmails({
     inviteId: ref.id,
     invitedEmail: args.invitedEmail,
     secondaryLabel: sanitizeLabel(args.secondaryLabel),
@@ -86,7 +84,20 @@ export async function mintInviteFromPrimaryHandler(req: CallableRequest<unknown>
     primaryEmail: req.auth.token?.email,
     auntieNotify,
   });
-  await ref.update({ status: 'EMAIL_SENT', sentToInviteeAt: FieldValue.serverTimestamp(), auntieNotifiedAt: FieldValue.serverTimestamp() });
+  await ref.update({
+    status: 'EMAIL_SENT',
+    sentToInviteeAt: FieldValue.serverTimestamp(),
+    ...(auntieNotified ? { auntieNotifiedAt: FieldValue.serverTimestamp() } : {}),
+  });
+  if (auntieNotifySkipped !== null) {
+    await recordAuntieNoticeSkipped({
+      functionName: 'mintInviteFromPrimary',
+      missingVar: auntieNotifySkipped,
+      inviteId: ref.id,
+      familyId: args.familyId,
+      uid: req.auth.uid,
+    });
+  }
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.MEMBERSHIP_INVITE_SENT,

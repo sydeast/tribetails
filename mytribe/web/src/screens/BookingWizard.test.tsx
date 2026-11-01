@@ -1334,7 +1334,7 @@ describe('BookingWizard: #1300 / #1302 step behaviour', () => {
 describe('BookingWizard: #1281 after a successful Create Booking', () => {
   function visitDto(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
     return {
-      id: 'v-new', batchId: 'batch-1', kinfolkId: 'fam1', status: 'requested', serviceType: 'Daily Visit', serviceId: null,
+      id: 'v-new', batchId: 'batch-1', kinfolkId: 'fam1', status: 'requested', serviceType: 'Daily Visit', serviceLabel: 'Daily Visit', serviceId: null,
       title: 'Daily Visit', startTimeMs: visitMs(TOMORROW, 9, 0), endTimeMs: null, startTimePending: false,
       requestedDate: null, timeBlockLabel: null, timeBlockStartTime: null, timeBlockEndTime: null,
       kinIds: ['k1'], kinNames: ['Buddy'], auntieDisplayName: null, auntieAvatarUrl: null,

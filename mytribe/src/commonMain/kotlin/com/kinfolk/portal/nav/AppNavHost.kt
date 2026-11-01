@@ -57,6 +57,7 @@ import com.kinfolk.portal.screens.tribe.TribeScreen
 import com.kinfolk.portal.share.SharedKinTaleScreen
 import com.kinfolk.portal.ui.LaunchErrorScreen
 import com.kinfolk.portal.ui.NoTribesOnboarding
+import com.kinfolk.portal.ui.NotFoundScreen
 import com.kinfolk.portal.util.openExternalUrl
 
 /** Dirty-flag key the detail destinations set so Schedule reloads on return. */
@@ -90,6 +91,8 @@ fun AppNavHost(
     shellPersonName: String = "",
     onPersonNameChanged: (String) -> Unit = {},
     shellLogoUrl: String = "",
+    /** #1369: `getMyHome.businessName`, for the footer. Blank draws no name. */
+    shellBusinessName: String = "",
     shellBanner: com.kinfolk.portal.portal.PortalBanner = com.kinfolk.portal.portal.PortalBanner(),
     shellBannerDismissedByUser: Boolean = false,
     onDismissBannerPerUser: ((bannerId: String) -> Unit)? = null,
@@ -107,6 +110,8 @@ fun AppNavHost(
     onSignOut: () -> Unit,
     onBackToDirectory: () -> Unit,
     onRefresh: () -> Unit,
+    /** #1293: "Back to Home" on the not-found screen; the caller clears the unknown launch link. */
+    onNotFoundHome: () -> Unit = {},
     /**
      * The "message Auntie" mailto on the no-tribes funnel. Nothing renders
      * `AppNavHost` from a test today (`NoTribesOnboardingTest` drives the
@@ -155,6 +160,7 @@ fun AppNavHost(
         TabShell(
             familyName = shellPersonName.ifBlank { shellFamilyName },
             logoUrl = shellLogoUrl,
+            businessName = shellBusinessName,
             navController = navController,
             onSignOut = onSignOut,
             onBackToDirectory = if (cameFromPicker) onBackToDirectory else null,
@@ -206,6 +212,7 @@ fun AppNavHost(
             LaunchedEffect(Unit) { tribes = resolveTribes() }
             TribePickerScreen(tribes = tribes, onPick = onPick, onSignOut = onSignOut)
         }
+        composable<NotFoundRoute> { NotFoundScreen(onHome = onNotFoundHome) }
         composable<LaunchErrorRoute> { entry ->
             LaunchErrorScreen(
                 message = entry.toRoute<LaunchErrorRoute>().message,
@@ -278,7 +285,8 @@ fun AppNavHost(
                             chatEnabled = shellChat.enabled,
                             onMessageAuntie = { navController.navigate(MessageAuntieRoute) },
                             onOpenSchedule = { navController.navigate(ScheduleRoute) { launchSingleTop = true } },
-                            onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
+                            onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
+                            onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
                             onOpenKin = { navController.navigate(KinRoute) { launchSingleTop = true } },
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
                             onAddKin = { navController.navigate(KinAddEditRoute()) },
@@ -317,8 +325,9 @@ fun AppNavHost(
                     }
                 }
             }
-            composable<KinTalesRoute> {
-                Shell { mod -> Box(mod) { KinTalesScreen(shellFamilyName, kinId, portalApi) } }
+            composable<KinTalesRoute> { entry ->
+                val taleId = entry.toRoute<KinTalesRoute>().taleId
+                Shell { mod -> Box(mod) { KinTalesScreen(shellFamilyName, kinId, portalApi, focusTaleId = taleId) } }
             }
             composable<KinRoute> {
                 Shell { mod ->
@@ -363,7 +372,7 @@ fun AppNavHost(
                             onEditProfile = { navController.navigate(TribeEditRoute) },
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
                             onManageKin = { navController.navigate(KinRoute) { launchSingleTop = true } },
-                            onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
+                            onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
                             onOpenGallery = { navController.navigate(GalleryRoute) },
                         )
                     }
@@ -377,7 +386,7 @@ fun AppNavHost(
                             portalApi = portalApi,
                             onBack = { navController.popBackStack() },
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
-                            onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
+                            onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
                         )
                     }
                 }
@@ -507,7 +516,8 @@ fun AppNavHost(
                                 markScheduleDirty(navController)
                                 navController.popBackStack()
                             },
-                            onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
+                            // #1363: open the KinTales tab on this visit's tale.
+                            onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
                             onOpenInvoice = { invoiceId -> navController.navigate(InvoiceDetailRoute(invoiceId)) },
                         )
                     }

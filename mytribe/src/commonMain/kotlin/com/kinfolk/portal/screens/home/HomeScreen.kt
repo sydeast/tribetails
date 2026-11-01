@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +84,8 @@ fun HomeScreen(
     onMessageAuntie: () -> Unit = {},
     onOpenSchedule: () -> Unit = {},
     onOpenKinTales: () -> Unit = {},
+    /** #1329: a Recent KinTales card opens that tale. */
+    onOpenKinTale: (String) -> Unit = {},
     onOpenKin: () -> Unit = {},
     onOpenKinDetail: (String) -> Unit = {},
     onAddKin: () -> Unit = {},
@@ -199,6 +202,7 @@ fun HomeScreen(
             failed = talesFailed,
             limit = talesLimit,
             onOpenKinTales = onOpenKinTales,
+            onOpenKinTale = onOpenKinTale,
             onRetry = {
                 // Show the spinner while the refetch runs, then bump the key.
                 tales = null
@@ -393,7 +397,7 @@ private fun UpcomingRow(b: Booking) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(b.title ?: b.serviceType ?: "Booking", style = type.heritageTitle)
+            Text(com.kinfolk.portal.util.visitTitle(b.title, b.serviceLabel) ?: "Booking", style = type.heritageTitle)
             Text(bookingWhenLabel(b), style = type.sansLabel)
             val withText = (listOf(b.auntieDisplayName).filterNotNull() + b.kinNames).joinToString(" • ").ifBlank { null }
             if (withText != null) Text(withText, style = type.sansMeta)
@@ -410,6 +414,7 @@ private fun TalesSection(
     failed: Boolean,
     limit: Int = 3,
     onOpenKinTales: () -> Unit,
+    onOpenKinTale: (String) -> Unit = {},
     onRetry: () -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
@@ -442,16 +447,22 @@ private fun TalesSection(
                 else -> KinStaggerReveal(
                     items = tales.take(limit),
                     verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
-                ) { tale -> TaleRow(tale) }
+                ) { tale -> TaleRow(tale, onOpen = { onOpenKinTale(tale.id) }) }
             }
         }
     }
 }
 
 @Composable
-private fun TaleRow(tale: KinTale) {
+private fun TaleRow(tale: KinTale, onOpen: () -> Unit) {
     val type = LocalKinfolkTypography.current
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = KinfolkSpacing.xs)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KinfolkShapes.card)
+            .clickable(role = Role.Button, onClickLabel = "Open this KinTale", onClick = onOpen)
+            .padding(vertical = KinfolkSpacing.xs),
+    ) {
         Text(
             text = tale.body.ifBlank { "A new tale from your Auntie" },
             style = type.sansBody,
@@ -618,7 +629,7 @@ private fun LiveVisitCard(b: Booking) {
             ) {
                 Column {
                     Text(auntieName(b.auntieDisplayName) ?: "Auntie", style = type.heritageTitle.copy(color = Color.White))
-                    Text(b.serviceType ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
+                    Text(b.serviceLabel ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
                 }
                 LivePill(onGradient = true)
             }

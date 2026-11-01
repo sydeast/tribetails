@@ -221,3 +221,20 @@ describe('#1301 read-back carries a block visit\'s window', () => {
     expect(visit).toMatchObject({ timeBlockLabel: 'Brunch', timeBlockStartTime: null, timeBlockEndTime: null });
   });
 });
+/** #1297 meets #1281: a written visit's read-back names its service the way the list does. */
+describe('#1297 read-back carries the resolved service name', () => {
+  it('readVisitDto resolves serviceLabel against the KinCare list', async () => {
+    const { readVisitDto } = await import('../src/lib/portalBookingDto');
+    const ctx = buildDbMock({
+      docs: {
+        'business_settings/business_settings': { serviceRates: { '60Minute': '40' }, serviceDurations: {} },
+        'families/kf1/bookings/b1/kinCares/v1': {
+          status: 'requested', batchId: 'b1', serviceType: 'visit_60', startTime: Timestamp.fromMillis(Date.now() + DAY),
+        },
+      },
+    });
+    const visit = await readVisitDto(ctx.db as any, 'kf1', 'b1', 'v1');
+    expect(visit?.serviceType).toBe('visit_60');
+    expect(visit?.serviceLabel).toBe('60 Minute');
+  });
+});

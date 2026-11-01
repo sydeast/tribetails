@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from 'react';
+import { serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getMyBookings, getMyHome, getMyKin, getMyKinTales } from '../api/portal';
@@ -26,6 +27,7 @@ import {
   visitTile,
   visitVariant,
 } from '../lib/portalFormat';
+import { BusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Home, ported from ui-ideas/mytribe-home-2026-05-31.html. `getMyHome` only
@@ -51,17 +53,22 @@ import {
  * it worse than most screens: while `home` is paused they are `enabled: false`,
  * so they never even reach 'paused' and sit at pending/idle. `gate: home` is
  * what makes them answer with home's reason instead of with silence.
+ *
+ * #1282: the three no longer WAIT for `home` (they used to be
+ * `enabled: home.isSuccess`). That gate made the first paint two round trips
+ * deep for no reason the data needed: none of the three reads anything out of
+ * `home`. They now start alongside it, and `gate: home` still makes a failed or
+ * paused `home` the reason every section reports.
  */
 export function Home() {
   const kinfolkId = getActiveKinfolkId();
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId) });
-  const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId), enabled: home.isSuccess });
+  const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId) });
   const kinTales = useQuery({
     queryKey: ['myKinTales', 'home-preview', kinfolkId],
     queryFn: () => getMyKinTales(kinfolkId, { limit: 3 }),
-    enabled: home.isSuccess,
   });
-  const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId), enabled: home.isSuccess });
+  const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
 
   // #1290: a first-name greeting off the signed-in person, not the household's
   // (often upper-case) name. Until the account answers, the heading keeps the
@@ -158,13 +165,13 @@ export function Home() {
               </h2>
               <p>
                 {liveVisit.startTimeMs !== null ? `Checked in ${elapsedMinutes(liveVisit.startTimeMs)} minutes ago` : 'Checked in'} for{' '}
-                {liveVisit.title ?? liveVisit.serviceType ?? 'a visit'}. You&rsquo;ll get a KinTale the moment they wrap up.
+                {visitTitleOf(liveVisit) ?? 'a visit'}. You&rsquo;ll get a KinTale the moment they wrap up.
               </p>
               <div className="lwho">
                 <div className="lav">{speciesEmoji(null)}</div>
                 <div style={{ flex: '0 0 auto' }}>
                   <b>{liveVisit.kinNames[0] ?? 'Your kin'}</b>
-                  <small>{(liveVisit.serviceType ?? liveVisit.title ?? 'VISIT').toUpperCase()}</small>
+                  <small>{(serviceLabelOf(liveVisit) ?? visitTitleOf(liveVisit) ?? 'Visit').toUpperCase()}</small>
                 </div>
                 <div className="track">
                   <i />
@@ -205,7 +212,7 @@ export function Home() {
                         <div className="d">{tile.day}</div>
                       </div>
                       <div className="info">
-                        <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
+                        <b>{visitTitleOf(b) ?? 'Visit'}</b>
                         <small>{bookingSubtitle(b)}</small>
                         {change && <small className="pending-change" data-testid="pending-change">{change}</small>}
                       </div>
@@ -233,7 +240,7 @@ export function Home() {
                 </LoadingLine>
               ) : (
                 tales.map((t, i) => (
-                  <div className={`tale a${(i % 3) + 1}`} key={t.id}>
+                  <Link className={`tale a${(i % 3) + 1}`} to="/kintales" search={{ tale: t.id }} key={t.id}>
                     <div className="photo">{'\u{1F43E}'}</div>
                     <div className="tb">
                       <b>{t.title || t.body.slice(0, 60)}</b>
@@ -242,7 +249,7 @@ export function Home() {
                         {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 ))
               )}
             </section>
@@ -352,9 +359,7 @@ export function Home() {
             of its own on iOS. See components/InstallAndAlerts.tsx. */}
         <InstallAndAlerts />
 
-        <p className="footnote">
-          Cared for by <b>{home.data?.businessName || 'Tribe Tails Pet Care'}</b>
-        </p>
+        <BusinessFootnote name={home.data?.businessName} />
       </div>
     </>
   );

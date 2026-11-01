@@ -24,8 +24,8 @@ const RECAPTCHA_MIN_SCORE = 0.5;
 //
 // The MODULE is loaded lazily too, and that is the expensive half. This is the
 // only function in the codebase that verifies a reCAPTCHA, but the Functions
-// runtime loads all of `index.js` on every cold start whatever the target is,
-// so a file-scope import charged the reCAPTCHA client's gRPC/protobuf stack to
+// runtime loaded all of `index.js` on every cold start whatever the target was
+// (until #1337), and discovery still does, so a file-scope import charged the reCAPTCHA client's gRPC/protobuf stack to
 // all 227 of them. Constructing the client is what needs the module, so that is
 // where it is fetched.
 let recaptchaClient: RecaptchaEnterpriseServiceClient | null = null;

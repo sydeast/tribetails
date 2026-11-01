@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.KinInfoTip
 import com.kinfolk.portal.components.GlassCard
-import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.KinSpinner
@@ -44,6 +44,7 @@ internal data class InvitePrefill(val personId: String, val name: String, val em
 
 /** `SECONDARY_KINFOLK_NAME_MAX` in `mytribe/functions/src/portal/secondaryKinfolk.ts`. */
 private const val NAME_MAX = 80
+private const val NAME_REQUIRED = "A secondary kinfolk needs a name."
 
 internal const val SK_NO_PORTAL_ACCESS = "No portal access"
 internal const val SK_INVITED = "Invited"
@@ -65,6 +66,10 @@ internal const val SK_WHO = "Someone in your household. Adding them sends nothin
  * already appears in Household members above. The list is PRIMARY-only on the
  * server; for anyone else the load error is shown, the same way the members
  * card degrades. Saves are pessimistic and show the server's own message.
+ *
+ * ONE SAVE (#1324). The form has no Save button: what is typed is added (or, when
+ * editing, updated) by the page's Save Changes through [CardSaveHandle]. Removing
+ * a person is a confirmed action on its row, so it still goes straight through.
  */
 @Composable
 internal fun SecondaryKinfolkCard(
@@ -72,6 +77,8 @@ internal fun SecondaryKinfolkCard(
     portalApi: PortalApi,
     reloadKey: Int,
     onGivePortalAccess: (InvitePrefill) -> Unit,
+    /** #1324: how the page's one Save Changes saves the open form. Null when a test renders the card alone. */
+    saveHandle: CardSaveHandle? = null,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -112,6 +119,53 @@ internal fun SecondaryKinfolkCard(
         formError = null
     }
 
+    /** The person being edited, as the list last showed them; null while adding. */
+    val source = editingId?.let { id -> people?.firstOrNull { it.personId == id } }
+    val formDirty = formOpen && if (source != null) {
+        name.trim() != source.name.trim() ||
+            phone.trim() != formatPhone(source.phone).trim() ||
+            email.trim() != source.email.orEmpty().trim()
+    } else {
+        name.isNotBlank() || phone.isNotBlank() || email.isNotBlank()
+    }
+    suspend fun saveNow(): CardSaveResult {
+        if (name.isBlank()) {
+            formError = NAME_REQUIRED
+            return CardSaveResult.Failed(NAME_REQUIRED)
+        }
+        saving = true
+        formError = null
+        return try {
+            portalApi.saveSecondaryKinfolk(
+                kinfolkId = kinfolkId,
+                personId = editingId,
+                name = name,
+                phone = phone,
+                email = email,
+            )
+            formOpen = false
+            editingId = null
+            name = ""
+            phone = ""
+            email = ""
+            localReload += 1
+            CardSaveResult.Ok
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            val text = t.message ?: "That did not save. Try again."
+            formError = text
+            CardSaveResult.Failed(text)
+        } finally {
+            saving = false
+        }
+    }
+    if (saveHandle != null) {
+        SideEffect {
+            saveHandle.dirty = formDirty
+            saveHandle.save = { saveNow() }
+        }
+    }
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         contentPadding = PaddingValues(KinfolkSpacing.l),
@@ -210,36 +264,16 @@ internal fun SecondaryKinfolkCard(
                             fieldTestTag = "sk-email",
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s), verticalAlignment = Alignment.CenterVertically) {
-                            KinButton(
-                                label = if (saving) "Saving…" else "Save",
-                                enabled = !saving && name.isNotBlank(),
-                                onClick = {
-                                    saving = true
-                                    formError = null
-                                    scope.launch {
-                                        try {
-                                            portalApi.saveSecondaryKinfolk(
-                                                kinfolkId = kinfolkId,
-                                                personId = editingId,
-                                                name = name,
-                                                phone = phone,
-                                                email = email,
-                                            )
-                                            formOpen = false
-                                            editingId = null
-                                            localReload += 1
-                                        } catch (c: CancellationException) {
-                                            throw c
-                                        } catch (t: Throwable) {
-                                            formError = t.message ?: "That did not save. Try again."
-                                        } finally {
-                                            saving = false
-                                        }
-                                    }
-                                },
+                        if (formDirty) {
+                            Text(
+                                if (editingId != null) "Changes to ${name.trim().ifBlank { "this person" }} are saved when you press Save Changes."
+                                else "${name.trim().ifBlank { "This person" }} is added when you press Save Changes.",
+                                style = type.sansLabel.copy(color = KinfolkBrand.KinfolkOrange),
                             )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s), verticalAlignment = Alignment.CenterVertically) {
                             KinGhostButton(label = "Cancel", enabled = !saving, onClick = { formOpen = false; editingId = null; formError = null })
+                            if (saving) KinSpinner(size = 20.dp)
                         }
                         formError?.let { Text(it, style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral)) }
                     } else {

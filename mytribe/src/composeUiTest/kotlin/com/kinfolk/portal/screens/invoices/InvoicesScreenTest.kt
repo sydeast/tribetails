@@ -105,11 +105,13 @@ class InvoicesScreenTest {
         waitForIdle()
         onNodeWithText("Credits").assertIsDisplayed()
         onNodeWithText("Save to Account Balance").assertIsDisplayed()
-        onNodeWithText("Return to Original Payment Method").assertIsDisplayed()
+        // #1338: the server refuses card refunds (no-refunds ruling), so the
+        // button is never offered, even when a payment intent is on file.
+        onNodeWithText("Return to Original Payment Method").assertDoesNotExist()
     }
 
     @Test
-    fun creditWithoutOriginalPi_disablesReturnButton() = runComposeUiTest {
+    fun creditWithoutOriginalPi_offersOnlyAccountBalance() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyInvoices", buildJsonObject {
             put("accountBalanceCents", 0L)
@@ -130,7 +132,9 @@ class InvoicesScreenTest {
             InvoicesScreen("The Foster", "3", PortalApi(fake))
         }
         waitForIdle()
-        onNodeWithText("Original card not on file. Only Account Balance is available.").assertIsDisplayed()
+        onNodeWithText("Save to Account Balance").assertIsDisplayed()
+        onNodeWithText("Return to Original Payment Method").assertDoesNotExist()
+        onNodeWithText("Original card not on file. Only Account Balance is available.").assertDoesNotExist()
     }
 
     @Test

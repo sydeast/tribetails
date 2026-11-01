@@ -46,8 +46,8 @@
  *   4. Flat kin_care_sessions mirroring the kinCares (same doc ids) plus one
  *      older completed session, so getMyVisits shows a SCHEDULED future visit
  *      and a completed visit with a GPS replay.
- *   5. Flat invoices: open (amountDue 4500), paid (total 6000, payments
- *      history), credit (invoiceStatus 'credit', -2000), with sessionIds
+ *   5. Flat invoices: open ($45.00 due), paid ($60.00, payments
+ *      history), credit (status 'credit', -$20.00), with sessionIds
  *      linking back to the seeded sessions. One payment doc for the paid one.
  *   6. 3 flat kin_care_reports (KinTales) with title + bodyCopy, sentAt
  *      descending, the newest carrying a media reference; 1 media_files doc.
@@ -82,6 +82,7 @@ import {
   Timestamp,
   getAuth,
 } from './lib/firebaseAdmin';
+import { canonicalCreditMoney, canonicalInvoiceMoney, type SeedInvoiceMoney } from './lib/seedInvoiceMoney';
 
 // ---------------------------------------------------------------------------
 // Fixed identity. Deterministic so re-runs converge and the rules match
@@ -296,11 +297,24 @@ export interface InvoiceDoc {
    * nothing writes it any more.
    */
   status: InvoiceStatus;
+  /** DOLLARS (float), the legacy shape of this collection. NOT cents (#1368). */
   total: number;
+  /** DOLLARS (float); negative is the credit signal. */
   amountDue: number;
   date: string;
   dueDate: string;
-  lineItems: Array<{ label: string; amount: number }>;
+  /**
+   * Canonical stored lines `{description, qty, unitCents, discountCents,
+   * sessionId}`, the shape `createInvoice` writes and `getMyInvoices` reads
+   * (#1368). The integer-cents truth rides beside them in [SeedInvoiceMoney].
+   */
+  lineItems: SeedInvoiceMoney['lineItems'];
+  invoiceDiscountCents: number;
+  subtotalCents: number;
+  totalCents: number;
+  amountDueCents: number;
+  paidCents: number;
+  editScope: string;
   /** Join to flat kin_care_sessions (lineItems join being added portal-side). */
   sessionIds: string[];
   paymentsHistory: string | null;
@@ -319,7 +333,10 @@ export interface PaymentDoc {
   _id: string;
   kinfolkId: string;
   invoiceId: string;
+  /** DOLLARS, as `markInvoicePaid` writes it. */
   amount: number;
+  /** CENTS, written alongside `amount` by the payment path. */
+  amountCents: number;
   currency: 'usd';
   status: 'succeeded';
   paidAt: string;
@@ -690,11 +707,9 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       kinfolkId: TEST_TRIBE_ID,
       kinfolkName,
       status: 'open',
-      total: 4500,
-      amountDue: 4500,
+      ...canonicalInvoiceMoney([{ description: '60-Minute Drop-In', qty: 1, unitCents: 4500, sessionId: visitId(3) }], 0, 'open'),
       date: isoDate(p1End),
       dueDate: isoDate(dayAt(now, 7, 0)),
-      lineItems: [{ label: '60-Minute Drop-In', amount: 4500 }],
       sessionIds: [visitId(3)],
       paymentsHistory: null,
       viewed: 'No',
@@ -707,13 +722,11 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       kinfolkId: TEST_TRIBE_ID,
       kinfolkName,
       status: 'paid',
-      total: 6000,
-      amountDue: 0,
+      ...canonicalInvoiceMoney([{ description: '60-Minute Drop-In', qty: 1, unitCents: 6000, sessionId: visitId(5) }], 6000, 'paid'),
       date: isoDate(p3End),
       dueDate: isoDate(dayAt(now, -11, 0)),
-      lineItems: [{ label: '60-Minute Drop-In', amount: 6000 }],
       sessionIds: [visitId(5)],
-      paymentsHistory: `${isoDate(dayAt(now, -18, 0))}: 6000 paid, card ending 4242`,
+      paymentsHistory: `${isoDate(dayAt(now, -18, 0))}: $60.00 paid, card ending 4242`,
       viewed: 'Yes',
       creditTarget: null,
       creditRedeemedAt: null,
@@ -724,11 +737,9 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       kinfolkId: TEST_TRIBE_ID,
       kinfolkName,
       status: 'credit',
-      total: -2000,
-      amountDue: -2000,
+      ...canonicalCreditMoney(2000),
       date: isoDate(p2End),
       dueDate: isoDate(p2End),
-      lineItems: [{ label: 'Credit for cancelled visit', amount: -2000 }],
       sessionIds: [visitId(4)],
       paymentsHistory: null,
       viewed: 'No',
@@ -742,7 +753,8 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
     _id: `${TEST_TRIBE_ID}-payment-1`,
     kinfolkId: TEST_TRIBE_ID,
     invoiceId: `${TEST_TRIBE_ID}-invoice-paid`,
-    amount: 6000,
+    amount: 60,
+    amountCents: 6000,
     currency: 'usd',
     status: 'succeeded',
     paidAt: isoDate(dayAt(now, -18, 0)),

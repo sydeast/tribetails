@@ -63,8 +63,9 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * both callables that do it are household-scoped; the PRIMARY invites the
  * secondary from MyTribe. So there is no Send here, no Revoke, and no
  * permission control: an admin-WIDE surface has no household to act on.
- * Tapping a row opens that household's own members-and-invites screen, where
- * every action already lives.
+ * Tapping a row opens that invite's own detail screen ([InviteDetailScreen],
+ * #1339); tapping its household line opens that household's own
+ * members-and-invites screen, where every action already lives.
  *
  * THE SHAPE IS THE MOCK'S (`ui-ideas/auntieos-invites-2026-05-27.html`, #755).
  * Sections sit on the ground under a serif heading with a mono status note,
@@ -80,10 +81,11 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 fun InvitesScreen(
     onBack: () -> Unit,
     onOpenHousehold: (kinfolkId: String, householdName: String) -> Unit,
+    onOpenInvite: (inviteId: String) -> Unit,
     viewModel: InvitesViewModel = remember { InvitesViewModel() },
 ) {
     AuntieScreenScaffold(title = "Invites", onBack = onBack) {
-        InvitesBody(viewModel = viewModel, onOpenHousehold = onOpenHousehold)
+        InvitesBody(viewModel = viewModel, onOpenHousehold = onOpenHousehold, onOpenInvite = onOpenInvite)
     }
 }
 
@@ -91,6 +93,7 @@ fun InvitesScreen(
 fun InvitesBody(
     viewModel: InvitesViewModel,
     onOpenHousehold: (kinfolkId: String, householdName: String) -> Unit,
+    onOpenInvite: (inviteId: String) -> Unit = {},
 ) {
     val dims = AuntieTheme.dims
     val state by viewModel.uiState.collectAsState()
@@ -146,7 +149,11 @@ fun InvitesBody(
             }
             else -> state.sections.filter { it.rows.isNotEmpty() }.forEach { section ->
                 item(key = section.heading) {
-                    InviteSectionBlock(section = section, onOpenHousehold = onOpenHousehold)
+                    InviteSectionBlock(
+                        section = section,
+                        onOpenHousehold = onOpenHousehold,
+                        onOpenInvite = onOpenInvite,
+                    )
                 }
             }
         }
@@ -162,6 +169,7 @@ fun InvitesBody(
 private fun InviteSectionBlock(
     section: InviteSection,
     onOpenHousehold: (kinfolkId: String, householdName: String) -> Unit,
+    onOpenInvite: (inviteId: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -184,14 +192,15 @@ private fun InviteSectionBlock(
             )
         }
         section.rows.forEach { row ->
-            AdminInviteRow(row = row, onOpen = onOpenHousehold)
+            AdminInviteRow(row = row, onOpen = onOpenHousehold, onOpenInvite = onOpenInvite)
         }
     }
 }
 
 /**
  * The mock's `.iv`: a 4dp tone stripe, a 42dp framed circle, the address in
- * bold, the provenance line, the pills. The whole row opens the household.
+ * bold, the provenance line, the pills. The row opens the invite's detail
+ * screen (#1339); the household line opens the household.
  *
  * The mock draws a profile photo in the circle. An invite is an address with
  * no account yet, so there is no photo to draw; the Den avatar's own fallback,
@@ -202,14 +211,15 @@ private fun InviteSectionBlock(
 private fun AdminInviteRow(
     row: MembersRepository.AdminInvite,
     onOpen: (kinfolkId: String, householdName: String) -> Unit,
+    onOpenInvite: (inviteId: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     val invite = row.invite
     val tone = invitePillTone(invite.effectiveStatus)
     val label = invite.secondaryLabel?.trim().orEmpty()
-    // Not tappable at all when the row carries no household id: a tap that
-    // opens "nothing" is worse than a row that plainly cannot be opened, and
-    // the row itself is still shown because it is evidence.
+    // The household line is not tappable when the row carries no household
+    // id: a tap that opens "nothing" is worse than a line that plainly cannot
+    // be opened. The row itself still opens the invite, which is evidence.
     val openable = row.tribeId.isNotBlank()
 
     GlassSurface(
@@ -217,10 +227,7 @@ private fun AdminInviteRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .then(
-                if (openable) Modifier.clickable { onOpen(row.tribeId, row.householdName) }
-                else Modifier,
-            ),
+            .clickable { onOpenInvite(invite.inviteId) },
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -256,6 +263,11 @@ private fun AdminInviteRow(
                     text = row.householdName,
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textPrimary,
+                    modifier = if (openable) {
+                        Modifier.clickable { onOpen(row.tribeId, row.householdName) }
+                    } else {
+                        Modifier
+                    },
                 )
                 Text(
                     text = adminInviteMetaLine(row),

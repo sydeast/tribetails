@@ -106,16 +106,21 @@ describe('#868 the page Save reports each half on its own', () => {
   const failed: SaveHalf = { kind: 'failed', error: boom };
 
   it('a clean save says so, and a home half that was never sent does not make it partial', () => {
-    expect(pageSaveOutcome(saved, skipped, false)).toEqual({ text: 'Saved.', ok: true });
-    expect(pageSaveOutcome(saved, saved, false)).toEqual({ text: 'Saved.', ok: true });
-    expect(pageSaveOutcome(saved, skipped, true)).toEqual({
-      text: 'Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.',
-      ok: true,
+    expect(pageSaveOutcome(saved, skipped)).toEqual({ text: 'Tribe Profile saved.', ok: true });
+    expect(pageSaveOutcome(saved, saved)).toEqual({ text: 'Tribe Profile saved.', ok: true });
+    // #1324: a card that did not save (Emergency Contacts, Secondary Kinfolk)
+    // turns the page result into a partial failure that names the card.
+    expect(pageSaveOutcome(saved, skipped, ['Emergency Contacts did not save: nope.'])).toEqual({
+      text: 'The rest of your Tribe Profile saved. Emergency Contacts did not save: nope.',
+      ok: false,
     });
+    const both = pageSaveOutcome({ kind: 'failed', error: new Error('x') }, skipped, ['Secondary Kinfolk did not save: y.']);
+    expect(both.ok).toBe(false);
+    expect(both.text).toContain('Secondary Kinfolk did not save: y.');
   });
 
   it('a partial result is a failure, names the half that did not save, and never starts "Save failed"', () => {
-    for (const partial of [pageSaveOutcome(saved, failed, false), pageSaveOutcome(failed, saved, false)]) {
+    for (const partial of [pageSaveOutcome(saved, failed), pageSaveOutcome(failed, saved)]) {
       expect(partial.ok).toBe(false);
       expect(partial.text.startsWith('Save failed')).toBe(false);
       expect(partial.text).toContain('did not save');
@@ -124,12 +129,12 @@ describe('#868 the page Save reports each half on its own', () => {
   });
 
   it('only the profile half failing keeps the plain "Save failed" line', () => {
-    expect(pageSaveOutcome(failed, skipped, false)).toEqual({ text: 'Save failed: nope', ok: false });
+    expect(pageSaveOutcome(failed, skipped)).toEqual({ text: 'Save failed: nope', ok: false });
   });
 
   it('#930: both halves failing for different reasons names both, not just the profile half\'s', () => {
     const failedHome: SaveHalf = { kind: 'failed', error: new Error('kaput') };
-    const outcome = pageSaveOutcome(failed, failedHome, false);
+    const outcome = pageSaveOutcome(failed, failedHome);
     expect(outcome.ok).toBe(false);
     expect(outcome.text).toContain('Family and Vet Clinic did not save: nope.');
     expect(outcome.text).toContain('Home Information and the after-hours clinic did not save: kaput.');
@@ -137,7 +142,7 @@ describe('#868 the page Save reports each half on its own', () => {
 
   it('#930: both halves failing for the SAME reason (a Save click rate-limits both callables together) states it once', () => {
     const sameBoom = new Error('nope');
-    const outcome = pageSaveOutcome({ kind: 'failed', error: sameBoom }, { kind: 'failed', error: sameBoom }, false);
+    const outcome = pageSaveOutcome({ kind: 'failed', error: sameBoom }, { kind: 'failed', error: sameBoom });
     expect(outcome).toEqual({ text: 'Save failed: nope. Press Save Changes to try again. Your edits are still on this page.', ok: false });
     // The reason is not named twice.
     expect(outcome.text.match(/Press Save Changes to try again/g)).toHaveLength(1);
@@ -155,7 +160,7 @@ describe('#868 the page Save reports each half on its own', () => {
 
   it('a throw before the profile call reads as a plain failure, not a silent "Saved."', () => {
     const blamed = blameUnfinishedHalf(skipped, skipped, boom);
-    expect(pageSaveOutcome(blamed.profile, blamed.home, false)).toEqual({ text: 'Save failed: nope', ok: false });
+    expect(pageSaveOutcome(blamed.profile, blamed.home)).toEqual({ text: 'Save failed: nope', ok: false });
   });
 });
 

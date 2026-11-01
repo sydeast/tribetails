@@ -100,7 +100,8 @@
  * on their first call and 703 ms on their second.
  *
  * Loading this codebase's module graph costs ~0.8s of CPU, because the Functions
- * runtime loads all of `index.js` whatever the target is. At 0.25 vCPU that is
+ * runtime loaded all of `index.js` whatever the target was (until #1337, which
+ * loads only FUNCTION_TARGET's module; see src/index.ts). At 0.25 vCPU that is
  * roughly 3.2s of wall clock on a cold start, and 1.45s of import on a cold
  * page cache is roughly 5.8s. That was tolerable on a nightly cron and not
  * tolerable on a login, which is what the split below encodes and what the

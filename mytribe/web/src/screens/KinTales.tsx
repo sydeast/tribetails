@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getRouteApi } from '@tanstack/react-router';
 import { getMyKinTales } from '../api/portal';
 import type { KinTaleDto } from '../api/types';
 import {
@@ -7,6 +8,7 @@ import {
   commentAuthorLabel,
   commentAvatarVariant,
   commentBadge,
+  commentInitial,
   filterTales,
   getKinTaleReaction,
   getMyKinTaleComments,
@@ -33,6 +35,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { RouteMap } from '../components/RouteMap';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const PAGE_SIZE = 20;
 const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
@@ -73,7 +76,8 @@ const FILTER_TABS: { id: KinTalesFilter; label: string }[] = [
  * (messaging land is S5's territory) and stays an inert button, same
  * convention as Home's Invoices quick-start.
  */
-export function KinTales() {
+export function KinTales(props: { focusTaleId?: string | undefined } = {}) {
+  const { focusTaleId } = props;
   const kinfolkId = getActiveKinfolkId();
 
   const [filter, setFilter] = useState<KinTalesFilter>('all');
@@ -95,6 +99,20 @@ export function KinTales() {
     },
   }, { policy: 'hold', what: 'this page of KinTales' });
 
+  // #1363: a tale opened by id may sit past the first page. Keep paging, by the
+  // same cursor Load More uses, until it turns up or the feed ends.
+  const loadMorePending = loadMore.isPending;
+  const loadMoreFailed = loadMore.phase === 'failed';
+  const firstPageTales = firstPage.data?.tales;
+  const firstPageHasMore = firstPage.data?.hasMore;
+  useEffect(() => {
+    if (!focusTaleId || !firstPageTales || loadMorePending || loadMoreFailed) return;
+    const loaded = [...firstPageTales, ...extraPages];
+    const more = hasMoreOverride ?? firstPageHasMore ?? false;
+    if (!more || loaded.some((t) => t.id === focusTaleId)) return;
+    const next = nextTalesCursor(loaded);
+    if (next !== undefined) loadMore.mutate(next);
+  }, [focusTaleId, firstPageTales, firstPageHasMore, extraPages, hasMoreOverride, loadMorePending, loadMoreFailed]);
   const { signOut, signingOut } = useSignOut();
   // #1303: a completed visit links here as `/kintales?tale=<id>`. Once that tale
   // is on screen it is scrolled into view; if it is on a page not loaded yet the
@@ -118,7 +136,11 @@ export function KinTales() {
 
   const firstPageView = viewOfQuery(firstPage);
   const allTales = [...(firstPage.data?.tales ?? []), ...extraPages];
-  const filtered = filterTales(allTales, filter);
+  const filteredInOrder = filterTales(allTales, filter);
+  // A tale opened from Home takes the featured slot. If it is not among the
+  // pages loaded (or the current filter hides it) the feed keeps its own order.
+  const focused = focusTaleId !== undefined ? filteredInOrder.find((t) => t.id === focusTaleId) : undefined;
+  const filtered = focused ? [focused, ...filteredInOrder.filter((t) => t !== focused)] : filteredInOrder;
   const hasMore = hasMoreOverride ?? firstPage.data?.hasMore ?? false;
   const cursor = nextTalesCursor(allTales);
   const [featuredTale, ...restTales] = filtered;
@@ -198,14 +220,18 @@ export function KinTales() {
           </div>
         )}
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );
 }
 
+const kinTalesRouteApi = getRouteApi('/kintales');
+/** Route wrapper: reads `?tale=<id>` (Home's Recent KinTales links) and features that tale. */
+export function KinTalesRoute() {
+  const { tale } = kinTalesRouteApi.useSearch();
+  return <KinTales focusTaleId={tale} />;
+}
 function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; featured: boolean; index?: number }) {
   const { tale, kinfolkId, featured, index = 0 } = props;
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -459,22 +485,21 @@ function TaleShare(props: { taleId: string; kinfolkId: string | undefined }) {
 
 /**
  * The mockup's heart + "You and 2 others loved this" line
- * (ui-ideas/mytribe-kintales-2026-05-31.html:348), made clickable to toggle
- * the caller's own reaction. Optimistic update on click (flip loved +/-1
- * count immediately) with a rollback + re-fetch on failure, since a "like"
- * button feeling laggy is a worse UX bug than an occasional wrong-then-
- * corrected count.
+ * (ui-ideas/mytribe-kintales-2026-05-31.html:348), as a real toggle button:
+ * a bordered pill with a heart, the count, and a pressed state that tints it.
+ * Pessimistic (operator ruling: pessimistic taps): the heart does not flip
+ * until the server answers, and while the call is in flight the pill shows a
+ * loading cue and ignores further taps. `toggleKinTaleLove` returns the new
+ * state, so success writes it straight into the cache.
  */
 function TaleReaction(props: { taleId: string; kinfolkId: string | undefined }) {
   const { taleId, kinfolkId } = props;
   const queryClient = useQueryClient();
   const queryKey = ['kinTaleReaction', kinfolkId, taleId];
-
   const reactionQuery = useQuery({
     queryKey,
     queryFn: () => getKinTaleReaction(taleId, kinfolkId),
   });
-
   // ABANDON, and it is the most retry-hostile callable in the portal.
   // `toggleKinTaleLove` READS the reaction doc and writes the opposite, so a
   // replay does not converge — it REVERSES what the first attempt did
@@ -483,25 +508,13 @@ function TaleReaction(props: { taleId: string; kinfolkId: string | undefined }) 
   // guard against that, so the write does not get to wait.
   const toggle = usePortalMutation({
     mutationFn: () => toggleKinTaleLove(taleId, kinfolkId),
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<{ loved: boolean; loveCount: number }>(queryKey);
-      if (previous) {
-        queryClient.setQueryData(queryKey, {
-          loved: !previous.loved,
-          loveCount: previous.loved ? previous.loveCount - 1 : previous.loveCount + 1,
-        });
-      }
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKey, result);
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey });
     },
   }, { policy: 'abandon', what: 'your love' });
-
   // No offline arm, deliberately, and it is the PortalNav rule again: this
   // renders a decoration, not a claim about the household's data. A paused read
   // leaves `data` undefined, the button is simply absent, and an absent heart
@@ -509,21 +522,29 @@ function TaleReaction(props: { taleId: string; kinfolkId: string | undefined }) 
   if (reactionQuery.isLoading || !reactionQuery.data) {
     return null;
   }
-
-  const { loved } = reactionQuery.data;
+  const { loved, loveCount } = reactionQuery.data;
   return (
-    <button
-      type="button"
-      className="react"
-      onClick={() => toggle.mutate()}
-      disabled={toggle.isPending}
-      aria-pressed={loved}
-    >
-      <span className="heart">{loved ? '❤️' : '\u{1F90D}'}</span> {loveLine(reactionQuery.data)}
-    </button>
+    <>
+      <button
+        type="button"
+        className={`react${loved ? ' is-on' : ''}`}
+        onClick={() => toggle.mutate()}
+        disabled={toggle.isPending}
+        aria-pressed={loved}
+        aria-busy={toggle.isPending}
+      >
+        <span className="heart" aria-hidden="true">{loved ? '❤️' : '\u{1F90D}'}</span>
+        <span className="react-count" aria-hidden="true">{loveCount}</span>
+        <span className="react-line">
+          <MutationLabel mutation={toggle} busy="Saving…">
+            {loveLine(reactionQuery.data)}
+          </MutationLabel>
+        </span>
+      </button>
+      {toggle.phase === 'failed' && <span className="react-err" role="alert">Couldn&rsquo;t save your love. Try again.</span>}
+    </>
   );
 }
-
 /**
  * "Reply to Auntie" and the comment box are two different components, and the
  * box is the thing that actually posts. Rather than lift its state up so a
@@ -545,7 +566,6 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
   const { taleId, kinfolkId } = props;
   const authState = useAuth();
   const currentUid = authState.status === 'signedIn' ? authState.user.uid : null;
-  const myInitial = initialOf(authState.status === 'signedIn' ? authState.user.email ?? 'M' : 'M');
   const queryClient = useQueryClient();
 
   const commentsQuery = useQuery({
@@ -617,6 +637,13 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
   const commentsView = viewOfQuery(commentsQuery);
   const comments = commentsQuery.data?.comments ?? [];
   const { topLevel, repliesByParent } = threadComments(comments);
+  // One person, one letter: the composer avatar uses the name the server gave
+  // this user's own comments (or the signed-in account's name/email before
+  // they have posted), the same source the comment rows use.
+  const ownName = comments.find((c) => currentUid !== null && c.authorUid === currentUid && c.authorDisplayName)?.authorDisplayName;
+  const accountLabel =
+    authState.status === 'signedIn' ? authState.user.displayName || authState.user.email || 'M' : 'M';
+  const myInitial = initialOf(ownName || accountLabel);
 
   return (
     <div className="thread">
@@ -637,6 +664,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
               comment={c}
               avatarIndex={i}
               currentUid={currentUid}
+              ownInitial={myInitial}
               onReply={() => {
                 setReplyParentId(c.id);
                 setReplyInput('');
@@ -644,7 +672,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
               }}
             />
             {(repliesByParent[c.id] ?? []).map((r, j) => (
-              <CommentRow key={r.id} comment={r} avatarIndex={i + j + 1} currentUid={currentUid} nested />
+              <CommentRow key={r.id} comment={r} avatarIndex={i + j + 1} currentUid={currentUid} ownInitial={myInitial} nested />
             ))}
             {replyParentId === c.id && (
               <div className="postbox" style={{ marginLeft: 55, borderTop: 'none', paddingTop: 0 }}>
@@ -707,14 +735,21 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
   );
 }
 
-function CommentRow(props: { comment: KinTaleCommentDto; avatarIndex: number; currentUid: string | null; nested?: boolean; onReply?: () => void }) {
-  const { comment, avatarIndex, currentUid, nested = false, onReply } = props;
+function CommentRow(props: {
+  comment: KinTaleCommentDto;
+  avatarIndex: number;
+  currentUid: string | null;
+  ownInitial: string;
+  nested?: boolean;
+  onReply?: () => void;
+}) {
+  const { comment, avatarIndex, currentUid, ownInitial, nested = false, onReply } = props;
   const label = commentAuthorLabel(comment, currentUid);
   const badge = commentBadge(comment);
 
   return (
     <div className={`cmt${nested ? ' nested' : ''}`}>
-      <div className={`cav ${commentAvatarVariant(avatarIndex)}`}>{initialOf(label)}</div>
+      <div className={`cav ${commentAvatarVariant(avatarIndex)}`}>{commentInitial(comment, currentUid, ownInitial)}</div>
       <div className="cbody">
         <div className="chead">
           <b>{label}</b>

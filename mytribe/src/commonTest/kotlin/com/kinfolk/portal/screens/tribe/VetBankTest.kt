@@ -7,6 +7,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -82,5 +84,44 @@ class VetBankTest {
         val r = PortalApi(fake).submitVetClinic("Riverside Animal Hospital")
         assertFalse(r.created)
         assertFalse(r.pending)
+    }
+
+    @Test
+    fun submitVetClinic_sendsAcknowledgedIds_andParsesTheChoice() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("submitVetClinic", buildJsonObject {
+            put("status", "needs_choice"); put("clinicId", ""); put("created", false); put("pending", false)
+            put("candidates", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "c9"); put("name", "Riverside Vet"); put("address", "9 River Rd"); put("phone", "5125550100")
+                    put("isEmergency", true); put("verified", false); put("reason", "similar")
+                })
+            })
+        })
+        val r = PortalApi(fake).submitVetClinic("Riverside", acknowledgedMatchIds = listOf("c9", "c4"))
+        assertTrue(r.needsChoice)
+        assertFalse(r.created)
+        assertEquals(1, r.candidates.size)
+        val c = r.candidates[0]
+        assertEquals("c9", c.id)
+        assertEquals("Riverside Vet", c.name)
+        assertEquals("9 River Rd", c.address)
+        assertTrue(c.isEmergency)
+        assertFalse(c.verified)
+        val sent = fake.calls.last().second!!
+        assertEquals(listOf("c9", "c4"), sent["acknowledgedMatchIds"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+    @Test
+    fun submitVetClinic_createdStatus_isNotAChoice() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("submitVetClinic", buildJsonObject {
+            put("status", "created"); put("clinicId", "n1"); put("created", true); put("pending", true)
+            put("candidates", buildJsonArray {})
+        })
+        val r = PortalApi(fake).submitVetClinic("Brand New")
+        assertFalse(r.needsChoice)
+        assertEquals("n1", r.clinicId)
+        assertTrue(r.candidates.isEmpty())
+        assertEquals(0, fake.calls.last().second!!["acknowledgedMatchIds"]!!.jsonArray.size)
     }
 }

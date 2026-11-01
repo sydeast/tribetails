@@ -15,7 +15,11 @@ const { useAuth, signIn, signOutSilent, sendReset } = vi.hoisted(() => ({
   sendReset: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/auth', () => ({ useAuth, signIn, signOutSilent, sendReset }));
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => vi.fn(),
+  useSearch: () => ({}),
+  useRouter: () => ({ history: { push: vi.fn() } }),
+}));
 vi.mock('../lib/access', () => ({ resolveAccess: vi.fn() }));
 vi.mock('../lib/firebase', () => ({ auth: { name: 'test-auth' }, getAppCheckStatus: vi.fn(() => 'inactive') }));
 vi.mock('../lib/fns', () => ({ call: vi.fn() }));

@@ -171,8 +171,15 @@ export const defaultDeps: IntegrationsHealthDeps = {
   // injection seam, replaced wholesale by test/getIntegrationsHealth.ts rather
   // than mocked by specifier, so nothing here relies on Vitest intercepting it.
   //
-  // eslint-disable-next-line @typescript-eslint/no-require-imports -- a real ESM import() of this extensionless relative path throws ERR_MODULE_NOT_FOUND; see above.
-  loadFunctionModule: async () => require('../index') as unknown,
+  // Through `__loadAllFunctions`, not the index's own exports (#1337). An
+  // instance started for this callable exports only this callable, so its
+  // exports would declare this function's secrets and nothing else, and every
+  // "declared" below would be true by construction. Loading the whole fleet
+  // here costs what every cold start used to (~197 MiB, under the 256MiB
+  // limit) and only on this admin screen.
+  loadFunctionModule: async () =>
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- a real ESM import() of this extensionless relative path throws ERR_MODULE_NOT_FOUND; see above.
+    (require('../index') as { __loadAllFunctions: () => unknown }).__loadAllFunctions(),
   env: process.env,
   now: () => new Date(),
 };

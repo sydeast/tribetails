@@ -14,9 +14,12 @@ import com.kinfolk.portal.portal.PayMethod
 import com.kinfolk.portal.portal.PayMethodKind
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.mintCheckoutIdempotencyKey
+import com.kinfolk.portal.util.attempt
 import com.kinfolk.portal.util.formatUsd
 import com.kinfolk.portal.util.openExternalUrl
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
@@ -124,9 +127,16 @@ class InvoicesController internal constructor(
         return (d.open + d.credits + d.paid).firstOrNull { it.id == invoiceId }
     }
 
-    suspend fun reload() {
+    // #1282: the three reads start together and are applied in the old order.
+    // They used to be awaited one after the other, and getMyInvoices and
+    // getAccountCreditHistory carry no minInstances, so a first open paid two
+    // cold starts in a row.
+    suspend fun reload(): Unit = coroutineScope {
+        val invoicesFetch = async { attempt { portalApi.getMyInvoices(kinfolkId) } }
+        val homeFetch = async { attempt { portalApi.getMyHome(kinfolkId) } }
+        val creditFetch = async { attempt { portalApi.getAccountCreditHistory(kinfolkId) } }
         try {
-            data = portalApi.getMyInvoices(kinfolkId)
+            data = invoicesFetch.await().getOrThrow()
             error = null
         } catch (c: CancellationException) {
             throw c
@@ -137,7 +147,7 @@ class InvoicesController internal constructor(
         // failure block the invoice list: a failed or empty result just
         // leaves payMethods at STRIPE_ONLY_FALLBACK.
         try {
-            val home = portalApi.getMyHome(kinfolkId)
+            val home = homeFetch.await().getOrThrow()
             if (home.payMethods.isNotEmpty()) payMethods = home.payMethods
         } catch (c: CancellationException) {
             throw c
@@ -146,15 +156,7 @@ class InvoicesController internal constructor(
             // Stripe-only list IS the shipped behavior on this path, not a
             // degraded one, so there is no error worth showing the household.
         }
-        creditHistory = creditHistoryStateOf(
-            try {
-                Result.success(portalApi.getAccountCreditHistory(kinfolkId))
-            } catch (c: CancellationException) {
-                throw c
-            } catch (t: Throwable) {
-                Result.failure(t)
-            },
-        )
+        creditHistory = creditHistoryStateOf(creditFetch.await())
     }
 
     /** 16.2: render the invoice PDF server-side and open the returned URL. */
@@ -336,7 +338,10 @@ class InvoicesController internal constructor(
                 // the old balance and read like a save that had not worked.
                 val banner = when (target) {
                     CreditTarget.AccountBalance -> "Credit saved. ${formatCents(res.redeemedAmountCents)} is in your account balance."
-                    CreditTarget.OriginalPaymentMethod -> "Refunded ${formatCents(res.redeemedAmountCents)} to your original card."
+                    // #1338: no UI offers this target and the server refuses it
+                    // (no-refunds ruling), so this arm is unreachable. It must
+                    // never promise a card refund; kept only for exhaustiveness.
+                    CreditTarget.OriginalPaymentMethod -> "Credit of ${formatCents(res.redeemedAmountCents)} redeemed."
                 }
                 reload()
                 statusBanner = banner

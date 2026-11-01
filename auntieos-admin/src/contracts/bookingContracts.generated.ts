@@ -216,6 +216,7 @@ export interface GetMyBookingsResultLiveVisit {
   kinfolkId: string;
   status: 'requested' | 'confirmed' | 'enRoute' | 'active' | 'completed' | 'cancelled';
   serviceType: string | null;
+  serviceLabel: string | null;
   serviceId: string | null;
   title: string | null;
   startTimeMs: number | null;

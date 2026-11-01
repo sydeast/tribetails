@@ -17,6 +17,12 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { NO_EXTRAS, readHouseholdAddress, type VisitExtras } from './portalVisitLinks';
 import { resolveBookingPolicy } from './bookingTimeBlocks';
+import {
+  serviceDisplayName,
+  serviceNameCatalogFrom,
+  EMPTY_SERVICE_NAME_CATALOG,
+  type ServiceNameCatalog,
+} from './serviceDisplayName';
 export const BookingDtoSchema = z
   .object({
     /** kinCare (per-visit) document id. */
@@ -26,6 +32,13 @@ export const BookingDtoSchema = z
     kinfolkId: z.string().min(1),
     status: z.enum(['requested', 'confirmed', 'enRoute', 'active', 'completed', 'cancelled']),
     serviceType: z.string().nullable(),
+    /**
+     * #1297: what the household is shown for the service, resolved on the
+     * server against the operator's KinCare list (`lib/serviceDisplayName.ts`).
+     * `serviceType` stays the raw stored value; no client prints it. Null when
+     * there is no name to show, and the client uses its own word for a visit.
+     */
+    serviceLabel: z.string().nullable(),
     /**
      * #1284: the catalog service this visit was booked as, so the reschedule
      * picker can tell a start-time KinCare (an overnight, booked by the clock
@@ -169,6 +182,19 @@ export async function loadBlocksById(firestore: Firestore): Promise<Map<string, 
     return new Map();
   }
 }
+/**
+ * #1297: the operator's KinCare list, so a written visit read back for the
+ * cache carries the same `serviceLabel` the list does. Fail-soft: a settings
+ * read that fails leaves names unresolved, never the read-back empty.
+ */
+export async function loadServiceCatalog(firestore: Firestore): Promise<ServiceNameCatalog> {
+  try {
+    const snap = await firestore.collection('business_settings').doc('business_settings').get();
+    return serviceNameCatalogFrom(snap.data());
+  } catch {
+    return EMPTY_SERVICE_NAME_CATALOG;
+  }
+}
 function blockFieldsOf(data: Record<string, unknown>, blocksById: Map<string, BlockBounds>) {
   const label = stringOrNull(data['timeBlockLabel']);
   const id = stringOrNull(data['timeBlockId']);
@@ -191,6 +217,7 @@ export function kinCareToDto(
   kinfolkId: string,
   extras: VisitExtras = NO_EXTRAS,
   blocksById: Map<string, BlockBounds> = new Map(),
+  serviceCatalog: ServiceNameCatalog = EMPTY_SERVICE_NAME_CATALOG,
 ): BookingDto {
   const cancelStatus = cancelRequestStatusOf(data);
   const status = (data['status'] as BookingDto['status']) ?? 'requested';
@@ -202,6 +229,7 @@ export function kinCareToDto(
     kinfolkId,
     status,
     serviceType: stringOrNull(data['serviceType']) ?? stringOrNull(data['serviceName']),
+    serviceLabel: serviceDisplayName(data['serviceType'], serviceCatalog, data['serviceName']),
     serviceId: stringOrNull(data['serviceId']),
     title: stringOrNull(data['title']),
     startTimeMs: tsMillis(data['startTime']),
@@ -271,10 +299,11 @@ export async function readEnvelopeDto(
 ): Promise<EnvelopeDto | null> {
   try {
     const parentRef = firestore.doc(`families/${kinfolkId}/bookings/${batchId}`);
-    const [parentSnap, visitsSnap, blocksById] = await Promise.all([
+    const [parentSnap, visitsSnap, blocksById, serviceCatalog] = await Promise.all([
       parentRef.get(),
       parentRef.collection('kinCares').get(),
       loadBlocksById(firestore),
+      loadServiceCatalog(firestore),
     ]);
     if (!parentSnap.exists) return null;
     const env = (parentSnap.data() ?? {}) as Record<string, unknown>;
@@ -283,7 +312,7 @@ export async function readEnvelopeDto(
     // visits to link.
     const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
     const visits = visitsSnap.docs.map((d) =>
-      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, extras, blocksById),
+      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, extras, blocksById, serviceCatalog),
     );
     return EnvelopeDtoSchema.parse(envelopeToDto(batchId, env, visits));
   } catch {
@@ -298,14 +327,15 @@ export async function readVisitDto(
   visitId: string,
 ): Promise<BookingDto | null> {
   try {
-    const [snap, blocksById] = await Promise.all([
+    const [snap, blocksById, serviceCatalog] = await Promise.all([
       firestore.doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`).get(),
       loadBlocksById(firestore),
+      loadServiceCatalog(firestore),
     ]);
     if (!snap.exists) return null;
     const data = (snap.data() ?? {}) as Record<string, unknown>;
     const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
-    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, extras, blocksById));
+    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, extras, blocksById, serviceCatalog));
   } catch {
     return null;
   }

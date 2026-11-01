@@ -30,6 +30,12 @@ data class Booking(
     val batchId: String? = null,
     val sourceBookingId: String? = null,
     val sessionId: String? = null,
+    /**
+     * #1297: the service's name for the household, resolved on the server
+     * against the operator's KinCare list. Null when there is none to show.
+     * Screens print this, never [serviceType]; see `util/ServiceLabel.kt`.
+     */
+    val serviceLabel: String? = null,
     /** True when a kinfolk cancellation ask is PENDING on this visit. The
      *  status does NOT change; only the business cancels for real. Pending, not
      *  "was ever asked": a declined ask clears this so the household can ask

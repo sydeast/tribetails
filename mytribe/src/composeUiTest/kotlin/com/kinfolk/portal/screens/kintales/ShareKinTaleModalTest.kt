@@ -3,6 +3,7 @@
 package com.kinfolk.portal.screens.kintales
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -100,5 +101,46 @@ class ShareKinTaleModalTest {
         onNodeWithText("This link no longer works.").assertDoesNotExist()
         onNodeWithText("Copy Link").assertIsDisplayed()
         onNodeWithText("https://kinfolk.tribetails.com/share/share-1").assertIsDisplayed()
+    }
+
+    @Test
+    fun title_namesTheAction_andCloseIsPresentBeforeAnyLinkExists() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        var dismissed = 0
+        setThemedContent {
+            ShareKinTaleModal(familyId = "fam1", kinTaleId = "t1", portalApi = PortalApi(fake), onDismiss = { dismissed++ })
+        }
+        waitForIdle()
+        onNodeWithText("Share this KinTale").assertIsDisplayed()
+        onNodeWithContentDescription("Close").performClick()
+        waitForIdle()
+        assertEquals(1, dismissed)
+    }
+    @Test
+    fun close_isAlsoThereOnceTheLinkIsMade() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubCreate(fake)
+        var dismissed = 0
+        setThemedContent {
+            ShareKinTaleModal(familyId = "fam1", kinTaleId = "t1", portalApi = PortalApi(fake), onDismiss = { dismissed++ })
+        }
+        waitForIdle()
+        onNodeWithText("Generate Link").performClick()
+        waitForIdle()
+        onNodeWithContentDescription("Close").performClick()
+        waitForIdle()
+        assertEquals(1, dismissed)
+    }
+    @Test
+    fun passcode_isHiddenUntilShown() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        setThemedContent {
+            ShareKinTaleModal(familyId = "fam1", kinTaleId = "t1", portalApi = PortalApi(fake), onDismiss = {})
+        }
+        waitForIdle()
+        onNodeWithText("Show passcode").assertIsDisplayed()
+        onNodeWithText("Show passcode").performClick()
+        waitForIdle()
+        onNodeWithText("Hide passcode").assertIsDisplayed()
     }
 }

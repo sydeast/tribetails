@@ -165,9 +165,9 @@ class TribeScreenTest {
 
     /**
      * #872: a household with a saved vet clinic used to see it twice on
-     * Android — once editable in the Vet Clinic card, once read-only as a
-     * "Set by your Auntie" row, because CustomFieldList's ownedElsewhere set
-     * never listed the vetClinic* keys. Each value must render exactly once.
+     * Android. Each value must render exactly once. After #1378 the free-text
+     * rows are legacy: shown read-only in the Vet Clinic card, never as a second
+     * "Set by your Auntie" copy.
      */
     @Test
     fun vetClinicCustomFields_showOnlyInTheVetClinicCard_neverAsAReadOnlyDuplicate() = runComposeUiTest {
@@ -179,18 +179,221 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithText("Ridgeline Animal Hospital").performScrollTo().assertIsDisplayed()
         assertEquals(1, onAllNodesWithText("Ridgeline Animal Hospital").fetchSemanticsNodes().size)
-        assertEquals(1, onAllNodesWithText("805-555-0170").fetchSemanticsNodes().size)
-        assertEquals(1, onAllNodesWithText("12 Ridge Rd").fetchSemanticsNodes().size)
-        // This profile's only customFields are the vet clinic's own; once
-        // CustomFieldList hides them there is nothing left for the read-only
-        // "Set by your Auntie" note to introduce.
+        assertEquals(1, onAllNodesWithText("(805) 555-0170 \u00b7 12 Ridge Rd").fetchSemanticsNodes().size)
+        onNodeWithTag("vet-legacy").assertExists()
         onNodeWithText("Set by your Auntie. Ask them to update these.").assertDoesNotExist()
-        // Same rule for the section header above the list: it must read off
-        // the same filtered set, or a vet-clinic-only profile shows
-        // "PROFILE FIELDS" over an empty read-only list.
         onNodeWithText("PROFILE FIELDS").assertDoesNotExist()
     }
-
+    // ---- #1378: the Vet Clinic card picks a catalog clinic by id, like portal web ----
+    private fun clinicJson(id: String, name: String, phone: String = "", address: String = "", emergency: Boolean = false) =
+        buildJsonObject {
+            put("id", id); put("name", name); put("phone", phone); put("address", address)
+            put("website", ""); put("googleMapsUrl", ""); put("isEmergency", emergency)
+        }
+    private fun FakeFunctionsClient.stubCatalog(vararg clinics: JsonObject) =
+        stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray { clinics.forEach { add(it) } }) })
+    private fun FakeFunctionsClient.stubProfileWithVetRows(vararg rows: Triple<String, String, String>) {
+        stub("getMyTribeProfile", buildJsonObject {
+            put("profile", buildJsonObject {
+                put("kinfolkId", "3"); put("displayName", "The Foster")
+                put("customFields", buildJsonArray {
+                    rows.forEach { (k, l, v) -> add(buildJsonObject { put("key", k); put("label", l); put("value", v) }) }
+                })
+            })
+            put("homeAccess", buildJsonObject {
+                put("gateCode", JsonNull); put("keyLocation", JsonNull); put("wifiPassword", JsonNull)
+                put("customFields", buildJsonArray {}); put("updatedAtMs", JsonNull)
+            })
+        })
+        stubEmergencyContacts()
+        stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+    }
+    private fun FakeFunctionsClient.savedProfile(): Pair<List<Pair<String, String>>, List<String>> {
+        val payload = calls.last { it.first == "saveTribeProfile" }.second!!
+        val rows = payload["customFields"]!!.jsonArray.map {
+            it.jsonObject["key"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content
+        }
+        val removed = (payload["removeCustomFieldKeys"] as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
+        return rows to removed
+    }
+    @Test
+    fun vetClinic_linkedId_showsNameFormattedPhoneAndAddress_neverTheId() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("vetClinicId", "Vet Clinic", "c-77"))
+        fake.stubCatalog(clinicJson("c-77", "Ridgeline Animal Hospital", "+18055550170", "12 Ridge Rd", emergency = true))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Ridgeline Animal Hospital \u00b7 24hr").assertExists()
+        onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
+        assertEquals(0, onAllNodesWithText("c-77").fetchSemanticsNodes().size)
+    }
+    @Test
+    fun vetClinic_searchAndPick_savesTheIdOnly() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubCatalog(clinicJson("c-1", "Ridgeline Animal Hospital", "8055550170", "12 Ridge Rd"), clinicJson("c-2", "Harbor Vet"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("ridge")
+        waitForIdle()
+        onNodeWithTag("vet-match-c-1").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val (rows, removed) = fake.savedProfile()
+        assertTrue("vetClinicId" to "c-1" in rows, "sent $rows")
+        assertTrue(rows.none { it.first == "vetClinicName" || it.first == "vetClinicPhone" || it.first == "vetClinicAddress" }, "sent $rows")
+        assertTrue("allergy" to "Chicken" in rows, "the unrelated field rides along: $rows")
+        assertEquals(emptyList(), removed)
+        assertTrue(fake.calls.none { it.first == "submitVetClinic" })
+    }
+    @Test
+    fun vetClinic_clearLink_removesTheIdByName_andKeepsLegacyRows() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(
+            Triple("vetClinicId", "Vet Clinic", "c-1"),
+            Triple("vetClinicName", "Vet Clinic", "Old Typed Name"),
+        )
+        fake.stubCatalog(clinicJson("c-1", "Ridgeline Animal Hospital"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-clear").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-on-file").assertDoesNotExist()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val (rows, removed) = fake.savedProfile()
+        assertEquals(listOf("vetClinicId"), removed)
+        assertTrue(rows.none { it.first == "vetClinicId" }, "sent $rows")
+        assertTrue("vetClinicName" to "Old Typed Name" in rows, "the legacy row is kept as stored: $rows")
+    }
+    @Test
+    fun vetClinic_legacyRowsOnly_areShownReadOnly_andASaveLeavesThemAlone() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(
+            Triple("vetClinicName", "Vet Clinic", "Old Typed Name"),
+            Triple("vetClinicPhone", "Vet Clinic Phone", "805-555-0170"),
+        )
+        fake.stubCatalog()
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-legacy").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Old Typed Name").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val (rows, removed) = fake.savedProfile()
+        assertTrue("vetClinicName" to "Old Typed Name" in rows, "sent $rows")
+        assertTrue("vetClinicPhone" to "805-555-0170" in rows, "sent $rows")
+        assertEquals(emptyList(), removed)
+    }
+    @Test
+    fun vetClinic_addNew_createdLinksTheId_andSavesIt() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubCatalog(clinicJson("c-2", "Harbor Vet"))
+        fake.stub("submitVetClinic", buildJsonObject {
+            put("status", "created"); put("clinicId", "new-9"); put("created", true); put("pending", true)
+            put("candidates", buildJsonArray {})
+        })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("Brand New Clinic")
+        waitForIdle()
+        onNodeWithTag("vet-add-new").performScrollTo().performClick()
+        waitForIdle()
+        val submitted = fake.calls.last { it.first == "submitVetClinic" }.second!!
+        assertEquals("Brand New Clinic", submitted["name"]!!.jsonPrimitive.content)
+        assertEquals(0, submitted["acknowledgedMatchIds"]!!.jsonArray.size)
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Brand New Clinic").assertExists()
+        onNodeWithTag("vet-message").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue("vetClinicId" to "new-9" in fake.savedProfile().first)
+    }
+    @Test
+    fun vetClinic_addNew_nearMatchOffersAChoice_andWritesNothingUntilTheHouseholdDecides() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubCatalog()
+        fake.stub("submitVetClinic", buildJsonObject {
+            put("status", "needs_choice"); put("clinicId", ""); put("created", false); put("pending", false)
+            put("candidates", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "c-5"); put("name", "Ridgeline Animal Hospital"); put("address", "12 Ridge Rd")
+                    put("phone", "8055550170"); put("isEmergency", false); put("verified", true); put("reason", "name")
+                })
+            })
+        })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("Ridgeline Animal Hosp")
+        waitForIdle()
+        onNodeWithTag("vet-add-new").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-candidates-note").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("vet-on-file").assertDoesNotExist()
+        // Create anyway echoes the ids it was shown.
+        onNodeWithTag("vet-add-anyway").performScrollTo().performClick()
+        waitForIdle()
+        val second = fake.calls.last { it.first == "submitVetClinic" }.second!!
+        assertEquals(listOf("c-5"), second["acknowledgedMatchIds"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+    @Test
+    fun vetClinic_addNew_pickingACandidateLinksItWithoutAnotherCall() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubCatalog()
+        fake.stub("submitVetClinic", buildJsonObject {
+            put("status", "needs_choice"); put("clinicId", ""); put("created", false); put("pending", false)
+            put("candidates", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "c-5"); put("name", "Ridgeline Animal Hospital"); put("address", "12 Ridge Rd")
+                    put("phone", "8055550170"); put("isEmergency", false); put("verified", false); put("reason", "name")
+                })
+            })
+        })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("Ridgeline")
+        waitForIdle()
+        onNodeWithTag("vet-add-new").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-candidate-c-5").performScrollTo().performClick()
+        waitForIdle()
+        assertEquals(1, fake.calls.count { it.first == "submitVetClinic" })
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue("vetClinicId" to "c-5" in fake.savedProfile().first)
+    }
+    @Test
+    fun vetClinic_catalogLoadFailure_isShown_notSwallowed() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubError("getVetClinics", IllegalStateException("catalog down"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-load-error").performScrollTo().assertIsDisplayed()
+    }
+    @Test
+    fun vetClinic_linkedIdMissingFromTheCatalog_saysSo_andKeepsTheLinkOnSave() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("vetClinicId", "Vet Clinic", "gone-1"))
+        fake.stubCatalog(clinicJson("c-2", "Harbor Vet"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-missing").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue("vetClinicId" to "gone-1" in fake.savedProfile().first)
+    }
     /**
      * #933 item 3. The After-hours block itself always renders (its header and
      * blurb are unconditional), but the editable "Emergency Clinic" fields only
@@ -352,11 +555,43 @@ class TribeScreenTest {
         assertTrue(keys.none { it.startsWith("emergencyContact") }, "sent $keys")
         assertTrue("k1" in keys, "the unrelated field still rides along: $keys")
         assertTrue(fake.calls.none { it.first == "saveEmergencyContacts" })
-        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Tribe Profile saved.").performScrollTo().assertIsDisplayed()
     }
 
+    // #1324: one save model. The Emergency Contacts card draws no Save of its own;
+    // the page's Save Changes sends its edit through saveEmergencyContacts.
     @Test
-    fun unsavedEmergencyContactsAreNamedAtThePageSave() = runComposeUiTest {
+    fun anEditedEmergencyContactIsSavedByThePageSave() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithSavedField()
+        fake.stubEmergencyContacts(canEdit = true, withRae = true)
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+        fake.stub("saveEmergencyContacts", buildJsonObject {
+            put("contacts", buildJsonArray {
+                add(buildJsonObject {
+                    put("name", "Rae Mercer Jr"); put("phone", "+18055550199"); put("relationship", JsonNull)
+                    put("recordedAt", JsonNull); put("updatedAt", JsonNull)
+                })
+            })
+        })
+        setThemedContent { TribeScreen("X", "3", PortalApi(fake)) }
+        waitForIdle()
+        assertTrue(onAllNodesWithText("Save Emergency Contacts").fetchSemanticsNodes().isEmpty())
+        onNodeWithTag("ec-0-name").performScrollTo().performTextReplacement("Rae Mercer Jr")
+        waitForIdle()
+        onNodeWithText("Unsaved changes. Press Save Changes at the bottom of the page.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val sent = fake.calls.last { it.first == "saveEmergencyContacts" }.second!!["contacts"]!!.jsonArray
+        assertEquals("Rae Mercer Jr", sent[0].jsonObject["name"]!!.jsonPrimitive.content)
+        onNodeWithText("Tribe Profile saved.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Unsaved changes. Press Save Changes at the bottom of the page.").assertDoesNotExist()
+    }
+    @Test
+    fun anUntouchedEmergencyContactIsNeverSent() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stubProfileWithSavedField()
         fake.stubEmergencyContacts(canEdit = true, withRae = true)
@@ -366,18 +601,104 @@ class TribeScreenTest {
         fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
         setThemedContent { TribeScreen("X", "3", PortalApi(fake)) }
         waitForIdle()
-        onNodeWithText("Your Emergency Contacts have unsaved changes.").assertDoesNotExist()
-        onNodeWithTag("ec-0-name").performScrollTo().performTextInput(" Jr")
-        waitForIdle()
-        onNodeWithText("Your Emergency Contacts have unsaved changes.").performScrollTo().assertIsDisplayed()
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
-        onNodeWithText("Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.")
-            .performScrollTo().assertIsDisplayed()
         assertTrue(fake.calls.none { it.first == "saveEmergencyContacts" })
-        onNodeWithText("Unsaved changes").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Tribe Profile saved.").performScrollTo().assertIsDisplayed()
     }
-
+    @Test
+    fun aRefusedEmergencyContactIsNamedOnTheStatusLine_andTheProfileStillSaved() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithSavedField()
+        fake.stubEmergencyContacts(canEdit = true, withRae = true)
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+        fake.stubError("saveEmergencyContacts", IllegalStateException("An Emergency Contact has to be someone outside the household."))
+        setThemedContent { TribeScreen("X", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("ec-0-name").performScrollTo().performTextReplacement("Rae Mercer Jr")
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText(
+            "The rest of your Tribe Profile saved. Emergency Contacts did not save: " +
+                "An Emergency Contact has to be someone outside the household. Your edits there are still on this page.",
+        ).performScrollTo().assertIsDisplayed()
+    }
+    @Test
+    fun cardFailureLine_dropsTheTrailingPeriodSoTheSentenceReadsOnce() {
+        assertEquals(
+            "Secondary Kinfolk did not save: nope. Your edits there are still on this page.",
+            cardFailureLine("Secondary Kinfolk", "nope. "),
+        )
+    }
+    @Test
+    fun pageSaveOutcome_aCardThatDidNotSave_turnsAFullSaveIntoAFailure() {
+        val out = pageSaveOutcome(SaveHalf.Saved, SaveHalf.Skipped, listOf(cardFailureLine("Emergency Contacts", "nope")))
+        assertEquals(false, out.ok)
+        assertEquals("The rest of your Tribe Profile saved. Emergency Contacts did not save: nope. Your edits there are still on this page.", out.text)
+        val both = pageSaveOutcome(SaveHalf.Failed(IllegalStateException("bad")), SaveHalf.Skipped, listOf(cardFailureLine("Emergency Contacts", "nope")))
+        assertEquals(false, both.ok)
+        assertTrue(both.text.contains("Emergency Contacts did not save: nope."))
+    }
+    // ---- #1325: the vet clinic is shown by name, never as its database id ----
+    private fun FakeFunctionsClient.stubProfileWithClinic(id: String = "m5rTfebiqMxckecn4OCM") {
+        stub("getMyTribeProfile", buildJsonObject {
+            put("profile", buildJsonObject {
+                put("kinfolkId", "3")
+                put("displayName", "X")
+                put("customFields", buildJsonArray {
+                    add(buildJsonObject { put("key", "vetClinicId"); put("label", "Vet Clinic"); put("value", id) })
+                })
+            })
+            put("vetClinic", buildJsonObject {
+                put("id", id); put("name", "Banfield Pet Hospital"); put("phone", "+18055550123")
+                put("address", "1 Main St"); put("isEmergency", false)
+            })
+            put("homeAccess", buildJsonObject {
+                put("gateCode", JsonNull); put("keyLocation", JsonNull); put("wifiPassword", JsonNull)
+                put("customFields", buildJsonArray {}); put("updatedAtMs", JsonNull)
+            })
+        })
+    }
+    @Test
+    fun theChosenClinicShowsByNameAddressAndFormattedPhone_andTheIdNeverAppears() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithClinic()
+        fake.stubEmergencyContacts()
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        setThemedContent { TribeScreen("X", "3", PortalApi(fake)) }
+        waitForIdle()
+        // #1378 picker UI: the linked clinic is not in the (empty) catalog, so it
+        // shows from the server's summary as the clinic on file, not as missing.
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Banfield Pet Hospital").assertIsDisplayed()
+        onNodeWithText("(805) 555-0123 · 1 Main St").assertIsDisplayed()
+        assertTrue(onAllNodesWithTag("vet-missing").fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodesWithText("m5rTfebiqMxckecn4OCM", substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodesWithText("PROFILE FIELDS").fetchSemanticsNodes().isEmpty())
+    }
+    @Test
+    fun savingKeepsTheChosenClinicLinked() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithClinic()
+        fake.stubEmergencyContacts()
+        fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
+        fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+        setThemedContent { TribeScreen("X", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val keep = fake.calls.last { it.first == "saveTribeProfile" }.second!!
+        val rows = keep["customFields"]!!.jsonArray.associate { it.jsonObject["key"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content }
+        assertEquals("m5rTfebiqMxckecn4OCM", rows["vetClinicId"])
+        // #1378: there are no free-text clinic fields to type over any more;
+        // unlinking is the picker's clear action (vetClinic_clearLink_* above).
+    }
     // ---- #873: a schema-mode save keeps the rows it does not edit ----
 
     /**
@@ -511,7 +832,7 @@ class TribeScreenTest {
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText(PROFILE_SAVE_RATE_LIMITED_MESSAGE).performScrollTo().assertIsDisplayed()
-        onNodeWithText("Saved.").assertDoesNotExist()
+        onNodeWithText("Tribe Profile saved.").assertDoesNotExist()
     }
 
     /**
@@ -612,7 +933,7 @@ class TribeScreenTest {
         waitForIdle()
         assertEquals("Foster Two", fake.calls.last { it.first == "saveTribeProfile" }.second!!["displayName"]!!.jsonPrimitive.content)
         assertTrue(fake.calls.none { it.first == "saveHomeAccess" }, "calls: ${fake.calls.map { it.first }}")
-        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Tribe Profile saved.").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -627,7 +948,7 @@ class TribeScreenTest {
         val home = fake.calls.last { it.first == "saveHomeAccess" }.second!!
         assertEquals("9001", home["gateCode"]!!.jsonPrimitive.content)
         assertEquals(listOf(afterPhone) to emptyList<String>(), fake.sent("saveHomeAccess"))
-        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Tribe Profile saved.").performScrollTo().assertIsDisplayed()
     }
 
     /**
@@ -649,7 +970,7 @@ class TribeScreenTest {
         val home = fake.calls.last { it.first == "saveHomeAccess" }.second!!
         assertTrue(home.containsKey("gateCode"), "gateCode missing from the payload: $home")
         assertEquals(JsonNull, home["gateCode"])
-        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Tribe Profile saved.").performScrollTo().assertIsDisplayed()
     }
 
     /**
@@ -713,7 +1034,7 @@ class TribeScreenTest {
         waitForIdle()
         assertEquals(1, fake.calls.count { it.first == "saveTribeProfile" })
         assertTrue(fake.calls.none { it.first == "saveHomeAccess" }, "calls: ${fake.calls.map { it.first }}")
-        onNodeWithText("Saved.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Tribe Profile saved.").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -731,7 +1052,7 @@ class TribeScreenTest {
                 "$refused Press Save Changes to try again. Your edits there are still on this page.",
         ).performScrollTo().assertIsDisplayed()
         assertTrue(onAllNodesWithText("Save failed", substring = true).fetchSemanticsNodes().isEmpty())
-        onNodeWithText("Saved.").assertDoesNotExist()
+        onNodeWithText("Tribe Profile saved.").assertDoesNotExist()
         onNodeWithText("9001").performScrollTo().assertIsDisplayed()
         assertEquals(1, fake.calls.count { it.first == "saveTribeProfile" })
     }
@@ -757,11 +1078,11 @@ class TribeScreenTest {
     @Test
     fun pageSaveOutcome_aPartialResultIsAFailure_andAFullSaveIsNot() {
         val boom = IllegalStateException("nope")
-        assertEquals(false, pageSaveOutcome(SaveHalf.Saved, SaveHalf.Failed(boom), emergencyContactsDirty = false).ok)
-        assertEquals(false, pageSaveOutcome(SaveHalf.Failed(boom), SaveHalf.Saved, emergencyContactsDirty = false).ok)
-        assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(SaveHalf.Failed(boom), SaveHalf.Skipped, emergencyContactsDirty = false))
-        assertEquals(PageSaveStatus("Saved.", ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Skipped, emergencyContactsDirty = false))
-        assertEquals(PageSaveStatus("Saved.", ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Saved, emergencyContactsDirty = false))
+        assertEquals(false, pageSaveOutcome(SaveHalf.Saved, SaveHalf.Failed(boom)).ok)
+        assertEquals(false, pageSaveOutcome(SaveHalf.Failed(boom), SaveHalf.Saved).ok)
+        assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(SaveHalf.Failed(boom), SaveHalf.Skipped))
+        assertEquals(PageSaveStatus(PAGE_SAVED, ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Skipped))
+        assertEquals(PageSaveStatus(PAGE_SAVED, ok = true), pageSaveOutcome(SaveHalf.Saved, SaveHalf.Saved))
     }
 
     /** #930: reporting only the profile half's reason drops the home access one. */
@@ -769,7 +1090,7 @@ class TribeScreenTest {
     fun pageSaveOutcome_bothHalvesFailingForDifferentReasons_namesBoth() {
         val profileError = IllegalStateException("nope")
         val homeError = IllegalStateException("kaput")
-        val outcome = pageSaveOutcome(SaveHalf.Failed(profileError), SaveHalf.Failed(homeError), emergencyContactsDirty = false)
+        val outcome = pageSaveOutcome(SaveHalf.Failed(profileError), SaveHalf.Failed(homeError))
         assertEquals(false, outcome.ok)
         assertTrue(outcome.text.contains("Family and Vet Clinic did not save: nope."))
         assertTrue(outcome.text.contains("Home Information and the after-hours clinic did not save: kaput."))
@@ -782,7 +1103,7 @@ class TribeScreenTest {
     @Test
     fun pageSaveOutcome_bothHalvesFailingForTheSameReason_statesItOnce() {
         val sameBoom = IllegalStateException("nope")
-        val outcome = pageSaveOutcome(SaveHalf.Failed(sameBoom), SaveHalf.Failed(sameBoom), emergencyContactsDirty = false)
+        val outcome = pageSaveOutcome(SaveHalf.Failed(sameBoom), SaveHalf.Failed(sameBoom))
         assertEquals(
             PageSaveStatus("Save failed: nope. Press Save Changes to try again. Your edits are still on this page.", ok = false),
             outcome,
@@ -807,7 +1128,7 @@ class TribeScreenTest {
         assertEquals(SaveHalf.Failed(boom) to SaveHalf.Saved, blameUnfinishedHalf(SaveHalf.Failed(boom), SaveHalf.Saved, boom))
 
         val (profile, home) = blameUnfinishedHalf(SaveHalf.Skipped, SaveHalf.Skipped, boom)
-        assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(profile, home, emergencyContactsDirty = false))
+        assertEquals(PageSaveStatus("Save failed: nope", ok = false), pageSaveOutcome(profile, home))
     }
 
     // ---- 2026-09-27 Q3: secondary kinfolk with no invite and no portal access ----
@@ -824,6 +1145,8 @@ class TribeScreenTest {
         fake.stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray {}) })
         fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
         fake.stub("listSecondaryKinfolk", buildJsonObject { put("people", buildJsonArray { people.forEach { add(it) } }) })
+        fake.stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        fake.stub("saveHomeAccess", buildJsonObject { put("ok", true) })
         return fake
     }
     @Test
@@ -836,7 +1159,7 @@ class TribeScreenTest {
         onNodeWithText("Phone (optional)").performScrollTo().assertIsDisplayed()
         onNodeWithText("Email (optional)").performScrollTo().assertIsDisplayed()
         onNodeWithTag("sk-name").performTextInput("Sam Lee")
-        onNodeWithText("Save").performScrollTo().performClick()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
         val payload = fake.calls.last { it.first == "saveSecondaryKinfolk" }.second!!
         assertEquals(setOf("kinfolkId", "name", "phone", "email"), payload.keys)
@@ -870,7 +1193,7 @@ class TribeScreenTest {
         onNodeWithText("Edit").performScrollTo().performClick()
         onNodeWithTag("sk-name").performTextReplacement("Sam Leigh")
         onNodeWithTag("sk-phone").performTextClearance()
-        onNodeWithText("Save").performScrollTo().performClick()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
         val edit = fake.calls.last { it.first == "saveSecondaryKinfolk" }.second!!
         assertEquals("p1", edit["personId"]!!.jsonPrimitive.content)
@@ -891,7 +1214,7 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithText("Add secondary kinfolk").performScrollTo().performClick()
         onNodeWithTag("sk-name").performTextInput("Dana Mercer")
-        onNodeWithText("Save").performScrollTo().performClick()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("That is the primary kinfolk. A secondary kinfolk is someone else in the household.").performScrollTo().assertIsDisplayed()
     }
@@ -905,7 +1228,8 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithText("Giving portal access to Sam Lee").performScrollTo().assertIsDisplayed()
         onNodeWithTag("invite-email").assert(androidx.compose.ui.test.hasText("sam@x.com"))
-        onNodeWithTag("invite-role").assert(androidx.compose.ui.test.hasText("Sam Lee"))
+        // #1323: the role is a role, not the person's name; it starts empty.
+        onNodeWithTag("invite-role").assert(androidx.compose.ui.test.hasText(""))
         onNodeWithText("Send Invite").performScrollTo().performClick()
         waitForIdle()
         val invite = fake.calls.last { it.first == "addSecondaryContact" }.second!!
@@ -940,5 +1264,70 @@ class TribeScreenTest {
         onNodeWithText("Send Invite").performScrollTo().performClick()
         waitForIdle()
         assertTrue(!fake.calls.last { it.first == "addSecondaryContact" }.second!!.containsKey("personId"))
+    }
+    // #1323: Cancel kept the email, the role and the previous error.
+    @Test
+    fun secondaryKinfolk_givePortalAccess_cancelClearsTheEmailRoleAndLastError() = runComposeUiTest {
+        val fake = secondaryHousehold(person("p1", "Sam Lee", "NONE", email = "catch@hanasamku.com"))
+        fake.stubError("addSecondaryContact", IllegalStateException("This secondary kinfolk already has portal access."))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Give portal access").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("invite-role").performScrollTo().performTextInput("Sister")
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("already has portal access", substring = true).performScrollTo().assertIsDisplayed()
+        onNodeWithText("Cancel").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue(onAllNodesWithText("Giving portal access to Sam Lee").fetchSemanticsNodes().isEmpty())
+        onNodeWithTag("invite-email").assert(androidx.compose.ui.test.hasText(""))
+        onNodeWithTag("invite-role").assert(androidx.compose.ui.test.hasText(""))
+        assertTrue(onAllNodesWithText("already has portal access", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+    // #1326: a bad address left Send Invite disabled with no reason.
+    @Test
+    fun secondaryKinfolk_invite_aBadAddressSaysWhySendInviteIsDisabled() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        assertTrue(onAllNodesWithText("Enter a valid email.").fetchSemanticsNodes().isEmpty())
+        onNodeWithTag("invite-email").performScrollTo().performTextInput("bad-email")
+        waitForIdle()
+        onNodeWithText("Enter a valid email.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue(fake.calls.none { it.first == "addSecondaryContact" })
+        onNodeWithTag("invite-email").performTextClearance()
+        onNodeWithTag("invite-email").performTextInput("catch@hanasamku.com")
+        waitForIdle()
+        assertTrue(onAllNodesWithText("Enter a valid email.").fetchSemanticsNodes().isEmpty())
+    }
+    // #1277: Tribe Profile › Invite a Kinfolk showed "AUNTIE_OS_REVIEW_BASE_URL is not configured [400]".
+    @Test
+    fun secondaryKinfolk_invite_aConfigRefusalNeverShowsTheSettingName() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        fake.stubError("addSecondaryContact", IllegalStateException("AUNTIE_OS_REVIEW_BASE_URL is not configured [400]"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("invite-email").performScrollTo().performTextInput("catch@hanasamku.com")
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Invites can't be sent right now. It's been reported to Auntie.").performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("is not configured", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+    // #1277: Give portal access opens the same card and gets the same line.
+    @Test
+    fun secondaryKinfolk_givePortalAccess_aConfigRefusalNeverShowsTheSettingName() = runComposeUiTest {
+        val fake = secondaryHousehold(person("p9", "Pat", "NONE", email = "pawsome@hanasamku.com"))
+        fake.stubError("addSecondaryContact", IllegalStateException("CLAIM_LINK_BASE_URL is not configured"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Give portal access").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Invites can't be sent right now. It's been reported to Auntie.").performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("CLAIM_LINK_BASE_URL", substring = true).fetchSemanticsNodes().isEmpty())
     }
 }

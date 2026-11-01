@@ -9,7 +9,7 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
-import { resolveInviteEmailConfig, sendPrimaryInviteEmails } from '../lib/inviteEmails';
+import { recordAuntieNoticeSkipped, resolveInviteEmailConfig, sendPrimaryInviteEmails } from '../lib/inviteEmails';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { SECONDARY_KINFOLK_GONE_MESSAGE } from './secondaryKinfolk';
 
@@ -60,11 +60,14 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = Args.parse(req.data);
-  // Fail loud before any Firestore write, and before the authz checks below —
+  // Fail loud before any Firestore write, and before the authz checks below,
   // matching mintInviteFromPrimary's own guard-before-authz shape (see
   // lib/requireBaseUrl.ts): nothing is minted that this call could not then
-  // tell the invitee, the business, or the primary about.
-  const { claimBaseUrl, auntieNotify } = resolveInviteEmailConfig();
+  // send the invitee a working claim link for. A missing
+  // AUNTIE_OS_REVIEW_BASE_URL does NOT refuse (#1277): it drops only the
+  // business's own notice, recorded for the operator below once the invite
+  // exists (lib/inviteEmails.ts).
+  const { claimBaseUrl, auntieNotify, auntieNotifySkipped } = resolveInviteEmailConfig();
   // Operator ruling 2026-09-27 (Q3): portal access for a secondary kinfolk
   // comes only from the primary's own invite. Staff used to pass through the
   // bypass below; no admin client called this, and now the server says no too.
@@ -125,7 +128,7 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
   // out of this point sends the same emails `mintInviteFromPrimary` sends,
   // with a claim link this specific invite id resolves.
   async function sendEmailsAndMarkSent(inviteRef: FirebaseFirestore.DocumentReference, inviteId: string): Promise<void> {
-    await sendPrimaryInviteEmails({
+    const { auntieNotified } = await sendPrimaryInviteEmails({
       inviteId,
       invitedEmail: lowerInvited,
       secondaryLabel,
@@ -140,8 +143,17 @@ export async function addSecondaryContactHandler(req: CallableRequest<unknown>):
     await inviteRef.update({
       status: 'EMAIL_SENT',
       sentToInviteeAt: FieldValue.serverTimestamp(),
-      auntieNotifiedAt: FieldValue.serverTimestamp(),
+      ...(auntieNotified ? { auntieNotifiedAt: FieldValue.serverTimestamp() } : {}),
     });
+    if (auntieNotifySkipped !== null) {
+      await recordAuntieNoticeSkipped({
+        functionName: 'addSecondaryContact',
+        missingVar: auntieNotifySkipped,
+        inviteId,
+        familyId: kinfolkId,
+        uid,
+      });
+    }
   }
 
   // S7-BLOCKER-2 dedupe: a cold-started first call can outlive the portal's

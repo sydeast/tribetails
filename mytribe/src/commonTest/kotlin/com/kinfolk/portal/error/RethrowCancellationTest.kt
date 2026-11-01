@@ -31,13 +31,21 @@ class RethrowCancellationTest {
         RuntimeException("wrapper", CancellationException("inner")).rethrowIfCancellation()
         assertFailsWith<CancellationException> { CancellationException("stop").rethrowIfCancellation() }
     }
-    @Test fun aCancelledInvoicesLoadSetsNoErrorAndStopsAtTheFirstCall() = runTest {
+    @Test fun aCancelledInvoicesLoadSetsNoErrorAndAsksForNothingAfterIt() = runTest {
         val fake = FakeFunctionsClient()
         fake.stubError("getMyInvoices", CancellationException("left composition"))
         val c = InvoicesController("kin-1", PortalApi(fake), this) { }
         assertFailsWith<CancellationException> { c.reload() }
         assertNull(c.error)
-        assertEquals(listOf("getMyInvoices"), fake.calls.map { it.first })
+        // #1282: the three reads now START together (they used to be awaited one
+        // after the other, two cold starts in a row), so all three are already
+        // asked for when the cancellation lands. What #1079 protects still
+        // holds: no banner, the cancellation propagates, and nothing is asked
+        // for AFTER it (each read exactly once, no retry, no follow-on call).
+        assertEquals(
+            listOf("getAccountCreditHistory", "getMyHome", "getMyInvoices"),
+            fake.calls.map { it.first }.sorted(),
+        )
     }
     @Test fun aRealInvoicesFailureStillShowsItsMessage() = runTest {
         val fake = FakeFunctionsClient()

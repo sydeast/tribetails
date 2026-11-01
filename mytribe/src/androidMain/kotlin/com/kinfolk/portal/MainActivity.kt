@@ -10,6 +10,8 @@ import com.kinfolk.portal.ui.KinfolkPortalAppGuarded
 import com.kinfolk.portal.util.androidInitialClaimInviteId
 import com.kinfolk.portal.util.androidInitialSecureResetParams
 import com.kinfolk.portal.util.androidInitialShareToken
+import com.kinfolk.portal.util.androidInitialUnknownLink
+import com.kinfolk.portal.util.deepLinkIsRecognized
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,7 +43,16 @@ class MainActivity : ComponentActivity() {
         // Every mode arrives here and none carries an `email` param; the screen
         // reads the account from the verified code. Parsing is shared, and tested,
         // in commonMain.
-        parseEmailActionUrl(uri.toString())?.let { androidInitialSecureResetParams = it }
+        val emailAction = parseEmailActionUrl(uri.toString())
+        emailAction?.let { androidInitialSecureResetParams = it }
+        // #1293: a link the manifest let in that names nothing we can open lands on
+        // the not-found screen instead of silently on Home.
+        androidInitialUnknownLink = !deepLinkIsRecognized(
+            // `mytribe://claim/<id>` carries "claim" as the host, not a path part.
+            pathSegments = listOfNotNull(uri.host.takeIf { uri.scheme == "mytribe" }) + pathParts,
+            inviteQuery = uri.getQueryParameter("invite"),
+            isEmailAction = emailAction != null,
+        )
     }
 
     private inline fun captureSegment(parts: List<String>, prefix: String, store: (String) -> Unit) {

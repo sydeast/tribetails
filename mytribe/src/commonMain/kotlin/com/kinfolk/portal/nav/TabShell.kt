@@ -76,6 +76,8 @@ private val NarrowTabBarClearance = 84.dp
 fun TabShell(
     familyName: String,
     logoUrl: String? = null,
+    /** #1369: the operator's business name for the footer; blank draws no footer text. */
+    businessName: String = "",
     navController: NavController,
     onSignOut: () -> Unit,
     onBackToDirectory: (() -> Unit)? = null,
@@ -190,7 +192,7 @@ fun TabShell(
                 ) {
                     content(Modifier.fillMaxWidth().widthIn(max = NavMaxWidth))
                 }
-                AppFooter()
+                AppFooter(businessName)
             }
         } else {
             val active = resolveActiveDestination(ShellNav.narrowTabs) { currentDestination.isOn(it) }
@@ -485,7 +487,9 @@ private fun AvatarMenuButton(
  * Mobile keeps the floating tab bar and no footer, matching app convention.
  */
 @Composable
-private fun AppFooter() {
+internal fun AppFooter(businessName: String) {
+    // #1369: never a hard-coded business name. Unset draws no footer at all.
+    val line = appFooterText(businessName) ?: return
     val type = LocalKinfolkTypography.current
     Column(modifier = Modifier.fillMaxWidth().background(KinfolkBrand.Cream.copy(alpha = 0.72f))) {
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(KinfolkBrand.NavyHairline))
@@ -494,7 +498,7 @@ private fun AppFooter() {
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = "Cared for by Tribe Tails Pet Care",
+                text = line,
                 style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
             )
         }
@@ -554,3 +558,7 @@ private fun TopBannerBar(banner: PortalBanner, onDismiss: (() -> Unit)?) {
 /** True when [this] destination (or an ancestor) is the given route type. */
 private fun NavDestination?.isOn(routeClass: KClass<*>): Boolean =
     this?.hierarchy?.any { it.hasRoute(routeClass) } == true
+
+/** #1369: "Cared for by <name>", or null when the business name is unset. */
+internal fun appFooterText(businessName: String): String? =
+    businessName.trim().takeIf { it.isNotEmpty() }?.let { "Cared for by $it" }

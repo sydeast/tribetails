@@ -171,6 +171,28 @@ describe('Schedule, a visit whose start time the Auntie sets (#1098)', () => {
     expect(screen.queryByText(/Time to be confirmed|Invalid Date|12:00 AM/)).toBeNull();
   });
 });
+// #1297: rows print the server-resolved service name, never the stored code,
+// and the "Service Type ·" prefix is gone.
+describe('Schedule, service names (#1297)', () => {
+  it('shows the service name above the title, with no code and no prefix', async () => {
+    mocks.getMyBookings.mockResolvedValue({
+      liveVisit: null,
+      upcoming: [{ ...pendingOvernight(), id: 'v-named', serviceType: 'visit_60', serviceLabel: '60 Minute', title: 'Midday drop-in' }],
+      recent: [],
+    });
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Schedule />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Midday drop-in')).toBeInTheDocument();
+    expect(screen.getByText('60 Minute')).toBeInTheDocument();
+    expect(screen.queryByText(/visit_60/i)).toBeNull();
+    expect(screen.queryByText(/Service Type/i)).toBeNull();
+  });
+});
 
 describe('Schedule, the open tab lives in the URL (#1304)', () => {
   const completed = {

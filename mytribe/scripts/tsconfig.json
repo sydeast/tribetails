@@ -17,6 +17,8 @@
     "paths": {
       "vitest": ["../functions/node_modules/vitest"],
       "firebase-admin/*": ["../functions/node_modules/firebase-admin/lib/*"],
+      "express": ["../functions/node_modules/@types/express"],
+      "express-serve-static-core": ["../functions/node_modules/@types/express-serve-static-core"],
       "*": ["../functions/node_modules/*", "./*"]
     }
   },

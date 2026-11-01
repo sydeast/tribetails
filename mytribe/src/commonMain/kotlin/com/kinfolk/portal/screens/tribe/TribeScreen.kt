@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
@@ -57,22 +58,23 @@ import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.CustomField
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.HomeAccess
-import com.kinfolk.portal.portal.MapboxSuggestion
+import com.kinfolk.portal.portal.inviteEmailProblem
+import com.kinfolk.portal.portal.isInvitableEmail
+import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeProfileResult
 import com.kinfolk.portal.portal.VetClinic
-import com.kinfolk.portal.portal.newMapboxSessionToken
 import com.kinfolk.portal.screens.gallery.isPermissionDenied
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.attempt
 import com.kinfolk.portal.util.openExternalUrl
 import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import com.kinfolk.portal.util.formatPhone
 
 /**
  * Tribe Profile settings, per ui-ideas/mytribe-tribe-2026-05-31.html: a
@@ -117,21 +119,40 @@ fun TribeScreen(
     var profileValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var homeValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var vetClinics by remember { mutableStateOf<List<VetClinic>>(emptyList()) }
-    var vetName by remember { mutableStateOf("") }
-    var vetPhone by remember { mutableStateOf("") }
-    var vetAddress by remember { mutableStateOf("") }
+    var vetClinicsLoading by remember { mutableStateOf(true) }
+    var vetClinicsError by remember { mutableStateOf<String?>(null) }
+    // #1378: ONE id, the catalog row the household picked (operator ruling 2026-08-01:
+    // vets are a dropdown and search, not a text box). Name, phone and address are
+    // read from the catalog. [vetPicked] only covers a clinic chosen or added this
+    // session that the picker catalog does not list yet (an unapproved submission).
+    var vetClinicId by remember { mutableStateOf("") }
+    var vetPicked by remember { mutableStateOf<VetClinic?>(null) }
+    // Free-text rows written before the picker existed. Shown read-only, never edited
+    // and never removed by Save: the rows stay on the profile until Auntie clears them.
+    var legacyVetName by remember { mutableStateOf("") }
+    var legacyVetPhone by remember { mutableStateOf("") }
+    var legacyVetAddress by remember { mutableStateOf("") }
     // After-hours emergency vet (gated). Stored in HomeAccess customFields under
     // stable keys so no backend change is needed.
     var afterHoursVetName by remember { mutableStateOf("") }
     var afterHoursVetPhone by remember { mutableStateOf("") }
-    // #829: Emergency Contacts live in their own card over their own callables.
-    // This flag only says the card holds edits its own Save has not sent, because
-    // Save Changes below never sends contacts.
-    var emergencyContactsDirty by remember { mutableStateOf(false) }
+    // #1324: the cards that keep their own form state (Emergency Contacts,
+    // Secondary Kinfolk) hand the page a way to save them, so Save Changes below
+    // is the page's only Save.
+    val emergencyContactsSave = remember { CardSaveHandle() }
+    val secondaryKinfolkSave = remember { CardSaveHandle() }
 
-    LaunchedEffect(kinfolkId) {
+    // #1282: the four reads start together and are applied in the old order.
+    // They used to be awaited one after the other, and none of the four
+    // callables carries minInstances, so a first open paid up to four cold
+    // starts back to back. The seeding below still reads the profile first.
+    LaunchedEffect(kinfolkId) { coroutineScope {
+        val profileFetch = async { attempt { portalApi.getMyTribeProfile(kinfolkId) } }
+        val profileSchemaFetch = async { attempt { portalApi.getFormSchema("tribeProfile") } }
+        val vetClinicsFetch = async { attempt { portalApi.getVetClinics() } }
+        val homeSchemaFetch = async { attempt { portalApi.getFormSchema("homeAccess") } }
         try {
-            val r = portalApi.getMyTribeProfile(kinfolkId)
+            val r = profileFetch.await().getOrThrow()
             loaded = r
             displayName = r.profile.displayName
             profileFields = r.profile.customFields
@@ -151,7 +172,7 @@ fun TribeScreen(
         }
         // Best-effort schema loads — fall back silently to static UI if missing.
         try {
-            val ps = portalApi.getFormSchema("tribeProfile")
+            val ps = profileSchemaFetch.await().getOrThrow()
             profileSchema = ps
             // Seed values from existing customFields + displayName.
             val seeded = mutableMapOf<String, String>()
@@ -164,17 +185,30 @@ fun TribeScreen(
         // Load shared vet clinic catalog (best-effort) + seed current values
         // from existing customFields if previously set.
         try {
-            vetClinics = portalApi.getVetClinics()
+            vetClinics = vetClinicsFetch.await().getOrThrow()
+            vetClinicsError = null
         } catch (c: CancellationException) {
             throw c
-        } catch (_: Throwable) { /* catalog unreachable — fall back to manual entry */ }
+        } catch (t: Throwable) {
+            vetClinicsError = "Could not load the clinic list: ${t.message ?: "try again later"}"
+        }
+        vetClinicsLoading = false
         val seededVet = profileFields.associate { it.key to it.value }
-        vetName    = seededVet[VET_CLINIC_NAME_KEY].orEmpty()
-        vetPhone   = seededVet[VET_CLINIC_PHONE_KEY].orEmpty()
-        vetAddress = seededVet[VET_CLINIC_ADDRESS_KEY].orEmpty()
+        vetClinicId       = seededVet[VET_CLINIC_ID_KEY].orEmpty().trim()
+        legacyVetName     = seededVet[VET_CLINIC_NAME_KEY].orEmpty()
+        legacyVetPhone    = seededVet[VET_CLINIC_PHONE_KEY].orEmpty()
+        legacyVetAddress  = seededVet[VET_CLINIC_ADDRESS_KEY].orEmpty()
+        // #1325 (via #1379): the server resolves the linked clinic. A clinic the
+        // catalog no longer lists (archived, or a submission still waiting for
+        // approval) is shown from that summary as the clinic on file, rather than
+        // as "no longer on the shared list". Seeding the picked clinic changes
+        // nothing that is saved: the id is untouched.
+        loaded?.vetClinic?.takeIf { it.id == vetClinicId }?.let { v ->
+            vetPicked = VetClinic(v.id, v.name, v.phone, v.address, isEmergency = v.isEmergency)
+        }
 
         try {
-            val hs = portalApi.getFormSchema("homeAccess")
+            val hs = homeSchemaFetch.await().getOrThrow()
             homeSchema = hs
             val seeded = mutableMapOf<String, String>()
             seeded["gateCode"] = gateCode
@@ -185,7 +219,7 @@ fun TribeScreen(
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) { /* same fallback */ }
-    }
+    } }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = isWideShell(maxWidth.value)
@@ -365,11 +399,13 @@ fun TribeScreen(
             VetClinicSection(
                 portalApi = portalApi,
                 clinics = vetClinics,
-                name = vetName, phone = vetPhone, address = vetAddress,
-                onPick = { c -> vetName = c.name; vetPhone = formatPhone(c.phone); vetAddress = c.address },
-                onName = { vetName = it },
-                onPhone = { vetPhone = it },
-                onAddress = { vetAddress = it },
+                clinicsLoading = vetClinicsLoading,
+                clinicsError = vetClinicsError,
+                clinicId = vetClinicId,
+                picked = vetPicked,
+                legacyName = legacyVetName, legacyPhone = legacyVetPhone, legacyAddress = legacyVetAddress,
+                onPick = { c -> vetClinicId = c.id; vetPicked = c },
+                onClear = { vetClinicId = ""; vetPicked = null },
                 showAfterHours = true,
                 // #868: stored with the home details, behind the same grant.
                 afterHoursLocked = !canEditHome,
@@ -380,12 +416,12 @@ fun TribeScreen(
                 wide = wide,
             )
 
-            // Emergency Contacts (#829): its own callables and its own Save. Read-only
-            // with the #844 sentence when the caller lacks Home access.
+            // Emergency Contacts (#829): its own callable, saved by the page's Save
+            // Changes (#1324). Read-only with the #844 sentence without Home access.
             EmergencyContactsCard(
                 kinfolkId = kinfolkId,
                 portalApi = portalApi,
-                onDirtyChange = { emergencyContactsDirty = it },
+                saveHandle = emergencyContactsSave,
             )
 
             // Household members: edit an existing secondary's permissions.
@@ -400,6 +436,7 @@ fun TribeScreen(
                 portalApi = portalApi,
                 reloadKey = secondaryReload,
                 onGivePortalAccess = { invitePrefill = it },
+                saveHandle = secondaryKinfolkSave,
             )
 
             // Secondary Kinfolk invite, moved here from Account settings.
@@ -442,6 +479,7 @@ fun TribeScreen(
                     scope.launch {
                         var profileHalf: SaveHalf = SaveHalf.Skipped
                         var homeHalf: SaveHalf = SaveHalf.Skipped
+                        val cardFailures = mutableListOf<String>()
                         try {
                             // #873: both saves start from the stored rows and change only
                             // the rows this screen edits (schema fields and the vet cards).
@@ -455,9 +493,10 @@ fun TribeScreen(
                             fun card(key: String, label: String, value: String, set: MutableList<CustomField>, clear: MutableList<String>) {
                                 if (value.isNotBlank()) set += CustomField(key = key, label = label, value = value.trim()) else clear += key
                             }
-                            card(VET_CLINIC_NAME_KEY, "Vet Clinic", vetName, profileSet, profileClear)
-                            card(VET_CLINIC_PHONE_KEY, "Vet Clinic Phone", vetPhone, profileSet, profileClear)
-                            card(VET_CLINIC_ADDRESS_KEY, "Vet Clinic Address", vetAddress, profileSet, profileClear)
+                            // #1378: the clinic is one id. The old free-text name, phone and
+                            // address rows are not in this edit, so a row that has no control
+                            // here is kept as stored.
+                            card(VET_CLINIC_ID_KEY, "Vet Clinic", vetClinicId, profileSet, profileClear)
                             val ps = profileSchema
                             val nextDisplayName = if (ps != null) {
                                 profileValues["displayName"]?.trim().orEmpty().ifBlank { displayName.trim() }
@@ -489,7 +528,8 @@ fun TribeScreen(
                             // when this Save changes them, so a Family-only edit makes no
                             // home access call.
                             val loadedHome = loaded?.homeAccess
-                            if (!canEditHome || loadedHome == null) return@launch
+                            run homeBlock@{
+                            if (!canEditHome || loadedHome == null) return@homeBlock
 
                             val homeSet = mutableListOf<CustomField>()
                             val homeClear = mutableListOf<String>()
@@ -500,9 +540,12 @@ fun TribeScreen(
                             val kl: String?
                             val wf: String?
                             if (hsSave != null) {
-                                gc = homeValues["gateCode"]?.trim()?.ifBlank { null } ?: gateCode.trim().ifBlank { null }
-                                kl = homeValues["keyLocation"]?.trim()?.ifBlank { null } ?: keyLocation.trim().ifBlank { null }
-                                wf = homeValues["wifiPassword"]?.trim()?.ifBlank { null } ?: wifi.trim().ifBlank { null }
+                                // #1336: a schema field the household emptied is a clear,
+                                // not a fall back to the static seed (which still holds the
+                                // old value). Only a key the schema lacks falls back.
+                                gc = schemaTextOrNull(homeValues, "gateCode", gateCode)
+                                kl = schemaTextOrNull(homeValues, "keyLocation", keyLocation)
+                                wf = schemaTextOrNull(homeValues, "wifiPassword", wifi)
                                 hsSave.sections.flatMap { it.fields }
                                     .filter { it.key != "gateCode" && it.key != "keyLocation" && it.key != "wifiPassword" }
                                     .forEach { f -> schemaFieldRow(accessFields, f.key, f.label, homeValues[f.key])?.let { homeSet += it } }
@@ -512,7 +555,7 @@ fun TribeScreen(
                                 wf = wifi.trim().ifBlank { null }
                             }
                             val homeEdit = editCustomFields(accessFields, homeSet, homeClear, LEGACY_EMERGENCY_CONTACT_KEYS)
-                            if (!homeAccessEditChanged(loadedHome, gc, kl, wf, homeEdit, LEGACY_EMERGENCY_CONTACT_KEYS)) return@launch
+                            if (!homeAccessEditChanged(loadedHome, gc, kl, wf, homeEdit, LEGACY_EMERGENCY_CONTACT_KEYS)) return@homeBlock
                             homeHalf = try {
                                 portalApi.saveHomeAccess(
                                     kinfolkId = kinfolkId,
@@ -528,6 +571,21 @@ fun TribeScreen(
                             } catch (t: Throwable) {
                                 SaveHalf.Failed(t)
                             }
+                            }
+                            // #1324: the cards with their own form state save on the same
+                            // press, one after another (each is its own callable), and a
+                            // card with no edits is never called. A refusal is named on the
+                            // status line; the card also keeps its own sentence and typing.
+                            listOf(
+                                "Emergency Contacts" to emergencyContactsSave,
+                                "Secondary Kinfolk" to secondaryKinfolkSave,
+                            ).forEach { (cardName, handle) ->
+                                if (!handle.dirty) return@forEach
+                                val r = handle.save()
+                                if (r is CardSaveResult.Failed) {
+                                    cardFailures += cardFailureLine(cardName, r.message)
+                                }
+                            }
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
@@ -539,11 +597,9 @@ fun TribeScreen(
                             profileHalf = blamed.first
                             homeHalf = blamed.second
                         } finally {
-                            // The card saves on its own button, so "Saved." here would be
-                            // false about any contact edit still sitting in it (#829).
                             // Nothing on screen is reloaded, so an edit that did not save
                             // stays in its field.
-                            val outcome = pageSaveOutcome(profileHalf, homeHalf, emergencyContactsDirty)
+                            val outcome = pageSaveOutcome(profileHalf, homeHalf, cardFailures)
                             status = outcome.text
                             statusOk = outcome.ok
                             saving = false
@@ -553,13 +609,6 @@ fun TribeScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
                 enabled = !saving && displayName.isNotBlank(),
             )
-            if (emergencyContactsDirty) {
-                Text(
-                    "Your Emergency Contacts have unsaved changes.",
-                    style = type.sansLabel.copy(color = KinfolkBrand.KinfolkOrange),
-                    modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
-                )
-            }
             Spacer(Modifier.height(KinfolkSpacing.l))
         }
     }
@@ -680,7 +729,7 @@ private fun GhostPillButton(
  * and by the two "has extra fields" header checks above it, so the header
  * and the list it introduces agree on what counts as an extra field.
  */
-private fun visibleCustomFields(fields: List<CustomField>): List<CustomField> =
+internal fun visibleCustomFields(fields: List<CustomField>): List<CustomField> =
     fields.filter { it.key !in SCREEN_OWNED_CUSTOM_FIELD_KEYS }
 
 @Composable
@@ -715,13 +764,17 @@ private fun CustomFieldList(
 private fun VetClinicSection(
     portalApi: PortalApi,
     clinics: List<VetClinic>,
-    name: String,
-    phone: String,
-    address: String,
+    clinicsLoading: Boolean,
+    clinicsError: String?,
+    /** The linked `vetClinicId`, or blank when none. */
+    clinicId: String,
+    /** A clinic chosen or added this session that the picker catalog may not list yet. */
+    picked: VetClinic?,
+    legacyName: String,
+    legacyPhone: String,
+    legacyAddress: String,
     onPick: (VetClinic) -> Unit,
-    onName: (String) -> Unit,
-    onPhone: (String) -> Unit,
-    onAddress: (String) -> Unit,
+    onClear: () -> Unit,
     showAfterHours: Boolean = false,
     /** #868: the viewer has no Home access, so the after-hours clinic shows the lock sentence instead of fields. */
     afterHoursLocked: Boolean = false,
@@ -733,13 +786,53 @@ private fun VetClinicSection(
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
-    var sessionToken by remember { mutableStateOf(newMapboxSessionToken()) }
-    var addressSuggestions by remember { mutableStateOf<List<MapboxSuggestion>>(emptyList()) }
-    var addressLookupError by remember { mutableStateOf<String?>(null) }
-    var debounceJob by remember { mutableStateOf<Job?>(null) }
     var vetQuery by remember { mutableStateOf("") }
     var submittingClinic by remember { mutableStateOf(false) }
     var submitClinicMsg by remember { mutableStateOf<String?>(null) }
+    /** Near-matches the server offered instead of creating a duplicate; non-empty means the household must choose. */
+    var candidates by remember { mutableStateOf<List<PortalApi.VetClinicCandidate>>(emptyList()) }
+    fun pick(c: VetClinic) {
+        onPick(c)
+        vetQuery = ""
+        candidates = emptyList()
+        submitClinicMsg = null
+    }
+    /**
+     * Add the typed name as a new clinic. [acknowledgedMatchIds] is empty on the
+     * first attempt, so a near match comes back as a choice and nothing is
+     * written. Confirming echoes the ids the household was just shown; the server
+     * checks them, a flag would let a client claim a confirmation it never got.
+     */
+    fun submitNew(acknowledgedMatchIds: List<String> = emptyList()) {
+        val typed = vetQuery.trim()
+        if (submittingClinic || typed.isEmpty()) return
+        submittingClinic = true
+        submitClinicMsg = null
+        scope.launch {
+            try {
+                val r = portalApi.submitVetClinic(typed, acknowledgedMatchIds = acknowledgedMatchIds)
+                if (r.needsChoice) {
+                    candidates = r.candidates
+                } else {
+                    candidates = emptyList()
+                    onPick(VetClinic(id = r.clinicId, name = typed, phone = "", address = ""))
+                    vetQuery = ""
+                    submitClinicMsg = if (r.pending) {
+                        "Sent to Auntie for approval. It is on your record now and joins the shared list once approved."
+                    } else {
+                        "Added to the shared list and set as your clinic."
+                    }
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                submitClinicMsg = "Couldn't submit: ${t.message ?: "unknown error"}"
+            } finally {
+                submittingClinic = false
+            }
+        }
+    }
+    val onFile = clinicOnFile(clinicId, clinics, picked)
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         contentPadding = PaddingValues(KinfolkSpacing.l),
@@ -751,157 +844,113 @@ private fun VetClinicSection(
                 title = "Vet Clinic",
                 sub = "The first call your Auntie makes if something is off.",
             )
-            if (clinics.isNotEmpty()) {
-                // Searchable picker over the shared catalog: type to filter by name,
-                // tap a match to fill the clinic fields below.
-                KinField(
-                    value = vetQuery,
-                    onValueChange = { vetQuery = it },
-                    label = "Search vet clinics",
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                val vetMatches = remember(vetQuery, clinics) {
-                    if (vetQuery.isBlank()) emptyList()
-                    else clinics.filter { it.name.contains(vetQuery, ignoreCase = true) }.take(8)
-                }
-                vetMatches.forEach { clinic ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(KinfolkShapes.cardSmall)
-                            .clickable { onPick(clinic); vetQuery = "" }
-                            .padding(vertical = KinfolkSpacing.xs, horizontal = KinfolkSpacing.xs),
-                    ) {
-                        Text(
-                            if (clinic.isEmergency) "${clinic.name} · 24hr" else clinic.name,
-                            style = type.sansBody,
-                        )
-                        if (clinic.address.isNotBlank()) {
-                            Text(clinic.address, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
-                        }
-                    }
-                }
-            }
-            FieldPair(
-                wide = wide,
-                first = { m ->
-                    KinField(
-                        value = name, onValueChange = onName,
-                        label = "Clinic Name",
-                        modifier = m,
-                    )
-                },
-                second = { m ->
-                    KinField(
-                        value = phone, onValueChange = onPhone,
-                        label = "Clinic Phone",
-                        modifier = m,
-                    )
-                },
-            )
+            // Search and pick, never a free-text box. The add-new row is last, so
+            // choosing a clinic that exists is always offered first.
             KinField(
-                value = address,
-                onValueChange = { v ->
-                    onAddress(v)
-                    debounceJob?.cancel()
-                    if (v.length < 3) {
-                        addressSuggestions = emptyList()
-                    } else {
-                        debounceJob = scope.launch {
-                            delay(250)
-                            try {
-                                addressSuggestions = portalApi.mapboxSearch(v, sessionToken)
-                                addressLookupError = null
-                            } catch (c: CancellationException) {
-                                throw c
-                            } catch (t: Throwable) {
-                                addressSuggestions = emptyList()
-                                addressLookupError = t.message ?: "Address lookup failed"
-                            }
-                        }
-                    }
-                },
-                label = "Clinic Address", singleLine = false,
+                value = vetQuery,
+                onValueChange = { vetQuery = it },
+                label = "Search vet clinics",
                 modifier = Modifier.fillMaxWidth(),
+                fieldTestTag = "vet-search",
             )
-            if (addressLookupError != null) {
+            if (clinicsLoading) {
+                Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s), verticalAlignment = Alignment.CenterVertically) {
+                    KinSpinner()
+                    Text("Loading clinics…", style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                }
+            }
+            if (clinicsError != null) {
                 Text(
-                    "Lookup error: ${addressLookupError ?: ""}",
+                    clinicsError,
                     style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+                    modifier = Modifier.testTag("vet-load-error"),
                 )
             }
-            if (addressSuggestions.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    addressSuggestions.take(5).forEach { s ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(KinfolkShapes.cardSmall)
-                                .clickable {
-                                    scope.launch {
-                                        try {
-                                            val feature = portalApi.mapboxRetrieve(s.mapboxId, sessionToken)
-                                            if (feature != null) {
-                                                onAddress(feature.resolvedAddress)
-                                            } else {
-                                                onAddress(s.fullAddress.ifBlank { s.name })
-                                            }
-                                            addressSuggestions = emptyList()
-                                            sessionToken = newMapboxSessionToken()
-                                        } catch (c: CancellationException) {
-                                            throw c
-                                        } catch (t: Throwable) {
-                                            addressLookupError = t.message ?: "Retrieve failed"
-                                        }
-                                    }
-                                }
-                                .padding(vertical = KinfolkSpacing.xs, horizontal = KinfolkSpacing.xs),
-                        ) {
-                            Text(s.fullAddress.ifBlank { s.name }, style = type.sansBody)
-                            if (s.placeFormatted.isNotBlank()) {
-                                Text(s.placeFormatted, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
-                            }
-                        }
-                    }
+            if (vetQuery.isNotBlank()) {
+                vetClinicMatches(vetQuery, clinics).forEach { clinic ->
+                    ClinicRow(
+                        title = clinicTitle(clinic.name, clinic.isEmergency),
+                        detail = clinic.address,
+                        tag = "vet-match-${clinic.id}",
+                        onClick = { pick(clinic) },
+                    )
+                }
+                if (!clinicAlreadyOnList(vetQuery, clinics)) {
+                    ClinicRow(
+                        title = if (submittingClinic) "Checking…" else "+ Add \"${vetQuery.trim()}\" as a new clinic",
+                        detail = "Sent to Auntie for approval before other households see it.",
+                        tag = "vet-add-new",
+                        enabled = !submittingClinic,
+                        onClick = { submitNew() },
+                    )
                 }
             }
-            // Add-to-shared-list: only offered when the typed clinic is genuinely
-            // novel (not already in the catalog). Submits a PENDING entry the
-            // operator approves in AuntieOS; the household's own vet fields are
-            // saved separately by the screen's Save button regardless.
-            if (!clinicAlreadyOnList(name, clinics)) {
-                GhostPillButton(
-                    label = if (submittingClinic) "Submitting…"
-                    else "Add \"${name.trim()}\" to the shared vet list",
-                    onClick = {
-                        if (!submittingClinic) {
-                            submittingClinic = true
-                            submitClinicMsg = null
-                            scope.launch {
-                                try {
-                                    val r = portalApi.submitVetClinic(name.trim(), phone.trim(), address.trim())
-                                    submitClinicMsg = if (!r.created && !r.pending) {
-                                        "That clinic is already on the shared list."
-                                    } else {
-                                        "Sent to Auntie for approval. It joins the shared list once approved."
-                                    }
-                                } catch (c: CancellationException) {
-                                    throw c
-                                } catch (t: Throwable) {
-                                    submitClinicMsg = "Couldn't submit: ${t.message ?: "unknown error"}"
-                                } finally {
-                                    submittingClinic = false
-                                }
-                            }
-                        }
-                    },
+            if (candidates.isNotEmpty()) {
+                // The server found what looks like the same practice and wrote
+                // nothing. The household decides: use the existing record, or say
+                // theirs really is a separate practice.
+                Text(
+                    "A clinic like that is already on the shared list. Use it, or add yours as a separate clinic.",
+                    style = type.sansBody,
+                    modifier = Modifier.testTag("vet-candidates-note"),
+                )
+                candidates.forEach { c ->
+                    ClinicRow(
+                        title = clinicTitle(c.name, c.isEmergency),
+                        detail = (clinicDetailLine(c.phone, c.address) + if (!c.verified) " · waiting for approval" else "")
+                            .removePrefix(" · "),
+                        tag = "vet-candidate-${c.id}",
+                        onClick = { pick(VetClinic(c.id, c.name, c.phone, c.address, isEmergency = c.isEmergency)) },
+                    )
+                }
+                ClinicRow(
+                    title = if (submittingClinic) "Checking…" else "No, add \"${vetQuery.trim()}\" as a different clinic",
+                    detail = "Use this when yours really is a separate practice.",
+                    tag = "vet-add-anyway",
                     enabled = !submittingClinic,
-                    icon = Icons.Filled.Add,
-                    color = KinfolkBrand.KinTeal,
+                    onClick = { submitNew(candidates.map { it.id }) },
                 )
-                submitClinicMsg?.let { msg ->
-                    Text(msg, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+            }
+            submitClinicMsg?.let { msg ->
+                Text(msg, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted), modifier = Modifier.testTag("vet-message"))
+            }
+            if (onFile != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag("vet-on-file")) {
+                    Text("Clinic on file", style = type.sansMeta)
+                    Text(clinicTitle(onFile.name, onFile.isEmergency), style = type.sansBody)
+                    val detail = clinicDetailLine(onFile.phone, onFile.address)
+                    if (detail.isNotBlank()) {
+                        Text(detail, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                    }
+                    Text(
+                        "Details come from the shared list, so if they are wrong Auntie can fix them once for every household. Search above to change your clinic.",
+                        style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
+                    )
                 }
+            } else if (clinicId.isNotBlank()) {
+                Text(
+                    "The clinic on file is no longer on the shared list. Search above to pick it again.",
+                    style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+                    modifier = Modifier.testTag("vet-missing"),
+                )
+            } else if (legacyName.isNotBlank() || legacyPhone.isNotBlank() || legacyAddress.isNotBlank()) {
+                // Typed in before the shared list existed. Not editable here.
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag("vet-legacy")) {
+                    Text("Clinic on file (typed before the shared list)", style = type.sansMeta)
+                    if (legacyName.isNotBlank()) Text(legacyName, style = type.sansBody)
+                    val detail = clinicDetailLine(legacyPhone, legacyAddress)
+                    if (detail.isNotBlank()) Text(detail, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                    Text("Search above to pick it from the list.", style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                }
+            }
+            if (clinicId.isNotBlank()) {
+                GhostPillButton(
+                    label = "Remove clinic",
+                    onClick = onClear,
+                    icon = Icons.Filled.Close,
+                    color = KinfolkBrand.KinTeal,
+                    modifier = Modifier.testTag("vet-clear"),
+                )
             }
             if (showAfterHours) {
                 CardDivider()
@@ -954,13 +1003,31 @@ private fun VetClinicSection(
     }
 }
 
+@Composable
+private fun ClinicRow(title: String, detail: String, tag: String, onClick: () -> Unit, enabled: Boolean = true) {
+    val type = LocalKinfolkTypography.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KinfolkShapes.cardSmall)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = KinfolkSpacing.xs, horizontal = KinfolkSpacing.xs)
+            .testTag(tag),
+    ) {
+        Text(title, style = type.sansBody)
+        if (detail.isNotBlank()) {
+            Text(detail, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+        }
+    }
+}
 /** Keys the Vet Clinic card edits, stored in profile customFields (#872). The
  *  save handler's card() calls below key off these same constants, so this
  *  is the one place a vet-clinic key literal is typed. */
+internal const val VET_CLINIC_ID_KEY = "vetClinicId"
 internal const val VET_CLINIC_NAME_KEY = "vetClinicName"
 internal const val VET_CLINIC_PHONE_KEY = "vetClinicPhone"
 internal const val VET_CLINIC_ADDRESS_KEY = "vetClinicAddress"
-internal val VET_CLINIC_CUSTOM_FIELD_KEYS = setOf(VET_CLINIC_NAME_KEY, VET_CLINIC_PHONE_KEY, VET_CLINIC_ADDRESS_KEY)
+internal val VET_CLINIC_CUSTOM_FIELD_KEYS = setOf(VET_CLINIC_ID_KEY, VET_CLINIC_NAME_KEY, VET_CLINIC_PHONE_KEY, VET_CLINIC_ADDRESS_KEY)
 
 /** Keys the After-hours Vet block edits, stored in home access customFields (#872). */
 internal const val AFTER_HOURS_VET_NAME_KEY = "afterHoursVetName"
@@ -1035,6 +1102,16 @@ internal data class PageSaveStatus(val text: String, val ok: Boolean)
  * Save calls saveHomeAccess only then. Mirrors `homeAccessEditChanged` in web
  * `api/tribeApi.ts`.
  */
+/**
+ * #1336. The trimmed schema value for [key], or null when the household emptied
+ * it. Only a key the schema map does not carry falls back to [staticValue].
+ * Mirrors `schemaTextOrNull` in web `screens/TribeProfile.tsx`.
+ */
+internal fun schemaTextOrNull(values: Map<String, String>, key: String, staticValue: String): String? {
+    val fromSchema = values[key]
+    if (fromSchema != null) return fromSchema.trim().ifBlank { null }
+    return staticValue.trim().ifBlank { null }
+}
 internal fun homeAccessEditChanged(
     loaded: HomeAccess,
     gateCode: String?,
@@ -1100,7 +1177,23 @@ private fun bothHalvesFailedStatus(profileError: Throwable, homeError: Throwable
  * and what did not, never starts "Save failed", and is still a failure. Mirrors
  * `pageSaveOutcome` in web `api/tribeApi.ts`.
  */
-internal fun pageSaveOutcome(profile: SaveHalf, home: SaveHalf, emergencyContactsDirty: Boolean): PageSaveStatus = when {
+internal fun pageSaveOutcome(profile: SaveHalf, home: SaveHalf, cardFailures: List<String> = emptyList()): PageSaveStatus {
+    val halves = halvesOutcome(profile, home)
+    if (cardFailures.isEmpty()) return halves
+    // A card that did not save makes the whole page save a partial result, so it
+    // is coloured as a failure and the sentence says what did land (#1324).
+    val failures = cardFailures.joinToString(" ")
+    return PageSaveStatus(
+        if (halves.ok) "The rest of your Tribe Profile saved. $failures" else "${halves.text} $failures",
+        ok = false,
+    )
+}
+/** The worded confirmation after a clean page Save (#1324). */
+internal const val PAGE_SAVED = "Tribe Profile saved."
+/** One card's refusal as a sentence for the page status: "Emergency Contacts did not save: <reason>. Your edits there are still on this page." */
+internal fun cardFailureLine(cardName: String, reason: String): String =
+    "$cardName did not save: ${reason.trim().trimEnd('.', ' ')}. Your edits there are still on this page."
+private fun halvesOutcome(profile: SaveHalf, home: SaveHalf): PageSaveStatus = when {
     profile is SaveHalf.Failed && home is SaveHalf.Saved -> PageSaveStatus(
         "Home Information and the after-hours clinic saved. Family and Vet Clinic did not save: " +
             "${saveFailureReason(profile.error)} Your edits there are still on this page.",
@@ -1113,11 +1206,7 @@ internal fun pageSaveOutcome(profile: SaveHalf, home: SaveHalf, emergencyContact
             "${saveFailureReason(home.error)} Your edits there are still on this page.",
         ok = false,
     )
-    emergencyContactsDirty -> PageSaveStatus(
-        "Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.",
-        ok = true,
-    )
-    else -> PageSaveStatus("Saved.", ok = true)
+    else -> PageSaveStatus(PAGE_SAVED, ok = true)
 }
 
 /**
@@ -1378,20 +1467,36 @@ private fun SecondaryInviteCard(
     val scope = rememberCoroutineScope()
     var email by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("") }
-    // 2026-09-27 Q3: "Give portal access" on a secondary kinfolk the primary
-    // added first fills the email (blank when none is on file) and the role
-    // with their name; the person id rides into the invite so the server links
-    // the two. The primary still sets the permissions with the toggles below.
-    LaunchedEffect(prefill) {
-        if (prefill != null) {
-            email = prefill.email
-            role = prefill.name.take(24)
-        }
-    }
     var canEditPets by remember { mutableStateOf(false) }
     var canAccessHome by remember { mutableStateOf(false) }
     var inviting by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
+    // 2026-09-27 Q3: "Give portal access" on a secondary kinfolk the primary
+    // added first fills the email (blank when none is on file); the person id
+    // rides into the invite so the server links the two. The primary still
+    // sets the permissions with the toggles below.
+    // #1323: the role is left empty. It used to be filled with the person's
+    // name, which is not a role, and a secondary kinfolk record has no
+    // relationship field to fill it from. A stale line from an earlier
+    // attempt is cleared too.
+    LaunchedEffect(prefill) {
+        if (prefill != null) {
+            email = prefill.email
+            role = ""
+            msg = null
+        }
+    }
+    // #1323: Cancel used to drop only the banner and left the email, role and
+    // the last error on the card.
+    val cancelPrefill = {
+        email = ""
+        role = ""
+        canEditPets = false
+        canAccessHome = false
+        msg = null
+        onClearPrefill()
+    }
+    val emailProblem = inviteEmailProblem(email)
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         contentPadding = PaddingValues(KinfolkSpacing.l),
@@ -1410,10 +1515,12 @@ private fun SecondaryInviteCard(
                         style = type.sansLabel.copy(color = KinfolkBrand.KinTeal),
                         modifier = Modifier.weight(1f),
                     )
-                    com.kinfolk.portal.components.KinGhostButton(label = "Clear", onClick = onClearPrefill)
+                    com.kinfolk.portal.components.KinGhostButton(label = "Cancel", onClick = cancelPrefill)
                 }
             }
-            KinField(value = email, onValueChange = { email = it }, label = "Email", fieldTestTag = "invite-email", modifier = Modifier.fillMaxWidth())
+            KinField(value = email, onValueChange = { email = it }, label = "Email", isError = emailProblem != null, fieldTestTag = "invite-email", modifier = Modifier.fillMaxWidth())
+            // #1326: Send Invite stays disabled on a bad address; say why.
+            emailProblem?.let { Text(it, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral)) }
             KinField(value = role, onValueChange = { role = it }, label = "Their role (e.g. Co-Parent, Sister)", fieldTestTag = "invite-role", modifier = Modifier.fillMaxWidth())
             AccessToggleRow(
                 label = "Can edit pets",
@@ -1456,13 +1563,14 @@ private fun SecondaryInviteCard(
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
-                            msg = "Invite failed: ${t.message ?: t}"
+                            // #1277: a missing backend setting never shows its name.
+                            msg = inviteFailureLine(t)
                         } finally {
                             inviting = false
                         }
                     }
                 },
-                enabled = !inviting && email.contains("@"),
+                enabled = !inviting && isInvitableEmail(email),
                 modifier = Modifier.fillMaxWidth(),
             )
             msg?.let { Text(it, style = type.sansLabel.copy(color = KinfolkBrand.KinTeal)) }

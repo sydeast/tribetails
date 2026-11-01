@@ -26,7 +26,12 @@ const { resolveAccess } = vi.hoisted(() => ({ resolveAccess: vi.fn() }));
 const { getAppCheckStatus } = vi.hoisted(() => ({ getAppCheckStatus: vi.fn(() => 'inactive') }));
 
 vi.mock('../lib/auth', () => ({ useAuth, signIn, signOutSilent, sendReset }));
-vi.mock('@tanstack/react-router', () => ({ useNavigate }));
+const { push, search } = vi.hoisted(() => ({ push: vi.fn(), search: { current: {} as Record<string, unknown> } }));
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate,
+  useSearch: () => search.current,
+  useRouter: () => ({ history: { push } }),
+}));
 vi.mock('../lib/access', () => ({ resolveAccess }));
 vi.mock('../lib/firebase', () => ({ auth: { name: 'test-auth' }, getAppCheckStatus }));
 vi.mock('firebase/auth', () => ({ signOut: vi.fn().mockResolvedValue(undefined) }));
@@ -44,6 +49,7 @@ const DENIED_MSG = 'This account does not have admin access.';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  search.current = {};
   resetRevokedSessionForTest();
   sessionStorage.clear();
   useAuth.mockReturnValue({ status: 'signedOut' });
@@ -216,5 +222,59 @@ describe('SignIn, denying a non-admin who is already signed in', () => {
       expect(sessionStorage.getItem(SIGN_IN_NOTICE_STORAGE_KEY)).toBeNull();
       view.unmount();
     }
+  });
+});
+
+/**
+ * #1384: an operator who opened an email deep link while signed out lands on
+ * that record after signing in, and a `redirect` that is not an in-app path is
+ * ignored rather than followed.
+ */
+describe('SignIn, landing after sign-in', () => {
+  function navigateMock() {
+    return useNavigate() as unknown as ReturnType<typeof vi.fn>;
+  }
+  async function submit() {
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'e2e-admin@tribetails.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw-not-real' } });
+    fireEvent.submit(screen.getByLabelText('Email').closest('form') as HTMLFormElement);
+    await waitFor(() => expect(navigateMock().mock.calls.length + push.mock.calls.length).toBe(1));
+  }
+  beforeEach(() => {
+    signIn.mockResolvedValue({ uid: 'admin-1' });
+    resolveAccess.mockResolvedValue({ status: 'admin' });
+  });
+  it('goes to Home when no redirect was carried', async () => {
+    render(<SignIn />);
+    await submit();
+    expect(navigateMock()).toHaveBeenCalledWith({ to: '/home' });
+    expect(push).not.toHaveBeenCalled();
+  });
+  it('lands on the carried deep link, search and all', async () => {
+    search.current = { redirect: '/directory/k1?section=unapplied-payments&paymentId=p1' };
+    render(<SignIn />);
+    await submit();
+    expect(push).toHaveBeenCalledWith('/directory/k1?section=unapplied-payments&paymentId=p1');
+    expect(navigateMock()).not.toHaveBeenCalled();
+  });
+  it.each([
+    'https://evil.example/home',
+    '//evil.example',
+    '/\\evil.example',
+    'javascript:alert(1)',
+    'invites/abc',
+    '/signin',
+  ])('ignores %s and goes to Home', async (bad) => {
+    search.current = { redirect: bad };
+    render(<SignIn />);
+    await submit();
+    expect(navigateMock()).toHaveBeenCalledWith({ to: '/home' });
+    expect(push).not.toHaveBeenCalled();
+  });
+  it('lands on the carried link when a session already exists on arrival (guard bounce)', async () => {
+    useAuth.mockReturnValue({ status: 'signedIn', user: { uid: 'admin-1' } });
+    search.current = { redirect: '/invites/inv_9' };
+    render(<SignIn />);
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/invites/inv_9'));
   });
 });
