@@ -2,6 +2,7 @@ import argon2 from 'argon2';
 import { db } from './firestoreAdmin';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
+import { mintShareUnlock, verifyShareUnlock } from './shareUnlock';
 
 /**
  * Shared "resolve a shared-KinTale link" lookup, extracted out of
@@ -45,6 +46,14 @@ export type ShareLinkResolution =
        * `getShareLink` is externally observed on and must keep byte-identical.
        */
       allowGuestComments: boolean;
+      /**
+       * #1280. Set only when THIS call verified a typed passcode against a
+       * passcode-protected share: a fresh unlock token the page stores in an
+       * HttpOnly cookie so the passcode never has to travel again. Null when
+       * the share has no passcode, or when an existing unlock token was what
+       * let the caller in.
+       */
+      unlockToken: string | null;
     }
   | {
       ok: false;
@@ -61,6 +70,12 @@ export type ShareLinkResolution =
 export async function resolveShareLink(
   shareId: string,
   passcode?: string,
+  /**
+   * #1280. Unlock tokens the caller already holds (the share page's
+   * `__session` cookie values). Any one that verifies stands in for the
+   * passcode. `getShareLink` passes none, so its behavior is unchanged.
+   */
+  unlockTokens: string[] = [],
 ): Promise<ShareLinkResolution> {
   const snap = await db().doc(`sharedKinTales/${shareId}`).get();
   if (!snap.exists) {
@@ -82,9 +97,18 @@ export async function resolveShareLink(
     });
     return { ok: false, status: 410, error: 'expired' };
   }
+  let unlockToken: string | null = null;
   if (data.passcodeHash) {
+    const hash = data.passcodeHash;
     const supplied = passcode ?? '';
-    if (!supplied || !(await argon2.verify(data.passcodeHash, supplied))) {
+    if (supplied) {
+      // A typed passcode is always checked, even beside a valid cookie, so a
+      // wrong guess is never reported as a success.
+      if (!(await argon2.verify(hash, supplied))) {
+        return { ok: false, status: 401, error: 'passcode-required' };
+      }
+      unlockToken = mintShareUnlock(shareId, hash);
+    } else if (!unlockTokens.some((t) => verifyShareUnlock(t, shareId, hash))) {
       return { ok: false, status: 401, error: 'passcode-required' };
     }
   }
@@ -100,5 +124,6 @@ export async function resolveShareLink(
     // same test `addGuestKinTaleComment` applies server-side, and the two must
     // not drift, or the page draws a form the callable will refuse.
     allowGuestComments: data.allowGuestComments !== false,
+    unlockToken,
   };
 }

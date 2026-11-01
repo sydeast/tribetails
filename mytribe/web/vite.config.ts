@@ -43,7 +43,11 @@ export default defineConfig({
         // The chunk is named for the package (mapbox-gl-<hash>.js, plus its
         // stylesheet); it is fetched the first time a visit actually has a
         // route, and the SVG polyline covers the case where that fetch fails.
-        globIgnores: ['**/__recorder.js', '**/mapbox-*.js', '**/mapbox-*.css'],
+        //
+        // share-assets/**: fonts for the public /share/<token> page, which a
+        // Cloud Function renders outside this app (#1278). No portal screen
+        // uses them, so they stay out of the precache.
+        globIgnores: ['**/__recorder.js', '**/mapbox-*.js', '**/mapbox-*.css', '**/share-assets/**'],
       },
       includeAssets: ['apple-touch-icon.png'],
       manifest: {
