@@ -325,3 +325,33 @@ describe('getMyBookingsHandler: visits awaiting a start time (#1098)', () => {
     expect(res.upcoming).toEqual([]);
   });
 });
+
+describe('getMyBookingsHandler: block-booked visits (#1301)', () => {
+  it('carries the window label and its current hours, null for a clock visit and for a removed window', async () => {
+    const at = Timestamp.fromMillis(Date.now() + 2 * 86_400_000);
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': {
+          allowTimeBlockBooking: true,
+          timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }],
+        },
+        'families/3/bookings/env-1': { envelopeStatus: 'confirmed', pattern: 'individual' },
+      },
+      collectionGroupDocs: {
+        kinCares: [
+          visit('env-1', 'blk', { status: 'confirmed', startTime: at, timeBlockId: 'midday', timeBlockLabel: 'Midday' }),
+          visit('env-1', 'gone', { status: 'confirmed', startTime: at, timeBlockId: 'brunch', timeBlockLabel: 'Brunch' }),
+          visit('env-1', 'clock', { status: 'confirmed', startTime: at, timeBlockId: null, timeBlockLabel: null }),
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const by = (id: string) => res.upcoming.find((b) => b.id === id)!;
+    expect(by('blk')).toMatchObject({ timeBlockLabel: 'Midday', timeBlockStartTime: '11:00', timeBlockEndTime: '15:00' });
+    expect(by('gone')).toMatchObject({ timeBlockLabel: 'Brunch', timeBlockStartTime: null, timeBlockEndTime: null });
+    expect(by('clock')).toMatchObject({ timeBlockLabel: null, timeBlockStartTime: null, timeBlockEndTime: null });
+  });
+});

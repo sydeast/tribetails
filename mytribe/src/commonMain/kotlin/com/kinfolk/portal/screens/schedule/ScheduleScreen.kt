@@ -51,6 +51,8 @@ import com.kinfolk.portal.portal.BookingStatus
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.label
+import com.kinfolk.portal.portal.pendingChangeLabel
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -413,9 +415,11 @@ private fun VisitRow(b: Booking, index: Int, onClick: (() -> Unit)? = null) {
             // pending state, so a declined ask clears it and needs its own
             // line. Otherwise the row goes quiet and the household never
             // learns from this screen that the visit is still on.
-            if (b.cancelRequested) {
+            val pendingChange = b.pendingChangeLabel()
+            if (pendingChange != null) {
+                // #1299: the cancellation or the new time, whichever is open.
                 Text(
-                    "Cancellation requested",
+                    pendingChange,
                     style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
                 )
             } else if (b.cancelRequestStatus == CancelRequestStatus.Declined) {
@@ -457,15 +461,16 @@ private fun EnvelopeRow(kinCares: List<Booking>, index: Int, onClick: () -> Unit
 
 @Composable
 private fun StatusChip(status: BookingStatus) {
-    val (label, color) = when (status) {
-        BookingStatus.Requested -> "REQUESTED" to KinfolkBrand.KinfolkOrange
-        BookingStatus.Confirmed -> "CONFIRMED" to KinfolkBrand.KinfolkOrange
-        BookingStatus.EnRoute -> "EN ROUTE" to KinfolkBrand.PackPink
-        BookingStatus.Active -> "ACTIVE" to KinfolkBrand.SnuggleCoral
-        BookingStatus.Completed -> "COMPLETED" to KinfolkBrand.FamilyPurple
-        BookingStatus.Cancelled -> "CANCELLED" to KinfolkBrand.NavyMuted
+    // #1298: the words come from BookingStatus.label(); only the colour is this screen's.
+    val color = when (status) {
+        BookingStatus.Requested -> KinfolkBrand.KinfolkOrange
+        BookingStatus.Confirmed -> KinfolkBrand.KinfolkOrange
+        BookingStatus.EnRoute -> KinfolkBrand.PackPink
+        BookingStatus.Active -> KinfolkBrand.SnuggleCoral
+        BookingStatus.Completed -> KinfolkBrand.FamilyPurple
+        BookingStatus.Cancelled -> KinfolkBrand.NavyMuted
     }
-    KinTintPill(label, color)
+    KinTintPill(status.label(), color)
 }
 
 // ---- Shared bits ----

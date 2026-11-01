@@ -516,21 +516,21 @@ describe('BookingWizard: #546/#547 the estimate follows the plan', () => {
     const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(TOMORROW);
     const date = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(TOMORROW);
     expect(screen.getByText(`${weekday}, ${date} at 9:00 AM`)).toBeInTheDocument();
-    expect(screen.getByText('$42.00')).toBeInTheDocument();
+    expect(screen.getAllByText('$42.00').length).toBeGreaterThan(0); // Review and, since #1300, the rail
   });
 
   /**
    * #547's third complaint: Review & Confirm and the Booking Summary rail were
    * on screen together, saying the same things twice.
    */
-  it('stands the summary rail down on Review, and shows it on every earlier step', async () => {
+  it('keeps the summary rail on every step including Review (#1300)', async () => {
     const user = userEvent.setup();
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
     expect(screen.getByText('Booking summary')).toBeInTheDocument();
     await pickDay(user, TOMORROW);
     await goToReview(user);
-    expect(screen.queryByText('Booking summary')).not.toBeInTheDocument();
+    expect(screen.getByText('Booking summary')).toBeInTheDocument();
   });
 });
 
@@ -882,8 +882,8 @@ describe('BookingWizard: time-block booking', () => {
 
     const select = (await screen.findByLabelText('1. Daily Visit')) as HTMLSelectElement;
     expect([...select.options].map((o) => o.textContent)).toEqual([
-      'Midday (11:00-15:00)',
-      'Evening (17:00-21:00)',
+      'Midday (11 AM to 3 PM)',
+      'Evening (5 PM to 9 PM)',
     ]);
     // A fresh KinCare lands in the first window rather than on "choose one".
     expect(select.value).toBe('midday');
@@ -918,7 +918,7 @@ describe('BookingWizard: time-block booking', () => {
     await pickDay(user, TOMORROW);
     await goToReview(user);
 
-    expect(screen.getByText(/, Midday \(11:00-15:00\)/)).toBeInTheDocument();
+    expect(screen.getByText(/, Midday \(11 AM to 3 PM\)/)).toBeInTheDocument();
   });
 
   it('two KinCares in one block are two visits, not a duplicate', async () => {
@@ -1125,7 +1125,7 @@ describe('BookingWizard: a night-only KinCare (#1098)', () => {
     await pickDay(user, TOMORROW);
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
     await goToReview(user);
-    expect(screen.getByText(/, Midday \(11:00-15:00\)/)).toBeInTheDocument();
+    expect(screen.getByText(/, Midday \(11 AM to 3 PM\)/)).toBeInTheDocument();
     expect(screen.getByText(/, start time set by your Auntie$/)).toBeInTheDocument();
     expect(screen.queryByText(/ at \d/)).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
@@ -1233,7 +1233,7 @@ describe('BookingWizard: #1037 visit prices are billing information', () => {
     assertNoMoney();
     await goToReview(user);
     assertNoMoney();
-    expect(screen.getByText('KinCare')).toBeInTheDocument();
+    expect(screen.getAllByText('KinCare').length).toBeGreaterThan(0);
   });
   it('a member without billing access still books, sending a null price the server ignores', async () => {
     getServiceCatalog.mockResolvedValue({ services: [strip(SERVICE_A)], pricesVisible: false });
@@ -1263,6 +1263,44 @@ describe('BookingWizard: #1037 visit prices are billing information', () => {
   });
 });
 
+describe('BookingWizard: #1300 / #1302 step behaviour', () => {
+  it('scrolls the stepper into view on each step change, not on open', async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    expect(scroll).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Choose KinCare Duration');
+    expect(scroll).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(scroll).toHaveBeenCalledTimes(2);
+  });
+  it('names the chosen Kin in the summary instead of counting them', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    await user.click(screen.getByRole('button', { name: /Choose specific Kin/ }));
+    await user.click(screen.getByText('Buddy'));
+    await user.click(screen.getByText('Willow'));
+    const rail = screen.getByText('Booking summary').closest('section')!;
+    expect(rail).toHaveTextContent('Buddy, Willow');
+    expect(rail).not.toHaveTextContent('2 chosen');
+  });
+  it('styles the note helper as a neutral hint, not an error', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '09:00');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    const hint = await screen.findByText('This note will be highlighted for Auntie during the visit.');
+    expect(hint).toHaveClass('hint');
+    expect(hint.getAttribute('style') ?? '').not.toMatch(/coral|red/);
+  });
+});
+
 /**
  * #1281: Create Booking landed on a Schedule that said "No upcoming bookings"
  * for about five seconds, and a second press really booked twice because the
@@ -1275,7 +1313,8 @@ describe('BookingWizard: #1281 after a successful Create Booking', () => {
     return {
       id: 'v-new', batchId: 'batch-1', kinfolkId: 'fam1', status: 'requested', serviceType: 'Daily Visit', serviceId: null,
       title: 'Daily Visit', startTimeMs: visitMs(TOMORROW, 9, 0), endTimeMs: null, startTimePending: false,
-      requestedDate: null, kinIds: ['k1'], kinNames: ['Buddy'], auntieDisplayName: null, auntieAvatarUrl: null,
+      requestedDate: null, timeBlockLabel: null, timeBlockStartTime: null, timeBlockEndTime: null,
+      kinIds: ['k1'], kinNames: ['Buddy'], auntieDisplayName: null, auntieAvatarUrl: null,
       notes: null, requestedByUid: 'u1', createdAtMs: null, updatedAtMs: null, visitProgress: null,
       sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null,
       cancelRequestReason: null, cancelResponseNote: null, rescheduleRequestStatus: null,

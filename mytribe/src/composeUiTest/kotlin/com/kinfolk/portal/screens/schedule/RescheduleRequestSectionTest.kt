@@ -384,7 +384,7 @@ class RescheduleRequestSectionTest {
         onNodeWithTag("rescheduleTime").assertDoesNotExist()
         onNodeWithText("20").performScrollTo().performClick()
         waitForIdle()
-        onNodeWithText("Afternoon (12:00-17:00)").performScrollTo().performClick()
+        onNodeWithText("Afternoon (12 PM to 5 PM)").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
         waitForIdle()

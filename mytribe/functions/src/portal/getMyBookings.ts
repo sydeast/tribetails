@@ -14,6 +14,7 @@ import {
   EnvelopeDtoSchema,
   envelopeToDto,
   kinCareToDto,
+  loadBlocksById,
   stringOrNull,
   visitSortMs,
   resolveBatchId,
@@ -59,13 +60,14 @@ export async function getMyBookingsHandler(
     .where('familyId', '==', kinfolkId)
     .get();
 
+  const blocksById = await loadBlocksById(firestore);
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
   const byBatch = new Map<string, BookingDto[]>();
   const all: BookingDto[] = snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>;
     const batchId = resolveBatchId(d, data);
-    const dto = kinCareToDto(d.id, data, batchId, kinfolkId);
+    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, blocksById);
     if (batchId) {
       const bucket = byBatch.get(batchId) ?? [];
       bucket.push(dto);
@@ -124,6 +126,9 @@ export async function getMyBookingsHandler(
       // A session always has its time; only a kinCares visit can await one.
       startTimePending: false,
       requestedDate: null,
+      timeBlockLabel: null,
+      timeBlockStartTime: null,
+      timeBlockEndTime: null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
       kinNames: [],
       auntieDisplayName: null,

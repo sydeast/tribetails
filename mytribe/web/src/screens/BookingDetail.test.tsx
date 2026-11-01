@@ -61,7 +61,11 @@ vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOu
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('@tanstack/react-router', () => ({
   useParams: () => ({ visitId: 'v1' }),
-  Link: ({ children }: { children?: ReactNode }) => <a>{children}</a>,
+  Link: ({ children, search }: { children?: ReactNode; search?: unknown }) => (
+    <a href="#" data-search={JSON.stringify(search ?? null)}>
+      {children}
+    </a>
+  ),
 }));
 
 function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
@@ -97,6 +101,9 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleResponseNote: null,
     startTimePending: false,
     requestedDate: null,
+    timeBlockLabel: null,
+    timeBlockStartTime: null,
+    timeBlockEndTime: null,
     ...overrides,
   };
 }
@@ -626,6 +633,30 @@ describe('BookingDetail: reschedule request', () => {
     expect(banner.textContent).toMatch(/new time requested/i);
     expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
   });
+  it('#1299: offers no cancellation while a new time is waiting, and says when it will', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({ upcoming: [booking({ rescheduleRequestStatus: 'pending' })] }),
+    );
+    renderScreen();
+    await screen.findByTestId('reschedule-pending');
+    expect(screen.queryByRole('button', { name: /request cancellation/i })).toBeNull();
+    expect(screen.getByTestId('cancel-held').textContent).toMatch(/once Tribe Tails answers your new time/i);
+  });
+  it('#1299: offers no new time while a cancellation is waiting', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({ upcoming: [booking({ cancelRequested: true, cancelRequestStatus: 'pending' })] }),
+    );
+    renderScreen();
+    await screen.findByTestId('cancel-pending');
+    expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
+  });
+  it('#1298: a requested visit shows REQUESTED in the badge and a clock, not a green check, on the Status tile', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'requested' })] }));
+    renderScreen();
+    await screen.findByText('REQUESTED');
+    expect(screen.queryByText('\u2705')).toBeNull();
+    expect(screen.getByText('\u{1F552}')).toBeInTheDocument();
+  });
   it('renders the accepted answer', async () => {
     const accepted = booking({
       rescheduleRequestStatus: 'accepted',
@@ -755,5 +786,17 @@ describe('BookingDetail: #1281 the ask shows the moment it resolves', () => {
     expect(screen.getByRole('button', { name: /Sending/ })).toBeDisabled();
     answer(bookingsResult({ upcoming: [booking({ cancelRequested: true, cancelRequestStatus: 'pending' })] }));
     expect(await screen.findByText(/Cancellation requested/)).toBeInTheDocument();
+  });
+});
+
+describe('BookingDetail: back to the tab the visit lives in (#1304)', () => {
+  it('names Past Visits from a completed visit and the default tab from an upcoming one', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [booking({ status: 'completed' })] }));
+    const { unmount } = renderScreen();
+    expect(await screen.findByRole('link', { name: /Back to Schedule/ })).toHaveAttribute('data-search', JSON.stringify({ tab: 'past' }));
+    unmount();
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    expect(await screen.findByRole('link', { name: /Back to Schedule/ })).toHaveAttribute('data-search', JSON.stringify({}));
   });
 });

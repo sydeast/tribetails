@@ -112,3 +112,40 @@ describe('getBusinessClosures: weekly hours (#1284)', () => {
     expect(res.timeZone).toBe('America/Chicago');
   });
 });
+
+/** #1301: days the operator leaves with no hours are closed days too, read off the same settings doc. */
+describe('getBusinessClosures: weekly days off (#1301)', () => {
+  const HOURS = {
+    Monday: '08:00-18:00', Tuesday: '08:00-18:00', Wednesday: '08:00-18:00', Thursday: '08:00-18:00',
+    Friday: '08:00-18:00', Saturday: '09:00-13:00', Sunday: '',
+  };
+  async function run(settings: Record<string, unknown> | null) {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({ docs: settings ? { 'business_settings/business_settings': settings } : {} }).db,
+    );
+    return getBusinessClosuresHandler(req({ fromDate: '2026-09-01', toDate: '2026-09-14' }));
+  }
+  it('closes every blank weekday in the range', async () => {
+    const res = await run({ businessHours: HOURS });
+    expect(res.closures).toEqual([
+      { date: '2026-09-06', name: 'Sundays' },
+      { date: '2026-09-13', name: 'Sundays' },
+    ]);
+  });
+  it('lets a company holiday keep its own name on a day off', async () => {
+    const res = await run({ businessHours: HOURS, companyHolidays: ['2026-09-06|Owner away'] });
+    expect(res.closures[0]).toEqual({ date: '2026-09-06', name: 'Owner away' });
+    expect(res.closures).toHaveLength(2);
+  });
+  it('invents nothing: no map, a missing key, or unreadable hours close nothing', async () => {
+    expect((await run({})).closures).toEqual([]);
+    expect((await run(null)).closures).toEqual([]);
+    const { Sunday: _s, ...noSunday } = HOURS;
+    expect((await run({ businessHours: noSunday })).closures).toEqual([]);
+    expect((await run({ businessHours: { ...HOURS, Sunday: 'by appointment' } })).closures).toEqual([]);
+  });
+  it('skips a date with special hours, because the weekly pattern is wrong for it', async () => {
+    const res = await run({ businessHours: HOURS, specialHours: ['2026-09-06|10-2'] });
+    expect(res.closures).toEqual([{ date: '2026-09-13', name: 'Sundays' }]);
+  });
+});

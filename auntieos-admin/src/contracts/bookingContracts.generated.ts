@@ -222,6 +222,9 @@ export interface GetMyBookingsResultLiveVisit {
   endTimeMs: number | null;
   startTimePending: boolean;
   requestedDate: string | null;
+  timeBlockLabel: string | null;
+  timeBlockStartTime: string | null;
+  timeBlockEndTime: string | null;
   kinIds: string[];
   kinNames: string[];
   auntieDisplayName: string | null;

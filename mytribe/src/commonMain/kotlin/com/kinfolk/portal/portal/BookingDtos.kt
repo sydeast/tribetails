@@ -66,6 +66,15 @@ data class Booking(
     /** #1098: the night asked for, `YYYY-MM-DD`, or null. */
     val requestedDate: String? = null,
     /**
+     * #1301: the named window this visit was booked into ("Midday"), or null
+     * for a by-the-clock visit. [timeBlockStartTime] / [timeBlockEndTime] are
+     * the window's `HH:MM` bounds, null when the window has since been removed
+     * or an older server omits them.
+     */
+    val timeBlockLabel: String? = null,
+    val timeBlockStartTime: String? = null,
+    val timeBlockEndTime: String? = null,
+    /**
      * #1284: the catalog service this visit was booked as, so the reschedule
      * form can tell a start-time KinCare (booked by the clock whatever the
      * block switches say) from one that rides a time block. Null from an older
@@ -143,8 +152,38 @@ data class RescheduleRequestResult(
 fun Booking.isAwaitingVisit(): Boolean =
     status == BookingStatus.Requested || status == BookingStatus.Confirmed
 
-/** True when the kinfolk can still ask to cancel: upcoming and no ask pending. */
-fun Booking.canRequestCancellation(): Boolean = isAwaitingVisit() && !cancelRequested
+/**
+ * #1298: the one wording of a booking's status, for the list pill, the Home
+ * pill and the detail badge alike. The web portal's `bookingStatusChip` says
+ * the same six words, so one booking reads the same on every screen of both
+ * clients. Callers pick their own colour; none picks its own words.
+ */
+fun BookingStatus.label(): String = when (this) {
+    BookingStatus.Requested -> "REQUESTED"
+    BookingStatus.Confirmed -> "CONFIRMED"
+    BookingStatus.EnRoute -> "EN ROUTE"
+    BookingStatus.Active -> "IN PROGRESS"
+    BookingStatus.Completed -> "COMPLETED"
+    BookingStatus.Cancelled -> "CANCELLED"
+}
+/**
+ * #1299: a change the household asked for that the office has not ruled on.
+ * The server now refuses a second ask while one is open, so a visit carries
+ * one at most; a visit written before that rule can carry both, and the
+ * cancellation is the one named because it ends the visit.
+ */
+fun Booking.pendingChangeLabel(): String? = when {
+    cancelRequested || cancelRequestStatus == CancelRequestStatus.Pending -> "Cancellation requested"
+    rescheduleRequestStatus == RescheduleRequestStatus.Pending -> "New time requested"
+    else -> null
+}
+/**
+ * True when the kinfolk can still ask to cancel: upcoming, no cancellation ask
+ * pending, and (#1299) no new time waiting. The server refuses the ask in that
+ * last case, so the control is not offered to fail.
+ */
+fun Booking.canRequestCancellation(): Boolean =
+    isAwaitingVisit() && !cancelRequested && rescheduleRequestStatus != RescheduleRequestStatus.Pending
 
 /**
  * True when the kinfolk can propose a new time for this visit.
@@ -161,7 +200,10 @@ fun Booking.canRequestReschedule(): Boolean =
     isAwaitingVisit() &&
         batchId != null &&
         !startTimePending &&
-        rescheduleRequestStatus != RescheduleRequestStatus.Pending
+        rescheduleRequestStatus != RescheduleRequestStatus.Pending &&
+        // #1299: the server refuses a new time while a cancellation is waiting.
+        !cancelRequested &&
+        cancelRequestStatus != CancelRequestStatus.Pending
 /**
  * #1098: an upcoming night still waiting for the Auntie to set its start. It
  * cannot be rescheduled yet (`requestBookingReschedule` refuses it), so the

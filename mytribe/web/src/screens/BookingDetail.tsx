@@ -19,6 +19,7 @@ import {
   auntieName,
   BOOKING_TIMELINE_STEPS,
   bookingStatusChip,
+  bookingStatusIcon,
   bookingTimelineIndex,
   bookingSubtitle,
   findBookingById,
@@ -208,7 +209,13 @@ export function BookingDetail() {
   // `cancelRequested` means an ask is PENDING, not "was ever asked". A declined
   // ask therefore reopens the button, which is the point: the household can ask
   // again with new information rather than being stuck behind a banner.
-  const canRequestCancel = canAct && !found.cancelRequested && (found.status === 'requested' || found.status === 'confirmed');
+  const canRequestCancel =
+    canAct &&
+    !found.cancelRequested &&
+    // #1299: the server refuses a cancellation while a new time is waiting
+    // (and the reverse), so the control is not offered to fail.
+    found.rescheduleRequestStatus !== 'pending' &&
+    (found.status === 'requested' || found.status === 'confirmed');
   // Same window as a cancellation ask, and for the same reason: a visit that is
   // under way or finished is not moved by asking. A pending ask is handled
   // above this flag, by the branch that renders the waiting state instead.
@@ -221,6 +228,7 @@ export function BookingDetail() {
     canAct &&
     !awaitingStartTime &&
     found.rescheduleRequestStatus !== 'pending' &&
+    found.cancelRequestStatus !== 'pending' &&
     (found.status === 'requested' || found.status === 'confirmed');
   const proposedLabel =
     found.rescheduleRequestedStartTimeMs !== null
@@ -252,7 +260,9 @@ export function BookingDetail() {
 
       <div className="wrap">
         <div className="crumbrow">
-          <Link className="backlink" to="/schedule">
+          {/* #1304: back lands on the tab this visit lives in, so a past visit
+              returns to Past Visits and not to the default tab. */}
+          <Link className="backlink" to="/schedule" search={found.status === 'completed' || found.status === 'cancelled' ? { tab: 'past' } : {}}>
             {'←'} Back to Schedule
           </Link>
         </div>
@@ -317,7 +327,7 @@ export function BookingDetail() {
                   </div>
                 </div>
                 <div className="bk-field f4">
-                  <div className="ic">{'✅'}</div>
+                  <div className="ic">{bookingStatusIcon(found.status)}</div>
                   <div>
                     <div className="lab">Status</div>
                     <div className="val">{chip.label.charAt(0) + chip.label.slice(1).toLowerCase()}</div>
@@ -598,6 +608,10 @@ export function BookingDetail() {
                         {'✕'} {found.cancelRequestStatus === 'declined' ? 'Ask again' : 'Request cancellation'}
                       </button>
                     )
+                  ) : found.rescheduleRequestStatus === 'pending' && canAct ? (
+                    <p className="sub" style={{ margin: 0 }} data-testid="cancel-held">
+                      You can ask to cancel once Tribe Tails answers your new time.
+                    </p>
                   ) : null}
                   </>
                 )}
