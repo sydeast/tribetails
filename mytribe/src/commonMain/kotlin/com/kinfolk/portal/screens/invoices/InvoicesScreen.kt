@@ -31,7 +31,6 @@ import androidx.compose.ui.unit.sp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinCalendarBadge
-import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinTintPill
 import com.kinfolk.portal.components.ScreenHeader
@@ -417,18 +416,6 @@ private fun CreditEntry(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !redeeming,
             )
-            KinGhostButton(
-                label = "Return to Original Payment Method",
-                onClick = { onRedeem(CreditTarget.OriginalPaymentMethod) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !redeeming && !invoice.originalPaymentIntentId.isNullOrBlank(),
-            )
-            if (invoice.originalPaymentIntentId.isNullOrBlank()) {
-                Text(
-                    "Original card not on file. Only Account Balance is available.",
-                    style = type.sansMeta,
-                )
-            }
         }
     }
 }

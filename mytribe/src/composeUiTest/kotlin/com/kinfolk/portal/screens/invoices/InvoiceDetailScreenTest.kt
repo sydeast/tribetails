@@ -44,6 +44,30 @@ class InvoiceDetailScreenTest {
         originalPaymentIntentId = null,
     )
 
+    private fun androidx.compose.ui.test.ComposeUiTest.assertCreditOffersAccountBalanceOnly(pi: String?) {
+        val credit = openInvoice().copy(
+            status = InvoiceStatus.Credit,
+            creditAmountCents = 2500L,
+            originalPaymentIntentId = pi,
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", credit, onBack = {}, onRedeem = {})
+        }
+        waitForIdle()
+        onNodeWithText("Save to Account Balance").assertIsDisplayed()
+        onNodeWithText("Return to Original Payment Method").assertDoesNotExist()
+        onNodeWithText("Original card not on file. Only Account Balance is available.").assertDoesNotExist()
+    }
+    // #1338: the server refuses the card target (no-refunds ruling), so the
+    // panel offers Account Balance and nothing else, with or without a PI.
+    @Test
+    fun unspentCreditWithPi_offersNoCardRefund() = runComposeUiTest {
+        assertCreditOffersAccountBalanceOnly("pi_123")
+    }
+    @Test
+    fun unspentCreditWithoutPi_offersNoCardRefundAndNoHint() = runComposeUiTest {
+        assertCreditOffersAccountBalanceOnly(null)
+    }
     @Test
     fun status_rendersFriendlyLabelNotEnumName() = runComposeUiTest {
         setThemedContent {

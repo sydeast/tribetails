@@ -219,7 +219,6 @@ fun InvoiceDetailScreen(
         // already been spent must never be offered for spending again.
         if (invoice.status == InvoiceStatus.Credit && invoice.creditRedeemedAtMs == null) {
             CreditRedeemPanel(
-                hasOriginalPi = !invoice.originalPaymentIntentId.isNullOrBlank(),
                 redeeming = redeeming,
                 onRedeem = onRedeem,
             )
@@ -312,7 +311,6 @@ private fun QuoteDecisionPanel(
 }
 @Composable
 private fun CreditRedeemPanel(
-    hasOriginalPi: Boolean,
     redeeming: Boolean,
     onRedeem: (CreditTarget) -> Unit,
 ) {
@@ -324,7 +322,7 @@ private fun CreditRedeemPanel(
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             Text("Redeem Credit", style = type.heritageTitle)
             Text(
-                "Choose how you'd like to receive this credit. Account Balance applies to your next invoice automatically.",
+                "Account Balance applies to your next invoice automatically.",
                 style = type.sansBody,
             )
             Button(
@@ -336,18 +334,6 @@ private fun CreditRedeemPanel(
                 ),
                 enabled = !redeeming,
             ) { Text(if (redeeming) "Working…" else "Save to Account Balance") }
-            KinGhostButton(
-                label = "Return to Original Payment Method",
-                onClick = { onRedeem(CreditTarget.OriginalPaymentMethod) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !redeeming && hasOriginalPi,
-            )
-            if (!hasOriginalPi) {
-                Text(
-                    "Original card not on file. Only Account Balance is available.",
-                    style = type.sansMeta,
-                )
-            }
         }
     }
 }
