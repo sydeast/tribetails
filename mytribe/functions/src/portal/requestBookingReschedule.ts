@@ -11,6 +11,7 @@ import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { validateResponse } from '../lib/callableResponse';
+import { BookingDtoSchema, readVisitDto } from '../lib/portalBookingDto';
 
 /**
  * A kinfolk PROPOSES a new time for a visit (issue #399, item 2).
@@ -61,6 +62,14 @@ export const Result = z
     /** Echoes what was recorded, so no client has to trust its own arithmetic. */
     proposedStartTimeMs: z.number().int(),
     proposedEndTimeMs: z.number().int().nullable(),
+    /**
+     * #1281: the visit as stored after this call, in exactly the shape
+     * `getMyBookings` lists it, so a client can write it into its bookings
+     * cache the moment this resolves rather than showing the pre-save visit
+     * until a refetch lands. Null when the read-back failed; the request still
+     * committed, and the client falls back to refetching.
+     */
+    visit: BookingDtoSchema.nullable(),
   })
   .strict();
 
@@ -208,6 +217,7 @@ export async function requestBookingRescheduleHandler(
     visitId: args.visitId,
     proposedStartTimeMs: args.proposedStartTimeMs,
     proposedEndTimeMs: proposedEndMs,
+    visit: await readVisitDto(db(), kinfolkId, args.batchId, args.visitId),
   });
 }
 

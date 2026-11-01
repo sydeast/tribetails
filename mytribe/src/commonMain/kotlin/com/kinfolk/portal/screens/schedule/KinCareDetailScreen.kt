@@ -196,7 +196,7 @@ fun KinCareDetailScreen(
                             rescheduleSending = true
                             rescheduleError = null
                             try {
-                                portalApi.requestBookingReschedule(
+                                val res = portalApi.requestBookingReschedule(
                                     batchId = batchId,
                                     visitId = b.id,
                                     proposedStartTimeMs = proposedStartMs,
@@ -204,7 +204,11 @@ fun KinCareDetailScreen(
                                     kinfolkId = kinfolkId,
                                 )
                                 reschedulePendingLocal = true
-                                reload()
+                                // #1281: the server's own copy of the visit,
+                                // shown at once. Without it, "Sending..." stays
+                                // up through a fresh read instead.
+                                val stored = res.visit
+                                if (stored != null) kinCare = stored else reload()
                             } catch (c: CancellationException) {
                                 throw c
                             } catch (t: Throwable) {
@@ -228,14 +232,16 @@ fun KinCareDetailScreen(
                             try {
                                 // alreadyPending=true is still success: the ask
                                 // is on file either way, so render pending.
-                                portalApi.requestBookingCancellation(
+                                val res = portalApi.requestBookingCancellation(
                                     batchId = b.batchId ?: b.id,
                                     visitId = b.id,
                                     reason = reason,
                                     kinfolkId = kinfolkId,
                                 )
                                 cancelPendingLocal = true
-                                reload()
+                                // #1281: same as the reschedule ask above.
+                                val stored = res.visit
+                                if (stored != null) kinCare = stored else reload()
                             } catch (c: CancellationException) {
                                 throw c
                             } catch (t: Throwable) {

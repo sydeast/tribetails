@@ -19,6 +19,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.navigation
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navDeepLink
 import androidx.navigation.toRoute
@@ -49,6 +50,7 @@ import com.kinfolk.portal.screens.notifications.NotificationSettingsScreen
 import com.kinfolk.portal.screens.schedule.BookingEnvelopeScreen
 import com.kinfolk.portal.screens.schedule.BookingWizardScreen
 import com.kinfolk.portal.screens.schedule.KinCareDetailScreen
+import com.kinfolk.portal.screens.schedule.ScheduleHandoff
 import com.kinfolk.portal.screens.schedule.ScheduleScreen
 import com.kinfolk.portal.screens.tribe.TribeHubScreen
 import com.kinfolk.portal.screens.tribe.TribeScreen
@@ -172,6 +174,9 @@ fun AppNavHost(
         }
     }
 
+    // #1281: lives above the NavHost, so it outlasts the wizard's destination
+    // and reaches Schedule's. See ScheduleHandoff.
+    var scheduleHandoff by remember { mutableStateOf<ScheduleHandoff?>(null) }
     NavHost(navController = navController, startDestination = startRoute) {
         // ---- Pre-shell funnel ----
         composable<SignInRoute> {
@@ -301,6 +306,8 @@ fun AppNavHost(
                             onOpenRecurring = { navController.navigate(BookingWizardRoute(startWeekly = true)) },
                             onOpenMessageAuntie = { navController.navigate(MessageAuntieRoute) },
                             reloadSignal = reloadSignal,
+                            handoff = scheduleHandoff,
+                            onHandoffTaken = { scheduleHandoff = null },
                         )
                     }
                 }
@@ -518,7 +525,14 @@ fun AppNavHost(
                             kinfolkId = kinId,
                             portalApi = portalApi,
                             onClose = { navController.popBackStack() },
-                            onComplete = {
+                            onComplete = { fresh ->
+                                // Only when Schedule is what the pop returns
+                                // to. From Home the wizard pops back to Home,
+                                // and a handoff left waiting would surface on
+                                // some later visit to Schedule, out of context.
+                                if (navController.previousBackStackEntry?.destination?.hasRoute(ScheduleRoute::class) == true) {
+                                    scheduleHandoff = ScheduleHandoff(bookings = fresh, notice = "Booking requested")
+                                }
                                 markScheduleDirty(navController)
                                 navController.popBackStack()
                             },

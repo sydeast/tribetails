@@ -88,7 +88,7 @@ describe('WARNING-27: onFamilyKinWrite pets.updated suppression', () => {
       status: 'active',
     };
     // A non-parent-owned field changed (no _mirrorOrigin), parent sees nothing new.
-    const after = { ...before, weight: '20kg' };
+    const after = { ...before, routine: 'out at 7' };
     await (onFamilyKinWrite as any).run(makeEvent(before, after));
 
     expect(

@@ -2152,9 +2152,16 @@ the handler.
   it; addresses come from the household doc and are read live from it. Neither
   parsing schema is `.strict()`, so a cached client still sending the key has
   it stripped rather than being refused.
-- res `{ batchId: string, bookingIds: string[], bookingId: string }`. Both
-  write paths return this identical shape; `bookingId` is always `batchId`
-  (kept as a legacy alias, no caller has ever seen it absent).
+- res `{ batchId: string, bookingIds: string[], bookingId: string, envelope: EnvelopeDto | null }`.
+  Both write paths return this identical shape; `bookingId` is always
+  `batchId` (kept as a legacy alias, no caller has ever seen it absent).
+- `envelope` (#1281) is the envelope and its visits read back after the write
+  (after auto-confirm, so a confirmed booking comes back confirmed), in the
+  exact shape `getMyBookings` lists it (`lib/portalBookingDto.ts`). A replayed
+  idempotency key returns what the first attempt stored. Clients write it into
+  their bookings cache so the new booking shows the moment the call resolves.
+  Null when the read-back failed; the booking still committed and the client
+  refetches instead.
 - Writes ONE parent `families/{kinfolkId}/bookings/{batchId}` envelope plus
   one `kinCares/{visitId}` per visit, in a transaction. `priceCents` and
   `serviceName` in the response's underlying doc are resolved SERVER-SIDE
@@ -2167,7 +2174,9 @@ the handler.
 
 ### requestBookingCancellation
 - req `{ kinfolkId?: string, batchId: string, visitId: string, reason?: string }`
-- res `{ ok: true, visitId: string, alreadyPending: boolean }`
+- res `{ ok: true, visitId: string, alreadyPending: boolean, visit: BookingDto | null }`.
+  `visit` (#1281) is the visit read back after the write, in the `getMyBookings`
+  shape, for the client to write into its cache; null if the read-back failed.
 - Vendor-parity (2026-07-02): NOT a status change. Stamps
   `cancelRequestedAt`/`cancelRequestReason`/`cancelRequestedByUid` plus (since
   #438) `cancelRequestStatus: 'pending'` on the visit; only the business
@@ -2186,7 +2195,8 @@ the handler.
 
 - req `{ kinfolkId?: string, batchId: string, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs?: number, reason?: string }`
   (`proposedStartTimeMs` is an integer epoch-ms in the future and at most a year out)
-- res `{ ok: true, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs: number | null }`
+- res `{ ok: true, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs: number | null, visit: BookingDto | null }`.
+  `visit` (#1281): same read-back as `requestBookingCancellation`.
 - #399 item 2, and the same kind of thing as the cancellation ask above: a
   PROPOSAL, not a move. Stamps `rescheduleRequestedAt` /
   `rescheduleRequestedByUid` / `rescheduleRequestReason` /

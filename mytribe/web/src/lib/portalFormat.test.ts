@@ -97,6 +97,12 @@ describe('speciesEmoji', () => {
     expect(speciesEmoji('Cat')).toBe('\u{1F431}');
   });
 
+  it('reads the picker spellings, so Small mammal and Rabbit keep their icons (#1313)', () => {
+    expect(speciesEmoji('Small mammal')).toBe('\u{1F439}');
+    expect(speciesEmoji('Small Animal')).toBe('\u{1F439}');
+    expect(speciesEmoji(' Rabbit ')).toBe('\u{1F430}');
+    expect(speciesEmoji('Reptile')).toBe('\u{1F98E}');
+  });
   it('falls back to a paw print for unknown/null species', () => {
     expect(speciesEmoji('betta fish')).toBe('\u{1F43E}');
     expect(speciesEmoji(null)).toBe('\u{1F43E}');

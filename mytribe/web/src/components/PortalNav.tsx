@@ -5,6 +5,7 @@ import { useAccessState, getActiveKinfolkId } from '../lib/activeTribe';
 import { getMyHome } from '../api/portal';
 import { BrandLogo } from './BrandLogo';
 import { billingAccessOf } from '../lib/billingAccess';
+import { SaveNoticeLine } from './SaveNotice';
 
 export type PortalNavTab = 'home' | 'tribe' | 'schedule' | 'kintales' | 'invoices' | 'account' | 'messages';
 
@@ -125,6 +126,7 @@ export function PortalNav(props: { active: PortalNavTab; displayName?: string })
           </div>
         </div>
       </nav>
+      <SaveNoticeLine />
 
       <nav className="tabbar">
         {TAB_ITEMS.map((tab) =>

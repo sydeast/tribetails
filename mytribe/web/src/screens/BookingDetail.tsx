@@ -11,6 +11,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { applyBookingWrite } from '../lib/bookingsCache';
 import { viewOfQuery } from '../lib/queryState';
 import {
   auntieName,
@@ -88,8 +89,13 @@ export function BookingDetail() {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be cancelled here.');
       return requestBookingCancellation(found.kinfolkId, found.batchId, found.id, reason);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myBookings', kinfolkId] });
+    // #1281: the panel used to close here while the visit underneath still
+    // showed its pre-ask state for 10s+. The server's copy of the visit goes
+    // into the cache first (or, without one, a fresh list is awaited), so
+    // "Cancellation requested" is on screen when the panel closes and the
+    // button stays on its busy label until then.
+    onSuccess: async (res) => {
+      await applyBookingWrite(queryClient, kinfolkId, { visit: res.visit ?? null });
       setConfirmingCancel(false);
       setCancelReason('');
     },
@@ -104,8 +110,10 @@ export function BookingDetail() {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be moved here.');
       return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, proposedStartTimeMs, rescheduleReason);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myBookings', kinfolkId] });
+    // #1281: same as the cancellation ask above. "New time requested for …"
+    // is drawn from the cached visit, so it shows the moment the panel closes.
+    onSuccess: async (res) => {
+      await applyBookingWrite(queryClient, kinfolkId, { visit: res.visit ?? null });
       setProposingReschedule(false);
       setProposedAt('');
       setRescheduleReason('');
