@@ -33,6 +33,17 @@ const KinPayload = z.object({
   emergencyNotes: z.string().max(2000).nullable().optional(),
   sitterNotes: z.string().max(2000).nullable().optional(),
   legacyKinId: z.string().max(40).nullable().optional(),
+  // Descriptive fields the admin also persists on the pet (the AuntieOS `Kin`
+  // model: sex, weight, colorMarkings, spayedNeutered, vetInfo). The household
+  // owns them too (kinMirror.ts HOUSEHOLD_SHARED_FIELDS). They are NOT
+  // nullable on purpose: the admin Android model declares them non-null
+  // `String` / `Boolean`, and a null written here crashes its toObject()
+  // decode. An empty string is how a household clears one.
+  sex: z.string().max(40).optional(),
+  weight: z.string().max(40).optional(),
+  colorMarkings: z.string().max(200).optional(),
+  spayedNeutered: z.boolean().optional(),
+  vetInfo: z.string().max(2000).optional(),
 });
 
 const AddArgs = z.object({

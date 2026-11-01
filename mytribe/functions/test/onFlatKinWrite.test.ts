@@ -17,6 +17,8 @@ import {
   MIRROR_ORIGIN_FLAT,
   PARENT_OWNED_FIELDS,
   STAFF_EDITABLE_FIELDS,
+  HOUSEHOLD_SHARED_FIELDS,
+  FLAT_MIRROR_FIELDS,
   omitKeys,
 } from '../src/triggers/kinMirror';
 
@@ -174,6 +176,14 @@ describe('kinMirror field-ownership contract', () => {
     expect(STAFF_EDITABLE_FIELDS).not.toContain('status');
   });
 
+  it('household-shared fields travel both ways and are owned by neither side exclusively (#1310)', () => {
+    for (const f of HOUSEHOLD_SHARED_FIELDS) {
+      expect(STAFF_EDITABLE_FIELDS).toContain(f);
+      expect(FLAT_MIRROR_FIELDS).toContain(f);
+      expect(PARENT_OWNED_FIELDS).not.toContain(f);
+    }
+    expect([...HOUSEHOLD_SHARED_FIELDS].sort()).toEqual(['colorMarkings', 'sex', 'spayedNeutered', 'vetInfo', 'weight']);
+  });
   it('keeps the two ownership lists disjoint', () => {
     const overlap = PARENT_OWNED_FIELDS.filter((f) => STAFF_EDITABLE_FIELDS.includes(f));
     expect(overlap).toEqual([]);

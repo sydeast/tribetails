@@ -95,6 +95,32 @@ describe('KinAdd', () => {
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith({ to: '/kin/$kinId', params: { kinId: 'new-1' } }));
   });
 
+  it('sends the shared facts when filled in (#1310)', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    await user.type(screen.getByLabelText(/^Name/i), 'Rex');
+    await user.selectOptions(screen.getByLabelText('Sex'), 'Female');
+    await user.type(screen.getByLabelText('Weight'), '40 lbs');
+    await user.type(screen.getByLabelText('Color / markings'), 'Brindle');
+    await user.click(screen.getByLabelText(/Spayed \/ neutered/));
+    await user.type(screen.getByLabelText('Vet'), 'Riverside Animal Hospital');
+    await user.click(screen.getByRole('button', { name: /Add Kin/i }));
+
+    await waitFor(() => expect(mocks.addKin).toHaveBeenCalledTimes(1));
+    expect(mocks.addKin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Rex',
+        sex: 'Female',
+        weight: '40 lbs',
+        colorMarkings: 'Brindle',
+        spayedNeutered: true,
+        vetInfo: 'Riverside Animal Hospital',
+      }),
+      'fam1',
+    );
+  });
+
   it('sad / negative path: blocks submit and shows an inline error for a whitespace-only name', async () => {
     const user = userEvent.setup();
     renderScreen();

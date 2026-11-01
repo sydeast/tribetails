@@ -19,6 +19,8 @@ const TEAL = '#0A8595';
 const ORANGE = '#DF8431';
 const PINK = '#D55C87';
 
+/** Shown over the polyline whenever the basemap is not coming (see MapPhase). */
+export const MAP_UNAVAILABLE_MESSAGE = 'Street map unavailable. Showing the route only.';
 const FIT_OPTIONS = { padding: 32, maxZoom: 16, duration: 0 };
 
 /**
@@ -197,6 +199,11 @@ function RouteMapBody(props: { route: RoutePoint[]; distanceMeters?: number | un
             {start && <circle cx={start.x} cy={start.y} r={5} fill="var(--orange)" stroke="#fff" strokeWidth={1.5} />}
             {end && <circle cx={end.x} cy={end.y} r={5} fill="var(--pink)" stroke="#fff" strokeWidth={1.5} />}
           </svg>
+        )}
+        {phase === 'fallback' && (
+          <p className="routemap-note" role="status" data-testid="routemap-unavailable">
+            {MAP_UNAVAILABLE_MESSAGE}
+          </p>
         )}
       </div>
       <div className="routemap-stats">
