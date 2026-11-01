@@ -14,7 +14,7 @@ function visit(id: string, startTimeMs: number, overrides: Partial<GetMyBookings
     auntieAvatarUrl: null, notes: null, requestedByUid: null, createdAtMs: null, updatedAtMs: null, visitProgress: null,
     sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null, cancelRequestReason: null,
     cancelResponseNote: null, rescheduleRequestStatus: null, rescheduleRequestedStartTimeMs: null,
-    rescheduleRequestedEndTimeMs: null, rescheduleRequestReason: null, rescheduleResponseNote: null, ...overrides,
+    rescheduleRequestedEndTimeMs: null, rescheduleRequestReason: null, rescheduleResponseNote: null, address: null, kinTaleId: null, invoiceId: null, ...overrides,
   };
 }
 function envelope(batchId: string, kinCares: GetMyBookingsResultLiveVisit[]): GetMyBookingsResultEnvelope {

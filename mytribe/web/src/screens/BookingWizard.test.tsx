@@ -1319,7 +1319,7 @@ describe('BookingWizard: #1281 after a successful Create Booking', () => {
       sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null,
       cancelRequestReason: null, cancelResponseNote: null, rescheduleRequestStatus: null,
       rescheduleRequestedStartTimeMs: null, rescheduleRequestedEndTimeMs: null, rescheduleRequestReason: null,
-      rescheduleResponseNote: null, ...overrides,
+      rescheduleResponseNote: null, address: null, kinTaleId: null, invoiceId: null, ...overrides,
     };
   }
   function envelopeDto(): GetMyBookingsResultEnvelope {

@@ -245,6 +245,9 @@ export interface GetMyBookingsResultLiveVisit {
   rescheduleRequestedEndTimeMs: number | null;
   rescheduleRequestReason: string | null;
   rescheduleResponseNote: string | null;
+  address: string | null;
+  kinTaleId: string | null;
+  invoiceId: string | null;
 }
 
 /**
