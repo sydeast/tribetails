@@ -57,6 +57,13 @@ enum class InvoiceStatus { Draft, Quote, Open, Zero, Paid, Credit, Redeemed, Can
 /** What the household said about a quote. Null until they have answered. */
 enum class QuoteDecision { Accepted, Denied }
 
+/**
+ * #1338: [OriginalPaymentMethod] is kept for decoding history and for the
+ * wire/controller code, but NO screen offers it. The server refuses it
+ * (`redeemCredit.ts`, operator ruling: no refunds, ever) and account balance
+ * is the only destination for money owed back. Do not delete it (payment
+ * code); do not add a button for it.
+ */
 enum class CreditTarget { AccountBalance, OriginalPaymentMethod }
 
 data class Invoice(
