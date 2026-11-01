@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bookingWizardSearch, kinTalesSearch, pickGuardRedirect } from './router';
+import { bookingWizardSearch, kinTalesSearch, pickGuardRedirect, scheduleSearch } from './router';
 import type { AccessState } from './lib/activeTribe';
 
 function access(overrides: Partial<AccessState>): AccessState {
@@ -74,5 +74,17 @@ describe('kinTalesSearch (#1303)', () => {
     expect(kinTalesSearch({ tale: '' })).toEqual({});
     expect(kinTalesSearch({ tale: 4 })).toEqual({});
     expect(kinTalesSearch({ other: 'x' })).toEqual({});
+  });
+});
+describe('scheduleSearch (#1304)', () => {
+  it('keeps the past tab', () => {
+    expect(scheduleSearch({ tab: 'past' })).toEqual({ tab: 'past' });
+  });
+  it('leaves Upcoming as the absence of the key, so /schedule stays the clean address', () => {
+    expect(scheduleSearch({ tab: 'upcoming' })).toEqual({});
+    expect(scheduleSearch({})).toEqual({});
+  });
+  it('drops anything it does not know', () => {
+    expect(scheduleSearch({ tab: 'bogus', step: '4' })).toEqual({});
   });
 });

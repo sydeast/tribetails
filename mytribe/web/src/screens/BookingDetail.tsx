@@ -266,7 +266,9 @@ export function BookingDetail() {
 
       <div className="wrap">
         <div className="crumbrow">
-          <Link className="backlink" to="/schedule">
+          {/* #1304: back lands on the tab this visit lives in, so a past visit
+              returns to Past Visits and not to the default tab. */}
+          <Link className="backlink" to="/schedule" search={found.status === 'completed' || found.status === 'cancelled' ? { tab: 'past' } : {}}>
             {'←'} Back to Schedule
           </Link>
         </div>

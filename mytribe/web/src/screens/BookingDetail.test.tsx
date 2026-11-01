@@ -722,3 +722,14 @@ describe('BookingDetail: a visit that is over (#1285, #1303)', () => {
     expect(screen.queryByTestId('route-map')).toBeNull();
   });
 });
+describe('BookingDetail: back to the tab the visit lives in (#1304)', () => {
+  it('names Past Visits from a completed visit and the default tab from an upcoming one', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [booking({ status: 'completed' })] }));
+    const { unmount } = renderScreen();
+    expect(await screen.findByRole('link', { name: /Back to Schedule/ })).toHaveAttribute('data-search', JSON.stringify({ tab: 'past' }));
+    unmount();
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    expect(await screen.findByRole('link', { name: /Back to Schedule/ })).toHaveAttribute('data-search', JSON.stringify({}));
+  });
+});
