@@ -47,6 +47,28 @@ export function buildFlatMirrorPayload(after: KinDoc): Record<string, unknown> {
 }
 
 /**
+ * #1291. Every AuntieOS reader of a pet's picture (admin web Directory and
+ * KinView, admin Android, the desktop console) reads the flat doc's
+ * `profilePictureUrl`, never `photoUrl`. The portal writes `photoUrl`, so a
+ * photo a household uploaded reached the flat doc under a name no admin
+ * screen looks at. This stamps the admin field too, but ONLY when the
+ * household's photo actually changed (or arrives on create): an unrelated
+ * parent edit must not overwrite a portrait an Auntie set from the media
+ * gallery (`setMediaProfilePhoto`, the other writer of this field). A removed
+ * photo clears to `''`, the same "cleared" value `deleteMediaFile` writes.
+ */
+export function buildAdminPortraitStamp(
+  before: KinDoc | undefined,
+  after: KinDoc,
+): { profilePictureUrl: string } | Record<string, never> {
+  const next = typeof after.photoUrl === 'string' ? after.photoUrl : null;
+  const prev = typeof before?.photoUrl === 'string' ? before.photoUrl : null;
+  if (!before) return next ? { profilePictureUrl: next } : {};
+  if (next === prev) return {};
+  return { profilePictureUrl: next ?? '' };
+}
+
+/**
  * Mirrors a family kin doc to the flat `kin/` collection so AuntieOS staff and
  * the the_411 join see the same pet.
  *
@@ -66,7 +88,7 @@ export async function mirrorFamilyKinToFlat(
 ): Promise<{ action: 'created' | 'updated' | 'archived' | 'skipped'; flatDocId: string | null }> {
   const firestore = db();
   const familyKinPath = `families/${kinfolkId}/kin/${kinId}`;
-  const flatPayload = buildFlatMirrorPayload(after);
+  const flatPayload = { ...buildFlatMirrorPayload(after), ...buildAdminPortraitStamp(before, after) };
 
   // Resolve (or create) the flat mirror. Prefer the stamped link; fall back to
   // a kinfolkId + name lookup so a pet AuntieOS already created flat is reused

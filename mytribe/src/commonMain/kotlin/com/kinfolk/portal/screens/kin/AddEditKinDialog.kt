@@ -54,10 +54,12 @@ import kotlinx.coroutines.launch
 fun AddEditKinDialog(
     initial: Kin?,
     onClose: () -> Unit,
-    onSubmit: suspend (KinPayload, PickedImage?) -> String?,
+    onSubmit: suspend (KinPayload, KinPhotoChange) -> String?,
     schema: FormSchema? = null,
     dogBreeds: List<String> = emptyList(),
     catBreeds: List<String> = emptyList(),
+    /** #1291. True while the controller's photo upload runs, for the Save label. */
+    photoUploading: Boolean = false,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -77,6 +79,8 @@ fun AddEditKinDialog(
     // Photo: picked locally, uploaded by the controller after the kin write
     // succeeds (add needs the new kinId before the Storage path exists).
     var pickedPhoto by remember { mutableStateOf<PickedImage?>(null) }
+    // #1291: Remove marks the saved photo for clearing on Save (edit only).
+    var removePhoto by remember { mutableStateOf(false) }
     var photoError by remember { mutableStateOf<String?>(null) }
     val launchPhotoPicker = rememberPhotoPicker { picked ->
         if (picked == null) return@rememberPhotoPicker // cancelled — keep current state
@@ -86,8 +90,10 @@ fun AddEditKinDialog(
         } else {
             photoError = null
             pickedPhoto = picked
+            removePhoto = false
         }
     }
+    val savedPhotoUrl = initial?.photoUrl.orEmpty()
 
     // Schema-driven edit values, seeded from the existing Kin. Name stays a
     // dedicated control above the schema since the payload requires it.
@@ -158,7 +164,7 @@ fun AddEditKinDialog(
                         }
                     } else {
                         KinfolkRemoteImage(
-                            url = initial?.photoUrl.orEmpty(),
+                            url = if (removePhoto) "" else savedPhotoUrl,
                             contentDescription = "Current photo",
                             modifier = Modifier.size(72.dp),
                         )
@@ -167,11 +173,29 @@ fun AddEditKinDialog(
                         KinGhostButton(
                             label = when {
                                 pickedPhoto != null -> "Change Photo"
-                                !initial?.photoUrl.isNullOrBlank() -> "Replace Photo"
+                                savedPhotoUrl.isNotBlank() && !removePhoto -> "Replace Photo"
                                 else -> "Add Photo"
                             },
-                            onClick = launchPhotoPicker,
+                            onClick = { if (!saving) launchPhotoPicker() },
                         )
+                        if (pickedPhoto != null || (savedPhotoUrl.isNotBlank() && !removePhoto)) {
+                            KinGhostButton(
+                                label = "Remove Photo",
+                                onClick = {
+                                    if (!saving) {
+                                        if (pickedPhoto != null) {
+                                            pickedPhoto = null
+                                        } else {
+                                            removePhoto = true
+                                        }
+                                        photoError = null
+                                    }
+                                },
+                            )
+                        }
+                        if (removePhoto && pickedPhoto == null) {
+                            Text(text = "Photo will be removed when you save", style = type.sansMeta)
+                        }
                         val picked2 = pickedPhoto
                         if (picked2 != null) {
                             Text(
@@ -253,14 +277,19 @@ fun AddEditKinDialog(
                     scope.launch {
                         saving = true
                         submitError = null
-                        val err = onSubmit(payload, pickedPhoto)
+                        val err = onSubmit(payload, KinPhotoChange.of(pickedPhoto, removePhoto))
                         saving = false
                         if (err == null) onClose() else submitError = err
                     }
                     Unit
             }
             KinButton(
-                label = if (saving) "Saving…" else if (initial == null) "Add Kin" else "Save",
+                label = when {
+                    saving && photoUploading -> "Uploading photo…"
+                    saving -> "Saving…"
+                    initial == null -> "Add Kin"
+                    else -> "Save"
+                },
                 onClick = submit,
                 enabled = name.isNotBlank() && !saving,
             )

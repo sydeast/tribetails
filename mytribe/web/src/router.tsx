@@ -318,10 +318,22 @@ const kinDetailRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/KinDetail'), 'KinDetail'),
 });
 
+/**
+ * #1291. Add New Kin creates the record first and uploads the picked photo
+ * after (there is no kinId to sign a folder for until the record exists). If
+ * that upload fails the Kin is real, so the household lands here, on its edit
+ * screen, with `?photo=failed` telling KinEdit to say the photo did not take.
+ * Any other value, or any other key, is dropped. Exported for router.test.ts.
+ */
+export function kinEditSearch(search: Record<string, unknown>): { photo?: 'failed' } {
+  return search['photo'] === 'failed' ? { photo: 'failed' } : {};
+}
+
 const kinEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kin/$kinId/edit',
   beforeLoad: requireActiveTribe,
+  validateSearch: kinEditSearch,
   component: lazyRouteComponent(() => import('./screens/KinEdit'), 'KinEdit'),
 });
 

@@ -81,12 +81,15 @@ describe('validateKinForm', () => {
     expect(validateKinForm(formFor({ name: 'x'.repeat(80) })).name).toBeUndefined();
   });
 
-  it('requires photoUrl to be an http(s) URL', () => {
-    expect(validateKinForm(formFor({ photoUrl: 'javascript:alert(1)' })).photoUrl).toMatch(/http/);
-    expect(validateKinForm(formFor({ photoUrl: 'ftp://example.com/a.png' })).photoUrl).toMatch(/http/);
-    expect(validateKinForm(formFor({ photoUrl: 'not a url' })).photoUrl).toMatch(/http/);
-    expect(validateKinForm(formFor({ photoUrl: 'https://example.com/a.png' })).photoUrl).toBeUndefined();
-    expect(validateKinForm(formFor({ photoUrl: '' })).photoUrl).toBeUndefined();
+  it('#1291: the text form never carries photoUrl, so a Save can not overwrite an uploaded photo', () => {
+    const k = kin({ photoUrl: 'https://res.cloudinary.com/demo/image/upload/v1/old.jpg' });
+    const form = kinFormFromDto(k);
+    expect(form).not.toHaveProperty('photoUrl');
+    // The photo was replaced by an upload since the form was seeded: the
+    // cached kin now holds the new URL and the diff still leaves it alone.
+    const after = { ...k, photoUrl: 'https://res.cloudinary.com/demo/image/upload/v2/new.jpg' };
+    expect(buildKinChanges(after, { ...form, name: 'Buddy 2' })).toEqual({ name: 'Buddy 2' });
+    expect(buildNewKinPayload({ ...emptyKinForm(), name: 'Rex' })).not.toHaveProperty('photoUrl');
   });
 
   it('enforces the species / breed / long-text length caps', () => {
@@ -152,7 +155,6 @@ describe('buildNewKinPayload', () => {
       species: 'Dog',
       breed: null,
       ageYears: null,
-      photoUrl: null,
       feedingInstructions: null,
       walkingInstructions: null,
       medications: null,

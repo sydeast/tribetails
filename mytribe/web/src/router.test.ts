@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bookingWizardSearch, pickGuardRedirect } from './router';
+import { bookingWizardSearch, kinEditSearch, pickGuardRedirect } from './router';
 import type { AccessState } from './lib/activeTribe';
 
 function access(overrides: Partial<AccessState>): AccessState {
@@ -63,5 +63,14 @@ describe('bookingWizardSearch (/schedule/book search validation)', () => {
     expect(bookingWizardSearch({ step: 4 })).toEqual({ weekly: false });
     expect(bookingWizardSearch({ step: '4', invoice: '1', weekly: '1' })).toEqual({ weekly: true });
     expect(Object.keys(bookingWizardSearch({ step: 4, anything: 'else' }))).toEqual(['weekly']);
+  });
+});
+
+describe('kinEditSearch (/kin/$kinId/edit search validation, #1291)', () => {
+  it('keeps only photo=failed and drops everything else', () => {
+    expect(kinEditSearch({ photo: 'failed' })).toEqual({ photo: 'failed' });
+    expect(kinEditSearch({ photo: 'ok' })).toEqual({});
+    expect(kinEditSearch({})).toEqual({});
+    expect(kinEditSearch({ photo: 'failed', step: '4' })).toEqual({ photo: 'failed' });
   });
 });

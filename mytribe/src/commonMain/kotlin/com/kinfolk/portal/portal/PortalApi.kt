@@ -1083,6 +1083,21 @@ class PortalApi(private val fns: FunctionsClient) {
         })
     }
 
+    /**
+     * #1291. Clears a Kin's photo. [updateKin] cannot do it: [kinPayloadToJson]
+     * omits every null field, and the server's merge write keeps whatever an
+     * omitted field already held. This sends `photoUrl` as an explicit JSON
+     * null, which the server's KinPayload schema accepts (`nullable()`), and
+     * nothing else, so no other field is touched.
+     */
+    suspend fun removeKinPhoto(kinfolkId: String? = null, kinId: String) {
+        fns.call("updateKin", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("kinId", kinId)
+            put("kin", buildJsonObject { put("photoUrl", kotlinx.serialization.json.JsonNull) })
+        })
+    }
+
     suspend fun archiveKin(kinfolkId: String? = null, kinId: String, restore: Boolean = false) {
         fns.call("archiveKin", buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
