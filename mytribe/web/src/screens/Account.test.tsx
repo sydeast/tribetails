@@ -535,3 +535,72 @@ describe('Account billing, member without billing access (#1005)', () => {
     expect(result.getByText('Billing Details')).toBeTruthy();
   });
 });
+/**
+ * #1289 / #1306: a bad phone is caught on the field in plain words, and a saved
+ * one comes back the way a person writes it, never as E.164.
+ */
+describe('Account: phone (#1289, #1306)', () => {
+  async function renderWith(account: Partial<AccountDto>) {
+    const accountApi = await import('../api/accountApi');
+    const portalApi = await import('../api/portal');
+    vi.mocked(accountApi.getMyAccount).mockResolvedValue({ ...ACCOUNT, ...account });
+    vi.mocked(portalApi.getMyHome).mockResolvedValue(HOME);
+    vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const result = render(
+      <QueryClientProvider client={queryClient}>
+        <Account />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect((result.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Riley Kinfolk'));
+    return result;
+  }
+  it('shows a stored E.164 number as (512) 555-0142', async () => {
+    const { getByLabelText } = await renderWith({ phone: '+15125550142', backupPhone: '5125667512' });
+    expect((getByLabelText('Phone') as HTMLInputElement).value).toBe('(512) 555-0142');
+    expect((getByLabelText('Backup Phone') as HTMLInputElement).value).toBe('(512) 566-7512');
+  });
+  it('says what is wrong with abc123 on the field, and does not offer Save', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.saveMyAccount).mockClear();
+    const { getByLabelText, getByRole, findByRole } = await renderWith({});
+    await user.type(getByLabelText('Phone'), 'abc123');
+    const alert = await findByRole('alert');
+    expect(alert.textContent).toBe('Enter a 10-digit phone number.');
+    expect(getByLabelText('Phone')).toHaveAttribute('aria-invalid', 'true');
+    expect(getByRole('button', { name: /Save Changes/ })).toBeDisabled();
+    expect(accountApi.saveMyAccount).not.toHaveBeenCalled();
+  });
+  it('names the backup phone separately', async () => {
+    const user = userEvent.setup();
+    const { getByLabelText, findByRole, getByRole } = await renderWith({});
+    await user.type(getByLabelText('Backup Phone'), '12345');
+    expect((await findByRole('alert')).textContent).toBe('Enter a 10-digit phone number.');
+    expect(getByRole('button', { name: /Save Changes/ })).toBeDisabled();
+  });
+  it('formats what was typed on blur, and the save reply comes back formatted', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.saveMyAccount).mockResolvedValue({ ok: true });
+    const { getByLabelText, getByRole, findByText } = await renderWith({});
+    await user.type(getByLabelText('Phone'), '512-555-0142');
+    await user.tab();
+    expect((getByLabelText('Phone') as HTMLInputElement).value).toBe('(512) 555-0142');
+    vi.mocked(accountApi.getMyAccount).mockResolvedValue({ ...ACCOUNT, phone: '+15125550142' });
+    await user.click(getByRole('button', { name: /Save Changes/ }));
+    expect(await findByText('Saved.')).toBeInTheDocument();
+    expect((getByLabelText('Phone') as HTMLInputElement).value).toBe('(512) 555-0142');
+  });
+  it('shows the server sentence, not machinery, if the server refuses a number the form let through', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.saveMyAccount).mockRejectedValue(new Error('Enter a 10-digit phone number.'));
+    const { getByLabelText, getByRole, findByText } = await renderWith({});
+    await user.type(getByLabelText('Phone'), '123-456-7890');
+    await user.click(getByRole('button', { name: /Save Changes/ }));
+    const note = await findByText(/Save failed/);
+    expect(note.textContent).toBe('Save failed: Enter a 10-digit phone number.');
+    expect(note.textContent).not.toMatch(/phoneNormalize|\[\d{3}\]/);
+  });
+});

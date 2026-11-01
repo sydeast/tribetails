@@ -8,6 +8,7 @@ import {
   MIRROR_ORIGIN_FLAT,
   PARENT_OWNED_FIELDS,
   STAFF_EDITABLE_FIELDS,
+  STAFF_ONLY_KIN_FIELDS,
   omitKeys,
   pickDefined,
   projectChanged,
@@ -22,8 +23,10 @@ type FlatKinDoc = {
 } & Record<string, unknown>;
 
 /**
- * Reverse mirror: copies staff-editable fields from a flat `kin/{docId}` doc
- * back into the canonical `families/{kinfolkId}/kin/{kinId}` record.
+ * Reverse mirror: copies the household-visible staff-editable fields (sex,
+ * weight, colorMarkings, spayedNeutered, vetInfo) from a flat `kin/{docId}` doc
+ * back into the canonical `families/{kinfolkId}/kin/{kinId}` record. Staff-only
+ * fields (officeNotes, routine, reactive...) never leave the flat doc (#1335).
  *
  * Loop prevention (two independent guards, either one short-circuits):
  *   1. Origin guard: skip when the write was authored by the family -> flat
@@ -58,12 +61,17 @@ export async function mirrorFlatKinToFamily(
     return { action: 'skipped', reason: 'no-change' };
   }
 
-  // Inclusion list first, then strip every parent-owned field. The two lists are
-  // disjoint today, so the strip is a no-op; it is here so that adding a field
-  // to STAFF_EDITABLE_FIELDS can never silently hand staff a field the parent
-  // owns (`status` above all: AuntieOS writes `archived` onto the flat doc, and
-  // that must never travel back and un-memorialize a pet).
-  const payload = omitKeys(pickDefined(after, STAFF_EDITABLE_FIELDS), PARENT_OWNED_FIELDS);
+  // Inclusion list first, then strip every parent-owned field and every
+  // staff-only field. The lists are disjoint today, so both strips are no-ops;
+  // they are here so that adding a field to STAFF_EDITABLE_FIELDS can never
+  // silently hand staff a field the parent owns (`status` above all: AuntieOS
+  // writes `archived` onto the flat doc, and that must never travel back and
+  // un-memorialize a pet), nor copy a staff note onto a document every
+  // household member can read (#1335).
+  const payload = omitKeys(
+    omitKeys(pickDefined(after, STAFF_EDITABLE_FIELDS), PARENT_OWNED_FIELDS),
+    STAFF_ONLY_KIN_FIELDS,
+  );
   if (Object.keys(payload).length === 0) {
     return { action: 'skipped', reason: 'empty-projection' };
   }
