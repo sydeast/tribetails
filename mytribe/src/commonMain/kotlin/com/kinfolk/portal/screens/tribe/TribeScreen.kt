@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
@@ -57,11 +58,9 @@ import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.CustomField
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.HomeAccess
-import com.kinfolk.portal.portal.MapboxSuggestion
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeProfileResult
 import com.kinfolk.portal.portal.VetClinic
-import com.kinfolk.portal.portal.newMapboxSessionToken
 import com.kinfolk.portal.screens.gallery.isPermissionDenied
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
@@ -69,10 +68,7 @@ import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.openExternalUrl
 import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import com.kinfolk.portal.util.formatPhone
 
 /**
  * Tribe Profile settings, per ui-ideas/mytribe-tribe-2026-05-31.html: a
@@ -117,9 +113,19 @@ fun TribeScreen(
     var profileValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var homeValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var vetClinics by remember { mutableStateOf<List<VetClinic>>(emptyList()) }
-    var vetName by remember { mutableStateOf("") }
-    var vetPhone by remember { mutableStateOf("") }
-    var vetAddress by remember { mutableStateOf("") }
+    var vetClinicsLoading by remember { mutableStateOf(true) }
+    var vetClinicsError by remember { mutableStateOf<String?>(null) }
+    // #1378: ONE id, the catalog row the household picked (operator ruling 2026-08-01:
+    // vets are a dropdown and search, not a text box). Name, phone and address are
+    // read from the catalog. [vetPicked] only covers a clinic chosen or added this
+    // session that the picker catalog does not list yet (an unapproved submission).
+    var vetClinicId by remember { mutableStateOf("") }
+    var vetPicked by remember { mutableStateOf<VetClinic?>(null) }
+    // Free-text rows written before the picker existed. Shown read-only, never edited
+    // and never removed by Save: the rows stay on the profile until Auntie clears them.
+    var legacyVetName by remember { mutableStateOf("") }
+    var legacyVetPhone by remember { mutableStateOf("") }
+    var legacyVetAddress by remember { mutableStateOf("") }
     // After-hours emergency vet (gated). Stored in HomeAccess customFields under
     // stable keys so no backend change is needed.
     var afterHoursVetName by remember { mutableStateOf("") }
@@ -165,13 +171,18 @@ fun TribeScreen(
         // from existing customFields if previously set.
         try {
             vetClinics = portalApi.getVetClinics()
+            vetClinicsError = null
         } catch (c: CancellationException) {
             throw c
-        } catch (_: Throwable) { /* catalog unreachable — fall back to manual entry */ }
+        } catch (t: Throwable) {
+            vetClinicsError = "Could not load the clinic list: ${t.message ?: "try again later"}"
+        }
+        vetClinicsLoading = false
         val seededVet = profileFields.associate { it.key to it.value }
-        vetName    = seededVet[VET_CLINIC_NAME_KEY].orEmpty()
-        vetPhone   = seededVet[VET_CLINIC_PHONE_KEY].orEmpty()
-        vetAddress = seededVet[VET_CLINIC_ADDRESS_KEY].orEmpty()
+        vetClinicId       = seededVet[VET_CLINIC_ID_KEY].orEmpty().trim()
+        legacyVetName     = seededVet[VET_CLINIC_NAME_KEY].orEmpty()
+        legacyVetPhone    = seededVet[VET_CLINIC_PHONE_KEY].orEmpty()
+        legacyVetAddress  = seededVet[VET_CLINIC_ADDRESS_KEY].orEmpty()
 
         try {
             val hs = portalApi.getFormSchema("homeAccess")
@@ -365,11 +376,13 @@ fun TribeScreen(
             VetClinicSection(
                 portalApi = portalApi,
                 clinics = vetClinics,
-                name = vetName, phone = vetPhone, address = vetAddress,
-                onPick = { c -> vetName = c.name; vetPhone = formatPhone(c.phone); vetAddress = c.address },
-                onName = { vetName = it },
-                onPhone = { vetPhone = it },
-                onAddress = { vetAddress = it },
+                clinicsLoading = vetClinicsLoading,
+                clinicsError = vetClinicsError,
+                clinicId = vetClinicId,
+                picked = vetPicked,
+                legacyName = legacyVetName, legacyPhone = legacyVetPhone, legacyAddress = legacyVetAddress,
+                onPick = { c -> vetClinicId = c.id; vetPicked = c },
+                onClear = { vetClinicId = ""; vetPicked = null },
                 showAfterHours = true,
                 // #868: stored with the home details, behind the same grant.
                 afterHoursLocked = !canEditHome,
@@ -455,9 +468,10 @@ fun TribeScreen(
                             fun card(key: String, label: String, value: String, set: MutableList<CustomField>, clear: MutableList<String>) {
                                 if (value.isNotBlank()) set += CustomField(key = key, label = label, value = value.trim()) else clear += key
                             }
-                            card(VET_CLINIC_NAME_KEY, "Vet Clinic", vetName, profileSet, profileClear)
-                            card(VET_CLINIC_PHONE_KEY, "Vet Clinic Phone", vetPhone, profileSet, profileClear)
-                            card(VET_CLINIC_ADDRESS_KEY, "Vet Clinic Address", vetAddress, profileSet, profileClear)
+                            // #1378: the clinic is one id. The old free-text name, phone and
+                            // address rows are not in this edit, so a row that has no control
+                            // here is kept as stored.
+                            card(VET_CLINIC_ID_KEY, "Vet Clinic", vetClinicId, profileSet, profileClear)
                             val ps = profileSchema
                             val nextDisplayName = if (ps != null) {
                                 profileValues["displayName"]?.trim().orEmpty().ifBlank { displayName.trim() }
@@ -715,13 +729,17 @@ private fun CustomFieldList(
 private fun VetClinicSection(
     portalApi: PortalApi,
     clinics: List<VetClinic>,
-    name: String,
-    phone: String,
-    address: String,
+    clinicsLoading: Boolean,
+    clinicsError: String?,
+    /** The linked `vetClinicId`, or blank when none. */
+    clinicId: String,
+    /** A clinic chosen or added this session that the picker catalog may not list yet. */
+    picked: VetClinic?,
+    legacyName: String,
+    legacyPhone: String,
+    legacyAddress: String,
     onPick: (VetClinic) -> Unit,
-    onName: (String) -> Unit,
-    onPhone: (String) -> Unit,
-    onAddress: (String) -> Unit,
+    onClear: () -> Unit,
     showAfterHours: Boolean = false,
     /** #868: the viewer has no Home access, so the after-hours clinic shows the lock sentence instead of fields. */
     afterHoursLocked: Boolean = false,
@@ -733,13 +751,53 @@ private fun VetClinicSection(
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
-    var sessionToken by remember { mutableStateOf(newMapboxSessionToken()) }
-    var addressSuggestions by remember { mutableStateOf<List<MapboxSuggestion>>(emptyList()) }
-    var addressLookupError by remember { mutableStateOf<String?>(null) }
-    var debounceJob by remember { mutableStateOf<Job?>(null) }
     var vetQuery by remember { mutableStateOf("") }
     var submittingClinic by remember { mutableStateOf(false) }
     var submitClinicMsg by remember { mutableStateOf<String?>(null) }
+    /** Near-matches the server offered instead of creating a duplicate; non-empty means the household must choose. */
+    var candidates by remember { mutableStateOf<List<PortalApi.VetClinicCandidate>>(emptyList()) }
+    fun pick(c: VetClinic) {
+        onPick(c)
+        vetQuery = ""
+        candidates = emptyList()
+        submitClinicMsg = null
+    }
+    /**
+     * Add the typed name as a new clinic. [acknowledgedMatchIds] is empty on the
+     * first attempt, so a near match comes back as a choice and nothing is
+     * written. Confirming echoes the ids the household was just shown; the server
+     * checks them, a flag would let a client claim a confirmation it never got.
+     */
+    fun submitNew(acknowledgedMatchIds: List<String> = emptyList()) {
+        val typed = vetQuery.trim()
+        if (submittingClinic || typed.isEmpty()) return
+        submittingClinic = true
+        submitClinicMsg = null
+        scope.launch {
+            try {
+                val r = portalApi.submitVetClinic(typed, acknowledgedMatchIds = acknowledgedMatchIds)
+                if (r.needsChoice) {
+                    candidates = r.candidates
+                } else {
+                    candidates = emptyList()
+                    onPick(VetClinic(id = r.clinicId, name = typed, phone = "", address = ""))
+                    vetQuery = ""
+                    submitClinicMsg = if (r.pending) {
+                        "Sent to Auntie for approval. It is on your record now and joins the shared list once approved."
+                    } else {
+                        "Added to the shared list and set as your clinic."
+                    }
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                submitClinicMsg = "Couldn't submit: ${t.message ?: "unknown error"}"
+            } finally {
+                submittingClinic = false
+            }
+        }
+    }
+    val onFile = clinicOnFile(clinicId, clinics, picked)
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         contentPadding = PaddingValues(KinfolkSpacing.l),
@@ -751,157 +809,113 @@ private fun VetClinicSection(
                 title = "Vet Clinic",
                 sub = "The first call your Auntie makes if something is off.",
             )
-            if (clinics.isNotEmpty()) {
-                // Searchable picker over the shared catalog: type to filter by name,
-                // tap a match to fill the clinic fields below.
-                KinField(
-                    value = vetQuery,
-                    onValueChange = { vetQuery = it },
-                    label = "Search vet clinics",
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                val vetMatches = remember(vetQuery, clinics) {
-                    if (vetQuery.isBlank()) emptyList()
-                    else clinics.filter { it.name.contains(vetQuery, ignoreCase = true) }.take(8)
-                }
-                vetMatches.forEach { clinic ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(KinfolkShapes.cardSmall)
-                            .clickable { onPick(clinic); vetQuery = "" }
-                            .padding(vertical = KinfolkSpacing.xs, horizontal = KinfolkSpacing.xs),
-                    ) {
-                        Text(
-                            if (clinic.isEmergency) "${clinic.name} · 24hr" else clinic.name,
-                            style = type.sansBody,
-                        )
-                        if (clinic.address.isNotBlank()) {
-                            Text(clinic.address, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
-                        }
-                    }
-                }
-            }
-            FieldPair(
-                wide = wide,
-                first = { m ->
-                    KinField(
-                        value = name, onValueChange = onName,
-                        label = "Clinic Name",
-                        modifier = m,
-                    )
-                },
-                second = { m ->
-                    KinField(
-                        value = phone, onValueChange = onPhone,
-                        label = "Clinic Phone",
-                        modifier = m,
-                    )
-                },
-            )
+            // Search and pick, never a free-text box. The add-new row is last, so
+            // choosing a clinic that exists is always offered first.
             KinField(
-                value = address,
-                onValueChange = { v ->
-                    onAddress(v)
-                    debounceJob?.cancel()
-                    if (v.length < 3) {
-                        addressSuggestions = emptyList()
-                    } else {
-                        debounceJob = scope.launch {
-                            delay(250)
-                            try {
-                                addressSuggestions = portalApi.mapboxSearch(v, sessionToken)
-                                addressLookupError = null
-                            } catch (c: CancellationException) {
-                                throw c
-                            } catch (t: Throwable) {
-                                addressSuggestions = emptyList()
-                                addressLookupError = t.message ?: "Address lookup failed"
-                            }
-                        }
-                    }
-                },
-                label = "Clinic Address", singleLine = false,
+                value = vetQuery,
+                onValueChange = { vetQuery = it },
+                label = "Search vet clinics",
                 modifier = Modifier.fillMaxWidth(),
+                fieldTestTag = "vet-search",
             )
-            if (addressLookupError != null) {
+            if (clinicsLoading) {
+                Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s), verticalAlignment = Alignment.CenterVertically) {
+                    KinSpinner()
+                    Text("Loading clinics…", style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                }
+            }
+            if (clinicsError != null) {
                 Text(
-                    "Lookup error: ${addressLookupError ?: ""}",
+                    clinicsError,
                     style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+                    modifier = Modifier.testTag("vet-load-error"),
                 )
             }
-            if (addressSuggestions.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    addressSuggestions.take(5).forEach { s ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(KinfolkShapes.cardSmall)
-                                .clickable {
-                                    scope.launch {
-                                        try {
-                                            val feature = portalApi.mapboxRetrieve(s.mapboxId, sessionToken)
-                                            if (feature != null) {
-                                                onAddress(feature.resolvedAddress)
-                                            } else {
-                                                onAddress(s.fullAddress.ifBlank { s.name })
-                                            }
-                                            addressSuggestions = emptyList()
-                                            sessionToken = newMapboxSessionToken()
-                                        } catch (c: CancellationException) {
-                                            throw c
-                                        } catch (t: Throwable) {
-                                            addressLookupError = t.message ?: "Retrieve failed"
-                                        }
-                                    }
-                                }
-                                .padding(vertical = KinfolkSpacing.xs, horizontal = KinfolkSpacing.xs),
-                        ) {
-                            Text(s.fullAddress.ifBlank { s.name }, style = type.sansBody)
-                            if (s.placeFormatted.isNotBlank()) {
-                                Text(s.placeFormatted, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
-                            }
-                        }
-                    }
+            if (vetQuery.isNotBlank()) {
+                vetClinicMatches(vetQuery, clinics).forEach { clinic ->
+                    ClinicRow(
+                        title = clinicTitle(clinic.name, clinic.isEmergency),
+                        detail = clinic.address,
+                        tag = "vet-match-${clinic.id}",
+                        onClick = { pick(clinic) },
+                    )
+                }
+                if (!clinicAlreadyOnList(vetQuery, clinics)) {
+                    ClinicRow(
+                        title = if (submittingClinic) "Checking…" else "+ Add \"${vetQuery.trim()}\" as a new clinic",
+                        detail = "Sent to Auntie for approval before other households see it.",
+                        tag = "vet-add-new",
+                        enabled = !submittingClinic,
+                        onClick = { submitNew() },
+                    )
                 }
             }
-            // Add-to-shared-list: only offered when the typed clinic is genuinely
-            // novel (not already in the catalog). Submits a PENDING entry the
-            // operator approves in AuntieOS; the household's own vet fields are
-            // saved separately by the screen's Save button regardless.
-            if (!clinicAlreadyOnList(name, clinics)) {
-                GhostPillButton(
-                    label = if (submittingClinic) "Submitting…"
-                    else "Add \"${name.trim()}\" to the shared vet list",
-                    onClick = {
-                        if (!submittingClinic) {
-                            submittingClinic = true
-                            submitClinicMsg = null
-                            scope.launch {
-                                try {
-                                    val r = portalApi.submitVetClinic(name.trim(), phone.trim(), address.trim())
-                                    submitClinicMsg = if (!r.created && !r.pending) {
-                                        "That clinic is already on the shared list."
-                                    } else {
-                                        "Sent to Auntie for approval. It joins the shared list once approved."
-                                    }
-                                } catch (c: CancellationException) {
-                                    throw c
-                                } catch (t: Throwable) {
-                                    submitClinicMsg = "Couldn't submit: ${t.message ?: "unknown error"}"
-                                } finally {
-                                    submittingClinic = false
-                                }
-                            }
-                        }
-                    },
+            if (candidates.isNotEmpty()) {
+                // The server found what looks like the same practice and wrote
+                // nothing. The household decides: use the existing record, or say
+                // theirs really is a separate practice.
+                Text(
+                    "A clinic like that is already on the shared list. Use it, or add yours as a separate clinic.",
+                    style = type.sansBody,
+                    modifier = Modifier.testTag("vet-candidates-note"),
+                )
+                candidates.forEach { c ->
+                    ClinicRow(
+                        title = clinicTitle(c.name, c.isEmergency),
+                        detail = (clinicDetailLine(c.phone, c.address) + if (!c.verified) " · waiting for approval" else "")
+                            .removePrefix(" · "),
+                        tag = "vet-candidate-${c.id}",
+                        onClick = { pick(VetClinic(c.id, c.name, c.phone, c.address, isEmergency = c.isEmergency)) },
+                    )
+                }
+                ClinicRow(
+                    title = if (submittingClinic) "Checking…" else "No, add \"${vetQuery.trim()}\" as a different clinic",
+                    detail = "Use this when yours really is a separate practice.",
+                    tag = "vet-add-anyway",
                     enabled = !submittingClinic,
-                    icon = Icons.Filled.Add,
-                    color = KinfolkBrand.KinTeal,
+                    onClick = { submitNew(candidates.map { it.id }) },
                 )
-                submitClinicMsg?.let { msg ->
-                    Text(msg, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+            }
+            submitClinicMsg?.let { msg ->
+                Text(msg, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted), modifier = Modifier.testTag("vet-message"))
+            }
+            if (onFile != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag("vet-on-file")) {
+                    Text("Clinic on file", style = type.sansMeta)
+                    Text(clinicTitle(onFile.name, onFile.isEmergency), style = type.sansBody)
+                    val detail = clinicDetailLine(onFile.phone, onFile.address)
+                    if (detail.isNotBlank()) {
+                        Text(detail, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                    }
+                    Text(
+                        "Details come from the shared list, so if they are wrong Auntie can fix them once for every household. Search above to change your clinic.",
+                        style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
+                    )
                 }
+            } else if (clinicId.isNotBlank()) {
+                Text(
+                    "The clinic on file is no longer on the shared list. Search above to pick it again.",
+                    style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+                    modifier = Modifier.testTag("vet-missing"),
+                )
+            } else if (legacyName.isNotBlank() || legacyPhone.isNotBlank() || legacyAddress.isNotBlank()) {
+                // Typed in before the shared list existed. Not editable here.
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag("vet-legacy")) {
+                    Text("Clinic on file (typed before the shared list)", style = type.sansMeta)
+                    if (legacyName.isNotBlank()) Text(legacyName, style = type.sansBody)
+                    val detail = clinicDetailLine(legacyPhone, legacyAddress)
+                    if (detail.isNotBlank()) Text(detail, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                    Text("Search above to pick it from the list.", style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                }
+            }
+            if (clinicId.isNotBlank()) {
+                GhostPillButton(
+                    label = "Remove clinic",
+                    onClick = onClear,
+                    icon = Icons.Filled.Close,
+                    color = KinfolkBrand.KinTeal,
+                    modifier = Modifier.testTag("vet-clear"),
+                )
             }
             if (showAfterHours) {
                 CardDivider()
@@ -954,13 +968,31 @@ private fun VetClinicSection(
     }
 }
 
+@Composable
+private fun ClinicRow(title: String, detail: String, tag: String, onClick: () -> Unit, enabled: Boolean = true) {
+    val type = LocalKinfolkTypography.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KinfolkShapes.cardSmall)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = KinfolkSpacing.xs, horizontal = KinfolkSpacing.xs)
+            .testTag(tag),
+    ) {
+        Text(title, style = type.sansBody)
+        if (detail.isNotBlank()) {
+            Text(detail, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+        }
+    }
+}
 /** Keys the Vet Clinic card edits, stored in profile customFields (#872). The
  *  save handler's card() calls below key off these same constants, so this
  *  is the one place a vet-clinic key literal is typed. */
+internal const val VET_CLINIC_ID_KEY = "vetClinicId"
 internal const val VET_CLINIC_NAME_KEY = "vetClinicName"
 internal const val VET_CLINIC_PHONE_KEY = "vetClinicPhone"
 internal const val VET_CLINIC_ADDRESS_KEY = "vetClinicAddress"
-internal val VET_CLINIC_CUSTOM_FIELD_KEYS = setOf(VET_CLINIC_NAME_KEY, VET_CLINIC_PHONE_KEY, VET_CLINIC_ADDRESS_KEY)
+internal val VET_CLINIC_CUSTOM_FIELD_KEYS = setOf(VET_CLINIC_ID_KEY, VET_CLINIC_NAME_KEY, VET_CLINIC_PHONE_KEY, VET_CLINIC_ADDRESS_KEY)
 
 /** Keys the After-hours Vet block edits, stored in home access customFields (#872). */
 internal const val AFTER_HOURS_VET_NAME_KEY = "afterHoursVetName"
