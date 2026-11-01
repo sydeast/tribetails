@@ -44,6 +44,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
+import { inviteEmailProblem, isInvitableEmail } from '../lib/inviteEmail';
 import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { formatPhone } from '../lib/phone';
@@ -960,11 +961,6 @@ function InviteKinfolkCard(props: {
   // Captured at submit time, since `email` is cleared on success: the
   // confirmation names the address the invite actually went to.
   const [sentTo, setSentTo] = useState<string | null>(null);
-  useEffect(() => {
-    if (prefill === null) return;
-    setEmail(prefill.email ?? '');
-    setRole(prefill.name.slice(0, 40));
-  }, [prefill]);
 
   // HOLD. `addSecondaryContact` short-circuits on a live PENDING inviteRequest
   // for the same address rather than minting a second, and re-sends the invite
@@ -992,6 +988,32 @@ function InviteKinfolkCard(props: {
     },
   }, { policy: 'hold', what: 'this invite' });
 
+  // #1323: the role is left empty. It used to be filled with the person's
+  // name, which is not a role ("Their role (e.g. Co-Parent, Sister)"), and a
+  // secondary kinfolk record has no relationship field to fill it from. A
+  // stale error or confirmation from an earlier attempt is cleared too.
+  const { reset: resetInvite } = invite;
+  useEffect(() => {
+    if (prefill === null) return;
+    setEmail(prefill.email ?? '');
+    setRole('');
+    setSentTo(null);
+    resetInvite();
+  }, [prefill, resetInvite]);
+
+  // #1323: Cancel used to drop only the "Giving portal access to" banner and
+  // left the email, role and the last red error on the card.
+  const cancelPrefill = () => {
+    setEmail('');
+    setRole('');
+    setCanEditPets(false);
+    setCanAccessHome(false);
+    setSentTo(null);
+    resetInvite();
+    onClearPrefill?.();
+  };
+  const emailProblem = inviteEmailProblem(email);
+
   return (
     <section className="glass card d4" id="invite-kinfolk">
       <div className="cardhead">
@@ -1004,7 +1026,7 @@ function InviteKinfolkCard(props: {
       {prefill !== null && (
         <div className="contactactions" data-testid="invite-for-person">
           <span className="sub">Giving portal access to {prefill.name}</span>
-          <button type="button" className="btn ghost" onClick={() => onClearPrefill?.()}>
+          <button type="button" className="btn ghost" onClick={cancelPrefill}>
             Cancel
           </button>
         </div>
@@ -1012,7 +1034,21 @@ function InviteKinfolkCard(props: {
       <div className="grid2">
         <div className="field full">
           <label htmlFor="inv-email">Email</label>
-          <input id="inv-email" className="inp" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input
+            id="inv-email"
+            className="inp"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            aria-invalid={emailProblem !== null}
+            aria-describedby={emailProblem !== null ? 'inv-email-err' : undefined}
+          />
+          {/* #1326: Send Invite stays disabled on a bad address; say why. */}
+          {emailProblem !== null && (
+            <p id="inv-email-err" className="sub" role="alert" style={{ color: 'var(--coral)', marginTop: 6 }}>
+              {emailProblem}
+            </p>
+          )}
         </div>
         <div className="field full">
           <label htmlFor="inv-role">Their role (e.g. Co-Parent, Sister)</label>
@@ -1037,7 +1073,7 @@ function InviteKinfolkCard(props: {
           </span>
         </span>
       </label>
-      <button className="btn grad block" type="button" style={{ marginTop: 12 }} onClick={() => invite.mutate()} disabled={invite.isPending || !email.includes('@')}>
+      <button className="btn grad block" type="button" style={{ marginTop: 12 }} onClick={() => invite.mutate()} disabled={invite.isPending || !isInvitableEmail(email)}>
         <MutationLabel mutation={invite} busy="Sending…">
           Send Invite
         </MutationLabel>
