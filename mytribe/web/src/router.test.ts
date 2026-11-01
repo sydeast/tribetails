@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bookingWizardSearch, pickGuardRedirect } from './router';
+import { bookingWizardSearch, pickGuardRedirect, scheduleSearch } from './router';
 import type { AccessState } from './lib/activeTribe';
 
 function access(overrides: Partial<AccessState>): AccessState {
@@ -63,5 +63,18 @@ describe('bookingWizardSearch (/schedule/book search validation)', () => {
     expect(bookingWizardSearch({ step: 4 })).toEqual({ weekly: false });
     expect(bookingWizardSearch({ step: '4', invoice: '1', weekly: '1' })).toEqual({ weekly: true });
     expect(Object.keys(bookingWizardSearch({ step: 4, anything: 'else' }))).toEqual(['weekly']);
+  });
+});
+
+describe('scheduleSearch (#1304)', () => {
+  it('keeps the past tab', () => {
+    expect(scheduleSearch({ tab: 'past' })).toEqual({ tab: 'past' });
+  });
+  it('leaves Upcoming as the absence of the key, so /schedule stays the clean address', () => {
+    expect(scheduleSearch({ tab: 'upcoming' })).toEqual({});
+    expect(scheduleSearch({})).toEqual({});
+  });
+  it('drops anything it does not know', () => {
+    expect(scheduleSearch({ tab: 'bogus', step: '4' })).toEqual({});
   });
 });
