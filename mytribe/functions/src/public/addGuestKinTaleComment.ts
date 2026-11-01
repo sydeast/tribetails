@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import crypto from 'crypto';
+import argon2 from 'argon2';
 import { z } from 'zod';
 import type { RecaptchaEnterpriseServiceClient } from '@google-cloud/recaptcha-enterprise';
 import { db } from '../lib/firestoreAdmin';
@@ -8,6 +9,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText, sanitizePlainText } from '../lib/richText';
+import { verifyShareUnlock } from '../lib/shareUnlock';
 
 const GUEST_RATE_LIMIT_PER_HOUR = 5;
 const GUEST_RATE_WINDOW_MS = 60 * 60 * 1000;
@@ -81,6 +83,15 @@ const Body = z.object({
   parentCommentId: z.string().min(1).max(200).optional(),
   recaptchaToken: z.string().min(1).max(5000).optional(),
   /**
+   * #1332. Proof that the guest unlocked a passcode-protected share: the HMAC
+   * token `getShareLink` (POST) or the `/share/<id>` page minted
+   * (lib/shareUnlock.ts), or the passcode itself, verified with argon2. Both
+   * travel only in this body, never in a URL. Ignored for a share with no
+   * passcode.
+   */
+  unlockToken: z.string().min(1).max(512).optional(),
+  passcode: z.string().min(1).max(512).optional(),
+  /**
    * When true, the handler skips reCAPTCHA verification. Used only by the
    * unit test harness, production callers must pass a valid token.
    */
@@ -98,7 +109,32 @@ type ShareDoc = {
   revoked?: boolean;
   expiresAt?: { toMillis: () => number } | Date | null;
   allowGuestComments?: boolean;
+  passcodeHash?: string | null;
 };
+
+/**
+ * #1332. True when the share has no passcode, or the body proves the guest
+ * holds it. The token is tried first (an HMAC compare); argon2 runs only when
+ * a passcode was sent, so a guess here costs what a guess at `getShareLink`
+ * costs.
+ */
+async function hasUnlockProof(
+  share: ShareDoc,
+  shareId: string,
+  args: { unlockToken?: string; passcode?: string },
+): Promise<boolean> {
+  const hash = share.passcodeHash;
+  if (!hash) return true;
+  if (args.unlockToken && verifyShareUnlock(args.unlockToken, shareId, hash)) return true;
+  if (args.passcode) {
+    try {
+      return await argon2.verify(hash, args.passcode);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
 
 function isExpired(doc: ShareDoc): boolean {
   const exp = doc.expiresAt;
@@ -135,6 +171,8 @@ export interface MinimalRes {
  *
  * Anti-abuse:
  * - shareToken must exist + not be revoked + not expired
+ * - a passcode-protected share needs proof of unlock (#1332), checked before
+ *   reCAPTCHA and the rate limit so a refused note spends neither
  * - guestEmail hashed (sha256), never stored raw
  * - per-emailHash rate limit: 5 comments per rolling 60min
  * - reCAPTCHA Enterprise token VERIFIED server-side by `verifyRecaptcha` above:
@@ -204,6 +242,10 @@ export async function addGuestKinTaleCommentHandler(
   const tribeId = share.tribeId;
   if (!tribeId) {
     res.status(500).json({ error: 'Share link malformed (missing tribeId).' });
+    return;
+  }
+  if (!(await hasUnlockProof(share, args.shareToken, args))) {
+    res.status(401).json({ error: 'passcode-required' });
     return;
   }
 
