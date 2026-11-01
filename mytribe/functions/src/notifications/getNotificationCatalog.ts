@@ -107,6 +107,8 @@ export interface NotificationKeyDto {
   description: string;
   /** What the household reads under the title: addressed to them, never the operator. */
   householdDescription: string;
+  /** The title the household reads: addressed to them. `title` stays the operator's (#1372). */
+  householdTitle: string;
   allowedChannels: Channel[];
   required: Channel[];
   /**
@@ -267,6 +269,7 @@ export async function getNotificationCatalogHandler(
       // Fall back to the operator text only for a row with no household copy;
       // the catalog test fails the build before that can ship.
       householdDescription: def.householdDescription ?? def.description,
+      householdTitle: def.householdTitle ?? (def.label || titleCaseFromKey(def.key)),
       allowedChannels,
       required,
       lockedChannels,

@@ -188,6 +188,12 @@ internal fun channelInheritedChecked(
 ): Boolean = channelChipState(key = key, ch = ch, marketingGate = false, perKey = null, perCat = perCat).checked
 
 /**
+ * The title the household reads (#1372): `householdTitle`, else the catalog
+ * `title` for a callable that predates the field. The admin matrix keeps `title`.
+ */
+internal fun keyTitle(key: NotificationKey): String =
+    (key.householdTitle?.takeIf { it.isNotBlank() } ?: key.title).trim()
+/**
  * The line under a key's title, or null when there is nothing to add. The
  * catalog's description is sometimes the title with a full stop ("KinCare
  * booking confirmed." under "KinCare booking confirmed"), which is noise (#1317).
@@ -197,5 +203,5 @@ internal fun keyDescriptionLine(key: NotificationKey): String? {
     // #1359: the household's wording wins; `description` is the operator's text
     // and only the fallback for a callable that predates the field.
     val description = (key.householdDescription?.takeIf { it.isNotBlank() } ?: key.description).trim()
-    return description.takeUnless { it.isEmpty() || norm(it) == norm(key.title) }
+    return description.takeUnless { it.isEmpty() || norm(it) == norm(keyTitle(key)) }
 }

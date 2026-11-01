@@ -4,6 +4,7 @@ import {
   categoryMarketingCategories,
   categoryMasterState,
   keyDescription,
+  keyTitle,
   categoryToggleableChannels,
   channelChecked,
   keyChannelChecked,
@@ -271,5 +272,18 @@ describe('keyChannelOverridden', () => {
     expect(keyChannelOverridden({ sms: false }, 'sms')).toBe(true);
     expect(keyChannelOverridden({ email: true }, 'sms')).toBe(false);
     expect(keyChannelOverridden(undefined, 'sms')).toBe(false);
+  });
+});
+
+describe('keyTitle (#1372)', () => {
+  it('prefers the household title and falls back to the operator title', () => {
+    expect(keyTitle({ title: 'Kinfolk accepted a quote', householdTitle: 'You accepted a quote' })).toBe('You accepted a quote');
+    expect(keyTitle({ title: 'Kinfolk accepted a quote' })).toBe('Kinfolk accepted a quote');
+    expect(keyTitle({ title: 'Kinfolk accepted a quote', householdTitle: '  ' })).toBe('Kinfolk accepted a quote');
+  });
+  it('keyDescription dedupes against the household title', () => {
+    expect(
+      keyDescription({ title: 'Op', householdTitle: 'You accepted a quote', description: 'x', householdDescription: 'You accepted a quote.' }),
+    ).toBe('');
   });
 });

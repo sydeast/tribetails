@@ -53,6 +53,12 @@ describe('getNotificationCatalogHandler', () => {
     for (const k of all) {
       expect(k.householdDescription.length).toBeGreaterThan(0);
     }
+    for (const k of all) expect(k.householdTitle.length).toBeGreaterThan(0);
+    const accepted = all.find((k) => k.key === 'quote.accepted');
+    if (accepted) {
+      expect(accepted.title).toBe('Kinfolk accepted a quote');
+      expect(accepted.householdTitle).toBe('You accepted a quote');
+    }
     const changed = all.find((k) => k.key === 'kincare.changed')!;
     expect(changed.description).toBe('Kinfolk/Auntie updated, deleted, or requested changes to KinCare.');
     expect(changed.householdDescription).not.toBe(changed.description);
