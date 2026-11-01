@@ -435,3 +435,23 @@ describe('KinTales: visit facts', () => {
     expect(within(featured as HTMLElement).queryByText(/Arrived/)).not.toBeInTheDocument();
   });
 });
+// #1322: an Auntie whose display name already carries the role word used to
+// read "From Auntie TEST SANDBOX Auntie" on every byline.
+describe('KinTales: Auntie bylines say the role word once', () => {
+  it('leaves a name that already says Auntie alone, and prefixes a plain one', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        tale({ id: 't1', authorDisplayName: 'TEST SANDBOX Auntie' }),
+        tale({ id: 't2', authorDisplayName: 'TEST SANDBOX Auntie', title: 'Park day' }),
+        tale({ id: 't3', authorDisplayName: 'Maya', title: 'Beach day' }),
+      ],
+      hasMore: false,
+    });
+    renderScreen();
+    expect(await screen.findByText('From TEST SANDBOX Auntie')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reply to TEST SANDBOX Auntie/ })).toBeInTheDocument();
+    expect(screen.getByText(/^FROM TEST SANDBOX AUNTIE/)).toBeInTheDocument();
+    expect(screen.getByText(/^FROM AUNTIE MAYA/)).toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toMatch(/auntie test sandbox auntie/i);
+  });
+});

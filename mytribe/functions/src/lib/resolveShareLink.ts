@@ -14,6 +14,8 @@ import { AUDIT_EVENTS } from './auditEvents';
 
 export type ScrubbedSharePayload = {
   authorDisplayName?: string;
+  /** #1322. The tale's own title; empty or absent on older shares. */
+  title?: string;
   body?: string;
   photos?: string[];
   [key: string]: unknown;

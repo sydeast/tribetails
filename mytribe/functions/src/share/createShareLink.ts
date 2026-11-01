@@ -44,7 +44,7 @@ export async function createShareLinkHandler(req: CallableRequest<unknown>): Pro
   }
   const taleSnap = await db().doc(`kin_care_reports/${args.kinTaleId}`).get();
   if (!taleSnap.exists) throw new HttpsError('not-found', 'kinTale not found');
-  const tale = taleSnap.data() as { bodyCopy?: string; mediaFileIds?: string[]; authorDisplayName?: string; kinfolkId?: string };
+  const tale = taleSnap.data() as { title?: string; bodyCopy?: string; mediaFileIds?: string[]; authorDisplayName?: string; kinfolkId?: string };
   if (tale.kinfolkId !== args.familyId) throw new HttpsError('not-found', 'kinTale not found');
   const days = args.expiresInDays ?? SHARE_DEFAULT_TTL_DAYS;
   const expiresAt = new Date(Date.now() + days * 86400 * 1000);
@@ -63,6 +63,10 @@ export async function createShareLinkHandler(req: CallableRequest<unknown>): Pro
     sourceKinTaleId: args.kinTaleId,
     scrubbedPayload: {
       authorDisplayName: tale.authorDisplayName ?? 'Auntie',
+      // #1322: the share page and its link preview lead with the tale's own
+      // title. Absent on share docs written before this, and on a tale with
+      // no title yet; readers fall back to "A KinTale from <author>".
+      title: typeof tale.title === 'string' ? tale.title.trim() : '',
       body: tale.bodyCopy ?? '',
       photos,
     },

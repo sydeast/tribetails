@@ -9,7 +9,7 @@ import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
-import { relativeDay, speciesEmoji } from '../lib/portalFormat';
+import { auntieName, relativeDay, speciesEmoji } from '../lib/portalFormat';
 import { BusyLabel } from '../components/Loading';
 
 const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
@@ -153,7 +153,7 @@ export function TribeHub() {
                     <b>{t.title || t.body.slice(0, 60)}</b>
                     <p>{t.body}</p>
                     <div className="meta">
-                      {`FROM AUNTIE ${t.authorDisplayName.toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
+                      {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
                     </div>
                   </div>
                 </div>

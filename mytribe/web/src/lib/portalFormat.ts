@@ -33,11 +33,27 @@ export function weekdayTime(ms: number): string {
   return `${WEEKDAYS[d.getDay()]}, ${hours}:${minutes} ${ampm}`;
 }
 
+/**
+ * #1322. An Auntie's name with the role word in front, said once: "Maya" reads
+ * "Auntie Maya", but a display name that already carries the word ("TEST
+ * SANDBOX Auntie", "Auntie Maya") is left as it is, where every screen used to
+ * print "Auntie TEST SANDBOX Auntie". The name itself is the operator's
+ * setting and is never rewritten, only the prefix is skipped.
+ *
+ * Returns null for a missing or blank name, so each caller keeps its own
+ * fallback ("Your Auntie", "your Auntie").
+ */
+export function auntieName(displayName: string | null | undefined): string | null {
+  const name = (displayName ?? '').trim();
+  if (name === '') return null;
+  return /\bauntie\b/i.test(name) ? name : `Auntie ${name}`;
+}
 /** "Mon, 8:00 AM with Auntie Maya" / just the weekday-time if no auntie assigned yet. */
 export function visitSubtitle(startTimeMs: number | null, auntieDisplayName: string | null): string {
-  if (startTimeMs === null) return auntieDisplayName ? `With Auntie ${auntieDisplayName}` : 'Time to be confirmed';
+  const auntie = auntieName(auntieDisplayName);
+  if (startTimeMs === null) return auntie ? `With ${auntie}` : 'Time to be confirmed';
   const base = weekdayTime(startTimeMs);
-  return auntieDisplayName ? `${base} with Auntie ${auntieDisplayName}` : base;
+  return auntie ? `${base} with ${auntie}` : base;
 }
 
 /** The fields that say WHEN a booked visit happens. */
