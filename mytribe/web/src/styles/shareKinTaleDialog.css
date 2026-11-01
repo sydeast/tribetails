@@ -13,15 +13,16 @@
    ============================================================ */
 
 .skd-overlay {
-  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+  /* z-index 100: above the sticky nav (20), tab bar (30) and session notice (40);
+     the overlay is portalled to <body>, so those compete as peers. */
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
   background: rgba(17, 19, 31, .48); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
   padding: 20px;
 }
 
 .skd-card { width: 100%; max-width: 440px; max-height: calc(100vh - 40px); overflow-y: auto; }
 
-.skd-title { font-family: var(--serif); font-size: 22px; font-weight: 400; text-align: center; }
-.skd-sub { text-align: center; margin: 6px 0 20px; }
+.skd-title { font-family: var(--serif); font-size: 22px; font-weight: 400; text-align: center; padding: 0 36px; }
 
 .skd-form { display: flex; flex-direction: column; gap: 16px; }
 

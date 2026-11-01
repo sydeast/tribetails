@@ -120,4 +120,28 @@ describe('getKinTaleComments', () => {
     const res = await getKinTaleCommentsHandler(req({ kinfolkId: 'f1', taleId: 't1' }, 'admin1', true));
     expect(res.comments).toEqual([]);
   });
+
+  it('NAMES the author: Auntie by staff name, household member by first name, guest by typed name', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'kin_care_reports/t1': { kinfolkId: 'f1' },
+        'clients/kin1': { kinfolkIds: ['f1'] },
+        'staff/a1': { displayName: 'Maya' },
+        'families/f1/members/k1': { displayName: 'Sam Rivera' },
+        'clients/k2': { displayName: 'Jo Lee' },
+      },
+      queryDocs: {
+        'kin_care_reports/t1/comments': [
+          { id: 'c1', data: { authorRole: 'kinfolk', authorUid: 'k1', body: 'a', createdAtMs: 1 } },
+          { id: 'c2', data: { authorRole: 'admin', authorUid: 'a1', body: 'b', createdAtMs: 2 } },
+          { id: 'c3', data: { authorRole: 'guest', authorUid: null, guestName: 'Pat', body: 'c', createdAtMs: 3 } },
+          { id: 'c4', data: { authorRole: 'kinfolk', authorUid: 'k2', body: 'd', createdAtMs: 4 } },
+          { id: 'c5', data: { authorRole: 'kinfolk', authorUid: 'ghost', body: 'e', createdAtMs: 5 } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await getKinTaleCommentsHandler(req({ taleId: 't1' }, 'kin1', false));
+    expect(res.comments.map((c) => c['authorDisplayName'])).toEqual(['Sam', 'Maya', 'Pat', 'Jo', null]);
+  });
 });

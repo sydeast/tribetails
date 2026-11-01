@@ -2,6 +2,12 @@ package com.kinfolk.portal.screens.kintales
 
 import com.kinfolk.portal.util.auntieName
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -89,6 +95,8 @@ fun KinTalesScreen(
     familyName: String,
     kinfolkId: String,
     portalApi: PortalApi,
+    /** #1363: a tale to open. It takes the first slot; the feed pages until it is found. */
+    focusTaleId: String? = null,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -99,11 +107,24 @@ fun KinTalesScreen(
     var loadingMore by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(kinfolkId) {
+    LaunchedEffect(kinfolkId, focusTaleId) {
         try {
             val res: KinTalesResult = portalApi.getMyKinTales(kinfolkId = kinfolkId)
-            tales = res.tales
-            hasMore = res.hasMore
+            var loaded = res.tales
+            var more = res.hasMore
+            // #1363: a tale opened by id may sit past the first page. Keep
+            // paging (by the same cursor Load More uses) until it turns up or
+            // the feed ends; the list shows the first page meanwhile.
+            tales = loaded
+            hasMore = more
+            while (focusTaleId != null && more && loaded.none { it.id == focusTaleId }) {
+                val cursor = loaded.lastOrNull()?.sentAtMs ?: break
+                val next = portalApi.getMyKinTales(kinfolkId = kinfolkId, before = cursor)
+                loaded = loaded + next.tales
+                more = next.hasMore
+                tales = loaded
+                hasMore = more
+            }
             error = null
         } catch (c: CancellationException) {
             throw c
@@ -112,12 +133,12 @@ fun KinTalesScreen(
         }
     }
 
-    val filtered = remember(tales, filter) {
+    val filtered = remember(tales, filter, focusTaleId) {
         when (filter) {
             KinTalesFilter.All -> tales
             KinTalesFilter.Lore -> tales?.filter { it.mediaIds.isEmpty() }
             KinTalesFilter.Gallery -> tales?.filter { it.mediaIds.isNotEmpty() }
-        }
+        }?.let { focusKinTale(it, focusTaleId) }
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -227,6 +248,15 @@ fun KinTalesScreen(
     }
 }
 
+/**
+ * #1363: the tale named by [focusTaleId] moved to the front, so a link from Home
+ * or a visit lands on it. An id that is not in [tales] (or no id) leaves the
+ * feed in its own order. Mirrors the web screen's `focusTaleId`.
+ */
+internal fun focusKinTale(tales: List<KinTale>, focusTaleId: String?): List<KinTale> {
+    val focused = tales.firstOrNull { it.id == focusTaleId } ?: return tales
+    return listOf(focused) + tales.filter { it !== focused }
+}
 @Composable
 private fun KinTaleCard(
     tale: KinTale,
@@ -409,11 +439,15 @@ private fun KinTaleChecklistChips(items: List<KinTaleChecklistItem>) {
 
 /**
  * The mockup's heart + "You and 2 others loved this" line
- * (ui-ideas/mytribe-kintales-2026-05-31.html:348), clickable to toggle the
- * caller's own reaction. Mirrors [KinTaleComments]'s own load-on-mount +
- * local-state pattern. Optimistic: flips loved + count locally on tap,
- * reconciles with the server's response once it lands (or rolls back to
- * the pre-tap state on failure) so the button never feels laggy.
+ * (ui-ideas/mytribe-kintales-2026-05-31.html:348), as a real toggle: a bordered
+ * pill with the heart, the count and the line, announced as a switch with a
+ * pressed state. Mirrors [KinTaleComments]'s own load-on-mount + local-state
+ * pattern.
+ *
+ * Pessimistic (operator ruling: pessimistic taps): the heart does not flip
+ * until the server answers, and while the call is in flight the pill reads
+ * "Saving…" and ignores further taps. A failure leaves it where it was and says
+ * so. `toggleKinTaleLove` returns the new state, so success just adopts it.
  */
 @Composable
 private fun KinTaleReactionRow(
@@ -425,7 +459,7 @@ private fun KinTaleReactionRow(
     val scope = rememberCoroutineScope()
     var reaction by remember(taleId) { mutableStateOf<KinTaleReaction?>(null) }
     var toggling by remember(taleId) { mutableStateOf(false) }
-
+    var failed by remember(taleId) { mutableStateOf(false) }
     LaunchedEffect(taleId, kinfolkId) {
         try {
             reaction = portalApi.getKinTaleReaction(kinfolkId = kinfolkId, taleId = taleId)
@@ -436,41 +470,55 @@ private fun KinTaleReactionRow(
             // not worth a full error state the way a failed comment load is.
         }
     }
-
     val current = reaction ?: return
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        IconButton(
-            enabled = !toggling,
-            onClick = {
-                val before = current
-                reaction = KinTaleReaction(
-                    loved = !before.loved,
-                    loveCount = if (before.loved) before.loveCount - 1 else before.loveCount + 1,
+    val tint = if (current.loved) KinfolkBrand.PackPink else KinfolkBrand.NavyMuted
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+        Row(
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(if (current.loved) KinfolkBrand.PackPink.copy(alpha = 0.12f) else KinfolkBrand.GlassSurfaceDim)
+                .border(1.dp, if (current.loved) KinfolkBrand.PackPink.copy(alpha = 0.45f) else KinfolkBrand.GlassBorder, CircleShape)
+                .toggleable(
+                    value = current.loved,
+                    enabled = !toggling,
+                    role = Role.Switch,
+                    onValueChange = {
+                        failed = false
+                        toggling = true
+                        scope.launch {
+                            try {
+                                reaction = portalApi.toggleKinTaleLove(kinfolkId = kinfolkId, taleId = taleId)
+                            } catch (c: CancellationException) {
+                                throw c
+                            } catch (_: Throwable) {
+                                failed = true
+                            } finally {
+                                toggling = false
+                            }
+                        }
+                    },
                 )
-                toggling = true
-                scope.launch {
-                    try {
-                        reaction = portalApi.toggleKinTaleLove(kinfolkId = kinfolkId, taleId = taleId)
-                    } catch (c: CancellationException) {
-                        throw c
-                    } catch (_: Throwable) {
-                        reaction = before
-                    } finally {
-                        toggling = false
-                    }
-                }
-            },
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .semantics { contentDescription = kinTaleLoveDescription(current, toggling) },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Icon(
                 imageVector = if (current.loved) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                contentDescription = if (current.loved) "Unlove this KinTale" else "Love this KinTale",
-                tint = if (current.loved) KinfolkBrand.PackPink else KinfolkBrand.NavyMuted,
+                contentDescription = null,
+                tint = tint,
             )
+            Text(text = current.loveCount.toString(), style = type.sansMeta.copy(color = tint, fontWeight = FontWeight.Bold))
+            Text(text = if (toggling) "Saving…" else kinTaleLoveLine(current), style = type.sansMeta)
         }
-        Text(text = kinTaleLoveLine(current), style = type.sansMeta)
+        if (failed) {
+            Text("Couldn't save your love. Try again.", style = type.sansMeta.copy(color = KinfolkBrand.PackPink))
+        }
     }
 }
-
+/** What a screen reader says for the love toggle: the line, or that it is saving. */
+internal fun kinTaleLoveDescription(reaction: KinTaleReaction, toggling: Boolean): String =
+    if (toggling) "Saving your love" else kinTaleLoveLine(reaction)
 /** "You and 2 others loved this" / "You loved this" / "3 people loved this" /
  *  "Be the first to love this" — mirrors kinTalesApi.ts's `loveLine` exactly. */
 internal fun kinTaleLoveLine(reaction: KinTaleReaction): String {
@@ -637,6 +685,21 @@ private fun KinTaleComments(
     )
 }
 
+/**
+ * Who wrote a comment, from the name the server resolved: an Auntie reads
+ * "Auntie Maya" (via [auntieName], so the role word is said once), a household
+ * member their first name, a guest the name they typed. With no resolved name it
+ * falls back to the role word. Mirrors `commentAuthorLabel` in kinTalesApi.ts,
+ * minus the "(you)" suffix, which needs the signed-in uid this screen does not hold.
+ */
+internal fun kinTaleCommentAuthorLabel(comment: KinTaleComment): String {
+    val name = comment.authorDisplayName?.trim().orEmpty()
+    return when (comment.authorRole) {
+        CommentAuthorRole.Admin -> auntieName(name) ?: "Auntie"
+        CommentAuthorRole.Guest -> "${comment.guestName?.takeIf { it.isNotBlank() } ?: name.ifEmpty { "Guest" }} (guest)"
+        CommentAuthorRole.Kinfolk -> name.ifEmpty { "Kinfolk" }
+    }
+}
 @Composable
 private fun CommentRow(
     comment: KinTaleComment,
@@ -651,11 +714,7 @@ private fun CommentRow(
             .padding(start = start),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        val authorLabel = when (comment.authorRole) {
-            CommentAuthorRole.Admin -> "Auntie"
-            CommentAuthorRole.Guest -> "${comment.guestName ?: "Guest"} (guest)"
-            CommentAuthorRole.Kinfolk -> comment.authorDisplayName ?: "Kinfolk"
-        }
+        val authorLabel = kinTaleCommentAuthorLabel(comment)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,

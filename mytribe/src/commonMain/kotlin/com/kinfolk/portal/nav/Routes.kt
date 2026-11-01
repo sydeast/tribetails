@@ -39,7 +39,8 @@ import kotlinx.serialization.Serializable
 // ---- Tab destinations (bottom nav) ----
 @Serializable data object HomeRoute
 @Serializable data object ScheduleRoute
-@Serializable data object KinTalesRoute
+/** [taleId]: open the feed with that tale first (#1363). Null is the plain feed. */
+@Serializable data class KinTalesRoute(val taleId: String? = null)
 @Serializable data object KinRoute
 @Serializable data object InvoicesRoute
 

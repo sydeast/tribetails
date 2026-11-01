@@ -325,11 +325,21 @@ const kinEditRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/KinEdit'), 'KinEdit'),
 });
 
+/**
+ * `/kintales?tale=<id>` opens the feed with that tale in the featured slot
+ * (Home's Recent KinTales cards link here). A blank or non-string value is
+ * dropped, so a hand-edited URL lands on the plain feed instead of an error.
+ */
+export function kinTalesSearch(search: Record<string, unknown>): { tale?: string } {
+  const tale = search['tale'];
+  return typeof tale === 'string' && tale.trim() !== '' ? { tale: tale.trim() } : {};
+}
 const kinTalesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kintales',
   beforeLoad: requireActiveTribe,
-  component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTales'),
+  validateSearch: kinTalesSearch,
+  component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTalesRoute'),
 });
 
 const invoicesRoute = createRoute({

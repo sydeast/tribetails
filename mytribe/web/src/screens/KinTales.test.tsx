@@ -11,6 +11,7 @@ import { isoTime } from '../lib/portalFormat';
 const mocks = vi.hoisted(() => ({
   getMyKinTales: vi.fn<() => Promise<GetMyKinTalesResult>>(),
   getKinTaleReaction: vi.fn<() => Promise<KinTaleReactionResult>>(),
+  toggleKinTaleLove: vi.fn<() => Promise<KinTaleReactionResult>>(),
   getMyKinTaleComments: vi.fn<() => Promise<GetKinTaleCommentsResult>>(),
   createShareLink: vi.fn<(taleId: string, familyId: string, options?: unknown) => Promise<{ shareId: string; shareUrl: string }>>(),
   revokeShareLink: vi.fn<(shareId: string) => Promise<{ ok: true }>>(),
@@ -29,6 +30,7 @@ vi.mock('../api/kinTalesApi', async () => {
     // (filterTales, threadComments, loveLine, …) stays real, same
     // convention as Messages.test.tsx's messagesApi mock.
     getKinTaleReaction: () => mocks.getKinTaleReaction(),
+    toggleKinTaleLove: () => mocks.toggleKinTaleLove(),
     getMyKinTaleComments: () => mocks.getMyKinTaleComments(),
     createShareLink: (taleId: string, familyId: string, options?: unknown) => mocks.createShareLink(taleId, familyId, options),
     revokeShareLink: (shareId: string) => mocks.revokeShareLink(shareId),
@@ -59,11 +61,11 @@ function tale(overrides: Partial<KinTaleDto> = {}): KinTaleDto {
   };
 }
 
-function renderScreen() {
+function renderScreen(props: { focusTaleId?: string } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <KinTales />
+      <KinTales {...props} />
     </QueryClientProvider>,
   );
 }
@@ -71,6 +73,7 @@ function renderScreen() {
 beforeEach(() => {
   mocks.getMyKinTales.mockReset();
   mocks.getKinTaleReaction.mockReset();
+  mocks.toggleKinTaleLove.mockReset();
   mocks.getMyKinTaleComments.mockReset();
   mocks.createShareLink.mockReset();
   mocks.revokeShareLink.mockReset();
@@ -98,7 +101,7 @@ describe('KinTales: Share', () => {
 
     await user.click(await screen.findByRole('button', { name: SHARE_BUTTON }));
 
-    expect(await screen.findByRole('dialog', { name: /Invite the Family/i })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: /Share this KinTale/i })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Generate Link/i }));
 
     await waitFor(() =>
@@ -453,5 +456,98 @@ describe('KinTales: Auntie bylines say the role word once', () => {
     expect(screen.getByText(/^FROM TEST SANDBOX AUNTIE/)).toBeInTheDocument();
     expect(screen.getByText(/^FROM AUNTIE MAYA/)).toBeInTheDocument();
     expect(document.body.textContent ?? '').not.toMatch(/auntie test sandbox auntie/i);
+  });
+});
+
+describe('KinTales: the love control is a real toggle (#1328)', () => {
+  it('is a button with a pressed state and a count, not grey text', async () => {
+    mocks.getKinTaleReaction.mockResolvedValue({ loved: false, loveCount: 3 });
+    renderScreen();
+    const btn = await screen.findByRole('button', { name: /3 people loved this/i });
+    expect(btn).toHaveAttribute('aria-pressed', 'false');
+    expect(btn).not.toHaveClass('is-on');
+    expect(within(btn).getByText('3')).toBeInTheDocument();
+  });
+  it('is pessimistic: the heart does not flip until the server answers, and a loading cue shows meanwhile', async () => {
+    mocks.getKinTaleReaction.mockResolvedValue({ loved: false, loveCount: 1 });
+    let resolveToggle: (r: KinTaleReactionResult) => void = () => {};
+    mocks.toggleKinTaleLove.mockReturnValue(new Promise((res) => { resolveToggle = res; }));
+    const user = userEvent.setup();
+    renderScreen();
+    const btn = await screen.findByRole('button', { name: /1 person loved this/i });
+    await user.click(btn);
+    // In flight: still unpressed, disabled, saying it is saving.
+    const busy = await screen.findByRole('button', { name: /Saving/i });
+    expect(busy).toHaveAttribute('aria-pressed', 'false');
+    expect(busy).toBeDisabled();
+    mocks.getKinTaleReaction.mockResolvedValue({ loved: true, loveCount: 2 });
+    resolveToggle({ loved: true, loveCount: 2 });
+    const done = await screen.findByRole('button', { name: /You and 1 other loved this/i });
+    expect(done).toHaveAttribute('aria-pressed', 'true');
+    expect(done).toHaveClass('is-on');
+    expect(done).toBeEnabled();
+  });
+  it('a failed toggle leaves the heart where it was and says so', async () => {
+    mocks.getKinTaleReaction.mockResolvedValue({ loved: false, loveCount: 1 });
+    mocks.toggleKinTaleLove.mockRejectedValue(new Error('boom'));
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /1 person loved this/i }));
+    expect(await screen.findByText(/Couldn.t save your love/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /1 person loved this/i })).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+describe('KinTales: who wrote each comment (#1328)', () => {
+  it('names an Auntie, a household member, a guest, and the signed-in user, with matching avatar letters', async () => {
+    mocks.getMyKinTaleComments.mockResolvedValue({
+      comments: [
+        { id: 'c1', authorRole: 'admin', authorUid: 'a1', guestName: null, authorDisplayName: 'Maya', body: 'hello', parentCommentId: null, createdAtMs: 1 },
+        { id: 'c2', authorRole: 'kinfolk', authorUid: 'k9', guestName: null, authorDisplayName: 'Sam', body: 'thanks', parentCommentId: null, createdAtMs: 2 },
+        { id: 'c3', authorRole: 'guest', authorUid: null, guestName: 'Pat', authorDisplayName: 'Pat', body: 'hi', parentCommentId: null, createdAtMs: 3 },
+        { id: 'c4', authorRole: 'kinfolk', authorUid: 'u1', guestName: null, authorDisplayName: 'Casey', body: 'mine', parentCommentId: null, createdAtMs: 4 },
+      ],
+    });
+    const { container } = renderScreen();
+    expect(await screen.findByText('Auntie Maya')).toBeInTheDocument();
+    expect(screen.getByText('Sam')).toBeInTheDocument();
+    expect(screen.getByText('Pat (Guest)')).toBeInTheDocument();
+    expect(screen.getByText('Casey (you)')).toBeInTheDocument();
+    expect(screen.queryByText('Kinfolk', { selector: 'b' })).not.toBeInTheDocument();
+    // Her own comment and her composer show the same letter.
+    const avatars = Array.from(container.querySelectorAll('.cmt .cav')).map((n) => n.textContent);
+    expect(avatars).toEqual(['M', 'S', 'P', 'C']);
+    expect(container.querySelector('.postbox .cav')?.textContent).toBe('C');
+  });
+});
+describe('KinTales: opening a tale from Home (#1329)', () => {
+  it('features the tale named by focusTaleId instead of the newest', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ id: 'new', title: 'Newest walk' }), tale({ id: 'old', title: 'Older nap' })],
+      hasMore: false,
+    });
+    const { container } = renderScreen({ focusTaleId: 'old' });
+    await screen.findByText('Older nap');
+    expect(container.querySelector('.feature h2')?.textContent).toBe('Older nap');
+    expect(container.querySelector('.talecard h3')?.textContent).toBe('Newest walk');
+  });
+  it('an id that is not in the feed leaves the feed in its own order', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ id: 'new', title: 'Newest walk' }), tale({ id: 'old', title: 'Older nap' })],
+      hasMore: false,
+    });
+    const { container } = renderScreen({ focusTaleId: 'gone' });
+    await screen.findByText('Older nap');
+    expect(container.querySelector('.feature h2')?.textContent).toBe('Newest walk');
+  });
+});
+
+describe('KinTales: a focused tale past the first page (#1363)', () => {
+  it('keeps paging until the tale turns up, then features it', async () => {
+    mocks.getMyKinTales
+      .mockResolvedValueOnce({ tales: [tale({ id: 'a', title: 'First page tale', sentAtMs: 300 })], hasMore: true })
+      .mockResolvedValueOnce({ tales: [tale({ id: 'deep', title: 'Deep tale', sentAtMs: 100 })], hasMore: false });
+    const { container } = renderScreen({ focusTaleId: 'deep' });
+    await waitFor(() => expect(container.querySelector('.feature h2')?.textContent).toBe('Deep tale'));
+    expect(mocks.getMyKinTales).toHaveBeenCalledTimes(2);
   });
 });

@@ -41,7 +41,7 @@ enum class ShellDestination(
     Home("Home", "Home", Icons.Filled.Home, HomeRoute, HomeRoute::class),
     Tribe("Tribe", "Tribe", Icons.Filled.Groups, TribeRoute, TribeRoute::class),
     Schedule("Schedule", "Schedule", Icons.Filled.CalendarToday, ScheduleRoute, ScheduleRoute::class),
-    KinTales("KinTales", "Tales", Icons.Filled.AutoStories, KinTalesRoute, KinTalesRoute::class),
+    KinTales("KinTales", "Tales", Icons.Filled.AutoStories, KinTalesRoute(), KinTalesRoute::class),
     Invoices("Invoices", "Invoices", Icons.Filled.CreditCard, InvoicesRoute, InvoicesRoute::class),
     Kin("The Kin", "Kin", Icons.Filled.Pets, KinRoute, KinRoute::class),
     Account("Account", "Account", Icons.Filled.PersonOutline, AccountRoute, AccountRoute::class),

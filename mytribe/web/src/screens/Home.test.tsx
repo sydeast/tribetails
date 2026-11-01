@@ -38,7 +38,11 @@ vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('../components/PushPrompt', () => ({ PushPrompt: () => null }));
 vi.mock('../components/AddToHomeScreen', () => ({ AddToHomeScreen: () => null }));
 vi.mock('@tanstack/react-router', () => ({
-  Link: ({ children }: { children?: ReactNode }) => <a>{children}</a>,
+  Link: ({ children, to, search, className }: { children?: ReactNode; to?: string; search?: Record<string, string>; className?: string }) => (
+    <a className={className} data-to={to} data-search={search ? JSON.stringify(search) : undefined}>
+      {children}
+    </a>
+  ),
 }));
 
 afterEach(() => {
@@ -150,5 +154,29 @@ describe('Home, a visit whose start time the Auntie sets (#1098)', () => {
     expect(await screen.findByText('Fri night · Start time set by your Auntie')).toBeInTheDocument();
     expect(screen.getByText('Oct')).toBeInTheDocument();
     expect(screen.queryByText(/Time to be confirmed|Invalid Date|12:00 AM/)).toBeNull();
+  });
+});
+
+describe('Home, Recent KinTales cards open the tale (#1329)', () => {
+  it('each card is a link to /kintales carrying that tale id', async () => {
+    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        { id: 't-a', title: 'Park day', body: 'Ran everywhere.', authorDisplayName: 'Maya', mediaIds: [], sentAtMs: null },
+        { id: 't-b', title: 'Nap day', body: 'Slept.', authorDisplayName: 'Maya', mediaIds: [], sentAtMs: null },
+      ],
+    });
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    const card = (await screen.findByText('Park day')).closest('a');
+    expect(card).toHaveAttribute('data-to', '/kintales');
+    expect(card).toHaveAttribute('data-search', JSON.stringify({ tale: 't-a' }));
+    expect(screen.getByText('Nap day').closest('a')).toHaveAttribute('data-search', JSON.stringify({ tale: 't-b' }));
   });
 });
