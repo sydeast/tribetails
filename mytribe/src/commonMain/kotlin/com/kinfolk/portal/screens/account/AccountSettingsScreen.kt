@@ -41,6 +41,7 @@ import com.kinfolk.portal.components.SchemaFormRenderer
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.portal.Account
 import com.kinfolk.portal.portal.FormSchema
+import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.PaymentMethodState
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkBrand
@@ -69,6 +70,8 @@ fun AccountSettingsScreen(
      * card is not drawn and the card on file is never asked for.
      */
     billingAccess: Boolean = true,
+    /** Fires with the account the server returned after a save, so the header avatar can follow a renamed person (#1290). */
+    onAccountSaved: (Account) -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -238,7 +241,8 @@ fun AccountSettingsScreen(
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
-                            status = "Invite failed: ${t.message ?: t}"
+                            // #1277: a missing backend setting never shows its name.
+                            status = inviteFailureLine(t)
                         } finally {
                             inviting = false
                         }
@@ -516,6 +520,7 @@ fun AccountSettingsScreen(
                         // silent write failure surfaces instead of a false "Saved."
                         val fresh = portalApi.getMyAccount()
                         loaded = fresh
+                        onAccountSaved(fresh)
                         val freshName = fresh.displayName?.takeIf { it != fresh.email }.orEmpty()
                         displayName = freshName
                         phone = formatPhone(fresh.phone)

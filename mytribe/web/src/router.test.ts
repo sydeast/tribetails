@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bookingWizardSearch, kinTalesSearch, pickGuardRedirect } from './router';
+import { bookingWizardSearch, kinEditSearch, kinTalesSearch, pickGuardRedirect, scheduleSearch } from './router';
 import type { AccessState } from './lib/activeTribe';
 
 function access(overrides: Partial<AccessState>): AccessState {
@@ -66,7 +66,37 @@ describe('bookingWizardSearch (/schedule/book search validation)', () => {
   });
 });
 
-describe('kinTalesSearch (/kintales search validation)', () => {
+describe('kinEditSearch (/kin/$kinId/edit search validation, #1291)', () => {
+  it('keeps only photo=failed and drops everything else', () => {
+    expect(kinEditSearch({ photo: 'failed' })).toEqual({ photo: 'failed' });
+    expect(kinEditSearch({ photo: 'ok' })).toEqual({});
+    expect(kinEditSearch({})).toEqual({});
+    expect(kinEditSearch({ photo: 'failed', step: '4' })).toEqual({ photo: 'failed' });
+  });
+});
+describe('kinTalesSearch (#1303)', () => {
+  it('keeps a tale id', () => {
+    expect(kinTalesSearch({ tale: 'tale-9' })).toEqual({ tale: 'tale-9' });
+  });
+  it('drops an empty or non-string id and anything else', () => {
+    expect(kinTalesSearch({ tale: '' })).toEqual({});
+    expect(kinTalesSearch({ tale: 4 })).toEqual({});
+    expect(kinTalesSearch({ other: 'x' })).toEqual({});
+  });
+});
+describe('scheduleSearch (#1304)', () => {
+  it('keeps the past tab', () => {
+    expect(scheduleSearch({ tab: 'past' })).toEqual({ tab: 'past' });
+  });
+  it('leaves Upcoming as the absence of the key, so /schedule stays the clean address', () => {
+    expect(scheduleSearch({ tab: 'upcoming' })).toEqual({});
+    expect(scheduleSearch({})).toEqual({});
+  });
+  it('drops anything it does not know', () => {
+    expect(scheduleSearch({ tab: 'bogus', step: '4' })).toEqual({});
+  });
+});
+describe('kinTalesSearch (/kintales search validation, #1329)', () => {
   it('keeps a tale id and drops anything blank, non-string or unknown', () => {
     expect(kinTalesSearch({ tale: 't1' })).toEqual({ tale: 't1' });
     expect(kinTalesSearch({ tale: ' t1 ' })).toEqual({ tale: 't1' });

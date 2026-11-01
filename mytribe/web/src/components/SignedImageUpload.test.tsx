@@ -313,4 +313,30 @@ describe('SignedImageUpload', () => {
     expect(container.querySelector('img')).toBeNull();
     expect(getByText('M')).toBeTruthy();
   });
+
+  it('#1291 deferred mode: hands a valid file to onPicked and never signs or uploads', async () => {
+    const validate = vi.fn().mockReturnValue(null);
+    const sign = vi.fn().mockResolvedValue(SIGNED);
+    const onPicked = vi.fn();
+
+    const { container } = render(
+      <SignedImageUpload sign={sign} onPicked={onPicked} validate={validate} imageUrl="" fallback="M" />,
+    );
+    await selectFile(getFileInput(container), VALID_FILE);
+
+    await waitFor(() => expect(onPicked).toHaveBeenCalledWith(VALID_FILE));
+    expect(sign).not.toHaveBeenCalled();
+    expect(FakeXHR.instances).toHaveLength(0);
+  });
+
+  it('#1291 deferred mode: an invalid file is refused before onPicked', async () => {
+    const onPicked = vi.fn();
+    const { container, findByText } = render(
+      <SignedImageUpload onPicked={onPicked} validate={() => 'Use a JPG, PNG, WebP, or GIF image.'} imageUrl="" fallback="M" />,
+    );
+    await selectFile(getFileInput(container), VALID_FILE);
+
+    await findByText('Use a JPG, PNG, WebP, or GIF image.');
+    expect(onPicked).not.toHaveBeenCalled();
+  });
 });

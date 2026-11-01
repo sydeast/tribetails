@@ -836,4 +836,27 @@ describe('invite confirmation (#1018 item 3)', () => {
     expect(await view.findByText(/You cannot invite yourself/)).toBeInTheDocument();
     expect(view.queryByText(/Invite sent/)).not.toBeInTheDocument();
   });
+
+  // #1277: Tribe Profile › Invite a Kinfolk showed the env var name.
+  it('never shows a backend setting name: a config refusal reads as a plain line', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.addSecondaryContact).mockRejectedValue(new Error('AUNTIE_OS_REVIEW_BASE_URL is not configured [400]'));
+    const view = await renderTribeProfile({});
+    fireEvent.change(await view.findByLabelText('Email'), { target: { value: 'catch@hanasamku.com' } });
+    fireEvent.click(view.getByRole('button', { name: 'Send Invite' }));
+    expect(await view.findByText("Invites can't be sent right now. It's been reported to Auntie.")).toBeInTheDocument();
+    expect(view.queryByText(/AUNTIE_OS_REVIEW_BASE_URL|is not configured/)).not.toBeInTheDocument();
+  });
+  // #1277: Tribe Profile › Secondary Kinfolk › Give portal access opens the same card.
+  it('Give portal access: a config refusal reads as the same plain line', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.addSecondaryContact).mockRejectedValue(new Error('CLAIM_LINK_BASE_URL is not configured'));
+    const pat: SecondaryKinfolkDto = { personId: 'p9', name: 'Pat', phone: null, email: 'pawsome@hanasamku.com', access: 'NONE', memberUid: null, createdAt: null };
+    const view = await renderTribeProfile({ secondaryKinfolk: [pat] });
+    const row = (await view.findByText('Pat')).closest('li') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Give portal access' }));
+    fireEvent.click(view.getByRole('button', { name: 'Send Invite' }));
+    expect(await view.findByText("Invites can't be sent right now. It's been reported to Auntie.")).toBeInTheDocument();
+    expect(view.queryByText(/CLAIM_LINK_BASE_URL|is not configured/)).not.toBeInTheDocument();
+  });
 });

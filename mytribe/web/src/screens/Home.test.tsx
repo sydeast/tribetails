@@ -24,8 +24,10 @@ const mocks = vi.hoisted(() => ({
   getMyBookings: vi.fn(),
   getMyKin: vi.fn(),
   getMyKinTales: vi.fn(),
+  getMyAccount: vi.fn(),
 }));
 
+vi.mock('../api/accountApi', () => ({ getMyAccount: (...args: unknown[]) => mocks.getMyAccount(...args) }));
 vi.mock('../api/portal', () => ({
   getMyHome: (...args: unknown[]) => mocks.getMyHome(...args),
   getMyBookings: (...args: unknown[]) => mocks.getMyBookings(...args),
@@ -33,7 +35,10 @@ vi.mock('../api/portal', () => ({
   getMyKinTales: (...args: unknown[]) => mocks.getMyKinTales(...args),
 }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
-vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
+vi.mock('../lib/auth', () => ({
+  useSignOut: () => ({ signOut: vi.fn(), signingOut: false }),
+  useAuth: () => ({ status: 'signedIn', user: { uid: 'u1', email: 'casey.qa@example.com' } }),
+}));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('../components/PushPrompt', () => ({ PushPrompt: () => null }));
 vi.mock('../components/AddToHomeScreen', () => ({ AddToHomeScreen: () => null }));
@@ -101,7 +106,8 @@ describe('Home, signal lost with the tab open', () => {
 
 describe('Home, online and genuinely empty', () => {
   it('still shows the empty copy when the server answers with nothing', async () => {
-    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyHome.mockResolvedValue({ displayName: 'TEST SANDBOX', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyAccount.mockResolvedValue({ displayName: 'Casey QA', email: 'casey.qa@example.com', impersonated: false });
     mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
     mocks.getMyKinTales.mockResolvedValue({ tales: [] });
     mocks.getMyKin.mockResolvedValue({ kin: [] });
@@ -114,7 +120,9 @@ describe('Home, online and genuinely empty', () => {
     );
 
     expect(await screen.findByText('Nothing on the calendar yet.')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Hi Wren, your tribe is in good hands/);
+    // #1290: the person's first name, not the household's upper-case name.
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Hi Casey, your tribe is in good hands/);
+    expect(screen.getByRole('heading', { level: 1 })).not.toHaveTextContent(/TEST SANDBOX/i);
     expect(screen.queryByText(/We can.t reach Tribe Tails/)).not.toBeInTheDocument();
   });
 });
@@ -141,7 +149,8 @@ function pendingOvernight() {
 
 describe('Home, a visit whose start time the Auntie sets (#1098)', () => {
   it('lists it on its night with who sets the start, never a made-up time', async () => {
-    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyHome.mockResolvedValue({ displayName: 'TEST SANDBOX', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyAccount.mockResolvedValue({ displayName: 'Casey QA', email: 'casey.qa@example.com', impersonated: false });
     mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [pendingOvernight()], recent: [] });
     mocks.getMyKinTales.mockResolvedValue({ tales: [] });
     mocks.getMyKin.mockResolvedValue({ kin: [] });
@@ -178,5 +187,41 @@ describe('Home, Recent KinTales cards open the tale (#1329)', () => {
     expect(card).toHaveAttribute('data-to', '/kintales');
     expect(card).toHaveAttribute('data-search', JSON.stringify({ tale: 't-a' }));
     expect(screen.getByText('Nap day').closest('a')).toHaveAttribute('data-search', JSON.stringify({ tale: 't-b' }));
+  });
+});
+describe('Home, status words and the pending change (#1298, #1299)', () => {
+  async function renderWith(upcoming: unknown[]) {
+    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming, recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({ tales: [] });
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+  }
+  const visit = {
+    ...pendingOvernight(),
+    startTimePending: false,
+    requestedDate: null,
+    startTimeMs: new Date(2030, 5, 2, 8, 0).getTime(),
+    cancelRequestStatus: null,
+    rescheduleRequestStatus: null,
+  };
+  it('uses REQUESTED, not PENDING, and no change line when nothing is open', async () => {
+    await renderWith([visit]);
+    expect(await screen.findByText('REQUESTED')).toBeInTheDocument();
+    expect(screen.queryByText('PENDING')).toBeNull();
+    expect(screen.queryByTestId('pending-change')).toBeNull();
+  });
+  it('shows the open cancellation under Up Next', async () => {
+    await renderWith([{ ...visit, cancelRequestStatus: 'pending' }]);
+    expect((await screen.findByTestId('pending-change')).textContent).toBe('Cancellation requested');
+  });
+  it('shows the open new-time request under Up Next', async () => {
+    await renderWith([{ ...visit, rescheduleRequestStatus: 'pending' }]);
+    expect((await screen.findByTestId('pending-change')).textContent).toBe('New time requested');
   });
 });

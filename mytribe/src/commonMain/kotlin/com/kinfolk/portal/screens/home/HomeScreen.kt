@@ -53,6 +53,8 @@ import com.kinfolk.portal.portal.KinTale
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.PortalHomeSection
 import com.kinfolk.portal.portal.VisitProgress
+import com.kinfolk.portal.portal.label
+import com.kinfolk.portal.portal.pendingChangeLabel
 import com.kinfolk.portal.screens.schedule.SAVE_NOTICE_MS
 import com.kinfolk.portal.screens.schedule.SaveNoticeRow
 import com.kinfolk.portal.screens.schedule.ScheduleHandoff
@@ -399,6 +401,8 @@ private fun UpcomingRow(b: Booking) {
             Text(bookingWhenLabel(b), style = type.sansLabel)
             val withText = (listOf(b.auntieDisplayName).filterNotNull() + b.kinNames).joinToString(" • ").ifBlank { null }
             if (withText != null) Text(withText, style = type.sansMeta)
+            // #1299: the cancellation or new time still waiting on the office.
+            b.pendingChangeLabel()?.let { Text(it, style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted)) }
         }
         StatusPill(b)
     }
@@ -699,14 +703,16 @@ private fun VisitProgressTimeline(progress: VisitProgress, onGradient: Boolean =
 @Composable
 private fun StatusPill(b: Booking) {
     val type = LocalKinfolkTypography.current
-    val (label, color) = when (b.status) {
-        com.kinfolk.portal.portal.BookingStatus.Requested -> "REQUESTED" to KinfolkBrand.KinfolkOrange
-        com.kinfolk.portal.portal.BookingStatus.Confirmed -> "CONFIRMED" to KinfolkBrand.KinTeal
-        com.kinfolk.portal.portal.BookingStatus.EnRoute -> "EN ROUTE" to KinfolkBrand.PackPink
-        com.kinfolk.portal.portal.BookingStatus.Active -> "ACTIVE" to KinfolkBrand.SnuggleCoral
-        com.kinfolk.portal.portal.BookingStatus.Completed -> "COMPLETED" to KinfolkBrand.KinTeal
-        com.kinfolk.portal.portal.BookingStatus.Cancelled -> "CANCELLED" to KinfolkBrand.NavyMuted
+    // #1298: the words come from BookingStatus.label(); only the colour is this screen's.
+    val color = when (b.status) {
+        com.kinfolk.portal.portal.BookingStatus.Requested -> KinfolkBrand.KinfolkOrange
+        com.kinfolk.portal.portal.BookingStatus.Confirmed -> KinfolkBrand.KinTeal
+        com.kinfolk.portal.portal.BookingStatus.EnRoute -> KinfolkBrand.PackPink
+        com.kinfolk.portal.portal.BookingStatus.Active -> KinfolkBrand.SnuggleCoral
+        com.kinfolk.portal.portal.BookingStatus.Completed -> KinfolkBrand.KinTeal
+        com.kinfolk.portal.portal.BookingStatus.Cancelled -> KinfolkBrand.NavyMuted
     }
+    val label = b.status.label()
     GlassCard(
         modifier = Modifier,
         shape = KinfolkShapes.pill,

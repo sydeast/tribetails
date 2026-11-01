@@ -4,11 +4,10 @@ import { call } from '../lib/fns';
  * Signed direct-to-Cloudinary kin photo uploads
  * (functions/src/portal/signKinPhotoUpload.ts). Replaces the old
  * base64-through-a-callable `uploadKinPhoto` (deleted — its 2MB cap was the
- * whole point of this feature). No web screen calls this yet: Kin
- * Add/Edit is blocked on O-17 (no mockup exists), same as the rest of that
- * flow — this file exists so the backend is ready the moment that screen
- * gets built. Android already uses the equivalent flow live
- * (KinController.kt's uploadPhoto()).
+ * whole point of this feature). #1291: KinEdit.tsx uploads through
+ * <SignedImageUpload> with signKinPhotoUpload + confirmKinPhotoUpload, and
+ * KinAdd.tsx calls uploadKinPhotoSigned once addKin has returned the new
+ * kinId. Android runs the equivalent flow (KinController.kt's uploadPhoto()).
  */
 
 export interface SignedKinPhotoUpload {

@@ -44,6 +44,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
+import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { formatPhone } from '../lib/phone';
 
@@ -385,7 +386,7 @@ export function TribeProfile() {
 
   return (
     <>
-      <PortalNav active="tribe" displayName={displayName} />
+      <PortalNav active="tribe" />
 
       <div className="wrap">
         <header className="hero-greet">
@@ -1047,7 +1048,7 @@ function InviteKinfolkCard(props: {
       )}
       <OfflineMutationNotice phase={invite.phase} what="this invite" check="your Members list" />
       {invite.phase === 'failed' && (
-        <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>{errorLine(invite, 'Invite failed. Try again.')}</p>
+        <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>{isConfigGapError(invite.error) ? INVITES_UNAVAILABLE_MESSAGE : errorLine(invite, 'Invite failed. Try again.')}</p>
       )}
     </section>
   );
