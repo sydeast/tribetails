@@ -22,6 +22,8 @@ import {
   assertNoUserFacingCopy,
   parseArgs,
 } from '../seedDemoKinfolk';
+import { computeInvoiceTotals, centsToDollars } from '../../functions/src/lib/invoiceMath';
+import { invoiceStateStampOf } from '../../functions/src/lib/invoiceStateStamp';
 
 describe('seedDemoKinfolk parseArgs', () => {
   it('defaults to a dry run', () => {
@@ -372,7 +374,8 @@ describe('seedDemoKinfolk (MyTribe portal docs: home, bookings, invoices)', () =
         expect(inv.kinfolkId).toBe(fam);
         expect(inv._demo).toBe(true);
         expect(Array.isArray(inv.lineItems)).toBe(true);
-        expect(inv.lineItems.length).toBeGreaterThan(0);
+        // #1368: a credit is money-only (no writer produces a negative line).
+        if (inv.invoiceStatus !== 'credit') expect(inv.lineItems.length).toBeGreaterThan(0);
       }
       const credit = p.invoices.find((i) => i.invoiceStatus === 'credit')!;
       // getMyInvoices treats negative amountDue/total as credit math input.
@@ -381,6 +384,24 @@ describe('seedDemoKinfolk (MyTribe portal docs: home, bookings, invoices)', () =
     }
   });
 
+  // #1368: same defect as the sandbox seed (lines written as {label, amount}).
+  it('demo invoice money agrees with invoiceMath and the state stamp (reader-schema parse: functions/test/seedInvoiceShape.test.ts)', () => {
+    for (const fam of DEMO_FAMILY_IDS) {
+      for (const inv of buildSeedPayload(fam).invoices) {
+        // A credit is money-only (no stored lines); every other state is itemized.
+        if (inv.lineItems.length > 0) {
+          const t = computeInvoiceTotals(inv.lineItems, inv.invoiceDiscountCents, inv.paidCents);
+          expect(inv.totalCents).toBe(t.totalCents);
+          expect(inv.amountDueCents).toBe(t.amountDueCents);
+        }
+        expect(inv.total).toBe(centsToDollars(inv.totalCents));
+        expect(inv.amountDue).toBe(centsToDollars(inv.amountDueCents));
+        const stamp = invoiceStateStampOf({ ...inv, status: inv.invoiceStatus }, inv.paidCents);
+        expect(stamp.status).toBe(inv.invoiceStatus);
+        expect(stamp.editScope).toBe(inv.editScope);
+      }
+    }
+  });
   // #932: the seed used to write BOTH `invoices/{id}` and the retired
   // `families/{fam}/invoices/{id}`, which is why a demo household could be
   // chased twice by any collectionGroup scan. The pair of tests that asserted
