@@ -1266,6 +1266,35 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   invites the secondary from MyTribe. An admin-wide surface has no household to
   mint into, and must never grow a button that pretends otherwise.
 
+### getInvite (net-new 2026-11-01, issue #1339)
+- req `{ inviteId: string /* trimmed, 1..200, no '/' */ }`
+- res `{ invite: listAllInvites row & { invitedByRole: 'AUNTIE' | 'PRIMARY',
+  invitedBy: { uid, displayName: string | null, email: string | null } | null,
+  acceptedBy: same shape | null, acceptedAt: string | null, source: string | null } }`
+- GATE: `wrapAdminCallable`.
+- Errors: `invalid-argument` (blank id, or one carrying `/`), `not-found` (no
+  `inviteRequests/{inviteId}` doc).
+- **Why it exists.** The `invite.auntie-notify` email links to
+  `${AUNTIE_OS_REVIEW_BASE_URL}/invites/<inviteId>`, the admin web route
+  `invites/$inviteId`. A page of `listAllInvites` (200 rows) cannot promise to
+  contain an older invite, so the detail screen reads the one doc by id.
+- The row is `mapInviteDoc` + `householdNameFor`, imported from the two list
+  callables. `invitedByRole` is `AUNTIE` when `primaryUid === ''` (the business
+  minted it: `mintInvite`, `inviteKinfolkToPortal`, `provisionTribe`,
+  `executePrimaryRecovery`), else `PRIMARY` (`mintInviteFromPrimary`,
+  `addSecondaryContact`). `invitedBy` / `acceptedBy` come from Firebase Auth; an
+  account Auth cannot read keeps its uid with null name and email.
+- `acceptedAt` is stamped by `acceptInvite` from #1339 on. Invites accepted
+  before that have only `acceptedUid` and read `acceptedAt: null`.
+- One best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry with the household's
+  `familyId`. The invite id (the claim token) reaches neither the audit payload
+  nor `logEvent`.
+- Mirrors: `auntieos-admin/src/api/members.ts#getInvite` +
+  `src/screens/InviteDetail.tsx`; Android `MembersRepository.getInvite` +
+  `ui/members/InviteDetailScreen.kt`. The desktop console has no invites list.
+- Like the list, it offers no write. Revoke stays on the household's Members and
+  invites screen, which the detail links to.
+
 ### listRecoveryCandidates (net-new 2026-08-18, issue #378)
 - req `{ familyId: string, oldUid?: string }`
 - res `{ candidates: Array<{ uid, email, secondaryLabel: string | null, role, status }> }`
