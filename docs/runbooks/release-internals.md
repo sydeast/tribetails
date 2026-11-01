@@ -646,6 +646,7 @@ its own, since it's "what does source currently declare, exactly" with inheritan
 already resolved, and it fails loudly (nonzero exit, every unresolved export
 named) if a future function's options object uses a shape the extractor
 hasn't been taught, rather than silently skipping it.
+
 A `...NAME` spread inside an options object resolves the way JS scoping
 does (#1388): a top-level `const NAME = { ... }` in the same file is
 inlined; a name imported from `lib/runtimeOptions.ts` is one of the named

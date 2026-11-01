@@ -88,6 +88,7 @@ interface SpreadLink {
   key: string; // `<file>#<name>`: unique across modules
   label: string; // `NAME`, what a reader sees
 }
+
 /** `import { NAME } from './x'` / `import { ORIG as NAME } from './x'` in this file. */
 function findNamedImport(
   sourceFile: ts.SourceFile,
@@ -109,6 +110,7 @@ function findNamedImport(
   }
   return undefined;
 }
+
 /**
  * Resolves `...NAME` inside an options literal to fragments, in this order,
  * which is JS's own scoping order (#1388):
@@ -181,6 +183,7 @@ function spreadToFragments(
     link,
   ]);
 }
+
 /**
  * Walks one options `ObjectLiteralExpression`'s properties in source order.
  * Only properties whose key is one of the six `RuntimeKey`s are kept —
@@ -391,6 +394,7 @@ function findLocalConst(
   }
   return undefined;
 }
+
 function optionsExpressionToFragments(
   expr: ts.Expression | undefined,
   sourceFile: ts.SourceFile,

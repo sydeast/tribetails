@@ -236,6 +236,7 @@ describe('extractFunctionDeclaration', () => {
     );
   });
 });
+
 describe('file-local const spreads (#1388)', () => {
   it('inlines a file-local `as const` spread in source order (the emailFrameSettings.ts shape)', () => {
     const src = sourceFile(`
@@ -245,6 +246,7 @@ describe('file-local const spreads (#1388)', () => {
     const decl = extractFunctionDeclaration(src, 'getEmailFrame', 'x.ts');
     expect(decl.fragments).toEqual([{ kind: 'prop', key: 'region', value: 'us-central1' }]);
   });
+
   it('keeps JS override order around a local spread, and still defers named constants', () => {
     const src = sourceFile(`
       const BASE = { memory: '512MiB', ...FULL_CPU, region: 'us-east1' };
@@ -259,6 +261,7 @@ describe('file-local const spreads (#1388)', () => {
       { kind: 'prop', key: 'minInstances', value: 1 },
     ]);
   });
+
   it('a file-local const shadows a same-named import, as JS scoping does', () => {
     const src = sourceFile(`
       import { FULL_CPU } from '../lib/runtimeOptions';
@@ -268,6 +271,7 @@ describe('file-local const spreads (#1388)', () => {
     const decl = extractFunctionDeclaration(src, 'f', 'x.ts');
     expect(decl.fragments).toEqual([{ kind: 'prop', key: 'cpu', value: 2 }]);
   });
+
   it('fails loudly, naming the file and construct, when the local const is not an object literal', () => {
     const src = sourceFile(
       `
@@ -283,6 +287,7 @@ describe('file-local const spreads (#1388)', () => {
       /src\/admin\/fixture\.ts:f: spreads file-local const "OPTS" \(src\/admin\/fixture\.ts:2\), whose initializer is not an object literal \(buildOpts\(\)\)/,
     );
   });
+
   it('fails loudly on a local const that spreads itself', () => {
     const src = sourceFile(`
       const A = { ...B };
@@ -294,12 +299,14 @@ describe('file-local const spreads (#1388)', () => {
     );
   });
 });
+
 describe('imported const spreads (#1388)', () => {
   function fixtureDir(files: Record<string, string>): string {
     const dir = mkdtempSync(join(tmpdir(), 'rtopts-spread-'));
     for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
     return dir;
   }
+
   it('follows a relative import to the exporting module and inlines its const (the HOURLY_TICK shape)', () => {
     const dir = fixtureDir({
       'schedule.ts': `
@@ -321,6 +328,7 @@ describe('imported const spreads (#1388)', () => {
       { kind: 'prop', key: 'memory', value: '512MiB' },
     ]);
   });
+
   it('fails loudly when the imported module has no such const', () => {
     const dir = fixtureDir({ 'schedule.ts': `export function TICK() {}` });
     const file = join(dir, 'cron.ts');
@@ -335,6 +343,7 @@ describe('imported const spreads (#1388)', () => {
       /declares no top-level const "TICK"/,
     );
   });
+
   it('fails loudly on a spread imported from a package', () => {
     const src = sourceFile(`
       import { OPTS } from 'some-package';
@@ -345,6 +354,7 @@ describe('imported const spreads (#1388)', () => {
     );
   });
 });
+
 describe('extractAll / resolveAll over the real src/index.ts (#1388)', () => {
   // The guard the issue asks for: the next unsupported options shape fails
   // CI here instead of the operator's `runtime-options:diff` mid-release.
@@ -353,6 +363,7 @@ describe('extractAll / resolveAll over the real src/index.ts (#1388)', () => {
     expect(errors).toEqual([]);
     expect(declarations.length).toBeGreaterThan(200);
   });
+
   it('resolves every declaration to a concrete shape with zero errors', () => {
     const { declarations, errors } = resolveAll();
     expect(errors).toEqual([]);
