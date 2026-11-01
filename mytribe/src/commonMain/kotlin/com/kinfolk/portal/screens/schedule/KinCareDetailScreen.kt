@@ -1,7 +1,5 @@
 package com.kinfolk.portal.screens.schedule
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -32,13 +29,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
+import com.kinfolk.portal.components.KinChip
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.portal.Booking
+import com.kinfolk.portal.portal.BookingMode
+import com.kinfolk.portal.portal.BookingNotes
+import com.kinfolk.portal.portal.BookingPolicy
+import com.kinfolk.portal.portal.BusinessCalendar
 import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.RescheduleRequestStatus
@@ -48,12 +50,18 @@ import com.kinfolk.portal.portal.canRequestReschedule
 import com.kinfolk.portal.portal.isAwaitingVisit
 import com.kinfolk.portal.screens.schedule.util.RESCHEDULE_REASON_MAX
 import com.kinfolk.portal.screens.schedule.util.ReviewRow
-import com.kinfolk.portal.screens.schedule.util.proposedStartMillis
+import com.kinfolk.portal.screens.schedule.util.RescheduleProposal
+import com.kinfolk.portal.screens.schedule.util.blockChoices
+import com.kinfolk.portal.screens.schedule.util.closedDaysFor
+import com.kinfolk.portal.screens.schedule.util.FALLBACK_TIME_ZONE
+import com.kinfolk.portal.screens.schedule.util.rescheduleModes
+import com.kinfolk.portal.screens.schedule.util.resolveProposal
 import com.kinfolk.portal.screens.schedule.util.rescheduleProblem
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.bookingWhenLabel
+import com.kinfolk.portal.util.noteWrittenAt
 import com.kinfolk.portal.util.weekdayTime
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
@@ -99,6 +107,25 @@ fun KinCareDetailScreen(
     var rescheduleSending by remember { mutableStateOf(false) }
     var rescheduleError by remember { mutableStateOf<String?>(null) }
 
+    // #1284: the reschedule form's two secondary reads. A failed read leaves the
+    // wizard's own fallback (every day pickable, clock times) in place rather
+    // than blocking the form; the server is the authority either way.
+    var calendar by remember { mutableStateOf<BusinessCalendar?>(null) }
+    var policy by remember { mutableStateOf<BookingPolicy?>(null) }
+    // #1283: what this household already told its Auntie about the visit.
+    var savedNotes by remember { mutableStateOf<BookingNotes?>(null) }
+    var notesError by remember { mutableStateOf(false) }
+    suspend fun reloadNotes(batchId: String?) {
+        if (batchId == null) return
+        try {
+            savedNotes = portalApi.getBookingNotes(batchId = batchId, visitId = kinCareId, kinfolkId = kinfolkId)
+            notesError = false
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            notesError = true
+        }
+    }
     suspend fun reload() {
         try {
             val all = portalApi.getMyBookings(kinfolkId)
@@ -113,7 +140,25 @@ fun KinCareDetailScreen(
         }
     }
 
-    LaunchedEffect(kinCareId, kinfolkId) { reload() }
+    LaunchedEffect(kinCareId, kinfolkId) {
+        reload()
+        reloadNotes(kinCare?.batchId)
+        val today = Instant.fromEpochMilliseconds(nowMs()).toLocalDateTime(TimeZone.currentSystemDefault()).date
+        try {
+            calendar = portalApi.getBusinessCalendar(bookingDateKey(today), bookingDateKey(bookingHorizonEnd(today)))
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            calendar = BusinessCalendar(closures = emptyList())
+        }
+        try {
+            policy = portalApi.getBookingPolicy()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            policy = BookingPolicy.CLOCK_ONLY
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         // Header w/ back button
@@ -154,6 +199,10 @@ fun KinCareDetailScreen(
                     saving = saving,
                     saveError = saveError,
                     nowMs = nowMs(),
+                    savedNotes = savedNotes,
+                    notesError = notesError,
+                    calendar = calendar,
+                    policy = policy,
                     onSaveNote = {
                         val body = noteInput.trim()
                         if (body.isBlank()) {
@@ -172,6 +221,7 @@ fun KinCareDetailScreen(
                                 )
                                 noteInput = ""
                                 reload()
+                                reloadNotes(b.batchId)
                             } catch (c: CancellationException) {
                                 throw c
                             } catch (t: Throwable) {
@@ -184,7 +234,7 @@ fun KinCareDetailScreen(
                     reschedulePendingLocal = reschedulePendingLocal,
                     rescheduleSending = rescheduleSending,
                     rescheduleError = rescheduleError,
-                    onSendRescheduleRequest = { proposedStartMs, reason ->
+                    onSendRescheduleRequest = { proposal, reason ->
                         val batchId = b.batchId
                         if (batchId == null) {
                             // canRequestReschedule() keeps the control off the
@@ -199,9 +249,10 @@ fun KinCareDetailScreen(
                                 val res = portalApi.requestBookingReschedule(
                                     batchId = batchId,
                                     visitId = b.id,
-                                    proposedStartTimeMs = proposedStartMs,
+                                    proposedStartTimeMs = proposal.startMs,
                                     reason = reason,
                                     kinfolkId = kinfolkId,
+                                    timeBlockId = proposal.timeBlockId,
                                 )
                                 reschedulePendingLocal = true
                                 // #1281: the server's own copy of the visit,
@@ -266,11 +317,15 @@ private fun KinCareDetailBody(
     saving: Boolean,
     saveError: String?,
     nowMs: Long,
+    savedNotes: BookingNotes?,
+    notesError: Boolean,
+    calendar: BusinessCalendar?,
+    policy: BookingPolicy?,
     onSaveNote: () -> Unit,
     reschedulePendingLocal: Boolean,
     rescheduleSending: Boolean,
     rescheduleError: String?,
-    onSendRescheduleRequest: (proposedStartMs: Long, reason: String?) -> Unit,
+    onSendRescheduleRequest: (proposal: RescheduleProposal, reason: String?) -> Unit,
     cancelPending: Boolean,
     cancelSending: Boolean,
     cancelError: String?,
@@ -315,6 +370,12 @@ private fun KinCareDetailBody(
             }
         }
 
+        // #1283: what the household already told its Auntie. The booking note
+        // from the wizard and every note saved from this screen, each with the
+        // time it was written. The server sends the household's own notes only.
+        if (kinCare.batchId != null) {
+            SavedNotesCard(savedNotes = savedNotes, error = notesError)
+        }
         // Editable Additional Information
         GlassCard(
             modifier = Modifier.fillMaxWidth(),
@@ -365,6 +426,8 @@ private fun KinCareDetailBody(
                 sending = rescheduleSending,
                 error = rescheduleError,
                 nowMs = nowMs,
+                calendar = calendar,
+                policy = policy,
                 onSend = onSendRescheduleRequest,
             )
         }
@@ -405,7 +468,9 @@ private fun RescheduleRequestSection(
     sending: Boolean,
     error: String?,
     nowMs: Long,
-    onSend: (proposedStartMs: Long, reason: String?) -> Unit,
+    calendar: BusinessCalendar?,
+    policy: BookingPolicy?,
+    onSend: (proposal: RescheduleProposal, reason: String?) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
     val status = kinCare.rescheduleRequestStatus
@@ -458,9 +523,12 @@ private fun RescheduleRequestSection(
             }
             if (kinCare.canRequestReschedule() && !pending) {
                 RescheduleProposalForm(
+                    serviceId = kinCare.serviceId,
                     sending = sending,
                     error = error,
                     nowMs = nowMs,
+                    calendar = calendar,
+                    policy = policy,
                     onSend = onSend,
                 )
             }
@@ -469,29 +537,39 @@ private fun RescheduleRequestSection(
 }
 
 /**
- * The proposal itself: a day off the next four weeks, a time, and an optional
- * reason. Folded behind "Reschedule visit" so the card reads as a caption
- * until a household actually wants one, the same way the cancellation ask
- * below reveals its confirm.
+ * The proposal itself (#1284): the booking wizard's own month grid, with closed
+ * company days and closed weekdays dimmed, then either the business's time
+ * blocks or a clock time bounded by that weekday's hours, whichever the
+ * business's policy offers for this visit. Then an optional reason. Folded
+ * behind "Reschedule visit" so the card reads as a caption until a household
+ * wants one, the same way the cancellation ask below reveals its confirm.
  *
- * The date grid starts TODAY rather than at the first of the month: every day
- * already behind us is a time the server refuses, so offering them would be
- * offering a refusal.
+ * It used to take any clock time on any of the next 28 days, so 2:00 AM went
+ * through. The two reads behind it (closures with weekly hours, and the
+ * booking policy) are the wizard's, and the server applies the same rules
+ * again in `requestBookingReschedule`; this form only keeps a doomed request
+ * from being sent. [calendar] and [policy] are null while those reads are in
+ * flight, which shows a loading cue instead of a form that would change under
+ * the household's fingers.
  */
 @Composable
 private fun RescheduleProposalForm(
+    serviceId: String?,
     sending: Boolean,
     error: String?,
     nowMs: Long,
-    onSend: (proposedStartMs: Long, reason: String?) -> Unit,
+    calendar: BusinessCalendar?,
+    policy: BookingPolicy?,
+    onSend: (proposal: RescheduleProposal, reason: String?) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
     var showForm by remember { mutableStateOf(false) }
     var pickedDate by remember { mutableStateOf<LocalDate?>(null) }
+    var modeChoice by remember { mutableStateOf<BookingMode?>(null) }
     var timeText by remember { mutableStateOf("") }
+    var blockId by remember { mutableStateOf<String?>(null) }
     var reason by remember { mutableStateOf("") }
     var localProblem by remember { mutableStateOf<String?>(null) }
-
     if (!showForm) {
         KinGhostButton(
             label = "Reschedule visit",
@@ -500,25 +578,93 @@ private fun RescheduleProposalForm(
         )
         return
     }
-
     Text(
         "This proposes a new time to Tribe Tails. The visit stays where it is until they accept.",
         style = type.sansMeta,
     )
+    if (calendar == null || policy == null) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+            CircularProgressIndicator(color = KinfolkBrand.KinfolkOrange, modifier = Modifier.size(20.dp))
+            Text("Loading the days and times you can pick…", style = type.sansMeta)
+        }
+        KinGhostButton(
+            label = "Never mind",
+            onClick = { showForm = false },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        return
+    }
+    val today = remember(nowMs) {
+        Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(TimeZone.currentSystemDefault()).date
+    }
+    val horizonEnd = remember(today) { bookingHorizonEnd(today) }
+    val timeZoneId = calendar.timeZone.ifBlank { FALLBACK_TIME_ZONE }
+    val closedDates = remember(calendar, today) {
+        closedDaysFor(
+            calendar.closures.associate { it.date to it.name },
+            calendar.weeklyHours,
+            today,
+            BOOKING_HORIZON_DAYS,
+        )
+    }
+    val modes = remember(policy, serviceId) { rescheduleModes(policy, serviceId) }
+    val mode = modeChoice?.takeIf { it in modes.modes } ?: modes.initial
+    val startTimeService = serviceId != null && serviceId in policy.startTimeServiceIds
+    val openBlocks = remember(pickedDate, mode, policy, timeZoneId, nowMs) {
+        val day = pickedDate
+        if (day == null || mode != BookingMode.TimeBlock) emptyList()
+        else blockChoices(day, policy.timeBlocks, nowMs, timeZoneId)
+    }
+    // A block picked for one day may be gone on another (it has passed today).
+    val effectiveBlockId = blockId?.takeIf { id -> openBlocks.any { it.block.id == id } }
     Text("New date", style = type.sansLabel)
-    UpcomingDayPicker(
-        nowMs = nowMs,
-        selected = pickedDate,
-        onSelect = { pickedDate = if (pickedDate == it) null else it },
+    SimpleMonthPicker(
+        selectedDates = listOfNotNull(pickedDate),
+        onToggle = { pickedDate = if (pickedDate == it) null else it },
+        today = today,
+        horizonEnd = horizonEnd,
+        closedDates = closedDates,
     )
-    KinField(
-        value = timeText,
-        onValueChange = { timeText = it },
-        label = "Time (HH:MM)",
-        enabled = !sending,
-        modifier = Modifier.fillMaxWidth(),
-        fieldTestTag = "rescheduleTime",
-    )
+    if (modes.modes.size > 1) {
+        Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+            KinChip(
+                label = "Time Blocks",
+                selected = mode == BookingMode.TimeBlock,
+                onClick = { modeChoice = BookingMode.TimeBlock },
+            )
+            KinChip(
+                label = "A Specific Time",
+                selected = mode == BookingMode.SpecificTime,
+                onClick = { modeChoice = BookingMode.SpecificTime },
+            )
+        }
+    }
+    if (pickedDate == null) {
+        Text("Pick a day to see the times.", style = type.sansMeta)
+    } else if (mode == BookingMode.TimeBlock) {
+        if (openBlocks.isEmpty()) {
+            Text("No blocks left this day.", style = type.sansMeta)
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+                openBlocks.forEach { choice ->
+                    KinChip(
+                        label = timeBlockLabel(choice.block),
+                        selected = effectiveBlockId == choice.block.id,
+                        onClick = { blockId = choice.block.id },
+                    )
+                }
+            }
+        }
+    } else {
+        KinField(
+            value = timeText,
+            onValueChange = { timeText = it },
+            label = "Time (HH:MM)",
+            enabled = !sending,
+            modifier = Modifier.fillMaxWidth(),
+            fieldTestTag = "rescheduleTime",
+        )
+    }
     KinField(
         value = reason,
         onValueChange = { reason = it.take(RESCHEDULE_REASON_MAX) },
@@ -535,11 +681,22 @@ private fun RescheduleProposalForm(
     KinButton(
         label = if (sending) "Sending..." else "Send this time to Tribe Tails",
         onClick = {
-            val proposed = proposedStartMillis(pickedDate, timeText)
-            val trouble = rescheduleProblem(proposed, nowMs)
+            val result = resolveProposal(
+                day = pickedDate,
+                mode = mode,
+                time = timeText,
+                blockId = effectiveBlockId,
+                blocks = policy.timeBlocks,
+                weekly = calendar.weeklyHours,
+                timeZoneId = timeZoneId,
+                nowMs = nowMs,
+                startTimeService = startTimeService,
+            )
+            val proposal = result.proposal
+            val trouble = result.problem ?: rescheduleProblem(proposal?.startMs, nowMs)
             localProblem = trouble
-            if (trouble == null && proposed != null) {
-                onSend(proposed, reason.trim().takeIf { it.isNotEmpty() })
+            if (trouble == null && proposal != null) {
+                onSend(proposal, reason.trim().takeIf { it.isNotEmpty() })
             }
         },
         enabled = !sending,
@@ -555,49 +712,56 @@ private fun RescheduleProposalForm(
         modifier = Modifier.fillMaxWidth(),
     )
 }
-
-/** Four weeks of days from today, seven to a row; tap one to pick it. */
+/**
+ * #1283: what the household already told its Auntie about this visit. The
+ * booking wizard's note, then each saved note with the time it was written.
+ * A load that failed says so and keeps the rest of the screen; nothing here
+ * can hide the note box below it.
+ */
 @Composable
-private fun UpcomingDayPicker(
-    nowMs: Long,
-    selected: LocalDate?,
-    onSelect: (LocalDate) -> Unit,
-) {
+private fun SavedNotesCard(savedNotes: BookingNotes?, error: Boolean) {
     val type = LocalKinfolkTypography.current
-    val days = remember(nowMs) {
-        val today = Instant.fromEpochMilliseconds(nowMs)
-            .toLocalDateTime(TimeZone.currentSystemDefault())
-            .date
-        (0 until 28L).map { LocalDate.fromEpochDays(today.toEpochDays() + it) }
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        days.chunked(7).forEach { week ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                week.forEach { d ->
-                    val isSelected = selected == d
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(
-                                color = if (isSelected) KinfolkBrand.KinTeal else KinfolkBrand.GlassSurfaceDim,
-                                shape = CircleShape,
-                            )
-                            .clickable { onSelect(d) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            d.day.toString(),
-                            style = type.sansMeta.copy(
-                                color = if (isSelected) Color.White else KinfolkBrand.Navy,
-                            ),
-                        )
+    GlassCard(
+        modifier = Modifier.fillMaxWidth().testTag("savedNotes"),
+        contentPadding = PaddingValues(KinfolkSpacing.l),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+            Text("Your notes", style = type.heritageSection)
+            when {
+                savedNotes == null && error -> Text(
+                    "We couldn't load your notes.",
+                    style = type.sansMeta,
+                    color = KinfolkBrand.SnuggleCoral,
+                )
+                savedNotes == null -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+                ) {
+                    CircularProgressIndicator(color = KinfolkBrand.KinfolkOrange, modifier = Modifier.size(20.dp))
+                    Text("Loading your notes…", style = type.sansMeta)
+                }
+                savedNotes.bookingNote == null && savedNotes.notes.isEmpty() ->
+                    Text("Nothing yet.", style = type.sansMeta)
+                else -> {
+                    savedNotes.bookingNote?.let { note ->
+                        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+                            Text("When you booked", style = type.sansLabel)
+                            Text(note, style = type.sansBody)
+                        }
+                    }
+                    savedNotes.notes.forEach { n ->
+                        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+                            noteWrittenAt(n.createdAtMs).takeIf { it.isNotEmpty() }?.let {
+                                Text(it, style = type.sansLabel)
+                            }
+                            Text(n.body, style = type.sansBody)
+                        }
                     }
                 }
             }
         }
     }
 }
-
 /**
  * "Need to cancel?" card. Tap reveals an inline confirm with an optional
  * short reason; the ask does not change the visit status.

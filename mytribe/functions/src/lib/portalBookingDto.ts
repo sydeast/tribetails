@@ -24,6 +24,13 @@ export const BookingDtoSchema = z
     kinfolkId: z.string().min(1),
     status: z.enum(['requested', 'confirmed', 'enRoute', 'active', 'completed', 'cancelled']),
     serviceType: z.string().nullable(),
+    /**
+     * #1284: the catalog service this visit was booked as, so the reschedule
+     * picker can tell a start-time KinCare (an overnight, booked by the clock
+     * whatever the block switches say) from one that rides a time block. Null
+     * on a visit that carries none (a session with no booking, an older doc).
+     */
+    serviceId: z.string().nullable(),
     title: z.string().nullable(),
     startTimeMs: z.number().int().nullable(),
     endTimeMs: z.number().int().nullable(),
@@ -134,6 +141,7 @@ export function kinCareToDto(
     kinfolkId,
     status: (data['status'] as BookingDto['status']) ?? 'requested',
     serviceType: stringOrNull(data['serviceType']) ?? stringOrNull(data['serviceName']),
+    serviceId: stringOrNull(data['serviceId']),
     title: stringOrNull(data['title']),
     startTimeMs: tsMillis(data['startTime']),
     endTimeMs: tsMillis(data['endTime']),

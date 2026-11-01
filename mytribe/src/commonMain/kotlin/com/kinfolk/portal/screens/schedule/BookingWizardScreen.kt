@@ -1108,7 +1108,7 @@ private val WEEKDAY_HEADERS = listOf("S", "M", "T", "W", "T", "F", "S")
  * so the grid reads as a calendar rather than growing holes.
  */
 @Composable
-private fun SimpleMonthPicker(
+internal fun SimpleMonthPicker(
     selectedDates: List<LocalDate>,
     onToggle: (LocalDate) -> Unit,
     today: LocalDate,

@@ -220,6 +220,7 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     kinfolkId: 'fam1',
     status: 'confirmed',
     serviceType: 'Drop-in Visit',
+    serviceId: null,
     title: null,
     startTimeMs: null,
     endTimeMs: null,

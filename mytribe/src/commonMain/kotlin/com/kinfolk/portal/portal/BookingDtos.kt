@@ -65,6 +65,30 @@ data class Booking(
     val startTimePending: Boolean = false,
     /** #1098: the night asked for, `YYYY-MM-DD`, or null. */
     val requestedDate: String? = null,
+    /**
+     * #1284: the catalog service this visit was booked as, so the reschedule
+     * form can tell a start-time KinCare (booked by the clock whatever the
+     * block switches say) from one that rides a time block. Null from an older
+     * server or a visit that carries none.
+     */
+    val serviceId: String? = null,
+)
+/** #1283: one note this household saved on a visit, with when it was written. */
+data class BookingNote(
+    val id: String,
+    val body: String,
+    /** Epoch millis, or null for a row with no readable timestamp. */
+    val createdAtMs: Long?,
+)
+/**
+ * #1283: what the household told its Auntie about one visit, from
+ * `getBookingNotes`. [bookingNote] is the booking wizard's Extra Love & Context
+ * text; [notes] are the household's own saved notes, oldest first. The server
+ * never sends staff, internal, dossier or 411 text here.
+ */
+data class BookingNotes(
+    val bookingNote: String?,
+    val notes: List<BookingNote>,
 )
 
 /**

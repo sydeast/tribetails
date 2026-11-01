@@ -213,8 +213,8 @@ class RescheduleRequestSectionTest {
         waitForIdle()
 
         onNodeWithText("Pick a date and time first.").assertExists()
-        // Nothing was sent: the only call is the screen's own load.
-        assertEquals(listOf("getMyBookings"), fake.calls.map { it.first })
+        // Nothing was sent: the only calls are the screen's own reads.
+        assertTrue(fake.calls.none { it.first == "requestBookingReschedule" })
     }
 
     @Test
@@ -291,5 +291,160 @@ class RescheduleRequestSectionTest {
 
         onNodeWithText("Send this time to Tribe Tails").assertDoesNotExist()
         onNodeWithText("Reschedule visit").assertExists()
+    }
+
+    // -- #1284: the booking wizard's day grid, blocks and hours --
+    private fun stubCalendar(fake: FakeFunctionsClient, closedDate: String? = null, hours: Boolean = false) {
+        fake.stub("getBusinessClosures", buildJsonObject {
+            put("closures", buildJsonArray {
+                closedDate?.let { add(buildJsonObject { put("date", it); put("name", "Owner away") }) }
+            })
+            put("weeklyHours", buildJsonArray {
+                if (hours) for (d in 0..6) add(buildJsonObject {
+                    put("weekday", d)
+                    put("open", true)
+                    put("startTime", "09:00")
+                    put("endTime", "17:00")
+                })
+            })
+            put("timeZone", "America/Chicago")
+        })
+    }
+    private fun stubBlockOnlyPolicy(fake: FakeFunctionsClient) {
+        fake.stub("getBookingPolicy", buildJsonObject {
+            put("allowTimeBlockBooking", true)
+            put("allowSpecificTimeBooking", false)
+            put("defaultBookingMode", "TIME_BLOCK")
+            put("timeBlocks", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "morning"); put("label", "Morning")
+                    put("startTime", "08:00"); put("endTime", "12:00"); put("durationMinutes", 240)
+                })
+                add(buildJsonObject {
+                    put("id", "afternoon"); put("label", "Afternoon")
+                    put("startTime", "12:00"); put("endTime", "17:00"); put("durationMinutes", 300)
+                })
+            })
+        })
+    }
+    @Test
+    fun form_refusesTwoAMOutsideThatDaysHoursAndSendsNothing() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisit(fake)
+        stubCalendar(fake, hours = true)
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+        onNodeWithText("Reschedule visit").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("20").performScrollTo().performClick()
+        onNodeWithTag("rescheduleTime").performTextInput("02:00")
+        waitForIdle()
+        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("We are open 09:00 to 17:00", substring = true).assertExists()
+        assertTrue(fake.calls.none { it.first == "requestBookingReschedule" })
+    }
+    @Test
+    fun form_leavesAClosedCompanyDayInertSoNothingIsPickedFromIt() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisit(fake)
+        // 2026-08-20 is the day the other tests tap.
+        stubCalendar(fake, closedDate = "2026-08-20")
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+        onNodeWithText("Reschedule visit").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("20").performScrollTo().performClick()
+        waitForIdle()
+        // The closed day did not select, so there is still no time to type.
+        onNodeWithTag("rescheduleTime").assertDoesNotExist()
+        onNodeWithText("Pick a day to see the times.").assertExists()
+        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Pick a date and time first.").assertExists()
+        assertTrue(fake.calls.none { it.first == "requestBookingReschedule" })
+    }
+    @Test
+    fun form_offersTimeBlocksWhenTheBusinessBooksByBlockAndSendsTheBlockId() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisit(fake)
+        stubCalendar(fake)
+        stubBlockOnlyPolicy(fake)
+        fake.stub("requestBookingReschedule", buildJsonObject {
+            put("ok", true)
+            put("visitId", "v1")
+            put("proposedStartTimeMs", 1_787_058_000_000L)
+            put("proposedEndTimeMs", JsonNull)
+        })
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+        onNodeWithText("Reschedule visit").performScrollTo().performClick()
+        waitForIdle()
+        // No clock field in block-only mode.
+        onNodeWithTag("rescheduleTime").assertDoesNotExist()
+        onNodeWithText("20").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Afternoon (12:00-17:00)").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        waitForIdle()
+        val sent = fake.calls.first { it.first == "requestBookingReschedule" }.second
+        assertEquals("afternoon", sent?.get("timeBlockId")?.toString()?.trim('"'))
+        // 12:00 Chicago on Aug 20 (CDT, UTC-5) is 17:00Z.
+        assertEquals(1_787_245_200_000L, sent?.get("proposedStartTimeMs")?.toString()?.toLong())
+    }
+    // -- #1283: the notes the household wrote, read back --
+    @Test
+    fun notes_showTheBookingNoteAndEachSavedNoteWithWhenItWasWritten() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisit(fake)
+        fake.stub("getBookingNotes", buildJsonObject {
+            put("bookingNote", "QA walk test booking - please cancel.")
+            put("notes", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "n1"); put("body", "Back door is easier.")
+                    put("createdAtMs", 1_786_980_600_000L)
+                })
+            })
+        })
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+        onNodeWithText("QA walk test booking - please cancel.").performScrollTo().assertExists()
+        onNodeWithText("Back door is easier.").performScrollTo().assertExists()
+        onNodeWithText("When you booked").assertExists()
+        val call = fake.calls.first { it.first == "getBookingNotes" }.second
+        assertEquals("batch-1", call?.get("batchId")?.toString()?.trim('"'))
+        assertEquals("v1", call?.get("visitId")?.toString()?.trim('"'))
+    }
+    @Test
+    fun notes_sayNothingYetWhenThereAreNone() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisit(fake)
+        fake.stub("getBookingNotes", buildJsonObject {
+            put("bookingNote", JsonNull)
+            put("notes", buildJsonArray {})
+        })
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+        onNodeWithText("Nothing yet.").performScrollTo().assertExists()
+    }
+    @Test
+    fun notes_saySoWhenTheyCouldNotBeLoadedAndKeepTheNoteBox() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisit(fake)
+        fake.stubError("getBookingNotes", RuntimeException("offline"))
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+        onNodeWithText("We couldn't load your notes.").performScrollTo().assertExists()
+        onNodeWithText("Save Note").performScrollTo().assertExists()
+    }
+    @Test
+    fun notes_areNotAskedForOnAVisitWithNoBookingEnvelope() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisit(fake, batchId = null)
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+        assertTrue(fake.calls.none { it.first == "getBookingNotes" })
+        onNodeWithText("Your notes").assertDoesNotExist()
     }
 }

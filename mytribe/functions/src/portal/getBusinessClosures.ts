@@ -7,6 +7,8 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { parseClosureEntry, closureOccurrencesInRange } from '../lib/closureRecurrence';
 import { refuseAuntie } from '../lib/staffGate';
+import { businessHoursForDayName } from '../lib/businessHours';
+import { businessTimeZone } from '../lib/bookingTimeBlocks';
 
 /**
  * C1: the ONE way a kinfolk client can find out which dates are closed.
@@ -46,8 +48,44 @@ export interface BusinessClosureDto {
   name: string;
 }
 
+/**
+ * #1284: one weekday of `business_settings.businessHours`, so the reschedule
+ * picker can grey out a day the business is shut and bound the clock to the
+ * day's hours. `weekday` is 0 = Sunday. `open` false means closed all day;
+ * `startTime` / `endTime` are `HH:mm` in the business's zone, null when closed.
+ */
+export interface BusinessWeekdayHoursDto {
+  weekday: number;
+  open: boolean;
+  startTime: string | null;
+  endTime: string | null;
+}
 export interface GetBusinessClosuresResult {
   closures: BusinessClosureDto[];
+  /**
+   * Seven entries (Sunday first) when the business has weekly hours on file and
+   * every day reads; [] when it has none or a day cannot be read, which clients
+   * treat as "no restriction known". The server is the authority either way.
+   */
+  weeklyHours: BusinessWeekdayHoursDto[];
+  /** IANA zone the hours and closures are stated in. */
+  timeZone: string;
+}
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+/** The seven-day table, or [] when hours are not configured or any day is unreadable. */
+function weeklyHoursOf(hours: unknown): BusinessWeekdayHoursDto[] {
+  if (!hours || typeof hours !== 'object' || Object.keys(hours as object).length === 0) return [];
+  const out: BusinessWeekdayHoursDto[] = [];
+  for (const [weekday, name] of WEEKDAY_NAMES.entries()) {
+    const day = businessHoursForDayName(hours, name);
+    if (day.kind === 'unreadable') return [];
+    out.push(
+      day.kind === 'open'
+        ? { weekday, open: true, startTime: day.startHHmm, endTime: day.endHHmm }
+        : { weekday, open: false, startTime: null, endTime: null },
+    );
+  }
+  return out;
 }
 
 /** Whole-day span in ms, for the range-size gate below. */
@@ -85,7 +123,8 @@ export async function getBusinessClosuresHandler(
   }
 
   const settingsSnap = await db().collection('business_settings').doc('business_settings').get();
-  const raw = settingsSnap.data()?.companyHolidays;
+  const settings = settingsSnap.data();
+  const raw = settings?.companyHolidays;
   const entries = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string').map(parseClosureEntry) : [];
 
   const closures: BusinessClosureDto[] = [];
@@ -103,7 +142,7 @@ export async function getBusinessClosuresHandler(
     uid,
     extra: { fromDate: args.fromDate, toDate: args.toDate, count: closures.length },
   });
-  return { closures };
+  return { closures, weeklyHours: weeklyHoursOf(settings?.businessHours), timeZone: businessTimeZone(settings ?? {}) };
 }
 
 export const getBusinessClosures = onCall(

@@ -8,7 +8,7 @@ import type {
 /** #1281: the cache write a booking callable's reply goes through. */
 function visit(id: string, startTimeMs: number, overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
   return {
-    id, batchId: 'b-new', kinfolkId: 'fam1', status: 'requested', serviceType: 'Walk', title: 'Walk', startTimeMs,
+    id, batchId: 'b-new', kinfolkId: 'fam1', status: 'requested', serviceType: 'Walk', serviceId: null, title: 'Walk', startTimeMs,
     endTimeMs: null, startTimePending: false, requestedDate: null, kinIds: [], kinNames: [], auntieDisplayName: null,
     auntieAvatarUrl: null, notes: null, requestedByUid: null, createdAtMs: null, updatedAtMs: null, visitProgress: null,
     sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null, cancelRequestReason: null,

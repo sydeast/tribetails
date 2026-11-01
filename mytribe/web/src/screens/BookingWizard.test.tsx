@@ -1273,7 +1273,7 @@ describe('BookingWizard: #1037 visit prices are billing information', () => {
 describe('BookingWizard: #1281 after a successful Create Booking', () => {
   function visitDto(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
     return {
-      id: 'v-new', batchId: 'batch-1', kinfolkId: 'fam1', status: 'requested', serviceType: 'Daily Visit',
+      id: 'v-new', batchId: 'batch-1', kinfolkId: 'fam1', status: 'requested', serviceType: 'Daily Visit', serviceId: null,
       title: 'Daily Visit', startTimeMs: visitMs(TOMORROW, 9, 0), endTimeMs: null, startTimePending: false,
       requestedDate: null, kinIds: ['k1'], kinNames: ['Buddy'], auntieDisplayName: null, auntieAvatarUrl: null,
       notes: null, requestedByUid: 'u1', createdAtMs: null, updatedAtMs: null, visitProgress: null,

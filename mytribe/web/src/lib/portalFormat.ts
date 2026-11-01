@@ -33,6 +33,15 @@ export function weekdayTime(ms: number): string {
   return `${WEEKDAYS[d.getDay()]}, ${hours}:${minutes} ${ampm}`;
 }
 
+/** "Nov 1, 3:05 PM": when a note was written, with the date because notes outlive the day. #1283. */
+export function noteWrittenAt(ms: number): string {
+  const d = new Date(ms);
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hours}:${minutes} ${ampm}`;
+}
 /**
  * #1322. An Auntie's name with the role word in front, said once: "Maya" reads
  * "Auntie Maya", but a display name that already carries the word ("TEST

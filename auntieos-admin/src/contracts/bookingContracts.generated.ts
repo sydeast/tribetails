@@ -71,6 +71,34 @@ export interface AddBookingNoteResult {
   noteId: string;
 }
 
+// ---------- getBookingNotes ----------
+
+/**
+ * Request payload for the `getBookingNotes` callable.
+ */
+export interface GetBookingNotesArgs {
+  kinfolkId?: string;
+  batchId: string;
+  visitId: string;
+}
+
+/**
+ * Nested in the `getBookingNotes` contract.
+ */
+export interface GetBookingNotesResultNote {
+  id: string;
+  body: string;
+  createdAtMs: number | null;
+}
+
+/**
+ * Response from the `getBookingNotes` callable.
+ */
+export interface GetBookingNotesResult {
+  bookingNote: string | null;
+  notes: GetBookingNotesResultNote[];
+}
+
 // ---------- addInternalBookingNote ----------
 
 /**
@@ -188,6 +216,7 @@ export interface GetMyBookingsResultLiveVisit {
   kinfolkId: string;
   status: 'requested' | 'confirmed' | 'enRoute' | 'active' | 'completed' | 'cancelled';
   serviceType: string | null;
+  serviceId: string | null;
   title: string | null;
   startTimeMs: number | null;
   endTimeMs: number | null;
@@ -365,6 +394,7 @@ export interface RequestBookingRescheduleArgs {
   visitId: string;
   proposedStartTimeMs: number;
   proposedEndTimeMs?: number;
+  timeBlockId?: string;
   reason?: string;
 }
 

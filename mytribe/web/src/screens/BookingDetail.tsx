@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyBookings } from '../api/portal';
-import { addBookingNote, requestBookingCancellation, requestBookingReschedule } from '../api/bookingApi';
+import { addBookingNote, getBookingNotes, requestBookingCancellation, requestBookingReschedule } from '../api/bookingApi';
+import { ReschedulePicker } from '../components/ReschedulePicker';
+import type { RescheduleProposal } from '../lib/rescheduleTime';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
@@ -24,6 +26,7 @@ import {
   speciesEmoji,
   visitTile,
   visitWhenLine,
+  noteWrittenAt,
   weekdayTime,
 } from '../lib/portalFormat';
 import '../styles/bookingdetail.css';
@@ -61,11 +64,19 @@ export function BookingDetail() {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [proposingReschedule, setProposingReschedule] = useState(false);
-  const [proposedAt, setProposedAt] = useState('');
+  const [proposal, setProposal] = useState<RescheduleProposal | null>(null);
   const [rescheduleReason, setRescheduleReason] = useState('');
   const [rescheduleProblem, setRescheduleProblem] = useState<string | null>(null);
 
   const found = findBookingById(bookings.data, visitId);
+  // #1283: what this household already told its Auntie about the visit. The
+  // server returns the household's own notes only.
+  const notesQueryKey = ['bookingNotes', kinfolkId, found?.batchId ?? null, found?.id ?? null] as const;
+  const savedNotes = useQuery({
+    queryKey: notesQueryKey,
+    queryFn: () => getBookingNotes(found!.kinfolkId, found!.batchId!, found!.id),
+    enabled: !!found?.batchId,
+  });
 
   // ABANDON. `addBookingNote` is a bare `.add()` on the visit's notes
   // subcollection with no dedupe key, and its only precondition (a 3-hour
@@ -75,9 +86,11 @@ export function BookingDetail() {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so notes are not available.');
       return addBookingNote(found.kinfolkId, found.batchId, found.id, body);
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       setNoteSaved(true);
       setNoteBody('');
+      // The saved note joins the list the household reads above the box.
+      await queryClient.invalidateQueries({ queryKey: ['bookingNotes', kinfolkId] });
     },
   }, { policy: 'abandon', what: 'your note' });
 
@@ -106,16 +119,16 @@ export function BookingDetail() {
   // can do is surface that refusal — which is the right answer, and is already
   // the sentence `onError` shows. It cannot stack two proposed times.
   const reschedule = usePortalMutation({
-    mutationFn: (proposedStartTimeMs: number) => {
+    mutationFn: (p: RescheduleProposal) => {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be moved here.');
-      return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, proposedStartTimeMs, rescheduleReason);
+      return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, p.startMs, rescheduleReason, p.timeBlockId);
     },
     // #1281: same as the cancellation ask above. "New time requested for …"
     // is drawn from the cached visit, so it shows the moment the panel closes.
     onSuccess: async (res) => {
       await applyBookingWrite(queryClient, kinfolkId, { visit: res.visit ?? null });
       setProposingReschedule(false);
-      setProposedAt('');
+      setProposal(null);
       setRescheduleReason('');
       setRescheduleProblem(null);
     },
@@ -215,17 +228,16 @@ export function BookingDetail() {
       : '';
   const auntieLabel = auntieName(found.auntieDisplayName) ?? 'your Auntie';
   const submitReschedule = () => {
-    const ms = parseLocalDateTime(proposedAt);
-    if (ms === null) {
-      setRescheduleProblem('Pick a date and time first.');
+    if (proposal === null) {
+      setRescheduleProblem('Pick a day and a time first.');
       return;
     }
-    if (ms <= Date.now()) {
+    if (proposal.startMs <= Date.now()) {
       setRescheduleProblem('Pick a time in the future.');
       return;
     }
     setRescheduleProblem(null);
-    reschedule.mutate(ms);
+    reschedule.mutate(proposal);
   };
 
   const submitNote = () => {
@@ -321,6 +333,46 @@ export function BookingDetail() {
               </section>
             )}
 
+            {canAct && (
+              <section className="glass card d3" data-testid="saved-notes">
+                <div className="sectlabel">Your notes to {auntieLabel}</div>
+                {savedNotes.isPending && savedNotes.fetchStatus === 'fetching' ? (
+                  <LoadingLine what="your notes" retry={() => void savedNotes.refetch()}>
+                    Loading your notes…
+                  </LoadingLine>
+                ) : savedNotes.isError ? (
+                  <p className="sub">
+                    We couldn&rsquo;t load your notes.{' '}
+                    <button type="button" className="btn ghost" onClick={() => void savedNotes.refetch()}>
+                      Try again
+                    </button>
+                  </p>
+                ) : savedNotes.data && (savedNotes.data.bookingNote || savedNotes.data.notes.length > 0) ? (
+                  <>
+                    {savedNotes.data.bookingNote && (
+                      <p className="info-line" style={{ whiteSpace: 'pre-wrap' }} data-testid="booking-note">
+                        <b>When you booked</b>
+                        <br />
+                        {savedNotes.data.bookingNote}
+                      </p>
+                    )}
+                    {savedNotes.data.notes.map((n) => (
+                      <p className="info-line" style={{ whiteSpace: 'pre-wrap' }} key={n.id} data-testid="saved-note">
+                        {n.createdAtMs !== null && (
+                          <>
+                            <b>{noteWrittenAt(n.createdAtMs)}</b>
+                            <br />
+                          </>
+                        )}
+                        {n.body}
+                      </p>
+                    ))}
+                  </>
+                ) : (
+                  <p className="sub">Nothing yet.</p>
+                )}
+              </section>
+            )}
             <section className="glass card d4">
               <div className="sectlabel">Add a note</div>
               {canAct ? (
@@ -426,16 +478,13 @@ export function BookingDetail() {
                           <p className="sub">
                             This proposes a new time to Tribe Tails. The visit stays where it is until they accept.
                           </p>
-                          <label className="sub" htmlFor="new-visit-time" style={{ margin: 0 }}>
-                            New date and time
-                          </label>
-                          <input
-                            className="input"
-                            id="new-visit-time"
-                            type="datetime-local"
-                            value={proposedAt}
-                            onChange={(e) => setProposedAt(e.target.value)}
+                          <ReschedulePicker
+                            serviceId={found.serviceId}
                             disabled={reschedule.isPending}
+                            onChange={(p) => {
+                              setProposal(p);
+                              setRescheduleProblem(null);
+                            }}
                           />
                           <textarea
                             className="note-ta"
@@ -450,7 +499,7 @@ export function BookingDetail() {
                             className="btn purple block"
                             type="button"
                             onClick={() => submitReschedule()}
-                            disabled={reschedule.isPending || proposedAt.trim().length === 0}
+                            disabled={reschedule.isPending || proposal === null}
                           >
                             <MutationLabel mutation={reschedule} busy="Sending…">
                               Send this time to Tribe Tails
@@ -563,18 +612,4 @@ export function BookingDetail() {
       </div>
     </>
   );
-}
-/**
- * Epoch millis from an `<input type="datetime-local">` value, or null when the
- * field is blank or unparseable.
- *
- * `new Date('2026-09-01T15:00')` is read as LOCAL time by every browser that
- * ships this input, which is what the household typed. Appending a Z, or
- * routing through Date.UTC, would silently move the proposal by the viewer's
- * offset.
- */
-function parseLocalDateTime(value: string): number | null {
-  if (!value.trim()) return null;
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : null;
 }
