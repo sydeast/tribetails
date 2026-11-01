@@ -280,6 +280,8 @@ fun AppNavHost(
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
                             onAddKin = { navController.navigate(KinAddEditRoute()) },
                             onBookVisit = { navController.navigate(BookingWizardRoute(startWeekly = false)) },
+                            handoff = scheduleHandoff,
+                            onHandoffTaken = { scheduleHandoff = null },
                             onOpenInvoices = if (shellBillingAccess) {
                                 { navController.navigate(InvoicesRoute) { launchSingleTop = true } }
                             } else {
@@ -526,11 +528,12 @@ fun AppNavHost(
                             portalApi = portalApi,
                             onClose = { navController.popBackStack() },
                             onComplete = { fresh ->
-                                // Only when Schedule is what the pop returns
-                                // to. From Home the wizard pops back to Home,
-                                // and a handoff left waiting would surface on
-                                // some later visit to Schedule, out of context.
-                                if (navController.previousBackStackEntry?.destination?.hasRoute(ScheduleRoute::class) == true) {
+                                // #1345: Home and Schedule are the only entry
+                                // points, and each takes the handoff. Guarded
+                                // so a handoff never waits for a screen that
+                                // does not read it and surfaces out of context.
+                                val back = navController.previousBackStackEntry?.destination
+                                if (back?.hasRoute(ScheduleRoute::class) == true || back?.hasRoute(HomeRoute::class) == true) {
                                     scheduleHandoff = ScheduleHandoff(bookings = fresh, notice = "Booking requested")
                                 }
                                 markScheduleDirty(navController)
