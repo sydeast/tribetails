@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOOKING_TIMELINE_STEPS,
+  auntieName,
   bookingChip,
   bookingStatusChip,
   bookingTimelineIndex,
@@ -52,6 +53,31 @@ describe('visitSubtitle', () => {
   });
 });
 
+describe('auntieName (#1322)', () => {
+  it('puts the role word in front of a plain name', () => {
+    expect(auntieName('Maya')).toBe('Auntie Maya');
+  });
+  it('says the role word once when the name already carries it, in any case or position', () => {
+    expect(auntieName('TEST SANDBOX Auntie')).toBe('TEST SANDBOX Auntie');
+    expect(auntieName('Auntie Maya')).toBe('Auntie Maya');
+    expect(auntieName('auntie maya')).toBe('auntie maya');
+    expect(auntieName('Auntie')).toBe('Auntie');
+  });
+  it('matches the whole word only', () => {
+    expect(auntieName('Aunties Club')).toBe('Auntie Aunties Club');
+  });
+  it('returns null for a missing or blank name so the caller keeps its fallback', () => {
+    expect(auntieName(null)).toBeNull();
+    expect(auntieName(undefined)).toBeNull();
+    expect(auntieName('   ')).toBeNull();
+  });
+  it('feeds visitSubtitle without doubling', () => {
+    expect(visitSubtitle(null, 'TEST SANDBOX Auntie')).toBe('With TEST SANDBOX Auntie');
+    expect(visitSubtitle(new Date(2026, 5, 1, 8, 0).getTime(), 'TEST SANDBOX Auntie')).toBe(
+      'Mon, 8:00 AM with TEST SANDBOX Auntie',
+    );
+  });
+});
 describe('relativeDay', () => {
   const now = new Date(2026, 5, 10, 9, 0).getTime();
 
@@ -72,6 +98,12 @@ describe('speciesEmoji', () => {
     expect(speciesEmoji('Cat')).toBe('\u{1F431}');
   });
 
+  it('reads the picker spellings, so Small mammal and Rabbit keep their icons (#1313)', () => {
+    expect(speciesEmoji('Small mammal')).toBe('\u{1F439}');
+    expect(speciesEmoji('Small Animal')).toBe('\u{1F439}');
+    expect(speciesEmoji(' Rabbit ')).toBe('\u{1F430}');
+    expect(speciesEmoji('Reptile')).toBe('\u{1F98E}');
+  });
   it('falls back to a paw print for unknown/null species', () => {
     expect(speciesEmoji('betta fish')).toBe('\u{1F43E}');
     expect(speciesEmoji(null)).toBe('\u{1F43E}');

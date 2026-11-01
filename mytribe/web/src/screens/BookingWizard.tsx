@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
 import { getBookingPolicy, getBusinessClosures, getServiceCatalog, pricesVisibleOf, requestBooking } from '../api/bookingApi';
 import { mintBookingIdempotencyKey } from '../lib/bookingIdempotency';
+import { applyBookingWrite } from '../lib/bookingsCache';
+import { announceSaved } from '../lib/saveNotice';
 import type { BookingMode, GetBookingPolicyResult, ServiceDto, TimeBlockDto } from '../api/bookingApi';
 import type { RequestBookingArgsVisit, RequestBookingResult } from '../contracts/bookingContracts.generated';
 import { getMyKin } from '../api/portal';
@@ -440,6 +442,10 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   // taps Create in a dead zone gets the booking they asked for when their
   // signal comes back, rather than losing the whole wizard's work.
   const isMounted = useIsMounted();
+  // #1281: one press, one call. `disabled` only lands on the next render, so
+  // two clicks inside one frame both reached `mutate()`. Cleared on error so a
+  // household can try again; never cleared on success.
+  const pressed = useRef(false);
   const submit = usePortalMutation({
     mutationFn: async () => {
       if (slots.length === 0) throw new Error('Choose a KinCare Duration first.');
@@ -459,19 +465,31 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
       };
       return requestBooking({ ...args, idempotencyKey: keyForSubmission(args) });
     },
-    onSuccess: (result) => {
-      // #644: the submission is over, so the next one is a new booking and
-      // gets a new key.
-      submissionKey.current = null;
-      void queryClient.invalidateQueries({ queryKey: ['myBookings', kinfolkId] });
+    onSuccess: async (result) => {
+      // #1281: the key is NOT cleared here. It used to be, and the button
+      // re-enabled while the move to Schedule was still under way, so a second
+      // press minted a new key and really booked twice. Held, a second press of
+      // the same booking replays the first one; an edited booking still gets a
+      // new key, because the key follows the payload's signature.
+      //
+      // #1281: the booking goes into the Schedule cache BEFORE the move, from
+      // the record the server wrote. Nothing observes ['myBookings'] on this
+      // route, so the invalidate this used to rely on did nothing and Schedule
+      // opened on its pre-booking list. Returning this promise keeps the
+      // button on "Creating…" until the cache shows the booking.
+      await applyBookingWrite(queryClient, kinfolkId, { envelope: result.envelope ?? null });
+      announceSaved('Booking requested');
       // Guarded because this write is HELD and `onComplete` NAVIGATES. The
       // options callback lives on the Mutation rather than the observer, so it
       // runs when the queued booking resumes whether or not the wizard is
       // still open — and being thrown onto Schedule while reading something
       // else, twenty minutes after the tap, connects to nothing. The cache
-      // invalidation above is the part that still matters from a dead screen:
-      // the booking shows up next time Schedule is opened.
+      // write above is the part that still matters from a dead screen: the
+      // booking shows up next time Schedule is opened.
       if (isMounted()) props.onComplete(result);
+    },
+    onError: () => {
+      pressed.current = false;
     },
   }, { policy: 'hold', what: 'your booking' });
 
@@ -658,12 +676,23 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                 <button
                   type="button"
                   className="btn grad"
-                  disabled={submit.isPending || slots.length === 0 || !scheduleReady || plannedVisits.length === 0}
-                  onClick={() => submit.mutate()}
+                  // #1281: disabled after success as well, until the move to
+                  // Schedule lands. A booking that went through is not a
+                  // button to press again.
+                  disabled={submit.isPending || submit.isSuccess || slots.length === 0 || !scheduleReady || plannedVisits.length === 0}
+                  onClick={() => {
+                    if (pressed.current) return;
+                    pressed.current = true;
+                    submit.mutate();
+                  }}
                 >
-                  <MutationLabel mutation={submit} busy="Creating…">
-                    Create Booking
-                  </MutationLabel>
+                  {submit.isSuccess ? (
+                    'Booking requested'
+                  ) : (
+                    <MutationLabel mutation={submit} busy="Creating…">
+                      Create Booking
+                    </MutationLabel>
+                  )}
                 </button>
               )}
             </div>

@@ -86,7 +86,7 @@ describe('EmergencyContactsCard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
     await waitFor(() => expect(mocks.saveEmergencyContacts).toHaveBeenCalledTimes(1));
     expect(mocks.saveEmergencyContacts.mock.calls[0]?.[0].contacts).toEqual([
-      { name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister' },
+      { name: 'Rae Mercer', phone: '(805) 555-0199', relationship: 'Sister' },
     ]);
   });
   it('refuses to send an empty list or a missing phone', async () => {
@@ -133,7 +133,7 @@ describe('EmergencyContactsCard', () => {
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: false, legacy: false });
     mount();
     expect(await screen.findByText('Rae Mercer')).toBeInTheDocument();
-    expect(screen.getByText('+18055550199')).toBeInTheDocument();
+    expect(screen.getByText('(805) 555-0199')).toBeInTheDocument();
     expect(screen.getByTestId('ec-locked')).toHaveTextContent(LOCKED);
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save Emergency Contacts' })).toBeNull();
@@ -246,7 +246,7 @@ describe('EmergencyContactsCard', () => {
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#ec-0-phone' }), '805 555 0100');
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
     expect(await screen.findByText('Saved.')).toBeInTheDocument();
-    expect(screen.getByLabelText('Phone', { selector: '#ec-0-phone' })).toHaveValue('+18055550100');
+    expect(screen.getByLabelText('Phone', { selector: '#ec-0-phone' })).toHaveValue('(805) 555-0100');
     expect(qc.getQueryData(['emergencyContacts', 'kin-fam-1'])).toEqual({ contacts: [stored], canEdit: true, legacy: false });
     expect(mocks.listEmergencyContacts).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('A household needs at least one Emergency Contact.')).toBeNull();

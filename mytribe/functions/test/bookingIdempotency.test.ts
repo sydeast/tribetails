@@ -300,7 +300,10 @@ describe('#644 requestBooking — the portal path, where a duplicate can auto-co
       auth: { uid: 'u1' },
     } as any);
 
-    expect(res).toEqual({ batchId: KEY, bookingIds: [KEY], bookingId: KEY });
+    expect(res).toMatchObject({ batchId: KEY, bookingIds: [KEY], bookingId: KEY });
+    // #1281: the replay carries the envelope the FIRST attempt stored, so a
+    // second press is shown the booking it already made.
+    expect(res.envelope).toMatchObject({ batchId: KEY, envelopeStatus: 'confirmed' });
     expect(ctx.writes).toHaveLength(0);
     // The one that matters: no second approve pass, so no second set of
     // confirmed sessions.

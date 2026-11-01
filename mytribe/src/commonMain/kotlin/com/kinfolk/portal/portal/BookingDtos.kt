@@ -97,6 +97,12 @@ data class CancelRequestResult(
     val ok: Boolean,
     val visitId: String,
     val alreadyPending: Boolean,
+    /**
+     * #1281: the visit as the server stored it after this ask, in the shape
+     * getMyBookings lists it. The screen shows it at once instead of waiting on
+     * a second read. Null from an older server or a failed read-back.
+     */
+    val visit: Booking? = null,
 )
 
 /**
@@ -110,6 +116,12 @@ data class RescheduleRequestResult(
     val visitId: String,
     val proposedStartTimeMs: Long,
     val proposedEndTimeMs: Long?,
+    /**
+     * #1281: the visit as the server stored it after this ask, in the shape
+     * getMyBookings lists it. The screen shows it at once instead of waiting on
+     * a second read. Null from an older server or a failed read-back.
+     */
+    val visit: Booking? = null,
 )
 
 /** True while the visit is still ahead of us (requested or confirmed). */

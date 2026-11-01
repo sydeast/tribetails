@@ -146,8 +146,10 @@ describe('buildFamilyKinDoc — full flat doc mapping', () => {
     expect(doc.weight).toBe('28 lbs');
     expect(doc.vetInfo).toBe('Dr. Smith 555-0100');
     expect(doc.spayedNeutered).toBe(true);
-    expect(doc.reactive).toBe(false);
-    expect(doc.officeNotes).toBe('Escapes crates');
+    // #1335: staff-only fields never land on the household-readable family doc.
+    expect(doc).not.toHaveProperty('reactive');
+    expect(doc).not.toHaveProperty('officeNotes');
+    expect(doc).not.toHaveProperty('routine');
     // Not staff-editable / not parent-owned -> never copied.
     expect(doc).not.toHaveProperty('ownerEmail');
     expect(doc).not.toHaveProperty('ownerPhone');

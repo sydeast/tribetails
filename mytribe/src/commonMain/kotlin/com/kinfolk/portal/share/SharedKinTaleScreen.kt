@@ -232,6 +232,9 @@ private fun SharedPayloadView(
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
     val authorDisplayName = payload["authorDisplayName"]?.jsonPrimitive?.contentOrNull?.ifBlank { null } ?: "Auntie"
+    // #1322: the tale's own title leads, as on the server-rendered share page.
+    // Older shares carry none and keep the "From {author}" heading alone.
+    val title = sharedTaleTitle(payload)
     val body = payload["body"]?.jsonPrimitive?.contentOrNull.orEmpty()
     val photos = runCatchingCancellable {
         payload["photos"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }
@@ -259,10 +262,21 @@ private fun SharedPayloadView(
                 "FAMILY SHARE",
                 style = type.sansMeta.copy(color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold),
             )
-            Text(
-                "From $authorDisplayName",
-                style = type.heritageTitle.copy(color = Color.White, fontWeight = FontWeight.SemiBold),
-            )
+            if (title != null) {
+                Text(
+                    title,
+                    style = type.heritageTitle.copy(color = Color.White, fontWeight = FontWeight.SemiBold),
+                )
+                Text(
+                    "From $authorDisplayName",
+                    style = type.sansMeta.copy(color = Color.White.copy(alpha = 0.9f)),
+                )
+            } else {
+                Text(
+                    "From $authorDisplayName",
+                    style = type.heritageTitle.copy(color = Color.White, fontWeight = FontWeight.SemiBold),
+                )
+            }
         }
 
         // Narrative
@@ -407,3 +421,9 @@ private fun PhotoTile(url: String) {
         )
     }
 }
+/** #1322. The shared tale's title, or null when the share predates it or the tale has none. */
+internal fun sharedTaleTitle(payload: JsonObject): String? =
+    runCatchingCancellable { payload["title"]?.jsonPrimitive?.contentOrNull }
+        .getOrNull()
+        ?.trim()
+        ?.ifBlank { null }

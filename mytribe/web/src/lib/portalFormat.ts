@@ -55,11 +55,27 @@ function weekdayWhen(ms: number, block: VisitBlock): string {
   if (text === null) return weekdayTime(ms);
   return `${WEEKDAYS[new Date(ms).getDay()]}, ${text}`;
 }
+/**
+ * #1322. An Auntie's name with the role word in front, said once: "Maya" reads
+ * "Auntie Maya", but a display name that already carries the word ("TEST
+ * SANDBOX Auntie", "Auntie Maya") is left as it is, where every screen used to
+ * print "Auntie TEST SANDBOX Auntie". The name itself is the operator's
+ * setting and is never rewritten, only the prefix is skipped.
+ *
+ * Returns null for a missing or blank name, so each caller keeps its own
+ * fallback ("Your Auntie", "your Auntie").
+ */
+export function auntieName(displayName: string | null | undefined): string | null {
+  const name = (displayName ?? '').trim();
+  if (name === '') return null;
+  return /\bauntie\b/i.test(name) ? name : `Auntie ${name}`;
+}
 /** "Mon, 8:00 AM with Auntie Maya" / just the weekday-time if no auntie assigned yet. */
 export function visitSubtitle(startTimeMs: number | null, auntieDisplayName: string | null, block: VisitBlock = {}): string {
-  if (startTimeMs === null) return auntieDisplayName ? `With Auntie ${auntieDisplayName}` : 'Time to be confirmed';
+  const auntie = auntieName(auntieDisplayName);
+  if (startTimeMs === null) return auntie ? `With ${auntie}` : 'Time to be confirmed';
   const base = weekdayWhen(startTimeMs, block);
-  return auntieDisplayName ? `${base} with Auntie ${auntieDisplayName}` : base;
+  return auntie ? `${base} with ${auntie}` : base;
 }
 /** The fields that say WHEN a booked visit happens. */
 type VisitWhen = Pick<GetMyBookingsResultLiveVisit, 'startTimeMs' | 'startTimePending' | 'requestedDate'> & VisitBlock;
@@ -123,12 +139,15 @@ const SPECIES_EMOJI: Record<string, string> = {
   fish: '\u{1F41F}',
   reptile: '\u{1F98E}',
   small_mammal: '\u{1F439}',
+  small_animal: '\u{1F439}',
+  turtle: '\u{1F422}',
 };
 
 /** Best-effort emoji for a kin's species; falls back to a paw print. */
 export function speciesEmoji(species: string | null): string {
   if (!species) return '\u{1F43E}';
-  return SPECIES_EMOJI[species.toLowerCase()] ?? '\u{1F43E}';
+  // "Small mammal" (the picker's spelling) and small_mammal are the same key.
+  return SPECIES_EMOJI[species.trim().toLowerCase().replace(/[\s-]+/g, '_')] ?? '\u{1F43E}';
 }
 
 export interface ChipInfo {

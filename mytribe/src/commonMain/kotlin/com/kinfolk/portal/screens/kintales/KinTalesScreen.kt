@@ -1,5 +1,6 @@
 package com.kinfolk.portal.screens.kintales
 
+import com.kinfolk.portal.util.auntieName
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -264,7 +265,7 @@ private fun KinTaleCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = tale.authorDisplayName ?: "Auntie",
+                        text = auntieName(tale.authorDisplayName) ?: "Auntie",
                         style = type.heritageTitle,
                     )
                     Text(

@@ -2,7 +2,12 @@
 
 package com.kinfolk.portal.screens.account
 
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -95,6 +100,41 @@ class AccountSettingsScreenTest {
         setThemedContent { AccountSettingsScreen("The Foster", PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("No payment method on file").assertExists()
+    }
+
+    /** #1306: a stored E.164 number is shown the way a person writes it. */
+    @Test
+    fun storedPhone_isShownFormatted() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyAccount", buildJsonObject {
+            put("uid", "u1")
+            put("email", "n@x.com")
+            put("displayName", "Sydney")
+            put("phone", "+15125550142")
+            put("backupEmail", JsonNull)
+            put("backupPhone", "5125667512")
+            put("kinfolkIds", buildJsonArray {})
+            put("hasPaymentMethod", false)
+            put("updatedAtMs", JsonNull)
+        })
+        setThemedContent { AccountSettingsScreen("The Foster", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("account-phone").assertTextContains("(512) 555-0142")
+        onNodeWithTag("account-backup-phone").assertTextContains("(512) 566-7512")
+    }
+    /** #1289: a bad number is caught on the field, in plain words, before Save. */
+    @Test
+    fun badPhone_isCaughtOnTheField_andSaveIsNotOffered() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubAccount(fake)
+        setThemedContent { AccountSettingsScreen("The Foster", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Save Changes").performScrollTo().assertIsEnabled()
+        onNodeWithTag("account-phone").performTextInput("abc123")
+        waitForIdle()
+        onNodeWithText("Enter a 10-digit phone number.").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().assertIsNotEnabled()
+        assertFalse(fake.calls.any { it.first == "saveMyAccount" }, "a bad number must never reach the server")
     }
 
     @Test

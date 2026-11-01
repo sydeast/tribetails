@@ -95,10 +95,6 @@ fun KinScreen(
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = KinfolkSpacing.m)) {
                     Text(text = "The Kin", style = type.heritageTitle)
-                    Text(
-                        text = "Everyone who shares your home. Tap a card to open the full profile.",
-                        style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
-                    )
                 }
                 KinButton(label = "Add New", onClick = { addNew = true })
             }

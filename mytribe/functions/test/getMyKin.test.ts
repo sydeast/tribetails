@@ -59,6 +59,38 @@ describe('getMyKinHandler', () => {
     expect(res.kin[0].name).toBe('Buddy');
   });
 
+  it('returns the household-shared descriptive fields and defaults them when absent (#1310)', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        'families/3/kin': [
+          { id: 'k1', data: { name: 'Buddy', status: 'active', sex: 'Male', weight: '68 lbs', colorMarkings: 'Yellow', spayedNeutered: true, vetInfo: 'Riverside' } },
+          { id: 'k2', data: { name: 'Mo', status: 'active' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinHandler } = await import('../src/portal/getMyKin');
+    const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.kin[0]).toMatchObject({ sex: 'Male', weight: '68 lbs', colorMarkings: 'Yellow', spayedNeutered: true, vetInfo: 'Riverside' });
+    expect(res.kin[1]).toMatchObject({ sex: null, weight: null, colorMarkings: null, spayedNeutered: false, vetInfo: null });
+  });
+  it('never returns staff-only fields the mirror copies onto the family doc (officeNotes, reactive, routine, vaccinations, tags)', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        'families/3/kin': [
+          { id: 'k1', data: { name: 'Buddy', status: 'active', officeNotes: 'bites', reactive: true, routine: 'r', vaccinations: 'v', trainingCommands: 't', feedingBrand: 'b', medicationHealthNotes: 'm', tags: ['x'] } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinHandler } = await import('../src/portal/getMyKin');
+    const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    for (const k of ['officeNotes', 'reactive', 'routine', 'vaccinations', 'trainingCommands', 'feedingBrand', 'medicationHealthNotes', 'tags']) {
+      expect(res.kin[0]).not.toHaveProperty(k);
+    }
+  });
   /**
    * THIS TEST USED TO ASSERT THE LEAK. It read
    * `expect(res.kin[0].aiBlurb).toBe('Mr Biggles is pure joy.')` and passed,

@@ -31,6 +31,8 @@
 .acct .input:focus { outline: none; border-color: var(--orange); background: #fff;
   box-shadow: 0 0 0 4px rgba(223, 132, 49, .14); }
 .acct .input:disabled { color: var(--navy-muted); cursor: not-allowed; }
+.acct .field-err { color: var(--coral); margin: 6px 0 0; }
+.acct .input[aria-invalid="true"] { border-color: var(--coral); }
 .acct .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
 /* profile photo block */

@@ -107,7 +107,7 @@ class EmergencyContactsCardTest {
         // The prompt is about what the server holds, and the server now holds one.
         onNodeWithText(required).assertDoesNotExist()
         // Seeded from the reply: the stored E.164 phone, not the typed spelling.
-        onNodeWithTag("ec-0-phone").assertTextEquals("+18055550199")
+        onNodeWithTag("ec-0-phone").assertTextEquals("(805) 555-0199")
         onNodeWithText("Unsaved changes").assertDoesNotExist()
     }
 
@@ -188,7 +188,7 @@ class EmergencyContactsCardTest {
         assertTrue(onAllNodesWithText("Called first").fetchSemanticsNodes().isEmpty())
         onNodeWithText("Sister").assertIsDisplayed()
         // The phone is a tap to call.
-        onNode(hasText("+18055550199") and hasClickAction()).assertIsDisplayed()
+        onNode(hasText("(805) 555-0199") and hasClickAction()).assertIsDisplayed()
         onNodeWithText(locked).assertIsDisplayed()
         assertTrue(onAllNodesWithText("Save Emergency Contacts").fetchSemanticsNodes().isEmpty())
         assertTrue(onAllNodesWithTag("ec-0-name").fetchSemanticsNodes().isEmpty())

@@ -16,6 +16,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
@@ -73,6 +75,11 @@ fun AddEditKinDialog(
     var allergies by remember { mutableStateOf(initial?.allergies.orEmpty()) }
     var emergency by remember { mutableStateOf(initial?.emergencyNotes.orEmpty()) }
     var sitter by remember { mutableStateOf(initial?.sitterNotes.orEmpty()) }
+    var sex by remember { mutableStateOf(initial?.sex.orEmpty()) }
+    var weight by remember { mutableStateOf(initial?.weight.orEmpty()) }
+    var markings by remember { mutableStateOf(initial?.colorMarkings.orEmpty()) }
+    var fixed by remember { mutableStateOf(initial?.spayedNeutered ?: false) }
+    var vet by remember { mutableStateOf(initial?.vetInfo.orEmpty()) }
 
     // Photo: picked locally, uploaded by the controller after the kin write
     // succeeds (add needs the new kinId before the Storage path exists).
@@ -195,7 +202,12 @@ fun AddEditKinDialog(
                 } else {
                     SpeciesRadioGroup(
                         selected = species,
-                        onSelect = { species = it; breed = "" },
+                        onSelect = { next ->
+                            // Typing in the Other box edits the same species; only a
+                            // change of picker entry resets the breed.
+                            if (!next.equals(species, ignoreCase = true) && speciesChoice(next) != SPECIES_OTHER) breed = ""
+                            species = next
+                        },
                     )
                     BreedField(
                         species = species,
@@ -212,6 +224,23 @@ fun AddEditKinDialog(
                     KinField(value = emergency, onValueChange = { emergency = it }, label = "Emergency Notes", singleLine = false)
                     KinField(value = sitter, onValueChange = { sitter = it }, label = "Sitter Notes", singleLine = false)
                 }
+                // The facts shared with the admin (#1310). Outside the schema branch so a
+                // schema-driven form still carries them.
+                SexRadioGroup(selected = sex, onSelect = { sex = it })
+                KinField(value = weight, onValueChange = { weight = it }, label = "Weight")
+                KinField(value = markings, onValueChange = { markings = it }, label = "Color / markings")
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { fixed = !fixed },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = fixed,
+                        onCheckedChange = { fixed = it },
+                        colors = CheckboxDefaults.colors(checkedColor = KinfolkBrand.KinfolkOrange),
+                    )
+                    Text("Spayed / neutered", style = type.sansBody)
+                }
+                KinField(value = vet, onValueChange = { vet = it }, label = "Vet", singleLine = false)
                 submitError?.let { problem ->
                     Text(text = problem, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
                 }
@@ -250,10 +279,25 @@ fun AddEditKinDialog(
                             legacyKinId = initial?.id?.takeIf { it.matches(Regex("\\d+")) },
                         )
                     }
+                    val facts = sharedFactsPayload(
+                        initial = initial,
+                        sex = sex,
+                        weight = weight,
+                        markings = markings,
+                        fixed = fixed,
+                        vet = vet,
+                    )
+                    val finalPayload = payload.copy(
+                        sex = facts.sex,
+                        weight = facts.weight,
+                        colorMarkings = facts.colorMarkings,
+                        spayedNeutered = facts.spayedNeutered,
+                        vetInfo = facts.vetInfo,
+                    )
                     scope.launch {
                         saving = true
                         submitError = null
-                        val err = onSubmit(payload, pickedPhoto)
+                        val err = onSubmit(finalPayload, pickedPhoto)
                         saving = false
                         if (err == null) onClose() else submitError = err
                     }
@@ -269,25 +313,113 @@ fun AddEditKinDialog(
     )
 }
 
+private val SEX_OPTIONS = listOf("Male", "Female", "Unknown")
+
+/** What the dialog sends for the five shared facts: null = leave alone, "" = clear. */
+internal data class SharedFacts(
+    val sex: String?,
+    val weight: String?,
+    val colorMarkings: String?,
+    val spayedNeutered: Boolean?,
+    val vetInfo: String?,
+)
+
+/**
+ * Diff each shared fact against what the kin carried. An untouched field sends
+ * null, so a save never rewrites a value this form did not change; a field the
+ * household emptied sends "" to clear it. [initial] null (Add) sends only what
+ * was filled in.
+ */
+internal fun sharedFactsPayload(
+    initial: com.kinfolk.portal.portal.Kin?,
+    sex: String,
+    weight: String,
+    markings: String,
+    fixed: Boolean,
+    vet: String,
+): SharedFacts {
+    fun text(now: String, before: String?): String? {
+        val next = now.trim()
+        val prev = before.orEmpty().trim()
+        return if (next == prev) null else next
+    }
+    return SharedFacts(
+        sex = text(sex, initial?.sex),
+        weight = text(weight, initial?.weight),
+        colorMarkings = text(markings, initial?.colorMarkings),
+        spayedNeutered = if (fixed == (initial?.spayedNeutered ?: false)) null else fixed,
+        vetInfo = text(vet, initial?.vetInfo),
+    )
+}
+
+@Composable
+private fun SexRadioGroup(selected: String, onSelect: (String) -> Unit) {
+    val type = LocalKinfolkTypography.current
+    // A value the admin wrote outside the three ("F") stays selectable.
+    val options = if (selected.isNotBlank() && SEX_OPTIONS.none { it == selected }) SEX_OPTIONS + selected else SEX_OPTIONS
+    Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+        Text("SEX", style = type.sansMeta)
+        Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+            options.forEach { opt ->
+                Row(
+                    modifier = Modifier.clickable { onSelect(opt) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = selected == opt,
+                        onClick = { onSelect(opt) },
+                        colors = RadioButtonDefaults.colors(selectedColor = KinfolkBrand.KinfolkOrange),
+                    )
+                    Text(opt, style = type.sansBody)
+                }
+            }
+        }
+    }
+}
+
 /** Species the breed banks support today. Dog/Cat get a searchable breed list;
  *  the rest keep a free-text breed until their banks are seeded. */
-private val SPECIES_OPTIONS = listOf("Dog", "Cat", "Small Animal", "Reptile", "Fish", "Bird", "Turtle")
+private val SPECIES_OPTIONS = listOf("Dog", "Cat", "Rabbit", "Small Animal", "Reptile", "Fish", "Bird", "Turtle")
+/** The picker entry for a stored species: "Other" is a picker entry, never a stored value. */
+internal const val SPECIES_OTHER = "Other"
+/**
+ * Which radio a stored species belongs to: a listed species (any case), else
+ * [SPECIES_OTHER] when something non-blank is stored (a legacy "Ferret" keeps its
+ * text), else null when unset.
+ */
+internal fun speciesChoice(species: String): String? {
+    val trimmed = species.trim()
+    if (trimmed.isEmpty()) return null
+    return SPECIES_OPTIONS.firstOrNull { it.equals(trimmed, ignoreCase = true) } ?: SPECIES_OTHER
+}
 
 @Composable
 private fun SpeciesRadioGroup(selected: String, onSelect: (String) -> Unit) {
     val type = LocalKinfolkTypography.current
+    var otherPicked by remember { mutableStateOf(speciesChoice(selected) == SPECIES_OTHER) }
+    val choice = if (otherPicked) SPECIES_OTHER else speciesChoice(selected)
     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
         Text("SPECIES", style = type.sansMeta)
-        SPECIES_OPTIONS.chunked(2).forEach { rowOpts ->
+        (SPECIES_OPTIONS + SPECIES_OTHER).chunked(2).forEach { rowOpts ->
             Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 rowOpts.forEach { opt ->
+                    val pick = {
+                        if (opt == SPECIES_OTHER) {
+                            otherPicked = true
+                            // Keep an already-custom species; clear a listed one.
+                            if (speciesChoice(selected) != SPECIES_OTHER) onSelect("")
+                        } else {
+                            otherPicked = false
+                            onSelect(opt)
+                        }
+                    }
                     Row(
-                        modifier = Modifier.weight(1f).clickable { onSelect(opt) },
+                        modifier = Modifier.weight(1f).clickable { pick() },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
-                            selected = selected.equals(opt, ignoreCase = true),
-                            onClick = { onSelect(opt) },
+                            selected = choice == opt,
+                            onClick = { pick() },
                             colors = RadioButtonDefaults.colors(selectedColor = KinfolkBrand.KinfolkOrange),
                         )
                         Text(opt, style = type.sansBody)
@@ -295,9 +427,11 @@ private fun SpeciesRadioGroup(selected: String, onSelect: (String) -> Unit) {
                 }
             }
         }
+        if (otherPicked) {
+            KinField(value = selected, onValueChange = { onSelect(it) }, label = "Other species")
+        }
     }
 }
-
 /** Breed input: a type-to-search list for Dog/Cat (478/103 seeded breeds),
  *  a plain text field for every other species (and before the lists load). */
 @Composable

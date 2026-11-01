@@ -202,7 +202,7 @@ describe('BookingDetail: add a note', () => {
 describe('BookingDetail: request cancellation', () => {
   it('happy path: confirms, sends the request, and invalidates the bookings cache', async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'requested' })] }));
-    mocks.requestBookingCancellation.mockResolvedValue({ ok: true, visitId: 'v1', alreadyPending: false });
+    mocks.requestBookingCancellation.mockResolvedValue({ ok: true, visitId: 'v1', alreadyPending: false, visit: null });
     const user = userEvent.setup();
     renderScreen();
 
@@ -216,7 +216,7 @@ describe('BookingDetail: request cancellation', () => {
 
   it('sends a typed reason', async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'confirmed' })] }));
-    mocks.requestBookingCancellation.mockResolvedValue({ ok: true, visitId: 'v1', alreadyPending: false });
+    mocks.requestBookingCancellation.mockResolvedValue({ ok: true, visitId: 'v1', alreadyPending: false, visit: null });
     const user = userEvent.setup();
     renderScreen();
 
@@ -407,6 +407,7 @@ describe('BookingDetail: reschedule request', () => {
       visitId: 'v1',
       proposedStartTimeMs: 0,
       proposedEndTimeMs: null,
+      visit: null,
     });
     renderScreen();
     await userEvent.click(await screen.findByRole('button', { name: /reschedule visit/i }));
@@ -524,5 +525,71 @@ describe('BookingDetail: a visit whose start time the Auntie sets (#1098)', () =
     renderScreen();
     expect(await screen.findByRole('button', { name: /reschedule visit/i })).toBeEnabled();
     expect(screen.queryByText('Your Auntie has not set the start time yet.')).toBeNull();
+  });
+});
+/**
+ * #1281: the panel closed on success and the visit kept its pre-ask look for
+ * 10s+ until the refetch landed. The server now returns the visit as stored,
+ * and it is on screen the moment the call resolves, refetch or no refetch.
+ */
+describe('BookingDetail: #1281 the ask shows the moment it resolves', () => {
+  function futureValue(): { value: string; ms: number } {
+    const d = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    d.setSeconds(0, 0);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return { value, ms: new Date(value).getTime() };
+  }
+  it('reschedule: "New time requested" is drawn from the returned visit, with the refetch still out', async () => {
+    const { value, ms } = futureValue();
+    mocks.getMyBookings.mockResolvedValueOnce(bookingsResult({ upcoming: [booking()] }));
+    // Every later read hangs, so only the cache write can explain the banner.
+    mocks.getMyBookings.mockReturnValue(new Promise(() => {}));
+    mocks.requestBookingReschedule.mockResolvedValue({
+      ok: true,
+      visitId: 'v1',
+      proposedStartTimeMs: ms,
+      proposedEndTimeMs: null,
+      visit: booking({ rescheduleRequestStatus: 'pending', rescheduleRequestedStartTimeMs: ms }),
+    });
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    await user.type(within(form).getByLabelText(/new date and time/i), value);
+    await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    expect(await screen.findByText(/New time requested/)).toBeInTheDocument();
+    expect(screen.queryByTestId('reschedule-form')).not.toBeInTheDocument();
+    expect(mocks.requestBookingReschedule).toHaveBeenCalledTimes(1);
+  });
+  it('cancel: "Cancellation requested" is drawn from the returned visit, with the refetch still out', async () => {
+    mocks.getMyBookings.mockResolvedValueOnce(bookingsResult({ upcoming: [booking()] }));
+    mocks.getMyBookings.mockReturnValue(new Promise(() => {}));
+    mocks.requestBookingCancellation.mockResolvedValue({
+      ok: true,
+      visitId: 'v1',
+      alreadyPending: false,
+      visit: booking({ cancelRequested: true, cancelRequestStatus: 'pending' }),
+    });
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /Request cancellation/i }));
+    await user.click(screen.getByRole('button', { name: /Yes, request cancellation/i }));
+    expect(await screen.findByText(/Cancellation requested/)).toBeInTheDocument();
+    expect(mocks.requestBookingCancellation).toHaveBeenCalledTimes(1);
+  });
+  it('with no visit in the reply, stays on "Sending…" until the fresh list arrives', async () => {
+    let answer!: (r: GetMyBookingsResult) => void;
+    mocks.getMyBookings.mockResolvedValueOnce(bookingsResult({ upcoming: [booking()] }));
+    mocks.getMyBookings.mockReturnValue(new Promise((r) => { answer = r; }));
+    mocks.requestBookingCancellation.mockResolvedValue({ ok: true, visitId: 'v1', alreadyPending: false, visit: null });
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /Request cancellation/i }));
+    await user.click(screen.getByRole('button', { name: /Yes, request cancellation/i }));
+    await waitFor(() => expect(mocks.getMyBookings).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('button', { name: /Sending/ })).toBeDisabled();
+    answer(bookingsResult({ upcoming: [booking({ cancelRequested: true, cancelRequestStatus: 'pending' })] }));
+    expect(await screen.findByText(/Cancellation requested/)).toBeInTheDocument();
   });
 });
