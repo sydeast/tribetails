@@ -45,6 +45,7 @@ import {
 } from '../lib/bookingWizardLogic';
 import type { BookingTiming, KinCareSlot } from '../lib/bookingWizardLogic';
 import '../styles/booking.css';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * C1 / #544: the lookahead window `getBusinessClosures` is asked to resolve,
@@ -763,9 +764,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
           </div>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
   );
 }

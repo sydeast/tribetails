@@ -90,6 +90,8 @@ fun AppNavHost(
     shellPersonName: String = "",
     onPersonNameChanged: (String) -> Unit = {},
     shellLogoUrl: String = "",
+    /** #1369: `getMyHome.businessName`, for the footer. Blank draws no name. */
+    shellBusinessName: String = "",
     shellBanner: com.kinfolk.portal.portal.PortalBanner = com.kinfolk.portal.portal.PortalBanner(),
     shellBannerDismissedByUser: Boolean = false,
     onDismissBannerPerUser: ((bannerId: String) -> Unit)? = null,
@@ -155,6 +157,7 @@ fun AppNavHost(
         TabShell(
             familyName = shellPersonName.ifBlank { shellFamilyName },
             logoUrl = shellLogoUrl,
+            businessName = shellBusinessName,
             navController = navController,
             onSignOut = onSignOut,
             onBackToDirectory = if (cameFromPicker) onBackToDirectory else null,

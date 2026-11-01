@@ -41,6 +41,9 @@ vi.mock('../lib/auth', () => ({
   useSignOut: () => ({ signOut: vi.fn(), signingOut: false }),
 }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
+// #1369: the footnote reads the business name from getMyHome; no network in a unit test.
+vi.mock('../api/portal', () => ({ getMyHome: vi.fn().mockResolvedValue({ businessName: '' }) }));
+vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
 
 function key(overrides: Partial<NotificationKeyDto>): NotificationKeyDto {
   return {

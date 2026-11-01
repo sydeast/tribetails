@@ -12,6 +12,7 @@ import { usePortalMutation } from '../lib/mutationState';
 import { SignedImageUpload } from '../components/SignedImageUpload';
 import { uploadKinPhotoSigned, validateKinPhotoFile } from '../api/kinPhotoApi';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Add New Kin (B3, punchlist item): the create counterpart to KinEdit.tsx.
@@ -227,9 +228,7 @@ export function KinAdd() {
           </section>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

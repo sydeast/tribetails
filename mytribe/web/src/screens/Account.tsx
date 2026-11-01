@@ -32,6 +32,7 @@ import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFail
 import { billingAccessOf } from '../lib/billingAccess';
 import { resolveIdentity } from '../lib/identity';
 import { formatPhone, phoneProblem } from '../lib/phone';
+import { BusinessFootnote } from '../components/BusinessFootnote';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -317,7 +318,7 @@ export function Account() {
   // placeholder here cannot disagree with it (#1290).
   const { initial } = resolveIdentity({ account: data, signInEmail: null, householdName });
   const roster = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, 4);
-  const businessName = home.data?.businessName || 'Tribe Tails Pet Care';
+  const businessName = (home.data?.businessName ?? '').trim();
   const nameValid = displayName.trim().length > 0;
   // #1289: caught on the field, in plain words, before Save is ever offered. The
   // server repeats the same sentence if a number slips past this floor.
@@ -638,7 +639,7 @@ export function Account() {
 
             <section className="glass card d4">
               <div className="sectlabel">Cared for by</div>
-              <h3 className="title">{businessName}</h3>
+              <h3 className="title">{businessName || 'Your Auntie'}</h3>
               <p className="sub">Your care team can see your profile name and contact details to reach you about visits.</p>
               <div style={{ marginTop: 14 }}>
                 <Link className="btn ghost block" to="/messages">
@@ -696,9 +697,7 @@ export function Account() {
             </button>
           )}
         </section>
-        <p className="footnote">
-          Cared for by <b>{businessName}</b>
-        </p>
+        <BusinessFootnote name={businessName} />
       </div>
     </>
   );

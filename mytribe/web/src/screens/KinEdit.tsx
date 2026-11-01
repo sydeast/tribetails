@@ -21,6 +21,7 @@ import { SignedImageUpload } from '../components/SignedImageUpload';
 import { BusyLabel } from '../components/Loading';
 import { confirmKinPhotoUpload, signKinPhotoUpload, validateKinPhotoFile } from '../api/kinPhotoApi';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -339,9 +340,7 @@ export function KinEdit() {
           </section>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

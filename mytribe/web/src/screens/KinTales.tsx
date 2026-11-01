@@ -33,6 +33,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { RouteMap } from '../components/RouteMap';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const PAGE_SIZE = 20;
 const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
@@ -198,9 +199,7 @@ export function KinTales() {
           </div>
         )}
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );
