@@ -48,6 +48,11 @@ function kin(overrides: Partial<KinDto> = {}): KinDto {
     allergies: null,
     emergencyNotes: null,
     sitterNotes: null,
+    sex: null,
+    weight: null,
+    colorMarkings: null,
+    spayedNeutered: false,
+    vetInfo: null,
     ...overrides,
   };
 }
@@ -75,6 +80,50 @@ beforeEach(() => {
 });
 
 describe('KinEdit', () => {
+  it('shows the shared facts from the kin and saves only the one that changed (#1310)', async () => {
+    mocks.getMyKin.mockResolvedValue({
+      kin: [kin({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', spayedNeutered: true, vetInfo: 'Dr A' })],
+    });
+    const user = userEvent.setup();
+    renderScreen();
+    expect(((await screen.findByLabelText('Sex')) as HTMLSelectElement).value).toBe('Female');
+    expect((screen.getByLabelText('Weight') as HTMLInputElement).value).toBe('52 lbs');
+    expect((screen.getByLabelText('Color / markings') as HTMLInputElement).value).toBe('Black');
+    expect((screen.getByLabelText(/Spayed \/ neutered/) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Vet') as HTMLTextAreaElement).value).toBe('Dr A');
+
+    const weight = screen.getByLabelText('Weight');
+    await user.clear(weight);
+    await user.type(weight, '55 lbs');
+    await user.click(screen.getByRole('button', { name: /Save/i }));
+    await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
+    expect(mocks.updateKin).toHaveBeenCalledWith('k1', { weight: '55 lbs' }, 'fam1');
+  });
+
+  it('edits sex, the fixed flag and the vet, and clears a field with an empty string (#1310)', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ weight: '52 lbs' })] });
+    const user = userEvent.setup();
+    renderScreen();
+    await user.selectOptions(await screen.findByLabelText('Sex'), 'Male');
+    await user.click(screen.getByLabelText(/Spayed \/ neutered/));
+    await user.type(screen.getByLabelText('Vet'), 'Riverside Animal Hospital');
+    await user.clear(screen.getByLabelText('Weight'));
+    await user.click(screen.getByRole('button', { name: /Save/i }));
+    await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
+    expect(mocks.updateKin).toHaveBeenCalledWith(
+      'k1',
+      { sex: 'Male', weight: '', vetInfo: 'Riverside Animal Hospital', spayedNeutered: true },
+      'fam1',
+    );
+  });
+
+  it('keeps a legacy sex value the admin wrote (F) selectable instead of rewriting it (#1310)', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ sex: 'F' })] });
+    renderScreen();
+    expect(((await screen.findByLabelText('Sex')) as HTMLSelectElement).value).toBe('F');
+    expect(screen.getByRole('button', { name: /Save/i })).toBeDisabled();
+  });
+
   it('prefills the form from the existing kin', async () => {
     renderScreen();
     const nameInput = (await screen.findByLabelText(/Name/i)) as HTMLInputElement;

@@ -877,10 +877,24 @@ service cloud.firestore {
       match /kin/{kinId} {
         allow read: if activeMember(fid) || isStaff();
         allow create, delete: if hasPerm(fid, 'kin_edit');
-        allow update: if hasPerm(fid, 'kin_edit')
+        // #1310: this doc also carries staff-only fields the flat -> family
+        // mirror copies in (officeNotes, reactive, routine, vaccinations...).
+        // Even a kin_edit holder may only write what the portal edits: the
+        // profile, the care block, and the five descriptive facts shared with
+        // the admin (sex, weight, colorMarkings, spayedNeutered, vetInfo; see
+        // functions/src/triggers/kinMirror.ts HOUSEHOLD_SHARED_FIELDS).
+        allow update: if (hasPerm(fid, 'kin_edit') && diffOnly([
+            'name','species','breed','ageYears','photoUrl','status','legacyKinId',
+            'feedingInstructions','walkingInstructions','sitterNotes',
+            'emergencyNotes','medications','allergies',
+            'sex','weight','colorMarkings','spayedNeutered','vetInfo',
+            'updatedAt','updatedByUid'
+          ]))
           || (activeMember(fid) && diffOnly([
             'feedingInstructions','walkingInstructions','sitterNotes',
-            'emergencyNotes','medications','allergies','updatedAt'
+            'emergencyNotes','medications','allergies',
+            'sex','weight','colorMarkings','spayedNeutered','vetInfo',
+            'updatedAt'
           ]));
       }
 

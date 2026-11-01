@@ -19,9 +19,8 @@ const FALLBACK = 'Not set';
  * Kin detail, ported from ui-ideas/mytribe-kin-detail-2026-05-31.html.
  * There's no dedicated getKinById callable — getMyKin already returns every
  * detail field, so this screen reads the same ['myKin'] cache as Home/Kin
- * and finds the row by id. The mockup's vet-clinic line has no backing
- * field on KinDto (no vetClinicId anywhere in the kin doc), so it's
- * omitted rather than faked. Edit (O-17) links to the KinEdit form at
+ * and finds the row by id. The Vet line is the free-text `vetInfo` the admin
+ * also keeps on the pet (#1310), not a clinic-directory link. Edit (O-17) links to the KinEdit form at
  * /kin/$kinId/edit, mirroring Compose's AddEditKinDialog.
  */
 export function KinDetail() {
@@ -152,6 +151,22 @@ export function KinDetail() {
                   <div className="k">Age</div>
                   <div className="v">{found.ageYears !== null ? `${found.ageYears} yrs` : FALLBACK}</div>
                 </div>
+                <div className="fact">
+                  <div className="k">Sex</div>
+                  <div className="v">{found.sex ?? FALLBACK}</div>
+                </div>
+                <div className="fact">
+                  <div className="k">Weight</div>
+                  <div className="v">{found.weight ?? FALLBACK}</div>
+                </div>
+                <div className="fact">
+                  <div className="k">Color / markings</div>
+                  <div className="v">{found.colorMarkings ?? FALLBACK}</div>
+                </div>
+                <div className="fact">
+                  <div className="k">Spayed / neutered</div>
+                  <div className="v">{found.spayedNeutered ? 'Yes' : 'No'}</div>
+                </div>
               </div>
             </section>
 
@@ -174,6 +189,10 @@ export function KinDetail() {
                 <div className="fact">
                   <div className="k">Allergies</div>
                   <div className="v">{found.allergies ?? 'None'}</div>
+                </div>
+                <div className="fact">
+                  <div className="k">Vet</div>
+                  <div className="v">{found.vetInfo ?? FALLBACK}</div>
                 </div>
               </div>
             </section>

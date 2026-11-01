@@ -157,6 +157,11 @@ function kin(overrides: Partial<KinDto>): KinDto {
     allergies: null,
     emergencyNotes: null,
     sitterNotes: null,
+    sex: null,
+    weight: null,
+    colorMarkings: null,
+    spayedNeutered: false,
+    vetInfo: null,
     ...overrides,
   };
 }

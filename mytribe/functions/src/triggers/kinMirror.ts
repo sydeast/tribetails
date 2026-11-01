@@ -45,7 +45,27 @@ export const PARENT_OWNED_FIELDS: readonly string[] = [
 ];
 
 /**
- * The subset of parent-owned fields copied VERBATIM family -> flat.
+ * Fields BOTH sides edit: the descriptive pet facts the admin has always kept
+ * on the flat doc (sex, weight, markings, fixed flag, vet) and the household can
+ * now edit in the portal (#1310). They are deliberately NOT in
+ * PARENT_OWNED_FIELDS, so the flat -> family reverse mirror keeps carrying them
+ * (they are in STAFF_EDITABLE_FIELDS), and ARE in FLAT_MIRROR_FIELDS, so a
+ * household edit reaches the admin. Last writer wins; each direction only fires
+ * when that side's copy actually changed, and the echo guards end the bounce.
+ *
+ * Everything else staff keeps (routine, officeNotes, reactive, vaccinations,
+ * the_411, dossiers) stays staff-only and is never read or written by the portal.
+ */
+export const HOUSEHOLD_SHARED_FIELDS: readonly string[] = [
+  'sex',
+  'weight',
+  'colorMarkings',
+  'spayedNeutered',
+  'vetInfo',
+];
+/**
+ * The subset of parent-owned fields copied VERBATIM family -> flat, plus the
+ * shared descriptive fields above.
  *
  * `status` is deliberately not copied: the two collections speak different
  * status vocabularies (portal `active`/`noLongerWithUs`, flat
@@ -53,9 +73,10 @@ export const PARENT_OWNED_FIELDS: readonly string[] = [
  * the create/archive/restore paths instead of leaking the portal spelling into
  * the flat doc or resetting a staff `archived` on every unrelated parent edit.
  */
-export const FLAT_MIRROR_FIELDS: readonly string[] = PARENT_OWNED_FIELDS.filter(
-  (f) => f !== 'status',
-);
+export const FLAT_MIRROR_FIELDS: readonly string[] = [
+  ...PARENT_OWNED_FIELDS.filter((f) => f !== 'status'),
+  ...HOUSEHOLD_SHARED_FIELDS,
+];
 
 /**
  * Staff-editable fields that flow flat -> family. These are descriptive bits a

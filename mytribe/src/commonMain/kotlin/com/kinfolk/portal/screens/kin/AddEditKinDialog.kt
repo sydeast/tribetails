@@ -16,6 +16,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
@@ -73,6 +75,11 @@ fun AddEditKinDialog(
     var allergies by remember { mutableStateOf(initial?.allergies.orEmpty()) }
     var emergency by remember { mutableStateOf(initial?.emergencyNotes.orEmpty()) }
     var sitter by remember { mutableStateOf(initial?.sitterNotes.orEmpty()) }
+    var sex by remember { mutableStateOf(initial?.sex.orEmpty()) }
+    var weight by remember { mutableStateOf(initial?.weight.orEmpty()) }
+    var markings by remember { mutableStateOf(initial?.colorMarkings.orEmpty()) }
+    var fixed by remember { mutableStateOf(initial?.spayedNeutered ?: false) }
+    var vet by remember { mutableStateOf(initial?.vetInfo.orEmpty()) }
 
     // Photo: picked locally, uploaded by the controller after the kin write
     // succeeds (add needs the new kinId before the Storage path exists).
@@ -212,6 +219,23 @@ fun AddEditKinDialog(
                     KinField(value = emergency, onValueChange = { emergency = it }, label = "Emergency Notes", singleLine = false)
                     KinField(value = sitter, onValueChange = { sitter = it }, label = "Sitter Notes", singleLine = false)
                 }
+                // The facts shared with the admin (#1310). Outside the schema branch so a
+                // schema-driven form still carries them.
+                SexRadioGroup(selected = sex, onSelect = { sex = it })
+                KinField(value = weight, onValueChange = { weight = it }, label = "Weight")
+                KinField(value = markings, onValueChange = { markings = it }, label = "Color / markings")
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { fixed = !fixed },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = fixed,
+                        onCheckedChange = { fixed = it },
+                        colors = CheckboxDefaults.colors(checkedColor = KinfolkBrand.KinfolkOrange),
+                    )
+                    Text("Spayed / neutered", style = type.sansBody)
+                }
+                KinField(value = vet, onValueChange = { vet = it }, label = "Vet", singleLine = false)
                 submitError?.let { problem ->
                     Text(text = problem, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
                 }
@@ -250,10 +274,25 @@ fun AddEditKinDialog(
                             legacyKinId = initial?.id?.takeIf { it.matches(Regex("\\d+")) },
                         )
                     }
+                    val facts = sharedFactsPayload(
+                        initial = initial,
+                        sex = sex,
+                        weight = weight,
+                        markings = markings,
+                        fixed = fixed,
+                        vet = vet,
+                    )
+                    val finalPayload = payload.copy(
+                        sex = facts.sex,
+                        weight = facts.weight,
+                        colorMarkings = facts.colorMarkings,
+                        spayedNeutered = facts.spayedNeutered,
+                        vetInfo = facts.vetInfo,
+                    )
                     scope.launch {
                         saving = true
                         submitError = null
-                        val err = onSubmit(payload, pickedPhoto)
+                        val err = onSubmit(finalPayload, pickedPhoto)
                         saving = false
                         if (err == null) onClose() else submitError = err
                     }
@@ -267,6 +306,70 @@ fun AddEditKinDialog(
         },
         dismissButton = { TextButton(onClick = { if (!saving) onClose() }) { Text("Cancel") } },
     )
+}
+
+private val SEX_OPTIONS = listOf("Male", "Female", "Unknown")
+
+/** What the dialog sends for the five shared facts: null = leave alone, "" = clear. */
+internal data class SharedFacts(
+    val sex: String?,
+    val weight: String?,
+    val colorMarkings: String?,
+    val spayedNeutered: Boolean?,
+    val vetInfo: String?,
+)
+
+/**
+ * Diff each shared fact against what the kin carried. An untouched field sends
+ * null, so a save never rewrites a value this form did not change; a field the
+ * household emptied sends "" to clear it. [initial] null (Add) sends only what
+ * was filled in.
+ */
+internal fun sharedFactsPayload(
+    initial: com.kinfolk.portal.portal.Kin?,
+    sex: String,
+    weight: String,
+    markings: String,
+    fixed: Boolean,
+    vet: String,
+): SharedFacts {
+    fun text(now: String, before: String?): String? {
+        val next = now.trim()
+        val prev = before.orEmpty().trim()
+        return if (next == prev) null else next
+    }
+    return SharedFacts(
+        sex = text(sex, initial?.sex),
+        weight = text(weight, initial?.weight),
+        colorMarkings = text(markings, initial?.colorMarkings),
+        spayedNeutered = if (fixed == (initial?.spayedNeutered ?: false)) null else fixed,
+        vetInfo = text(vet, initial?.vetInfo),
+    )
+}
+
+@Composable
+private fun SexRadioGroup(selected: String, onSelect: (String) -> Unit) {
+    val type = LocalKinfolkTypography.current
+    // A value the admin wrote outside the three ("F") stays selectable.
+    val options = if (selected.isNotBlank() && SEX_OPTIONS.none { it == selected }) SEX_OPTIONS + selected else SEX_OPTIONS
+    Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+        Text("SEX", style = type.sansMeta)
+        Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+            options.forEach { opt ->
+                Row(
+                    modifier = Modifier.clickable { onSelect(opt) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = selected == opt,
+                        onClick = { onSelect(opt) },
+                        colors = RadioButtonDefaults.colors(selectedColor = KinfolkBrand.KinfolkOrange),
+                    )
+                    Text(opt, style = type.sansBody)
+                }
+            }
+        }
+    }
 }
 
 /** Species the breed banks support today. Dog/Cat get a searchable breed list;
