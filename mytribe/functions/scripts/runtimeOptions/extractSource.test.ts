@@ -58,31 +58,38 @@ describe('extractNamedConstants', () => {
 });
 
 describe('extractIndexExports', () => {
-  it('reads export { a, b } from "./module" in source order', () => {
+  it('reads the FUNCTIONS table in source order', () => {
     const src = sourceFile(`
-      export { health } from './health/health';
-      export {
-        getMyHome,
-        getMyAccess,
-      } from './portal/getMyAccess';
+      setGlobalOptions({ cpu: 1 });
+      const FUNCTIONS: Record<string, FunctionModuleLoader> = {
+        // a comment between entries is fine
+        health: () => require('./health/health'),
+        getMyHome: () => require('./portal/getMyAccess'),
+        getMyAccess: () => require('./portal/getMyAccess'),
+      };
     `);
     const exports = extractIndexExports(src);
     expect(exports.map((e) => e.name)).toEqual(['health', 'getMyHome', 'getMyAccess']);
     expect(exports[1].modulePath).toBe('./portal/getMyAccess');
   });
-
-  it('ignores export declarations with no module specifier', () => {
+  it('throws rather than returning nothing when there is no table', () => {
+    const src = sourceFile(`export { health } from './health/health';`);
+    expect(() => extractIndexExports(src)).toThrow(/no `const FUNCTIONS/);
+  });
+  it('throws on an entry that is not a literal require', () => {
     const src = sourceFile(`
-      export { health } from './health/health';
-      export type { Foo } from './types';
-      const local = 1;
-      export { local };
+      const FUNCTIONS = {
+        health: () => require('./health/health'),
+        computed: () => require(PATHS.computed),
+      };
     `);
-    const exports = extractIndexExports(src);
-    expect(exports.map((e) => e.name)).toEqual(['health']);
+    expect(() => extractIndexExports(src)).toThrow(/computed is not/);
+  });
+  it('throws on a spread or shorthand entry', () => {
+    const src = sourceFile(`const FUNCTIONS = { ...OTHER };`);
+    expect(() => extractIndexExports(src)).toThrow(/expected `name: \(\) => require/);
   });
 });
-
 describe('extractFunctionDeclaration', () => {
   it('resolves a plain onCall with an inline options object', () => {
     const src = sourceFile(`

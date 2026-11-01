@@ -36,18 +36,16 @@ beforeEach(() => {
 });
 
 /**
- * Every name `src/index.ts` re-exports, which is every callable this codebase
- * deploys. Parsed rather than imported, because importing index.ts pulls in the
- * whole function tree and its side effects.
+ * Every name in `src/index.ts`'s FUNCTIONS table (`name: () => require(...)`),
+ * which is every callable this codebase deploys. Parsed rather than imported,
+ * because importing index.ts pulls in the whole function tree and its side
+ * effects.
  */
 function deployedCallableNames(): Set<string> {
   const text = readFileSync(resolve(__dirname, '../src/index.ts'), 'utf8');
   const names = new Set<string>();
-  for (const m of text.matchAll(/export \{([^}]*)\} from/gs)) {
-    for (const raw of m[1]!.split(',')) {
-      const name = raw.trim().split(' as ').pop()!.trim();
-      if (/^[A-Za-z_$][\w$]*$/.test(name)) names.add(name);
-    }
+  for (const m of text.matchAll(/^[ \t]*([A-Za-z_$][\w$]*): \(\) => require\(/gm)) {
+    names.add(m[1]!);
   }
   return names;
 }

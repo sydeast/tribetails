@@ -5,9 +5,15 @@ import { dirname, resolve, relative } from 'node:path';
 /**
  * A guard on the one number that sets every Cloud Function's cold start.
  *
- * The Functions runtime loads the whole of `lib/index.js` on every cold start
- * whatever the target is, so the import graph reachable from `src/index.ts` is
- * paid by all ~227 deployed functions, not by the one that was called. Issue
+ * Until #1337 the Functions runtime loaded the whole of `lib/index.js` on every
+ * cold start whatever the target was, so the import graph reachable from
+ * `src/index.ts` was paid by every deployed function, not by the one that was
+ * called. Since #1337 a deployed instance loads only its FUNCTION_TARGET's
+ * module (see the FUNCTIONS table in src/index.ts), but the union of all of
+ * them is still loaded by deploy-time discovery, by the emulator and by
+ * getIntegrationsHealth at call time, and anything in it lands on every
+ * function that shares the module. So this walks the union: the index's own
+ * imports plus every module the FUNCTIONS table loads. Issue
  * #395 is what happens when that cost meets a fractional vCPU: five callables
  * on the 2026-08-17 walk took between 7.9 and 10.3 seconds on their first call
  * and 703 ms on their second.
@@ -184,6 +190,17 @@ interface Graph {
   packageOrigin: Map<string, string>;
 }
 
+/**
+ * The module specifiers of src/index.ts's FUNCTIONS table, one per
+ * `name: () => require('./module'),` entry. A thunk is not an eager edge of the
+ * index, but discovery calls every one of them, so for the union graph each is.
+ */
+function functionTableEdges(file: string): Edge[] {
+  const code = stripComments(readFileSync(file, 'utf8'));
+  return [
+    ...code.matchAll(/^[ \t]*[A-Za-z_$][\w$]*:[ \t]*\(\)[ \t]*=>[ \t]*require\('([^']+)'\),?$/gm),
+  ].map((m) => ({ spec: m[1], typeOnly: false }));
+}
 function walkEagerGraph(entry: string): Graph {
   const ownFiles = new Set<string>([entry]);
 
@@ -194,7 +211,9 @@ function walkEagerGraph(entry: string): Graph {
   const queue = [entry];
   while (queue.length > 0) {
     const file = queue.pop() as string;
-    for (const edge of readEdges(file)) {
+    const edges =
+      file === entry ? [...readEdges(file), ...functionTableEdges(file)] : readEdges(file);
+    for (const edge of edges) {
       if (edge.typeOnly) continue;
       if (edge.spec.startsWith('.')) {
         const target = resolveLocal(file, edge.spec);
@@ -216,6 +235,16 @@ function walkEagerGraph(entry: string): Graph {
 describe('cold-start import graph of the functions entrypoint', () => {
   const graph = walkEagerGraph(ENTRY);
 
+  it('walks from every entry of the FUNCTIONS table', () => {
+    // Without this the walk could silently start from index.ts alone, whose own
+    // imports are one package, and every assertion below would pass vacuously.
+    const entries = functionTableEdges(ENTRY);
+    const names =
+      readFileSync(ENTRY, 'utf8').match(/^[ \t]*[A-Za-z_$][\w$]*: \(\) => require\(/gm) ?? [];
+    expect(entries.length).toBeGreaterThan(200);
+    expect(entries.length).toBe(names.length);
+    expect(graph.ownFiles.size).toBeGreaterThan(entries.length / 2);
+  });
   it('reaches no heavy SDK at file scope', () => {
     const offenders = BANNED_AT_FILE_SCOPE.filter((pkg) => graph.packages.has(pkg)).map(
       (pkg) => `${pkg} (imported by src/${graph.packageOrigin.get(pkg)})`,
