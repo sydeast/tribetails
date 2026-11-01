@@ -53,17 +53,22 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
  * it worse than most screens: while `home` is paused they are `enabled: false`,
  * so they never even reach 'paused' and sit at pending/idle. `gate: home` is
  * what makes them answer with home's reason instead of with silence.
+ *
+ * #1282: the three no longer WAIT for `home` (they used to be
+ * `enabled: home.isSuccess`). That gate made the first paint two round trips
+ * deep for no reason the data needed: none of the three reads anything out of
+ * `home`. They now start alongside it, and `gate: home` still makes a failed or
+ * paused `home` the reason every section reports.
  */
 export function Home() {
   const kinfolkId = getActiveKinfolkId();
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId) });
-  const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId), enabled: home.isSuccess });
+  const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId) });
   const kinTales = useQuery({
     queryKey: ['myKinTales', 'home-preview', kinfolkId],
     queryFn: () => getMyKinTales(kinfolkId, { limit: 3 }),
-    enabled: home.isSuccess,
   });
-  const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId), enabled: home.isSuccess });
+  const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
 
   // #1290: a first-name greeting off the signed-in person, not the household's
   // (often upper-case) name. Until the account answers, the heading keeps the
@@ -235,7 +240,7 @@ export function Home() {
                 </LoadingLine>
               ) : (
                 tales.map((t, i) => (
-                  <div className={`tale a${(i % 3) + 1}`} key={t.id}>
+                  <Link className={`tale a${(i % 3) + 1}`} to="/kintales" search={{ tale: t.id }} key={t.id}>
                     <div className="photo">{'\u{1F43E}'}</div>
                     <div className="tb">
                       <b>{t.title || t.body.slice(0, 60)}</b>
@@ -244,7 +249,7 @@ export function Home() {
                         {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 ))
               )}
             </section>

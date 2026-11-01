@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ShareKinTaleDialog } from './ShareKinTaleDialog';
@@ -198,5 +198,58 @@ describe('ShareKinTaleDialog: dismissal', () => {
     await user.click(screen.getByRole('dialog').parentElement!);
 
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe('ShareKinTaleDialog: placement and closing (#1327)', () => {
+  it('is titled for the action and portalled to <body>, above any page stacking context', () => {
+    renderDialog();
+    const dialog = screen.getByRole('dialog', { name: /Share this KinTale/i });
+    expect(screen.getByRole('heading', { name: 'Share this KinTale' })).toBeInTheDocument();
+    // Not inside the render container: a `.wrap` ancestor would trap it under the sticky nav.
+    expect(dialog.closest('.skd-overlay')?.parentElement).toBe(document.body);
+  });
+  it('has a labelled close button on the form stage, before any link exists', async () => {
+    const user = userEvent.setup();
+    const onClose = renderDialog();
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it('also has it once the link is made', async () => {
+    const user = userEvent.setup();
+    const onClose = renderDialog();
+    await createLink(user);
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it('closes on Escape and on a click outside the card, but not on a click inside it', async () => {
+    const user = userEvent.setup();
+    const onClose = renderDialog();
+    await user.click(screen.getByRole('heading', { name: 'Share this KinTale' }));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    const overlay = screen.getByRole('dialog').closest('.skd-overlay') as HTMLElement;
+    await user.click(overlay);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+  it('does not close while a link is being created', async () => {
+    mocks.createShareLink.mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    const onClose = renderDialog();
+    await user.click(screen.getByRole('button', { name: /Generate Link/i }));
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+  it('hides the passcode as typed, with a control to show it', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    const field = screen.getByLabelText(/optional.*4 to 8 characters/i);
+    expect(field).toHaveAttribute('type', 'password');
+    await user.click(screen.getByRole('button', { name: 'Show passcode' }));
+    expect(field).toHaveAttribute('type', 'text');
+    await user.click(screen.getByRole('button', { name: 'Hide passcode' }));
+    expect(field).toHaveAttribute('type', 'password');
   });
 });

@@ -21,6 +21,32 @@ data class KinPayload(
     val colorMarkings: String? = null,
     val spayedNeutered: Boolean? = null,
     val vetInfo: String? = null,
+    /**
+     * #1336. Keys of the nullable fields above to send as an explicit JSON
+     * `null`, which `updateKin` stores as a clear. A null property alone means
+     * "leave the stored value alone" and is omitted. Only keys in
+     * [NULL_CLEARABLE_KIN_FIELDS] are honoured; the five shared facts clear
+     * with "" instead.
+     */
+    val clearFields: Set<String> = emptySet(),
+)
+
+/**
+ * #1336. The [KinPayload] fields whose clear value is JSON `null` (the
+ * server's zod marks them `.nullable()`; CALLABLE_CONTRACT.md "Clearing a
+ * field"). The kin dialog clears a photo through its own path (#1291).
+ */
+val NULL_CLEARABLE_KIN_FIELDS: Set<String> = setOf(
+    "species",
+    "breed",
+    "ageYears",
+    "photoUrl",
+    "feedingInstructions",
+    "walkingInstructions",
+    "medications",
+    "allergies",
+    "emergencyNotes",
+    "sitterNotes",
 )
 
 data class PayInvoiceResult(

@@ -632,3 +632,23 @@ describe('Account: phone (#1289, #1306)', () => {
     expect(note.textContent).not.toMatch(/phoneNormalize|\[\d{3}\]/);
   });
 });
+
+describe('Account, reads start together (#1282)', () => {
+  it('asks for home and kin while getMyAccount is still in flight', async () => {
+    const accountApi = await import('../api/accountApi');
+    const portalApi = await import('../api/portal');
+    vi.mocked(accountApi.getMyAccount).mockReturnValue(new Promise(() => {}));
+    vi.mocked(portalApi.getMyHome).mockResolvedValue(HOME);
+    vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Account />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(portalApi.getMyHome).toHaveBeenCalledWith('kin-fam-1'));
+    expect(portalApi.getMyKin).toHaveBeenCalledWith('kin-fam-1');
+    // The card row still waits for the account answer: it needs `impersonated`.
+    expect(accountApi.getMyPaymentMethod).not.toHaveBeenCalled();
+  });
+});

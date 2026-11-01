@@ -107,4 +107,41 @@ class HomeScreenTest {
         onNodeWithText("Couldn't load Home").assertIsDisplayed()
         onNodeWithText("network down").assertIsDisplayed()
     }
+
+    @Test
+    fun recentKinTaleCard_opensThatTale() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", kotlinx.serialization.json.JsonNull)
+            put("upcoming", buildJsonArray {})
+            put("recent", buildJsonArray {})
+        })
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t-a")
+                    put("body", "Buddy chased the ball.")
+                    put("authorDisplayName", "Maya")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                })
+                add(buildJsonObject {
+                    put("id", "t-b")
+                    put("body", "Buddy napped all afternoon.")
+                    put("authorDisplayName", "Maya")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                })
+            })
+        })
+        val opened = mutableListOf<String>()
+        setThemedContent {
+            HomeScreen("The Foster", "demo-1", PortalApi(fake), onOpenKinTale = { opened += it })
+        }
+        waitForIdle()
+        onNodeWithText("Buddy napped all afternoon.").performClick()
+        waitForIdle()
+        kotlin.test.assertEquals(listOf("t-b"), opened)
+    }
 }

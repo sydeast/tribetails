@@ -24,6 +24,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.theme.KinfolkTheme
 
@@ -51,6 +52,8 @@ fun KinField(
      * leaves the field untagged, which is every caller that does not need it.
      */
     fieldTestTag: String? = null,
+    /** Masks the text, for a passcode. [VisualTransformation.None] (the default) shows it as typed. */
+    visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
@@ -104,6 +107,7 @@ fun KinField(
             onValueChange     = onValueChange,
             enabled           = enabled,
             singleLine        = singleLine,
+            visualTransformation = visualTransformation,
             cursorBrush       = SolidColor(primary),
             textStyle         = type.sansBody.copy(color = navyColor),
             interactionSource = source,

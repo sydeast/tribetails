@@ -1,5 +1,6 @@
 package com.kinfolk.portal.portal
 
+import com.kinfolk.portal.firebase.FirestoreClient
 import com.kinfolk.portal.firebase.FunctionsClient
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.async
@@ -23,7 +24,15 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
-class PortalApi(private val fns: FunctionsClient) {
+/**
+ * [firestore] is optional so tests and callers that only exercise callables
+ * keep constructing `PortalApi(fns)`. When present, the hot reads that the
+ * rules let a household make directly go there first (#1282).
+ */
+class PortalApi(
+    private val fns: FunctionsClient,
+    private val firestore: FirestoreClient? = null,
+) {
 
     // -- Access (operator-aware kinfolkIds list) --
     suspend fun getMyAccess(): MyAccessResult {
@@ -667,7 +676,29 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     // -- Kin --
+    /**
+     * #1282: Firestore first when the household is known (see KinDirectRead.kt
+     * for why the rules allow it), so a first open skips the `getMyKin` cold
+     * start. ANY failure falls back to the callable, the old path unchanged: a
+     * legacy primary with no member doc is denied by the rule but admitted by
+     * `resolveKinfolkAccess`, and offline or revoked sessions get the error the
+     * screens already handle. With no id the callable picks the default tribe.
+     */
     suspend fun getMyKin(kinfolkId: String? = null): KinResult {
+        val direct = firestore
+        if (kinfolkId != null && direct != null) {
+            try {
+                return readKinDirect(direct, kinfolkId)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+                // Fall through to the callable; see above.
+            }
+        }
+        return getMyKinViaCallable(kinfolkId)
+    }
+
+    private suspend fun getMyKinViaCallable(kinfolkId: String?): KinResult {
         val raw = fns.call("getMyKin", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
         val list = (raw["kin"] as? JsonArray)?.map { el ->
             val o = el.jsonObject
@@ -976,19 +1007,33 @@ class PortalApi(private val fns: FunctionsClient) {
         )
     }
 
+    /**
+     * A null argument is omitted (leave the stored value alone). #1336: a key in
+     * [clearFields] (`phone`, `photoUrl`, `backupEmail`, `backupPhone`) is sent
+     * as JSON `null`, which the callable stores as a clear. `displayName` cannot
+     * be cleared (the server requires at least one character) and is never in
+     * the set. [accountChanges] builds both from the loaded account.
+     */
     suspend fun saveMyAccount(
         displayName: String? = null,
         phone: String? = null,
         photoUrl: String? = null,
         backupEmail: String? = null,
         backupPhone: String? = null,
+        clearFields: Set<String> = emptySet(),
     ) {
         fns.call("saveMyAccount", buildJsonObject {
+            fun opt(key: String, value: String?) {
+                when {
+                    value != null -> put(key, value)
+                    key in clearFields && key in NULL_CLEARABLE_ACCOUNT_FIELDS -> put(key, JsonNull)
+                }
+            }
             displayName?.let { put("displayName", it) }
-            phone?.let { put("phone", it) }
-            photoUrl?.let { put("photoUrl", it) }
-            backupEmail?.let { put("backupEmail", it) }
-            backupPhone?.let { put("backupPhone", it) }
+            opt("phone", phone)
+            opt("photoUrl", photoUrl)
+            opt("backupEmail", backupEmail)
+            opt("backupPhone", backupPhone)
         })
     }
 
@@ -1160,18 +1205,29 @@ class PortalApi(private val fns: FunctionsClient) {
         return confirmKinPhotoUpload(kinId = kinId, secureUrl = secureUrl, kinfolkId = kinfolkId)
     }
 
+    /**
+     * #1336: a null property is omitted (leave the stored value alone); a key
+     * in [KinPayload.clearFields] is sent as JSON `null`, which `updateKin`
+     * stores as a clear. A value wins over a clear for the same key.
+     */
     private fun kinPayloadToJson(p: KinPayload): JsonObject = buildJsonObject {
+        fun opt(key: String, value: JsonElement?) {
+            when {
+                value != null -> put(key, value)
+                key in p.clearFields && key in NULL_CLEARABLE_KIN_FIELDS -> put(key, JsonNull)
+            }
+        }
         put("name", p.name)
-        p.species?.let { put("species", it) }
-        p.breed?.let { put("breed", it) }
-        p.ageYears?.let { put("ageYears", it) }
-        p.photoUrl?.let { put("photoUrl", it) }
-        p.feedingInstructions?.let { put("feedingInstructions", it) }
-        p.walkingInstructions?.let { put("walkingInstructions", it) }
-        p.medications?.let { put("medications", it) }
-        p.allergies?.let { put("allergies", it) }
-        p.emergencyNotes?.let { put("emergencyNotes", it) }
-        p.sitterNotes?.let { put("sitterNotes", it) }
+        opt("species", p.species?.let(::JsonPrimitive))
+        opt("breed", p.breed?.let(::JsonPrimitive))
+        opt("ageYears", p.ageYears?.let(::JsonPrimitive))
+        opt("photoUrl", p.photoUrl?.let(::JsonPrimitive))
+        opt("feedingInstructions", p.feedingInstructions?.let(::JsonPrimitive))
+        opt("walkingInstructions", p.walkingInstructions?.let(::JsonPrimitive))
+        opt("medications", p.medications?.let(::JsonPrimitive))
+        opt("allergies", p.allergies?.let(::JsonPrimitive))
+        opt("emergencyNotes", p.emergencyNotes?.let(::JsonPrimitive))
+        opt("sitterNotes", p.sitterNotes?.let(::JsonPrimitive))
         p.legacyKinId?.let { put("legacyKinId", it) }
         p.sex?.let { put("sex", it) }
         p.weight?.let { put("weight", it) }
@@ -1698,7 +1754,7 @@ class PortalApi(private val fns: FunctionsClient) {
             KinTaleComment(
                 id = o["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 authorRole = role,
-                authorDisplayName = null,
+                authorDisplayName = o["authorDisplayName"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
                 guestName = o["guestName"]?.jsonPrimitive?.contentOrNull,
                 body = o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 parentCommentId = o["parentCommentId"]?.jsonPrimitive?.contentOrNull,

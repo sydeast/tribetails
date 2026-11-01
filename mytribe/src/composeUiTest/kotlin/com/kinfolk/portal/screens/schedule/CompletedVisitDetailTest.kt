@@ -47,7 +47,7 @@ class CompletedVisitDetailTest {
     }
     private fun androidx.compose.ui.test.ComposeUiTest.show(
         fake: FakeFunctionsClient,
-        onTales: () -> Unit = {},
+        onTale: (String) -> Unit = {},
         onInvoice: (String) -> Unit = {},
     ) {
         setThemedContent {
@@ -57,7 +57,7 @@ class CompletedVisitDetailTest {
                 portalApi = PortalApi(fake),
                 onBack = {},
                 nowMs = { fixedNow },
-                onOpenKinTales = onTales,
+                onOpenKinTale = onTale,
                 onOpenInvoice = onInvoice,
             )
         }
@@ -89,12 +89,13 @@ class CompletedVisitDetailTest {
     fun completedVisit_linksToItsKinTaleAndInvoice() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         stub(fake)
-        var tales = 0
+        val tales = mutableListOf<String>()
         val invoices = mutableListOf<String>()
-        show(fake, onTales = { tales++ }, onInvoice = { invoices += it })
+        show(fake, onTale = { tales += it }, onInvoice = { invoices += it })
         onNodeWithText("Read the KinTale").performClick()
         onNodeWithText("See the invoice").performClick()
-        assertEquals(1, tales)
+        // #1363: the link names the tale, so KinTales opens on it, not at the top.
+        assertEquals(listOf("tale-9"), tales)
         assertEquals(listOf("inv-3"), invoices)
     }
     @Test
