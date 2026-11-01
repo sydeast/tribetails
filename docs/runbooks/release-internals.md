@@ -316,11 +316,24 @@ of the built `lib/`, read **statically** so lazy requires inside handler bodies
 are in it. Shared code widens correctly rather than being mapped per file:
 `src/lib/logger.ts` is in all 227 closures and `src/lib/auditEvents.ts` in 196.
 
+The scan lexes each `lib/` file, so `require()` written in a comment or a
+string is prose, not code (#1390; tsc keeps comments, and one comment saying
+"lowered to require()," had sent every release to the full fleet). `await
+import('...')` in code is an edge like `require` (#1393; before that a module
+loaded only through `import()` was missing from the graph). The lexer is never
+trusted to remove an edge: a literal specifier in a comment that resolves still
+joins the graph, so a misread can only widen a deploy. It prints how many calls
+it read in code and how many mentions it set aside, every run.
+
 It refuses to narrow, and falls back to the full (still batched) fleet, whenever
 it cannot attribute a change: a `src/index.ts` edit (the barrel can repoint an
 export at a different module while touching neither), a delete or a rename, a
-`package.json` change outside its `scripts` block, a `require()` it cannot read
-statically, or a source file with no built counterpart. It says which, every
+`package.json` change outside its `scripts` block, a `require()` or `import()` in
+code whose argument is anything but one string literal (`require(x)`,
+`require('./a' + b)`, a template with a substitution), `require` used as a value
+rather than called, a `lib/` file the lexer cannot read cleanly (a string or
+regex that runs into a newline, a comment or template still open at end of file,
+unbalanced brackets), or a source file with no built counterpart. It says which, every
 time. A correct slow deploy beats a clever wrong one, and every uncertain case
 resolves towards deploying *more* functions, never fewer.
 
