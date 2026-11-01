@@ -26,8 +26,16 @@ export interface SignedUploadParams {
 }
 
 export interface SignedImageUploadProps {
-  /** Requests fresh signed-upload params scoped to the caller's folder (e.g. signKinfolkAvatar, or a `() => signKinPhotoUpload(kinId, kinfolkId)` closure). */
-  sign: () => Promise<SignedUploadParams>;
+  /** Requests fresh signed-upload params scoped to the caller's folder (e.g. signKinfolkAvatar, or a `() => signKinPhotoUpload(kinId, kinfolkId)` closure). Unused when `onPicked` is set. */
+  sign?: () => Promise<SignedUploadParams>;
+  /**
+   * #1291. Deferred mode: hand the validated file to the host instead of
+   * uploading it now. For a record that does not exist yet (Add New Kin has
+   * no kinId to sign a folder for), the host previews the file through
+   * `imageUrl` and runs the upload itself once the record is created. When
+   * set, `sign`/`confirm`/`onUploaded` are not called.
+   */
+  onPicked?: (file: File) => void;
   /**
    * Client-side file check — pass an existing helper (validateAvatarFile,
    * validateKinPhotoFile) rather than reimplementing size/MIME rules here.
@@ -47,7 +55,7 @@ export interface SignedImageUploadProps {
    */
   confirm?: (secureUrl: string) => Promise<string>;
   /** Called once sign -> upload -> (optional) confirm all succeed. */
-  onUploaded: (url: string) => void;
+  onUploaded?: (url: string) => void;
   /** Called on every user-facing failure (validation, sign, network, server rejection), in addition to the inline message this component already renders. */
   onError?: (message: string) => void;
   /** Current image to preview; '' (or omitted) shows `fallback` instead. */
@@ -138,6 +146,7 @@ function uploadToCloudinary(
  */
 export function SignedImageUpload({
   sign,
+  onPicked,
   validate,
   confirm,
   onUploaded,
@@ -168,8 +177,15 @@ export function SignedImageUpload({
       return;
     }
 
+    if (onPicked) {
+      setPhase({ kind: 'idle' });
+      onPicked(file);
+      return;
+    }
+
     setPhase({ kind: 'uploading', progress: null });
     try {
+      if (!sign) throw new Error("Photo uploads aren't available right now. Try again later.");
       const signed = await sign();
       if (!signed.cloudName) {
         throw new Error("Photo uploads aren't available right now. Try again later.");
@@ -183,7 +199,7 @@ export function SignedImageUpload({
       }
 
       setPhase({ kind: 'idle' });
-      onUploaded(finalUrl);
+      onUploaded?.(finalUrl);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed, try again.';
       setPhase({ kind: 'error', message });

@@ -168,6 +168,34 @@ class MembersRepository(
         val householdName: String,
     )
 
+    /** An account on one side of an invite, as Firebase Auth names it. */
+    data class InviteParty(
+        val uid: String,
+        /** Null when the account has no name, or Auth could not read it. */
+        val displayName: String?,
+        val email: String?,
+    )
+
+    /**
+     * ONE invite, as `getInvite` returns it for the detail screen (#1339):
+     * [AdminInvite] plus what a single row can afford to say. Who sent it
+     * ([invitedByAuntie] true when the business minted it), who claimed it and
+     * when, and the permissions it proposes.
+     */
+    data class InviteDetail(
+        val admin: AdminInvite,
+        val permissions: MemberPermissions,
+        val invitedByAuntie: Boolean,
+        /** The inviting primary's account. Null when the business minted it. */
+        val invitedBy: InviteParty?,
+        /** Who claimed it. Null until claimed. */
+        val acceptedBy: InviteParty?,
+        /** ISO-8601, or null when unclaimed or claimed before the server recorded the time. */
+        val acceptedAt: String?,
+        /** Where it came from, e.g. `mytribe-portal`, when recorded. */
+        val source: String?,
+    )
+
     /**
      * The five permission keys `setMemberPermissions` accepts. `kintales_only`
      * is deliberately absent: the server's argument schema does not carry it,
@@ -224,6 +252,24 @@ class MembersRepository(
             ?: error("listAllInvites: non-map payload")
         decodeAllInvites(raw)
     }.onFailure { AuntieLog.e("MembersRepository.listAllInvites failed", it) }
+
+    /**
+     * One invite by id (#1339), for the detail screen. Not a lookup in a page
+     * of [listAllInvites]: that page holds 200 rows, and an older invite
+     * falling off it would read as missing when it is not.
+     */
+    suspend fun getInvite(inviteId: String): Result<InviteDetail> = runCatchingCancellable {
+        require(inviteId.isNotBlank()) { "getInvite requires an invite id" }
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("getInvite")
+            .call(mapOf("inviteId" to inviteId.trim())).awaitCallable().data as? Map<String, Any?>
+            ?: error("getInvite: non-map payload")
+        decodeInviteDetail(raw)
+    }.onFailure {
+        // The id is the claim-link bearer token; the message names the callable.
+        AuntieLog.e("MembersRepository.getInvite failed", it)
+    }
 
     // ── writes ──────────────────────────────────────────────────────────────
 
@@ -490,6 +536,35 @@ internal fun decodeAllInvites(raw: Map<*, *>?): List<MembersRepository.AdminInvi
     }
 }
 
+internal fun decodeInviteParty(v: Any?): MembersRepository.InviteParty? {
+    val m = v as? Map<*, *> ?: return null
+    val uid = (m["uid"] as? String)?.ifBlank { null } ?: return null
+    return MembersRepository.InviteParty(
+        uid = uid,
+        displayName = (m["displayName"] as? String)?.ifBlank { null },
+        email = (m["email"] as? String)?.ifBlank { null },
+    )
+}
+
+/**
+ * `getInvite`'s payload (#1339). A missing `invite` is an ERROR, never a blank
+ * detail screen: "we could not read it" and "there is nothing to show" are
+ * different facts.
+ */
+internal fun decodeInviteDetail(raw: Map<*, *>?): MembersRepository.InviteDetail {
+    val m = raw?.get("invite") as? Map<*, *> ?: error("getInvite: response carried no invite")
+    val admin = decodeAllInvites(mapOf("invites" to listOf(m))).firstOrNull()
+        ?: error("getInvite: invite carried no id")
+    return MembersRepository.InviteDetail(
+        admin = admin,
+        permissions = decodePermissions(m["proposedPermissions"]),
+        invitedByAuntie = m["invitedByRole"] == "AUNTIE",
+        invitedBy = decodeInviteParty(m["invitedBy"]),
+        acceptedBy = decodeInviteParty(m["acceptedBy"]),
+        acceptedAt = (m["acceptedAt"] as? String)?.ifBlank { null },
+        source = (m["source"] as? String)?.ifBlank { null },
+    )
+}
 /** Unknown reads SECONDARY, the least-privileged member of the set. */
 internal fun decodeRole(v: Any?): MembersRepository.MemberRole =
     if (v == "PRIMARY") MembersRepository.MemberRole.PRIMARY

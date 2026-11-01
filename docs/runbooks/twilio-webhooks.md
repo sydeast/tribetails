@@ -49,8 +49,12 @@ gcloud run services update twilioinboundcall --region us-central1 \
 Service names are the lowercased export names. The alternative route is three
 lines in `mytribe/functions/.env` followed by a deploy of those three functions;
 that file is for non-secret configuration only, and a URL is not a secret.
-**Nothing in this repo establishes whether a `gcloud`-set variable survives the
-next `firebase deploy` of the same function**, so after any redeploy of these
+**A `gcloud`-set variable does not survive a deploy from the main checkout**:
+firebase-tools replaces the whole environment with that `.env` file's contents
+when the file exists (`docs/runbooks/secrets.md`, "Plain functions config").
+Whether a hosted release, which has no `.env` and merges the existing
+environment instead, keeps a value set on the Cloud Run service directly is not
+established. The `.env` route is the durable one. After any redeploy of these
 three, re-read the value before trusting it:
 
 ```bash

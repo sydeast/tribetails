@@ -43,6 +43,12 @@ export function formatCentsUsd(cents: number): string {
 /** Parses an opaque backend date string to epoch ms, or null if unparseable/absent. */
 export function parseDateMs(raw: string | null): number | null {
   if (!raw) return null;
+  // #1330: a bare `YYYY-MM-DD` names a DAY, taken as written, the same rule as
+  // the Android portal's `invoiceDayLabel`. `Date.parse` reads it as UTC
+  // midnight, so every reader west of Greenwich was shown the day before:
+  // an invoice dated Dec 17 printed "Dec 16".
+  const bare = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+  if (bare) return new Date(Number(bare[1]), Number(bare[2]) - 1, Number(bare[3])).getTime();
   const ms = Date.parse(raw);
   return Number.isNaN(ms) ? null : ms;
 }

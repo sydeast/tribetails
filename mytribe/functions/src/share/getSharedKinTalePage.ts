@@ -734,8 +734,8 @@ function sendResolveFailure(
  * `kin_care_reports/{taleId}/comments`, the collection the page's thread, the
  * portal and the admin apps all read.
  *
- * Only the five named fields are forwarded. `skipRecaptchaForTest` can never
- * arrive from a browser.
+ * Only the named fields are forwarded, plus the unlock token this function
+ * itself verified. `skipRecaptchaForTest` can never arrive from a browser.
  */
 async function handleGuestComment(req: MinimalReq, res: MinimalRes, shareId: string): Promise<void> {
   const wantsJson = (req.accept ?? '').includes('application/json');
@@ -770,6 +770,9 @@ async function handleGuestComment(req: MinimalReq, res: MinimalRes, shareId: str
         guestEmail: field(req.body, 'guestEmail') ?? '',
         body: field(req.body, 'body') ?? '',
         ...(recaptchaToken ? { recaptchaToken } : {}),
+        // #1332. The handler refuses a note on a protected share without
+        // proof, so the cookie token that let this reader in goes with it.
+        ...(result.proofToken ? { unlockToken: result.proofToken } : {}),
       },
     },
     {

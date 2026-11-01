@@ -325,6 +325,12 @@ describe('InvoiceDetail line items', () => {
       </QueryClientProvider>,
     );
   }
+  // #1288: an invoice written without `client` printed "Not set" on the bill.
+  it('names the household when the invoice carries no client', async () => {
+    await renderWith({ ...ITEMIZED, client: null, kinfolkName: 'The Rivera Tribe' });
+    expect((await screen.findAllByText('The Rivera Tribe')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Not set')).toBeNull();
+  });
   it('renders every stored line with a real amount, none of them blank', async () => {
     await renderWith(ITEMIZED);
     expect(await screen.findByText('Daily visit')).toBeInTheDocument();

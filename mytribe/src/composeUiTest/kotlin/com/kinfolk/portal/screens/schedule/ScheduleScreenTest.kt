@@ -117,6 +117,27 @@ class ScheduleScreenTest {
         onNodeWithText("12:00 AM", substring = true).assertDoesNotExist()
     }
     @Test
+    fun requestedVisit_saysREQUESTED_andNamesTheChangeWaitingOnTheOffice() = runComposeUiTest {
+        // #1298 / #1299: one word for the status, and the open ask under it.
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", JsonNull)
+            put("upcoming", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "b1")
+                    put("status", "requested")
+                    put("title", "Park Adventure")
+                    put("rescheduleRequestStatus", "pending")
+                })
+            })
+            put("recent", buildJsonArray {})
+        })
+        setThemedContent { ScheduleScreen("The Foster", "3", PortalApi(fake), com.kinfolk.portal.firebase.FakeFirestoreClient()) }
+        waitForIdle()
+        onNodeWithText("REQUESTED").assertIsDisplayed()
+        onNodeWithText("New time requested").assertIsDisplayed()
+    }
+    @Test
     fun bookings_renderAuntieAndKinNames() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyBookings", buildJsonObject {

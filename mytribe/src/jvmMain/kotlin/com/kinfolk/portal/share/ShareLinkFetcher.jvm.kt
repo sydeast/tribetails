@@ -14,9 +14,6 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 
 actual fun makeShareLinkFetcher(base: String): ShareLinkFetcher = JvmShareLinkFetcher(base)
 
@@ -44,14 +41,19 @@ internal class JvmShareLinkFetcher(
     private fun resolvedBase(): String = if (endpoints.FUNCTIONS_EMULATOR_HOST != null) endpoints.functionsBase() else base
 
     override suspend fun getShareLink(shareId: String, passcode: String?): GetShareLinkResult {
-        val url = buildString {
-            append(resolvedBase()); append("/getShareLink/"); append(shareId)
-            if (!passcode.isNullOrBlank()) append("?passcode=").append(passcode)
+        // #1331: the passcode goes in a POST body, never the URL.
+        val request = shareLinkRequest(resolvedBase(), shareId, passcode)
+        val resp: HttpResponse = if (request.body == null) {
+            client.get(request.url)
+        } else {
+            client.post(request.url) {
+                headers { append(HttpHeaders.ContentType, "application/json") }
+                setBody(json.encodeToString(JsonObject.serializer(), request.body))
+            }
         }
-        val resp: HttpResponse = client.get(url)
         val text = resp.bodyAsText()
         return when (resp.status) {
-            HttpStatusCode.OK            -> GetShareLinkResult.Ok(json.parseToJsonElement(text) as JsonObject)
+            HttpStatusCode.OK            -> shareLinkOk(json.parseToJsonElement(text) as JsonObject)
             HttpStatusCode.Unauthorized  -> GetShareLinkResult.PasscodeRequired
             HttpStatusCode.NotFound      -> GetShareLinkResult.NotFound
             HttpStatusCode.Gone          -> GetShareLinkResult.Expired
@@ -67,30 +69,16 @@ internal class JvmShareLinkFetcher(
         guestEmail: String,
         recaptchaToken: String,
         parentCommentId: String?,
+        unlockToken: String?,
     ): String {
-        val payload = buildJsonObject {
-            put("shareToken", shareToken)
-            put("taleId", taleId)
-            put("body", body)
-            put("guestName", guestName)
-            put("guestEmail", guestEmail)
-            put("recaptchaToken", recaptchaToken)
-            if (parentCommentId != null) put("parentCommentId", parentCommentId)
-        }
+        val payload = guestCommentBody(
+            shareToken, taleId, body, guestName, guestEmail, recaptchaToken, parentCommentId, unlockToken,
+        )
         val resp: HttpResponse = client.post("${resolvedBase()}/addGuestKinTaleComment") {
             headers { append(HttpHeaders.ContentType, "application/json") }
             setBody(json.encodeToString(JsonObject.serializer(), payload))
         }
         val text = resp.bodyAsText()
-        when (resp.status) {
-            HttpStatusCode.OK -> {
-                val obj = json.parseToJsonElement(text) as JsonObject
-                return obj["commentId"]?.jsonPrimitive?.content
-                    ?: throw ShareFetchException("Guest comment: server returned no commentId.")
-            }
-            HttpStatusCode.TooManyRequests ->
-                throw ShareFetchException("Too many comments from this email. Try again in an hour.")
-            else -> throw ShareFetchException("Guest comment failed: ${resp.status.value}")
-        }
+        return guestCommentResult(resp.status.value) { json.parseToJsonElement(text) as JsonObject }
     }
 }

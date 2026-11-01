@@ -196,7 +196,7 @@ private fun AccountBalanceHero(balanceCents: Long) {
                 style = type.heritageDisplay.copy(color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Normal),
             )
             Text(
-                "Available credit on your account. Applied automatically to next invoice.",
+                "What you can spend. It comes off your next invoice.",
                 style = type.sansBody.copy(color = Color.White.copy(alpha = 0.92f)),
             )
         }
@@ -347,7 +347,8 @@ private fun PaidInvoiceRow(invoice: Invoice, onClick: () -> Unit) {
             if (invoice.client != null) {
                 Text("Invoice #${invoice.id}", style = type.sansMeta)
             }
-            Text("Paid ${invoice.date ?: "—"}", style = type.sansMeta)
+            // #1330: the day with its year, the same label the web portal shows.
+            Text("Paid ${com.kinfolk.portal.util.invoiceDayLabel(invoice.date).ifEmpty { "—" }}", style = type.sansMeta)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
             Text(formatUsd(invoice.total), style = type.heritageTitle.copy(fontSize = 18.sp))
@@ -407,6 +408,8 @@ private fun CreditEntry(
             }
             Text(targetLabel, style = type.sansMeta.copy(color = KinfolkBrand.KinTeal))
         } else {
+            // #1294: a credit counts only once it is saved; nothing applies it.
+            Text("Save it to your account balance to spend it.", style = type.sansMeta)
             KinButton(
                 label = if (redeeming) "Working…" else "Save to Account Balance",
                 onClick = { onRedeem(CreditTarget.AccountBalance) },

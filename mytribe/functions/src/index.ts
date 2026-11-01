@@ -299,6 +299,7 @@ export {
   bulkUnarchiveNotifications,
 } from './portal/archiveNotification';
 export { addBookingNote } from './portal/addBookingNote';
+export { getBookingNotes } from './portal/getBookingNotes';
 export { submitRating } from './portal/submitRating';
 
 // admin-callables
@@ -320,6 +321,10 @@ export { listInvites } from './admin/listInvites';
 // imports both), plus the household name a row needs to be readable out of its
 // household's context.
 export { listAllInvites } from './admin/listAllInvites';
+// ONE invite by id, for the admin's invite detail screen (#1339): the
+// `invite.auntie-notify` email links to `/invites/<inviteId>`, and a page of
+// listAllInvites cannot promise to contain the row.
+export { getInvite } from './admin/getInvite';
 export { setMemberPermissions } from './admin/setMemberPermissions';
 export { removeMember } from './admin/removeMember';
 export { setTribePin } from './admin/setTribePin';

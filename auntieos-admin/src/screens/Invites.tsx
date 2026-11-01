@@ -191,7 +191,17 @@ function InviteCard({ invite }: { invite: AdminInvite }) {
         className="invites__pic"
       />
       <div className="invites__info">
-        <p className="invites__email">{invite.invitedEmail}</p>
+        <p className="invites__email">
+          {/* #1339: the address opens this invite's own detail screen, the
+              same one the Auntie notice email links to. */}
+          <Link
+            to="/invites/$inviteId"
+            params={{ inviteId: invite.inviteId }}
+            className="invites__email-link"
+          >
+            {invite.invitedEmail}
+          </Link>
+        </p>
         <p className="invites__meta">
           {/* The household leads the line and IS the link: the whole point of
               this screen is getting from a stray invite back to the household

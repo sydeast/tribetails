@@ -11,13 +11,19 @@ import type { AddKinRequest, KinDto, KinPayloadPartial } from '../api/types';
  * AddEditKinDialog, it is derived from the doc id, never hand-edited.
  */
 
-/** Every input is a plain string; age/photo are parsed at build time. */
+/**
+ * Every input is a plain string; age is parsed at build time.
+ *
+ * #1291: `photoUrl` is NOT a form field any more. The photo is uploaded
+ * (signKinPhotoUpload + confirmKinPhotoUpload) or removed as its own step on
+ * the screen, so the text form never carries it: a Save after an upload can
+ * not send the stale, pre-upload URL back over the new one.
+ */
 export interface KinEditForm {
   name: string;
   species: string;
   breed: string;
   ageYears: string;
-  photoUrl: string;
   feedingInstructions: string;
   walkingInstructions: string;
   medications: string;
@@ -88,7 +94,6 @@ export function emptyKinForm(): KinEditForm {
     species: '',
     breed: '',
     ageYears: '',
-    photoUrl: '',
     feedingInstructions: '',
     walkingInstructions: '',
     medications: '',
@@ -110,7 +115,6 @@ export function kinFormFromDto(kin: KinDto): KinEditForm {
     species: kin.species ?? '',
     breed: kin.breed ?? '',
     ageYears: kin.ageYears !== null ? String(kin.ageYears) : '',
-    photoUrl: kin.photoUrl ?? '',
     feedingInstructions: kin.feedingInstructions ?? '',
     walkingInstructions: kin.walkingInstructions ?? '',
     medications: kin.medications ?? '',
@@ -127,16 +131,6 @@ export function kinFormFromDto(kin: KinDto): KinEditForm {
 
 export type KinFormErrors = Partial<Record<keyof KinEditForm, string>>;
 
-/** True only for a valid, absolute http(s) URL, mirroring the server's SafeUrl refine. */
-function isHttpUrl(value: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return false;
-  }
-  return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-}
 
 /**
  * Parses the age text into the payload value. Empty is a valid null (age not
@@ -164,8 +158,6 @@ export function validateKinForm(form: KinEditForm): KinFormErrors {
 
   if (parseAge(form.ageYears) === 'invalid') errors.ageYears = 'Age must be a number of 0 or more.';
 
-  const photoUrl = form.photoUrl.trim();
-  if (photoUrl.length > 0 && !isHttpUrl(photoUrl)) errors.photoUrl = 'Photo URL must start with http:// or https://.';
 
   for (const key of LONG_TEXT_FIELDS) {
     if (form[key].trim().length > KIN_MAX.longText) errors[key] = `Keep this to ${KIN_MAX.longText} characters or fewer.`;
@@ -206,8 +198,6 @@ export function buildKinChanges(kin: KinDto, form: KinEditForm): KinPayloadParti
   const ageYears = parsedAge === 'invalid' ? kin.ageYears : parsedAge;
   if (ageYears !== kin.ageYears) changes.ageYears = ageYears;
 
-  const photoUrl = form.photoUrl.trim() || null;
-  if (photoUrl !== kin.photoUrl) changes.photoUrl = photoUrl;
 
   for (const key of LONG_TEXT_FIELDS) {
     const next = form[key].trim() || null;
@@ -236,7 +226,6 @@ export function buildNewKinPayload(form: KinEditForm): AddKinRequest['kin'] {
     species: form.species.trim() || null,
     breed: form.breed.trim() || null,
     ageYears: parsedAge === 'invalid' ? null : parsedAge,
-    photoUrl: form.photoUrl.trim() || null,
     feedingInstructions: form.feedingInstructions.trim() || null,
     walkingInstructions: form.walkingInstructions.trim() || null,
     medications: form.medications.trim() || null,

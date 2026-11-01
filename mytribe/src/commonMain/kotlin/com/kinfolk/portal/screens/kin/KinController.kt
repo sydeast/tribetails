@@ -100,11 +100,23 @@ class KinController internal constructor(
             t.message ?: "Could not add Kin"
         }
 
-    /** Edit an existing Kin and reload. Returns null on success, or an error message. */
-    suspend fun updateAndReload(kinId: String, payload: KinPayload, photo: com.kinfolk.portal.media.PickedImage? = null): String? =
+    /**
+     * Edit an existing Kin and reload. Returns null on success, or an error
+     * message. [photo] (#1291) runs after the text write: an upload is
+     * best-effort (see [uploadPhoto]); a removal failing IS a save failure,
+     * since nothing else would tell the household the photo is still there.
+     */
+    suspend fun updateAndReload(kinId: String, payload: KinPayload, photo: KinPhotoChange = KinPhotoChange.Keep): String? =
         try {
             portalApi.updateKin(kinfolkId = kinfolkId, kinId = kinId, kin = payload)
-            photo?.let { uploadPhoto(kinId, it) }
+            when (photo) {
+                is KinPhotoChange.Upload -> uploadPhoto(kinId, photo.image)
+                KinPhotoChange.Remove -> {
+                    portalApi.removeKinPhoto(kinfolkId = kinfolkId, kinId = kinId)
+                    photoNotice = null
+                }
+                KinPhotoChange.Keep -> Unit
+            }
             reload()
             error = null
             null

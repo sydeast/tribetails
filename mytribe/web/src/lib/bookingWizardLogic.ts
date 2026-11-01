@@ -162,9 +162,29 @@ export function findTimeBlock(blocks: readonly TimeBlockDto[], id: string | null
   return blocks.find((b) => b.id === id) ?? null;
 }
 
-/** 'Midday (11:00-15:00)': how a window is named wherever one is chosen or confirmed. */
+/**
+ * '11:00' -> '11 AM', '15:30' -> '3:30 PM', '00:00' and '24:00' -> '12 AM'.
+ * The wire carries 24-hour `HH:MM`; a household reads a 12-hour clock (#1301).
+ * Returns the input untouched when it does not parse, so an odd value shows up
+ * as itself rather than as a wrong time.
+ */
+export function formatClock12(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  if (!m) return hhmm;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour > 24 || minute > 59 || (hour === 24 && minute !== 0)) return hhmm;
+  const h12 = hour % 12 || 12;
+  const ampm = hour % 24 >= 12 ? 'PM' : 'AM';
+  return minute === 0 ? `${h12} ${ampm}` : `${h12}:${String(minute).padStart(2, '0')} ${ampm}`;
+}
+/** '11 AM to 3 PM': a window's hours, the way a booked visit and the picker both say them. */
+export function formatClockRange12(startHHmm: string, endHHmm: string): string {
+  return `${formatClock12(startHHmm)} to ${formatClock12(endHHmm)}`;
+}
+/** 'Midday (11 AM to 3 PM)': how a window is named wherever one is chosen or confirmed. */
 export function timeBlockLabel(block: TimeBlockDto): string {
-  return `${block.label} (${block.startTime}-${block.endTime})`;
+  return `${block.label} (${formatClockRange12(block.startTime, block.endTime)})`;
 }
 
 /**

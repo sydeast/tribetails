@@ -32,8 +32,8 @@ import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
-import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinChip
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.ScreenHeader
@@ -44,7 +44,9 @@ import com.kinfolk.portal.notifications.KINFOLK_CATEGORIES
 import com.kinfolk.portal.notifications.NotificationCatalogRepository
 import com.kinfolk.portal.notifications.NotificationChannel
 import com.kinfolk.portal.notifications.NotificationKey
+import com.kinfolk.portal.portal.NotificationPrefsPatch
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.applyNotificationPrefsPatch
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
@@ -60,6 +62,12 @@ import kotlinx.coroutines.launch
  *   2. Per-category cards — header row with "select all by channel" chips;
  *      expand chevron reveals per-key channel chips that override the row
  *      default.
+ *
+ * Saving (#1292): every tap saves on its own, pessimistically. Nothing on
+ * screen changes until the server confirms; while the write is out every chip
+ * is disabled and a "Saving…" cue shows; a failure leaves the chip where it was
+ * and says so. The write is a PATCH naming only what the tap changed (see
+ * NotificationPrefsPatch), so it can never rewrite a choice made elsewhere.
  *
  * Write semantics:
  *   - byCategory map mirrors the header chip state per category.
@@ -98,6 +106,7 @@ fun NotificationSettingsScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
 
     val byCategory: SnapshotStateMap<String, MutableMap<String, Boolean>> = remember { mutableStateMapOf() }
     // Task 27a model: byKey is an override, absence means inherit — a key
@@ -142,6 +151,28 @@ fun NotificationSettingsScreen(
     }
 
     val effectiveCategories: List<CategoryDef> = dynamicCategories ?: KINFOLK_CATEGORIES
+    // One tap, one write. The maps change only after the server says ok, so a
+    // failed save leaves the screen showing what is really stored.
+    val savePatch: (NotificationPrefsPatch) -> Unit = { patch ->
+        if (!saving && prefsLoaded) {
+            saving = true
+            status = null
+            saveError = null
+            scope.launch {
+                try {
+                    portalApi.saveMyNotificationPrefs(patch)
+                    applyNotificationPrefsPatch(patch, byCategory, byKey, marketingOptIn)
+                    status = "Saved."
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    saveError = "Couldn't save that change: ${t.message ?: t}. It is back where it was."
+                } finally {
+                    saving = false
+                }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         try {
@@ -205,7 +236,7 @@ fun NotificationSettingsScreen(
             )
         }
 
-        MarketingOptInBlock(marketingOptIn = marketingOptIn)
+        MarketingOptInBlock(marketingOptIn = marketingOptIn, saving = saving, onPatch = savePatch)
 
         effectiveCategories.forEach { cat ->
             // D12: present the "schedule" category with the Schedule Reminders
@@ -217,6 +248,8 @@ fun NotificationSettingsScreen(
                 byCategory = byCategory,
                 byKey = byKey,
                 marketingOptIn = marketingOptIn,
+                saving = saving,
+                onPatch = savePatch,
                 isExpanded = expanded[cat.id] == true,
                 onToggleExpand = { expanded[cat.id] = !(expanded[cat.id] == true) },
                 displayTitle = if (scheduleRelabel) "Schedule Reminders" else cat.title,
@@ -228,46 +261,45 @@ fun NotificationSettingsScreen(
             )
         }
 
-        if (status != null) {
+        if (saving) {
+            Row(
+                modifier = Modifier.padding(horizontal = KinfolkSpacing.l).testTag("notif-saving"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+            ) {
+                KinSpinner(size = 18.dp)
+                Text("Saving your change…", style = type.sansLabel)
+            }
+        }
+        if (status != null && !saving) {
             Text(
                 status!!,
                 style = type.sansLabel.copy(color = KinfolkBrand.KinTeal),
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
             )
         }
-        KinButton(
-            label = if (saving) "Saving…" else "Save Notification Preferences",
-            onClick = {
-                if (saving) return@KinButton
-                saving = true
-                status = null
-                scope.launch {
-                    try {
-                        portalApi.saveMyNotificationPrefs(
-                            byCategory = byCategory.mapValues { (_, v) -> v.toMap() },
-                            byKey = byKey.mapValues { (_, v) -> v.toMap() },
-                            marketingOptIn = marketingOptIn.toMap(),
-                        )
-                        status = "Preferences saved."
-                    } catch (c: CancellationException) {
-                        throw c
-                    } catch (t: Throwable) {
-                        status = "Save failed: ${t.message ?: t}"
-                    } finally {
-                        saving = false
-                    }
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
+        if (saveError != null && !saving) {
+            Text(
+                saveError!!,
+                style = type.sansLabel.copy(color = KinfolkBrand.PackPink),
+                modifier = Modifier.padding(horizontal = KinfolkSpacing.l).testTag("notif-save-error"),
+            )
+        }
+        Text(
+            "Each change saves as soon as you make it.",
+            style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+            modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
         )
         Spacer(Modifier.height(KinfolkSpacing.l))
     }
 }
 
 @Composable
-private fun MarketingOptInBlock(marketingOptIn: SnapshotStateMap<String, Boolean>) {
+private fun MarketingOptInBlock(
+    marketingOptIn: SnapshotStateMap<String, Boolean>,
+    saving: Boolean,
+    onPatch: (NotificationPrefsPatch) -> Unit,
+) {
     val type = LocalKinfolkTypography.current
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
@@ -289,7 +321,9 @@ private fun MarketingOptInBlock(marketingOptIn: SnapshotStateMap<String, Boolean
                     KinChip(
                         label = mc.label,
                         selected = selected,
-                        onClick = { marketingOptIn[mc.id] = !selected },
+                        onClick = { onPatch(NotificationPrefsPatch(marketingOptIn = mapOf(mc.id to !selected))) },
+                        enabled = !saving,
+                        modifier = Modifier.testTag("mkt-chip-${mc.id}"),
                     )
                 }
             }
@@ -303,6 +337,8 @@ private fun CategoryCard(
     byCategory: SnapshotStateMap<String, MutableMap<String, Boolean>>,
     byKey: SnapshotStateMap<String, MutableMap<String, Boolean>>,
     marketingOptIn: SnapshotStateMap<String, Boolean>,
+    saving: Boolean,
+    onPatch: (NotificationPrefsPatch) -> Unit,
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
     displayTitle: String = cat.title,
@@ -340,7 +376,7 @@ private fun CategoryCard(
             }
 
             if (!isMarketingCategory) {
-                CategoryChannelRow(cat = cat, byCategory = byCategory)
+                CategoryChannelRow(cat = cat, byCategory = byCategory, saving = saving, onPatch = onPatch)
             }
 
             if (isExpanded) {
@@ -351,6 +387,8 @@ private fun CategoryCard(
                         byCategory = byCategory,
                         byKey = byKey,
                         marketingOptIn = marketingOptIn,
+                        saving = saving,
+                        onPatch = onPatch,
                     )
                 }
             }
@@ -362,6 +400,8 @@ private fun CategoryCard(
 private fun CategoryChannelRow(
     cat: CategoryDef,
     byCategory: SnapshotStateMap<String, MutableMap<String, Boolean>>,
+    saving: Boolean,
+    onPatch: (NotificationPrefsPatch) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
     // Notification revamp: only offer "select all" chips for channels at least
@@ -390,15 +430,18 @@ private fun CategoryChannelRow(
         Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             NotificationChannel.entries.forEach { ch ->
                 if (ch !in channelsInCategory) return@forEach
-                val current = byCategory[cat.id]?.get(ch.id) == true
+                // Same default as the web screen and the dispatcher: an unset
+                // channel reads email-on, everything else off. This used to read
+                // `== true`, so an untouched Email chip drew OFF here while the
+                // household was in fact getting email.
+                val current = byCategory[cat.id]?.get(ch.id) ?: (ch == NotificationChannel.EMAIL)
                 KinChip(
                     label = ch.label,
                     selected = current,
                     onClick = {
-                        val map = byCategory[cat.id]?.toMutableMap() ?: mutableMapOf()
-                        map[ch.id] = !current
-                        byCategory[cat.id] = map
+                        onPatch(NotificationPrefsPatch(byCategory = mapOf(cat.id to mapOf(ch.id to !current))))
                     },
+                    enabled = !saving,
                     modifier = Modifier.testTag("catchip-${cat.id}-${ch.id}"),
                 )
             }
@@ -428,6 +471,8 @@ private fun PerKeyRow(
     byCategory: SnapshotStateMap<String, MutableMap<String, Boolean>>,
     byKey: SnapshotStateMap<String, MutableMap<String, Boolean>>,
     marketingOptIn: SnapshotStateMap<String, Boolean>,
+    saving: Boolean,
+    onPatch: (NotificationPrefsPatch) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
     val marketingGate = key.marketingCategory?.let { marketingOptIn[it.id] != true } == true
@@ -437,7 +482,7 @@ private fun PerKeyRow(
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
     ) {
         Text(key.title, style = type.sansLabel)
-        Text(key.description, style = type.sansBody)
+        keyDescriptionLine(key)?.let { Text(it, style = type.sansBody) }
         if (marketingGate) {
             Text(
                 "Enable the parent marketing opt-in above to receive this.",
@@ -492,18 +537,16 @@ private fun PerKeyRow(
                             ch = ch,
                             perCat = byCategory[catId]?.get(ch.id),
                         )
-                        if (next == inherited) {
-                            val map = byKey[key.key]?.toMutableMap()
-                            if (map != null) {
-                                map.remove(ch.id)
-                                if (map.isEmpty()) byKey.remove(key.key) else byKey[key.key] = map
-                            }
-                        } else {
-                            val map = byKey[key.key]?.toMutableMap() ?: mutableMapOf()
-                            map[ch.id] = next
-                            byKey[key.key] = map
-                        }
+                        // Clearing is sent as a null channel; the server drops the entry.
+                        onPatch(
+                            NotificationPrefsPatch(
+                                byKey = mapOf<String, Map<String, Boolean?>?>(
+                                    key.key to mapOf<String, Boolean?>(ch.id to if (next == inherited) null else next),
+                                ),
+                            ),
+                        )
                     },
+                    enabled = !saving,
                     trailingIcon = when (chip.marker) {
                         ChipMarker.RequiredCheck -> Icons.Filled.Check
                         ChipMarker.AdminLock -> Icons.Filled.Lock
