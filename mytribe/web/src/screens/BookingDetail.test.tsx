@@ -86,6 +86,9 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleResponseNote: null,
     startTimePending: false,
     requestedDate: null,
+    timeBlockLabel: null,
+    timeBlockStartTime: null,
+    timeBlockEndTime: null,
     ...overrides,
   };
 }

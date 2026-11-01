@@ -213,7 +213,7 @@ class StartTimeServiceBookingTest {
         )
         val rendered = renderPlannedVisits(visits, utc, listOf(midday, evening))
         assertEquals(
-            listOf("Fri, Oct 9, Midday (11:00-15:00)", "Fri, Oct 9, start time set by your Auntie"),
+            listOf("Fri, Oct 9, Midday (11 AM to 3 PM)", "Fri, Oct 9, start time set by your Auntie"),
             rendered.map { plannedVisitLine(it) },
         )
         assertEquals("Overnight", rendered[1].serviceName)
