@@ -31,6 +31,7 @@
  */
 
 import { initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
+import { canonicalCreditMoney, canonicalInvoiceMoney, type SeedInvoiceMoney } from './lib/seedInvoiceMoney';
 
 // ---------------------------------------------------------------------------
 // Demo family ids — these must match the placeholders already in the
@@ -275,11 +276,20 @@ export interface InvoiceDoc {
   kinfolkId: string;
   kinfolkName: string;
   invoiceStatus: 'open' | 'paid' | 'credit';
+  /** DOLLARS (float). */
   total: number;
+  /** DOLLARS (float); negative is the credit signal. */
   amountDue: number;
   date: string;
   dueDate: string;
-  lineItems: Array<{ label: string; amount: number }>;
+  /** Canonical stored lines (#1368), the shape `createInvoice` writes. */
+  lineItems: SeedInvoiceMoney['lineItems'];
+  invoiceDiscountCents: number;
+  subtotalCents: number;
+  totalCents: number;
+  amountDueCents: number;
+  paidCents: number;
+  editScope: string;
   // Credit-only fields (present on the credit doc so redeemCredit + the UI work).
   creditTarget: 'accountBalance' | 'originalPaymentMethod' | null;
   creditRedeemedAt: string | null;
@@ -699,11 +709,9 @@ export function buildSeedPayload(fam: DemoFamilyId): SeedPayload {
       kinfolkId: fam,
       kinfolkName: mock.kinfolkDisplay,
       invoiceStatus: 'open',
-      total: 60,
-      amountDue: 60,
+      ...canonicalInvoiceMoney([{ description: '60-minute drop-in', qty: 1, unitCents: 6000 }], 0, 'open'),
       date: invDate,
       dueDate: invDue,
-      lineItems: [{ label: '60-minute drop-in', amount: 60 }],
       creditTarget: null,
       creditRedeemedAt: null,
       _demo: true,
@@ -713,14 +721,16 @@ export function buildSeedPayload(fam: DemoFamilyId): SeedPayload {
       kinfolkId: fam,
       kinfolkName: mock.kinfolkDisplay,
       invoiceStatus: 'paid',
-      total: 90,
-      amountDue: 0,
+      ...canonicalInvoiceMoney(
+        [
+          { description: '60-minute drop-in', qty: 1, unitCents: 6000 },
+          { description: '30-minute drop-in', qty: 1, unitCents: 3000 },
+        ],
+        9000,
+        'paid',
+      ),
       date: isoOffsetDays(base, -45).slice(0, 10),
       dueDate: isoOffsetDays(base, -35).slice(0, 10),
-      lineItems: [
-        { label: '60-minute drop-in', amount: 60 },
-        { label: '30-minute drop-in', amount: 30 },
-      ],
       creditTarget: null,
       creditRedeemedAt: null,
       _demo: true,
@@ -730,11 +740,9 @@ export function buildSeedPayload(fam: DemoFamilyId): SeedPayload {
       kinfolkId: fam,
       kinfolkName: mock.kinfolkDisplay,
       invoiceStatus: 'credit',
-      total: -25,
-      amountDue: -25,
+      ...canonicalCreditMoney(2500),
       date: isoOffsetDays(base, -10).slice(0, 10),
       dueDate: isoOffsetDays(base, -10).slice(0, 10),
-      lineItems: [{ label: 'Goodwill credit for a rescheduled visit', amount: -25 }],
       creditTarget: 'accountBalance',
       creditRedeemedAt: null,
       _demo: true,

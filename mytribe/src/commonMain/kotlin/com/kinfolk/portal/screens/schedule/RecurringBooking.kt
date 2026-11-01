@@ -144,8 +144,27 @@ fun slotMode(slot: KinCareSlot, timing: BookingTiming): SlotMode = slotMode(slot
 fun findTimeBlock(blocks: List<TimeBlock>, id: String?): TimeBlock? =
     if (id == null) null else blocks.firstOrNull { it.id == id }
 
-/** "Midday (11:00-15:00)": how a window is named wherever one is chosen or confirmed. */
-fun timeBlockLabel(block: TimeBlock): String = "${block.label} (${block.startTime}-${block.endTime})"
+/**
+ * "11:00" -> "11 AM", "15:30" -> "3:30 PM", "00:00" and "24:00" -> "12 AM". The
+ * wire carries 24-hour `HH:MM`; a household reads a 12-hour clock (#1301).
+ * Mirrors `formatClock12` in mytribe/web/src/lib/bookingWizardLogic.ts and
+ * hands back what it cannot read rather than a wrong time.
+ */
+fun formatClock12(hhmm: String): String {
+    val parts = hhmm.trim().split(":")
+    if (parts.size != 2) return hhmm
+    val hour = parts[0].toIntOrNull() ?: return hhmm
+    val minute = parts[1].toIntOrNull() ?: return hhmm
+    if (parts[1].length != 2 || hour !in 0..24 || minute !in 0..59 || (hour == 24 && minute != 0)) return hhmm
+    val h12 = if (hour % 12 == 0) 12 else hour % 12
+    val ampm = if (hour % 24 >= 12) "PM" else "AM"
+    return if (minute == 0) "$h12 $ampm" else "$h12:${minute.toString().padStart(2, '0')} $ampm"
+}
+/** "11 AM to 3 PM". */
+fun formatClockRange12(startHHmm: String, endHHmm: String): String =
+    "${formatClock12(startHHmm)} to ${formatClock12(endHHmm)}"
+/** "Midday (11 AM to 3 PM)": how a window is named wherever one is chosen or confirmed. */
+fun timeBlockLabel(block: TimeBlock): String = "${block.label} (${formatClockRange12(block.startTime, block.endTime)})"
 
 /**
  * The "HH:MM" a slot actually starts at under [timing], or null when it has

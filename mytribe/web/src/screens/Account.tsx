@@ -28,6 +28,7 @@ import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { billingAccessOf } from '../lib/billingAccess';
 import { resolveIdentity } from '../lib/identity';
 import { formatPhone, phoneProblem } from '../lib/phone';
@@ -185,7 +186,11 @@ export function Account() {
     onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim().toLowerCase()}.`, tone: 'ok' }),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
-      setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
+      // #1277: a missing backend setting is the operator's to fix; never show its name.
+      const text = isConfigGapError(err)
+        ? INVITES_UNAVAILABLE_MESSAGE
+        : `Invite failed: ${err instanceof Error ? err.message : 'try again'}`;
+      setInviteStatus({ text, tone: 'err' });
     },
   }, { policy: 'hold', what: 'this invite' });
 
@@ -331,7 +336,9 @@ export function Account() {
     ? formatCard(card)
     : cardOnFile
       ? 'Charges run through your care team'
-      : 'Settle up directly with your Auntie for now';
+      // #1330: the card's one billing sentence. A second line under the card
+      // used to say the same thing again, card or no card.
+      : 'Settle up with your Auntie directly until a card is on file.';
   const billingReadError = isPermissionDenied(paymentMethod.error)
     ? 'You need billing access to manage billing. Your primary kinfolk can give it to you.'
     : 'We could not read your billing details just now.';
@@ -598,10 +605,6 @@ export function Account() {
                     )}
                   </div>
                 )}
-
-                <p className="sub" style={{ marginTop: 12 }}>
-                  No payment method on file means visits cannot be charged automatically.
-                </p>
               </section>
             )}
           </div>

@@ -21,7 +21,10 @@ import { BookingDtoSchema, readVisitDto } from '../lib/portalBookingDto';
  * the ask is recorded as `cancelRequestedAt` + `cancelRequestReason` +
  * `cancelRequestedByUid` on the kinCares doc. onBookingsWrite watches the
  * flag's first appearance and fires `kincare.cancel.requested` to the office.
- * A second request while one is still pending is a no-op.
+ * A second request while one is still pending is a no-op. #1299: a request
+ * while a reschedule ask is pending is refused with `failed-precondition`
+ * (and `requestBookingReschedule` refuses the other way round), so a visit
+ * never carries both asks at once.
  *
  * #438 adds `cancelRequestStatus`, which is what an operator rules on through
  * `admin/cancelRequests`. Every request written before #438 carries the stamp
@@ -102,6 +105,7 @@ export async function requestBookingCancellationHandler(
     status?: string;
     cancelRequestedAt?: unknown;
     cancelRequestStatus?: unknown;
+    rescheduleRequestStatus?: unknown;
     startTime?: { toMillis?: () => number } | null;
   };
 
@@ -120,6 +124,17 @@ export async function requestBookingCancellationHandler(
     });
   }
 
+  // #1299: one change at a time. The office rules on a new time and on a
+  // cancellation in separate queues, and answering one while the other is open
+  // leaves the visit in a state neither answer describes (a visit moved to a
+  // time the household has already asked to cancel). The household finishes
+  // the first ask, or waits for the answer, before making the second.
+  if (data.rescheduleRequestStatus === 'pending') {
+    throw new HttpsError(
+      'failed-precondition',
+      'A new time is already waiting on Tribe Tails for this visit. Wait for their answer before asking to cancel.',
+    );
+  }
   await visitRef.set(
     {
       cancelRequestedAt: FieldValue.serverTimestamp(),

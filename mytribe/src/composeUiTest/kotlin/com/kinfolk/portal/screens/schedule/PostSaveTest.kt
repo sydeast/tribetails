@@ -47,7 +47,7 @@ private fun ComposeUiTest.fillToReview() {
     waitForIdle()
     onNodeWithText("10").performClick()
     waitForIdle()
-    onNodeWithText("Evening (17:00-21:00)").performScrollTo().performClick()
+    onNodeWithText("Evening (5 PM to 9 PM)").performScrollTo().performClick()
     waitForIdle()
     clickFooter("Next")
     clickFooter("Next")

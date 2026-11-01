@@ -941,4 +941,31 @@ class TribeScreenTest {
         waitForIdle()
         assertTrue(!fake.calls.last { it.first == "addSecondaryContact" }.second!!.containsKey("personId"))
     }
+    // #1277: Tribe Profile › Invite a Kinfolk showed "AUNTIE_OS_REVIEW_BASE_URL is not configured [400]".
+    @Test
+    fun secondaryKinfolk_invite_aConfigRefusalNeverShowsTheSettingName() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        fake.stubError("addSecondaryContact", IllegalStateException("AUNTIE_OS_REVIEW_BASE_URL is not configured [400]"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("invite-email").performScrollTo().performTextInput("catch@hanasamku.com")
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Invites can't be sent right now. It's been reported to Auntie.").performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("is not configured", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+    // #1277: Give portal access opens the same card and gets the same line.
+    @Test
+    fun secondaryKinfolk_givePortalAccess_aConfigRefusalNeverShowsTheSettingName() = runComposeUiTest {
+        val fake = secondaryHousehold(person("p9", "Pat", "NONE", email = "pawsome@hanasamku.com"))
+        fake.stubError("addSecondaryContact", IllegalStateException("CLAIM_LINK_BASE_URL is not configured"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Give portal access").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Invites can't be sent right now. It's been reported to Auntie.").performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("CLAIM_LINK_BASE_URL", substring = true).fetchSemanticsNodes().isEmpty())
+    }
 }

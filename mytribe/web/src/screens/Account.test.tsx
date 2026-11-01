@@ -303,6 +303,19 @@ describe('Account: secondary invite confirmation (#1018 item 3)', () => {
     expect(await findByText(/Invite failed.*already invited/)).toBeInTheDocument();
     expect(queryByText(/Invite sent/)).not.toBeInTheDocument();
   });
+
+  // #1277: Account › Recovery Contacts › Send Invite showed
+  // "AUNTIE_OS_REVIEW_BASE_URL is not configured [400]" to the household.
+  it('never shows a backend setting name: a config refusal reads as a plain line', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockRejectedValue(new Error('CLAIM_LINK_BASE_URL is not configured [400]'));
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+    await user.type(getByLabelText('Backup Email'), 'catch@hanasamku.com');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+    expect(await findByText("Invites can't be sent right now. It's been reported to Auntie.")).toBeInTheDocument();
+    expect(queryByText(/CLAIM_LINK_BASE_URL|is not configured/)).not.toBeInTheDocument();
+  });
 });
 
 describe('Account: Message your Auntie', () => {

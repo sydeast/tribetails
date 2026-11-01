@@ -191,6 +191,28 @@ describe('generate (O-8) — suggest_reply mode', () => {
     expect(mocks.createFn).not.toHaveBeenCalled();
   });
 
+  it('SAD: household spoke last is failed-precondition nothing_to_reply_to, model never called (#1320)', async () => {
+    mocks.dbFn.mockReturnValue(memberDb().db);
+    mocks.readThreadFn.mockResolvedValue([
+      { id: 'm1', senderRole: 'auntie', senderUid: 'a1', body: '<p>Biscuit was great.</p>', createdAtMs: 1 },
+      { id: 'm2', senderRole: 'kinfolk', senderUid: 'u1', body: '<p>Thanks so much, Auntie.</p>', createdAtMs: 2 },
+    ]);
+    await expect(generateHandler(req({ mode: 'suggest_reply' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'nothing_to_reply_to',
+    });
+    expect(mocks.createFn).not.toHaveBeenCalled();
+  });
+  it('HAPPY: the prompt tells the model to answer the Auntie\'s latest message (#1320)', async () => {
+    mocks.dbFn.mockReturnValue(memberDb().db);
+    mocks.readThreadFn.mockResolvedValue([
+      { id: 'm1', senderRole: 'auntie', senderUid: 'a1', body: 'Hello!', createdAtMs: 1 },
+    ]);
+    mocks.createFn.mockResolvedValue(aiText('<p>Hi!</p>'));
+    await generateHandler(req({ mode: 'suggest_reply' }));
+    const call = mocks.createFn.mock.calls[0][0];
+    expect(JSON.stringify(call)).toContain("Auntie's latest message");
+  });
   it('ERROR: model returning only whitespace maps to unavailable', async () => {
     mocks.dbFn.mockReturnValue(memberDb().db);
     mocks.readThreadFn.mockResolvedValue([

@@ -17,6 +17,8 @@ data class Visit(
     val gpsRoute: List<RoutePoint> = emptyList(),
     val gpsDistanceMeters: Double? = null,
     val gpsDurationSeconds: Long? = null,
+    /** #1297: the service's name for the household; see `util/ServiceLabel.kt`. */
+    val serviceLabel: String? = null,
 )
 
 data class VisitsResult(val visits: List<Visit>)

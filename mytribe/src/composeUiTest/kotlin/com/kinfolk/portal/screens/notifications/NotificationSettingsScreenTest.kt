@@ -44,7 +44,7 @@ class NotificationSettingsScreenTest {
         onNodeWithText("Schedule Reminders").assertExists()
         onNodeWithText("Home & Pets").assertExists()
         onNodeWithText("Newsletters & Community").assertExists()
-        onNodeWithText("Save Notification Preferences").assertExists()
+        onNodeWithText("Each change saves as soon as you make it.").assertExists()
     }
 
     @Test
@@ -87,7 +87,6 @@ class NotificationSettingsScreenTest {
         waitForIdle()
 
         onNodeWithText("prefs unavailable").assertExists()
-        onNodeWithText("Save Notification Preferences").assertDoesNotExist()
         // The editor itself is gone too, so there is nothing to edit into the
         // empty state either.
         onNodeWithText("Marketing Opt-Ins").assertDoesNotExist()
@@ -331,12 +330,63 @@ class NotificationSettingsScreenTest {
         })
     }
 
-    private fun savedByKey(fake: FakeFunctionsClient) =
-        fake.calls.last { it.first == "saveMyNotificationPrefs" }
-            .second?.get("prefs")?.jsonObject?.get("byKey")?.jsonObject
-
+    private fun patches(fake: FakeFunctionsClient) =
+        fake.calls.filter { it.first == "saveMyNotificationPrefs" }
+            .map { it.second?.get("patch")?.jsonObject }
     @Test
-    fun perKeyOverride_toggledBackToInheritedValue_clearsTheOverrideEntirely() = runComposeUiTest {
+    fun noSaveButton_andNoPrefsObjectIsEverSent() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisitPrefs(fake)
+        stubVisitCatalog(fake)
+        fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
+        val catalog = NotificationCatalogRepository(fake)
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        waitForIdle()
+        onNodeWithText("Save Notification Preferences").assertDoesNotExist()
+        onNodeWithTag("catchip-visit-sms").performClick()
+        waitForIdle()
+        val sent = fake.calls.last { it.first == "saveMyNotificationPrefs" }.second
+        assertNull(sent?.get("prefs"), "a toggle must send a patch, never the whole prefs object")
+    }
+    @Test
+    fun categoryChannelChip_sendsOnlyThatChannel() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisitPrefs(fake)
+        stubVisitCatalog(fake)
+        fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
+        val catalog = NotificationCatalogRepository(fake)
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        waitForIdle()
+        onNodeWithTag("catchip-visit-sms").performClick() // false -> true
+        waitForIdle()
+        val patch = patches(fake).single()!!
+        val visit = patch["byCategory"]?.jsonObject?.get("visit")?.jsonObject
+        assertEquals(setOf("sms"), visit?.keys)
+        assertEquals(true, visit?.get("sms")?.jsonPrimitive?.booleanOrNull)
+        assertNull(patch["byKey"], "a category tap must not name byKey")
+        onNodeWithText("Saved.").assertExists()
+    }
+    @Test
+    fun untouchedEmailCategoryChip_readsOnLikeTheDispatcherDefault() = runComposeUiTest {
+        // No stored choice for email: the dispatcher sends email, so the chip is
+        // ON, and the first tap turns it OFF (it used to read off and send true).
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyNotificationPrefs", buildJsonObject {
+            put("prefs", buildJsonObject {})
+            put("updatedAtMs", JsonNull)
+        })
+        stubVisitCatalog(fake)
+        fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
+        val catalog = NotificationCatalogRepository(fake)
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        waitForIdle()
+        onNodeWithTag("catchip-visit-email").performClick()
+        waitForIdle()
+        val visit = patches(fake).single()!!["byCategory"]?.jsonObject?.get("visit")?.jsonObject
+        assertEquals(false, visit?.get("email")?.jsonPrimitive?.booleanOrNull)
+    }
+    @Test
+    fun perKeyOverride_toggledBackToInheritedValue_sendsNullToClearTheOverride() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         stubVisitPrefs(fake)
         stubVisitCatalog(fake)
@@ -346,22 +396,19 @@ class NotificationSettingsScreenTest {
         waitForIdle()
         onNodeWithText("Visit Updates").performClick() // expand to reach per-key chips
         waitForIdle()
-
         // sms inherits false from the category default.
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick() // override: true
         waitForIdle()
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick() // undo: back to false
         waitForIdle()
-
-        onNodeWithText("Save Notification Preferences").performClick()
-        waitForIdle()
-
-        assertNull(
-            savedByKey(fake)?.get("kincare.auntie.on_my_way"),
-            "reverting to the inherited value must clear the override, not pin an explicit duplicate of it",
-        )
+        val all = patches(fake)
+        assertEquals(2, all.size)
+        val first = all[0]!!["byKey"]?.jsonObject?.get("kincare.auntie.on_my_way")?.jsonObject
+        assertEquals(true, first?.get("sms")?.jsonPrimitive?.booleanOrNull)
+        val second = all[1]!!["byKey"]?.jsonObject?.get("kincare.auntie.on_my_way")?.jsonObject
+        assertTrue(second?.containsKey("sms") == true, "the clear must name the channel")
+        assertEquals(JsonNull, second?.get("sms"), "reverting to the inherited value clears the override with null")
     }
-
     @Test
     fun perKeyOverride_toDifferentValue_stillWritesAnExplicitOverride() = runComposeUiTest {
         val fake = FakeFunctionsClient()
@@ -373,21 +420,13 @@ class NotificationSettingsScreenTest {
         waitForIdle()
         onNodeWithText("Visit Updates").performClick()
         waitForIdle()
-
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick() // false -> true, diverges from category
         waitForIdle()
-
-        onNodeWithText("Save Notification Preferences").performClick()
-        waitForIdle()
-
-        val override = savedByKey(fake)?.get("kincare.auntie.on_my_way")?.jsonObject
+        val override = patches(fake).single()!!["byKey"]?.jsonObject?.get("kincare.auntie.on_my_way")?.jsonObject
         assertEquals(true, override?.get("sms")?.jsonPrimitive?.booleanOrNull)
     }
-
     @Test
-    fun save_omitsByKeyEntriesForKeysNeverTouched() = runComposeUiTest {
-        // PR27's review noted this is code-correct but untested: only the key
-        // a kinfolk actually clicked should ever appear in the saved byKey map.
+    fun patch_namesOnlyTheKeyThatWasTouched() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         stubVisitPrefs(fake)
         stubVisitCatalog(fake)
@@ -397,23 +436,17 @@ class NotificationSettingsScreenTest {
         waitForIdle()
         onNodeWithText("Visit Updates").performClick()
         waitForIdle()
-
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-push").performClick() // touch exactly one key/channel
-
-        onNodeWithText("Save Notification Preferences").performClick()
         waitForIdle()
-
-        val byKey = savedByKey(fake)
+        val byKey = patches(fake).single()!!["byKey"]?.jsonObject
         assertEquals(setOf("kincare.auntie.on_my_way"), byKey?.keys)
         assertNull(byKey?.get("kincare.checkin.push_only"))
     }
-
     @Test
     fun categoryChannelChip_doesNotClearExistingPerKeyOverrides() = runComposeUiTest {
-        // Task 27a defect #2: this row used to remove() every key's byKey
-        // entry in the category on every click. byKey always wins over
-        // byCategory, so a category change must only affect keys nobody has
-        // overridden.
+        // Task 27a defect #2: byKey always wins over byCategory, so a category
+        // change must only affect keys nobody has overridden: its patch never
+        // names byKey at all.
         val fake = FakeFunctionsClient()
         stubVisitPrefs(fake)
         stubVisitCatalog(fake)
@@ -423,23 +456,83 @@ class NotificationSettingsScreenTest {
         waitForIdle()
         onNodeWithText("Visit Updates").performClick()
         waitForIdle()
-
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick() // override: sms true
         waitForIdle()
         onNodeWithTag("catchip-visit-sms").performClick() // flip the category's sms default
         waitForIdle()
-
-        onNodeWithText("Save Notification Preferences").performClick()
-        waitForIdle()
-
-        val override = savedByKey(fake)?.get("kincare.auntie.on_my_way")?.jsonObject
-        assertEquals(
-            true,
-            override?.get("sms")?.jsonPrimitive?.booleanOrNull,
-            "the category control must not clear a deliberate per-key override",
-        )
+        val all = patches(fake)
+        assertEquals(2, all.size)
+        assertNull(all[1]!!["byKey"], "the category control must not touch any per-key override")
     }
-
+    @Test
+    fun failedSave_leavesTheChipWhereItWasAndSaysSo() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisitPrefs(fake)
+        stubVisitCatalog(fake)
+        fake.stubError("saveMyNotificationPrefs", IllegalStateException("network down"))
+        val catalog = NotificationCatalogRepository(fake)
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        waitForIdle()
+        onNodeWithText("Visit Updates").performClick()
+        waitForIdle()
+        onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick()
+        waitForIdle()
+        onNodeWithTag("notif-save-error").assertExists()
+        onNodeWithText("Saved.").assertDoesNotExist()
+        // Still off: tapping again sends the same "true", not a clearing null.
+        onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick()
+        waitForIdle()
+        val last = patches(fake).last()!!["byKey"]?.jsonObject?.get("kincare.auntie.on_my_way")?.jsonObject
+        assertEquals(true, last?.get("sms")?.jsonPrimitive?.booleanOrNull)
+    }
+    @Test
+    fun marketingOptIn_savesOnTap() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisitPrefs(fake)
+        stubVisitCatalog(fake)
+        fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
+        val catalog = NotificationCatalogRepository(fake)
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        waitForIdle()
+        onNodeWithTag("mkt-chip-newsletter").performClick()
+        waitForIdle()
+        val patch = patches(fake).single()!!
+        assertEquals(true, patch["marketingOptIn"]?.jsonObject?.get("newsletter")?.jsonPrimitive?.booleanOrNull)
+        assertNull(patch["byCategory"])
+    }
+    @Test
+    fun keyDescriptionThatRepeatsTheTitleIsNotShown() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisitPrefs(fake)
+        fake.stub("getNotificationCatalog", buildJsonObject {
+            put("schemaVersion", 2)
+            put("categories", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "visit")
+                    put("title", "Visit Updates")
+                    put("description", "Check ins.")
+                    put("keys", buildJsonArray {
+                        add(buildJsonObject {
+                            put("key", "kincare.booking.confirmed")
+                            put("title", "KinCare booking confirmed")
+                            put("description", "KinCare booking confirmed.")
+                            put("allowedChannels", buildJsonArray { add("email") })
+                            put("required", buildJsonArray { })
+                            put("lockedChannels", buildJsonArray { })
+                            put("marketingCategory", JsonNull)
+                        })
+                    })
+                })
+            })
+        })
+        val catalog = NotificationCatalogRepository(fake)
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        waitForIdle()
+        onNodeWithText("Visit Updates").performClick()
+        waitForIdle()
+        onNodeWithText("KinCare booking confirmed").assertExists()
+        onNodeWithText("KinCare booking confirmed.").assertDoesNotExist()
+    }
     @Test
     fun categoryCard_explainsThatPerKeyOverridesSurviveTheCategoryControl() = runComposeUiTest {
         val fake = FakeFunctionsClient()

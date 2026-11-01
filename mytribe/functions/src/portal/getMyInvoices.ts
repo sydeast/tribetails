@@ -16,6 +16,13 @@ import { centsToDollars } from '../lib/invoiceMath';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
 import { invoiceIsPaid } from '../lib/invoicePaidGate';
 import {
+  EMPTY_SERVICE_NAME_CATALOG,
+  looksLikeServiceCode,
+  serviceDisplayName,
+  serviceNameCatalogFrom,
+  type ServiceNameCatalog,
+} from '../lib/serviceDisplayName';
+import {
   CentsSchema,
   DollarsSchema,
   InvoiceStateSchema,
@@ -376,6 +383,14 @@ export async function getMyInvoicesHandler(
   const liveSettings = payMethodSettingsFrom(settingsSnap?.data() ?? {});
 
   const accountBalanceCents = numericFrom(familySnap.data()?.accountBalanceCents);
+  // #1297: the operator's KinCare list, so a line drawn from a visit is named
+  // the way the business names the service, never by its stored code.
+  const serviceCatalog = settingsSnap ? serviceNameCatalogFrom(settingsSnap.data()) : EMPTY_SERVICE_NAME_CATALOG;
+  // #1288: who the bill is for. An invoice written without `client` (the
+  // migrated and seeded ones) printed "Not set" on the household's own bill.
+  // The invoice's own name first, then the household name it was issued
+  // under, then the household's display name off the family doc already read.
+  const householdName = stringOrNull(familySnap.data()?.['displayName']);
 
   const sessionIdsByInvoice = new Map<string, string[]>();
   // Invoices whose OWN lines are bound to visits (#408). A different question
@@ -445,7 +460,7 @@ export async function getMyInvoicesHandler(
       id: d.id,
       kinfolkId,
       kinfolkName: stringOrNull(data['kinfolkName']),
-      client: stringOrNull(data['client']),
+      client: stringOrNull(data['client']) ?? stringOrNull(data['kinfolkName']) ?? householdName,
       total,
       amountDue,
       isPaid,
@@ -485,7 +500,7 @@ export async function getMyInvoicesHandler(
       // lookup that fails leaves them dated null, which is what a line with no
       // reachable visit honestly is.
       ...(storedLines.length > 0
-        ? { lineItems: storedLines.map((li, index) => mapStoredLineItem(li, index)) }
+        ? { lineItems: storedLines.map((li, index) => mapStoredLineItem(li, index, null, serviceCatalog)) }
         : {}),
     };
   });
@@ -513,7 +528,16 @@ export async function getMyInvoicesHandler(
         if (!invoice) continue;
         const lineItems = sessionIds
           .filter((id) => sessionDataById.has(id))
-          .map((id) => mapSessionToLineItem(id, sessionDataById.get(id)!));
+          .map((id) => mapSessionToLineItem(id, sessionDataById.get(id)!, serviceCatalog));
+        // #1288: ONE VISIT, ONE BILL. A legacy session carries no price, so its
+        // derived line had no amount and the table showed a dash beside the
+        // total. When the invoice bills exactly one visit and that line has no
+        // figure of its own, the invoice total IS what that visit cost; nothing
+        // else could be. Two or more unpriced lines stay blank: splitting a
+        // total across them would invent a breakdown nobody billed.
+        if (lineItems.length === 1 && sessionIds.length === 1 && lineItems[0].amountCents === null) {
+          lineItems[0].amountCents = Math.round(invoice.total * 100);
+        }
         if (lineItems.length > 0) invoice.lineItems = lineItems;
       }
       // The bound half: same lookup, opposite direction. These invoices keep
@@ -524,7 +548,7 @@ export async function getMyInvoicesHandler(
         if (!invoice) continue;
         invoice.lineItems = storedLines.map((li, index) => {
           const start = li.sessionId === '' ? undefined : sessionDataById.get(li.sessionId)?.['startTime'];
-          return mapStoredLineItem(li, index, typeof start === 'string' && start !== '' ? start : null);
+          return mapStoredLineItem(li, index, typeof start === 'string' && start !== '' ? start : null, serviceCatalog);
         });
       }
     } catch (err) {
@@ -630,8 +654,15 @@ export function sessionIdsFrom(data: Record<string, unknown>): string[] {
  * `serviceType` (older docs: `type`), `startTime` as ISO string (older: `date`),
  * and a dollars-denominated `rate` (older: `price`/`amount`).
  */
-export function mapSessionToLineItem(sessionId: string, data: Record<string, unknown>): InvoiceLineItemDto {
-  const label = stringOrNull(data['serviceType']) ?? stringOrNull(data['type']) ?? 'Service';
+export function mapSessionToLineItem(
+  sessionId: string,
+  data: Record<string, unknown>,
+  catalog: ServiceNameCatalog = EMPTY_SERVICE_NAME_CATALOG,
+): InvoiceLineItemDto {
+  // #1297: named off the operator's KinCare list, never the stored code.
+  const label =
+    serviceDisplayName(stringOrNull(data['serviceType']) ?? stringOrNull(data['type']), catalog, data['serviceName']) ??
+    'Service';
   const dateIso = stringOrNull(data['startTime']) ?? stringOrNull(data['date']);
   const dollars = numericOrNull(data['rate']) ?? numericOrNull(data['price']) ?? numericOrNull(data['amount']);
   const amountCents = dollars != null ? Math.round(dollars * 100) : null;
@@ -723,12 +754,19 @@ export function mapStoredLineItem(
   li: StoredLineItem,
   index: number,
   sessionStartIso: string | null = null,
+  catalog: ServiceNameCatalog = EMPTY_SERVICE_NAME_CATALOG,
 ): InvoiceLineItemDto {
   return {
     lineId: `stored:${index}`,
     source: 'stored',
     sessionId: li.sessionId,
-    label: li.description,
+    // #1297: a description the operator typed is shown as typed. One that is a
+    // service CODE (a line drawn from a visit whose type was `visit_60`) is
+    // named off the KinCare list instead, and kept as written when the list has
+    // no match: the row stays, it is money.
+    label: looksLikeServiceCode(li.description)
+      ? (serviceDisplayName(li.description, catalog) ?? li.description)
+      : li.description,
     dateIso: li.sessionId === '' ? null : sessionStartIso,
     amountCents: Math.round(li.qty * li.unitCents) - li.discountCents,
     qty: li.qty,

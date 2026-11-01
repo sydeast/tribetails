@@ -179,3 +179,40 @@ describe('Home, first paint is one round trip deep (#1282)', () => {
     expect(mocks.getMyKinTales).toHaveBeenCalledWith('fam1', { limit: 3 });
   });
 });
+
+describe('Home, status words and the pending change (#1298, #1299)', () => {
+  async function renderWith(upcoming: unknown[]) {
+    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming, recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({ tales: [] });
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+  }
+  const visit = {
+    ...pendingOvernight(),
+    startTimePending: false,
+    requestedDate: null,
+    startTimeMs: new Date(2030, 5, 2, 8, 0).getTime(),
+    cancelRequestStatus: null,
+    rescheduleRequestStatus: null,
+  };
+  it('uses REQUESTED, not PENDING, and no change line when nothing is open', async () => {
+    await renderWith([visit]);
+    expect(await screen.findByText('REQUESTED')).toBeInTheDocument();
+    expect(screen.queryByText('PENDING')).toBeNull();
+    expect(screen.queryByTestId('pending-change')).toBeNull();
+  });
+  it('shows the open cancellation under Up Next', async () => {
+    await renderWith([{ ...visit, cancelRequestStatus: 'pending' }]);
+    expect((await screen.findByTestId('pending-change')).textContent).toBe('Cancellation requested');
+  });
+  it('shows the open new-time request under Up Next', async () => {
+    await renderWith([{ ...visit, rescheduleRequestStatus: 'pending' }]);
+    expect((await screen.findByTestId('pending-change')).textContent).toBe('New time requested');
+  });
+});

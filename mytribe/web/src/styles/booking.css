@@ -98,6 +98,8 @@
 .mp-day.is-closed:hover { background: repeating-linear-gradient(135deg, transparent, transparent 4px, var(--glass-dim) 4px, var(--glass-dim) 8px); }
 /* #544: in range of the shown month but outside the bookable window (before
    today, or past the horizon). Still drawn, so the month reads as a month. */
+.mp-day.is-today { box-shadow: inset 0 0 0 2px var(--teal); font-weight: 700; }
+.mp-day.is-today.is-on { box-shadow: inset 0 0 0 2px #fff; }
 .mp-day.is-unavailable { cursor: not-allowed; opacity: .32; }
 .mp-day.is-unavailable:hover { background: var(--glass-dim); }
 

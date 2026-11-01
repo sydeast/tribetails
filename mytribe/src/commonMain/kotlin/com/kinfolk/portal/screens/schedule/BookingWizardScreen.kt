@@ -1,6 +1,7 @@
 package com.kinfolk.portal.screens.schedule
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -93,6 +95,11 @@ fun BookingWizardScreen(
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
     var step by remember { mutableStateOf(1) }
+    // #1300: each step change lands back at the top. The whole wizard is one
+    // scrolling column, so a long step left the next one opened mid-page with
+    // the step indicator out of sight.
+    val pageScroll = rememberScrollState()
+    LaunchedEffect(step) { pageScroll.animateScrollTo(0) }
     var kin by remember { mutableStateOf<List<Kin>?>(null) }
     var services by remember { mutableStateOf<List<Service>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -306,7 +313,7 @@ fun BookingWizardScreen(
         else -> true
     }
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(pageScroll)) {
         ScreenHeader(title = "New Booking")
         WizardStepIndicator(current = step)
 
@@ -1014,7 +1021,8 @@ private fun Step4ExtraLoveAndContext(notes: String, onNotesChange: (String) -> U
         )
         Text(
             "This note will be highlighted for Auntie during the visit.",
-            style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+            // #1302: a helper line, not an error. Coral is the error colour here.
+            style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
         )
     }
 }
@@ -1120,7 +1128,7 @@ private val WEEKDAY_HEADERS = listOf("S", "M", "T", "W", "T", "F", "S")
  * so the grid reads as a calendar rather than growing holes.
  */
 @Composable
-private fun SimpleMonthPicker(
+internal fun SimpleMonthPicker(
     selectedDates: List<LocalDate>,
     onToggle: (LocalDate) -> Unit,
     today: LocalDate,
@@ -1171,9 +1179,16 @@ private fun SimpleMonthPicker(
                     val sel = selectedDates.contains(d)
                     val closed = closedDates.containsKey(bookingDateKey(d))
                     val pickable = !closed && isBookableDay(d, today, horizonEnd)
+                    val isToday = d == today
                     Box(
                         modifier = Modifier
                             .size(40.dp)
+                            // #1301: today carries a ring, selected or not.
+                            .then(if (isToday) Modifier.border(2.dp, KinfolkBrand.KinTeal, CircleShape) else Modifier)
+                            .semantics {
+                                if (isToday) stateDescription = "Today"
+                                if (closed) stateDescription = "Closed: ${closedDates[bookingDateKey(d)]}"
+                            }
                             .background(
                                 color = if (sel) KinfolkBrand.KinTeal else KinfolkBrand.GlassSurfaceDim,
                                 shape = CircleShape,

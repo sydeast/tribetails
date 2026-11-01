@@ -70,7 +70,8 @@ function polishInstruction(): string {
 function suggestReplyInstruction(): string {
   return (
     'Task: suggest one short reply (1 to 3 sentences) the kinfolk could send next in the ' +
-    'conversation below. Speak as the kinfolk, plainly. If the last message from the auntie ' +
+    'conversation below. The final line is the Auntie\'s latest message: reply to it. ' +
+    'Speak as the kinfolk, plainly. If the last message from the auntie ' +
     'asks a question you cannot answer from the conversation, acknowledge it and ask for or ' +
     'promise the missing detail instead of inventing one. HTML is allowed.\n\nConversation, oldest first:'
   );
@@ -118,6 +119,13 @@ export async function generateHandler(req: CallableRequest<unknown>): Promise<Ge
     const recent = thread.slice(-THREAD_CONTEXT_MESSAGES);
     if (recent.length === 0) {
       throw new HttpsError('failed-precondition', 'thread_empty');
+    }
+    // #1320: a reply is only meaningful to something the Auntie said. When the
+    // household spoke last there is nothing new to answer, and the model used
+    // to draft a follow-up to the household's OWN message. Refuse instead; the
+    // clients disable the button on the same rule.
+    if (recent[recent.length - 1]!.senderRole !== 'auntie') {
+      throw new HttpsError('failed-precondition', 'nothing_to_reply_to');
     }
     instruction = suggestReplyInstruction();
     input = recent

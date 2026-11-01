@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
 
 interface GetMyVisitsRequest {
   kinfolkId?: string;
@@ -36,6 +37,8 @@ interface VisitDto {
   id: string;
   status: string;
   serviceType: string | null;
+  /** #1297: the service's name for the household; see `lib/serviceDisplayName.ts`. */
+  serviceLabel: string | null;
   startTimeIso: string | null;
   endTimeIso: string | null;
   arrivedAtIso: string | null;
@@ -69,12 +72,20 @@ export async function getMyVisitsHandler(
   // once per call, before the projection, so a `false` withholds coordinates
   // from every visit in the response rather than per row. Absent reads as ON.
   const shareLocations = await isClientLocationSharingEnabled(db());
-  const snap = await db()
-    .collection('kin_care_sessions')
-    .where('kinfolkId', '==', kinfolkId)
-    .orderBy('startTime', 'desc')
-    .limit(limit)
-    .get();
+  // Fail-soft settings read: a doc that will not load leaves names unresolved.
+  const [snap, settingsSnap] = await Promise.all([
+    db()
+      .collection('kin_care_sessions')
+      .where('kinfolkId', '==', kinfolkId)
+      .orderBy('startTime', 'desc')
+      .limit(limit)
+      .get(),
+    // Inside `.then` so a synchronous throw is caught too: names are optional.
+    Promise.resolve()
+      .then(() => db().collection('business_settings').doc('business_settings').get())
+      .catch(() => null),
+  ]);
+  const serviceCatalog = settingsSnap ? serviceNameCatalogFrom(settingsSnap.data()) : EMPTY_SERVICE_NAME_CATALOG;
 
   const visits: VisitDto[] = snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>;
@@ -82,6 +93,7 @@ export async function getMyVisitsHandler(
       id: d.id,
       status: typeof data['status'] === 'string' ? (data['status'] as string) : '',
       serviceType: stringOrNull(data['serviceType']),
+      serviceLabel: serviceDisplayName(data['serviceType'], serviceCatalog, data['serviceName']),
       startTimeIso: stringOrNull(data['startTime']),
       endTimeIso:   stringOrNull(data['endTime']),
       arrivedAtIso: stringOrNull(data['arrivedAt']),

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
@@ -25,6 +25,7 @@ import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { viewOfQuery } from '../lib/queryState';
+import { businessTime, dayKey, dayLabel } from '../lib/messageDays';
 import '../styles/messages.css';
 
 /**
@@ -134,9 +135,6 @@ function applyToolbarAction(editor: Editor, id: ToolbarActionId, promptForLink: 
   }
 }
 
-function shortTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-}
 
 export function Messages() {
   const queryClient = useQueryClient();
@@ -273,6 +271,7 @@ export function Messages() {
     sendMutation.mutate(html, {
       onSuccess: () => {
         setSendError(null);
+        setPolishUndo(null);
         editor.commands.clearContent();
         // Belt-and-suspenders alongside the realtime listener: refetch the
         // query-backed thread too, so the new message still shows up even
@@ -298,8 +297,10 @@ export function Messages() {
   function handleAssist(mode: GenerateAssistMode) {
     if (!editor || assistMutation.isPending) return;
     if (mode === 'polish' && (!editorState || editorState.isEmpty)) return;
+    if (mode === 'suggest_reply' && !canSuggestReply) return;
+    const before = editor.getHTML();
     assistMutation.mutate(
-      { mode, ...(mode === 'polish' ? { body: editor.getHTML() } : {}) },
+      { mode, ...(mode === 'polish' ? { body: before } : {}) },
       {
         onSuccess: (result) => {
           setAssistError(null);
@@ -308,6 +309,11 @@ export function Messages() {
           // the send path re-sanitizes anyway (see sendKinfolkMessage).
           editor.commands.setContent(result.html);
           editor.commands.focus();
+          // Polish and Suggest reply both replace whatever was in the composer.
+          // Keep it so Undo can put it back; nothing to keep for a blank one.
+          const written = editor.getHTML();
+          const hadDraft = before.trim() !== '' && before !== '<p></p>';
+          setPolishUndo(hadDraft ? { original: before, polished: written } : null);
         },
         // Same rule as handleSend's onError: a failed helper call surfaces
         // inline and never touches the draft, so "try again" is a re-click.
@@ -319,6 +325,30 @@ export function Messages() {
     );
   }
 
+  // #1319: Polish used to overwrite the draft with no way back. Keep what was
+  // there before the rewrite and offer Undo until the household edits the
+  // composer or sends.
+  const [polishUndo, setPolishUndo] = useState<{ original: string; polished: string } | null>(null);
+  useEffect(() => {
+    if (!editor || !polishUndo) return;
+    const onUpdate = () => {
+      if (editor.getHTML() !== polishUndo.polished) setPolishUndo(null);
+    };
+    editor.on('update', onUpdate);
+    return () => {
+      editor.off('update', onUpdate);
+    };
+  }, [editor, polishUndo]);
+  function handleUndoPolish() {
+    if (!editor || !polishUndo) return;
+    editor.commands.setContent(polishUndo.original);
+    editor.commands.focus();
+    setPolishUndo(null);
+  }
+  // #1320: only an Auntie message is worth answering. If the household spoke
+  // last, Suggest reply has nothing new to reply to (the server refuses too).
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1]! : null;
+  const canSuggestReply = lastMessage !== null && lastMessage.senderRole === 'auntie';
   const noThreadYet = messages.length === 0;
   // The Firestore listener is the other source here, and it has an offline
   // cache of its own, so a paused callable only matters when the listener has
@@ -363,7 +393,19 @@ export function Messages() {
                 <p>Say hello — your Auntie will see this and reply right here.</p>
               </div>
             ) : (
-              messages.map((message) => <MessageBubble key={message.id} message={message} />)
+              messages.map((message, i) => {
+                const newDay = i === 0 || dayKey(messages[i - 1]!.createdAtMs) !== dayKey(message.createdAtMs);
+                return (
+                  <Fragment key={message.id}>
+                    {newDay && (
+                      <div className="msgs-day" role="separator" data-testid="msgs-day">
+                        <span>{dayLabel(message.createdAtMs)}</span>
+                      </div>
+                    )}
+                    <MessageBubble message={message} />
+                  </Fragment>
+                );
+              })
             )}
             <div ref={bottomRef} />
           </div>
@@ -437,10 +479,16 @@ export function Messages() {
                   Polish
                 </MutationLabel>
               </button>
+              {polishUndo && (
+                <button type="button" className="btn ghost" onClick={handleUndoPolish}>
+                  Undo
+                </button>
+              )}
               <button
                 type="button"
                 className="btn ghost"
-                disabled={!editor || assistBusy || messages.length === 0}
+                disabled={!editor || assistBusy || !canSuggestReply}
+                title={!canSuggestReply ? 'Nothing new to reply to' : undefined}
                 onClick={() => handleAssist('suggest_reply')}
               >
                 <MutationLabel
@@ -487,7 +535,7 @@ function MessageBubble(props: { message: ThreadMessageDto }) {
       <div className="msgs-bubble">
         <div className="msgs-meta">
           <b>{mine ? 'You' : 'Auntie'}</b>
-          <time>{shortTime(message.createdAtMs)}</time>
+          <time>{businessTime(message.createdAtMs)}</time>
         </div>
         {/*
           Trust boundary: message.body is sanitizeRichText'd server-side on

@@ -41,6 +41,7 @@ import com.kinfolk.portal.components.SchemaFormRenderer
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.portal.Account
 import com.kinfolk.portal.portal.FormSchema
+import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.PaymentMethodState
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkBrand
@@ -256,7 +257,8 @@ fun AccountSettingsScreen(
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
-                            status = "Invite failed: ${t.message ?: t}"
+                            // #1277: a missing backend setting never shows its name.
+                            status = inviteFailureLine(t)
                         } finally {
                             inviting = false
                         }
@@ -356,7 +358,7 @@ fun AccountSettingsScreen(
                             ?: if (cardOnFile) {
                                 "Charges run through your care team."
                             } else {
-                                "Settle up directly with your Auntie until a card is on file."
+                                "Settle up with your Auntie directly until a card is on file."
                             },
                         style = type.sansMeta,
                     )

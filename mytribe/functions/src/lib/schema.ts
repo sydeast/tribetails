@@ -83,6 +83,8 @@ export interface InviteRequestDoc {
   auntieNotifiedAt?: FirebaseFirestore.Timestamp;
   sentToInviteeAt?: FirebaseFirestore.Timestamp;
   acceptedUid?: string;
+  /** Stamped by `acceptInvite` from #1339 on. Older accepted invites lack it. */
+  acceptedAt?: FirebaseFirestore.Timestamp;
   expiresAt: FirebaseFirestore.Timestamp;
   createdAt: FirebaseFirestore.Timestamp;
 }
