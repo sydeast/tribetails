@@ -501,6 +501,8 @@ fun AppNavHost(
                                 markScheduleDirty(navController)
                                 navController.popBackStack()
                             },
+                            onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
+                            onOpenInvoice = { invoiceId -> navController.navigate(InvoiceDetailRoute(invoiceId)) },
                         )
                     }
                 }

@@ -65,7 +65,15 @@ data class Booking(
     val startTimePending: Boolean = false,
     /** #1098: the night asked for, `YYYY-MM-DD`, or null. */
     val requestedDate: String? = null,
+    /** #1303: the household's address, where every visit happens. Null when none is on file. */
+    val address: String? = null,
+    /** #1303: the sent KinTale for a completed visit that has one, else null. */
+    val kinTaleId: String? = null,
+    /** #1303: the invoice billing a completed visit, for a member with billing access, else null. */
+    val invoiceId: String? = null,
 )
+/** True once the visit is over (completed or cancelled): nobody is left to read a note. */
+fun Booking.isFinished(): Boolean = status == BookingStatus.Completed || status == BookingStatus.Cancelled
 
 /**
  * The three answers a reschedule ask can be waiting on. Anything else the

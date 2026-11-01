@@ -325,9 +325,15 @@ const kinEditRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/KinEdit'), 'KinEdit'),
 });
 
+/** #1303: `/kintales?tale=<id>` is how a completed visit points at its KinTale. */
+export function kinTalesSearch(search: Record<string, unknown>): { tale?: string } {
+  const tale = search['tale'];
+  return typeof tale === 'string' && tale.length > 0 ? { tale } : {};
+}
 const kinTalesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kintales',
+  validateSearch: kinTalesSearch,
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTales'),
 });
