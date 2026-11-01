@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { businessLabel, loadBusinessName } from '../lib/businessName';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { householdStaffFlag } from '../lib/staffGate';
@@ -157,7 +158,7 @@ export async function requestBookingRescheduleHandler(
   if (data.rescheduleRequestStatus === 'pending') {
     throw new HttpsError(
       'already-exists',
-      'A new time is already waiting on Tribe Tails for this visit.',
+      `A new time is already waiting on ${businessLabel(await loadBusinessName('requestBookingReschedule'))} for this visit.`,
     );
   }
 
@@ -168,7 +169,7 @@ export async function requestBookingRescheduleHandler(
   if (cancelRequestStatusOf(data as Record<string, unknown>) === 'pending') {
     throw new HttpsError(
       'failed-precondition',
-      'A cancellation is already waiting on Tribe Tails for this visit. Wait for their answer before asking for a new time.',
+      `A cancellation is already waiting on ${businessLabel(await loadBusinessName('requestBookingReschedule'))} for this visit. Wait for their answer before asking for a new time.`,
     );
   }
   // Omitted end: keep the visit's current length. A visit with no end time on

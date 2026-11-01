@@ -146,6 +146,7 @@ fun KinfolkPortalAppGuarded() {
     KinfolkPortalTheme(themeId = home?.portal?.themeId ?: "default") {
         androidx.compose.runtime.CompositionLocalProvider(
             com.kinfolk.portal.config.LocalFeatureFlags provides featureFlags,
+            com.kinfolk.portal.components.LocalBusinessName provides (home?.businessName ?: ""),
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 com.kinfolk.portal.components.KinfolkBackground()

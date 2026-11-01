@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinChip
 import com.kinfolk.portal.components.KinSpinner
+import com.kinfolk.portal.components.LocalBusinessName
+import com.kinfolk.portal.components.fillBusinessPlaceholders
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.notifications.ALL_MARKETING_CATEGORIES
 import com.kinfolk.portal.notifications.CatalogState
@@ -258,7 +260,7 @@ fun NotificationSettingsScreen(
                 displayDescription = if (scheduleRelabel) {
                     "Reminders before upcoming and pending visits on your calendar."
                 } else {
-                    cat.description
+                    fillBusinessPlaceholders(cat.description, LocalBusinessName.current)
                 },
             )
         }
@@ -373,7 +375,7 @@ private fun CategoryCard(
             }
 
             // Legend for the chip markers, only when this category renders any.
-            categoryMarkerLegend(cat)?.let { legend ->
+            categoryMarkerLegend(cat, LocalBusinessName.current)?.let { legend ->
                 Text(legend, style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
             }
 
@@ -412,7 +414,7 @@ private fun CategoryChannelRow(
     // chips below stay on regardless, so the row would visually contradict
     // them. When NOTHING in the category is toggleable, say so instead of
     // rendering a dead row.
-    val setByBusinessNote = categorySetByBusinessNote(cat)
+    val setByBusinessNote = categorySetByBusinessNote(cat, LocalBusinessName.current)
     if (setByBusinessNote != null) {
         Text(
             setByBusinessNote,
@@ -506,7 +508,7 @@ private fun PerKeyRow(
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
     ) {
         Text(keyTitle(key), style = type.sansLabel)
-        keyDescriptionLine(key)?.let { Text(it, style = type.sansBody) }
+        keyDescriptionLine(key, LocalBusinessName.current)?.let { Text(it, style = type.sansBody) }
         if (marketingGate) {
             Text(
                 "Enable the parent marketing opt-in above to receive this.",
@@ -519,7 +521,7 @@ private fun PerKeyRow(
         // (lockReason); without one, a default line names the locked channels,
         // and a fully locked key reads as always-on. The dispatcher enforces
         // the same lock server-side, so this is purely an explanation.
-        val lockLine = lockExplanation(key)
+        val lockLine = lockExplanation(key, LocalBusinessName.current)
         if (lockLine != null) {
             Text(
                 lockLine,

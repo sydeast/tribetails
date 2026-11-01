@@ -43,7 +43,8 @@ describe('household-visible notification copy', () => {
         expect(text.length).toBeGreaterThan(5);
         expect(text).not.toMatch(VENDOR_OR_PLUMBING);
         expect(text).not.toMatch(OPERATOR_VOICE);
-        expect(text).not.toMatch(/\bthe office\b|\bbusiness\b/i);
+        // `{business}` is the settings-name placeholder (#1381), not the word.
+        expect(text.replace(/\{[Bb]usiness('s)?\}/g, '')).not.toMatch(/\bthe office\b|\bbusiness\b/i);
       },
     );
     it('leaves the operator label alone for the admin matrix', () => {

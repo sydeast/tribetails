@@ -202,6 +202,32 @@ describe('broadcastMessage suppression', () => {
  * household that had switched off email, SMS, push AND in-app still got all
  * four.
  */
+describe('broadcastMessage names the business from settings (#1381)', () => {
+  it('titles a subject-less push with the business name, and the email footer names it too', async () => {
+    const ctx = kinfolkDb({}, { 'business_settings/business_settings': { businessName: 'Test Business' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await broadcastMessageHandler(
+      req({ criteria: { kind: 'all' }, channels: ['push'], body: 'Body' }),
+    );
+    expect(mocks.multicast).toHaveBeenCalledTimes(1);
+    expect(mocks.multicast.mock.calls[0]![0].notification.title).toBe('Test Business');
+    mocks.multicast.mockClear();
+    await broadcastMessageHandler(
+      req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'Hi', body: 'Body' }),
+    );
+    const email = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(email.bodyTemplate).toContain('contact Test Business to be removed');
+    expect(email.bodyTemplate).not.toContain('Tribe Tails');
+  });
+  it('sends no push title at all, and "your Auntie" in the footer, when no name is set', async () => {
+    const ctx = kinfolkDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['push'], body: 'Body' }));
+    expect(mocks.multicast.mock.calls[0]![0].notification.title).toBeUndefined();
+    await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'Hi', body: 'Body' }));
+    expect(mocks.sendTemplatedEmail.mock.calls[0]![0].bodyTemplate).toContain('contact your Auntie to be removed');
+  });
+});
 describe('broadcastMessage notification preferences', () => {
   /** One kinfolk with every contact detail and a linked account. */
   function oneKinfolkDb(docs: Record<string, any>) {

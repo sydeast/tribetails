@@ -11,6 +11,7 @@ import { db } from '../lib/firestoreAdmin';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { refuseAuntie } from '../lib/staffGate';
+import { fillBusinessPlaceholders, loadBusinessName } from '../lib/businessName';
 
 /**
  * Returns the kinfolk-facing notification catalog at runtime, closes the
@@ -95,7 +96,7 @@ const CATEGORY_DESCRIPTORS: Record<string, CategoryDescriptor> = {
     // #386: this bucket now also carries `broadcast.message`, the announcement
     // the office sends to a group of households at once, so the sentence names
     // both kinds of message rather than only the 1:1 thread.
-    description: 'Messages and announcements from Tribe Tails.',
+    description: 'Messages and announcements from {business}.',
   },
 };
 
@@ -227,6 +228,8 @@ export async function getNotificationCatalogHandler(
   // dispatcher still enforces the matrix at send time). A type the admin disabled, or one
   // whose channels the admin all disabled, is hidden from the kinfolk entirely.
   const overridesSnap = await db().collection('businessSettings').doc('notifications').get();
+  // #1381: household copy names the business from settings; the catalog strings hold `{business}` placeholders.
+  const businessName = await loadBusinessName('getNotificationCatalog');
   const byKey = (overridesSnap.data()?.byKey ?? {}) as Record<string, BusinessNotificationOverride>;
 
   // Group filtered entries by category, preserving catalog declaration order.
@@ -268,8 +271,11 @@ export async function getNotificationCatalogHandler(
       description: def.description,
       // Fall back to the operator text only for a row with no household copy;
       // the catalog test fails the build before that can ship.
-      householdDescription: def.householdDescription ?? def.description,
-      householdTitle: def.householdTitle ?? (def.label || titleCaseFromKey(def.key)),
+      householdDescription: fillBusinessPlaceholders(def.householdDescription ?? def.description, businessName),
+      householdTitle: fillBusinessPlaceholders(
+        def.householdTitle ?? (def.label || titleCaseFromKey(def.key)),
+        businessName,
+      ),
       allowedChannels,
       required,
       lockedChannels,
@@ -288,7 +294,11 @@ export async function getNotificationCatalogHandler(
       title: catId,
       description: '',
     };
-    categories.push({ ...descriptor, keys });
+    categories.push({
+      ...descriptor,
+      description: fillBusinessPlaceholders(descriptor.description, businessName),
+      keys,
+    });
   }
 
   return { categories, schemaVersion: 1 };

@@ -1,1 +1,1 @@
-Tribe Tails: the {{serviceType}} for {{kinName}} on {{bookingDate}} is still on. {{note}}
+{{Business}}: the {{serviceType}} for {{kinName}} on {{bookingDate}} is still on. {{note}}

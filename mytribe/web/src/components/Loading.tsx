@@ -1,5 +1,7 @@
 import { isWaiting, useSlowWait } from '../lib/slowWait';
 import type { PortalView } from '../lib/queryState';
+import { useCachedBusinessName } from './BusinessFootnote';
+import { businessLabel } from '../lib/businessLabel';
 
 /**
  * The portal's in-flight vocabulary: a ring that turns, the sentence that was
@@ -145,12 +147,13 @@ interface NoticeProps {
  */
 export function SlowWaitNotice({ what, attempt, onSync }: NoticeProps) {
   const asked = attempt > 0;
+  const business = useCachedBusinessName();
   return (
     <div className="slow-wait" role="group" aria-label={`${what} is taking a while`}>
       <p className="slow-wait__line sub">
         {asked
-          ? 'Asked again. Still waiting on Tribe Tails.'
-          : 'Tribe Tails has not answered yet.'}
+          ? `Asked again. Still waiting on ${businessLabel(business)}.`
+          : `${businessLabel(business, { capital: true })} has not answered yet.`}
       </p>
       {onSync ? (
         <button type="button" className="slow-wait__sync" onClick={onSync}>

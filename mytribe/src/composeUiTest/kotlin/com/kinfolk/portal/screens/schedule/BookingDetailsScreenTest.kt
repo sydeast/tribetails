@@ -261,7 +261,7 @@ class BookingDetailsScreenTest {
         }
         waitForIdle()
 
-        onNodeWithText("Cancellation requested. Tribe Tails has it in their queue and will answer soon.").assertIsDisplayed()
+        onNodeWithText("Cancellation requested. Your Auntie has it in their queue and will answer soon.").assertIsDisplayed()
         onNodeWithText("Request cancellation").assertDoesNotExist()
     }
 
@@ -294,7 +294,7 @@ class BookingDetailsScreenTest {
         onNodeWithText("Send request").performClick()
         waitForIdle()
 
-        onNodeWithText("Cancellation requested. Tribe Tails has it in their queue and will answer soon.").assertIsDisplayed()
+        onNodeWithText("Cancellation requested. Your Auntie has it in their queue and will answer soon.").assertIsDisplayed()
         onNodeWithText("Request cancellation").assertDoesNotExist()
     }
 
@@ -325,11 +325,42 @@ class BookingDetailsScreenTest {
         waitForIdle()
 
         onNodeWithText(
-            "Tribe Tails is keeping this visit on the books. Inside the 48-hour window.",
+            "Your Auntie is keeping this visit on the books. Inside the 48-hour window.",
         ).assertIsDisplayed()
         onNodeWithText("Ask again").assertIsDisplayed()
     }
 
+    // #1381: the answer names the business from settings, not a hard-coded one.
+    @Test
+    fun cancelDeclined_namesTheBusinessFromSettings() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubBooking(
+            fake,
+            "b1",
+            fixedNow + tenHoursMs,
+            cancelRequested = false,
+            cancelRequestStatus = "declined",
+            cancelResponseNote = "Inside the 48-hour window.",
+        )
+        setThemedContent {
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.kinfolk.portal.components.LocalBusinessName provides "Test Business",
+            ) {
+                KinCareDetailScreen(
+                    kinCareId = "b1",
+                    kinfolkId = "3",
+                    portalApi = PortalApi(fake),
+                    onBack = {},
+                    nowMs = { fixedNow },
+                )
+            }
+        }
+        waitForIdle()
+        onNodeWithText(
+            "Test Business is keeping this visit on the books. Inside the 48-hour window.",
+        ).assertIsDisplayed()
+        onNodeWithText("Your Auntie is keeping this visit on the books.", substring = true).assertDoesNotExist()
+    }
     @Test
     fun cancelAccepted_saysTheVisitIsCancelledAndOffersNoAction() = runComposeUiTest {
         val fake = FakeFunctionsClient()

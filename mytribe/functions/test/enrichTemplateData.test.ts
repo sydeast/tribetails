@@ -84,6 +84,40 @@ describe('enrichTemplateData: invoice.new (the canonical gap)', () => {
   });
 });
 
+describe('enrichTemplateData: the business merge fields (#1381)', () => {
+  it('fills {{business}} and {{Business}} from business_settings', async () => {
+    const ctx = buildDbMock({ docs: { 'business_settings/business_settings': { businessName: 'Test Business' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const out = await enrichTemplateData('newsletter.announcement', 'u1', {});
+    expect(out.business).toBe('Test Business');
+    const reset = await enrichTemplateData('auth.password.reset', 'u1', {});
+    expect(reset.Business).toBe('Test Business');
+  });
+  it('reads "your Auntie" / "Your Auntie" when the name is unset', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: {} }).db);
+    const out = await enrichTemplateData('marketing.optin', 'u1', {});
+    expect(out.business).toBe('your Auntie');
+    const declined = await enrichTemplateData('kincare.request.declined', 'u1', {});
+    expect(declined.Business).toBe('Your Auntie');
+  });
+  it('lets an emitter-provided value win', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'business_settings/business_settings': { businessName: 'Test Business' } } }).db);
+    const out = await enrichTemplateData('marketing.optin', 'u1', { business: 'Emitter Name' });
+    expect(out.business).toBe('Emitter Name');
+  });
+  it('no household seed template still names Tribe Tails', () => {
+    const dir = join(__dirname, '../../seeds/notificationTemplates');
+    for (const key of [
+      'account.welcome.kinfolk', 'auth.account.locked', 'auth.failedLogin.attempts', 'auth.password.reset',
+      'invoice.new', 'kincare.cancel.declined', 'kincare.request.declined', 'marketing.optin',
+      'newsletter.announcement', 'survey.event',
+    ]) {
+      for (const f of readdirSync(join(dir, key))) {
+        expect(readFileSync(join(dir, key, f), 'utf8'), `${key}/${f}`).not.toMatch(/Tribe Tails/);
+      }
+    }
+  });
+});
 describe('enrichTemplateData: bookings', () => {
   it('kincare.booking.confirm: maps serviceName→serviceType, names from family + booking, and leaves the emitter’s dates alone', async () => {
     // Jul 4 2026 18:30 UTC = 14:30 America/New_York (EDT, UTC-4).

@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { businessLabel, loadBusinessName } from '../lib/businessName';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { householdStaffFlag } from '../lib/staffGate';
@@ -132,7 +133,7 @@ export async function requestBookingCancellationHandler(
   if (data.rescheduleRequestStatus === 'pending') {
     throw new HttpsError(
       'failed-precondition',
-      'A new time is already waiting on Tribe Tails for this visit. Wait for their answer before asking to cancel.',
+      `A new time is already waiting on ${businessLabel(await loadBusinessName('requestBookingCancellation'))} for this visit. Wait for their answer before asking to cancel.`,
     );
   }
   await visitRef.set(

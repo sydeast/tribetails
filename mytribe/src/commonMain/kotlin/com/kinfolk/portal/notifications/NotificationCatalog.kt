@@ -57,7 +57,7 @@ data class NotificationKey(
     val lockedChannelValues: Map<NotificationChannel, Boolean> = emptyMap(),
     // Notification revamp: operator-authored reason why a locked/required
     // notification stays on. Shown on the key row in place of the stock
-    // "Set by Tribe Tails Pet Care. Can't be changed here." line. Always null in
+    // "Set by <business>. Can't be changed here." line. Always null in
     // the static fallback below; operator prose only arrives via
     // getNotificationCatalog. #451: this fallback knows nothing about the
     // operator's current gate, which is exactly why the stock line names who
@@ -205,7 +205,7 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
             NotificationKey(
                 key = "newsletter.announcement",
                 title = "News and announcements",
-                description = "News and announcements from Tribe Tails, if you opt in.",
+                description = "News and announcements from {business}, if you opt in.",
                 allowedChannels = EMAIL_PUSH,
                 marketingCategory = MarketingCategory.NEWSLETTER,
             ),
@@ -219,7 +219,7 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
             NotificationKey(
                 key = "marketing.optin",
                 title = "Offers and updates",
-                description = "General updates and offers from Tribe Tails, if you opt in.",
+                description = "General updates and offers from {business}, if you opt in.",
                 allowedChannels = EMAIL_ONLY,
                 marketingCategory = MarketingCategory.MARKETING,
             ),

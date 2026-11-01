@@ -108,6 +108,7 @@ private fun SlowWaitNotice(attempt: Int, canSync: Boolean, onSync: () -> Unit) {
     val c = KinfolkTheme.colors
     val type = LocalKinfolkTypography.current
     val asked = attempt > 0
+    val business = LocalBusinessName.current
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -115,9 +116,9 @@ private fun SlowWaitNotice(attempt: Int, canSync: Boolean, onSync: () -> Unit) {
     ) {
         Text(
             text = if (asked) {
-                "Asked again. Still waiting on Tribe Tails."
+                "Asked again. Still waiting on ${businessLabel(business)}."
             } else {
-                "Tribe Tails has not answered yet."
+                "${businessLabel(business, capital = true)} has not answered yet."
             },
             style = type.sansMeta,
             color = c.navyMuted,

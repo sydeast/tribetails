@@ -19,7 +19,8 @@ import {
   type KinfolkLike,
 } from './audienceCriteria';
 import { SEGMENTS_COLLECTION } from './audienceSegments';
-import { UNSUBSCRIBE_FOOTER, suppressionDocId } from './sendExternalMessage';
+import { unsubscribeFooter, suppressionDocId } from './sendExternalMessage';
+import { loadBusinessName } from '../lib/businessName';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 import {
   BroadcastIdempotencyKeyArg,
@@ -395,8 +396,12 @@ export function broadcastSender(ctx: {
    * the read below exists for.
    */
   known?: Map<string, KinfolkLike>;
+  /** #1381: `business_settings.businessName`, read once per broadcast; '' when unset. */
+  businessName?: string;
 }): (kinfolkId: string) => Promise<{ outcome: RecipientOutcome; detail: RecipientDetail }> {
   const { actorUid: uid, channels, subject, body, def, businessOverride, stream, known } = ctx;
+  const businessName = (ctx.businessName ?? '').trim();
+  const footer = unsubscribeFooter(businessName);
 
   return async (kinfolkId: string) => {
     const detail: RecipientDetail = {
@@ -497,7 +502,7 @@ export function broadcastSender(ctx: {
           await sendTemplatedEmail({
             to: email,
             subjectTemplate: subject,
-            bodyTemplate: `${body}${UNSUBSCRIBE_FOOTER}`,
+            bodyTemplate: `${body}${footer}`,
             data: {},
           });
           mark('email', 'sent');
@@ -548,7 +553,8 @@ export function broadcastSender(ctx: {
               .messaging()
               .sendEachForMulticast({
                 tokens,
-                notification: { title: subject || 'Tribe Tails', body },
+                // #1381: the business name from settings; no title at all when both are unset.
+                notification: { title: subject || businessName || undefined, body },
                 data: { notificationKey: BROADCAST_NOTIFICATION_KEY },
               });
             // Counts are per-RECIPIENT-reached (consistent with email/sms/in-app
@@ -615,6 +621,7 @@ export async function resumeBroadcastFanout(opts: {
       def,
       businessOverride,
       stream: streamForRecipient(def, 'clients'),
+      businessName: await loadBusinessName('outboundFanoutSweep'),
     }),
   });
   if (run.ran) {
@@ -811,6 +818,7 @@ export async function broadcastMessageHandler(
       businessOverride,
       stream,
       known: new Map(recipients.map((k) => [k.id, k])),
+      businessName: await loadBusinessName('broadcastMessage'),
     }),
   });
 

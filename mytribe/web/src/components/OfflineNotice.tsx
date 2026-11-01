@@ -1,3 +1,6 @@
+import { useCachedBusinessName } from './BusinessFootnote';
+import { businessLabel } from '../lib/businessLabel';
+
 /**
  * What a region shows when its read is PAUSED because the device is offline
  * (see lib/queryState.ts for why the query pauses rather than fails).
@@ -22,6 +25,7 @@
  * heading + body block. Nothing new was invented for this.
  */
 export function OfflineNotice(props: { what: string; compact?: boolean }) {
+  const business = useCachedBusinessName();
   if (props.compact === true) {
     return (
       <p className="offline-line" role="status">
@@ -35,7 +39,7 @@ export function OfflineNotice(props: { what: string; compact?: boolean }) {
         {'\u{1F4F5}'}
       </div>
       <div>
-        <b>We can&rsquo;t reach Tribe Tails</b>
+        <b>We can&rsquo;t reach {businessLabel(business)}</b>
         <p>
           Your phone is offline, so {props.what} has not loaded. Nothing has been removed. We just can&rsquo;t read it from
           here. It fills back in on its own once your signal returns.

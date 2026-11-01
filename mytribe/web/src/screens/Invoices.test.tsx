@@ -16,6 +16,8 @@ import { SaveNoticeLine } from '../components/SaveNotice';
  * distinct, visible message.
  */
 
+// #1381: the business footnote reads the name from getMyHome; no network in a unit test.
+vi.mock('../api/portal', () => ({ getMyHome: vi.fn().mockResolvedValue({ businessName: '' }) }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 
 vi.mock('@tanstack/react-router', () => ({

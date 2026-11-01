@@ -39,11 +39,14 @@ function def(overrides: Partial<NotificationDef> = {}): NotificationDef {
 }
 
 /** clients/{uid} carries the address unless the test says otherwise. */
-function dbWith(email: string | null) {
+function dbWith(email: string | null, businessName?: string) {
   const docMock = (path: string) => ({
     get: vi.fn(async () => ({
       exists: path === 'clients/u1' && email !== null,
-      data: () => (path === 'clients/u1' && email !== null ? { email } : undefined),
+      data: () => {
+        if (path === 'business_settings/business_settings' && businessName !== undefined) return { businessName };
+        return path === 'clients/u1' && email !== null ? { email } : undefined;
+      },
     })),
   });
   return {
@@ -86,6 +89,27 @@ describe('sendEmailChannel: generic fallback when copy is not authored', () => {
     expect(sent.bodyTemplate).not.toMatch(/declin/i);
   });
 
+  // #1381: the household's fallback wording names the business from settings.
+  it('names the business from settings in the household fallback', async () => {
+    mocks.loadEmailTemplate.mockResolvedValue(null);
+    mocks.dbFn.mockReturnValue(dbWith('kin@example.com', 'Test Business'));
+    await sendEmailChannel({ def: def(), recipientUid: 'u1', data: {} });
+    const sent = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(sent.bodyTemplate).toContain('with {{businessLabel}}.');
+    expect(sent.bodyTemplate).toContain("{{businessLabel}}. Your Kin's Favorite Auntie.");
+    expect(sent.data.businessLabel).toBe('Test Business');
+    expect(sent.bodyTemplate).not.toContain('Tribe Tails');
+  });
+  it('says "your Auntie" and drops the sign-off name when no business name is set', async () => {
+    mocks.loadEmailTemplate.mockResolvedValue(null);
+    await sendEmailChannel({ def: def(), recipientUid: 'u1', data: {} });
+    const sent = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(sent.data.businessLabel).toBe('your Auntie');
+    expect(sent.bodyTemplate).toContain('with {{businessLabel}}.');
+    expect(sent.bodyTemplate).not.toContain('{{businessLabel}}. Your Kin');
+    expect(sent.bodyTemplate).toContain("Your Kin's Favorite Auntie.");
+    expect(sent.bodyTemplate).not.toContain('Tribe Tails');
+  });
   it('points an office-facing key at AuntieOS, not the household portal', async () => {
     mocks.loadEmailTemplate.mockResolvedValue(null);
 

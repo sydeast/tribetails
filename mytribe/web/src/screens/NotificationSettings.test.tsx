@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { NotificationSettings, SET_BY_BUSINESS_NOTE } from './NotificationSettings';
+import { NotificationSettings, setByBusinessNote } from './NotificationSettings';
 import type {
   CategoryDto,
   GetMyNotificationPrefsResult,
@@ -224,7 +224,19 @@ describe('a channel the household cannot change', () => {
   it('names who decides on the category row, on both the row and the key line', async () => {
     await renderLockedCategory();
     // One on the category channel row, one on the per-key channel row.
-    expect(screen.getAllByText(SET_BY_BUSINESS_NOTE)).toHaveLength(2);
+    expect(screen.getAllByText(setByBusinessNote(''))).toHaveLength(2);
+    expect(screen.getAllByText('Set by your Auntie. Can’t be changed here.')).toHaveLength(2);
+  });
+  it('names the business from settings when it is set (#1381)', async () => {
+    const { getMyHome } = await import('../api/portal');
+    vi.mocked(getMyHome).mockResolvedValue({ businessName: 'Test Business' } as never);
+    try {
+      await renderLockedCategory();
+      await waitFor(() => expect(screen.getAllByText('Set by Test Business. Can’t be changed here.')).toHaveLength(2));
+      expect(screen.queryByText(/your Auntie/)).toBeNull();
+    } finally {
+      vi.mocked(getMyHome).mockResolvedValue({ businessName: '' } as never);
+    }
   });
   it('never tells the household the notification is always on', async () => {
     await renderLockedCategory();

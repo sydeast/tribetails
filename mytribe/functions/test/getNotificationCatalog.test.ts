@@ -4,7 +4,9 @@ import { HttpsError } from 'firebase-functions/v2/https';
 
 // #6: the handler now reads the admin's businessSettings/notifications overrides to gate
 // the kinfolk catalog. Mock the Firestore read; tests set `h.overrideData` per case.
-const h = vi.hoisted(() => ({ overrideData: undefined as { byKey?: Record<string, unknown> } | undefined }));
+const h = vi.hoisted(() => ({
+  overrideData: undefined as { byKey?: Record<string, unknown>; businessName?: string } | undefined,
+}));
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({
     collection: () => ({
@@ -62,6 +64,37 @@ describe('getNotificationCatalogHandler', () => {
     const changed = all.find((k) => k.key === 'kincare.changed')!;
     expect(changed.description).toBe('Kinfolk/Auntie updated, deleted, or requested changes to KinCare.');
     expect(changed.householdDescription).not.toBe(changed.description);
+  });
+  // #1381: household copy names the business from settings, and says "your Auntie" when unset.
+  it('names the business from settings in household copy, with no placeholder left behind', async () => {
+    h.overrideData = { businessName: 'Test Business' };
+    const result = await getNotificationCatalogHandler({ data: {}, auth: SIGNED_IN } as never);
+    const all = result.categories.flatMap((c) => c.keys);
+    const texts = [
+      ...all.map((k) => k.householdDescription),
+      ...all.map((k) => k.householdTitle),
+      ...result.categories.map((c) => c.description),
+    ];
+    expect(texts.join('\n')).not.toMatch(/\{[Bb]usiness|Tribe Tails/);
+    const newsletter = all.find((k) => k.key === 'newsletter.announcement')!;
+    expect(newsletter.householdDescription).toBe('News and announcements from Test Business, if you opt in.');
+    expect(all.find((k) => k.key === 'broadcast.message')!.householdTitle).toBe('Announcements from Test Business');
+    expect(result.categories.find((c) => c.id === 'messages')!.description).toBe(
+      'Messages and announcements from Test Business.',
+    );
+  });
+  it('says "your Auntie" in household copy when no business name is set', async () => {
+    h.overrideData = { businessName: '   ' };
+    const result = await getNotificationCatalogHandler({ data: {}, auth: SIGNED_IN } as never);
+    const all = result.categories.flatMap((c) => c.keys);
+    const newsletter = all.find((k) => k.key === 'newsletter.announcement')!;
+    expect(newsletter.householdDescription).toBe('News and announcements from your Auntie, if you opt in.');
+    const texts = [
+      ...all.map((k) => k.householdDescription),
+      ...all.map((k) => k.householdTitle),
+      ...result.categories.map((c) => c.description),
+    ];
+    expect(texts.join('\n')).not.toMatch(/\{[Bb]usiness|Tribe Tails/);
   });
   // Audience revamp 2026-07: alwaysEnabled keys are no longer hidden from the
   // kinfolk portal. They are surfaced with their REQUIRED channels locked and

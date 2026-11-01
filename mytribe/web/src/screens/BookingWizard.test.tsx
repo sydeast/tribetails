@@ -1200,7 +1200,7 @@ describe('BookingWizard, signal lost with the tab open', () => {
     renderWizard();
     expect(getMyKin).not.toHaveBeenCalled();
     expect(getServiceCatalog).not.toHaveBeenCalled();
-    expect(screen.getByText(/We can.t reach Tribe Tails/)).toBeInTheDocument();
+    expect(screen.getByText(/We can.t reach your Auntie/)).toBeInTheDocument();
     expect(screen.getByText(/the booking wizard has not loaded/)).toBeInTheDocument();
     // None of the wizard itself, and above all no way to submit a booking
     // against a roster and a catalog that were never read.

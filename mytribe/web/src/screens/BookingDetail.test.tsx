@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   getBookingPolicy: vi.fn<() => Promise<GetBookingPolicyResult>>(),
   getBusinessClosures: vi.fn<() => Promise<GetBusinessClosuresResult>>(),
   getMyVisits: vi.fn(),
+  getMyHome: vi.fn(),
   addBookingNote: vi.fn<(kinfolkId: string, batchId: string, visitId: string, body: string) => Promise<AddBookingNoteResult>>(),
   requestBookingCancellation: vi.fn<
     (kinfolkId: string, batchId: string, visitId: string, reason?: string) => Promise<RequestBookingCancellationResult>
@@ -38,6 +39,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../api/portal', () => ({
+  getMyHome: () => mocks.getMyHome(),
   getMyBookings: () => mocks.getMyBookings(),
   getMyVisits: (...args: unknown[]) => mocks.getMyVisits(...args),
 }));
@@ -137,6 +139,7 @@ const CLOCK_ONLY: GetBookingPolicyResult = {
 };
 const NO_CLOSURES: GetBusinessClosuresResult = { closures: [], weeklyHours: [], timeZone: 'America/Chicago' };
 beforeEach(() => {
+  mocks.getMyHome.mockResolvedValue({ businessName: '' });
   mocks.getBookingNotes.mockReset();
   mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [] });
   mocks.getBookingPolicy.mockReset();
@@ -425,6 +428,23 @@ describe('BookingDetail: request cancellation', () => {
     expect(screen.getByRole('button', { name: /Ask again/i })).toBeInTheDocument();
   });
 
+  it('#1381: names the business from settings in the declined answers, and falls back to "Your Auntie" when unset', async () => {
+    mocks.getMyHome.mockResolvedValue({ businessName: 'Test Business' });
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({
+        upcoming: [booking({ status: 'confirmed', cancelRequested: false, cancelRequestStatus: 'declined' })],
+      }),
+    );
+    const named = renderScreen();
+    await waitFor(() =>
+      expect(screen.getByTestId('cancel-declined')).toHaveTextContent('Test Business is keeping this visit on the books.'),
+    );
+    expect(screen.getByTestId('cancel-declined')).not.toHaveTextContent(/Tribe Tails/);
+    named.unmount();
+    mocks.getMyHome.mockResolvedValue({ businessName: '' });
+    renderScreen();
+    expect(await screen.findByTestId('cancel-declined')).toHaveTextContent('Your Auntie is keeping this visit on the books.');
+  });
   it('#438: says the visit is cancelled once the office accepted', async () => {
     mocks.getMyBookings.mockResolvedValue(
       bookingsResult({
@@ -523,7 +543,7 @@ describe('BookingDetail: reschedule request', () => {
     expect(await within(form).findByRole('button', { name: /previous month/i })).toBeInTheDocument();
     expect(form.querySelector('input[type="datetime-local"]')).toBeNull();
     // Nothing to send until a day is picked.
-    expect(within(form).getByRole('button', { name: /send this time to tribe tails/i })).toBeDisabled();
+    expect(within(form).getByRole('button', { name: /send this time to your auntie/i })).toBeDisabled();
   });
   it('shows a loading cue while the days and times load', async () => {
     mocks.getBusinessClosures.mockReturnValue(new Promise(() => {}));
@@ -549,7 +569,7 @@ describe('BookingDetail: reschedule request', () => {
     const day = await pickDay(user, form);
     await setTime(user, form, '1030');
     await user.type(within(form).getByPlaceholderText(/why the change/i), 'Flight moved');
-    await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    await user.click(within(form).getByRole('button', { name: /send this time to your auntie/i }));
     await waitFor(() =>
       expect(mocks.requestBookingReschedule).toHaveBeenCalledWith('fam1', 'b1', 'v1', chicagoMs(day, '10:30'), 'Flight moved', null),
     );
@@ -589,7 +609,7 @@ describe('BookingDetail: reschedule request', () => {
     await pickDay(user, form);
     await setTime(user, form, '0200');
     expect(await within(form).findByText(/we are open 09:00 to 17:00/i)).toBeInTheDocument();
-    expect(within(form).getByRole('button', { name: /send this time to tribe tails/i })).toBeDisabled();
+    expect(within(form).getByRole('button', { name: /send this time to your auntie/i })).toBeDisabled();
     expect(mocks.requestBookingReschedule).not.toHaveBeenCalled();
   });
   it('offers the business\'s time blocks when it books by block, and sends the block id', async () => {
@@ -611,7 +631,7 @@ describe('BookingDetail: reschedule request', () => {
     const day = await pickDay(user, form);
     expect(within(form).queryByLabelText(/^time$/i)).toBeNull();
     await user.selectOptions(await within(form).findByLabelText(/time block/i), 'afternoon');
-    await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    await user.click(within(form).getByRole('button', { name: /send this time to your auntie/i }));
     await waitFor(() =>
       expect(mocks.requestBookingReschedule).toHaveBeenCalledWith('fam1', 'b1', 'v1', chicagoMs(day, '12:00'), '', 'afternoon'),
     );
@@ -626,7 +646,7 @@ describe('BookingDetail: reschedule request', () => {
     await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
     const form = await screen.findByTestId('reschedule-form');
     await pickDay(user, form);
-    await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    await user.click(within(form).getByRole('button', { name: /send this time to your auntie/i }));
     expect(
       await screen.findByText(/only a requested or confirmed visit can ask for a new time/i),
     ).toBeInTheDocument();
@@ -649,7 +669,7 @@ describe('BookingDetail: reschedule request', () => {
     renderScreen();
     await screen.findByTestId('reschedule-pending');
     expect(screen.queryByRole('button', { name: /request cancellation/i })).toBeNull();
-    expect(screen.getByTestId('cancel-held').textContent).toMatch(/once Tribe Tails answers your new time/i);
+    expect(screen.getByTestId('cancel-held').textContent).toMatch(/once your Auntie answers your new time/i);
   });
   it('#1299: offers no new time while a cancellation is waiting', async () => {
     mocks.getMyBookings.mockResolvedValue(
@@ -761,7 +781,7 @@ describe('BookingDetail: #1281 the ask shows the moment it resolves', () => {
     await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
     const form = await screen.findByTestId('reschedule-form');
     await pickDay(user, form);
-    await user.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    await user.click(within(form).getByRole('button', { name: /send this time to your auntie/i }));
     expect(await screen.findByText(/New time requested/)).toBeInTheDocument();
     expect(screen.queryByTestId('reschedule-form')).not.toBeInTheDocument();
     expect(mocks.requestBookingReschedule).toHaveBeenCalledTimes(1);

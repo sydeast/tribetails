@@ -18,6 +18,7 @@ import { loadEmailFrame } from '../lib/emailFrameStore';
 import { SEED_CORPUS } from '../notifications/seedCorpus.generated';
 import { isAuntieClaim, isOwner, isOwnerClaim } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { businessTokens, loadBusinessName } from '../lib/businessName';
 
 /**
  * #905: password reset emails are sent by us, not by Firebase.
@@ -254,7 +255,12 @@ export async function processPasswordResetRequest(request: PasswordResetRequest)
     const frame = await loadEmailFrame('requestPasswordReset');
     await sendTemplatedEmail({
       to: user.email,
-      data: { link, email: user.email, displayName: user.displayName || user.email },
+      data: {
+        link,
+        email: user.email,
+        displayName: user.displayName || user.email,
+        ...businessTokens(await loadBusinessName('requestPasswordReset')),
+      },
       ...sendPartsFor(loaded.template, frame),
     });
   } catch (err) {

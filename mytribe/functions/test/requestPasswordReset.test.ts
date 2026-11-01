@@ -117,7 +117,14 @@ describe('sending', () => {
     expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
     const args = mocks.sendTemplatedEmail.mock.calls[0]![0];
     expect(args.to).toBe(KIN_EMAIL);
-    expect(args.data).toEqual({ link: LINK, email: KIN_EMAIL, displayName: 'Pat Doe' });
+    // #1381: the business merge fields ride along; unset reads "your Auntie".
+    expect(args.data).toEqual({
+      link: LINK,
+      email: KIN_EMAIL,
+      displayName: 'Pat Doe',
+      business: 'your Auntie',
+      Business: 'Your Auntie',
+    });
     expect(mocks.enqueueNotification).not.toHaveBeenCalled();
     // No notification doc is written, so the link is stored nowhere.
     expect(ctx.writes.some((w: { path: string }) => w.path.startsWith('notification'))).toBe(false);
@@ -171,7 +178,7 @@ describe('sending', () => {
     // exact text line, and the html frame carries the same href.
     await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
     const args = mocks.sendTemplatedEmail.mock.calls[0]![0];
-    expect(args.subjectTemplate).toBe('Reset your Tribe Tails password');
+    expect(args.subjectTemplate).toBe('Reset your password');
     expect(args.bodyTemplate).toContain('Reset Password: {{link}}');
     expect(args.htmlTemplate).toContain('{{link}}');
   });
@@ -195,6 +202,12 @@ describe('sending', () => {
     expect(args.htmlTemplate).toContain('<div class="footer">Stored footer line</div>');
   });
 
+  it('#1381: carries the business name from settings into the merge fields', async () => {
+    setup({ 'business_settings/business_settings': { businessName: 'Test Business' } });
+    await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
+    const args = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(args.data).toMatchObject({ business: 'Test Business', Business: 'Test Business' });
+  });
   it('a failed send is rethrown, so the trigger reports it, and writes no audit row', async () => {
     mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('smtp2go down'));
     await expect(processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET })).rejects.toThrow('smtp2go down');

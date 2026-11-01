@@ -27,6 +27,7 @@ import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { viewOfQuery } from '../lib/queryState';
 import { businessTime, dayKey, dayLabel } from '../lib/messageDays';
 import '../styles/messages.css';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Message Auntie: two-way household conversation with the auntie. Ported
@@ -514,9 +515,7 @@ export function Messages() {
           </div>
         </section>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

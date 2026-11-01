@@ -1,1 +1,1 @@
-Tribe Tails: we couldn't take the {{serviceType}} for {{kinName}}, {{bookingDates}}. {{note}}
+{{Business}}: we couldn't take the {{serviceType}} for {{kinName}}, {{bookingDates}}. {{note}}

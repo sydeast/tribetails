@@ -196,9 +196,26 @@ class RescheduleRequestSectionTest {
         setThemedContent { Screen(fake) }
         waitForIdle()
 
-        onNodeWithText("Tribe Tails could not take that time.", substring = true).assertExists()
+        onNodeWithText("Your Auntie could not take that time.", substring = true).assertExists()
     }
 
+    // #1381: the declined line and the send button name the business from settings.
+    @Test
+    fun declinedAskAndSendButton_nameTheBusinessFromSettings() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisit(fake, rescheduleStatus = "declined")
+        setThemedContent {
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.kinfolk.portal.components.LocalBusinessName provides "Test Business",
+            ) { Screen(fake) }
+        }
+        waitForIdle()
+        onNodeWithText("Test Business could not take that time.", substring = true).assertExists()
+        onNodeWithText("Reschedule visit").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Send this time to Test Business").assertExists()
+        onNodeWithText("Send this time to your Auntie").assertDoesNotExist()
+    }
     @Test
     fun form_refusesAnEmptyProposalBeforeItReachesTheServer() = runComposeUiTest {
         val fake = FakeFunctionsClient()
@@ -209,7 +226,7 @@ class RescheduleRequestSectionTest {
 
         onNodeWithText("Reschedule visit").performScrollTo().performClick()
         waitForIdle()
-        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        onNodeWithText("Send this time to your Auntie").performScrollTo().performClick()
         waitForIdle()
 
         onNodeWithText("Pick a date and time first.").assertExists()
@@ -238,7 +255,7 @@ class RescheduleRequestSectionTest {
         onNodeWithTag("rescheduleTime").performTextInput("13:00")
         onNodeWithTag("rescheduleReason").performTextInput("School run moved")
         waitForIdle()
-        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        onNodeWithText("Send this time to your Auntie").performScrollTo().performClick()
         waitForIdle()
 
         val sent = fake.calls.first { it.first == "requestBookingReschedule" }.second
@@ -249,7 +266,7 @@ class RescheduleRequestSectionTest {
         assertTrue(proposed != null && proposed > fixedNow, "proposed time should be ahead of now, was $proposed")
 
         onNodeWithText("New time requested", substring = true).assertExists()
-        onNodeWithText("Send this time to Tribe Tails").assertDoesNotExist()
+        onNodeWithText("Send this time to your Auntie").assertDoesNotExist()
     }
 
     @Test
@@ -258,7 +275,7 @@ class RescheduleRequestSectionTest {
         stubVisit(fake)
         fake.stubError(
             "requestBookingReschedule",
-            IllegalStateException("A new time is already waiting on Tribe Tails for this visit."),
+            IllegalStateException("A new time is already waiting on your Auntie for this visit."),
         )
 
         setThemedContent { Screen(fake) }
@@ -269,11 +286,11 @@ class RescheduleRequestSectionTest {
         onNodeWithText("20").performScrollTo().performClick()
         onNodeWithTag("rescheduleTime").performTextInput("13:00")
         waitForIdle()
-        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        onNodeWithText("Send this time to your Auntie").performScrollTo().performClick()
         waitForIdle()
 
-        onNodeWithText("A new time is already waiting on Tribe Tails for this visit.").assertExists()
-        onNodeWithText("Send this time to Tribe Tails").assertExists()
+        onNodeWithText("A new time is already waiting on your Auntie for this visit.").assertExists()
+        onNodeWithText("Send this time to your Auntie").assertExists()
     }
 
     @Test
@@ -289,7 +306,7 @@ class RescheduleRequestSectionTest {
         onNodeWithText("Never mind").performScrollTo().performClick()
         waitForIdle()
 
-        onNodeWithText("Send this time to Tribe Tails").assertDoesNotExist()
+        onNodeWithText("Send this time to your Auntie").assertDoesNotExist()
         onNodeWithText("Reschedule visit").assertExists()
     }
 
@@ -339,7 +356,7 @@ class RescheduleRequestSectionTest {
         onNodeWithText("20").performScrollTo().performClick()
         onNodeWithTag("rescheduleTime").performTextInput("02:00")
         waitForIdle()
-        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        onNodeWithText("Send this time to your Auntie").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("We are open 09:00 to 17:00", substring = true).assertExists()
         assertTrue(fake.calls.none { it.first == "requestBookingReschedule" })
@@ -359,7 +376,7 @@ class RescheduleRequestSectionTest {
         // The closed day did not select, so there is still no time to type.
         onNodeWithTag("rescheduleTime").assertDoesNotExist()
         onNodeWithText("Pick a day to see the times.").assertExists()
-        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        onNodeWithText("Send this time to your Auntie").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("Pick a date and time first.").assertExists()
         assertTrue(fake.calls.none { it.first == "requestBookingReschedule" })
@@ -386,7 +403,7 @@ class RescheduleRequestSectionTest {
         waitForIdle()
         onNodeWithText("Afternoon (12 PM to 5 PM)").performScrollTo().performClick()
         waitForIdle()
-        onNodeWithText("Send this time to Tribe Tails").performScrollTo().performClick()
+        onNodeWithText("Send this time to your Auntie").performScrollTo().performClick()
         waitForIdle()
         val sent = fake.calls.first { it.first == "requestBookingReschedule" }.second
         assertEquals("afternoon", sent?.get("timeBlockId")?.toString()?.trim('"'))

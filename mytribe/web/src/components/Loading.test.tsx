@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { render as rtlRender, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SLOW_WAIT_MS } from '../lib/slowWait';
 import { LoadingLine } from './Loading';
+// The slow-wait cue reads the business name from the query cache (#1381).
+function render(ui: ReactElement) {
+  const client = new QueryClient();
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 /**
  * The 2026-09-12 ruling at the portal's loading seam.
@@ -89,11 +96,26 @@ describe('LoadingLine', () => {
     expect(screen.getByRole('status')).toHaveAttribute('data-phase', 'waiting');
     act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS));
     expect(screen.getByRole('group', { name: 'your schedule is taking a while' })).toHaveTextContent(
-      'Asked again. Still waiting on Tribe Tails.',
+      'Asked again. Still waiting on your Auntie.',
     );
     expect(screen.getByRole('button', { name: 'Ask again' })).toBeTruthy();
   });
 
+  it('names the business from the myHome cache once it is warm (#1381)', () => {
+    const client = new QueryClient();
+    client.setQueryData(['myHome', undefined], { businessName: 'Test Business' });
+    rtlRender(
+      <QueryClientProvider client={client}>
+        <LoadingLine what="your schedule" retry={() => {}}>
+          Loading your schedule…
+        </LoadingLine>
+      </QueryClientProvider>,
+    );
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS));
+    expect(screen.getByRole('group', { name: 'your schedule is taking a while' })).toHaveTextContent(
+      'Test Business has not answered yet.',
+    );
+  });
   it('never leaves a wait with no way forward when there is no retry', () => {
     render(<LoadingLine what="the composer">Loading composer…</LoadingLine>);
     act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS));

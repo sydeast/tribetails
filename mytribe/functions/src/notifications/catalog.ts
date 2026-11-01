@@ -249,7 +249,7 @@ const CATALOG_LIST: NotificationDef[] = [
     },
     description: 'Tribe Tails is keeping a visit the household asked to cancel.',
     householdTitle: 'Your cancellation request was declined',
-    householdDescription: 'When Tribe Tails keeps a visit you asked to cancel.',
+    householdDescription: 'When {business} keeps a visit you asked to cancel.',
   },
   {
     // #533: the answer to a booking request the office turned down. NOT
@@ -275,7 +275,7 @@ const CATALOG_LIST: NotificationDef[] = [
     },
     description: 'Tribe Tails could not take a care request the household asked for.',
     householdTitle: 'Your care request was declined',
-    householdDescription: "When Tribe Tails can't take a visit you requested.",
+    householdDescription: "When {business} can't take a visit you requested.",
   },
   {
     // #399 item 2: the office hears when a kinfolk proposes a new time for a
@@ -790,8 +790,8 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'broadcast.message', sms: 'broadcast.message', push: 'broadcast.message' },
     description: 'One-off announcements the office sends to a group of households.',
-    householdTitle: 'Announcements from Tribe Tails',
-    householdDescription: 'Announcements Tribe Tails sends to many households at once.',
+    householdTitle: 'Announcements from {business}',
+    householdDescription: 'Announcements {business} sends to many households at once.',
   },
 
   // ─────────────────────────────────────────────────────────
@@ -1155,7 +1155,7 @@ const CATALOG_LIST: NotificationDef[] = [
     marketingCategory: 'newsletter',
     description: 'Newsletters & announcements.',
     householdTitle: 'News and announcements',
-    householdDescription: 'News and announcements from Tribe Tails, if you opt in.',
+    householdDescription: 'News and announcements from {business}, if you opt in.',
   },
   {
     key: 'survey.event',
@@ -1191,7 +1191,7 @@ const CATALOG_LIST: NotificationDef[] = [
     marketingCategory: 'marketing',
     description: 'General marketing opt-in (must include unsubscribe footer).',
     householdTitle: 'Offers and updates',
-    householdDescription: 'General updates and offers from Tribe Tails, if you opt in.',
+    householdDescription: 'General updates and offers from {business}, if you opt in.',
   },
 ];
 

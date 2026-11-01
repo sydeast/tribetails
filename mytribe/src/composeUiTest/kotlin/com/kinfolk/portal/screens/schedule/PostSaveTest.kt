@@ -128,7 +128,7 @@ class PostSaveTest {
     fun aFailedSubmit_keepsItsKey_soTheRetryNamesTheSameBooking() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         stubWizard(fake)
-        fake.stubError("requestBooking", IllegalStateException("Could not reach Tribe Tails."))
+        fake.stubError("requestBooking", IllegalStateException("Could not reach your Auntie."))
         fake.stub("getMyBookings", listWith("v-new", "Evening walk"))
         val completions = mutableListOf<BookingsResult?>()
         setThemedContent {
@@ -136,7 +136,7 @@ class PostSaveTest {
         }
         fillToReview()
         clickFooter("Create Booking")
-        onNodeWithText("Could not reach Tribe Tails.").assertExists()
+        onNodeWithText("Could not reach your Auntie.").assertExists()
 
         fake.stub("requestBooking", buildJsonObject { put("batchId", "batch-1") })
         clickFooter("Create Booking")

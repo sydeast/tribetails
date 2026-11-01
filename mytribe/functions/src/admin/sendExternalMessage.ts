@@ -1,5 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
+import { businessLabel, loadBusinessName } from '../lib/businessName';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -67,8 +68,10 @@ import {
 // Plain functional unsubscribe footer. No marketing copy (operator authors all
 // customer-facing words elsewhere); this is the legally-required functional line
 // only. Appended to every outbound email body.
-export const UNSUBSCRIBE_FOOTER =
-  '\n\n---\nTo stop receiving these messages, reply STOP or contact Tribe Tails to be removed from this list.';
+// #1381: names the business from settings, "your Auntie" when unset.
+export function unsubscribeFooter(businessName: string): string {
+  return `\n\n---\nTo stop receiving these messages, reply STOP or contact ${businessLabel(businessName)} to be removed from this list.`;
+}
 
 export const Args = z
   .object({
@@ -177,7 +180,7 @@ export async function sendExternalMessageHandler(req: CallableRequest<unknown>):
     if (args.channel === 'email') {
       // The unsubscribe footer is the marketing/bulk-list functional line. A
       // transactional 1:1 reply is not bulk outreach, so it must not carry it.
-      const emailBody = args.transactional ? args.body : `${args.body}${UNSUBSCRIBE_FOOTER}`;
+      const emailBody = args.transactional ? args.body : `${args.body}${unsubscribeFooter(await loadBusinessName('sendExternalMessage'))}`;
       providerMessageId = await sendTemplatedEmail({
         to: args.to.trim(),
         // subject is guaranteed present for email by validation.
