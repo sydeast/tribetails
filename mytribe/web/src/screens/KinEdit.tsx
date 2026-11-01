@@ -9,10 +9,11 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
 import { BreedField } from '../components/BreedField';
 import { PortalNav } from '../components/PortalNav';
+import { FixedField, SexField } from '../components/KinFactsFields';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
-import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
+import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm, type KinTextKey } from '../lib/kinEditForm';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { useIsMounted, usePortalMutation } from '../lib/mutationState';
 
@@ -127,14 +128,14 @@ export function KinEdit() {
   const nothingToSave = Object.keys(changes).length === 0;
   const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending;
 
-  const set = (key: keyof KinEditForm, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
+  const set = (key: KinTextKey, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
 
   const submit = () => {
     if (!canSave) return;
     save.mutate(changes);
   };
 
-  const textField = (key: keyof KinEditForm, label: string, opts?: { full?: boolean; area?: boolean; required?: boolean; type?: string }) => (
+  const textField = (key: KinTextKey, label: string, opts?: { full?: boolean; area?: boolean; required?: boolean; type?: string }) => (
     <div className={opts?.full ? 'field full' : 'field'}>
       <label htmlFor={`kin-${key}`}>
         {label}
@@ -204,6 +205,10 @@ export function KinEdit() {
                 }
               />
               {textField('ageYears', 'Age (years)', { type: 'text' })}
+              <SexField id="kin-sex" value={current.sex} onChange={(v) => set('sex', v)} error={errors.sex} />
+              {textField('weight', 'Weight')}
+              {textField('colorMarkings', 'Color / markings')}
+              <FixedField id="kin-spayedNeutered" checked={current.spayedNeutered} onChange={(v) => setForm((f) => (f ? { ...f, spayedNeutered: v } : f))} />
               {textField('photoUrl', 'Photo URL', { full: true, type: 'url' })}
             </div>
           </section>
@@ -222,6 +227,7 @@ export function KinEdit() {
               {textField('walkingInstructions', 'Walking Instructions', { full: true, area: true })}
               {textField('medications', 'Medications', { full: true, area: true })}
               {textField('allergies', 'Allergies', { full: true, area: true })}
+              {textField('vetInfo', 'Vet', { full: true, area: true })}
             </div>
           </section>
 
