@@ -21,26 +21,36 @@ export function resolveAll(): ResolveAllResult {
   const { globalFragments, namedConstants, declarations: raw, errors } = extractAll();
   const fleetDefault = resolveFleetDefault(globalFragments);
 
-  const declarations: ResolvedFunctionDeclaration[] = raw.map((decl) => {
-    const shape =
-      decl.generation === 'gen1'
-        ? // v1 has no `setGlobalOptions` inheritance at all; this codebase's one
-          // v1 trigger sets nothing, so what's "expected" is the gcf_gen1 SDK
-          // default (256MiB, 60s, us-central1) rather than anything from
-          // index.ts. cpu/minInstances/maxInstances are meaningless for gen1
-          // and never compared (see GEN1_COMPARABLE_FIELDS) — the placeholder
-          // values here (fleetDefault's) are never read.
-          { ...fleetDefault, memory: 256, timeoutSeconds: 60, region: 'us-central1' }
-        : resolveFunctionShape(fleetDefault, decl.fragments, namedConstants);
-    return {
+  const declarations: ResolvedFunctionDeclaration[] = [];
+  for (const decl of raw) {
+    let shape: RuntimeShape;
+    try {
+      shape =
+        decl.generation === 'gen1'
+          ? // v1 has no `setGlobalOptions` inheritance at all; this codebase's one
+            // v1 trigger sets nothing, so what's "expected" is the gcf_gen1 SDK
+            // default (256MiB, 60s, us-central1) rather than anything from
+            // index.ts. cpu/minInstances/maxInstances are meaningless for gen1
+            // and never compared (see GEN1_COMPARABLE_FIELDS) — the placeholder
+            // values here (fleetDefault's) are never read.
+            { ...fleetDefault, memory: 256, timeoutSeconds: 60, region: 'us-central1' }
+          : resolveFunctionShape(fleetDefault, decl.fragments, namedConstants);
+    } catch (err) {
+      // One function's unresolvable spread is that function's finding, named
+      // with its file and line, not a crash that hides the other 295 (#1388).
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push({ name: decl.name, message: `${decl.file}:${decl.line}: ${message}` });
+      continue;
+    }
+    declarations.push({
       name: decl.name,
       file: decl.file,
       line: decl.line,
       trigger: decl.trigger,
       generation: decl.generation,
       shape,
-    };
-  });
+    });
+  }
 
   return { fleetDefault, declarations, errors };
 }

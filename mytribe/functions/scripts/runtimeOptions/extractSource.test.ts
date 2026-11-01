@@ -1,13 +1,19 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import {
   ExtractionError,
+  extractAll,
   extractFunctionDeclaration,
   extractGlobalFragments,
   extractIndexExports,
   extractNamedConstants,
 } from './extractSource';
+import { resolveAll } from './resolveAll';
 
 function sourceFile(text: string, fileName = 'fixture.ts'): ts.SourceFile {
   return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -228,5 +234,136 @@ describe('extractFunctionDeclaration', () => {
     expect(() => extractFunctionDeclaration(src, 'missingExport', 'x.ts')).toThrow(
       /no "export const missingExport/,
     );
+  });
+});
+describe('file-local const spreads (#1388)', () => {
+  it('inlines a file-local `as const` spread in source order (the emailFrameSettings.ts shape)', () => {
+    const src = sourceFile(`
+      const OPTS = { region: 'us-central1', cors: TRIBETAILS_CORS } as const;
+      export const getEmailFrame = onCall({ ...OPTS, secrets: ['SENTRY_DSN'] }, handler);
+    `);
+    const decl = extractFunctionDeclaration(src, 'getEmailFrame', 'x.ts');
+    expect(decl.fragments).toEqual([{ kind: 'prop', key: 'region', value: 'us-central1' }]);
+  });
+  it('keeps JS override order around a local spread, and still defers named constants', () => {
+    const src = sourceFile(`
+      const BASE = { memory: '512MiB', ...FULL_CPU, region: 'us-east1' };
+      export const f = onCall({ region: 'us-central1', ...BASE, minInstances: 1 }, handler);
+    `);
+    const decl = extractFunctionDeclaration(src, 'f', 'x.ts');
+    expect(decl.fragments).toEqual([
+      { kind: 'prop', key: 'region', value: 'us-central1' },
+      { kind: 'prop', key: 'memory', value: '512MiB' },
+      { kind: 'spread', constant: 'FULL_CPU' },
+      { kind: 'prop', key: 'region', value: 'us-east1' },
+      { kind: 'prop', key: 'minInstances', value: 1 },
+    ]);
+  });
+  it('a file-local const shadows a same-named import, as JS scoping does', () => {
+    const src = sourceFile(`
+      import { FULL_CPU } from '../lib/runtimeOptions';
+      const FULL_CPU = { cpu: 2 };
+      export const f = onCall({ ...FULL_CPU }, handler);
+    `);
+    const decl = extractFunctionDeclaration(src, 'f', 'x.ts');
+    expect(decl.fragments).toEqual([{ kind: 'prop', key: 'cpu', value: 2 }]);
+  });
+  it('fails loudly, naming the file and construct, when the local const is not an object literal', () => {
+    const src = sourceFile(
+      `
+      const OPTS = buildOpts();
+      export const f = onCall({ ...OPTS }, handler);
+    `,
+      'src/admin/fixture.ts',
+    );
+    expect(() => extractFunctionDeclaration(src, 'f', 'src/admin/fixture.ts')).toThrow(
+      ExtractionError,
+    );
+    expect(() => extractFunctionDeclaration(src, 'f', 'src/admin/fixture.ts')).toThrow(
+      /src\/admin\/fixture\.ts:f: spreads file-local const "OPTS" \(src\/admin\/fixture\.ts:2\), whose initializer is not an object literal \(buildOpts\(\)\)/,
+    );
+  });
+  it('fails loudly on a local const that spreads itself', () => {
+    const src = sourceFile(`
+      const A = { ...B };
+      const B = { ...A };
+      export const f = onCall({ ...A }, handler);
+    `);
+    expect(() => extractFunctionDeclaration(src, 'f', 'x.ts')).toThrow(
+      /const "A" spreads itself \(A -> B -> A\)/,
+    );
+  });
+});
+describe('imported const spreads (#1388)', () => {
+  function fixtureDir(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), 'rtopts-spread-'));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    return dir;
+  }
+  it('follows a relative import to the exporting module and inlines its const (the HOURLY_TICK shape)', () => {
+    const dir = fixtureDir({
+      'schedule.ts': `
+        const BASE = { timeoutSeconds: 300 } as const;
+        export const TICK = { schedule: '0 * * * *', ...BASE } as const;
+      `,
+    });
+    const file = join(dir, 'cron.ts');
+    const src = sourceFile(
+      `
+      import { TICK as HOURLY } from './schedule';
+      export const cron = onSchedule({ ...HOURLY, memory: '512MiB' }, handler);
+    `,
+      file,
+    );
+    const decl = extractFunctionDeclaration(src, 'cron', 'cron.ts', file);
+    expect(decl.fragments).toEqual([
+      { kind: 'prop', key: 'timeoutSeconds', value: 300 },
+      { kind: 'prop', key: 'memory', value: '512MiB' },
+    ]);
+  });
+  it('fails loudly when the imported module has no such const', () => {
+    const dir = fixtureDir({ 'schedule.ts': `export function TICK() {}` });
+    const file = join(dir, 'cron.ts');
+    const src = sourceFile(
+      `
+      import { TICK } from './schedule';
+      export const cron = onSchedule({ ...TICK }, handler);
+    `,
+      file,
+    );
+    expect(() => extractFunctionDeclaration(src, 'cron', 'cron.ts', file)).toThrow(
+      /declares no top-level const "TICK"/,
+    );
+  });
+  it('fails loudly on a spread imported from a package', () => {
+    const src = sourceFile(`
+      import { OPTS } from 'some-package';
+      export const f = onCall({ ...OPTS }, handler);
+    `);
+    expect(() => extractFunctionDeclaration(src, 'f', 'x.ts')).toThrow(
+      /imported from package "some-package"/,
+    );
+  });
+});
+describe('extractAll / resolveAll over the real src/index.ts (#1388)', () => {
+  // The guard the issue asks for: the next unsupported options shape fails
+  // CI here instead of the operator's `runtime-options:diff` mid-release.
+  it('extracts every exported function with zero errors', () => {
+    const { declarations, errors } = extractAll();
+    expect(errors).toEqual([]);
+    expect(declarations.length).toBeGreaterThan(200);
+  });
+  it('resolves every declaration to a concrete shape with zero errors', () => {
+    const { declarations, errors } = resolveAll();
+    expect(errors).toEqual([]);
+    const emailFrame = declarations.filter((d) =>
+      ['getEmailFrame', 'saveEmailFrame', 'previewEmailFrame'].includes(d.name),
+    );
+    expect(emailFrame.map((d) => d.name).sort()).toEqual([
+      'getEmailFrame',
+      'previewEmailFrame',
+      'saveEmailFrame',
+    ]);
+    for (const d of emailFrame) expect(d.shape.region).toBe('us-central1');
   });
 });
