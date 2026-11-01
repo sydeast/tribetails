@@ -384,7 +384,7 @@ export function TribeProfile() {
 
   return (
     <>
-      <PortalNav active="tribe" displayName={displayName} />
+      <PortalNav active="tribe" />
 
       <div className="wrap">
         <header className="hero-greet">

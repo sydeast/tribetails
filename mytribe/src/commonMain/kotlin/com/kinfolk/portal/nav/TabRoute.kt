@@ -131,3 +131,18 @@ fun isShellChromeDestination(isOn: (KClass<*>) -> Boolean): Boolean =
  */
 fun avatarInitial(displayName: String?): String =
     displayName?.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "T"
+/**
+ * The name the header avatar is drawn from (#1290): the person's own saved
+ * display name, else the address they sign in with, else the household's name.
+ * Older accounts were seeded with displayName = email, which is not a name.
+ * The web portal's `lib/identity.ts` gives the same answer.
+ */
+fun resolveShellPersonName(displayName: String?, email: String?, householdName: String): String {
+    val mail = email?.trim().orEmpty()
+    val saved = displayName?.trim().orEmpty()
+    return when {
+        saved.isNotEmpty() && !saved.equals(mail, ignoreCase = true) -> saved
+        mail.isNotEmpty() -> mail
+        else -> householdName
+    }
+}

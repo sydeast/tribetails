@@ -67,6 +67,8 @@ fun AccountSettingsScreen(
      * card is not drawn and the card on file is never asked for.
      */
     billingAccess: Boolean = true,
+    /** Fires with the account the server returned after a save, so the header avatar can follow a renamed person (#1290). */
+    onAccountSaved: (Account) -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -494,6 +496,7 @@ fun AccountSettingsScreen(
                         // silent write failure surfaces instead of a false "Saved."
                         val fresh = portalApi.getMyAccount()
                         loaded = fresh
+                        onAccountSaved(fresh)
                         val freshName = fresh.displayName?.takeIf { it != fresh.email }.orEmpty()
                         displayName = freshName
                         phone = fresh.phone.orEmpty()

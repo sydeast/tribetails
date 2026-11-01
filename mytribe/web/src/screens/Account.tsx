@@ -29,6 +29,7 @@ import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { billingAccessOf } from '../lib/billingAccess';
+import { resolveIdentity } from '../lib/identity';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -306,7 +307,9 @@ export function Account() {
   // account, not theirs: the profile becomes a read-only view of that household.
   const readOnly = data.impersonated;
   const householdName = home.data?.displayName || data.displayName || 'this tribe';
-  const initial = (data.displayName || data.email || householdName || 'M').charAt(0).toUpperCase();
+  // The same answer the header avatar gives (lib/identity.ts), so the photo
+  // placeholder here cannot disagree with it (#1290).
+  const { initial } = resolveIdentity({ account: data, signInEmail: null, householdName });
   const roster = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, 4);
   const businessName = home.data?.businessName || 'Tribe Tails Pet Care';
   const nameValid = displayName.trim().length > 0;
@@ -327,7 +330,7 @@ export function Account() {
 
   return (
     <>
-      <PortalNav active="account" displayName={(readOnly ? householdName : data.displayName) ?? ''} />
+      <PortalNav active="account" />
 
       <div className="wrap acct">
         <header className="hero-greet">
