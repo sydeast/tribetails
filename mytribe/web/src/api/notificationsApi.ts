@@ -25,6 +25,11 @@ export interface NotificationKeyDto {
    * and the screen then falls back to `description` instead of breaking.
    */
   householdDescription?: string;
+  /**
+   * The title addressed to the household (#1372), OPTIONAL for the same deploy
+   * skew reason; `keyTitle` falls back to `title` when an older callable omits it.
+   */
+  householdTitle?: string;
   allowedChannels: Channel[];
   required: Channel[];
   /** Channels the operator (or the catalog's `required`) decides; render read-only. Already computed server-side. */
@@ -196,17 +201,21 @@ export function categoryMasterState(cat: CategoryDto, byCategory: Partial<Record
 export function marketingMasterState(cat: CategoryDto, marketingOptIn: Partial<Record<MarketingCategory, boolean>> | undefined): MasterState {
   return stateOf(categoryMarketingCategories(cat).map((mc) => marketingOptIn?.[mc] === true));
 }
+/** The title the household reads (#1372): `householdTitle`, else the operator's `title`. */
+export function keyTitle(key: Pick<NotificationKeyDto, 'title' | 'householdTitle'>): string {
+  return (key.householdTitle?.trim() || key.title).trim();
+}
 /**
  * The line under a key's title. The catalog's description is sometimes just
  * the title with a full stop ("KinCare booking confirmed." under "KinCare
  * booking confirmed"), which is noise, so that case returns an empty string.
  */
-export function keyDescription(key: Pick<NotificationKeyDto, 'title' | 'description' | 'householdDescription'>): string {
+export function keyDescription(key: Pick<NotificationKeyDto, 'title' | 'householdTitle' | 'description' | 'householdDescription'>): string {
   const norm = (t: string) => t.trim().replace(/[\s.!:;,]+$/u, '').toLowerCase();
   // #1359: the household's wording wins; `description` is the operator's text
   // and is only the fallback for a callable that predates the field.
   const description = (key.householdDescription?.trim() || key.description).trim();
-  return norm(description) === norm(key.title) ? '' : description;
+  return norm(description) === norm(keyTitle(key)) ? '' : description;
 }
 /**
  * Distinct marketingCategory values a category's keys reference. Only the

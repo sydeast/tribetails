@@ -469,6 +469,7 @@ describe('household-facing copy (#1317)', () => {
               title: 'KinCare updated or change requested',
               description: 'Kinfolk/Auntie updated, deleted, or requested changes to KinCare.',
               householdDescription: 'When a KinCare visit on your schedule is changed.',
+              householdTitle: 'A visit on your schedule changed',
               allowedChannels: ['email'],
             }),
             key({ key: 'old', title: 'Old callable', description: 'Sent by an older server.', allowedChannels: ['email'] }),
@@ -482,6 +483,9 @@ describe('household-facing copy (#1317)', () => {
     await waitFor(() => expect(screen.getByText('Old callable')).toBeTruthy());
     expect(screen.getByText('When a KinCare visit on your schedule is changed.')).toBeTruthy();
     expect(screen.queryByText(/Kinfolk\/Auntie updated/)).toBeNull();
+    // #1372: the title is the household's wording too; the aria-label follows it.
+    expect(screen.getByText('A visit on your schedule changed')).toBeTruthy();
+    expect(screen.queryByText('KinCare updated or change requested')).toBeNull();
     // A callable that predates the field still renders; the screen falls back.
     expect(screen.getByText('Sent by an older server.')).toBeTruthy();
   });

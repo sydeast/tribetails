@@ -39,6 +39,9 @@ data class NotificationKey(
     // a callable that predates the field, and for the static fallback below,
     // whose `description` is already written to the household.
     val householdDescription: String? = null,
+    // The title addressed to the household ("You accepted a quote"). Null from a
+    // callable that predates the field (#1372); `title` is then the fallback.
+    val householdTitle: String? = null,
     val allowedChannels: Set<NotificationChannel>,
     val required: Set<NotificationChannel> = emptySet(),
     // Run-4 #13: channels the business admin LOCKED. Shown but read-only; the kinfolk
@@ -85,19 +88,19 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         keys = listOf(
             NotificationKey(
                 key = "kincare.auntie.on_my_way",
-                title = "Auntie On Her Way",
+                title = "Your Auntie is on the way",
                 description = "When your Auntie is en route to your KinCare visit.",
                 allowedChannels = ALL,
             ),
             NotificationKey(
                 key = "kincare.auntie.arrived",
-                title = "Auntie Arrived",
+                title = "Your Auntie has arrived",
                 description = "When your Auntie checks in at the start of a visit.",
                 allowedChannels = ALL,
             ),
             NotificationKey(
                 key = "kincare.auntie.departed",
-                title = "Auntie Departed",
+                title = "Your Auntie has left",
                 description = "When your Auntie wraps up and leaves.",
                 allowedChannels = ALL,
             ),
@@ -106,7 +109,7 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
             // below) on 2026-07-24 and is now a server-side alias.
             NotificationKey(
                 key = "kincare.unavailable",
-                title = "Visit Marked Unavailable",
+                title = "A visit can't go ahead",
                 description = "When a KinCare visit can't go ahead, for example when your Auntie can't get into your home.",
                 allowedChannels = ALL,
             ),
@@ -119,19 +122,19 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         keys = listOf(
             NotificationKey(
                 key = "kintale.published",
-                title = "KinTale (visit report) published",
+                title = "Your KinTale is ready",
                 description = "When your Auntie publishes the written report from a KinCare visit.",
                 allowedChannels = ALL,
             ),
             NotificationKey(
                 key = "kintale.comment.added",
-                title = "New comment on a KinTale (comment box)",
+                title = "New comment on your KinTale",
                 description = "When someone comments on one of your KinTales. New comments arrive together in one message.",
                 allowedChannels = EMAIL_PUSH,
             ),
             NotificationKey(
                 key = "kintale.note.added",
-                title = "Auntie added to a KinTale after sending",
+                title = "Your Auntie added to a KinTale",
                 description = "When your Auntie adds more words or photos to a KinTale you already received.",
                 allowedChannels = EMAIL_PUSH,
             ),
@@ -144,19 +147,19 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         keys = listOf(
             NotificationKey(
                 key = "invoice.updated",
-                title = "Invoice Updated",
+                title = "Your invoice or quote changed",
                 description = "When an invoice or quote is updated.",
                 allowedChannels = EMAIL_PUSH,
             ),
             NotificationKey(
                 key = "invoice.reminder",
-                title = "Invoice Reminder",
+                title = "Reminder to pay your invoice",
                 description = "Friendly reminder ahead of an invoice due date.",
                 allowedChannels = ALL,
             ),
             NotificationKey(
                 key = "invoice.payment.applied",
-                title = "Payment Applied",
+                title = "Payment applied to your invoice",
                 description = "When a payment or credit is applied to an invoice.",
                 allowedChannels = EMAIL_PUSH,
             ),
@@ -169,7 +172,7 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         keys = listOf(
             NotificationKey(
                 key = "kincare.upcoming.reminder",
-                title = "Upcoming KinCare Reminder",
+                title = "Reminder before your visit",
                 description = "A reminder before each KinCare visit on your schedule.",
                 allowedChannels = ALL,
             ),
@@ -182,13 +185,13 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         keys = listOf(
             NotificationKey(
                 key = "pets.updated",
-                title = "Pet Records Updated",
+                title = "Your pets were updated",
                 description = "When a pet on your household is added or changed.",
                 allowedChannels = EMAIL_PUSH,
             ),
             NotificationKey(
                 key = "profile.updated",
-                title = "Profile Updated",
+                title = "Your profile was updated",
                 description = "When your household profile is changed.",
                 allowedChannels = EMAIL_PUSH,
             ),
@@ -201,21 +204,21 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         keys = listOf(
             NotificationKey(
                 key = "newsletter.announcement",
-                title = "Newsletters & Announcements",
+                title = "News and announcements",
                 description = "News and announcements from Tribe Tails, if you opt in.",
                 allowedChannels = EMAIL_PUSH,
                 marketingCategory = MarketingCategory.NEWSLETTER,
             ),
             NotificationKey(
                 key = "survey.event",
-                title = "Surveys & Events",
+                title = "Surveys and community events",
                 description = "Surveys and community event invitations, if you opt in.",
                 allowedChannels = EMAIL_PUSH,
                 marketingCategory = MarketingCategory.SURVEY,
             ),
             NotificationKey(
                 key = "marketing.optin",
-                title = "Marketing Promotions",
+                title = "Offers and updates",
                 description = "General updates and offers from Tribe Tails, if you opt in.",
                 allowedChannels = EMAIL_ONLY,
                 marketingCategory = MarketingCategory.MARKETING,

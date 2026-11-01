@@ -33,6 +33,23 @@ describe('household-visible notification copy', () => {
         expect(text).not.toMatch(OPERATOR_VOICE);
       },
     );
+    // #1372: the title is household copy too. Same voice rules, and a title that
+    // is just the operator's `label` must be a deliberate choice, not an omission.
+    it.each(kinfolkDefs.map((d) => [d.key, d.householdTitle]))(
+      '%s has a household title in the household\'s voice',
+      (_key, title) => {
+        expect(typeof title).toBe('string');
+        const text = String(title).trim();
+        expect(text.length).toBeGreaterThan(5);
+        expect(text).not.toMatch(VENDOR_OR_PLUMBING);
+        expect(text).not.toMatch(OPERATOR_VOICE);
+        expect(text).not.toMatch(/\bthe office\b|\bbusiness\b/i);
+      },
+    );
+    it('leaves the operator label alone for the admin matrix', () => {
+      expect(NOTIFICATION_CATALOG['quote.accepted'].label).toBe('Kinfolk accepted a quote');
+      expect(NOTIFICATION_CATALOG['quote.accepted'].householdTitle).toBe('You accepted a quote');
+    });
     it('leaves the operator text alone for the admin matrix', () => {
       expect(NOTIFICATION_CATALOG['kincare.changed'].description).toBe(
         'Kinfolk/Auntie updated, deleted, or requested changes to KinCare.',
