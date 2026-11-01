@@ -28,6 +28,7 @@ import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { billingAccessOf } from '../lib/billingAccess';
 import { resolveIdentity } from '../lib/identity';
 import { formatPhone, phoneProblem } from '../lib/phone';
@@ -182,7 +183,11 @@ export function Account() {
     onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim().toLowerCase()}.`, tone: 'ok' }),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
-      setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
+      // #1277: a missing backend setting is the operator's to fix; never show its name.
+      const text = isConfigGapError(err)
+        ? INVITES_UNAVAILABLE_MESSAGE
+        : `Invite failed: ${err instanceof Error ? err.message : 'try again'}`;
+      setInviteStatus({ text, tone: 'err' });
     },
   }, { policy: 'hold', what: 'this invite' });
 
