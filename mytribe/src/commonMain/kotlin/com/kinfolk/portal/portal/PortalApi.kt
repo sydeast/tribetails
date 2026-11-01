@@ -951,19 +951,33 @@ class PortalApi(private val fns: FunctionsClient) {
         )
     }
 
+    /**
+     * A null argument is omitted (leave the stored value alone). #1336: a key in
+     * [clearFields] (`phone`, `photoUrl`, `backupEmail`, `backupPhone`) is sent
+     * as JSON `null`, which the callable stores as a clear. `displayName` cannot
+     * be cleared (the server requires at least one character) and is never in
+     * the set. [accountChanges] builds both from the loaded account.
+     */
     suspend fun saveMyAccount(
         displayName: String? = null,
         phone: String? = null,
         photoUrl: String? = null,
         backupEmail: String? = null,
         backupPhone: String? = null,
+        clearFields: Set<String> = emptySet(),
     ) {
         fns.call("saveMyAccount", buildJsonObject {
+            fun opt(key: String, value: String?) {
+                when {
+                    value != null -> put(key, value)
+                    key in clearFields && key in NULL_CLEARABLE_ACCOUNT_FIELDS -> put(key, JsonNull)
+                }
+            }
             displayName?.let { put("displayName", it) }
-            phone?.let { put("phone", it) }
-            photoUrl?.let { put("photoUrl", it) }
-            backupEmail?.let { put("backupEmail", it) }
-            backupPhone?.let { put("backupPhone", it) }
+            opt("phone", phone)
+            opt("photoUrl", photoUrl)
+            opt("backupEmail", backupEmail)
+            opt("backupPhone", backupPhone)
         })
     }
 
@@ -1120,18 +1134,29 @@ class PortalApi(private val fns: FunctionsClient) {
         return confirmKinPhotoUpload(kinId = kinId, secureUrl = secureUrl, kinfolkId = kinfolkId)
     }
 
+    /**
+     * #1336: a null property is omitted (leave the stored value alone); a key
+     * in [KinPayload.clearFields] is sent as JSON `null`, which `updateKin`
+     * stores as a clear. A value wins over a clear for the same key.
+     */
     private fun kinPayloadToJson(p: KinPayload): JsonObject = buildJsonObject {
+        fun opt(key: String, value: JsonElement?) {
+            when {
+                value != null -> put(key, value)
+                key in p.clearFields && key in NULL_CLEARABLE_KIN_FIELDS -> put(key, JsonNull)
+            }
+        }
         put("name", p.name)
-        p.species?.let { put("species", it) }
-        p.breed?.let { put("breed", it) }
-        p.ageYears?.let { put("ageYears", it) }
-        p.photoUrl?.let { put("photoUrl", it) }
-        p.feedingInstructions?.let { put("feedingInstructions", it) }
-        p.walkingInstructions?.let { put("walkingInstructions", it) }
-        p.medications?.let { put("medications", it) }
-        p.allergies?.let { put("allergies", it) }
-        p.emergencyNotes?.let { put("emergencyNotes", it) }
-        p.sitterNotes?.let { put("sitterNotes", it) }
+        opt("species", p.species?.let(::JsonPrimitive))
+        opt("breed", p.breed?.let(::JsonPrimitive))
+        opt("ageYears", p.ageYears?.let(::JsonPrimitive))
+        opt("photoUrl", p.photoUrl?.let(::JsonPrimitive))
+        opt("feedingInstructions", p.feedingInstructions?.let(::JsonPrimitive))
+        opt("walkingInstructions", p.walkingInstructions?.let(::JsonPrimitive))
+        opt("medications", p.medications?.let(::JsonPrimitive))
+        opt("allergies", p.allergies?.let(::JsonPrimitive))
+        opt("emergencyNotes", p.emergencyNotes?.let(::JsonPrimitive))
+        opt("sitterNotes", p.sitterNotes?.let(::JsonPrimitive))
         p.legacyKinId?.let { put("legacyKinId", it) }
         p.sex?.let { put("sex", it) }
         p.weight?.let { put("weight", it) }

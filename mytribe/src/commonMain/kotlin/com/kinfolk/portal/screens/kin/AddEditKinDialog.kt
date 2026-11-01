@@ -68,7 +68,7 @@ fun AddEditKinDialog(
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var species by remember { mutableStateOf(initial?.species.orEmpty()) }
     var breed by remember { mutableStateOf(initial?.breed.orEmpty()) }
-    var ageText by remember { mutableStateOf(initial?.ageYears?.toInt()?.toString().orEmpty()) }
+    var ageText by remember { mutableStateOf(ageSeedText(initial?.ageYears)) }
     var feed by remember { mutableStateOf(initial?.feedingInstructions.orEmpty()) }
     var walk by remember { mutableStateOf(initial?.walkingInstructions.orEmpty()) }
     var meds by remember { mutableStateOf(initial?.medications.orEmpty()) }
@@ -249,34 +249,36 @@ fun AddEditKinDialog(
         confirmButton = {
             val submit = {
                     // Typed save: read schema values when the schema drives the form,
-                    // otherwise the static field state. Maps onto the same KinPayload.
+                    // otherwise the static field state. #1336: both are diffed against
+                    // the loaded Kin (kinCareFieldsPayload). A key the schema map lacks
+                    // falls back to the static field, which still holds the seed.
                     val payload = if (schema != null) {
-                        KinPayload(
-                            name = name.trim(),
-                            species = kinValues["species"].orEmpty().trim().ifBlank { null },
-                            breed = kinValues["breed"].orEmpty().trim().ifBlank { null },
-                            ageYears = kinValues["ageYears"].orEmpty().toDoubleOrNull(),
-                            feedingInstructions = kinValues["feedingInstructions"].orEmpty().trim().ifBlank { null },
-                            walkingInstructions = kinValues["walkingInstructions"].orEmpty().trim().ifBlank { null },
-                            medications = kinValues["medications"].orEmpty().trim().ifBlank { null },
-                            allergies = kinValues["allergies"].orEmpty().trim().ifBlank { null },
-                            emergencyNotes = kinValues["emergencyNotes"].orEmpty().trim().ifBlank { null },
-                            sitterNotes = kinValues["sitterNotes"].orEmpty().trim().ifBlank { null },
-                            legacyKinId = initial?.id?.takeIf { it.matches(Regex("\\d+")) },
+                        kinCareFieldsPayload(
+                            initial = initial,
+                            name = name,
+                            species = kinValues["species"] ?: species,
+                            breed = kinValues["breed"] ?: breed,
+                            ageText = kinValues["ageYears"] ?: ageText,
+                            feed = kinValues["feedingInstructions"] ?: feed,
+                            walk = kinValues["walkingInstructions"] ?: walk,
+                            meds = kinValues["medications"] ?: meds,
+                            allergies = kinValues["allergies"] ?: allergies,
+                            emergency = kinValues["emergencyNotes"] ?: emergency,
+                            sitter = kinValues["sitterNotes"] ?: sitter,
                         )
                     } else {
-                        KinPayload(
-                            name = name.trim(),
-                            species = species.trim().ifBlank { null },
-                            breed = breed.trim().ifBlank { null },
-                            ageYears = ageText.toIntOrNull()?.toDouble(),
-                            feedingInstructions = feed.trim().ifBlank { null },
-                            walkingInstructions = walk.trim().ifBlank { null },
-                            medications = meds.trim().ifBlank { null },
-                            allergies = allergies.trim().ifBlank { null },
-                            emergencyNotes = emergency.trim().ifBlank { null },
-                            sitterNotes = sitter.trim().ifBlank { null },
-                            legacyKinId = initial?.id?.takeIf { it.matches(Regex("\\d+")) },
+                        kinCareFieldsPayload(
+                            initial = initial,
+                            name = name,
+                            species = species,
+                            breed = breed,
+                            ageText = ageText,
+                            feed = feed,
+                            walk = walk,
+                            meds = meds,
+                            allergies = allergies,
+                            emergency = emergency,
+                            sitter = sitter,
                         )
                     }
                     val facts = sharedFactsPayload(
@@ -314,6 +316,66 @@ fun AddEditKinDialog(
 }
 
 private val SEX_OPTIONS = listOf("Male", "Female", "Unknown")
+
+/** The age the dialog shows for a stored age (whole years), and diffs against. */
+internal fun ageSeedText(ageYears: Double?): String = ageYears?.toInt()?.toString().orEmpty()
+
+/**
+ * #1336. The name and the parent-owned fields, diffed against what the dialog
+ * seeded from [initial]: an untouched field is left null (not sent), a changed
+ * one carries its trimmed value, and one the household emptied is named in
+ * [KinPayload.clearFields] so it goes as JSON `null` and clears on the server.
+ * Before this every field was rebuilt from form state and a blank became a
+ * null that was never sent, so a cleared medication came back on reload.
+ *
+ * [initial] null (Add) diffs against blanks: only filled fields are sent.
+ * An age that does not parse is left alone rather than cleared. The name is
+ * always sent (the payload requires it).
+ */
+internal fun kinCareFieldsPayload(
+    initial: com.kinfolk.portal.portal.Kin?,
+    name: String,
+    species: String,
+    breed: String,
+    ageText: String,
+    feed: String,
+    walk: String,
+    meds: String,
+    allergies: String,
+    emergency: String,
+    sitter: String,
+): KinPayload {
+    val clears = mutableSetOf<String>()
+    fun text(key: String, now: String, before: String?): String? {
+        val next = now.trim()
+        if (next == before.orEmpty().trim()) return null
+        if (next.isEmpty()) {
+            clears += key
+            return null
+        }
+        return next
+    }
+    val ageNow = ageText.trim()
+    val ageYears: Double? = when {
+        ageNow == ageSeedText(initial?.ageYears) -> null
+        ageNow.isEmpty() -> { clears += "ageYears"; null }
+        else -> ageNow.toDoubleOrNull()
+    }
+    return KinPayload(
+        name = name.trim(),
+        species = text("species", species, initial?.species),
+        breed = text("breed", breed, initial?.breed),
+        ageYears = ageYears,
+        feedingInstructions = text("feedingInstructions", feed, initial?.feedingInstructions),
+        walkingInstructions = text("walkingInstructions", walk, initial?.walkingInstructions),
+        medications = text("medications", meds, initial?.medications),
+        allergies = text("allergies", allergies, initial?.allergies),
+        emergencyNotes = text("emergencyNotes", emergency, initial?.emergencyNotes),
+        sitterNotes = text("sitterNotes", sitter, initial?.sitterNotes),
+        legacyKinId = initial?.id?.takeIf { it.matches(Regex("\\d+")) },
+        clearFields = clears,
+    )
+}
 
 /** What the dialog sends for the five shared facts: null = leave alone, "" = clear. */
 internal data class SharedFacts(
