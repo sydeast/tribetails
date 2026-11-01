@@ -70,9 +70,12 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.attempt
 import com.kinfolk.portal.util.openExternalUrl
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.kinfolk.portal.util.formatPhone
@@ -132,9 +135,17 @@ fun TribeScreen(
     // Save Changes below never sends contacts.
     var emergencyContactsDirty by remember { mutableStateOf(false) }
 
-    LaunchedEffect(kinfolkId) {
+    // #1282: the four reads start together and are applied in the old order.
+    // They used to be awaited one after the other, and none of the four
+    // callables carries minInstances, so a first open paid up to four cold
+    // starts back to back. The seeding below still reads the profile first.
+    LaunchedEffect(kinfolkId) { coroutineScope {
+        val profileFetch = async { attempt { portalApi.getMyTribeProfile(kinfolkId) } }
+        val profileSchemaFetch = async { attempt { portalApi.getFormSchema("tribeProfile") } }
+        val vetClinicsFetch = async { attempt { portalApi.getVetClinics() } }
+        val homeSchemaFetch = async { attempt { portalApi.getFormSchema("homeAccess") } }
         try {
-            val r = portalApi.getMyTribeProfile(kinfolkId)
+            val r = profileFetch.await().getOrThrow()
             loaded = r
             displayName = r.profile.displayName
             profileFields = r.profile.customFields
@@ -154,7 +165,7 @@ fun TribeScreen(
         }
         // Best-effort schema loads — fall back silently to static UI if missing.
         try {
-            val ps = portalApi.getFormSchema("tribeProfile")
+            val ps = profileSchemaFetch.await().getOrThrow()
             profileSchema = ps
             // Seed values from existing customFields + displayName.
             val seeded = mutableMapOf<String, String>()
@@ -167,7 +178,7 @@ fun TribeScreen(
         // Load shared vet clinic catalog (best-effort) + seed current values
         // from existing customFields if previously set.
         try {
-            vetClinics = portalApi.getVetClinics()
+            vetClinics = vetClinicsFetch.await().getOrThrow()
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) { /* catalog unreachable — fall back to manual entry */ }
@@ -177,7 +188,7 @@ fun TribeScreen(
         vetAddress = seededVet[VET_CLINIC_ADDRESS_KEY].orEmpty()
 
         try {
-            val hs = portalApi.getFormSchema("homeAccess")
+            val hs = homeSchemaFetch.await().getOrThrow()
             homeSchema = hs
             val seeded = mutableMapOf<String, String>()
             seeded["gateCode"] = gateCode
@@ -188,7 +199,7 @@ fun TribeScreen(
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) { /* same fallback */ }
-    }
+    } }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = isWideShell(maxWidth.value)

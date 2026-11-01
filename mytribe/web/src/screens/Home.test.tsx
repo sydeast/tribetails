@@ -165,6 +165,24 @@ describe('Home, a visit whose start time the Auntie sets (#1098)', () => {
     expect(screen.queryByText(/Time to be confirmed|Invalid Date|12:00 AM/)).toBeNull();
   });
 });
+describe('Home, first paint is one round trip deep (#1282)', () => {
+  it('starts bookings, KinTales and kin while getMyHome is still in flight', async () => {
+    mocks.getMyHome.mockReturnValue(new Promise(() => {}));
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({ tales: [] });
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    await vi.waitFor(() => expect(mocks.getMyKin).toHaveBeenCalledWith('fam1'));
+    expect(mocks.getMyHome).toHaveBeenCalledTimes(1);
+    expect(mocks.getMyBookings).toHaveBeenCalledWith('fam1');
+    expect(mocks.getMyKinTales).toHaveBeenCalledWith('fam1', { limit: 3 });
+  });
+});
 
 describe('Home, Recent KinTales cards open the tale (#1329)', () => {
   it('each card is a link to /kintales carrying that tale id', async () => {
