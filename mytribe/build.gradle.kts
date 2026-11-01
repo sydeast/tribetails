@@ -219,6 +219,13 @@ kotlin {
             // when callers pass Map<String, Any?> payloads. The native call()
             // accepts HashMap and returns HashMap, no serializer layer.
             implementation("com.google.firebase:firebase-functions:22.1.1")
+            // #1282: native Firestore for document reads, for the same reason
+            // (gitlive 2.x decodes a document through a serializer, and there is
+            // none for Map<String, Any?>). Already on the classpath through
+            // gitlive's firestore-android; named here so
+            // NativeAndroidFirestoreClient does not lean on a transitive dep.
+            // Version comes from the BOM above.
+            implementation("com.google.firebase:firebase-firestore")
             // No App Check dependency (R3 ruling, 2026-09-27,
             // mytribe/docs/O3_APP_CHECK_RULING_2026-07-13.md), superseding O-3's
             // D1. This app is sideloaded and will never be in the Play Console,

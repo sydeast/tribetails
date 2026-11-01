@@ -43,7 +43,9 @@ const COLLECTION = 'kin_care_reports';
  * `sessionDirectReads.test.ts` on purpose: if a file is added there and not
  * here, one of the two guards is out of date.
  */
-const FIRESTORE_IMPORTERS = ['lib/breadcrumbs.ts', 'lib/firebase.ts', 'lib/messagesListener.ts'];
+// #1282: `kinDirectRead.ts` reads `families/{fid}/kin`, which the rules grant
+// to any active member of the household (`activeMember(fid) || isStaff()`).
+const FIRESTORE_IMPORTERS = ['lib/breadcrumbs.ts', 'lib/firebase.ts', 'lib/kinDirectRead.ts', 'lib/messagesListener.ts'];
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -96,7 +98,7 @@ describe('the portal reads KinTales through getMyKinTales, never the report docu
     ).toEqual([]);
   });
 
-  it('touches Firestore from three files and no others', () => {
+  it('touches Firestore from four files and no others', () => {
     const importers = sourceFiles(SRC)
       .filter((f) => /from '(firebase\/firestore|firebase-admin\/firestore)'/.test(readFileSync(f, 'utf8')))
       .map(rel)

@@ -1,5 +1,6 @@
 package com.kinfolk.portal.portal
 
+import com.kinfolk.portal.firebase.FirestoreClient
 import com.kinfolk.portal.firebase.FunctionsClient
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.async
@@ -23,7 +24,15 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
-class PortalApi(private val fns: FunctionsClient) {
+/**
+ * [firestore] is optional so tests and callers that only exercise callables
+ * keep constructing `PortalApi(fns)`. When present, the hot reads that the
+ * rules let a household make directly go there first (#1282).
+ */
+class PortalApi(
+    private val fns: FunctionsClient,
+    private val firestore: FirestoreClient? = null,
+) {
 
     // -- Access (operator-aware kinfolkIds list) --
     suspend fun getMyAccess(): MyAccessResult {
@@ -637,7 +646,29 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     // -- Kin --
+    /**
+     * #1282: Firestore first when the household is known (see KinDirectRead.kt
+     * for why the rules allow it), so a first open skips the `getMyKin` cold
+     * start. ANY failure falls back to the callable, the old path unchanged: a
+     * legacy primary with no member doc is denied by the rule but admitted by
+     * `resolveKinfolkAccess`, and offline or revoked sessions get the error the
+     * screens already handle. With no id the callable picks the default tribe.
+     */
     suspend fun getMyKin(kinfolkId: String? = null): KinResult {
+        val direct = firestore
+        if (kinfolkId != null && direct != null) {
+            try {
+                return readKinDirect(direct, kinfolkId)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+                // Fall through to the callable; see above.
+            }
+        }
+        return getMyKinViaCallable(kinfolkId)
+    }
+
+    private suspend fun getMyKinViaCallable(kinfolkId: String?): KinResult {
         val raw = fns.call("getMyKin", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
         val list = (raw["kin"] as? JsonArray)?.map { el ->
             val o = el.jsonObject

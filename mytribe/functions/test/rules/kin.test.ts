@@ -1,6 +1,6 @@
-import { afterAll, afterEach, describe, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { getEnv, cleanup, shutdown, seedFamily, asUser } from './setup';
+import { getEnv, cleanup, shutdown, seedFamily, asUser, asUnauth } from './setup';
 
 describe('rules: /families/{fid}/kin/{kinId}', () => {
   afterEach(async () => cleanup());
@@ -107,6 +107,67 @@ describe('rules: /families/{fid}/kin/{kinId}', () => {
         await assertFails(asUser(env, uid).firestore().doc('families/f1/kin/k1').update(field));
       }
     }
+  });
+
+  // #1282: the portals now LIST this subcollection directly (web
+  // lib/kinDirectRead.ts, KMP portal/KinDirectRead.kt) instead of waiting on a
+  // cold `getMyKin`. These pin who that query works for, and who it refuses,
+  // so the client fallback to the callable is only ever the legacy case.
+  describe('direct roster read (#1282)', () => {
+    async function seedRoster(): Promise<void> {
+      const env = await getEnv();
+      await seedFamily({
+        fid: 'f1',
+        primaryUid: 'u-prim',
+        secondaries: [
+          { uid: 'u-sec', perms: {} },
+          { uid: 'u-invited', perms: {}, status: 'INVITED' },
+        ],
+      });
+      await seedFamily({ fid: 'f2', primaryUid: 'u-other' });
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        await ctx.firestore().doc('families/f1/kin/k1').set({ name: 'Kai', status: 'active' });
+        await ctx.firestore().doc('families/f1/kin/k2').set({ name: 'Bo', status: 'noLongerWithUs' });
+      });
+    }
+    it('the PRIMARY lists the household roster', async () => {
+      const env = await getEnv();
+      await seedRoster();
+      const snap = await assertSucceeds(asUser(env, 'u-prim').firestore().collection('families/f1/kin').get());
+      expect(snap.docs.map((d) => d.id).sort()).toEqual(['k1', 'k2']);
+    });
+    it('a SECONDARY with no permissions at all still lists it', async () => {
+      const env = await getEnv();
+      await seedRoster();
+      await assertSucceeds(asUser(env, 'u-sec').firestore().collection('families/f1/kin').get());
+    });
+    it('an operator (admin claim) stepping into the household lists it', async () => {
+      const env = await getEnv();
+      await seedRoster();
+      await assertSucceeds(asUser(env, 'u-op', { admin: true }).firestore().collection('families/f1/kin').get());
+    });
+    it('an INVITED member who has not accepted is refused', async () => {
+      const env = await getEnv();
+      await seedRoster();
+      await assertFails(asUser(env, 'u-invited').firestore().collection('families/f1/kin').get());
+    });
+    it('a member of another household is refused', async () => {
+      const env = await getEnv();
+      await seedRoster();
+      await assertFails(asUser(env, 'u-other').firestore().collection('families/f1/kin').get());
+    });
+    it('a signed-in account with no member doc is refused (the callable fallback case)', async () => {
+      const env = await getEnv();
+      await seedRoster();
+      await assertFails(
+        asUser(env, 'u-legacy', { role: 'kinfolk', kinfolkId: 'f1' }).firestore().collection('families/f1/kin').get(),
+      );
+    });
+    it('a signed-out caller is refused', async () => {
+      const env = await getEnv();
+      await seedRoster();
+      await assertFails(asUnauth(env).firestore().collection('families/f1/kin').get());
+    });
   });
 });
 /**
