@@ -1,11 +1,6 @@
-import { HttpsError } from 'firebase-functions/v2/https';
 import type { Firestore } from 'firebase-admin/firestore';
-import {
-  BUSINESS_SETTINGS_DOC,
-  businessHoursForDayName,
-  resolveBusinessOpen,
-  type BusinessHoursSettings,
-} from './businessHours';
+import { BUSINESS_SETTINGS_DOC } from './businessHours';
+import { assertWeeklyHours } from './weeklyHoursRule';
 import { businessTimeZone, resolveBookingPolicy } from './bookingTimeBlocks';
 import { guardCompanyHolidayConflict } from './companyHolidayConflict';
 import { assertVisitBookingMode, type ResolvedVisitBlock } from '../portal/requestBooking';
@@ -37,12 +32,6 @@ import { assertVisitBookingMode, type ResolvedVisitBlock } from '../portal/reque
  * free text cannot be parsed), or a read that fails does not refuse a
  * household. Not being able to read our own hours is not evidence we are shut.
  */
-
-/** `business_settings.businessHours`, as the Settings screen writes it. */
-function hoursAreConfigured(raw: Record<string, unknown>): boolean {
-  const map = raw['businessHours'];
-  return !!map && typeof map === 'object' && Object.keys(map as Record<string, unknown>).length > 0;
-}
 
 export interface RescheduleCandidate {
   startTimeMs: number;
@@ -93,34 +82,10 @@ export async function assertRescheduleTimeAllowed(
     visits: [{ startTimeMs: candidate.startTimeMs, endTimeMs: candidate.endTimeMs }],
   });
 
-  if (raw !== null && hoursAreConfigured(raw)) {
-    const hoursSettings: BusinessHoursSettings = {
-      businessHours: raw['businessHours'],
-      // The resolved zone, not the raw field: a blank one means the ruled
-      // America/Chicago (#1109), never a silent UTC.
-      timeZone,
-      companyHolidays: raw['companyHolidays'],
-      specialHours: raw['specialHours'],
-    };
-    const state = resolveBusinessOpen(hoursSettings, candidate.startTimeMs);
-    if (state.reason === 'closed-day') {
-      throw new HttpsError(
-        'invalid-argument',
-        `We are closed on ${state.dayName}s. Pick another day for this visit.`,
-      );
-    }
-    const booksByClock =
-      block.timeBlockId === null &&
-      !(candidate.serviceId !== undefined && policy.startTimeServiceIds.includes(candidate.serviceId));
-    if (booksByClock && state.reason === 'outside-hours') {
-      const hours = businessHoursForDayName(raw['businessHours'], state.dayName);
-      const range = hours.kind === 'open' ? ` (${hours.startHHmm} to ${hours.endHHmm})` : '';
-      throw new HttpsError(
-        'invalid-argument',
-        `That time is outside our hours on ${state.dayName}s${range}. Pick a time inside them.`,
-      );
-    }
-  }
-
+  assertWeeklyHours(raw, timeZone, policy, {
+    startTimeMs: candidate.startTimeMs,
+    timeBlockId: block.timeBlockId,
+    serviceId: candidate.serviceId,
+  });
   return block;
 }

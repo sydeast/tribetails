@@ -846,6 +846,29 @@ describe('BookingWizard: submit error handling', () => {
     await screen.findByText('Could not create booking. Try again.');
     expect(onComplete).not.toHaveBeenCalled();
   });
+
+  // #1382: the server refuses a time outside the weekly business hours with a
+  // plain sentence. The wizard prints it as sent, in the warning line on the
+  // Review step, and does not close.
+  it.each([
+    'That time is outside our hours on Mondays (09:00 to 17:00). Pick a time inside them.',
+    'We are closed on Sundays. Pick another day for this visit.',
+    '2026-11-04: That time is outside our hours on Wednesdays (09:00 to 17:00). Pick a time inside them.',
+  ])('shows the server weekly-hours refusal verbatim: %s', async (refusal) => {
+    requestBooking.mockRejectedValue(new Error(refusal));
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+    renderWizard(onComplete);
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    const line = await screen.findByText(refusal);
+    expect(line).toHaveClass('wiz-warn');
+    expect(onComplete).not.toHaveBeenCalled();
+    // The household can fix the plan and try again.
+    expect(screen.getByRole('button', { name: 'Create Booking' })).toBeEnabled();
+  });
 });
 
 /**
