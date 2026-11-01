@@ -184,6 +184,47 @@ describe('requestBookingRescheduleHandler', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
+  it('#1299: refuses a new time while a cancellation ask is pending, and writes nothing', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        [VISIT]: { status: 'confirmed', cancelRequestStatus: 'pending' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingRescheduleHandler } = await import('../src/portal/requestBookingReschedule');
+    await expect(requestBookingRescheduleHandler(callableRequest(args(), { uid: 'u1' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: expect.stringContaining('cancellation is already waiting'),
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('#1299: a pre-#438 bare cancellation stamp also blocks a new time', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        [VISIT]: { status: 'confirmed', cancelRequestedAt: '__SERVER_TS__' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingRescheduleHandler } = await import('../src/portal/requestBookingReschedule');
+    await expect(requestBookingRescheduleHandler(callableRequest(args(), { uid: 'u1' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('#1299: a DECLINED cancellation ask does not block a new time', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        [VISIT]: { status: 'confirmed', cancelRequestStatus: 'declined', cancelRequestedAt: '__SERVER_TS__' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingRescheduleHandler } = await import('../src/portal/requestBookingReschedule');
+    const res = await requestBookingRescheduleHandler(callableRequest(args(), { uid: 'u1' }));
+    expect(res.ok).toBe(true);
+  });
   it('allows a fresh proposal after a decline, and clears the old answer', async () => {
     const ctx = buildDbMock({
       docs: {

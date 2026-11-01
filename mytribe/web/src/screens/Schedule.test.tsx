@@ -278,3 +278,41 @@ describe('Schedule rows are links styled by the stylesheet (#1286)', () => {
     expect(rule![1]).toMatch(/text-decoration:\s*none/);
   });
 });
+describe('Schedule, one status vocabulary and the pending change (#1298, #1299)', () => {
+  function renderWith(upcoming: unknown[]) {
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming, recent: [] });
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Schedule />
+      </QueryClientProvider>,
+    );
+  }
+  const requested = {
+    ...pendingOvernight(),
+    startTimePending: false,
+    requestedDate: null,
+    startTimeMs: new Date(2030, 5, 2, 8, 0).getTime(),
+    cancelRequestStatus: null,
+    rescheduleRequestStatus: null,
+  };
+  it('labels a requested booking REQUESTED, the word its detail page uses, never PENDING', async () => {
+    renderWith([requested]);
+    expect(await screen.findByText('REQUESTED')).toBeInTheDocument();
+    expect(screen.queryByText('PENDING')).toBeNull();
+  });
+  it('says a new time is waiting on the row', async () => {
+    renderWith([{ ...requested, rescheduleRequestStatus: 'pending' }]);
+    expect((await screen.findByTestId('pending-change')).textContent).toBe('New time requested');
+  });
+  it('says a cancellation is waiting on the row', async () => {
+    renderWith([{ ...requested, cancelRequestStatus: 'pending' }]);
+    expect((await screen.findByTestId('pending-change')).textContent).toBe('Cancellation requested');
+  });
+  it('adds no line when nothing is open', async () => {
+    renderWith([requested]);
+    await screen.findByText('REQUESTED');
+    expect(screen.queryByTestId('pending-change')).toBeNull();
+  });
+});

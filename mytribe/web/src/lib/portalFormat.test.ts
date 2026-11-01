@@ -3,6 +3,9 @@ import {
   BOOKING_TIMELINE_STEPS,
   auntieName,
   bookingChip,
+  bookingStatusIcon,
+  pendingChangeLabel,
+  pendingChangeOf,
   bookingStatusChip,
   bookingTimelineIndex,
   calTile,
@@ -113,11 +116,45 @@ describe('speciesEmoji', () => {
 describe('bookingChip', () => {
   it.each([
     ['confirmed', 'CONFIRMED', 'warm'],
-    ['requested', 'PENDING', 'go'],
+    ['requested', 'REQUESTED', 'go'],
+    ['enRoute', 'EN ROUTE', 'warm'],
+    ['active', 'IN PROGRESS', 'warm'],
     ['completed', 'COMPLETED', 'done'],
     ['cancelled', 'CANCELLED', 'done'],
   ] as const)('%s -> %s / %s', (status, label, tone) => {
     expect(bookingChip(status)).toEqual({ label, tone });
+  });
+  // #1298: the list pill and the detail badge were two spellings of one status.
+  it.each(['requested', 'confirmed', 'enRoute', 'active', 'completed', 'cancelled'] as const)(
+    'says %s with the same words the detail badge uses',
+    (status) => {
+      expect(bookingChip(status).label).toBe(bookingStatusChip(status).label);
+    },
+  );
+});
+describe('bookingStatusIcon (#1298)', () => {
+  it('is not a green check while the visit is only requested', () => {
+    expect(bookingStatusIcon('requested')).not.toBe('\u2705');
+    expect(bookingStatusIcon('confirmed')).toBe('\u2705');
+    expect(bookingStatusIcon('cancelled')).not.toBe('\u2705');
+  });
+});
+describe('pendingChange (#1299)', () => {
+  const none = { cancelRequestStatus: null, rescheduleRequestStatus: null } as const;
+  it('is null when nothing is open, including after an answer', () => {
+    expect(pendingChangeOf(none)).toBeNull();
+    expect(pendingChangeLabel({ cancelRequestStatus: 'declined', rescheduleRequestStatus: 'accepted' })).toBeNull();
+  });
+  it('names a pending new time', () => {
+    expect(pendingChangeLabel({ ...none, rescheduleRequestStatus: 'pending' })).toBe('New time requested');
+  });
+  it('names a pending cancellation', () => {
+    expect(pendingChangeLabel({ ...none, cancelRequestStatus: 'pending' })).toBe('Cancellation requested');
+  });
+  it('names the cancellation when a visit written before the rule carries both', () => {
+    expect(pendingChangeLabel({ cancelRequestStatus: 'pending', rescheduleRequestStatus: 'pending' })).toBe(
+      'Cancellation requested',
+    );
   });
 });
 

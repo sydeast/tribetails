@@ -39,6 +39,7 @@ import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.portal.Booking
+import com.kinfolk.portal.portal.label
 import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.RescheduleRequestStatus
@@ -361,6 +362,9 @@ private fun KinCareDetailBody(
         if (kinCare.rescheduleRequestStatus != null || kinCare.canRequestReschedule() || kinCare.awaitingStartTime()) {
             RescheduleRequestSection(
                 kinCare = kinCare,
+                // #1299: a cancellation ask in flight holds the new-time form,
+                // including the moment before the refreshed visit arrives.
+                heldByCancellation = cancelPending,
                 pendingLocal = reschedulePendingLocal,
                 sending = rescheduleSending,
                 error = rescheduleError,
@@ -377,7 +381,10 @@ private fun KinCareDetailBody(
             CancelRequestSection(
                 kinCare = kinCare,
                 pending = cancelPending,
-                canAsk = kinCare.canRequestCancellation(),
+                // #1299: a new time waiting on the office holds the ask, on the
+                // server and for the moment before the refreshed visit arrives.
+                heldByReschedule = reschedulePendingLocal || kinCare.rescheduleRequestStatus == RescheduleRequestStatus.Pending,
+                canAsk = kinCare.canRequestCancellation() && !reschedulePendingLocal,
                 sending = cancelSending,
                 error = cancelError,
                 onSend = onSendCancelRequest,
@@ -401,6 +408,7 @@ private fun KinCareDetailBody(
 @Composable
 private fun RescheduleRequestSection(
     kinCare: Booking,
+    heldByCancellation: Boolean,
     pendingLocal: Boolean,
     sending: Boolean,
     error: String?,
@@ -456,7 +464,7 @@ private fun RescheduleRequestSection(
                     color = KinfolkBrand.NavyMuted,
                 )
             }
-            if (kinCare.canRequestReschedule() && !pending) {
+            if (kinCare.canRequestReschedule() && !pending && !heldByCancellation) {
                 RescheduleProposalForm(
                     sending = sending,
                     error = error,
@@ -614,6 +622,7 @@ private fun UpcomingDayPicker(
 private fun CancelRequestSection(
     kinCare: Booking,
     pending: Boolean,
+    heldByReschedule: Boolean,
     canAsk: Boolean,
     sending: Boolean,
     error: String?,
@@ -649,6 +658,14 @@ private fun CancelRequestSection(
                 )
             }
 
+            if (heldByReschedule && !pending && kinCare.isAwaitingVisit()) {
+                // #1299: say why the button is not here.
+                Text(
+                    "You can ask to cancel once Tribe Tails answers your new time.",
+                    style = type.sansMeta,
+                    color = KinfolkBrand.NavyMuted,
+                )
+            }
             if (canAsk && !pending) {
                 var showConfirm by remember { mutableStateOf(false) }
                 var reason by remember { mutableStateOf("") }
@@ -696,11 +713,6 @@ private fun CancelRequestSection(
     }
 }
 
-private fun statusLabel(b: Booking): String = when (b.status) {
-    com.kinfolk.portal.portal.BookingStatus.Requested -> "Requested"
-    com.kinfolk.portal.portal.BookingStatus.Confirmed -> "Confirmed"
-    com.kinfolk.portal.portal.BookingStatus.EnRoute -> "Auntie en route"
-    com.kinfolk.portal.portal.BookingStatus.Active -> "In progress"
-    com.kinfolk.portal.portal.BookingStatus.Completed -> "Completed"
-    com.kinfolk.portal.portal.BookingStatus.Cancelled -> "Cancelled"
-}
+/** #1298: the status row says the same word as the list and Home pills, in sentence case. */
+private fun statusLabel(b: Booking): String =
+    b.status.label().lowercase().replaceFirstChar { it.uppercase() }
