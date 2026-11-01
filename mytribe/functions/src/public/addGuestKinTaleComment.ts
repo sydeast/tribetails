@@ -303,6 +303,18 @@ export async function addGuestKinTaleCommentHandler(
   res.status(200).json({ commentId: commentRef.id });
 }
 
+/**
+ * #1351. The body a public request may hand the handler: everything the caller
+ * sent except `skipRecaptchaForTest`. That flag exists for the unit-test
+ * harness, which calls the handler directly; a request to the deployed
+ * function could set it and post with no reCAPTCHA token at all.
+ */
+export function publicRequestBody(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const { skipRecaptchaForTest: _dropped, ...rest } = body as Record<string, unknown>;
+  return rest;
+}
+
 export const addGuestKinTaleComment = onRequest(
   {
     region: 'us-central1',
@@ -319,6 +331,6 @@ export const addGuestKinTaleComment = onRequest(
         res.json(payload);
       },
     };
-    await addGuestKinTaleCommentHandler({ method: req.method, body: req.body }, adapter);
+    await addGuestKinTaleCommentHandler({ method: req.method, body: publicRequestBody(req.body) }, adapter);
   },
 );
