@@ -202,7 +202,12 @@ fun AddEditKinDialog(
                 } else {
                     SpeciesRadioGroup(
                         selected = species,
-                        onSelect = { species = it; breed = "" },
+                        onSelect = { next ->
+                            // Typing in the Other box edits the same species; only a
+                            // change of picker entry resets the breed.
+                            if (!next.equals(species, ignoreCase = true) && speciesChoice(next) != SPECIES_OTHER) breed = ""
+                            species = next
+                        },
                     )
                     BreedField(
                         species = species,
@@ -374,23 +379,47 @@ private fun SexRadioGroup(selected: String, onSelect: (String) -> Unit) {
 
 /** Species the breed banks support today. Dog/Cat get a searchable breed list;
  *  the rest keep a free-text breed until their banks are seeded. */
-private val SPECIES_OPTIONS = listOf("Dog", "Cat", "Small Animal", "Reptile", "Fish", "Bird", "Turtle")
+private val SPECIES_OPTIONS = listOf("Dog", "Cat", "Rabbit", "Small Animal", "Reptile", "Fish", "Bird", "Turtle")
+/** The picker entry for a stored species: "Other" is a picker entry, never a stored value. */
+internal const val SPECIES_OTHER = "Other"
+/**
+ * Which radio a stored species belongs to: a listed species (any case), else
+ * [SPECIES_OTHER] when something non-blank is stored (a legacy "Ferret" keeps its
+ * text), else null when unset.
+ */
+internal fun speciesChoice(species: String): String? {
+    val trimmed = species.trim()
+    if (trimmed.isEmpty()) return null
+    return SPECIES_OPTIONS.firstOrNull { it.equals(trimmed, ignoreCase = true) } ?: SPECIES_OTHER
+}
 
 @Composable
 private fun SpeciesRadioGroup(selected: String, onSelect: (String) -> Unit) {
     val type = LocalKinfolkTypography.current
+    var otherPicked by remember { mutableStateOf(speciesChoice(selected) == SPECIES_OTHER) }
+    val choice = if (otherPicked) SPECIES_OTHER else speciesChoice(selected)
     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
         Text("SPECIES", style = type.sansMeta)
-        SPECIES_OPTIONS.chunked(2).forEach { rowOpts ->
+        (SPECIES_OPTIONS + SPECIES_OTHER).chunked(2).forEach { rowOpts ->
             Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 rowOpts.forEach { opt ->
+                    val pick = {
+                        if (opt == SPECIES_OTHER) {
+                            otherPicked = true
+                            // Keep an already-custom species; clear a listed one.
+                            if (speciesChoice(selected) != SPECIES_OTHER) onSelect("")
+                        } else {
+                            otherPicked = false
+                            onSelect(opt)
+                        }
+                    }
                     Row(
-                        modifier = Modifier.weight(1f).clickable { onSelect(opt) },
+                        modifier = Modifier.weight(1f).clickable { pick() },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
-                            selected = selected.equals(opt, ignoreCase = true),
-                            onClick = { onSelect(opt) },
+                            selected = choice == opt,
+                            onClick = { pick() },
                             colors = RadioButtonDefaults.colors(selectedColor = KinfolkBrand.KinfolkOrange),
                         )
                         Text(opt, style = type.sansBody)
@@ -398,9 +427,11 @@ private fun SpeciesRadioGroup(selected: String, onSelect: (String) -> Unit) {
                 }
             }
         }
+        if (otherPicked) {
+            KinField(value = selected, onValueChange = { onSelect(it) }, label = "Other species")
+        }
     }
 }
-
 /** Breed input: a type-to-search list for Dog/Cat (478/103 seeded breeds),
  *  a plain text field for every other species (and before the lists load). */
 @Composable

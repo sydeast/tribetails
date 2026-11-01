@@ -8,6 +8,7 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
 import { BreedField } from '../components/BreedField';
+import { SpeciesField } from '../components/SpeciesField';
 import { PortalNav } from '../components/PortalNav';
 import { FixedField, SexField } from '../components/KinFactsFields';
 import { LaunchError } from './LaunchError';
@@ -175,12 +176,11 @@ export function KinEdit() {
               <div className="ic orange">{'\u{1F43E}'}</div>
               <div className="htxt">
                 <h3 className="title">About</h3>
-                <p className="sub">The basics your Aunties see first.</p>
               </div>
             </div>
             <div className="grid2">
               {textField('name', 'Name', { full: true, required: true })}
-              {textField('species', 'Species')}
+              <SpeciesField id="kin-species" value={current.species} onChange={(v) => set('species', v)} error={errors.species} />
               {/* Beside Species on purpose: Species is what picks the bank. */}
               <BreedField
                 value={current.breed}
@@ -219,7 +219,6 @@ export function KinEdit() {
               <div className="ic teal">{'\u{1F37D}'}</div>
               <div className="htxt">
                 <h3 className="title">Care</h3>
-                <p className="sub">Daily routine and needs.</p>
               </div>
             </div>
             <div className="grid2">
@@ -237,7 +236,6 @@ export function KinEdit() {
               <div className="ic purple">{'\u{1F4DD}'}</div>
               <div className="htxt">
                 <h3 className="title">Notes</h3>
-                <p className="sub">Good-to-know details and emergencies.</p>
               </div>
             </div>
             <div className="grid2">
