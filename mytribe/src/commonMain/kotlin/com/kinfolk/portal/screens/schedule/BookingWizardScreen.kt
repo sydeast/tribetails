@@ -53,6 +53,7 @@ import com.kinfolk.portal.portal.BookingVisit
 import com.kinfolk.portal.portal.TimeBlock
 import com.kinfolk.portal.screens.schedule.util.ReviewRow
 import com.kinfolk.portal.portal.Kin
+import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.mintBookingIdempotencyKey
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.Service
@@ -78,7 +79,12 @@ fun BookingWizardScreen(
     kinfolkId: String,
     portalApi: PortalApi,
     onClose: () -> Unit,
-    onComplete: () -> Unit,
+    /**
+     * #1281: called once the booking is in, with a fresh bookings list read
+     * after it (null when that read failed). The host hands the list to
+     * Schedule so it opens on the new booking instead of on a load.
+     */
+    onComplete: (BookingsResult?) -> Unit,
     startWeekly: Boolean = false,
 ) {
     val type = LocalKinfolkTypography.current
@@ -114,6 +120,8 @@ fun BookingWizardScreen(
     var weekCount by remember { mutableStateOf(4) }
     var notes by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
+    /** #1281: the booking went through; the button stays shut. */
+    var submitted by remember { mutableStateOf(false) }
     /** #644: the submission signature this key was minted for, and the key. */
     var submissionKey by remember { mutableStateOf<Pair<String, String>?>(null) }
     var submitError by remember { mutableStateOf<String?>(null) }
@@ -406,8 +414,16 @@ fun BookingWizardScreen(
                     )
                 } else {
                     KinButton(
-                        label = if (submitting) "Creating…" else "Create Booking",
+                        label = when {
+                            submitted -> "Booking requested"
+                            submitting -> "Creating…"
+                            else -> "Create Booking"
+                        },
                         onClick = {
+                            // #1281: one tap, one call. `enabled` lands a frame
+                            // late, and a booking that went through is not a
+                            // button to press again.
+                            if (submitting || submitted) return@KinButton
                             submitting = true
                             submitError = null
                             scope.launch {
@@ -450,18 +466,34 @@ fun BookingWizardScreen(
                                         notes = notes.ifBlank { null },
                                         idempotencyKey = submissionKey?.second,
                                     )
-                                    submissionKey = null
-                                    onComplete()
+                                    // #1281: the key is NOT cleared. Clearing it
+                                    // here let a second tap, landing before the
+                                    // screen closed, mint a new key and book
+                                    // twice. Held, it replays the first booking.
+                                    //
+                                    // Still "Creating…" while the fresh list
+                                    // loads, so Schedule opens on the booking.
+                                    // A failed read does not fail a booking
+                                    // that went through; Schedule loads its own.
+                                    val fresh = try {
+                                        portalApi.getMyBookings(kinfolkId)
+                                    } catch (c: CancellationException) {
+                                        throw c
+                                    } catch (_: Throwable) {
+                                        null
+                                    }
+                                    submitted = true
+                                    submitting = false
+                                    onComplete(fresh)
                                 } catch (c: CancellationException) {
                                     throw c
                                 } catch (t: Throwable) {
                                     submitError = t.message ?: "Could not create booking"
-                                } finally {
                                     submitting = false
                                 }
                             }
                         },
-                        enabled = !submitting && slots.isNotEmpty() && plannedVisits.isNotEmpty() && scheduleReady,
+                        enabled = !submitting && !submitted && slots.isNotEmpty() && plannedVisits.isNotEmpty() && scheduleReady,
                     )
                 }
             }

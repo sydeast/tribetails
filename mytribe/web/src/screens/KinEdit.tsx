@@ -15,6 +15,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { useIsMounted, usePortalMutation } from '../lib/mutationState';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -57,8 +58,10 @@ export function KinEdit() {
   const isMounted = useIsMounted();
   const save = usePortalMutation({
     mutationFn: (changes: KinPayloadPartial) => updateKin(kinId, changes, kinfolkId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
+    // #1281: the profile this navigates to reads the kin list, so the refresh
+    // is waited for first; otherwise it opens on the pre-save values.
+    onSuccess: async () => {
+      await refreshAfterSave(queryClient, ['myKin', kinfolkId]);
       // Guarded because this write is HELD: a queued save resumes on
       // reconnect whether or not this screen is still open, and navigating
       // from a dead screen drops the household onto a Kin profile they did

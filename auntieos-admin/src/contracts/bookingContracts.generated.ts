@@ -329,6 +329,7 @@ export interface RequestBookingResult {
   batchId: string;
   bookingIds: string[];
   bookingId: string;
+  envelope: GetMyBookingsResultEnvelope | null;
 }
 
 // ---------- requestBookingCancellation ----------
@@ -350,6 +351,7 @@ export interface RequestBookingCancellationResult {
   ok: true;
   visitId: string;
   alreadyPending: boolean;
+  visit: GetMyBookingsResultLiveVisit | null;
 }
 
 // ---------- requestBookingReschedule ----------
@@ -374,6 +376,7 @@ export interface RequestBookingRescheduleResult {
   visitId: string;
   proposedStartTimeMs: number;
   proposedEndTimeMs: number | null;
+  visit: GetMyBookingsResultLiveVisit | null;
 }
 
 // ---------- rescheduleBooking ----------

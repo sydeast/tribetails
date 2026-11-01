@@ -44,6 +44,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
 
 /**
  * Reads one of the three reserved home-access fields when a homeAccess schema
@@ -373,7 +374,9 @@ export function TribeProfile() {
       // result that would wipe the edits that did not save, so only a clean
       // save reloads.
       if (profileHalf.kind !== 'failed' && homeHalf.kind !== 'failed') {
-        void queryClient.invalidateQueries({ queryKey: ['tribeProfile', kinfolkId] });
+        // #1281: awaited, so the save button stays busy until the reloaded
+        // profile is what the inputs show.
+        await refreshAfterSave(queryClient, ['tribeProfile', kinfolkId]);
       }
       setSaving(false);
     }
@@ -874,7 +877,8 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
           home_access: canAccessHome,
         },
       }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['members', kinfolkId] }),
+    // #1281: pending until the member list shows the new permissions.
+    onSuccess: () => refreshAfterSave(queryClient, ['members', kinfolkId]),
   }, { policy: 'hold', what: 'this permission change' });
 
   const title = member.secondaryLabel?.trim() || member.invitedEmail?.trim() || 'Member';

@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +59,7 @@ import com.kinfolk.portal.util.bookingCalendarBadge
 import com.kinfolk.portal.util.bookingSortMs
 import com.kinfolk.portal.util.bookingWhenLabel
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
@@ -74,6 +76,12 @@ import kotlin.time.Clock
  * re-fetches via [reloadSignal] (the host bumps it from the back-stack dirty
  * flag), mirroring the old "reload on back" semantics.
  */
+/**
+ * #1281: what the booking wizard leaves for Schedule. [bookings] is the list
+ * read right after the booking went in (null when that read failed), and
+ * [notice] is the confirmation to show in words.
+ */
+data class ScheduleHandoff(val bookings: BookingsResult?, val notice: String)
 @Composable
 fun ScheduleScreen(
     familyName: String,
@@ -86,10 +94,16 @@ fun ScheduleScreen(
     onOpenMessageAuntie: () -> Unit = {},
     onOpenRecurring: () -> Unit = {},
     reloadSignal: Int = 0,
+    /** #1281: see [ScheduleHandoff]. Taken once, then [onHandoffTaken] clears it. */
+    handoff: ScheduleHandoff? = null,
+    onHandoffTaken: () -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
-    var data by remember { mutableStateOf<BookingsResult?>(null) }
+    // #1281: seeded from the wizard's handoff, so Schedule opens on the new
+    // booking rather than on a load. The reload below still runs, behind it.
+    var data by remember { mutableStateOf(handoff?.bookings) }
+    var notice by remember { mutableStateOf(handoff?.notice) }
     var visits by remember { mutableStateOf<com.kinfolk.portal.portal.VisitsResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var showRequest by remember { mutableStateOf(false) }
@@ -116,6 +130,19 @@ fun ScheduleScreen(
     // bumps reloadSignal off the back-stack dirty flag), reproducing the old
     // reload-on-back behavior after a saved note or new booking.
     LaunchedEffect(kinfolkId, reloadSignal) { reload() }
+    LaunchedEffect(handoff) {
+        if (handoff != null) {
+            handoff.bookings?.let { data = it }
+            notice = handoff.notice
+            onHandoffTaken()
+        }
+    }
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            delay(SAVE_NOTICE_MS)
+            notice = null
+        }
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = isWideShell(maxWidth.value)
@@ -141,6 +168,20 @@ fun ScheduleScreen(
                     )
                 }
                 KinButton(label = "Request a Booking", onClick = onOpenWizard)
+            }
+            notice?.let { text ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = KinfolkSpacing.l)
+                        .testTag(SAVE_NOTICE_TAG),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+                ) {
+                    Text("\u2713", style = type.sansBody.copy(color = KinfolkBrand.KinfolkOrange, fontWeight = FontWeight.Bold))
+                    Text(text, style = type.sansBody.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
+                    TextButton(onClick = { notice = null }) { Text("Dismiss") }
+                }
             }
 
             val mainColumn: @Composable () -> Unit = {
@@ -549,3 +590,7 @@ private fun LiveVisitCard(
         }
     }
 }
+/** #1281: test tag on Schedule's post-save confirmation line. */
+const val SAVE_NOTICE_TAG = "schedule-save-notice"
+/** #1281: how long the post-save confirmation stays up. Matches the web portal. */
+const val SAVE_NOTICE_MS = 8_000L

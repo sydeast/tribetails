@@ -7,6 +7,7 @@ import { PortalNav } from '../components/PortalNav';
 import { buildNewKinPayload, emptyKinForm, hasErrors, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { usePortalMutation } from '../lib/mutationState';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
 
 /**
  * Add New Kin (B3, punchlist item): the create counterpart to KinEdit.tsx.
@@ -29,8 +30,10 @@ export function KinAdd() {
   // a replay is a second Kin on the household's list.
   const save = usePortalMutation({
     mutationFn: () => addKin(buildNewKinPayload(form), kinfolkId),
-    onSuccess: (res) => {
-      void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
+    // #1281: the new Kin's page reads the kin list, so the list is refreshed
+    // (and waited for) before the move; "Saving…" stays up until then.
+    onSuccess: async (res) => {
+      await refreshAfterSave(queryClient, ['myKin', kinfolkId]);
       void navigate({ to: '/kin/$kinId', params: { kinId: res.kinId } });
     },
   }, { policy: 'abandon', what: 'this Kin' });
