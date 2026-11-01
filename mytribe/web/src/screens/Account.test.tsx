@@ -303,8 +303,36 @@ describe('Account: secondary invite confirmation (#1018 item 3)', () => {
     expect(await findByText(/Invite failed.*already invited/)).toBeInTheDocument();
     expect(queryByText(/Invite sent/)).not.toBeInTheDocument();
   });
+
+  // #1277: Account › Recovery Contacts › Send Invite showed
+  // "AUNTIE_OS_REVIEW_BASE_URL is not configured [400]" to the household.
+  it('never shows a backend setting name: a config refusal reads as a plain line', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockRejectedValue(new Error('CLAIM_LINK_BASE_URL is not configured [400]'));
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+    await user.type(getByLabelText('Backup Email'), 'catch@hanasamku.com');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+    expect(await findByText("Invites can't be sent right now. It's been reported to Auntie.")).toBeInTheDocument();
+    expect(queryByText(/CLAIM_LINK_BASE_URL|is not configured/)).not.toBeInTheDocument();
+  });
 });
 
+// #1326: Account › Secondary Kinfolk with "bad-email" typed gave no reason.
+describe('Account: invite email check (#1326)', () => {
+  it('says why Send Invite is disabled for a bad backup email', async () => {
+    const user = userEvent.setup();
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+    expect(queryByText('Enter a valid email.')).not.toBeInTheDocument();
+    await user.type(getByLabelText('Backup Email'), 'bad-email');
+    expect(await findByText('Enter a valid email.')).toBeInTheDocument();
+    expect(getByRole('button', { name: /Send Invite/ })).toBeDisabled();
+    await user.clear(getByLabelText('Backup Email'));
+    await user.type(getByLabelText('Backup Email'), 'catch@hanasamku.com');
+    expect(queryByText('Enter a valid email.')).not.toBeInTheDocument();
+    expect(getByRole('button', { name: /Send Invite/ })).toBeEnabled();
+  });
+});
 describe('Account: Message your Auntie', () => {
   it('is a real link to /messages, not a coming-soon span', async () => {
     const { getByRole, queryByTitle } = await renderAccount();

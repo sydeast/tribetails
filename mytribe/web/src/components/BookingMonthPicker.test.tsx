@@ -153,3 +153,21 @@ describe('BookingMonthPicker: closures and selection across months', () => {
     expect((onToggle.mock.calls[0]![1] as Date).getMonth()).toBe(8);
   });
 });
+
+describe('BookingMonthPicker: today and closed days (#1301)', () => {
+  it('marks today, and only today', () => {
+    render(<Harness />);
+    expect(day(12)).toHaveAttribute('aria-current', 'date');
+    expect(day(13)).not.toHaveAttribute('aria-current');
+    expect(day(12).className).toContain('is-today');
+  });
+  it('marks a closed day, names it, and refuses the tap', async () => {
+    const user = userEvent.setup();
+    render(<Harness closedDates={new Map([['2026-08-16', 'Sundays']])} />);
+    expect(day(16)).toBeDisabled();
+    expect(day(16).className).toContain('is-closed');
+    expect(day(16)).toHaveAttribute('title', 'Closed: Sundays');
+    await user.click(day(16));
+    expect(day(16)).toHaveAttribute('aria-pressed', 'false');
+  });
+});

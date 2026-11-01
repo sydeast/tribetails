@@ -57,6 +57,9 @@ import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.CustomField
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.HomeAccess
+import com.kinfolk.portal.portal.inviteEmailProblem
+import com.kinfolk.portal.portal.isInvitableEmail
+import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.MapboxSuggestion
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeProfileResult
@@ -1378,20 +1381,36 @@ private fun SecondaryInviteCard(
     val scope = rememberCoroutineScope()
     var email by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("") }
-    // 2026-09-27 Q3: "Give portal access" on a secondary kinfolk the primary
-    // added first fills the email (blank when none is on file) and the role
-    // with their name; the person id rides into the invite so the server links
-    // the two. The primary still sets the permissions with the toggles below.
-    LaunchedEffect(prefill) {
-        if (prefill != null) {
-            email = prefill.email
-            role = prefill.name.take(24)
-        }
-    }
     var canEditPets by remember { mutableStateOf(false) }
     var canAccessHome by remember { mutableStateOf(false) }
     var inviting by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
+    // 2026-09-27 Q3: "Give portal access" on a secondary kinfolk the primary
+    // added first fills the email (blank when none is on file); the person id
+    // rides into the invite so the server links the two. The primary still
+    // sets the permissions with the toggles below.
+    // #1323: the role is left empty. It used to be filled with the person's
+    // name, which is not a role, and a secondary kinfolk record has no
+    // relationship field to fill it from. A stale line from an earlier
+    // attempt is cleared too.
+    LaunchedEffect(prefill) {
+        if (prefill != null) {
+            email = prefill.email
+            role = ""
+            msg = null
+        }
+    }
+    // #1323: Cancel used to drop only the banner and left the email, role and
+    // the last error on the card.
+    val cancelPrefill = {
+        email = ""
+        role = ""
+        canEditPets = false
+        canAccessHome = false
+        msg = null
+        onClearPrefill()
+    }
+    val emailProblem = inviteEmailProblem(email)
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         contentPadding = PaddingValues(KinfolkSpacing.l),
@@ -1410,10 +1429,12 @@ private fun SecondaryInviteCard(
                         style = type.sansLabel.copy(color = KinfolkBrand.KinTeal),
                         modifier = Modifier.weight(1f),
                     )
-                    com.kinfolk.portal.components.KinGhostButton(label = "Clear", onClick = onClearPrefill)
+                    com.kinfolk.portal.components.KinGhostButton(label = "Cancel", onClick = cancelPrefill)
                 }
             }
-            KinField(value = email, onValueChange = { email = it }, label = "Email", fieldTestTag = "invite-email", modifier = Modifier.fillMaxWidth())
+            KinField(value = email, onValueChange = { email = it }, label = "Email", isError = emailProblem != null, fieldTestTag = "invite-email", modifier = Modifier.fillMaxWidth())
+            // #1326: Send Invite stays disabled on a bad address; say why.
+            emailProblem?.let { Text(it, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral)) }
             KinField(value = role, onValueChange = { role = it }, label = "Their role (e.g. Co-Parent, Sister)", fieldTestTag = "invite-role", modifier = Modifier.fillMaxWidth())
             AccessToggleRow(
                 label = "Can edit pets",
@@ -1456,13 +1477,14 @@ private fun SecondaryInviteCard(
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
-                            msg = "Invite failed: ${t.message ?: t}"
+                            // #1277: a missing backend setting never shows its name.
+                            msg = inviteFailureLine(t)
                         } finally {
                             inviting = false
                         }
                     }
                 },
-                enabled = !inviting && email.contains("@"),
+                enabled = !inviting && isInvitableEmail(email),
                 modifier = Modifier.fillMaxWidth(),
             )
             msg?.let { Text(it, style = type.sansLabel.copy(color = KinfolkBrand.KinTeal)) }

@@ -17,6 +17,8 @@ import { call } from '../lib/fns';
 import type {
   AddBookingNoteArgs,
   AddBookingNoteResult,
+  GetBookingNotesArgs,
+  GetBookingNotesResult,
   RequestBookingArgs,
   RequestBookingRescheduleArgs,
   RequestBookingRescheduleResult,
@@ -102,8 +104,23 @@ export interface GetBusinessClosuresRequest {
   toDate: string;
 }
 
+/**
+ * #1284: one weekday of the business's weekly hours. `weekday` is 0 = Sunday.
+ * `open` false means closed all day; the times are `HH:mm` in
+ * {@link GetBusinessClosuresResult.timeZone}, null when closed.
+ */
+export interface BusinessWeekdayHoursDto {
+  weekday: number;
+  open: boolean;
+  startTime: string | null;
+  endTime: string | null;
+}
 export interface GetBusinessClosuresResult {
   closures: BusinessClosureDto[];
+  /** Seven days (Sunday first), or [] when the business has no readable weekly hours. Optional: an older server omits it. */
+  weeklyHours?: BusinessWeekdayHoursDto[];
+  /** IANA zone the hours, closures and time blocks are stated in. Optional for the same reason. */
+  timeZone?: string;
 }
 
 export function getBusinessClosures(req: GetBusinessClosuresRequest): Promise<GetBusinessClosuresResult> {
@@ -229,18 +246,32 @@ export function requestBookingReschedule(
   visitId: string,
   proposedStartTimeMs: number,
   reason?: string,
+  timeBlockId?: string | null,
 ): Promise<RequestBookingRescheduleResult> {
   const payload: RequestBookingRescheduleArgs = {
     kinfolkId,
     batchId,
     visitId,
     proposedStartTimeMs,
+    ...(timeBlockId ? { timeBlockId } : {}),
     ...(reason && reason.trim() ? { reason: reason.trim() } : {}),
   };
   return call<RequestBookingRescheduleArgs, RequestBookingRescheduleResult>(
     'requestBookingReschedule',
     payload,
   );
+}
+// ── getBookingNotes (functions/src/portal/getBookingNotes.ts) ───────────────
+// #1283: what the household told its Auntie, read back to it. The server
+// returns the household's own notes only, never staff or internal ones.
+/** The household's saved notes on one visit, plus the booking-level note from the wizard. */
+export function getBookingNotes(
+  kinfolkId: string,
+  batchId: string,
+  visitId: string,
+): Promise<GetBookingNotesResult> {
+  const payload: GetBookingNotesArgs = { kinfolkId, batchId, visitId };
+  return call<GetBookingNotesArgs, GetBookingNotesResult>('getBookingNotes', payload);
 }
 // ── addBookingNote (functions/src/portal/addBookingNote.ts) ─────────────────
 // `kinfolkId` is typed optional server-side but the handler throws

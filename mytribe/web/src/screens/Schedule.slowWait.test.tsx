@@ -42,6 +42,8 @@ vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('../components/RouteMap', () => ({ RouteMap: () => null }));
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children }: { children?: ReactNode }) => <a>{children}</a>,
+  useSearch: () => ({}),
+  useNavigate: () => vi.fn(),
 }));
 
 beforeEach(() => {

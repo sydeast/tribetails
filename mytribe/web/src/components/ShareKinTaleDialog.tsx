@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { createShareLink, revokeShareLink, type CreateShareLinkResult } from '../api/kinTalesApi';
 import '../styles/shareKinTaleDialog.css';
@@ -44,6 +45,8 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
   const [copied, setCopied] = useState(false);
   const [confirmingRevoke, setConfirmingRevoke] = useState(false);
   const [revoked, setRevoked] = useState(false);
+  const [showPasscode, setShowPasscode] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   // ABANDON. `createShareLink` `.add()`s a new sharedKinTales document every
   // call, so a replay mints a SECOND live public URL with its own passcode
@@ -85,6 +88,11 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [busy, onClose]);
 
+  // Land focus inside the dialog so Tab and a screen reader start there, not
+  // on the page underneath.
+  useEffect(() => {
+    cardRef.current?.focus();
+  }, []);
   function handleSubmit() {
     setClientError(null);
     const trimmed = passcode.trim();
@@ -118,19 +126,27 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
 
   const revokeErrorMessage = errorLine(revoke, 'Could not revoke the link. Try again.');
 
-  return (
+  // Portalled to <body>. `.wrap` is `position: relative; z-index: 1`, a stacking
+  // context, so a fixed overlay rendered inside it can never rise above the
+  // sticky nav (z-index 20) however high its own z-index is. That is how the
+  // title ended up under the header.
+  return createPortal(
     <div className="skd-overlay" role="presentation" onClick={handleBackdropClose}>
       <div
+        ref={cardRef}
+        tabIndex={-1}
         className="skd-card glass card"
         role="dialog"
         aria-modal="true"
-        aria-label={created ? 'Link Ready!' : 'Invite the Family'}
+        aria-label={created ? 'Link ready' : 'Share this KinTale'}
         onClick={(e) => e.stopPropagation()}
       >
+        <button type="button" className="skd-close" aria-label="Close" onClick={handleBackdropClose} disabled={busy}>
+          <span aria-hidden="true">{'×'}</span>
+        </button>
         {!created ? (
           <div className="skd-form">
-            <h3 className="skd-title">Invite the Family</h3>
-            <p className="sub skd-sub">Share this story with family and friends. Choose how the link works.</p>
+            <h3 className="skd-title">Share this KinTale</h3>
 
             <button
               type="button"
@@ -169,7 +185,8 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
             <label className="skd-field">
               <span className="skd-fieldlabel">Secure with passcode</span>
               <input
-                type="text"
+                type={showPasscode ? 'text' : 'password'}
+                autoComplete="off"
                 className="skd-inp"
                 value={passcode}
                 maxLength={MAX_PASSCODE_LENGTH}
@@ -178,6 +195,9 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
                 aria-label="Passcode, optional, 4 to 8 characters"
                 disabled={busy}
               />
+              <button type="button" className="skd-reveal" aria-pressed={showPasscode} onClick={() => setShowPasscode((v) => !v)}>
+                {showPasscode ? 'Hide passcode' : 'Show passcode'}
+              </button>
             </label>
 
             {formErrorMessage && <p className="skd-error">{formErrorMessage}</p>}
@@ -195,7 +215,7 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
               <span className="skd-check" aria-hidden="true">
                 {'✓'}
               </span>
-              <h3 className="skd-title">Link Ready!</h3>
+              <h3 className="skd-title">Link ready</h3>
             </div>
 
             {!revoked ? (
@@ -248,6 +268,7 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

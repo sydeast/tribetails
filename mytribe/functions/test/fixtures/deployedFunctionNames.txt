@@ -59,6 +59,7 @@ generate
 generateInvoicePdf
 generateReceipt
 getAccountCreditHistory
+getBookingNotes
 getBookingPolicy
 getBreeds
 getBroadcastProgress
@@ -71,6 +72,7 @@ getFeatureFlags
 getFormSchema
 getGoogleCalendarConnection
 getIntegrationsHealth
+getInvite
 getInvitePreview
 getInvoiceLedger
 getKinTaleComments

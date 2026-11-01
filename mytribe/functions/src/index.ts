@@ -344,6 +344,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   unarchiveNotification: () => require('./portal/archiveNotification'),
   bulkUnarchiveNotifications: () => require('./portal/archiveNotification'),
   addBookingNote: () => require('./portal/addBookingNote'),
+  getBookingNotes: () => require('./portal/getBookingNotes'),
   submitRating: () => require('./portal/submitRating'),
 
   // admin-callables
@@ -365,6 +366,10 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // imports both), plus the household name a row needs to be readable out of its
   // household's context.
   listAllInvites: () => require('./admin/listAllInvites'),
+  // ONE invite by id, for the admin's invite detail screen (#1339): the
+  // `invite.auntie-notify` email links to `/invites/<inviteId>`, and a page of
+  // listAllInvites cannot promise to contain the row.
+  getInvite: () => require('./admin/getInvite'),
   setMemberPermissions: () => require('./admin/setMemberPermissions'),
   removeMember: () => require('./admin/removeMember'),
   setTribePin: () => require('./admin/setTribePin'),

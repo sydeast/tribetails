@@ -28,9 +28,12 @@ import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { inviteEmailProblem, isInvitableEmail } from '../lib/inviteEmail';
+import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { billingAccessOf } from '../lib/billingAccess';
 import { resolveIdentity } from '../lib/identity';
 import { formatPhone, phoneProblem } from '../lib/phone';
+import { BusinessFootnote } from '../components/BusinessFootnote';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -182,7 +185,11 @@ export function Account() {
     onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim().toLowerCase()}.`, tone: 'ok' }),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
-      setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
+      // #1277: a missing backend setting is the operator's to fix; never show its name.
+      const text = isConfigGapError(err)
+        ? INVITES_UNAVAILABLE_MESSAGE
+        : `Invite failed: ${err instanceof Error ? err.message : 'try again'}`;
+      setInviteStatus({ text, tone: 'err' });
     },
   }, { policy: 'hold', what: 'this invite' });
 
@@ -312,7 +319,7 @@ export function Account() {
   // placeholder here cannot disagree with it (#1290).
   const { initial } = resolveIdentity({ account: data, signInEmail: null, householdName });
   const roster = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, 4);
-  const businessName = home.data?.businessName || 'Tribe Tails Pet Care';
+  const businessName = (home.data?.businessName ?? '').trim();
   const nameValid = displayName.trim().length > 0;
   // #1289: caught on the field, in plain words, before Save is ever offered. The
   // server repeats the same sentence if a number slips past this floor.
@@ -328,7 +335,9 @@ export function Account() {
     ? formatCard(card)
     : cardOnFile
       ? 'Charges run through your care team'
-      : 'Settle up directly with your Auntie for now';
+      // #1330: the card's one billing sentence. A second line under the card
+      // used to say the same thing again, card or no card.
+      : 'Settle up with your Auntie directly until a card is on file.';
   const billingReadError = isPermissionDenied(paymentMethod.error)
     ? 'You need billing access to manage billing. Your primary kinfolk can give it to you.'
     : 'We could not read your billing details just now.';
@@ -433,7 +442,16 @@ export function Account() {
                       onChange={(e) => setBackupEmail(e.target.value)}
                       placeholder="name@example.com"
                       disabled={readOnly}
+                      aria-invalid={inviteEmailProblem(backupEmail) !== null}
+                      aria-describedby={inviteEmailProblem(backupEmail) !== null ? 'bemail-err' : undefined}
                     />
+                    {/* #1326: Send Invite stays disabled on a bad address; say why. */}
+                    {inviteEmailProblem(backupEmail) !== null && (
+                      <span id="bemail-err" className="note err" role="alert">
+                        <span className="dot" />
+                        {inviteEmailProblem(backupEmail)}
+                      </span>
+                    )}
                   </div>
                   <div className="field">
                     <label htmlFor="bphone">Backup Phone</label>
@@ -461,7 +479,7 @@ export function Account() {
                     className="btn ghost"
                     type="button"
                     onClick={() => invite.mutate()}
-                    disabled={invite.isPending || !backupEmail.trim().includes('@') || readOnly}
+                    disabled={invite.isPending || !isInvitableEmail(backupEmail) || readOnly}
                   >
                     {'✉️'}{' '}
                     <MutationLabel mutation={invite} busy="Sending…">
@@ -595,10 +613,6 @@ export function Account() {
                     )}
                   </div>
                 )}
-
-                <p className="sub" style={{ marginTop: 12 }}>
-                  No payment method on file means visits cannot be charged automatically.
-                </p>
               </section>
             )}
           </div>
@@ -635,7 +649,7 @@ export function Account() {
 
             <section className="glass card d4">
               <div className="sectlabel">Cared for by</div>
-              <h3 className="title">{businessName}</h3>
+              <h3 className="title">{businessName || 'Your Auntie'}</h3>
               <p className="sub">Your care team can see your profile name and contact details to reach you about visits.</p>
               <div style={{ marginTop: 14 }}>
                 <Link className="btn ghost block" to="/messages">
@@ -693,9 +707,7 @@ export function Account() {
             </button>
           )}
         </section>
-        <p className="footnote">
-          Cared for by <b>{businessName}</b>
-        </p>
+        <BusinessFootnote name={businessName} />
       </div>
     </>
   );

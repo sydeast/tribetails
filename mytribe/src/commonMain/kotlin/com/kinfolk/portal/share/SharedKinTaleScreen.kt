@@ -93,8 +93,13 @@ fun SharedKinTaleScreen(
             errorBanner = null
             try {
                 when (val r = fetcher.getShareLink(shareId, pin)) {
-                    is GetShareLinkResult.Ok           -> stage = ViewerStage.Ready(r.payload)
-                    GetShareLinkResult.PasscodeRequired -> stage = ViewerStage.PasscodeGate
+                    is GetShareLinkResult.Ok           -> stage = ViewerStage.Ready(r.payload, r.unlockToken)
+                    GetShareLinkResult.PasscodeRequired -> {
+                        // A typed passcode that comes back 401 was wrong; say so
+                        // instead of redrawing the same empty gate.
+                        if (!pin.isNullOrBlank()) errorBanner = WRONG_PASSCODE_MESSAGE
+                        stage = ViewerStage.PasscodeGate
+                    }
                     GetShareLinkResult.NotFound        -> stage = ViewerStage.Terminal("This share link doesn't exist.")
                     GetShareLinkResult.Expired         -> stage = ViewerStage.Terminal("This share link has expired.")
                 }
@@ -133,6 +138,7 @@ fun SharedKinTaleScreen(
                     payload = s.payload,
                     shareId = shareId,
                     fetcher = fetcher,
+                    unlockToken = s.unlockToken,
                 )
                 is ViewerStage.Terminal -> TerminalBanner(s.message)
             }
@@ -144,10 +150,13 @@ fun SharedKinTaleScreen(
 // Stages
 // -----------------------------------------------------------------------------
 
+internal const val WRONG_PASSCODE_MESSAGE = "That passcode didn't match. Check it with the family and try again."
+
 private sealed class ViewerStage {
     object Loading : ViewerStage()
     object PasscodeGate : ViewerStage()
-    data class Ready(val payload: JsonObject) : ViewerStage()
+    /** [unlockToken] is the #1332 proof a guest note on a protected share carries. */
+    data class Ready(val payload: JsonObject, val unlockToken: String?) : ViewerStage()
     data class Terminal(val message: String) : ViewerStage()
 }
 
@@ -228,6 +237,7 @@ private fun SharedPayloadView(
     payload: JsonObject,
     shareId: String,
     fetcher: ShareLinkFetcher,
+    unlockToken: String?,
 ) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
@@ -309,7 +319,7 @@ private fun SharedPayloadView(
         // Guest comment form — taleId surfaced in the wrapped getShareLink response.
         val taleId = payload["sourceKinTaleId"]?.jsonPrimitive?.contentOrNull.orEmpty()
         if (taleId.isNotBlank()) {
-            GuestCommentForm(shareToken = shareId, taleId = taleId, fetcher = fetcher)
+            GuestCommentForm(shareToken = shareId, taleId = taleId, fetcher = fetcher, unlockToken = unlockToken)
         }
 
         Spacer(Modifier.height(KinfolkSpacing.m))
@@ -323,7 +333,7 @@ private fun SharedPayloadView(
 }
 
 @Composable
-private fun GuestCommentForm(shareToken: String, taleId: String, fetcher: ShareLinkFetcher) {
+private fun GuestCommentForm(shareToken: String, taleId: String, fetcher: ShareLinkFetcher, unlockToken: String?) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
     val scope = rememberCoroutineScope()
@@ -374,6 +384,7 @@ private fun GuestCommentForm(shareToken: String, taleId: String, fetcher: ShareL
                                 guestEmail = email.trim(),
                                 recaptchaToken = token.orEmpty(),
                                 parentCommentId = null,
+                                unlockToken = unlockToken,
                             )
                             sent = true
                         } catch (c: CancellationException) {

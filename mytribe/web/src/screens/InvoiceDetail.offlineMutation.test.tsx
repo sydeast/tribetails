@@ -259,3 +259,20 @@ describe('InvoiceDetail: a mutation with no signal (#807)', () => {
     expect(mocks.redeemCredit).not.toHaveBeenCalled();
   });
 });
+// #1369: the footnote and the "From" party name the business from settings.
+describe('InvoiceDetail: business name comes from settings (#1369)', () => {
+  it('names the configured business in the footnote and never a hard-coded one', async () => {
+    mocks.getBusinessContact.mockResolvedValue({ name: 'Paws and Claws Pet Sitting', email: '', phone: '', address: '' });
+    await renderLoaded('cr1');
+    await screen.findByText('Paws and Claws Pet Sitting', { selector: 'b' });
+    expect(screen.getByText(/Billed by/)).toBeTruthy();
+    expect(screen.queryByText(/Tribe Tails Pet Care/)).toBeNull();
+  });
+  it('leaves the footnote out when no business name is set', async () => {
+    mocks.getBusinessContact.mockResolvedValue({ name: '', email: '', phone: '', address: '' });
+    await renderLoaded('cr1');
+    await screen.findByRole('button', { name: /Save to Account Balance/i });
+    expect(screen.queryByText(/Billed by/)).toBeNull();
+    expect(screen.queryByText(/Tribe Tails Pet Care/)).toBeNull();
+  });
+});

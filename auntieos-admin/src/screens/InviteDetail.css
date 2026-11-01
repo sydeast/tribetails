@@ -1,0 +1,56 @@
+/* One invite (#1339). The pills and the panel are the kit's; only the fact
+   list and the action line live here. Tokens only, no literal colours. */
+
+.invite-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.invite-detail__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.invite-detail__facts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.invite-detail__row {
+  display: grid;
+  grid-template-columns: minmax(7rem, 10rem) 1fr;
+  gap: var(--space-3);
+}
+
+.invite-detail__row dt {
+  color: var(--color-text-dim);
+}
+
+.invite-detail__row dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .invite-detail__row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
+.invite-detail__handle {
+  font-family: var(--font-mono);
+}
+
+.invite-detail__household,
+.invite-detail__action {
+  color: var(--color-text-primary);
+}
+
+.invite-detail__actions {
+  margin: 0;
+}

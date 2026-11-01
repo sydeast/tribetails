@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Icon
@@ -40,6 +41,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -106,6 +113,7 @@ fun ShareKinTaleModal(
                 contentPadding = PaddingValues(KinfolkSpacing.l),
                 modifier = Modifier.fillMaxWidth(),
             ) {
+              Box(modifier = Modifier.fillMaxWidth()) {
                 if (created == null) {
                     ShareFormBody(
                         includePhotos = includePhotos,
@@ -182,6 +190,12 @@ fun ShareKinTaleModal(
                         },
                     )
                 }
+                ShareCloseButton(
+                    enabled = !submitting && !revoking,
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.TopEnd),
+                )
+              }
             }
             Spacer(Modifier.height(KinfolkSpacing.m))
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -194,6 +208,35 @@ fun ShareKinTaleModal(
     }
 }
 
+internal const val SHARE_DIALOG_TITLE = "Share this KinTale"
+/**
+ * The dialog's X, present on both stages (the form had none until a link
+ * existed, so a household that only wanted out had to find the system back
+ * gesture). Disabled while a create or revoke is in flight, same as the scrim
+ * tap and Back.
+ */
+@Composable
+private fun ShareCloseButton(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = KinfolkTheme.colors
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics {
+                contentDescription = "Close"
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Close,
+            contentDescription = null,
+            tint = if (enabled) c.navy else c.navyMuted,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
 // -----------------------------------------------------------------------------
 // Form (stage 1)
 // -----------------------------------------------------------------------------
@@ -212,19 +255,15 @@ private fun ShareFormBody(
 ) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
+    var showPasscode by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m)) {
         Text(
-            text = "Invite the Family",
+            text = SHARE_DIALOG_TITLE,
             style = type.heritageTitle,
-            modifier = Modifier.fillMaxWidth(),
+            // Room for the close button at the card's top-right corner.
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 36.dp),
             textAlign = TextAlign.Center,
-        )
-        Text(
-            text = "Share this story with family and friends. Choose how the link works.",
-            style = type.sansBody.copy(color = c.navyMuted),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
         )
 
         // ---- Include Photos toggle ----
@@ -283,6 +322,12 @@ private fun ShareFormBody(
             value = passcode,
             onValueChange = onPasscodeChange,
             label = "Optional, 4–8 characters",
+            visualTransformation = if (showPasscode) VisualTransformation.None else PasswordVisualTransformation(),
+        )
+        Text(
+            text = if (showPasscode) "Hide passcode" else "Show passcode",
+            style = type.sansMeta.copy(color = c.navyMuted),
+            modifier = Modifier.clickable { showPasscode = !showPasscode },
         )
 
         if (error != null) {
@@ -350,7 +395,7 @@ private fun ShareResultBody(
                     modifier = Modifier.size(16.dp),
                 )
             }
-            Text("Link Ready!", style = type.heritageTitle)
+            Text("Link ready", style = type.heritageTitle)
         }
 
         if (revoked) {

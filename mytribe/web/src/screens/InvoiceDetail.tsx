@@ -38,6 +38,7 @@ import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { announceSaved } from '../lib/saveNotice';
 import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
 import '../styles/invoices.css';
+import { BusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Deploy skew fallback (web and functions don't deploy atomically): if
@@ -338,7 +339,7 @@ export function InvoiceDetail() {
                 <div className="doc-head">
                   <div className="party">
                     <div className="lbl">From</div>
-                    <div className="who">{business.data?.name ?? 'Tribe Tails Pet Care'}</div>
+                    <div className="who">{business.data?.name?.trim() || 'Your Auntie'}</div>
                     {business.data && (
                       <address>
                         {business.data.address}
@@ -349,7 +350,7 @@ export function InvoiceDetail() {
                   </div>
                   <div className="party">
                     <div className="lbl">Client</div>
-                    <div className="who">{inv.client ?? 'Not set'}</div>
+                    <div className="who">{inv.client ?? inv.kinfolkName ?? 'Not set'}</div>
                     {inv.address && (
                       <>
                         <div className="lbl" style={{ marginTop: 12 }}>
@@ -596,9 +597,7 @@ export function InvoiceDetail() {
           </div>
         </div>
 
-        <p className="footnote">
-          Billed by <b>Tribe Tails Pet Care</b>
-        </p>
+        <BusinessFootnote lead="Billed by" name={business.data?.name} />
       </div>
     </>
   );
