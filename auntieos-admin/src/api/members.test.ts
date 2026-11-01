@@ -7,6 +7,7 @@ import {
   EDITABLE_PERMISSION_KEYS,
   PERMISSION_META,
   formatInviteDate,
+  getInvite,
   inviteHandle,
   inviteStatusLabel,
   inviteStatusTone,
@@ -393,5 +394,63 @@ describe('listRecoveryCandidates', () => {
   it('answers an empty list for an unreadable shape rather than inventing rows', async () => {
     call.mockResolvedValue({});
     await expect(listRecoveryCandidates('fam1')).resolves.toEqual([]);
+  });
+});
+
+describe('getInvite (#1339)', () => {
+  it('sends the invite id and maps the detail fields onto the shared row', async () => {
+    call.mockResolvedValue({
+      invite: {
+        inviteId: 'rq_1',
+        tribeId: 'f1',
+        householdName: 'the Demos',
+        invitedEmail: 'jane@example.com',
+        status: 'ACCEPTED',
+        effectiveStatus: 'ACCEPTED',
+        redeemable: false,
+        acceptedUid: 'u7',
+        acceptedAt: '2026-10-03T08:30:00.000Z',
+        invitedByRole: 'PRIMARY',
+        invitedBy: { uid: 'p1', displayName: 'Dora Demo', email: 'dora@example.com' },
+        acceptedBy: { uid: 'u7', displayName: null, email: 'jane@example.com' },
+        source: 'mytribe-portal',
+      },
+    });
+
+    const row = await getInvite('  rq_1 ');
+
+    expect(call).toHaveBeenCalledWith('getInvite', { inviteId: 'rq_1' });
+    expect(row).toMatchObject({
+      inviteId: 'rq_1',
+      householdName: 'the Demos',
+      effectiveStatus: 'ACCEPTED',
+      acceptedAt: '2026-10-03T08:30:00.000Z',
+      invitedByRole: 'PRIMARY',
+      invitedBy: { uid: 'p1', displayName: 'Dora Demo', email: 'dora@example.com' },
+      acceptedBy: { uid: 'u7', displayName: null, email: 'jane@example.com' },
+      source: 'mytribe-portal',
+    });
+  });
+
+  it('reads a business-minted invite as AUNTIE with no inviter', async () => {
+    call.mockResolvedValue({
+      invite: { inviteId: 'rq_2', tribeId: 'f1', householdName: 'the Demos', invitedByRole: 'AUNTIE', invitedBy: null },
+    });
+    const row = await getInvite('rq_2');
+    expect(row.invitedByRole).toBe('AUNTIE');
+    expect(row.invitedBy).toBeNull();
+    expect(row.acceptedAt).toBeNull();
+  });
+
+  it('refuses a blank id without a round trip, and propagates a server refusal', async () => {
+    await expect(getInvite(' ')).rejects.toThrow('getInvite requires an invite id');
+    expect(call).not.toHaveBeenCalled();
+    call.mockRejectedValue(new Error('No invite with that id.'));
+    await expect(getInvite('nope')).rejects.toThrow('No invite with that id.');
+  });
+
+  it('a payload with no invite is an error, not a blank screen', async () => {
+    call.mockResolvedValue({});
+    await expect(getInvite('rq_3')).rejects.toThrow('getInvite returned no invite');
   });
 });

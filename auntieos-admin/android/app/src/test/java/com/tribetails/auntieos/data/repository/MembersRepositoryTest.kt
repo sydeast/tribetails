@@ -510,4 +510,72 @@ class MembersRepositoryTest {
         repoWith(functions).removeSecondaryKinfolk("fam1", "p1").getOrThrow()
         assertEquals(mapOf("kinfolkId" to "fam1", "personId" to "p1"), sent.captured)
     }
+
+    // ── getInvite (#1339) ───────────────────────────────────────────────────
+
+    @Test
+    fun `HAPPY getInvite sends the trimmed id and decodes who sent and who claimed it`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val payload = slot<Map<String, Any?>>()
+        callableReturning(
+            functions,
+            "getInvite",
+            mapOf(
+                "invite" to mapOf(
+                    "inviteId" to "rq_1",
+                    "tribeId" to "f1",
+                    "householdName" to "the Demos",
+                    "invitedEmail" to "jane@example.com",
+                    "proposedRole" to "SECONDARY",
+                    "proposedPermissions" to mapOf("messaging_direct" to true),
+                    "status" to "ACCEPTED",
+                    "effectiveStatus" to "ACCEPTED",
+                    "redeemable" to false,
+                    "acceptedAt" to "2026-10-03T08:30:00.000Z",
+                    "invitedByRole" to "PRIMARY",
+                    "invitedBy" to mapOf("uid" to "p1", "displayName" to "Dora Demo", "email" to "dora@example.com"),
+                    "acceptedBy" to mapOf("uid" to "u7", "displayName" to "", "email" to "jane@example.com"),
+                    "source" to "mytribe-portal",
+                ),
+            ),
+            payload,
+        )
+
+        val detail = repoWith(functions).getInvite(" rq_1 ").getOrThrow()
+
+        assertEquals(mapOf("inviteId" to "rq_1"), payload.captured)
+        assertEquals("rq_1", detail.admin.invite.inviteId)
+        assertEquals("the Demos", detail.admin.householdName)
+        assertEquals(MembersRepository.InviteStatus.ACCEPTED, detail.admin.invite.effectiveStatus)
+        assertFalse(detail.invitedByAuntie)
+        assertEquals(MembersRepository.InviteParty("p1", "Dora Demo", "dora@example.com"), detail.invitedBy)
+        // A blank display name is no name.
+        assertEquals(MembersRepository.InviteParty("u7", null, "jane@example.com"), detail.acceptedBy)
+        assertEquals("2026-10-03T08:30:00.000Z", detail.acceptedAt)
+        assertTrue(detail.permissions.messagingDirect)
+        assertEquals("mytribe-portal", detail.source)
+    }
+
+    @Test
+    fun `getInvite reads a business-minted invite as AUNTIE with no inviter account`() {
+        val detail = decodeInviteDetail(
+            mapOf("invite" to mapOf("inviteId" to "rq_2", "tribeId" to "f1", "invitedByRole" to "AUNTIE", "invitedBy" to null)),
+        )
+        assertTrue(detail.invitedByAuntie)
+        assertNull(detail.invitedBy)
+        assertNull(detail.acceptedAt)
+    }
+
+    @Test
+    fun `getInvite fails loud on a payload with no invite, never a blank detail`() {
+        val err = runCatching { decodeInviteDetail(emptyMap<String, Any?>()) }.exceptionOrNull()
+        assertTrue(err?.message?.contains("no invite") == true)
+    }
+
+    @Test
+    fun `getInvite refuses a blank id without calling anything`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        assertTrue(repoWith(functions).getInvite("  ").isFailure)
+        io.mockk.verify(exactly = 0) { functions.getHttpsCallable(any()) }
+    }
 }

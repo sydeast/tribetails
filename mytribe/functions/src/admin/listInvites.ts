@@ -84,7 +84,7 @@ export interface ListInvitesResult {
 }
 
 /** Firestore Timestamp | Date | string -> ISO-8601, else null. Never throws. */
-function toIsoOrNull(v: unknown): string | null {
+export function toIsoOrNull(v: unknown): string | null {
   if (v == null) return null;
   if (typeof v === 'object' && typeof (v as { toDate?: unknown }).toDate === 'function') {
     try {

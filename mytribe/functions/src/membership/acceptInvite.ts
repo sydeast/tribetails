@@ -234,6 +234,8 @@ export async function acceptInviteHandler(req: CallableRequest<unknown>): Promis
     tx.update(inviteRef, {
       status: 'ACCEPTED',
       acceptedUid: req.auth!.uid,
+      // #1339: the admin invite detail shows when an invite was claimed.
+      acceptedAt: FieldValue.serverTimestamp(),
     });
   });
   // O-37: stamp role/kinfolkId now, the same way setActiveTribe does, instead of
