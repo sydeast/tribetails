@@ -165,9 +165,9 @@ class TribeScreenTest {
 
     /**
      * #872: a household with a saved vet clinic used to see it twice on
-     * Android — once editable in the Vet Clinic card, once read-only as a
-     * "Set by your Auntie" row, because CustomFieldList's ownedElsewhere set
-     * never listed the vetClinic* keys. Each value must render exactly once.
+     * Android. Each value must render exactly once. After #1378 the free-text
+     * rows are legacy: shown read-only in the Vet Clinic card, never as a second
+     * "Set by your Auntie" copy.
      */
     @Test
     fun vetClinicCustomFields_showOnlyInTheVetClinicCard_neverAsAReadOnlyDuplicate() = runComposeUiTest {
@@ -179,18 +179,221 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithText("Ridgeline Animal Hospital").performScrollTo().assertIsDisplayed()
         assertEquals(1, onAllNodesWithText("Ridgeline Animal Hospital").fetchSemanticsNodes().size)
-        assertEquals(1, onAllNodesWithText("805-555-0170").fetchSemanticsNodes().size)
-        assertEquals(1, onAllNodesWithText("12 Ridge Rd").fetchSemanticsNodes().size)
-        // This profile's only customFields are the vet clinic's own; once
-        // CustomFieldList hides them there is nothing left for the read-only
-        // "Set by your Auntie" note to introduce.
+        assertEquals(1, onAllNodesWithText("(805) 555-0170 \u00b7 12 Ridge Rd").fetchSemanticsNodes().size)
+        onNodeWithTag("vet-legacy").assertExists()
         onNodeWithText("Set by your Auntie. Ask them to update these.").assertDoesNotExist()
-        // Same rule for the section header above the list: it must read off
-        // the same filtered set, or a vet-clinic-only profile shows
-        // "PROFILE FIELDS" over an empty read-only list.
         onNodeWithText("PROFILE FIELDS").assertDoesNotExist()
     }
-
+    // ---- #1378: the Vet Clinic card picks a catalog clinic by id, like portal web ----
+    private fun clinicJson(id: String, name: String, phone: String = "", address: String = "", emergency: Boolean = false) =
+        buildJsonObject {
+            put("id", id); put("name", name); put("phone", phone); put("address", address)
+            put("website", ""); put("googleMapsUrl", ""); put("isEmergency", emergency)
+        }
+    private fun FakeFunctionsClient.stubCatalog(vararg clinics: JsonObject) =
+        stub("getVetClinics", buildJsonObject { put("clinics", buildJsonArray { clinics.forEach { add(it) } }) })
+    private fun FakeFunctionsClient.stubProfileWithVetRows(vararg rows: Triple<String, String, String>) {
+        stub("getMyTribeProfile", buildJsonObject {
+            put("profile", buildJsonObject {
+                put("kinfolkId", "3"); put("displayName", "The Foster")
+                put("customFields", buildJsonArray {
+                    rows.forEach { (k, l, v) -> add(buildJsonObject { put("key", k); put("label", l); put("value", v) }) }
+                })
+            })
+            put("homeAccess", buildJsonObject {
+                put("gateCode", JsonNull); put("keyLocation", JsonNull); put("wifiPassword", JsonNull)
+                put("customFields", buildJsonArray {}); put("updatedAtMs", JsonNull)
+            })
+        })
+        stubEmergencyContacts()
+        stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
+        stub("saveTribeProfile", buildJsonObject { put("ok", true) })
+        stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+    }
+    private fun FakeFunctionsClient.savedProfile(): Pair<List<Pair<String, String>>, List<String>> {
+        val payload = calls.last { it.first == "saveTribeProfile" }.second!!
+        val rows = payload["customFields"]!!.jsonArray.map {
+            it.jsonObject["key"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content
+        }
+        val removed = (payload["removeCustomFieldKeys"] as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
+        return rows to removed
+    }
+    @Test
+    fun vetClinic_linkedId_showsNameFormattedPhoneAndAddress_neverTheId() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("vetClinicId", "Vet Clinic", "c-77"))
+        fake.stubCatalog(clinicJson("c-77", "Ridgeline Animal Hospital", "+18055550170", "12 Ridge Rd", emergency = true))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Ridgeline Animal Hospital \u00b7 24hr").assertExists()
+        onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
+        assertEquals(0, onAllNodesWithText("c-77").fetchSemanticsNodes().size)
+    }
+    @Test
+    fun vetClinic_searchAndPick_savesTheIdOnly() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubCatalog(clinicJson("c-1", "Ridgeline Animal Hospital", "8055550170", "12 Ridge Rd"), clinicJson("c-2", "Harbor Vet"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("ridge")
+        waitForIdle()
+        onNodeWithTag("vet-match-c-1").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val (rows, removed) = fake.savedProfile()
+        assertTrue("vetClinicId" to "c-1" in rows, "sent $rows")
+        assertTrue(rows.none { it.first == "vetClinicName" || it.first == "vetClinicPhone" || it.first == "vetClinicAddress" }, "sent $rows")
+        assertTrue("allergy" to "Chicken" in rows, "the unrelated field rides along: $rows")
+        assertEquals(emptyList(), removed)
+        assertTrue(fake.calls.none { it.first == "submitVetClinic" })
+    }
+    @Test
+    fun vetClinic_clearLink_removesTheIdByName_andKeepsLegacyRows() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(
+            Triple("vetClinicId", "Vet Clinic", "c-1"),
+            Triple("vetClinicName", "Vet Clinic", "Old Typed Name"),
+        )
+        fake.stubCatalog(clinicJson("c-1", "Ridgeline Animal Hospital"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-clear").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-on-file").assertDoesNotExist()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val (rows, removed) = fake.savedProfile()
+        assertEquals(listOf("vetClinicId"), removed)
+        assertTrue(rows.none { it.first == "vetClinicId" }, "sent $rows")
+        assertTrue("vetClinicName" to "Old Typed Name" in rows, "the legacy row is kept as stored: $rows")
+    }
+    @Test
+    fun vetClinic_legacyRowsOnly_areShownReadOnly_andASaveLeavesThemAlone() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(
+            Triple("vetClinicName", "Vet Clinic", "Old Typed Name"),
+            Triple("vetClinicPhone", "Vet Clinic Phone", "805-555-0170"),
+        )
+        fake.stubCatalog()
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-legacy").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Old Typed Name").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        val (rows, removed) = fake.savedProfile()
+        assertTrue("vetClinicName" to "Old Typed Name" in rows, "sent $rows")
+        assertTrue("vetClinicPhone" to "805-555-0170" in rows, "sent $rows")
+        assertEquals(emptyList(), removed)
+    }
+    @Test
+    fun vetClinic_addNew_createdLinksTheId_andSavesIt() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubCatalog(clinicJson("c-2", "Harbor Vet"))
+        fake.stub("submitVetClinic", buildJsonObject {
+            put("status", "created"); put("clinicId", "new-9"); put("created", true); put("pending", true)
+            put("candidates", buildJsonArray {})
+        })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("Brand New Clinic")
+        waitForIdle()
+        onNodeWithTag("vet-add-new").performScrollTo().performClick()
+        waitForIdle()
+        val submitted = fake.calls.last { it.first == "submitVetClinic" }.second!!
+        assertEquals("Brand New Clinic", submitted["name"]!!.jsonPrimitive.content)
+        assertEquals(0, submitted["acknowledgedMatchIds"]!!.jsonArray.size)
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Brand New Clinic").assertExists()
+        onNodeWithTag("vet-message").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue("vetClinicId" to "new-9" in fake.savedProfile().first)
+    }
+    @Test
+    fun vetClinic_addNew_nearMatchOffersAChoice_andWritesNothingUntilTheHouseholdDecides() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubCatalog()
+        fake.stub("submitVetClinic", buildJsonObject {
+            put("status", "needs_choice"); put("clinicId", ""); put("created", false); put("pending", false)
+            put("candidates", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "c-5"); put("name", "Ridgeline Animal Hospital"); put("address", "12 Ridge Rd")
+                    put("phone", "8055550170"); put("isEmergency", false); put("verified", true); put("reason", "name")
+                })
+            })
+        })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("Ridgeline Animal Hosp")
+        waitForIdle()
+        onNodeWithTag("vet-add-new").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-candidates-note").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("vet-on-file").assertDoesNotExist()
+        // Create anyway echoes the ids it was shown.
+        onNodeWithTag("vet-add-anyway").performScrollTo().performClick()
+        waitForIdle()
+        val second = fake.calls.last { it.first == "submitVetClinic" }.second!!
+        assertEquals(listOf("c-5"), second["acknowledgedMatchIds"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+    @Test
+    fun vetClinic_addNew_pickingACandidateLinksItWithoutAnotherCall() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubCatalog()
+        fake.stub("submitVetClinic", buildJsonObject {
+            put("status", "needs_choice"); put("clinicId", ""); put("created", false); put("pending", false)
+            put("candidates", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "c-5"); put("name", "Ridgeline Animal Hospital"); put("address", "12 Ridge Rd")
+                    put("phone", "8055550170"); put("isEmergency", false); put("verified", false); put("reason", "name")
+                })
+            })
+        })
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("Ridgeline")
+        waitForIdle()
+        onNodeWithTag("vet-add-new").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-candidate-c-5").performScrollTo().performClick()
+        waitForIdle()
+        assertEquals(1, fake.calls.count { it.first == "submitVetClinic" })
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue("vetClinicId" to "c-5" in fake.savedProfile().first)
+    }
+    @Test
+    fun vetClinic_catalogLoadFailure_isShown_notSwallowed() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
+        fake.stubError("getVetClinics", IllegalStateException("catalog down"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-load-error").performScrollTo().assertIsDisplayed()
+    }
+    @Test
+    fun vetClinic_linkedIdMissingFromTheCatalog_saysSo_andKeepsTheLinkOnSave() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows(Triple("vetClinicId", "Vet Clinic", "gone-1"))
+        fake.stubCatalog(clinicJson("c-2", "Harbor Vet"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-missing").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Save Changes").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue("vetClinicId" to "gone-1" in fake.savedProfile().first)
+    }
     /**
      * #933 item 3. The After-hours block itself always renders (its header and
      * blurb are unconditional), but the editable "Emergency Clinic" fields only
@@ -468,14 +671,17 @@ class TribeScreenTest {
         fake.stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
         setThemedContent { TribeScreen("X", "3", PortalApi(fake)) }
         waitForIdle()
-        onNodeWithTag("vet-name").performScrollTo().assert(androidx.compose.ui.test.hasText("Banfield Pet Hospital"))
-        onNodeWithTag("vet-phone").assert(androidx.compose.ui.test.hasText("(805) 555-0123"))
-        onNodeWithTag("vet-address").assert(androidx.compose.ui.test.hasText("1 Main St"))
+        // #1378 picker UI: the linked clinic is not in the (empty) catalog, so it
+        // shows from the server's summary as the clinic on file, not as missing.
+        onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Banfield Pet Hospital").assertIsDisplayed()
+        onNodeWithText("(805) 555-0123 · 1 Main St").assertIsDisplayed()
+        assertTrue(onAllNodesWithTag("vet-missing").fetchSemanticsNodes().isEmpty())
         assertTrue(onAllNodesWithText("m5rTfebiqMxckecn4OCM", substring = true).fetchSemanticsNodes().isEmpty())
         assertTrue(onAllNodesWithText("PROFILE FIELDS").fetchSemanticsNodes().isEmpty())
     }
     @Test
-    fun savingKeepsTheChosenClinicLinked_andTypingOverItUnlinksIt() = runComposeUiTest {
+    fun savingKeepsTheChosenClinicLinked() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stubProfileWithClinic()
         fake.stubEmergencyContacts()
@@ -490,11 +696,8 @@ class TribeScreenTest {
         val keep = fake.calls.last { it.first == "saveTribeProfile" }.second!!
         val rows = keep["customFields"]!!.jsonArray.associate { it.jsonObject["key"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content }
         assertEquals("m5rTfebiqMxckecn4OCM", rows["vetClinicId"])
-        onNodeWithTag("vet-name").performScrollTo().performTextReplacement("My Own Vet")
-        onNodeWithText("Save Changes").performScrollTo().performClick()
-        waitForIdle()
-        val unlink = fake.calls.last { it.first == "saveTribeProfile" }.second!!
-        assertTrue("vetClinicId" in unlink["removeCustomFieldKeys"]!!.jsonArray.map { it.jsonPrimitive.content })
+        // #1378: there are no free-text clinic fields to type over any more;
+        // unlinking is the picker's clear action (vetClinic_clearLink_* above).
     }
     // ---- #873: a schema-mode save keeps the rows it does not edit ----
 

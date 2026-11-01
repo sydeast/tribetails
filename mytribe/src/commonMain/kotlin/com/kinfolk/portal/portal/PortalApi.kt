@@ -647,34 +647,74 @@ class PortalApi(
         }.orEmpty()
     }
 
-    /** Result of submitting a not-on-the-list vet to the shared bank. */
-    data class VetSubmitResult(val clinicId: String, val created: Boolean, val pending: Boolean)
-
+    /**
+     * Result of submitting a not-on-the-list vet to the shared bank.
+     *
+     * [needsChoice] is the branch to read first. When true NOTHING was written:
+     * [candidates] are clinics that look like the same practice, and the
+     * household either picks one (no call) or re-submits with their ids in
+     * `acknowledgedMatchIds`. A backend that predates the choice flow sends no
+     * `status`, which reads as created.
+     */
+    data class VetSubmitResult(
+        val clinicId: String,
+        val created: Boolean,
+        val pending: Boolean,
+        val needsChoice: Boolean = false,
+        val candidates: List<VetClinicCandidate> = emptyList(),
+    )
+    /** A near-match `submitVetClinic` offered instead of creating a duplicate. */
+    data class VetClinicCandidate(
+        val id: String,
+        val name: String,
+        val address: String,
+        val phone: String,
+        val isEmergency: Boolean,
+        val verified: Boolean,
+    )
     /**
      * Kinfolk add-new: submits a vet clinic the household couldn't find on the
      * list. Lands a PENDING entry (verified=false) the operator approves in
-     * AuntieOS; if a clinic with the same name already exists, the call dedupes
-     * and returns that clinic instead of creating a duplicate.
+     * AuntieOS. The first call carries no [acknowledgedMatchIds]; a near match
+     * comes back as [VetSubmitResult.needsChoice] with nothing written, and the
+     * second call echoes the ids the household was shown (operator ruling
+     * 2026-08-01). Same callable and payload as portal web.
      */
     suspend fun submitVetClinic(
         name: String,
         phone: String = "",
         address: String = "",
         website: String = "",
+        acknowledgedMatchIds: List<String> = emptyList(),
     ): VetSubmitResult {
         val raw = fns.call("submitVetClinic", buildJsonObject {
             put("name", name)
             put("phone", phone)
             put("address", address)
             put("website", website)
+            put("acknowledgedMatchIds", buildJsonArray { acknowledgedMatchIds.forEach { add(it) } })
         })
+        val candidates = (raw["candidates"] as? JsonArray)?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val id = o["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            if (id.isEmpty()) return@mapNotNull null
+            VetClinicCandidate(
+                id = id,
+                name = o["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                address = o["address"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                phone = o["phone"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                isEmergency = o["isEmergency"]?.jsonPrimitive?.booleanOrNull ?: false,
+                verified = o["verified"]?.jsonPrimitive?.booleanOrNull ?: true,
+            )
+        }.orEmpty()
         return VetSubmitResult(
             clinicId = raw["clinicId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             created  = raw["created"]?.jsonPrimitive?.booleanOrNull ?: false,
             pending  = raw["pending"]?.jsonPrimitive?.booleanOrNull ?: true,
+            needsChoice = raw["status"]?.jsonPrimitive?.contentOrNull == "needs_choice",
+            candidates = candidates,
         )
     }
-
     // -- Kin --
     /**
      * #1282: Firestore first when the household is known (see KinDirectRead.kt
