@@ -35,6 +35,9 @@ type KinDoc = {
   _mirrorOrigin?: string;
 };
 
+/** #1370: flat-doc fields the admin `Kin` models decode as non-null `String`. */
+export const FLAT_NON_NULL_TEXT_FIELDS: readonly string[] = ['name', 'species', 'breed'];
+
 /**
  * Builds the flat `kin/{docId}` payload from a family kin doc. Only the
  * parent-owned fields are projected here, minus `status`, which the paths below
@@ -43,7 +46,38 @@ type KinDoc = {
  * `vetInfo`) is NEVER written by this trigger. One writer per field.
  */
 export function buildFlatMirrorPayload(after: KinDoc): Record<string, unknown> {
-  return pickDefined(after as Record<string, unknown>, FLAT_MIRROR_FIELDS);
+  const out = pickDefined(after as Record<string, unknown>, FLAT_MIRROR_FIELDS);
+  // #1370: the portal clears these with null on the family doc (updateKin's
+  // zod is `.nullable()`), but the admin Android and desktop `Kin` models
+  // declare them non-null `String`, and Firestore's mapper hands a null to the
+  // Kotlin setter. The flat doc gets "", the value those models already read
+  // as "none". The family doc keeps its null.
+  for (const k of FLAT_NON_NULL_TEXT_FIELDS) {
+    if (out[k] === null) out[k] = '';
+  }
+  return out;
+}
+
+/**
+ * #1291. Every AuntieOS reader of a pet's picture (admin web Directory and
+ * KinView, admin Android, the desktop console) reads the flat doc's
+ * `profilePictureUrl`, never `photoUrl`. The portal writes `photoUrl`, so a
+ * photo a household uploaded reached the flat doc under a name no admin
+ * screen looks at. This stamps the admin field too, but ONLY when the
+ * household's photo actually changed (or arrives on create): an unrelated
+ * parent edit must not overwrite a portrait an Auntie set from the media
+ * gallery (`setMediaProfilePhoto`, the other writer of this field). A removed
+ * photo clears to `''`, the same "cleared" value `deleteMediaFile` writes.
+ */
+export function buildAdminPortraitStamp(
+  before: KinDoc | undefined,
+  after: KinDoc,
+): { profilePictureUrl: string } | Record<string, never> {
+  const next = typeof after.photoUrl === 'string' ? after.photoUrl : null;
+  const prev = typeof before?.photoUrl === 'string' ? before.photoUrl : null;
+  if (!before) return next ? { profilePictureUrl: next } : {};
+  if (next === prev) return {};
+  return { profilePictureUrl: next ?? '' };
 }
 
 /**
@@ -66,7 +100,7 @@ export async function mirrorFamilyKinToFlat(
 ): Promise<{ action: 'created' | 'updated' | 'archived' | 'skipped'; flatDocId: string | null }> {
   const firestore = db();
   const familyKinPath = `families/${kinfolkId}/kin/${kinId}`;
-  const flatPayload = buildFlatMirrorPayload(after);
+  const flatPayload = { ...buildFlatMirrorPayload(after), ...buildAdminPortraitStamp(before, after) };
 
   // Resolve (or create) the flat mirror. Prefer the stamped link; fall back to
   // a kinfolkId + name lookup so a pet AuntieOS already created flat is reused

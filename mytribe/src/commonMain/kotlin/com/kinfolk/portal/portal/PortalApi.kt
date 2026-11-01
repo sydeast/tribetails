@@ -1,5 +1,6 @@
 package com.kinfolk.portal.portal
 
+import com.kinfolk.portal.firebase.FirestoreClient
 import com.kinfolk.portal.firebase.FunctionsClient
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.async
@@ -23,7 +24,15 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
-class PortalApi(private val fns: FunctionsClient) {
+/**
+ * [firestore] is optional so tests and callers that only exercise callables
+ * keep constructing `PortalApi(fns)`. When present, the hot reads that the
+ * rules let a household make directly go there first (#1282).
+ */
+class PortalApi(
+    private val fns: FunctionsClient,
+    private val firestore: FirestoreClient? = null,
+) {
 
     // -- Access (operator-aware kinfolkIds list) --
     suspend fun getMyAccess(): MyAccessResult {
@@ -357,7 +366,15 @@ class PortalApi(private val fns: FunctionsClient) {
      * `BOOKING_HORIZON_DAYS`, which is why one call answers every month the
      * picker can page to.
      */
-    suspend fun getBusinessClosures(fromDate: String, toDate: String): List<BusinessClosure> {
+    suspend fun getBusinessClosures(fromDate: String, toDate: String): List<BusinessClosure> =
+        getBusinessCalendar(fromDate, toDate).closures
+    /**
+     * #1284: the same read as [getBusinessClosures], plus the weekly hours and
+     * the zone the same response now carries, for the reschedule form's closed
+     * weekdays and clock bounds. One callable, so the closures and the hours can
+     * never come from two different moments.
+     */
+    suspend fun getBusinessCalendar(fromDate: String, toDate: String): BusinessCalendar {
         val raw = fns.call(
             "getBusinessClosures",
             buildJsonObject {
@@ -365,12 +382,29 @@ class PortalApi(private val fns: FunctionsClient) {
                 put("toDate", toDate)
             },
         )
-        return (raw["closures"] as? JsonArray)?.mapNotNull { el ->
+        val closures = (raw["closures"] as? JsonArray)?.mapNotNull { el ->
             val o = el.jsonObject
             val date = o["date"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
             val name = o["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: "Closed"
             BusinessClosure(date = date, name = name)
         }.orEmpty()
+        val weekly = (raw["weeklyHours"] as? JsonArray)?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val weekday = o["weekday"]?.jsonPrimitive?.intOrNull?.takeIf { it in 0..6 } ?: return@mapNotNull null
+            WeekdayHours(
+                weekday = weekday,
+                open = o["open"]?.jsonPrimitive?.booleanOrNull ?: return@mapNotNull null,
+                startTime = o["startTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+                endTime = o["endTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+            )
+        }.orEmpty()
+        return BusinessCalendar(
+            closures = closures,
+            // Seven days or none: a partial table would read as "closed" for the
+            // days it lacks, which is a guess this client must not make.
+            weeklyHours = if (weekly.map { it.weekday }.toSet().size == 7) weekly else emptyList(),
+            timeZone = raw["timeZone"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
     }
 
     /**
@@ -585,6 +619,11 @@ class PortalApi(private val fns: FunctionsClient) {
                 gpsRoute        = route,
                 gpsDistanceMeters  = summary?.get("distanceMeters")?.jsonPrimitive?.doubleOrNull,
                 gpsDurationSeconds = summary?.get("durationSeconds")?.jsonPrimitive?.longOrNull,
+                serviceLabel    = com.kinfolk.portal.util.decodeServiceLabel(
+                    labelPresent = o.containsKey("serviceLabel"),
+                    serviceLabel = o["serviceLabel"]?.jsonPrimitive?.contentOrNull,
+                    serviceType = o["serviceType"]?.jsonPrimitive?.contentOrNull,
+                ),
             )
         }.orEmpty()
         return VisitsResult(visits = list)
@@ -637,7 +676,29 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     // -- Kin --
+    /**
+     * #1282: Firestore first when the household is known (see KinDirectRead.kt
+     * for why the rules allow it), so a first open skips the `getMyKin` cold
+     * start. ANY failure falls back to the callable, the old path unchanged: a
+     * legacy primary with no member doc is denied by the rule but admitted by
+     * `resolveKinfolkAccess`, and offline or revoked sessions get the error the
+     * screens already handle. With no id the callable picks the default tribe.
+     */
     suspend fun getMyKin(kinfolkId: String? = null): KinResult {
+        val direct = firestore
+        if (kinfolkId != null && direct != null) {
+            try {
+                return readKinDirect(direct, kinfolkId)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+                // Fall through to the callable; see above.
+            }
+        }
+        return getMyKinViaCallable(kinfolkId)
+    }
+
+    private suspend fun getMyKinViaCallable(kinfolkId: String?): KinResult {
         val raw = fns.call("getMyKin", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
         val list = (raw["kin"] as? JsonArray)?.map { el ->
             val o = el.jsonObject
@@ -828,6 +889,16 @@ class PortalApi(private val fns: FunctionsClient) {
             ),
             // #843. Absent from an older backend: allowed, and the server still enforces it.
             canEditHomeDetails = raw["canEditHomeDetails"]?.jsonPrimitive?.booleanOrNull ?: true,
+            // #1325. Null (JSON null, or absent from an older backend) means no clinic chosen.
+            vetClinic = (raw["vetClinic"] as? JsonObject)?.let { v ->
+                VetClinicSummary(
+                    id = v["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    name = v["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    phone = v["phone"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    address = v["address"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    isEmergency = v["isEmergency"]?.jsonPrimitive?.booleanOrNull ?: false,
+                )
+            },
         )
     }
 
@@ -901,30 +972,15 @@ class PortalApi(private val fns: FunctionsClient) {
         )
     }
 
-    suspend fun saveMyNotificationPrefs(
-        byCategory: Map<String, Map<String, Boolean>>,
-        byKey: Map<String, Map<String, Boolean>>,
-        marketingOptIn: Map<String, Boolean>,
-    ) {
+    /**
+     * Save ONE change (#1292). The callable merges [patch] into the stored
+     * preferences; nothing here is rebuilt from screen state.
+     */
+    suspend fun saveMyNotificationPrefs(patch: NotificationPrefsPatch) {
         fns.call("saveMyNotificationPrefs", buildJsonObject {
-            put("prefs", buildJsonObject {
-                put("byCategory", buildJsonObject {
-                    byCategory.forEach { (cat, channels) ->
-                        put(cat, buildJsonObject { channels.forEach { (ch, v) -> put(ch, v) } })
-                    }
-                })
-                put("byKey", buildJsonObject {
-                    byKey.forEach { (key, channels) ->
-                        put(key, buildJsonObject { channels.forEach { (ch, v) -> put(ch, v) } })
-                    }
-                })
-                put("marketingOptIn", buildJsonObject {
-                    marketingOptIn.forEach { (k, v) -> put(k, v) }
-                })
-            })
+            put("patch", patch.toJson())
         })
     }
-
     private fun parseChannelMapMap(obj: JsonObject?): Map<String, Map<String, Boolean>> {
         if (obj == null) return emptyMap()
         return obj.entries.associate { (outerKey, channels) ->
@@ -951,19 +1007,33 @@ class PortalApi(private val fns: FunctionsClient) {
         )
     }
 
+    /**
+     * A null argument is omitted (leave the stored value alone). #1336: a key in
+     * [clearFields] (`phone`, `photoUrl`, `backupEmail`, `backupPhone`) is sent
+     * as JSON `null`, which the callable stores as a clear. `displayName` cannot
+     * be cleared (the server requires at least one character) and is never in
+     * the set. [accountChanges] builds both from the loaded account.
+     */
     suspend fun saveMyAccount(
         displayName: String? = null,
         phone: String? = null,
         photoUrl: String? = null,
         backupEmail: String? = null,
         backupPhone: String? = null,
+        clearFields: Set<String> = emptySet(),
     ) {
         fns.call("saveMyAccount", buildJsonObject {
+            fun opt(key: String, value: String?) {
+                when {
+                    value != null -> put(key, value)
+                    key in clearFields && key in NULL_CLEARABLE_ACCOUNT_FIELDS -> put(key, JsonNull)
+                }
+            }
             displayName?.let { put("displayName", it) }
-            phone?.let { put("phone", it) }
-            photoUrl?.let { put("photoUrl", it) }
-            backupEmail?.let { put("backupEmail", it) }
-            backupPhone?.let { put("backupPhone", it) }
+            opt("phone", phone)
+            opt("photoUrl", photoUrl)
+            opt("backupEmail", backupEmail)
+            opt("backupPhone", backupPhone)
         })
     }
 
@@ -1088,6 +1158,21 @@ class PortalApi(private val fns: FunctionsClient) {
         })
     }
 
+    /**
+     * #1291. Clears a Kin's photo. [updateKin] cannot do it: [kinPayloadToJson]
+     * omits every null field, and the server's merge write keeps whatever an
+     * omitted field already held. This sends `photoUrl` as an explicit JSON
+     * null, which the server's KinPayload schema accepts (`nullable()`), and
+     * nothing else, so no other field is touched.
+     */
+    suspend fun removeKinPhoto(kinfolkId: String? = null, kinId: String) {
+        fns.call("updateKin", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("kinId", kinId)
+            put("kin", buildJsonObject { put("photoUrl", kotlinx.serialization.json.JsonNull) })
+        })
+    }
+
     suspend fun archiveKin(kinfolkId: String? = null, kinId: String, restore: Boolean = false) {
         fns.call("archiveKin", buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
@@ -1120,18 +1205,29 @@ class PortalApi(private val fns: FunctionsClient) {
         return confirmKinPhotoUpload(kinId = kinId, secureUrl = secureUrl, kinfolkId = kinfolkId)
     }
 
+    /**
+     * #1336: a null property is omitted (leave the stored value alone); a key
+     * in [KinPayload.clearFields] is sent as JSON `null`, which `updateKin`
+     * stores as a clear. A value wins over a clear for the same key.
+     */
     private fun kinPayloadToJson(p: KinPayload): JsonObject = buildJsonObject {
+        fun opt(key: String, value: JsonElement?) {
+            when {
+                value != null -> put(key, value)
+                key in p.clearFields && key in NULL_CLEARABLE_KIN_FIELDS -> put(key, JsonNull)
+            }
+        }
         put("name", p.name)
-        p.species?.let { put("species", it) }
-        p.breed?.let { put("breed", it) }
-        p.ageYears?.let { put("ageYears", it) }
-        p.photoUrl?.let { put("photoUrl", it) }
-        p.feedingInstructions?.let { put("feedingInstructions", it) }
-        p.walkingInstructions?.let { put("walkingInstructions", it) }
-        p.medications?.let { put("medications", it) }
-        p.allergies?.let { put("allergies", it) }
-        p.emergencyNotes?.let { put("emergencyNotes", it) }
-        p.sitterNotes?.let { put("sitterNotes", it) }
+        opt("species", p.species?.let(::JsonPrimitive))
+        opt("breed", p.breed?.let(::JsonPrimitive))
+        opt("ageYears", p.ageYears?.let(::JsonPrimitive))
+        opt("photoUrl", p.photoUrl?.let(::JsonPrimitive))
+        opt("feedingInstructions", p.feedingInstructions?.let(::JsonPrimitive))
+        opt("walkingInstructions", p.walkingInstructions?.let(::JsonPrimitive))
+        opt("medications", p.medications?.let(::JsonPrimitive))
+        opt("allergies", p.allergies?.let(::JsonPrimitive))
+        opt("emergencyNotes", p.emergencyNotes?.let(::JsonPrimitive))
+        opt("sitterNotes", p.sitterNotes?.let(::JsonPrimitive))
         p.legacyKinId?.let { put("legacyKinId", it) }
         p.sex?.let { put("sex", it) }
         p.weight?.let { put("weight", it) }
@@ -1397,6 +1493,33 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     /**
+     * #1283: what this household told its Auntie about one visit: the booking
+     * wizard's note and the notes saved from the visit screen, each with the
+     * time it was written. The server returns the household's own notes only;
+     * staff, internal, dossier and 411 text never come back on this call.
+     */
+    suspend fun getBookingNotes(
+        batchId: String,
+        visitId: String,
+        kinfolkId: String? = null,
+    ): BookingNotes {
+        val raw = fns.call("getBookingNotes", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("batchId", batchId)
+            put("visitId", visitId)
+        })
+        val notes = (raw["notes"] as? JsonArray)?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val id = o["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val body = o["body"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            BookingNote(id = id, body = body, createdAtMs = o["createdAtMs"]?.jsonPrimitive?.longOrNull)
+        }.orEmpty()
+        return BookingNotes(
+            bookingNote = raw["bookingNote"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+            notes = notes,
+        )
+    }
+    /**
      * Asks the business to cancel one KinCare inside an envelope. Deliberately
      * NOT a status change: the server stamps a pending flag on the visit and
      * notifies the office; only the business cancels for real. A repeat ask on
@@ -1446,12 +1569,15 @@ class PortalApi(private val fns: FunctionsClient) {
         proposedStartTimeMs: Long,
         reason: String? = null,
         kinfolkId: String? = null,
+        /** #1284: the named window the new time sits in, when the business books by block. */
+        timeBlockId: String? = null,
     ): RescheduleRequestResult {
         val raw = fns.call("requestBookingReschedule", buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
             put("batchId", batchId)
             put("visitId", visitId)
             put("proposedStartTimeMs", proposedStartTimeMs)
+            timeBlockId?.takeIf { it.isNotBlank() }?.let { put("timeBlockId", it) }
             reason?.trim()?.takeIf { it.isNotEmpty() }?.let { put("reason", it) }
         })
         return RescheduleRequestResult(
@@ -1628,7 +1754,7 @@ class PortalApi(private val fns: FunctionsClient) {
             KinTaleComment(
                 id = o["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 authorRole = role,
-                authorDisplayName = null,
+                authorDisplayName = o["authorDisplayName"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
                 guestName = o["guestName"]?.jsonPrimitive?.contentOrNull,
                 body = o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 parentCommentId = o["parentCommentId"]?.jsonPrimitive?.contentOrNull,
@@ -1745,6 +1871,11 @@ class PortalApi(private val fns: FunctionsClient) {
             else -> BookingStatus.Requested
         },
         serviceType = o["serviceType"]?.jsonPrimitive?.contentOrNull,
+        serviceLabel = com.kinfolk.portal.util.decodeServiceLabel(
+            labelPresent = o.containsKey("serviceLabel"),
+            serviceLabel = o["serviceLabel"]?.jsonPrimitive?.contentOrNull,
+            serviceType = o["serviceType"]?.jsonPrimitive?.contentOrNull,
+        ),
         title = o["title"]?.jsonPrimitive?.contentOrNull,
         startTimeMs = o["startTimeMs"]?.jsonPrimitive?.longOrNull,
         endTimeMs = o["endTimeMs"]?.jsonPrimitive?.longOrNull,
@@ -1776,6 +1907,11 @@ class PortalApi(private val fns: FunctionsClient) {
         // #1098: absent on an older server, which reads as a timed visit.
         startTimePending = o["startTimePending"]?.jsonPrimitive?.booleanOrNull ?: false,
         requestedDate = o["requestedDate"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        serviceId = o["serviceId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        // #1303: absent on an older server, which reads as nothing to link to.
+        address = o["address"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        kinTaleId = o["kinTaleId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        invoiceId = o["invoiceId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
         // #1301: absent on an older server, which reads as a by-the-clock visit.
         timeBlockLabel = o["timeBlockLabel"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
         timeBlockStartTime = o["timeBlockStartTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },

@@ -1,5 +1,5 @@
 import { call } from '../lib/fns';
-import { relativeDay, weekdayTime } from '../lib/portalFormat';
+import { auntieName, relativeDay, weekdayTime } from '../lib/portalFormat';
 import type { KinTaleDto } from './types';
 
 /**
@@ -51,14 +51,15 @@ export interface GetKinTaleCommentsRequest {
 }
 
 /**
- * NOTE: the backend does NOT include an `authorDisplayName` field (see
- * getKinTaleComments.ts's CommentDoc mapping) even though the Kotlin
- * `KinTaleComment` model has one — it's always null in the live app too.
- * We render a role-derived label instead of pretending a name exists;
- * see `commentAuthorLabel` below.
+ * `authorDisplayName` is who wrote it, resolved server-side (getKinTaleComments.ts):
+ * the Auntie's staff name (print it through `auntieName`), a household member's
+ * first name, or the name a guest typed. Null when the author cannot be
+ * resolved, and absent from an older deployed function; both fall back to the
+ * role label in `commentAuthorLabel`.
  */
 export interface KinTaleCommentDto {
   id: string;
+  authorDisplayName?: string | null;
   authorRole: string;
   authorUid: string | null;
   guestName: string | null;
@@ -282,18 +283,35 @@ export function threadComments(comments: KinTaleCommentDto[]): ThreadedComments 
 }
 
 /**
- * Display label for a comment author. The backend never sends a real
- * display name (see KinTaleCommentDto's note), so this is role-derived:
- * admin -> "Auntie", a guest reply -> "<name> (Guest)", the signed-in
- * user's own comment -> "You", any other kinfolk -> the generic "Kinfolk".
+ * Display label for a comment author, the name the server resolved:
+ * an Auntie -> "Auntie Maya" (via `auntieName`, so "Auntie" is said once),
+ * a guest -> "<name> (Guest)", a household member -> their first name, and
+ * the signed-in user's own comment -> "<name> (you)". With no resolved name it
+ * falls back to the role word: "Auntie", "You", "Kinfolk".
  */
 export function commentAuthorLabel(comment: KinTaleCommentDto, currentUid: string | null): string {
-  if (comment.authorRole === 'admin') return 'Auntie';
+  const name = (comment.authorDisplayName ?? '').trim();
+  if (comment.authorRole === 'admin') return auntieName(name) ?? 'Auntie';
   if (comment.guestName) return `${comment.guestName} (Guest)`;
-  if (currentUid && comment.authorUid === currentUid) return 'You';
-  return 'Kinfolk';
+  if (currentUid && comment.authorUid === currentUid) return name ? `${name} (you)` : 'You';
+  return name || 'Kinfolk';
 }
-
+/**
+ * The letter on a comment's avatar: the author's NAME, never the "(you)" or
+ * "(Guest)" suffix and never the "You" fallback word, so one person shows one
+ * letter wherever they appear (their comments and their own composer).
+ */
+export function commentInitial(
+  comment: KinTaleCommentDto,
+  currentUid: string | null,
+  ownInitial: string = initialOf('You'),
+): string {
+  const name = (comment.authorDisplayName ?? '').trim();
+  if (comment.authorRole === 'admin') return initialOf(name || 'Auntie');
+  if (comment.guestName) return initialOf(comment.guestName);
+  if (currentUid && comment.authorUid === currentUid && !name) return ownInitial;
+  return initialOf(name || 'Kinfolk');
+}
 export interface CommentBadge {
   label: string;
   tone: 'kin' | 'guest';

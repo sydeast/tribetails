@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,6 +53,8 @@ import com.kinfolk.portal.portal.KinTale
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.PortalHomeSection
 import com.kinfolk.portal.portal.VisitProgress
+import com.kinfolk.portal.portal.label
+import com.kinfolk.portal.portal.pendingChangeLabel
 import com.kinfolk.portal.screens.schedule.SAVE_NOTICE_MS
 import com.kinfolk.portal.screens.schedule.SaveNoticeRow
 import com.kinfolk.portal.screens.schedule.ScheduleHandoff
@@ -81,6 +84,8 @@ fun HomeScreen(
     onMessageAuntie: () -> Unit = {},
     onOpenSchedule: () -> Unit = {},
     onOpenKinTales: () -> Unit = {},
+    /** #1329: a Recent KinTales card opens that tale. */
+    onOpenKinTale: (String) -> Unit = {},
     onOpenKin: () -> Unit = {},
     onOpenKinDetail: (String) -> Unit = {},
     onAddKin: () -> Unit = {},
@@ -197,6 +202,7 @@ fun HomeScreen(
             failed = talesFailed,
             limit = talesLimit,
             onOpenKinTales = onOpenKinTales,
+            onOpenKinTale = onOpenKinTale,
             onRetry = {
                 // Show the spinner while the refetch runs, then bump the key.
                 tales = null
@@ -391,10 +397,12 @@ private fun UpcomingRow(b: Booking) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(b.title ?: b.serviceType ?: "Booking", style = type.heritageTitle)
+            Text(com.kinfolk.portal.util.visitTitle(b.title, b.serviceLabel) ?: "Booking", style = type.heritageTitle)
             Text(bookingWhenLabel(b), style = type.sansLabel)
             val withText = (listOf(b.auntieDisplayName).filterNotNull() + b.kinNames).joinToString(" • ").ifBlank { null }
             if (withText != null) Text(withText, style = type.sansMeta)
+            // #1299: the cancellation or new time still waiting on the office.
+            b.pendingChangeLabel()?.let { Text(it, style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted)) }
         }
         StatusPill(b)
     }
@@ -406,6 +414,7 @@ private fun TalesSection(
     failed: Boolean,
     limit: Int = 3,
     onOpenKinTales: () -> Unit,
+    onOpenKinTale: (String) -> Unit = {},
     onRetry: () -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
@@ -438,16 +447,22 @@ private fun TalesSection(
                 else -> KinStaggerReveal(
                     items = tales.take(limit),
                     verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
-                ) { tale -> TaleRow(tale) }
+                ) { tale -> TaleRow(tale, onOpen = { onOpenKinTale(tale.id) }) }
             }
         }
     }
 }
 
 @Composable
-private fun TaleRow(tale: KinTale) {
+private fun TaleRow(tale: KinTale, onOpen: () -> Unit) {
     val type = LocalKinfolkTypography.current
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = KinfolkSpacing.xs)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KinfolkShapes.card)
+            .clickable(role = Role.Button, onClickLabel = "Open this KinTale", onClick = onOpen)
+            .padding(vertical = KinfolkSpacing.xs),
+    ) {
         Text(
             text = tale.body.ifBlank { "A new tale from your Auntie" },
             style = type.sansBody,
@@ -614,7 +629,7 @@ private fun LiveVisitCard(b: Booking) {
             ) {
                 Column {
                     Text(auntieName(b.auntieDisplayName) ?: "Auntie", style = type.heritageTitle.copy(color = Color.White))
-                    Text(b.serviceType ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
+                    Text(b.serviceLabel ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
                 }
                 LivePill(onGradient = true)
             }
@@ -688,14 +703,16 @@ private fun VisitProgressTimeline(progress: VisitProgress, onGradient: Boolean =
 @Composable
 private fun StatusPill(b: Booking) {
     val type = LocalKinfolkTypography.current
-    val (label, color) = when (b.status) {
-        com.kinfolk.portal.portal.BookingStatus.Requested -> "REQUESTED" to KinfolkBrand.KinfolkOrange
-        com.kinfolk.portal.portal.BookingStatus.Confirmed -> "CONFIRMED" to KinfolkBrand.KinTeal
-        com.kinfolk.portal.portal.BookingStatus.EnRoute -> "EN ROUTE" to KinfolkBrand.PackPink
-        com.kinfolk.portal.portal.BookingStatus.Active -> "ACTIVE" to KinfolkBrand.SnuggleCoral
-        com.kinfolk.portal.portal.BookingStatus.Completed -> "COMPLETED" to KinfolkBrand.KinTeal
-        com.kinfolk.portal.portal.BookingStatus.Cancelled -> "CANCELLED" to KinfolkBrand.NavyMuted
+    // #1298: the words come from BookingStatus.label(); only the colour is this screen's.
+    val color = when (b.status) {
+        com.kinfolk.portal.portal.BookingStatus.Requested -> KinfolkBrand.KinfolkOrange
+        com.kinfolk.portal.portal.BookingStatus.Confirmed -> KinfolkBrand.KinTeal
+        com.kinfolk.portal.portal.BookingStatus.EnRoute -> KinfolkBrand.PackPink
+        com.kinfolk.portal.portal.BookingStatus.Active -> KinfolkBrand.SnuggleCoral
+        com.kinfolk.portal.portal.BookingStatus.Completed -> KinfolkBrand.KinTeal
+        com.kinfolk.portal.portal.BookingStatus.Cancelled -> KinfolkBrand.NavyMuted
     }
+    val label = b.status.label()
     GlassCard(
         modifier = Modifier,
         shape = KinfolkShapes.pill,

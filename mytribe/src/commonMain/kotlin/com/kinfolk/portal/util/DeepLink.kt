@@ -45,3 +45,27 @@ data class SecureResetParams(
  * reader to open the link in a browser and files nothing.
  */
 expect fun readInitialSecureResetParams(): SecureResetParams?
+
+/**
+ * True when the app was opened by a link it claims (an App Link or `mytribe://`)
+ * that none of the launch parsers could place (#1293): `/share/` with no token,
+ * `/claim/` with no invite, any other path the manifest matched. Only Android
+ * ever answers true; web has the React portal's own not-found page and desktop
+ * has no links.
+ */
+expect fun readInitialUnknownLink(): Boolean
+/**
+ * Whether a launch link names something the app can open. Pure so it is tested
+ * without an Activity: [pathSegments] are the URI's path parts, [inviteQuery] its
+ * `invite` query value, [isEmailAction] whether [com.kinfolk.portal.auth.parseEmailActionUrl]
+ * accepted it. Mirrors `captureDeepLink` in MainActivity.
+ */
+fun deepLinkIsRecognized(pathSegments: List<String>, inviteQuery: String?, isEmailAction: Boolean): Boolean {
+    fun idAfter(prefix: String): Boolean {
+        val i = pathSegments.indexOf(prefix)
+        return i >= 0 && i + 1 < pathSegments.size && pathSegments[i + 1].isNotBlank()
+    }
+    if (idAfter("claim") || idAfter("share")) return true
+    if (pathSegments.lastOrNull() == "claim" && !inviteQuery.isNullOrBlank()) return true
+    return isEmailAction
+}

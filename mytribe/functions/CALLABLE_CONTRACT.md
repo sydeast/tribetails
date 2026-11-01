@@ -1266,6 +1266,35 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   invites the secondary from MyTribe. An admin-wide surface has no household to
   mint into, and must never grow a button that pretends otherwise.
 
+### getInvite (net-new 2026-11-01, issue #1339)
+- req `{ inviteId: string /* trimmed, 1..200, no '/' */ }`
+- res `{ invite: listAllInvites row & { invitedByRole: 'AUNTIE' | 'PRIMARY',
+  invitedBy: { uid, displayName: string | null, email: string | null } | null,
+  acceptedBy: same shape | null, acceptedAt: string | null, source: string | null } }`
+- GATE: `wrapAdminCallable`.
+- Errors: `invalid-argument` (blank id, or one carrying `/`), `not-found` (no
+  `inviteRequests/{inviteId}` doc).
+- **Why it exists.** The `invite.auntie-notify` email links to
+  `${AUNTIE_OS_REVIEW_BASE_URL}/invites/<inviteId>`, the admin web route
+  `invites/$inviteId`. A page of `listAllInvites` (200 rows) cannot promise to
+  contain an older invite, so the detail screen reads the one doc by id.
+- The row is `mapInviteDoc` + `householdNameFor`, imported from the two list
+  callables. `invitedByRole` is `AUNTIE` when `primaryUid === ''` (the business
+  minted it: `mintInvite`, `inviteKinfolkToPortal`, `provisionTribe`,
+  `executePrimaryRecovery`), else `PRIMARY` (`mintInviteFromPrimary`,
+  `addSecondaryContact`). `invitedBy` / `acceptedBy` come from Firebase Auth; an
+  account Auth cannot read keeps its uid with null name and email.
+- `acceptedAt` is stamped by `acceptInvite` from #1339 on. Invites accepted
+  before that have only `acceptedUid` and read `acceptedAt: null`.
+- One best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry with the household's
+  `familyId`. The invite id (the claim token) reaches neither the audit payload
+  nor `logEvent`.
+- Mirrors: `auntieos-admin/src/api/members.ts#getInvite` +
+  `src/screens/InviteDetail.tsx`; Android `MembersRepository.getInvite` +
+  `ui/members/InviteDetailScreen.kt`. The desktop console has no invites list.
+- Like the list, it offers no write. Revoke stays on the household's Members and
+  invites screen, which the detail links to.
+
 ### listRecoveryCandidates (net-new 2026-08-18, issue #378)
 - req `{ familyId: string, oldUid?: string }`
 - res `{ candidates: Array<{ uid, email, secondaryLabel: string | null, role, status }> }`
@@ -1587,9 +1616,17 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
 - `removeSecondaryKinfolk` req `{ kinfolkId?: string, personId: string }` (strict) res `{ ok: true }`. Deletes a NONE or INVITED record. ACTIVE is refused with `failed-precondition` "This secondary kinfolk has portal access. Remove them from the portal first." (an INVITED record is deletable so a revoked or expired invite never strands it).
 - PORTAL ACCESS: `addSecondaryContact` takes an optional `personId`. The invite carries it and the record moves to `INVITED` with `inviteId`; a deduped live invite is stamped with it too. Refused: `not-found` for a missing record, `failed-precondition` "This secondary kinfolk already has portal access." `acceptInvite` then sets the record to `ACTIVE` with `memberUid` in the same transaction (skipped if the record was deleted).
 - `addSecondaryContact` now refuses every staff caller (owner claim or `AUNTIE_OPERATOR_UIDS`) with `permission-denied` "Only the primary kinfolk can invite a secondary kinfolk to the portal." No admin client called it.
-- #1018 item 3: `addSecondaryContact` used to send no email of its own (`onInviteRequestCreate` is a no-op), which made the portal's "Invite sent." false. `mintInviteFromPrimary` had always sent three real emails through `sendFromTemplate` (`invite.secondary`, `invite.auntie-notify`, `invite.primary-receipt`) that `addSecondaryContact` never gained. It now sends the identical set, with identical template data, through the shared `lib/inviteEmails.ts` helper (`resolveInviteEmailConfig` / `sendPrimaryInviteEmails`) both callables use. A send failure throws out of the handler exactly as it always has out of `mintInviteFromPrimary`: never swallowed, and the invite doc is left `PENDING` (not `EMAIL_SENT`) so its real state stays visible. A resend of a still-live deduped invite (S7-BLOCKER-2) re-sends the email too. Requires `CLAIM_LINK_BASE_URL` (fail-loud, before any write, same guard `mintInviteFromPrimary` uses) and, when `AUNTIE_NOTIFY_EMAIL` is set, `AUNTIE_OS_REVIEW_BASE_URL`.
+- #1018 item 3: `addSecondaryContact` used to send no email of its own (`onInviteRequestCreate` is a no-op), which made the portal's "Invite sent." false. `mintInviteFromPrimary` had always sent three real emails through `sendFromTemplate` (`invite.secondary`, `invite.auntie-notify`, `invite.primary-receipt`) that `addSecondaryContact` never gained. It now sends the identical set, with identical template data, through the shared `lib/inviteEmails.ts` helper (`resolveInviteEmailConfig` / `sendPrimaryInviteEmails`) both callables use. A send failure throws out of the handler exactly as it always has out of `mintInviteFromPrimary`: never swallowed, and the invite doc is left `PENDING` (not `EMAIL_SENT`) so its real state stays visible. A resend of a still-live deduped invite (S7-BLOCKER-2) re-sends the email too. Requires `CLAIM_LINK_BASE_URL` (fail-loud `failed-precondition` "CLAIM_LINK_BASE_URL is not configured", before any write, same guard `mintInviteFromPrimary` uses).
+- #1277: `AUNTIE_OS_REVIEW_BASE_URL` no longer refuses the invite, in either callable. It only builds the link in `invite.auntie-notify`, the business's own copy. When `AUNTIE_NOTIFY_EMAIL` is set and it is not, the invite is minted and the invitee and receipt emails go out as normal; the notice is skipped, `auntieNotifiedAt` is not stamped (it is now stamped only when the notice was sent), and the gap is recorded: an error log line `invite.auntieNotify.skipped` and a FAILURE `activity_log` row `MEMBERSHIP_INVITE_AUNTIE_NOTICE_SKIPPED` (payload `{ function, inviteId, missingVar }`) that the daily error digest lists. Portal web and the portal Android app map any `failed-precondition` "<VAR> is not configured" refusal to "Invites can't be sent right now. It's been reported to Auntie." and never show the variable name.
 - `removeMember` on an ACTIVE secondary returns their person record to `NONE` (memberUid and inviteId cleared); see `removeMember` above (#1018).
 - NEVER a recipient: nothing that sends reads this collection. NEVER logged: name, phone or email.
+### Clearing a field on the portal's edit callables (#1336)
+The edit callables merge into the stored doc, so a key the request leaves out is KEPT. Leaving a field out never clears it. Each field has one clear value, the one its zod accepts:
+- `updateKin` `kin`: `species`, `breed`, `ageYears`, `photoUrl`, `feedingInstructions`, `walkingInstructions`, `medications`, `allergies`, `emergencyNotes`, `sitterNotes` are `.nullable()`; JSON `null` clears and is stored as `null`. `sex`, `weight`, `colorMarkings`, `vetInfo` refuse `null` (the admin Android model decodes them as non-null, #1310); `""` clears. `name` cannot be cleared.
+- `saveMyAccount`: `phone`, `photoUrl`, `backupEmail`, `backupPhone` take `null` to clear. `displayName` (1..120) cannot be cleared.
+- `saveHomeAccess`: `gateCode`, `keyLocation`, `wifiPassword` take `null` to clear (#901). `customFields` rows clear with `value: ''` or `removeCustomFieldKeys` (below).
+- `saveSecondaryKinfolk`, `saveEmergencyContacts`: every field is sent on each save; `''` or `null` stores `null`.
+Client rule (portal web and portal KMP alike): diff the form against what was loaded. An untouched field is omitted, a changed one carries its value, an emptied one carries that field's clear value. Never rebuild the request from form state: a form that has no control for a field must not send it. Portal KMP marks the `null` clears in `KinPayload.clearFields` and the `clearFields` argument of `PortalApi.saveMyAccount`.
 ### saveTribeProfile / saveHomeAccess: `customFields` merge by key (#873)
 - `saveTribeProfile`
   - req `{ kinfolkId?: string, displayName?: string /* 1..120 */, customFields?: CustomField[] /* transport guard 317,750 */, removeCustomFieldKeys?: string[] /* 1..80 each, transport guard 317,750 */ }`
@@ -1638,7 +1675,8 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
 ### getMyTribeProfile / saveHomeAccess: the Home access grant on the portal Tribe Profile (#868)
 - `getMyTribeProfile`
   - req `{ kinfolkId?: string }`
-  - res `{ profile: { kinfolkId, displayName, customFields: CustomField[] }, homeAccess: { gateCode: string | null, keyLocation: string | null, wifiPassword: string | null, customFields: CustomField[], updatedAtMs: number | null }, canEditHomeDetails: boolean }`
+  - res `{ profile: { kinfolkId, displayName, customFields: CustomField[] }, vetClinic: { id, name, phone, address, isEmergency } | null, homeAccess: { gateCode: string | null, keyLocation: string | null, wifiPassword: string | null, customFields: CustomField[], updatedAtMs: number | null }, canEditHomeDetails: boolean }`
+  - `vetClinic` (#1325) is the household's chosen clinic resolved from the `vetClinicId` profile row, read from `vet_clinics/{id}` directly (not through the picker catalog), so an archived clinic or the household's own unapproved submission still resolves. Null when no clinic is chosen, the row is gone or has no name. Clients show name, address and phone from it and never show the id. Not gated on Home access: the clinic is on the Family/Vet card for every member who can read the profile.
   - `canEditHomeDetails` is `hasKinfolkPerm(..., 'home_access')`: true for staff, the PRIMARY, a legacy primary with no member doc, and an ACTIVE SECONDARY granted Home access; false otherwise. It is the ONLY place a portal client learns the grant. No custom claim carries it, and `getMyAccess` returns no role.
   - REDACTION. When `canEditHomeDetails` is false, `homeAccess` is `{ gateCode: null, keyLocation: null, wifiPassword: null, customFields: [], updatedAtMs: null }`. No gate code, key location, Wi-Fi password, home-details row or after-hours clinic reaches that caller (`test/getMyTribeProfile.test.ts` checks the serialized response).
   - A backend older than #843 omits `canEditHomeDetails`; both clients read the absence as allowed and the server still enforces the grant.
@@ -1647,7 +1685,7 @@ Operator ruling 2026-09-27 (Q3): "A Secondary kinfolk can be added to the househ
   - "The home details" are the Home Information card (static fields or the `homeAccess` form schema) and the after-hours clinic in the Vet Clinic card, since both live in `families/{id}/homeAccess/current`.
   - Without the grant both show one sentence in place of the fields, "Only someone with Home access can see or change the home details. Your primary kinfolk can give you Home access." (`HOME_DETAILS_LOCKED`), and Save Changes never calls `saveHomeAccess`.
   - With the grant, Save Changes calls `saveHomeAccess` only when the payload differs from what was loaded (`homeAccessEditChanged`), so a Family-only or Vet-only edit makes one call.
-  - The two callables are attempted separately and reported separately (`pageSaveOutcome`). Both saved: "Saved.". Only the profile refused, home unchanged: "Save failed: ...". One half saved and the other refused: the line names which half saved and which did not, gives the reason and what to do, never starts "Save failed", and is coloured as a failure. The edits that did not save stay on the page: web skips its reload after a partial result, and Android never reloads after a save.
+  - The two callables are attempted separately and reported separately (`pageSaveOutcome`). Both saved: "Tribe Profile saved." (#1324). Save Changes is the page's only Save: the Emergency Contacts card and the Secondary Kinfolk form have no Save button, and the same press sends their edits through `saveEmergencyContacts` / `saveSecondaryKinfolk` when they hold any. A card that is refused makes the result a failure: "The rest of your Tribe Profile saved. Emergency Contacts did not save: <reason>. Your edits there are still on this page.". Only the profile refused, home unchanged: "Save failed: ...". One half saved and the other refused: the line names which half saved and which did not, gives the reason and what to do, never starts "Save failed", and is coloured as a failure. The edits that did not save stay on the page: web skips its reload after a partial result, and Android never reloads after a save.
 
 ### saveEmergencyContacts / listEmergencyContacts (#829)
 - `saveEmergencyContacts`
@@ -1725,7 +1763,11 @@ closure so the operator can act on them manually.
 ### getBusinessClosures
 - req `{ fromDate: string (YYYY-MM-DD), toDate: string (YYYY-MM-DD) }`, range
   capped at 120 days, `toDate >= fromDate`.
-- res `{ closures: Array<{ date: string, name: string }> }`, sorted by date.
+- res `{ closures: Array<{ date: string, name: string }>, weeklyHours:
+  Array<{ weekday: number /* 0 = Sunday */, open: boolean, startTime: string | null,
+  endTime: string | null }>, timeZone: string }`, closures sorted by date.
+  `weeklyHours` is seven entries (Sunday first) or `[]` when the business has no
+  readable weekly hours; `[]` means "no restriction known" (#1284).
 - The kinfolk portal's ONE way to learn which dates are closed:
   `business_settings` is admin-only in `firestore.rules`
   (`allow read: if isAuntie() || isTestAdmin();`), so `mytribe/web` cannot read
@@ -2191,6 +2233,9 @@ the handler.
   asks that sat unread from 2026-07-02 until #438 built the queue.
 - Only `requested`/`confirmed` visits are cancelable; anything else is
   `failed-precondition`.
+- #1299: refused with `failed-precondition` while a reschedule ask is pending
+  on the visit. A visit carries at most one open ask; `requestBookingReschedule`
+  refuses the other way round. Clients hide the second action.
 - kinfolk portal only.
 
 - req `{ kinfolkId?: string, batchId: string, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs?: number, reason?: string }`
@@ -2211,6 +2256,9 @@ the handler.
 - A second proposal while one is pending is `already-exists`, not a silent
   overwrite: the office may already be acting on the time it was shown. A fresh
   proposal after a decline IS allowed, and clears the previous answer.
+- #1299: refused with `failed-precondition` while a cancellation ask is
+  pending (a pre-#438 bare `cancelRequestedAt` counts as pending), the mirror of
+  the rule on `requestBookingCancellation`.
 - Only `requested`/`confirmed` visits qualify; anything else is
   `failed-precondition`.
 - `onBookingsWrite` fires `kincare.reschedule.requested` to the business on the
@@ -2488,7 +2536,15 @@ instead of hand mirrors.
 - writes `.../kinCares/{visitId}/notes`, `authorRole` stamped from the CALLER
   (`'admin'` or `'kinfolk'`), never sent by the client
 
-### addInternalBookingNote
+### getBookingNotes
+- req `{ kinfolkId?: string, batchId: string, visitId: string }`
+- res `{ bookingNote: string | null, notes: Array<{ id: string, body: string, createdAtMs: number | null }> }`
+- `bookingNote` is the booking wizard's Extra Love & Context text off the parent
+  booking; `notes` are the household's own rows from `.../kinCares/{visitId}/notes`
+  (`authorRole === 'kinfolk'` only), oldest first, at most 200
+- NEVER returns staff rows (`authorRole: 'admin'`), `internalNotes`, dossier or
+  411 text; the filter runs on the server (#1283)
+- an Auntie is refused (household callable, `householdStaffFlag`)
 - req: identical to `addBookingNote`
 - res `{ noteId: string }`
 - writes `.../kinCares/{visitId}/internalNotes`, `authorRole` always `'admin'`

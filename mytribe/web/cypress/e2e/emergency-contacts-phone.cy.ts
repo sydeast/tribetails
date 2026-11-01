@@ -37,6 +37,9 @@ function openTribeProfile(list: ListEmergencyContactsResult, onSave?: (payload: 
     listMembers: { members: [] },
     getBusinessContact: { name: 'Tribe Tails Pet Care', email: '', phone: '', address: '' },
     listEmergencyContacts: list,
+    // #1324: the page's one Save Changes sends the profile too.
+    saveTribeProfile: { ok: true },
+    saveHomeAccess: { ok: true },
     saveEmergencyContacts: (payload: unknown) => {
       onSave?.(payload);
       return { contacts: TWO_CONTACTS };
@@ -70,7 +73,7 @@ for (const width of [390, 360]) {
 
     // Operator ruling 2026-09-27 (Q2): one per household. Two on file from the
     // earlier rule show under a notice, each with Remove; one must go before a save.
-    it('with Home access and two on file: the notice, both slots, Remove and Save fit, and a save after Remove goes through', () => {
+    it('with Home access and two on file: the notice, both slots, Remove and the page Save fit, and a save after Remove goes through', () => {
       const saved: unknown[] = [];
       openTribeProfile({ contacts: TWO_CONTACTS, canEdit: true, legacy: false }, (p) => saved.push(p));
       cy.get('#ec-1-name').should('have.value', 'Lee Park');
@@ -79,12 +82,12 @@ for (const width of [390, 360]) {
       }
       cy.contains('.ec-card p', 'This household has two Emergency Contacts on file.').should('be.visible');
       cy.get('button[aria-label="Remove Emergency Contact 2"]').should('be.visible');
-      cy.contains('button', 'Save Emergency Contacts').should('be.visible');
+      cy.contains('button', 'Save Changes').should('be.visible');
       assertFitsWidth(width);
 
       cy.get('button[aria-label="Remove Emergency Contact 2"]').click();
-      cy.contains('button', 'Save Emergency Contacts').click();
-      cy.contains('.ec-card p', 'Saved.').should('be.visible');
+      cy.contains('button', 'Save Changes').click();
+      cy.get('[data-testid="page-save-status"]').should('contain.text', 'Tribe Profile saved.');
       cy.wrap(saved).should('have.length', 1);
     });
 

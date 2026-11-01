@@ -9,3 +9,6 @@ package com.kinfolk.portal.firebase
 // reasoning in RevocationAwareFunctionsClient.
 actual fun platformFunctionsClient(): FunctionsClient =
     RevocationAwareFunctionsClient(GitliveFunctionsClient())
+
+// #1282: moved here from firebaseMain when Android took a native client.
+actual fun platformFirestoreClient(): FirestoreClient = GitliveFirestoreClient()

@@ -76,6 +76,11 @@ fun MessageAuntieScreen(
     // while controller.assisting is true. Cosmetic only — the re-entrancy
     // guard lives in the controller.
     var assistKind by remember { mutableStateOf<String?>(null) }
+    // #1319: the draft as it stood before an assist rewrote it, plus what the
+    // assist wrote. Undo shows while the composer still holds exactly that
+    // text, so any edit (or a send, which clears the draft) retires it.
+    var undoDraft by remember { mutableStateOf<String?>(null) }
+    var assistedDraft by remember { mutableStateOf<String?>(null) }
 
     // Chat off entirely: show the disabled state with the operator's away
     // message and never load the thread / mount the composer. (The server also
@@ -150,7 +155,11 @@ fun MessageAuntieScreen(
                     modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(KinfolkSpacing.l),
                     verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
                 ) {
-                    messages.forEach { MessageBubble(it) }
+                    val nowMs = remember(messages) { Clock.System.now().toEpochMilliseconds() }
+                    messages.forEachIndexed { i, m ->
+                        daySeparatorBefore(messages, i, nowMs)?.let { DaySeparator(it) }
+                        MessageBubble(m)
+                    }
                 }
             }
         }
@@ -254,7 +263,11 @@ fun MessageAuntieScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val onAssistResult: (String) -> Unit = { text ->
-                    draft = if (maxLen > 0) text.take(maxLen) else text
+                    val before = draft
+                    val next = if (maxLen > 0) text.take(maxLen) else text
+                    undoDraft = before.takeIf { it.isNotBlank() }
+                    assistedDraft = next
+                    draft = next
                 }
                 KinGhostButton(
                     label = if (controller.assisting && assistKind == "polish") "Polishing…" else "Polish",
@@ -271,9 +284,24 @@ fun MessageAuntieScreen(
                         assistKind = "suggest"
                         controller.suggestReply(onAssistResult)
                     },
-                    enabled = !controller.assisting && !controller.sending && (controller.messages?.isNotEmpty() == true),
+                    enabled = !controller.assisting && !controller.sending && canSuggestReply(controller.messages),
                     modifier = Modifier.weight(1f),
                 )
+            }
+            if (undoDraft != null && draft == assistedDraft) {
+                KinGhostButton(
+                    label = "Undo",
+                    onClick = {
+                        draft = undoDraft.orEmpty()
+                        undoDraft = null
+                        assistedDraft = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            // #1320: say why Suggest is parked when the household spoke last.
+            if (controller.messages?.isNotEmpty() == true && !canSuggestReply(controller.messages)) {
+                Text(NOTHING_NEW_TO_REPLY_TO, style = type.sansMeta, color = KinfolkBrand.NavyMuted)
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -341,6 +369,13 @@ private fun parseMinutes(s: String): Int? {
     return h * 60 + m
 }
 
+@Composable
+private fun DaySeparator(label: String) {
+    val type = LocalKinfolkTypography.current
+    Box(modifier = Modifier.fillMaxWidth().padding(top = KinfolkSpacing.s), contentAlignment = Alignment.Center) {
+        Text(text = label, style = type.sansMeta, color = KinfolkBrand.NavyMuted)
+    }
+}
 @Composable
 private fun MessageBubble(message: ConversationMessage) {
     val type = LocalKinfolkTypography.current

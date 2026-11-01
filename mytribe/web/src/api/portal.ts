@@ -1,5 +1,6 @@
 import { call } from '../lib/fns';
 import { FUNCTIONS_HTTP_BASE } from '../lib/firebase';
+import { readKinDirect } from '../lib/kinDirectRead';
 import type {
   AcceptInviteRequest,
   AcceptInviteResult,
@@ -110,8 +111,26 @@ export function getMyVisits(kinfolkId?: string, limit?: number): Promise<GetMyVi
   return call<GetMyVisitsRequest, GetMyVisitsResult>('getMyVisits', payload);
 }
 
-/** The kinfolk's kin roster, including memorialized (noLongerWithUs) entries. */
-export function getMyKin(kinfolkId?: string): Promise<GetMyKinResult> {
+/**
+ * The kinfolk's kin roster, including memorialized (noLongerWithUs) entries.
+ *
+ * #1282: read directly from Firestore when the household is known (see
+ * lib/kinDirectRead.ts for why the rules allow it), so the first open of a
+ * screen no longer waits on a `getMyKin` cold start. ANY failure of the direct
+ * read falls back to the callable, which is the old path unchanged: a legacy
+ * primary with no `members/{uid}` doc is denied by the rule but still let in by
+ * `resolveKinfolkAccess`, and an offline or revoked session gets exactly the
+ * error the screen already knows how to show. With no household id yet the
+ * callable resolves the default one, as it always has.
+ */
+export async function getMyKin(kinfolkId?: string): Promise<GetMyKinResult> {
+  if (kinfolkId) {
+    try {
+      return await readKinDirect(kinfolkId);
+    } catch {
+      // Fall through to the callable; see above.
+    }
+  }
   const payload: GetMyKinRequest = kinfolkId !== undefined ? { kinfolkId } : {};
   return call<GetMyKinRequest, GetMyKinResult>('getMyKin', payload);
 }

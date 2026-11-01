@@ -8,3 +8,6 @@ package com.kinfolk.portal.firebase
  */
 actual fun platformFunctionsClient(): FunctionsClient =
     RevocationAwareFunctionsClient(NativeAndroidFunctionsClient())
+
+/** #1282: native document reads; see NativeAndroidFirestoreClient for why not gitlive. */
+actual fun platformFirestoreClient(): FirestoreClient = NativeAndroidFirestoreClient()

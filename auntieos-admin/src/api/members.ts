@@ -358,6 +358,67 @@ export async function listAllInvites(): Promise<AdminInvite[]> {
   }));
 }
 
+/** An account on one side of an invite, as Firebase Auth names it. */
+export interface InviteParty {
+  uid: string;
+  /** Null when the account has no name, or Auth could not read it. */
+  displayName: string | null;
+  email: string | null;
+}
+
+/**
+ * ONE invite, as the detail screen at `/invites/$inviteId` shows it (#1339).
+ * `AdminInvite` plus what a single row can afford: who sent it, who claimed
+ * it, and when.
+ */
+export interface AdminInviteDetail extends AdminInvite {
+  /** AUNTIE when the business minted it, PRIMARY when a household primary did. */
+  invitedByRole: 'AUNTIE' | 'PRIMARY';
+  /** The inviting primary's account. Null when the business minted it. */
+  invitedBy: InviteParty | null;
+  /** Who claimed it. Null until claimed. */
+  acceptedBy: InviteParty | null;
+  /** Null when unclaimed, or claimed before the server recorded the time. */
+  acceptedAt: string | null;
+  /** Where the invite came from, e.g. `mytribe-portal`, when recorded. */
+  source: string | null;
+}
+
+function asParty(v: unknown): InviteParty | null {
+  if (v === null || typeof v !== 'object') return null;
+  const p = v as Record<string, unknown>;
+  const uid = str(p['uid']);
+  if (uid === null) return null;
+  return { uid, displayName: str(p['displayName']), email: str(p['email']) };
+}
+
+/**
+ * One invite by id (`getInvite`). The invite notice email links here, so the
+ * read cannot be "find it in a page of listAllInvites": an older invite would
+ * fall off that page and read as missing.
+ *
+ * Nothing catches: a `not-found` reaches the screen as an error it can name.
+ */
+export async function getInvite(inviteId: string): Promise<AdminInviteDetail> {
+  const id = inviteId.trim();
+  if (id === '') throw new Error('getInvite requires an invite id');
+  const res = await call<{ inviteId: string }, { invite?: unknown }>('getInvite', { inviteId: id });
+  const rows = inviteRows([res?.invite]);
+  const row = rows[0];
+  if (row === undefined) throw new Error('getInvite returned no invite');
+  return {
+    ...mapInviteRow(row),
+    householdName:
+      str(row['householdName']) ??
+      `(household name missing: ${typeof row['tribeId'] === 'string' ? row['tribeId'] : '?'})`,
+    invitedByRole: row['invitedByRole'] === 'AUNTIE' ? 'AUNTIE' : 'PRIMARY',
+    invitedBy: asParty(row['invitedBy']),
+    acceptedBy: asParty(row['acceptedBy']),
+    acceptedAt: str(row['acceptedAt']),
+    source: str(row['source']),
+  };
+}
+
 /** Display name for a member row. Never blank: falls back to the uid. */
 export function memberLabel(member: HouseholdMember): string {
   return member.invitedEmail ?? member.secondaryLabel ?? member.uid;

@@ -102,6 +102,8 @@ export async function resolveBookingRescheduleRequestHandler(
   const data = snap.data() as {
     rescheduleRequestStatus?: string;
     rescheduleRequestedStartTime?: Timestamp | null;
+    rescheduleRequestedTimeBlockId?: string | null;
+    rescheduleRequestedTimeBlockLabel?: string | null;
     rescheduleRequestedEndTime?: Timestamp | null;
     startTime?: Timestamp | null;
     endTime?: Timestamp | null;
@@ -194,6 +196,16 @@ export async function resolveBookingRescheduleRequestHandler(
       ...resolution,
       startTime: newStart,
       ...(newEnd ? { endTime: newEnd } : {}),
+      // #1284: a request that carries the window the household picked moves
+      // the visit's window with it, so the block it is labelled with never
+      // disagrees with its new time. A request written before the field existed
+      // has `undefined` here and leaves the visit's block alone.
+      ...(data.rescheduleRequestedTimeBlockId !== undefined
+        ? {
+            timeBlockId: data.rescheduleRequestedTimeBlockId,
+            timeBlockLabel: data.rescheduleRequestedTimeBlockLabel ?? null,
+          }
+        : {}),
     },
     { merge: true },
   );

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { call } from '../lib/fns';
 import {
   commentAuthorLabel,
+  commentInitial,
   commentAvatarVariant,
   commentBadge,
   createShareLink,
@@ -117,6 +118,27 @@ describe('commentAuthorLabel', () => {
 
   it('falls back to the generic Kinfolk label', () => {
     expect(commentAuthorLabel(comment({ authorUid: 'someone-else' }), 'me')).toBe('Kinfolk');
+  });
+  it('names an Auntie through auntieName, saying "Auntie" once', () => {
+    expect(commentAuthorLabel(comment({ authorRole: 'admin', authorDisplayName: 'Maya' }), null)).toBe('Auntie Maya');
+    expect(commentAuthorLabel(comment({ authorRole: 'admin', authorDisplayName: 'Auntie Maya' }), null)).toBe('Auntie Maya');
+  });
+  it('names a household member, and marks the signed-in user’s own comment', () => {
+    expect(commentAuthorLabel(comment({ authorUid: 'k9', authorDisplayName: 'Sam' }), 'me')).toBe('Sam');
+    expect(commentAuthorLabel(comment({ authorUid: 'me', authorDisplayName: 'Casey' }), 'me')).toBe('Casey (you)');
+  });
+  it('ignores a blank name', () => {
+    expect(commentAuthorLabel(comment({ authorUid: 'k9', authorDisplayName: '  ' }), 'me')).toBe('Kinfolk');
+  });
+});
+describe('commentInitial', () => {
+  it('uses the author name, never the (you) or (Guest) suffix', () => {
+    expect(commentInitial(comment({ authorUid: 'me', authorDisplayName: 'Casey' }), 'me')).toBe('C');
+    expect(commentInitial(comment({ guestName: 'Pat' }), null)).toBe('P');
+    expect(commentInitial(comment({ authorRole: 'admin', authorDisplayName: 'Maya' }), null)).toBe('M');
+  });
+  it('an unnamed own comment takes the composer’s letter, not Y', () => {
+    expect(commentInitial(comment({ authorUid: 'me' }), 'me', 'K')).toBe('K');
   });
 });
 

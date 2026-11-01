@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -23,7 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
-import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.KinInfoTip
@@ -125,21 +125,28 @@ private fun sameDrafts(a: List<EmergencyContactInput>, b: List<EmergencyContactI
  * `updatedAt` are the server's; it keeps them by matching slots, so no field is
  * rebuilt at a default.
  *
- * PESSIMISTIC. While a save is in flight every input and button is disabled and
- * Save reads "Saving…" beside a spinner. A refusal leaves the typing in place
+ * ONE SAVE (#1324). The card has no Save button: the page's Save Changes saves it
+ * through [CardSaveHandle], and reports the result on the page's status line.
+ *
+ * PESSIMISTIC. While a save is in flight every input is disabled beside a spinner. A refusal leaves the typing in place
  * under the server's own message. A success seeds the drafts from the reply, so
  * the household sees what was stored (E.164 phones, trimmed names).
  *
  * UNSAVED EDITS. The drafts are compared with the server copy they were seeded
  * from. While they differ the card says "Unsaved changes" and tells the page
- * through [onDirtyChange], because the page's own Save Changes never sends
- * contacts.
+ * through [onDirtyChange] and [saveHandle].
  */
 @Composable
 fun EmergencyContactsCard(
     kinfolkId: String?,
     portalApi: PortalApi,
     onDirtyChange: (Boolean) -> Unit = {},
+    /**
+     * #1324: how the page's one Save Changes saves this card. The card draws no
+     * Save button; a test that renders the card alone passes null and saves
+     * through a handle of its own.
+     */
+    saveHandle: CardSaveHandle? = null,
     /**
      * The read-only card's tap-to-call. `readOnlyWithoutHomeAccess` already
      * asserts that phone node `hasClickAction()`; the day someone turns that
@@ -180,8 +187,6 @@ fun EmergencyContactsCard(
             drafts = toDrafts(r.contacts)
         } catch (c: CancellationException) {
             throw c
-        } catch (c: CancellationException) {
-            throw c
         } catch (t: Throwable) {
             loadError = "Couldn't load your Emergency Contacts right now."
         }
@@ -194,6 +199,51 @@ fun EmergencyContactsCard(
     }
 
     fun set(i: Int, d: EmergencyContactInput) = edit(drafts.mapIndexed { j, x -> if (j == i) d else x })
+    /** Saves the drafts, pessimistically. Called by the page's Save Changes through [saveHandle]. */
+    suspend fun saveNow(): CardSaveResult {
+        val problem = precheck(drafts)
+        if (problem != null) {
+            // With none on file the prompt above already says this; a second copy
+            // under the field reads as an echo. Kept when the server holds contacts
+            // and the household cleared them, where no prompt shows.
+            val promptShowing = problem == REQUIRED && loaded?.contacts.isNullOrEmpty()
+            message = if (promptShowing) null else problem
+            messageOk = false
+            return CardSaveResult.Failed(problem)
+        }
+        saving = true
+        message = null
+        val sent = drafts
+        val sentFor = kinfolkId
+        val stored = try {
+            portalApi.saveEmergencyContacts(sentFor, sent)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            val text = t.message?.takeIf { it.isNotBlank() } ?: "The Emergency Contacts were not saved. Try again."
+            // Dropped if the household changed while it was away.
+            if (currentKinfolkId == sentFor) {
+                messageOk = false
+                message = text
+                saving = false
+            }
+            return CardSaveResult.Failed(text)
+        }
+        // A reply for a household no longer on screen is not applied: it would
+        // seed another household's slots.
+        if (currentKinfolkId != sentFor) return CardSaveResult.Ok
+        baseline = stored
+        drafts = toDrafts(stored)
+        loaded = loaded?.copy(contacts = stored, legacy = false)
+        saving = false
+        return CardSaveResult.Ok
+    }
+    if (saveHandle != null) {
+        SideEffect {
+            saveHandle.dirty = dirty
+            saveHandle.save = { saveNow() }
+        }
+    }
 
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
@@ -300,69 +350,12 @@ fun EmergencyContactsCard(
                         }
                     }
                     if (dirty) {
-                        Text("Unsaved changes", style = type.sansLabel.copy(color = KinfolkBrand.KinfolkOrange))
-                    }
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        KinButton(
-                            label = if (saving) "Saving…" else "Save Emergency Contacts",
-                            enabled = !saving,
-                            onClick = {
-                                val problem = precheck(drafts)
-                                when {
-                                    // With none on file the prompt above already says
-                                    // this; a second copy under Save reads as an echo.
-                                    // Kept when the server holds contacts and the
-                                    // household cleared them, where no prompt shows.
-                                    problem == REQUIRED && r.contacts.isEmpty() -> message = null
-
-                                    problem != null -> {
-                                        message = problem
-                                        messageOk = false
-                                    }
-
-                                    else -> {
-                                        saving = true
-                                        message = null
-                                        val sent = drafts
-                                        val sentFor = kinfolkId
-                                        scope.launch {
-                                            val stored = try {
-                                                portalApi.saveEmergencyContacts(sentFor, sent)
-                                            } catch (c: CancellationException) {
-                                                throw c
-                                            } catch (c: CancellationException) {
-                                                throw c
-                                            } catch (t: Throwable) {
-                                                // Dropped if the household changed while it was away.
-                                                if (currentKinfolkId == sentFor) {
-                                                    messageOk = false
-                                                    message = t.message?.takeIf { it.isNotBlank() }
-                                                        ?: "The Emergency Contacts were not saved. Try again."
-                                                    saving = false
-                                                }
-                                                return@launch
-                                            }
-                                            // A reply for a household no longer on screen is
-                                            // not applied: it would seed another household's
-                                            // slots and say "Saved." about them.
-                                            if (currentKinfolkId != sentFor) return@launch
-                                            baseline = stored
-                                            drafts = toDrafts(stored)
-                                            loaded = loaded?.copy(contacts = stored, legacy = false)
-                                            messageOk = true
-                                            message = "Saved."
-                                            saving = false
-                                        }
-                                    }
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
+                        Text(
+                            "Unsaved changes. Press Save Changes at the bottom of the page.",
+                            style = type.sansLabel.copy(color = KinfolkBrand.KinfolkOrange),
                         )
-                        if (saving) KinSpinner(size = 20.dp)
                     }
+                    if (saving) KinSpinner(size = 20.dp)
                     message?.let {
                         Text(
                             it,

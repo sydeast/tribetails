@@ -323,6 +323,16 @@ describe('acceptInviteHandler', () => {
     const memberWrite = memberSet.mock.calls.find((c) => (c[0] as { path?: string })?.path === 'families/t1/members/u1');
     expect(memberWrite?.[1]).toMatchObject({ uid: 'u1', role: 'SECONDARY', status: 'ACTIVE' });
   });
+  it('#1339: stamps acceptedAt beside acceptedUid, so the admin invite detail can say when it was claimed', async () => {
+    const { personId: _omit, ...plain } = personInvite();
+    inviteGet.mockImplementation(async () => ({ exists: true, data: () => plain }));
+    const { acceptInviteHandler } = await import('../src/membership/acceptInvite');
+    await acceptInviteHandler({ auth: { uid: 'u1', token: { email: 'a@b', email_verified: true } }, data: { inviteId: 'i1' } } as any);
+    const inviteWrite = inviteUpdate.mock.calls.find((c) => (c[0] as { path?: string })?.path === 'inviteRequests/i1');
+    expect(inviteWrite?.[1]).toMatchObject({ status: 'ACCEPTED', acceptedUid: 'u1' });
+    expect(inviteWrite?.[1]).toHaveProperty('acceptedAt');
+  });
+
   it('Q3: a person deleted since the invite was sent is skipped, and the accept still completes', async () => {
     inviteGet.mockImplementation(async (p: string) =>
       p === 'families/t1/secondaryKinfolk/p1' ? { exists: false, data: () => undefined } : { exists: true, data: personInvite },
