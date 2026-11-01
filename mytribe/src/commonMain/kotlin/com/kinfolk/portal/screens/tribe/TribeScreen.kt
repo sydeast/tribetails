@@ -58,6 +58,9 @@ import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.CustomField
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.HomeAccess
+import com.kinfolk.portal.portal.inviteEmailProblem
+import com.kinfolk.portal.portal.isInvitableEmail
+import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeProfileResult
 import com.kinfolk.portal.portal.VetClinic
@@ -66,8 +69,11 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.attempt
 import com.kinfolk.portal.util.openExternalUrl
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /**
@@ -135,9 +141,17 @@ fun TribeScreen(
     // Save Changes below never sends contacts.
     var emergencyContactsDirty by remember { mutableStateOf(false) }
 
-    LaunchedEffect(kinfolkId) {
+    // #1282: the four reads start together and are applied in the old order.
+    // They used to be awaited one after the other, and none of the four
+    // callables carries minInstances, so a first open paid up to four cold
+    // starts back to back. The seeding below still reads the profile first.
+    LaunchedEffect(kinfolkId) { coroutineScope {
+        val profileFetch = async { attempt { portalApi.getMyTribeProfile(kinfolkId) } }
+        val profileSchemaFetch = async { attempt { portalApi.getFormSchema("tribeProfile") } }
+        val vetClinicsFetch = async { attempt { portalApi.getVetClinics() } }
+        val homeSchemaFetch = async { attempt { portalApi.getFormSchema("homeAccess") } }
         try {
-            val r = portalApi.getMyTribeProfile(kinfolkId)
+            val r = profileFetch.await().getOrThrow()
             loaded = r
             displayName = r.profile.displayName
             profileFields = r.profile.customFields
@@ -157,7 +171,7 @@ fun TribeScreen(
         }
         // Best-effort schema loads — fall back silently to static UI if missing.
         try {
-            val ps = portalApi.getFormSchema("tribeProfile")
+            val ps = profileSchemaFetch.await().getOrThrow()
             profileSchema = ps
             // Seed values from existing customFields + displayName.
             val seeded = mutableMapOf<String, String>()
@@ -170,7 +184,7 @@ fun TribeScreen(
         // Load shared vet clinic catalog (best-effort) + seed current values
         // from existing customFields if previously set.
         try {
-            vetClinics = portalApi.getVetClinics()
+            vetClinics = vetClinicsFetch.await().getOrThrow()
             vetClinicsError = null
         } catch (c: CancellationException) {
             throw c
@@ -185,7 +199,7 @@ fun TribeScreen(
         legacyVetAddress  = seededVet[VET_CLINIC_ADDRESS_KEY].orEmpty()
 
         try {
-            val hs = portalApi.getFormSchema("homeAccess")
+            val hs = homeSchemaFetch.await().getOrThrow()
             homeSchema = hs
             val seeded = mutableMapOf<String, String>()
             seeded["gateCode"] = gateCode
@@ -196,7 +210,7 @@ fun TribeScreen(
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) { /* same fallback */ }
-    }
+    } }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = isWideShell(maxWidth.value)
@@ -514,9 +528,12 @@ fun TribeScreen(
                             val kl: String?
                             val wf: String?
                             if (hsSave != null) {
-                                gc = homeValues["gateCode"]?.trim()?.ifBlank { null } ?: gateCode.trim().ifBlank { null }
-                                kl = homeValues["keyLocation"]?.trim()?.ifBlank { null } ?: keyLocation.trim().ifBlank { null }
-                                wf = homeValues["wifiPassword"]?.trim()?.ifBlank { null } ?: wifi.trim().ifBlank { null }
+                                // #1336: a schema field the household emptied is a clear,
+                                // not a fall back to the static seed (which still holds the
+                                // old value). Only a key the schema lacks falls back.
+                                gc = schemaTextOrNull(homeValues, "gateCode", gateCode)
+                                kl = schemaTextOrNull(homeValues, "keyLocation", keyLocation)
+                                wf = schemaTextOrNull(homeValues, "wifiPassword", wifi)
                                 hsSave.sections.flatMap { it.fields }
                                     .filter { it.key != "gateCode" && it.key != "keyLocation" && it.key != "wifiPassword" }
                                     .forEach { f -> schemaFieldRow(accessFields, f.key, f.label, homeValues[f.key])?.let { homeSet += it } }
@@ -1067,6 +1084,16 @@ internal data class PageSaveStatus(val text: String, val ok: Boolean)
  * Save calls saveHomeAccess only then. Mirrors `homeAccessEditChanged` in web
  * `api/tribeApi.ts`.
  */
+/**
+ * #1336. The trimmed schema value for [key], or null when the household emptied
+ * it. Only a key the schema map does not carry falls back to [staticValue].
+ * Mirrors `schemaTextOrNull` in web `screens/TribeProfile.tsx`.
+ */
+internal fun schemaTextOrNull(values: Map<String, String>, key: String, staticValue: String): String? {
+    val fromSchema = values[key]
+    if (fromSchema != null) return fromSchema.trim().ifBlank { null }
+    return staticValue.trim().ifBlank { null }
+}
 internal fun homeAccessEditChanged(
     loaded: HomeAccess,
     gateCode: String?,
@@ -1410,20 +1437,36 @@ private fun SecondaryInviteCard(
     val scope = rememberCoroutineScope()
     var email by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("") }
-    // 2026-09-27 Q3: "Give portal access" on a secondary kinfolk the primary
-    // added first fills the email (blank when none is on file) and the role
-    // with their name; the person id rides into the invite so the server links
-    // the two. The primary still sets the permissions with the toggles below.
-    LaunchedEffect(prefill) {
-        if (prefill != null) {
-            email = prefill.email
-            role = prefill.name.take(24)
-        }
-    }
     var canEditPets by remember { mutableStateOf(false) }
     var canAccessHome by remember { mutableStateOf(false) }
     var inviting by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
+    // 2026-09-27 Q3: "Give portal access" on a secondary kinfolk the primary
+    // added first fills the email (blank when none is on file); the person id
+    // rides into the invite so the server links the two. The primary still
+    // sets the permissions with the toggles below.
+    // #1323: the role is left empty. It used to be filled with the person's
+    // name, which is not a role, and a secondary kinfolk record has no
+    // relationship field to fill it from. A stale line from an earlier
+    // attempt is cleared too.
+    LaunchedEffect(prefill) {
+        if (prefill != null) {
+            email = prefill.email
+            role = ""
+            msg = null
+        }
+    }
+    // #1323: Cancel used to drop only the banner and left the email, role and
+    // the last error on the card.
+    val cancelPrefill = {
+        email = ""
+        role = ""
+        canEditPets = false
+        canAccessHome = false
+        msg = null
+        onClearPrefill()
+    }
+    val emailProblem = inviteEmailProblem(email)
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         contentPadding = PaddingValues(KinfolkSpacing.l),
@@ -1442,10 +1485,12 @@ private fun SecondaryInviteCard(
                         style = type.sansLabel.copy(color = KinfolkBrand.KinTeal),
                         modifier = Modifier.weight(1f),
                     )
-                    com.kinfolk.portal.components.KinGhostButton(label = "Clear", onClick = onClearPrefill)
+                    com.kinfolk.portal.components.KinGhostButton(label = "Cancel", onClick = cancelPrefill)
                 }
             }
-            KinField(value = email, onValueChange = { email = it }, label = "Email", fieldTestTag = "invite-email", modifier = Modifier.fillMaxWidth())
+            KinField(value = email, onValueChange = { email = it }, label = "Email", isError = emailProblem != null, fieldTestTag = "invite-email", modifier = Modifier.fillMaxWidth())
+            // #1326: Send Invite stays disabled on a bad address; say why.
+            emailProblem?.let { Text(it, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral)) }
             KinField(value = role, onValueChange = { role = it }, label = "Their role (e.g. Co-Parent, Sister)", fieldTestTag = "invite-role", modifier = Modifier.fillMaxWidth())
             AccessToggleRow(
                 label = "Can edit pets",
@@ -1488,13 +1533,14 @@ private fun SecondaryInviteCard(
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
-                            msg = "Invite failed: ${t.message ?: t}"
+                            // #1277: a missing backend setting never shows its name.
+                            msg = inviteFailureLine(t)
                         } finally {
                             inviting = false
                         }
                     }
                 },
-                enabled = !inviting && email.contains("@"),
+                enabled = !inviting && isInvitableEmail(email),
                 modifier = Modifier.fillMaxWidth(),
             )
             msg?.let { Text(it, style = type.sansLabel.copy(color = KinfolkBrand.KinTeal)) }

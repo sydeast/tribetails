@@ -84,6 +84,7 @@ import { Args as PayInvoiceArgs, Result as PayInvoiceResult } from '../../src/po
 import { Args as RedeemCreditArgs, Result as RedeemCreditResult } from '../../src/portal/redeemCredit';
 import { Args as AddBookingNoteArgs, Result as AddBookingNoteResult } from '../../src/portal/addBookingNote';
 import { Result as GetMyBookingsResult } from '../../src/portal/getMyBookings';
+import { Args as GetBookingNotesArgs, Result as GetBookingNotesResult } from '../../src/portal/getBookingNotes';
 import { Args as RequestBookingArgs, Result as RequestBookingResult } from '../../src/portal/requestBooking';
 import {
   Args as RequestBookingCancellationArgs,
@@ -217,6 +218,7 @@ export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
   ],
   callables: [
     { name: 'addBookingNote', args: AddBookingNoteArgs, result: AddBookingNoteResult },
+    { name: 'getBookingNotes', args: GetBookingNotesArgs, result: GetBookingNotesResult },
     { name: 'addInternalBookingNote', args: AddInternalBookingNoteArgs, result: AddInternalBookingNoteResult },
     { name: 'batchUpdateBookings', args: BatchUpdateBookingsArgs, result: BatchUpdateBookingsResult },
     {

@@ -1,6 +1,7 @@
 package com.kinfolk.portal.screens.schedule
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -60,10 +62,13 @@ import com.kinfolk.portal.portal.Service
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.attempt
 import com.kinfolk.portal.util.formatUsd
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -90,6 +95,11 @@ fun BookingWizardScreen(
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
     var step by remember { mutableStateOf(1) }
+    // #1300: each step change lands back at the top. The whole wizard is one
+    // scrolling column, so a long step left the next one opened mid-page with
+    // the step indicator out of sight.
+    val pageScroll = rememberScrollState()
+    LaunchedEffect(step) { pageScroll.animateScrollTo(0) }
     var kin by remember { mutableStateOf<List<Kin>?>(null) }
     var services by remember { mutableStateOf<List<Service>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -151,10 +161,20 @@ fun BookingWizardScreen(
      */
     var pricesVisible by remember { mutableStateOf(true) }
 
-    LaunchedEffect(kinfolkId) {
+    // #1282: the four reads start together and are applied in the old order,
+    // each with its old failure posture. They used to be awaited one after the
+    // other, and getServiceCatalog, getBusinessClosures and getBookingPolicy
+    // carry no minInstances, so a first open paid three cold starts in a row.
+    LaunchedEffect(kinfolkId) { coroutineScope {
+        val kinFetch = async { attempt { portalApi.getMyKin(kinfolkId) } }
+        val catalogFetch = async { attempt { portalApi.getServiceCatalog(kinfolkId) } }
+        val closuresFetch = async {
+            attempt { portalApi.getBusinessClosures(bookingDateKey(today), bookingDateKey(horizonEnd)) }
+        }
+        val policyFetch = async { attempt { portalApi.getBookingPolicy() } }
         try {
-            kin = portalApi.getMyKin(kinfolkId).kin.filter { it.status == com.kinfolk.portal.portal.KinStatus.Active }
-            val catalogRes = portalApi.getServiceCatalog(kinfolkId)
+            kin = kinFetch.await().getOrThrow().kin.filter { it.status == com.kinfolk.portal.portal.KinStatus.Active }
+            val catalogRes = catalogFetch.await().getOrThrow()
             services = catalogRes.services
             pricesVisible = catalogRes.pricesVisible
         } catch (c: CancellationException) {
@@ -165,8 +185,7 @@ fun BookingWizardScreen(
         // Deliberately AFTER, and in its own try: closures are a secondary
         // read. Losing them must not take the whole wizard down with it.
         try {
-            closedDates = portalApi
-                .getBusinessClosures(bookingDateKey(today), bookingDateKey(horizonEnd))
+            closedDates = closuresFetch.await().getOrThrow()
                 .associate { it.date to it.name }
         } catch (c: CancellationException) {
             throw c
@@ -176,14 +195,14 @@ fun BookingWizardScreen(
         // Same posture again: the booking policy is a secondary read, and
         // losing it leaves the wizard on clock times rather than dead.
         try {
-            policy = portalApi.getBookingPolicy()
+            policy = policyFetch.await().getOrThrow()
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) {
             policy = BookingPolicy.CLOCK_ONLY
         }
         policyLoaded = true
-    }
+    } }
 
     /**
      * The mode in force. Derived rather than stored, so it can never be a mode
@@ -294,7 +313,7 @@ fun BookingWizardScreen(
         else -> true
     }
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(pageScroll)) {
         ScreenHeader(title = "New Booking")
         WizardStepIndicator(current = step)
 
@@ -1002,7 +1021,8 @@ private fun Step4ExtraLoveAndContext(notes: String, onNotesChange: (String) -> U
         )
         Text(
             "This note will be highlighted for Auntie during the visit.",
-            style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+            // #1302: a helper line, not an error. Coral is the error colour here.
+            style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
         )
     }
 }
@@ -1108,7 +1128,7 @@ private val WEEKDAY_HEADERS = listOf("S", "M", "T", "W", "T", "F", "S")
  * so the grid reads as a calendar rather than growing holes.
  */
 @Composable
-private fun SimpleMonthPicker(
+internal fun SimpleMonthPicker(
     selectedDates: List<LocalDate>,
     onToggle: (LocalDate) -> Unit,
     today: LocalDate,
@@ -1159,9 +1179,16 @@ private fun SimpleMonthPicker(
                     val sel = selectedDates.contains(d)
                     val closed = closedDates.containsKey(bookingDateKey(d))
                     val pickable = !closed && isBookableDay(d, today, horizonEnd)
+                    val isToday = d == today
                     Box(
                         modifier = Modifier
                             .size(40.dp)
+                            // #1301: today carries a ring, selected or not.
+                            .then(if (isToday) Modifier.border(2.dp, KinfolkBrand.KinTeal, CircleShape) else Modifier)
+                            .semantics {
+                                if (isToday) stateDescription = "Today"
+                                if (closed) stateDescription = "Closed: ${closedDates[bookingDateKey(d)]}"
+                            }
                             .background(
                                 color = if (sel) KinfolkBrand.KinTeal else KinfolkBrand.GlassSurfaceDim,
                                 shape = CircleShape,

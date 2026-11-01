@@ -10,6 +10,7 @@ import {
   formatUsd,
   invoiceRowStatusInfo,
   invoiceStatusInfo,
+  longDateLabel,
   offersPayment,
   partPaidSummary,
   shortDateLabel,
@@ -133,13 +134,22 @@ export function Invoices() {
           <section className="balance">
             <div className="btag">ACCOUNT BALANCE</div>
             <div className="bnum">{formatCentsUsd(data.accountBalanceCents)}</div>
-            <p className="bnote">Available credit on your account. Applied automatically to your next invoice.</p>
+            {/* #1294: this figure is what the household can spend, and it is the
+                only one here that comes off a bill by itself (onInvoiceAutoApply
+                draws it when an invoice is issued). A credit below counts only
+                once it is saved, so it is labelled as waiting, and the AUTO
+                APPLIED chip that sat beside it is gone. */}
+            <p className="bnote">What you can spend. It comes off your next invoice.</p>
             <div className="brow">
-              <div className="bcell">
-                <small>Credits</small>
-                <b>{formatCentsUsd(creditsAvailableCents)}</b>
-              </div>
-              <span className="bdiv" />
+              {creditsAvailableCents > 0 && (
+                <>
+                  <div className="bcell">
+                    <small>Credits to save</small>
+                    <b>{formatCentsUsd(creditsAvailableCents)}</b>
+                  </div>
+                  <span className="bdiv" />
+                </>
+              )}
               <div className="bcell">
                 <small>Open invoices</small>
                 <b>{formatUsd(openTotal)}</b>
@@ -148,9 +158,6 @@ export function Invoices() {
               <div className="bcell">
                 <small>Paid this month</small>
                 <b>{formatUsd(paidThisMonthTotal)}</b>
-              </div>
-              <div className="bcell" style={{ marginLeft: 'auto', alignSelf: 'flex-end' }}>
-                <span className="chip light">AUTO APPLIED</span>
               </div>
             </div>
           </section>
@@ -330,7 +337,8 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
   const { invoice: inv } = props;
   const status = invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
   const tile = calTileFor(inv.date);
-  const paidLabel = inv.status === 'cancelled' ? 'No charge' : `Paid ${shortDateLabel(inv.date) ?? '—'}`;
+  // #1330: with the year. A history spanning New Year read Jul 1, Jun 17, Dec 17.
+  const paidLabel = inv.status === 'cancelled' ? 'No charge' : `Paid ${longDateLabel(inv.date) ?? '—'}`;
 
   return (
     <Link className={`inv ${status.invClass}`} to="/invoices/$invoiceId" params={{ invoiceId: inv.id }} style={props.divider ? undefined : { borderTop: 'none' }}>
@@ -369,7 +377,7 @@ function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeemPhase: 
         <b>{invoiceTitle(inv)}</b>
         <small>
           Invoice #{inv.id}.{' '}
-          {redeemed ? 'Applied automatically to your next invoice.' : 'Save this to your account balance.'}
+          {redeemed ? 'It comes off your next invoice.' : 'Save it to your account balance to spend it.'}
         </small>
         {redeemed && (
           <span className="savedline">

@@ -45,7 +45,7 @@ fun KinfolkPortalAppGuarded() {
     }
     val functions: FunctionsClient = remember { platformFunctionsClient() }
     val firestoreClient = remember { com.kinfolk.portal.firebase.platformFirestoreClient() }
-    val portalApi = remember(functions) { PortalApi(functions) }
+    val portalApi = remember(functions, firestoreClient) { PortalApi(functions, firestoreClient) }
     val notificationCatalog = remember(functions) {
         com.kinfolk.portal.notifications.NotificationCatalogRepository(functions)
     }
@@ -163,6 +163,7 @@ fun KinfolkPortalAppGuarded() {
                             shellPersonName = personName,
                             onPersonNameChanged = { personName = it },
                             shellLogoUrl = home?.businessLogoUrl ?: "",
+                            shellBusinessName = home?.businessName ?: "",
                             shellBanner = home?.portal?.banner ?: com.kinfolk.portal.portal.PortalBanner(),
                             shellBannerDismissedByUser = home?.bannerDismissedByUser ?: false,
                             shellHomeSections = home?.portal?.home ?: emptyList(),

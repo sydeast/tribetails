@@ -84,6 +84,7 @@ function makeFakeEditor(initialHtml = '') {
   let html = initialHtml;
   const calls: string[] = [];
   const listeners = new Set<() => void>();
+  const updateListeners = new Set<() => void>();
   function notify() {
     listeners.forEach((l) => l());
   }
@@ -136,6 +137,20 @@ function makeFakeEditor(initialHtml = '') {
     subscribe: (fn: () => void) => {
       listeners.add(fn);
       return () => listeners.delete(fn);
+    },
+    // Editor 'update' events (#1319): fired for user edits only (the test
+    // calls userEdit), never for programmatic setContent, matching how the
+    // screen distinguishes an edit from its own write.
+    on: (_evt: string, fn: () => void) => {
+      updateListeners.add(fn);
+    },
+    off: (_evt: string, fn: () => void) => {
+      updateListeners.delete(fn);
+    },
+    userEdit: (next: string) => {
+      html = next;
+      updateListeners.forEach((l) => l());
+      notify();
     },
   };
 }
@@ -385,6 +400,67 @@ describe('Messages writing helper (O-8)', () => {
     expect(fakeEditor.getHTML()).toBe('<p>my draft</p>');
   });
 
+  it('offers Undo after Polish, restores the original draft, and drops Undo on edit or send (#1319)', async () => {
+    mocks.getMyConversation.mockResolvedValue(conversationResult([]));
+    mocks.generateAssist.mockResolvedValue({ ok: true, mode: 'polish', html: '<p>Polished</p>', text: 'Polished' });
+    renderScreen();
+    await screen.findByText('No messages yet');
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    act(() => fakeEditor.setHtml('<p>rough draft</p>'));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Polish' }));
+    await waitFor(() => expect(fakeEditor.getHTML()).toBe('<p>Polished</p>'));
+    await user.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(fakeEditor.getHTML()).toBe('<p>rough draft</p>');
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    // editing after a polish removes the Undo
+    await user.click(screen.getByRole('button', { name: 'Polish' }));
+    await screen.findByRole('button', { name: 'Undo' });
+    act(() => fakeEditor.userEdit('<p>Polished, then I typed</p>'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull());
+  });
+  it('keeps Undo until send, then clears it (#1319)', async () => {
+    mocks.getMyConversation.mockResolvedValue(conversationResult([]));
+    mocks.generateAssist.mockResolvedValue({ ok: true, mode: 'polish', html: '<p>Polished</p>', text: 'Polished' });
+    mocks.sendKinfolkMessage.mockResolvedValue({ ok: true });
+    renderScreen();
+    await screen.findByText('No messages yet');
+    act(() => fakeEditor.setHtml('<p>rough</p>'));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Polish' }));
+    await screen.findByRole('button', { name: 'Undo' });
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull());
+  });
+  it('disables Suggest reply with a reason when the household spoke last (#1320)', async () => {
+    mocks.getMyConversation.mockResolvedValue(
+      conversationResult([
+        message({ id: 'm1', senderRole: 'auntie', body: '<p>Biscuit did great.</p>', createdAtMs: 1_700_000_000_000 }),
+        message({ id: 'm2', senderRole: 'kinfolk', body: '<p>Thanks so much, Auntie.</p>', createdAtMs: 1_700_000_100_000 }),
+      ]),
+    );
+    renderScreen();
+    await screen.findByText('Thanks so much, Auntie.');
+    const btn = screen.getByRole('button', { name: 'Suggest reply' });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Nothing new to reply to');
+    expect(mocks.generateAssist).not.toHaveBeenCalled();
+  });
+  it('shows day separators between days and none within a day (#1318)', async () => {
+    const day1 = Date.UTC(2020, 0, 6, 18, 0);
+    mocks.getMyConversation.mockResolvedValue(
+      conversationResult([
+        message({ id: 'a', createdAtMs: day1 }),
+        message({ id: 'b', createdAtMs: day1 + 60_000 }),
+        message({ id: 'c', createdAtMs: day1 + 2 * 86_400_000 }),
+      ]),
+    );
+    renderScreen();
+    const seps = await screen.findAllByTestId('msgs-day');
+    expect(seps).toHaveLength(2);
+    expect(seps[0]).toHaveTextContent('January 6, 2020');
+    expect(seps[1]).toHaveTextContent('January 8, 2020');
+  });
   it('disables Polish while the draft is empty, and Suggest reply while the thread is empty', async () => {
     mocks.getMyConversation.mockResolvedValue(conversationResult([]));
     renderScreen();
@@ -414,7 +490,7 @@ describe('mapGenerateError', () => {
 
   it('maps failed-precondition (thread_empty) to the nothing-to-reply-to copy', () => {
     expect(mapGenerateError(new FirebaseError('functions/failed-precondition', 'thread_empty'))).toBe(
-      'There are no messages to reply to yet.',
+      'Nothing new to reply to.',
     );
   });
 

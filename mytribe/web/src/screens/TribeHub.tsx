@@ -11,6 +11,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { auntieName, relativeDay, speciesEmoji } from '../lib/portalFormat';
 import { BusyLabel } from '../components/Loading';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
 
@@ -183,9 +184,7 @@ export function TribeHub() {
           </section>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

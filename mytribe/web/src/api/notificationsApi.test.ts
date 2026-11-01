@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   categoryChannels,
   categoryMarketingCategories,
-  categoryMasterChecked,
+  categoryMasterState,
+  keyDescription,
   categoryToggleableChannels,
   channelChecked,
   keyChannelChecked,
   keyChannelOverridden,
   keyLockedChannels,
-  marketingMasterChecked,
+  marketingMasterState,
   type CategoryDto,
   type NotificationKeyDto,
 } from './notificationsApi';
@@ -122,25 +123,26 @@ describe('channelChecked', () => {
   });
 });
 
-describe('categoryMasterChecked', () => {
-  it('is on only when every toggleable channel currently reads on', () => {
-    const c = cat('visit', [key({ allowedChannels: ['email', 'sms'] })]);
-    expect(categoryMasterChecked(c, { email: true, sms: true })).toBe(true);
-    expect(categoryMasterChecked(c, { email: true, sms: false })).toBe(false);
+describe('categoryMasterState', () => {
+  const c = cat('invoice', [key({ allowedChannels: ['push', 'email', 'sms'] })]);
+  it('is on only when every toggleable channel reads on', () => {
+    expect(categoryMasterState(c, { push: true, email: true, sms: true })).toBe('on');
   });
-
+  it('is off when every toggleable channel reads off', () => {
+    expect(categoryMasterState(c, { push: false, email: false, sms: false })).toBe('off');
+  });
+  // #1317: it used to read off here, beside an Email row that was on.
+  it('is mixed when Email is on and the others are off', () => {
+    expect(categoryMasterState(c, { email: true })).toBe('mixed');
+    expect(categoryMasterState(c, undefined)).toBe('mixed'); // email defaults on, sms/push off
+  });
   it('reads on for a fully-locked category (nothing left to toggle)', () => {
-    const c = cat('visit', [
-      key({
-        allowedChannels: ['email'],
-        lockedChannels: ['email'],
-        lockedChannelValues: { email: true },
-      }),
+    const locked = cat('visit', [
+      key({ allowedChannels: ['email'], lockedChannels: ['email'], lockedChannelValues: { email: true } }),
     ]);
-    expect(categoryMasterChecked(c, undefined)).toBe(true);
+    expect(categoryMasterState(locked, undefined)).toBe('on');
   });
 });
-
 describe('categoryMarketingCategories', () => {
   it('collects distinct marketingCategory values across keys', () => {
     const c = cat('marketing', [
@@ -161,16 +163,29 @@ describe('categoryMarketingCategories', () => {
   });
 });
 
-describe('marketingMasterChecked', () => {
+describe('marketingMasterState', () => {
+  const c = cat('marketing', [key({ marketingCategory: 'newsletter' }), key({ marketingCategory: 'survey' })]);
   it('is on only when every referenced marketingCategory is opted in', () => {
-    const c = cat('marketing', [key({ marketingCategory: 'newsletter' }), key({ marketingCategory: 'survey' })]);
-    expect(marketingMasterChecked(c, { newsletter: true, survey: true })).toBe(true);
-    expect(marketingMasterChecked(c, { newsletter: true, survey: false })).toBe(false);
-    expect(marketingMasterChecked(c, undefined)).toBe(false);
+    expect(marketingMasterState(c, { newsletter: true, survey: true })).toBe('on');
   });
-
+  it('is mixed when only some are', () => {
+    expect(marketingMasterState(c, { newsletter: true, survey: false })).toBe('mixed');
+  });
+  it('is off when none are, or nothing is stored', () => {
+    expect(marketingMasterState(c, { newsletter: false })).toBe('off');
+    expect(marketingMasterState(c, undefined)).toBe('off');
+  });
   it('is off for a category with no keys', () => {
-    expect(marketingMasterChecked(cat('empty', []), { marketing: true })).toBe(false);
+    expect(marketingMasterState(cat('empty', []), { marketing: true })).toBe('off');
+  });
+});
+describe('keyDescription', () => {
+  it('drops a description that only repeats the title', () => {
+    expect(keyDescription({ title: 'KinCare booking confirmed', description: 'KinCare booking confirmed.' })).toBe('');
+    expect(keyDescription({ title: 'Invoice overdue', description: ' invoice overdue! ' })).toBe('');
+  });
+  it('keeps a description that says something', () => {
+    expect(keyDescription({ title: 'Receipt', description: 'Receipt issued for an invoice.' })).toBe('Receipt issued for an invoice.');
   });
 });
 

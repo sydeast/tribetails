@@ -13,6 +13,11 @@ data class Account(
     val hasPaymentMethod: Boolean,
     val updatedAtMs: Long?,
 )
+/**
+ * #1336. The `saveMyAccount` fields whose clear value is JSON `null` (the
+ * server's zod marks them `.nullable()`). `displayName` is not clearable.
+ */
+val NULL_CLEARABLE_ACCOUNT_FIELDS: Set<String> = setOf("phone", "photoUrl", "backupEmail", "backupPhone")
 
 /**
  * Hybrid notification prefs. Mirrors functions/src/notifications/types.ts

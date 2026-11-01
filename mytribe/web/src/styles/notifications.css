@@ -22,6 +22,10 @@
 .sw input:checked ~ .knob { transform: translateX(19px); }
 .sw input:focus-visible ~ .slot { outline: 2px solid var(--teal); outline-offset: 2px; }
 .sw input:disabled { cursor: not-allowed; }
+/* Mixed: some of the channels it covers are on, some off. */
+.sw input:indeterminate ~ .slot { background: rgba(240, 130, 60, .45); border-color: transparent; }
+.sw input:indeterminate ~ .knob { transform: translateX(9px); }
+.nf-saving { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; letter-spacing: .04em; }
 .sw.dis .slot { opacity: .45; } .sw.dis .knob { opacity: .55; box-shadow: none; }
 
 /* category card head */

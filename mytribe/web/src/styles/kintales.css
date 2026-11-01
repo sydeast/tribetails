@@ -48,11 +48,19 @@
 
 .feature .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 20px 26px 24px; border-top: 1px solid var(--hairline); margin-top: 22px; }
 
-/* Reset from a <button> — clickable now (toggles the caller's reaction),
-   was a static mockup <span>. Base look is unchanged; just interactive. */
-.react { border: none; background: none; padding: 0; cursor: pointer; display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11.5px; color: var(--navy-muted); letter-spacing: .04em; }
-.react:hover { color: var(--coral); }
-.react:disabled { cursor: default; opacity: .6; }
+/* A real toggle button: bordered pill, heart + count + line, and a pressed
+   state (aria-pressed / .is-on) that tints it coral. Pessimistic, so while the
+   call is in flight it is disabled and its label swaps to a loading cue. */
+.react { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--glass-border); background: var(--glass-dim); font-family: var(--mono); font-size: 11.5px;
+  color: var(--navy-soft); letter-spacing: .04em; transition: .2s var(--ease); }
+.react:hover { color: var(--coral); border-color: rgba(213, 83, 90, .4); }
+.react:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
+.react.is-on { background: rgba(213, 83, 90, .12); border-color: rgba(213, 83, 90, .45); color: var(--coral); }
+.react .heart { font-size: 16px; line-height: 1; }
+.react .react-count { font-weight: 700; min-width: 1ch; }
+.react:disabled { cursor: default; opacity: .7; }
+.react-err { font-family: var(--mono); font-size: 11px; color: var(--coral); letter-spacing: .04em; }
 .feature .actions .react { margin-left: auto; }
 
 /* ===== comment thread ===== */

@@ -237,9 +237,20 @@ const noTribesRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/NoTribes'), 'NoTribes'),
 });
 
+/**
+ * #1304: which Schedule tab is open lives in the URL, so opening a past visit
+ * and pressing back lands on Past Visits, not on the default tab. Upcoming is
+ * the default and is the absence of the key, which keeps `/schedule` the clean
+ * address every other link already uses. Anything but `past` reads as that
+ * default, and no other key is passed through. Exported for router.test.ts.
+ */
+export function scheduleSearch(search: Record<string, unknown>): { tab?: 'past' } {
+  return search['tab'] === 'past' ? { tab: 'past' } : {};
+}
 const scheduleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule',
+  validateSearch: scheduleSearch,
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Schedule'), 'Schedule'),
 });
@@ -318,18 +329,40 @@ const kinDetailRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/KinDetail'), 'KinDetail'),
 });
 
+/**
+ * #1291. Add New Kin creates the record first and uploads the picked photo
+ * after (there is no kinId to sign a folder for until the record exists). If
+ * that upload fails the Kin is real, so the household lands here, on its edit
+ * screen, with `?photo=failed` telling KinEdit to say the photo did not take.
+ * Any other value, or any other key, is dropped. Exported for router.test.ts.
+ */
+export function kinEditSearch(search: Record<string, unknown>): { photo?: 'failed' } {
+  return search['photo'] === 'failed' ? { photo: 'failed' } : {};
+}
+
 const kinEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kin/$kinId/edit',
   beforeLoad: requireActiveTribe,
+  validateSearch: kinEditSearch,
   component: lazyRouteComponent(() => import('./screens/KinEdit'), 'KinEdit'),
 });
 
+/**
+ * `/kintales?tale=<id>` opens the feed with that tale in the featured slot
+ * (Home's Recent KinTales cards link here). A blank or non-string value is
+ * dropped, so a hand-edited URL lands on the plain feed instead of an error.
+ */
+export function kinTalesSearch(search: Record<string, unknown>): { tale?: string } {
+  const tale = search['tale'];
+  return typeof tale === 'string' && tale.trim() !== '' ? { tale: tale.trim() } : {};
+}
 const kinTalesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kintales',
+  validateSearch: kinTalesSearch,
   beforeLoad: requireActiveTribe,
-  component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTales'),
+  component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTalesRoute'),
 });
 
 const invoicesRoute = createRoute({

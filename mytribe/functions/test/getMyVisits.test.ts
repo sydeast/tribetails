@@ -195,6 +195,7 @@ describe('getMyVisitsHandler projection boundary', () => {
       'departedAtIso',
       'endTimeIso',
       'id',
+      'serviceLabel',
       'serviceType',
       'startTimeIso',
       'status',

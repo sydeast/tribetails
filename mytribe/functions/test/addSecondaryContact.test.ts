@@ -7,6 +7,8 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sendFromTemplate', () => ({ sendFromTemplate: mocks.sendMock }));
+const auditMock = vi.hoisted(() => vi.fn());
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: auditMock }));
 
 /** #957: the invite set reads the email frame once and hands it to every send (here the default, nothing stored). */
 const FRAME = expect.objectContaining({ accentColor: '#df8431', footerText: expect.any(String) });
@@ -18,6 +20,8 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.sendMock.mockReset();
   mocks.sendMock.mockResolvedValue('m-1');
+  auditMock.mockReset();
+  auditMock.mockResolvedValue('a');
   delete process.env.AUNTIE_OPERATOR_UIDS;
   // #1018 item 3: addSecondaryContact now sends the same invite emails
   // mintInviteFromPrimary does, guarded the same way (lib/inviteEmails.ts).
@@ -306,20 +310,36 @@ describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
     });
   });
 
-  describe('AUNTIE_OS_REVIEW_BASE_URL guard', () => {
-    it('throws failed-precondition and writes nothing when AUNTIE_NOTIFY_EMAIL is set but the review base URL is not', async () => {
-      process.env.AUNTIE_NOTIFY_EMAIL = 'auntie@tribetails.com';
+  // #1277: this used to refuse every portal invite (Account Send Invite, Tribe
+  // Profile Invite a Kinfolk, Give portal access). The review URL only builds
+  // the business's own notice; the household's invite now goes out.
+  describe('AUNTIE_OS_REVIEW_BASE_URL missing', () => {
+    it('still mints the invite and emails the invitee when AUNTIE_NOTIFY_EMAIL is set but the review base URL is not; the notice is skipped and recorded', async () => {
+      process.env.AUNTIE_NOTIFY_EMAIL = 'e2e-admin@tribetails.com';
       const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
       mocks.dbFn.mockReturnValue(ctx.db);
       const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
-      await expect(
-        addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'partner@x.com' }, auth: { uid: 'u1' } } as any),
-      ).rejects.toMatchObject({ code: 'failed-precondition', message: expect.stringContaining('AUNTIE_OS_REVIEW_BASE_URL') });
-      expect(ctx.adds).toHaveLength(0);
-      expect(mocks.sendMock).not.toHaveBeenCalled();
+      const res = await addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'catch@hanasamku.com' }, auth: { uid: 'u1' } } as any);
+      expect(res.inviteId).toBeTruthy();
+      expect(ctx.adds.filter((a) => a.collection === 'inviteRequests')).toHaveLength(1);
+      const templates = mocks.sendMock.mock.calls.map((c) => c[0]);
+      expect(templates).toContain('invite.secondary');
+      expect(templates).not.toContain('invite.auntie-notify');
+      expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({
+        event: 'MEMBERSHIP_INVITE_AUNTIE_NOTICE_SKIPPED',
+        status: 'FAILURE',
+        familyId: '3',
+        payload: { function: 'addSecondaryContact', inviteId: res.inviteId, missingVar: 'AUNTIE_OS_REVIEW_BASE_URL' },
+      }));
+    });
+    it('records nothing when AUNTIE_NOTIFY_EMAIL is unset (the notice was never wanted)', async () => {
+      const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
+      await addSecondaryContactHandler({ data: { kinfolkId: '3', invitedEmail: 'catch@hanasamku.com' }, auth: { uid: 'u1' } } as any);
+      expect(auditMock).not.toHaveBeenCalled();
     });
   });
-
   it('a send failure is never swallowed: it throws out of the handler, and the invite is left PENDING, not EMAIL_SENT', async () => {
     mocks.sendMock.mockRejectedValueOnce(new Error('smtp2go: rejected'));
     const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });

@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CHANNEL_ORDER,
   categoryChannels,
   categoryMarketingCategories,
-  categoryMasterChecked,
+  categoryMasterState,
   categoryToggleableChannels,
   channelChecked,
   getMyNotificationPrefs,
@@ -12,11 +12,15 @@ import {
   keyChannelChecked,
   keyChannelOverridden,
   keyLockedChannels,
-  marketingMasterChecked,
+  keyDescription,
+  marketingMasterState,
   saveMyNotificationPrefs,
   type CategoryDto,
   type Channel,
+  type GetMyNotificationPrefsResult,
   type MarketingCategory,
+  type MasterState,
+  type NotificationPrefsPatch,
   type NotificationKeyDto,
   type UserNotificationPrefs,
 } from '../api/notificationsApi';
@@ -25,10 +29,11 @@ import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
-import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
-import { usePortalMutation } from '../lib/mutationState';
+import { OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { errorLine, usePortalMutation } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import '../styles/notifications.css';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Notification Settings, ported from
@@ -155,6 +160,12 @@ const GENERIC_CHANNEL_COPY: Record<Channel, { icon: string; label: string; desc:
   sms: { icon: '\u{1F4AC}', label: 'SMS', desc: 'Text message alerts.' },
 };
 
+const MARKETING_ROW_LABEL: Record<Channel, string> = {
+  push: 'Marketing push',
+  email: 'Marketing email',
+  sms: 'Marketing SMS',
+};
+
 function channelCopy(catId: string, ch: Channel) {
   return CHANNEL_ROW_COPY[catId]?.[ch] ?? GENERIC_CHANNEL_COPY[ch];
 }
@@ -188,6 +199,42 @@ interface EditedPrefs {
   marketingOptIn: MarketingOptInState;
 }
 
+function seedEdited(source: UserNotificationPrefs): EditedPrefs {
+  const byCategory: ByCategoryState = {};
+  for (const [catId, channels] of Object.entries(source.byCategory ?? {})) {
+    if (channels) byCategory[catId] = { ...channels };
+  }
+  return {
+    byCategory,
+    byKey: { ...(source.byKey ?? {}) },
+    marketingOptIn: { ...(source.marketingOptIn ?? {}) },
+  };
+}
+/**
+ * A switch that can read ON, OFF or MIXED. The browser's `indeterminate` flag
+ * is a DOM property with no attribute, so it is set from an effect.
+ */
+function MasterSwitch({ state, label, disabled, onChange }: { state: MasterState; label: string; disabled: boolean; onChange: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = state === 'mixed';
+  }, [state]);
+  return (
+    <label className="sw">
+      <input
+        ref={ref}
+        type="checkbox"
+        aria-label={label}
+        aria-checked={state === 'mixed' ? 'mixed' : state === 'on'}
+        checked={state === 'on'}
+        disabled={disabled}
+        onChange={onChange}
+      />
+      <span className="slot" />
+      <span className="knob" />
+    </label>
+  );
+}
 export function NotificationSettings() {
   const queryClient = useQueryClient();
 
@@ -197,55 +244,39 @@ export function NotificationSettings() {
   const [edited, setEdited] = useState<EditedPrefs | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showSaved, setShowSaved] = useState(false);
-
-  // Seed local edit state once from the server; local edits then diverge
-  // from the cache until Save (matches KinDetail/Kin's read-then-mutate
-  // pattern — server refetches after a save don't clobber in-flight edits).
+  // Seed local state once from the server. After that it only changes when a
+  // save is confirmed (see `save` below), so what is on screen is what the
+  // server holds, never a guess.
   useEffect(() => {
     if (edited !== null || !prefs.data) return;
-    const source = prefs.data.prefs;
-    const byCategory: ByCategoryState = {};
-    for (const [catId, channels] of Object.entries(source.byCategory ?? {})) {
-      if (channels) byCategory[catId] = { ...channels };
-    }
-    setEdited({
-      byCategory,
-      byKey: { ...(source.byKey ?? {}) },
-      marketingOptIn: { ...(source.marketingOptIn ?? {}) },
-    });
+    setEdited(seedEdited(prefs.data.prefs));
   }, [edited, prefs.data]);
-
-  // HOLD. The prefs write is a `mergeFields` set on clients/{uid}, replacing
-  // the whole `notificationPrefs` subtree, so a replay writes the same tree.
+  // #1292: every toggle saves on its own, pessimistically. Nothing on screen
+  // changes until the server confirms, every control is disabled and a
+  // "Saving…" cue shows while the write is out, and a failure leaves the
+  // switch where it was with a message. 'abandon' because a toggle taken
+  // offline is refused with "nothing was sent" rather than held and replayed
+  // minutes later against a screen the household has moved on from.
   //
-  // ONE CAVEAT WORTH KNOWING BEFORE ANYBODY WIDENS THIS. Because it is a whole
-  // subtree replace, a QUEUED payload is a snapshot of what this screen held
-  // when the tap happened; a map added on the server in between would be
-  // deleted by the replay (prefsSchema.ts says so out loud). Same-device,
-  // same-session, that is the household's own intent arriving late, which is
-  // what they asked for.
+  // The write is a PATCH naming only what the tap changed; the server merges it
+  // into the stored prefs. The old whole-object save rebuilt the subtree from
+  // this screen's state and deleted whatever another device had written.
   const save = usePortalMutation({
-    mutationFn: () => {
-      if (!edited) return Promise.reject(new Error('Preferences not loaded yet.'));
-      // All three maps, always, byte-for-byte what Compose sends. The handler
-      // writes this subtree with mergeFields, so what is absent HERE is what
-      // gets removed from the stored document — which is how clearing an
-      // override reaches the database at all.
-      const toSave: UserNotificationPrefs = {
-        byCategory: edited.byCategory,
-        byKey: edited.byKey,
-        marketingOptIn: edited.marketingOptIn,
-      };
-      return saveMyNotificationPrefs(toSave);
-    },
-    // #1281: "Saved" shows once the reloaded preferences are on screen.
-    onSuccess: async () => {
+    mutationFn: (patch: NotificationPrefsPatch) => saveMyNotificationPrefs(patch),
+    // Settled either way: re-read the server and show THAT. On success it is the
+    // change just made; on a failure (or a lost signal, where we cannot know)
+    // it is whatever is really stored.
+    onSettled: async () => {
       await refreshAfterSave(queryClient, ['myNotificationPrefs']);
+      const fresh = queryClient.getQueryData<GetMyNotificationPrefsResult>(['myNotificationPrefs']);
+      if (fresh) setEdited(seedEdited(fresh.prefs));
+    },
+    onSuccess: () => {
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 4000);
     },
-  }, { policy: 'hold', what: 'this update' });
-
+  }, { policy: 'abandon', what: 'this change' });
+  const busy = save.isPending;
   const { signOut, signingOut } = useSignOut();
 
   if (catalog.isError || prefs.isError) {
@@ -273,74 +304,52 @@ export function NotificationSettings() {
   const asideCategories = categories.filter((c) => ASIDE_CATEGORY_IDS.has(c.id));
 
   function toggleChannelRow(cat: CategoryDto, ch: Channel) {
-    if (!edited || !categoryToggleableChannels(cat).includes(ch)) return;
+    if (!edited || busy || !categoryToggleableChannels(cat).includes(ch)) return;
     const current = channelChecked(cat, ch, edited.byCategory[cat.id]);
-    setEdited({
-      ...edited,
-      byCategory: { ...edited.byCategory, [cat.id]: { ...(edited.byCategory[cat.id] ?? {}), [ch]: !current } },
-    });
+    setShowSaved(false);
+    save.mutate({ byCategory: { [cat.id]: { [ch]: !current } } });
   }
-
   function toggleCategoryMaster(cat: CategoryDto) {
-    if (!edited) return;
+    if (!edited || busy) return;
+    setShowSaved(false);
     if (cat.id === 'marketing') {
-      const next = !marketingMasterChecked(cat, edited.marketingOptIn);
-      const marketingOptIn = { ...edited.marketingOptIn };
+      // Mixed turns everything on, the usual answer to a click on a mixed switch.
+      const next = marketingMasterState(cat, edited.marketingOptIn) !== 'on';
+      const marketingOptIn: Partial<Record<MarketingCategory, boolean>> = {};
       for (const mc of categoryMarketingCategories(cat)) marketingOptIn[mc] = next;
-      setEdited({ ...edited, marketingOptIn });
+      save.mutate({ marketingOptIn });
       return;
     }
     const toggleable = categoryToggleableChannels(cat);
     if (toggleable.length === 0) return;
-    const next = !categoryMasterChecked(cat, edited.byCategory[cat.id]);
-    const updated = { ...(edited.byCategory[cat.id] ?? {}) };
-    for (const ch of toggleable) updated[ch] = next;
-    setEdited({ ...edited, byCategory: { ...edited.byCategory, [cat.id]: updated } });
+    const next = categoryMasterState(cat, edited.byCategory[cat.id]) !== 'on';
+    const channels: Partial<Record<Channel, boolean>> = {};
+    for (const ch of toggleable) channels[ch] = next;
+    save.mutate({ byCategory: { [cat.id]: channels } });
   }
-
   // Task 27a model: byKey is an override, absence means inherit. So a
   // key-channel has three honest states — on, off, or inheriting — and a
   // kinfolk must be able to get back to inheriting. Rather than add a
   // separate "follow the category" control, the existing toggle does double
   // duty: if the value the kinfolk just chose is the SAME value the key
-  // would have inherited anyway, the override is cleared instead of pinned.
-  // That's less UI than a dedicated revert control and matches what a user
-  // means by "undo" — click it off and back on and you're back to
-  // following the category, not silently stuck on an explicit duplicate of
-  // it. Writes/clears byKey[key.key][ch] only; the category's byCategory
-  // entry (and every other key's byKey entry) is left untouched. A key
-  // nobody has touched — or one whose last touch matched the inherited
-  // value — never gets a byKey entry at all: this is the only place byKey
-  // gets written, and it only fires from a deliberate click here.
+  // would have inherited anyway, the override is cleared (sent as null)
+  // instead of pinned. Only byKey[key][ch] is named in the patch; the
+  // category's byCategory entry and every other key's entry are not in it.
   function toggleKeyChannel(cat: CategoryDto, key: NotificationKeyDto, ch: Channel) {
-    if (!edited || keyLockedChannels(key).includes(ch)) return;
+    if (!edited || busy || keyLockedChannels(key).includes(ch)) return;
     const current = keyChannelChecked(key, ch, edited.byKey[key.key], edited.byCategory[cat.id]);
     const next = !current;
     const inherited = keyChannelChecked(key, ch, undefined, edited.byCategory[cat.id]);
-
-    const nextByKey = { ...edited.byKey };
-    if (next === inherited) {
-      const forKey = { ...(nextByKey[key.key] ?? {}) };
-      delete forKey[ch];
-      if (Object.keys(forKey).length > 0) {
-        nextByKey[key.key] = forKey;
-      } else {
-        delete nextByKey[key.key];
-      }
-    } else {
-      nextByKey[key.key] = { ...(nextByKey[key.key] ?? {}), [ch]: next };
-    }
-
-    setEdited({ ...edited, byKey: nextByKey });
+    setShowSaved(false);
+    save.mutate({ byKey: { [key.key]: { [ch]: next === inherited ? null : next } } });
   }
-
   function renderCard(cat: CategoryDto, index: number) {
     const isExpanded = expanded[cat.id] ?? true;
     const isMarketing = cat.id === 'marketing';
     const rows = categoryChannels(cat);
-    const masterChecked = isMarketing
-      ? marketingMasterChecked(cat, edited?.marketingOptIn)
-      : categoryMasterChecked(cat, edited?.byCategory[cat.id]);
+    const masterState: MasterState = isMarketing
+      ? marketingMasterState(cat, edited?.marketingOptIn)
+      : categoryMasterState(cat, edited?.byCategory[cat.id]);
 
     return (
       <section className={`glass card d${(index % 4) + 1}`} key={cat.id}>
@@ -349,7 +358,11 @@ export function NotificationSettings() {
           <div className="ht">
             <h3 className="title">
               {displayTitle(cat)}
-              {cat.id === 'schedule' && <span className="nf-sugtag">Suggestion</span>}
+              {cat.id === 'schedule' && (
+                <span className="nf-sugtag" title="Suggested reminders for upcoming visits. Change any of them below.">
+                  Suggestion
+                </span>
+              )}
             </h3>
             <div className="sub">{displayDescription(cat)}</div>
           </div>
@@ -358,16 +371,12 @@ export function NotificationSettings() {
         <div className="catbar">
           <div className="master">
             <span className="lbl">All in category:</span>
-            <label className="sw">
-              <input
-                type="checkbox"
-                aria-label={`All in category: ${displayTitle(cat)}`}
-                checked={masterChecked}
-                onChange={() => toggleCategoryMaster(cat)}
-              />
-              <span className="slot" />
-              <span className="knob" />
-            </label>
+            <MasterSwitch
+              state={masterState}
+              label={`All in category: ${displayTitle(cat)}`}
+              disabled={busy}
+              onChange={() => toggleCategoryMaster(cat)}
+            />
           </div>
           <div className="exg" role="group" aria-label="Expand or collapse channels">
             <button type="button" aria-pressed={isExpanded} onClick={() => setExpanded((prev) => ({ ...prev, [cat.id]: true }))}>
@@ -395,9 +404,9 @@ export function NotificationSettings() {
             {isMarketing
               ? rows.map((ch) => (
                   <div className="crow off" key={ch}>
-                    <div className="cico">{ch === 'email' ? '\u{1F4E7}' : '\u{1F4AC}'}</div>
+                    <div className="cico">{channelCopy(cat.id, ch).icon}</div>
                     <div className="cinfo">
-                      <b>{ch === 'email' ? 'Marketing email' : 'Marketing SMS'}</b>
+                      <b>{MARKETING_ROW_LABEL[ch]}</b>
                       <small>Enable the parent marketing opt-in above to receive this.</small>
                     </div>
                     <label className="sw dis">
@@ -422,7 +431,7 @@ export function NotificationSettings() {
                         <input
                           type="checkbox"
                           checked={checked}
-                          disabled={locked}
+                          disabled={locked || busy}
                           onChange={() => toggleChannelRow(cat, ch)}
                         />
                         <span className="slot" />
@@ -437,7 +446,7 @@ export function NotificationSettings() {
                   <div className="nf-key" key={k.key}>
                     <div className="nf-key-head">
                       <b>{k.title}</b>
-                      <small>{k.description}</small>
+                      {keyDescription(k) && <small>{keyDescription(k)}</small>}
                     </div>
                     <div className="nf-key-chans">
                       {k.allowedChannels
@@ -455,7 +464,7 @@ export function NotificationSettings() {
                                   type="checkbox"
                                   aria-label={`${copy.label} for ${k.title}`}
                                   checked={checked}
-                                  disabled={locked}
+                                  disabled={locked || busy}
                                   onChange={() => toggleKeyChannel(cat, k, ch)}
                                 />
                                 <span className="slot" />
@@ -521,28 +530,26 @@ export function NotificationSettings() {
               <div className="stack">{asideCategories.map((c, i) => renderCard(c, mainCategories.length + i))}</div>
             </div>
 
-            <div className="savebar">
-              <button type="button" className="btn grad" onClick={() => save.mutate()} disabled={save.isPending}>
-                {'\u{1F4BE}'}{' '}
-                <MutationLabel mutation={save} busy="Saving…">
-                  Save Notification Preferences
-                </MutationLabel>
-              </button>
-              <span className={`savedchip ${showSaved ? 'show' : ''}`}>{'✓'} Preferences saved.</span>
-              {save.phase === 'failed' && !showSaved && (
-                <span className="sub" style={{ color: 'var(--coral)' }}>
-                  Couldn&rsquo;t save. Try again.
+            <div className="savebar" role="status" aria-live="polite">
+              {busy && (
+                <span className="nf-saving">
+                  <span className="loading-spinner loading-spinner--inline" aria-hidden="true" />
+                  Saving your change…
                 </span>
               )}
-              <OfflineMutationNotice phase={save.phase} what="this update" check="this page" />
-              <span className="savehint">Changes apply across MyTribe push, email, and SMS.</span>
+              <span className={`savedchip ${showSaved && !busy ? 'show' : ''}`}>{'✓'} Saved.</span>
+              {save.phase === 'failed' && !busy && (
+                <span className="sub" style={{ color: 'var(--coral)' }} role="alert">
+                  {errorLine(save, 'Couldn’t save that change.')} The switch is back where it was.
+                </span>
+              )}
+              <OfflineMutationNotice phase={save.phase} what="this change" check="this page" />
+              <span className="savehint">Each change saves as soon as you make it.</span>
             </div>
           </>
         )}
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

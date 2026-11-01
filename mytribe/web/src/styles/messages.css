@@ -77,3 +77,6 @@
   .msgs-thread { max-height: 50vh; padding: 18px; }
   .msgs-composer { padding: 14px 18px 18px; }
 }
+
+.msgs-day { display: flex; justify-content: center; margin: 10px 0 2px; }
+.msgs-day span { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--navy-muted); }

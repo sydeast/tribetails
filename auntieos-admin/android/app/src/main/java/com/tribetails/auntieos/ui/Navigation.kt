@@ -203,6 +203,14 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
      */
     object Invites : Screen("invites", "Invites", Lucide.Mail)
 
+    /**
+     * ONE invite (#1339), opened from a row on [Invites]. The id is a Firestore
+     * doc id, already path-safe, so it is not encoded.
+     */
+    object InviteDetail : Screen("invites/{inviteId}", "Invite", Lucide.Mail) {
+        fun createRoute(inviteId: String) = "invites/$inviteId"
+    }
+
     // KinTale report (visit recap to kinfolk). reportId is optional ("new" = blank draft).
     object KinTaleReport : Screen("kintale/{sessionId}?reportId={reportId}", "KinTale", Lucide.Pencil) {
         fun createRoute(sessionId: String, reportId: String? = null): String =
@@ -1308,6 +1316,28 @@ private fun AuthenticatedNavHost(
                     onDenied = { navController.popBackStack() },
                 ) {
                     com.tribetails.auntieos.ui.members.InvitesScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenHousehold = { kinfolkId, householdName ->
+                            navController.navigate(
+                                Screen.HouseholdMembers.createRoute(kinfolkId, householdName),
+                            )
+                        },
+                        onOpenInvite = { inviteId ->
+                            navController.navigate(Screen.InviteDetail.createRoute(inviteId))
+                        },
+                    )
+                }
+            }
+            // #1339: one invite. Same AdminGate reasoning: `getInvite` is
+            // admin-gated server-side.
+            composable(Screen.InviteDetail.route) { backStackEntry ->
+                val inviteId = backStackEntry.arguments?.getString("inviteId") ?: return@composable
+                com.tribetails.auntieos.ui.admin.AdminGate(
+                    repository = app.repository,
+                    onDenied = { navController.popBackStack() },
+                ) {
+                    com.tribetails.auntieos.ui.members.InviteDetailScreen(
+                        inviteId = inviteId,
                         onBack = { navController.popBackStack() },
                         onOpenHousehold = { kinfolkId, householdName ->
                             navController.navigate(

@@ -182,7 +182,8 @@ fun KinScreen(
             dogBreeds = controller.breeds.dogBreeds,
             catBreeds = controller.breeds.catBreeds,
             onClose = { addNew = false },
-            onSubmit = { payload, photo -> controller.addAndReload(payload, photo) },
+            onSubmit = { payload, photo -> controller.addAndReload(payload, (photo as? KinPhotoChange.Upload)?.image) },
+            photoUploading = controller.photoUploading,
         )
     }
 }
@@ -208,8 +209,13 @@ fun KinAddEditScreen(
         catBreeds = controller.breeds.catBreeds,
         onClose = onClose,
         onSubmit = { payload, photo ->
-            if (kinId != null) controller.updateAndReload(kinId, payload, photo) else controller.addAndReload(payload, photo)
+            if (kinId != null) {
+                controller.updateAndReload(kinId, payload, photo)
+            } else {
+                controller.addAndReload(payload, (photo as? KinPhotoChange.Upload)?.image)
+            }
         },
+        photoUploading = controller.photoUploading,
     )
 }
 

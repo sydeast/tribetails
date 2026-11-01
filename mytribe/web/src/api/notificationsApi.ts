@@ -82,18 +82,27 @@ export function getMyNotificationPrefs(): Promise<GetMyNotificationPrefsResult> 
   return call<Record<string, never>, GetMyNotificationPrefsResult>('getMyNotificationPrefs', {});
 }
 
-export interface SaveMyNotificationPrefsRequest {
-  prefs: UserNotificationPrefs;
+/**
+ * One preference change (#1292). Names only what a tap changed; the server
+ * merges it into what is stored (functions/src/notifications/prefsSchema.ts
+ * applyPrefsPatch), so saving one toggle can never rewrite the others.
+ * A byKey channel of `null` clears that override (back to following the
+ * category); a byKey entry of `null` clears every override on the key.
+ */
+export interface NotificationPrefsPatch {
+  byCategory?: Record<string, Partial<Record<Channel, boolean>>>;
+  byKey?: Record<string, Partial<Record<Channel, boolean | null>> | null>;
+  marketingOptIn?: Partial<Record<MarketingCategory, boolean>>;
 }
-
+export interface SaveMyNotificationPrefsRequest {
+  patch: NotificationPrefsPatch;
+}
 export interface SaveMyNotificationPrefsResult {
   ok: true;
 }
-
-export function saveMyNotificationPrefs(prefs: UserNotificationPrefs): Promise<SaveMyNotificationPrefsResult> {
-  return call<SaveMyNotificationPrefsRequest, SaveMyNotificationPrefsResult>('saveMyNotificationPrefs', { prefs });
+export function saveMyNotificationPrefs(patch: NotificationPrefsPatch): Promise<SaveMyNotificationPrefsResult> {
+  return call<SaveMyNotificationPrefsRequest, SaveMyNotificationPrefsResult>('saveMyNotificationPrefs', { patch });
 }
-
 // ── pure category/channel display logic ─────────────────────────────────
 //
 // The mockup (ui-ideas/mytribe-notifications-2026-05-31.html) renders one row
@@ -154,18 +163,42 @@ export function channelChecked(cat: CategoryDto, ch: Channel, byCategory: Partia
   return saved !== undefined ? saved : ch === 'email';
 }
 
-/**
- * Master-switch checked state: on when every toggleable channel in the
- * category currently reads on. A category with nothing left to toggle
- * (every channel locked) always reads on — it's "always on" for the whole
- * household, matching NotificationLockDisplay.kt's categoryAlwaysOnNote.
- */
-export function categoryMasterChecked(cat: CategoryDto, byCategory: Partial<Record<Channel, boolean>> | undefined): boolean {
-  const toggleable = categoryToggleableChannels(cat);
-  if (toggleable.length === 0) return true;
-  return toggleable.every((ch) => channelChecked(cat, ch, byCategory));
+/** Three-way state for a master switch: a mix of on and off is its own answer, not "off". */
+export type MasterState = 'on' | 'off' | 'mixed';
+function stateOf(values: boolean[]): MasterState {
+  if (values.length === 0) return 'off';
+  if (values.every(Boolean)) return 'on';
+  return values.some(Boolean) ? 'mixed' : 'off';
 }
-
+/**
+ * #1317: "All in category" used to read OFF whenever any toggleable channel was
+ * off, including a category whose Email row was on. It now reads MIXED then.
+ * A category with nothing left to toggle reads on, as before.
+ */
+export function categoryMasterState(cat: CategoryDto, byCategory: Partial<Record<Channel, boolean>> | undefined): MasterState {
+  const toggleable = categoryToggleableChannels(cat);
+  if (toggleable.length === 0) return 'on';
+  return stateOf(toggleable.map((ch) => channelChecked(cat, ch, byCategory)));
+}
+/**
+ * Marketing master: on when every marketingCategory the card references is
+ * opted in, mixed when only some are, off otherwise (and for a card with none).
+ * It writes marketingOptIn directly rather than byCategory (CAN-SPAM / CASL
+ * opt-in-by-default-off; see NotificationSettings.tsx's file comment).
+ */
+export function marketingMasterState(cat: CategoryDto, marketingOptIn: Partial<Record<MarketingCategory, boolean>> | undefined): MasterState {
+  return stateOf(categoryMarketingCategories(cat).map((mc) => marketingOptIn?.[mc] === true));
+}
+/**
+ * The line under a key's title. The catalog's description is sometimes just
+ * the title with a full stop ("KinCare booking confirmed." under "KinCare
+ * booking confirmed"), which is noise, so that case returns an empty string.
+ */
+export function keyDescription(key: Pick<NotificationKeyDto, 'title' | 'description'>): string {
+  const norm = (t: string) => t.trim().replace(/[\s.!:;,]+$/u, '').toLowerCase();
+  const description = key.description.trim();
+  return norm(description) === norm(key.title) ? '' : description;
+}
 /**
  * Distinct marketingCategory values a category's keys reference. Only the
  * 'marketing' category has these in practice; falls back to 'marketing' when
@@ -177,20 +210,6 @@ export function categoryMarketingCategories(cat: CategoryDto): MarketingCategory
   for (const k of cat.keys) if (k.marketingCategory) found.add(k.marketingCategory);
   if (found.size === 0 && cat.keys.length > 0) found.add('marketing');
   return [...found];
-}
-
-/**
- * The marketing category's master-switch checked state: on only when every
- * marketingCategory it references is opted in. The per-channel rows under
- * this card are always-off/disabled placeholders in the mockup (CAN-SPAM /
- * CASL opt-in-by-default-off; see NotificationSettings.tsx's file comment),
- * so this master switch is the only interactive control for the category —
- * it writes marketingOptIn directly rather than byCategory.
- */
-export function marketingMasterChecked(cat: CategoryDto, marketingOptIn: Partial<Record<MarketingCategory, boolean>> | undefined): boolean {
-  const mcs = categoryMarketingCategories(cat);
-  if (mcs.length === 0) return false;
-  return mcs.every((mc) => marketingOptIn?.[mc] === true);
 }
 
 // ── per-key channel logic (P7: per-key notification toggles) ────────────

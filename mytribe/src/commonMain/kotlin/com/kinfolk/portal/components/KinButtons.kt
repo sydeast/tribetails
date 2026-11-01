@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -126,6 +127,7 @@ fun KinChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     trailingIcon: ImageVector? = null,
+    enabled: Boolean = true,
 ) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
@@ -152,11 +154,12 @@ fun KinChip(
 
     Box(
         modifier = modifier
+            .alpha(if (enabled) 1f else 0.5f)
             .scale(scale)
             .clip(KinfolkShapes.pill)
             .background(bgColor)
             .border(1.dp, if (selected) primaryColor else borderColor, KinfolkShapes.pill)
-            .clickable(interactionSource = source, indication = null) { onClick() }
+            .clickable(interactionSource = source, indication = null, enabled = enabled) { onClick() }
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {

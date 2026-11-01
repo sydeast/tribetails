@@ -341,6 +341,47 @@ class PortalApiTest {
     }
 
     @Test
+    fun `getMyBookings decodes serviceLabel, and never surfaces a code from an older server`() = runTest {
+        // #1297: the server-resolved name wins; a server without the key falls
+        // back to serviceType only when it reads as a name.
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", JsonNull)
+            put("upcoming", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "named")
+                    put("status", "confirmed")
+                    put("serviceType", "visit_60")
+                    put("serviceLabel", "60 Minute")
+                })
+                add(buildJsonObject {
+                    put("id", "old-code")
+                    put("status", "confirmed")
+                    put("serviceType", "VISIT_60")
+                })
+                add(buildJsonObject {
+                    put("id", "old-name")
+                    put("status", "confirmed")
+                    put("serviceType", "Overnight")
+                })
+                add(buildJsonObject {
+                    put("id", "unresolved")
+                    put("status", "confirmed")
+                    put("serviceType", "visit_60")
+                    put("serviceLabel", JsonNull)
+                })
+            })
+            put("recent", buildJsonArray {})
+            put("envelopes", buildJsonArray {})
+        })
+        val res = PortalApi(fake).getMyBookings()
+        val byId = res.upcoming.associateBy { it.id }
+        assertEquals("60 Minute", byId.getValue("named").serviceLabel)
+        assertNull(byId.getValue("old-code").serviceLabel)
+        assertEquals("Overnight", byId.getValue("old-name").serviceLabel)
+        assertNull(byId.getValue("unresolved").serviceLabel)
+    }
+    @Test
     fun `payInvoice forwards URL pair to the function`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stub("payInvoice", buildJsonObject {

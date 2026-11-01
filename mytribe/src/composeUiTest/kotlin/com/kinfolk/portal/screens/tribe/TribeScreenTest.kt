@@ -1108,7 +1108,8 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithText("Giving portal access to Sam Lee").performScrollTo().assertIsDisplayed()
         onNodeWithTag("invite-email").assert(androidx.compose.ui.test.hasText("sam@x.com"))
-        onNodeWithTag("invite-role").assert(androidx.compose.ui.test.hasText("Sam Lee"))
+        // #1323: the role is a role, not the person's name; it starts empty.
+        onNodeWithTag("invite-role").assert(androidx.compose.ui.test.hasText(""))
         onNodeWithText("Send Invite").performScrollTo().performClick()
         waitForIdle()
         val invite = fake.calls.last { it.first == "addSecondaryContact" }.second!!
@@ -1143,5 +1144,70 @@ class TribeScreenTest {
         onNodeWithText("Send Invite").performScrollTo().performClick()
         waitForIdle()
         assertTrue(!fake.calls.last { it.first == "addSecondaryContact" }.second!!.containsKey("personId"))
+    }
+    // #1323: Cancel kept the email, the role and the previous error.
+    @Test
+    fun secondaryKinfolk_givePortalAccess_cancelClearsTheEmailRoleAndLastError() = runComposeUiTest {
+        val fake = secondaryHousehold(person("p1", "Sam Lee", "NONE", email = "catch@hanasamku.com"))
+        fake.stubError("addSecondaryContact", IllegalStateException("This secondary kinfolk already has portal access."))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Give portal access").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("invite-role").performScrollTo().performTextInput("Sister")
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("already has portal access", substring = true).performScrollTo().assertIsDisplayed()
+        onNodeWithText("Cancel").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue(onAllNodesWithText("Giving portal access to Sam Lee").fetchSemanticsNodes().isEmpty())
+        onNodeWithTag("invite-email").assert(androidx.compose.ui.test.hasText(""))
+        onNodeWithTag("invite-role").assert(androidx.compose.ui.test.hasText(""))
+        assertTrue(onAllNodesWithText("already has portal access", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+    // #1326: a bad address left Send Invite disabled with no reason.
+    @Test
+    fun secondaryKinfolk_invite_aBadAddressSaysWhySendInviteIsDisabled() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        assertTrue(onAllNodesWithText("Enter a valid email.").fetchSemanticsNodes().isEmpty())
+        onNodeWithTag("invite-email").performScrollTo().performTextInput("bad-email")
+        waitForIdle()
+        onNodeWithText("Enter a valid email.").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue(fake.calls.none { it.first == "addSecondaryContact" })
+        onNodeWithTag("invite-email").performTextClearance()
+        onNodeWithTag("invite-email").performTextInput("catch@hanasamku.com")
+        waitForIdle()
+        assertTrue(onAllNodesWithText("Enter a valid email.").fetchSemanticsNodes().isEmpty())
+    }
+    // #1277: Tribe Profile › Invite a Kinfolk showed "AUNTIE_OS_REVIEW_BASE_URL is not configured [400]".
+    @Test
+    fun secondaryKinfolk_invite_aConfigRefusalNeverShowsTheSettingName() = runComposeUiTest {
+        val fake = secondaryHousehold()
+        fake.stubError("addSecondaryContact", IllegalStateException("AUNTIE_OS_REVIEW_BASE_URL is not configured [400]"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("invite-email").performScrollTo().performTextInput("catch@hanasamku.com")
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Invites can't be sent right now. It's been reported to Auntie.").performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("is not configured", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+    // #1277: Give portal access opens the same card and gets the same line.
+    @Test
+    fun secondaryKinfolk_givePortalAccess_aConfigRefusalNeverShowsTheSettingName() = runComposeUiTest {
+        val fake = secondaryHousehold(person("p9", "Pat", "NONE", email = "pawsome@hanasamku.com"))
+        fake.stubError("addSecondaryContact", IllegalStateException("CLAIM_LINK_BASE_URL is not configured"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Give portal access").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Send Invite").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Invites can't be sent right now. It's been reported to Auntie.").performScrollTo().assertIsDisplayed()
+        assertTrue(onAllNodesWithText("CLAIM_LINK_BASE_URL", substring = true).fetchSemanticsNodes().isEmpty())
     }
 }

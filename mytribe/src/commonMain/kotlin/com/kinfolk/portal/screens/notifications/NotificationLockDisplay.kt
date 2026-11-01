@@ -186,3 +186,14 @@ internal fun channelInheritedChecked(
     ch: NotificationChannel,
     perCat: Boolean?,
 ): Boolean = channelChipState(key = key, ch = ch, marketingGate = false, perKey = null, perCat = perCat).checked
+
+/**
+ * The line under a key's title, or null when there is nothing to add. The
+ * catalog's description is sometimes the title with a full stop ("KinCare
+ * booking confirmed." under "KinCare booking confirmed"), which is noise (#1317).
+ */
+internal fun keyDescriptionLine(key: NotificationKey): String? {
+    fun norm(t: String) = t.trim().trimEnd('.', '!', ':', ';', ',', ' ').lowercase()
+    val description = key.description.trim()
+    return description.takeUnless { it.isEmpty() || norm(it) == norm(key.title) }
+}

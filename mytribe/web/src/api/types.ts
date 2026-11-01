@@ -150,6 +150,8 @@ export interface VisitDto {
   /** Raw AuntieOS status string, e.g. "ARRIVED" — case-insensitive match for the live gate. */
   status: string;
   serviceType: string | null;
+  /** #1297: the service's name for the household, resolved on the server. Absent from an older server. */
+  serviceLabel?: string | null;
   startTimeIso: string | null;
   endTimeIso: string | null;
   arrivedAtIso: string | null;
