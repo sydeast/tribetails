@@ -34,6 +34,62 @@ export const PrefsShape = z.object({
 });
 
 export const SaveArgs = z.object({ prefs: PrefsShape });
+/**
+ * A SINGLE-PREFERENCE update (#1292). The portal saves each toggle the moment
+ * it is flipped, so it cannot send the whole subtree: a whole-subtree replace
+ * built from one device's screen state deletes whatever another device (or a
+ * stale tab) had written since that screen loaded. A patch names only what the
+ * tap changed and the server merges it into what is stored.
+ *
+ *   byCategory       channel -> boolean, merged per channel.
+ *   byKey            channel -> boolean sets one override; channel -> null
+ *                    CLEARS it (back to "follow the category"); a key -> null
+ *                    clears every override on that key.
+ *   marketingOptIn   category -> boolean, merged.
+ */
+export const PatchShape = z.object({
+  byCategory: z.partialRecord(Category, ChannelMap).optional(),
+  byKey: z.record(z.string(), z.partialRecord(Channel, z.boolean().nullable()).nullable()).optional(),
+  marketingOptIn: z.partialRecord(MarketingCategory, z.boolean()).optional(),
+});
+export type PrefsPatch = z.infer<typeof PatchShape>;
+/** The portal callable takes the whole object (legacy clients) or one patch, never both. */
+export const PortalSaveArgs = z
+  .object({ prefs: PrefsShape.optional(), patch: PatchShape.optional() })
+  .refine((a) => (a.prefs === undefined) !== (a.patch === undefined), {
+    message: 'Send either prefs or patch, not both and not neither.',
+  });
+type StoredChannels = Partial<Record<z.infer<typeof Channel>, boolean>>;
+type StoredPrefs = z.infer<typeof PrefsShape>;
+/**
+ * Merge a patch into the stored prefs. Pure, so the merge rules are testable
+ * without Firestore. Untouched categories, keys and channels come through
+ * unchanged; that is the whole point of a patch.
+ */
+export function applyPrefsPatch(existing: StoredPrefs | undefined, patch: PrefsPatch): Required<StoredPrefs> {
+  const byCategory: Record<string, StoredChannels | undefined> = { ...(existing?.byCategory ?? {}) };
+  for (const [cat, channels] of Object.entries(patch.byCategory ?? {})) {
+    if (!channels) continue;
+    byCategory[cat] = { ...(byCategory[cat] ?? {}), ...channels };
+  }
+  const byKey: Record<string, StoredChannels | undefined> = { ...(existing?.byKey ?? {}) };
+  for (const [key, channels] of Object.entries(patch.byKey ?? {})) {
+    if (channels === null) {
+      delete byKey[key];
+      continue;
+    }
+    if (!channels) continue;
+    const next: StoredChannels = { ...(byKey[key] ?? {}) };
+    for (const [ch, value] of Object.entries(channels) as Array<[z.infer<typeof Channel>, boolean | null | undefined]>) {
+      if (value === null) delete next[ch];
+      else if (typeof value === 'boolean') next[ch] = value;
+    }
+    if (Object.keys(next).length === 0) delete byKey[key];
+    else byKey[key] = next;
+  }
+  const marketingOptIn = { ...(existing?.marketingOptIn ?? {}), ...(patch.marketingOptIn ?? {}) };
+  return { byCategory, byKey, marketingOptIn } as Required<StoredPrefs>;
+}
 
 /**
  * The set options both prefs-save handlers must use.
