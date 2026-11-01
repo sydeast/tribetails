@@ -180,6 +180,56 @@ describe('KinfolkEdit: household tags', () => {
     await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Slow pay{Enter}');
     await waitFor(() => expect(updateKinfolkTags).toHaveBeenCalledWith('kf1', ['VIP', 'Slow pay']));
   });
+
+  /**
+   * #1271: a tag removal saves on its own. Cancel, Save and Archive used to stay
+   * live while it was unacknowledged, so the screen could be left and the page
+   * reloaded with the write in flight, and the tag came back.
+   */
+  it('holds Cancel, Save and Archive, with Save reading Saving…, until a tag removal is acknowledged', async () => {
+    let ack: () => void = () => undefined;
+    updateKinfolkTags.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          ack = resolve;
+        }),
+    );
+    const { onCancel, onDone } = mount({ tags: ['VIP', 'Slow pay'] });
+    await screen.findByText('Slow pay');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Slow pay tag' }));
+    expect(updateKinfolkTags).toHaveBeenCalledWith('kf1', ['VIP']);
+
+    const saving = screen.getByRole('button', { name: 'Saving…' });
+    expect(saving).toBeDisabled();
+    expect(saving).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    const cancels = screen.getAllByRole('button', { name: 'Cancel' });
+    expect(cancels).toHaveLength(2);
+    for (const c of cancels) expect(c).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeDisabled();
+    for (const c of cancels) await userEvent.click(c);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+
+    ack();
+    expect(await screen.findByRole('button', { name: 'Save changes' })).toBeEnabled();
+    for (const c of screen.getAllByRole('button', { name: 'Cancel' })) expect(c).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeEnabled();
+    const [headerCancel] = screen.getAllByRole('button', { name: 'Cancel' });
+    if (!headerCancel) throw new Error('no Cancel');
+    await userEvent.click(headerCancel);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the leave controls after a refused tag save and keeps the error on screen', async () => {
+    updateKinfolkTags.mockRejectedValue(new Error('permission-denied'));
+    mount({ tags: ['VIP'] });
+    await screen.findByText('VIP');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove VIP tag' }));
+    expect(await screen.findByText(/Couldn't save tags: permission-denied/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    for (const c of screen.getAllByRole('button', { name: 'Cancel' })) expect(c).toBeEnabled();
+  });
 });
 
 describe('KinfolkEdit: service address autofill (#12)', () => {

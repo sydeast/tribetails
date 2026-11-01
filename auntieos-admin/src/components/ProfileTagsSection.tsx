@@ -27,6 +27,14 @@ interface ProfileTagsSectionProps {
   initialTags: string[];
   /** Persists the next name list to the profile doc (kinfolk or kin). */
   onSaveTags: (next: string[]) => Promise<void>;
+  /**
+   * Told when a save starts and when it settles (#1271). A host that can close
+   * this panel holds its close control while a save is in flight, so the panel
+   * cannot be dismissed, and the screen left, before the server has the change.
+   */
+  onSavingChange?: (saving: boolean) => void;
+  /** Told the list the server accepted, so a host showing the tags elsewhere can repaint them. */
+  onSaved?: (saved: string[]) => void;
 }
 
 const SCOPE_COPY: Record<TagScope, { subtitle: string; inputLabel: string }> = {
@@ -40,7 +48,13 @@ const SCOPE_COPY: Record<TagScope, { subtitle: string; inputLabel: string }> = {
   },
 };
 
-export function ProfileTagsSection({ scope, initialTags, onSaveTags }: ProfileTagsSectionProps) {
+export function ProfileTagsSection({
+  scope,
+  initialTags,
+  onSaveTags,
+  onSavingChange,
+  onSaved,
+}: ProfileTagsSectionProps) {
   const copy = SCOPE_COPY[scope];
   const [tags, setTags] = useState<string[]>(initialTags);
   const [vocab, setVocab] = useState<TagDef[]>([]);
@@ -70,13 +84,18 @@ export function ProfileTagsSection({ scope, initialTags, onSaveTags }: ProfileTa
     const prev = tags;
     setTags(next);
     setSaving(true);
+    onSavingChange?.(true);
     setSaveError(null);
     onSaveTags(next)
+      .then(() => onSaved?.(next))
       .catch((err: unknown) => {
         setTags(prev); // revert the optimistic update
         setSaveError(`Couldn't save tags: ${err instanceof Error ? err.message : 'Save failed'}`);
       })
-      .finally(() => setSaving(false));
+      .finally(() => {
+        setSaving(false);
+        onSavingChange?.(false);
+      });
   }
 
   function handleCreateVocab(name: string) {

@@ -18,9 +18,14 @@ import { usingFixtureAdmin } from '../support/commands';
  *   - removed through the same control, it is gone after a full reload, so the
  *     fixture is left as `e2e/seed.ts` wrote it.
  *
- * No intercept: the wait for the write is the screen's own re-read inside the
- * running app (Back, then open the pet again), which never tears the page
- * down mid-write the way a `cy.visit` would.
+ * No intercept: the wait for the write is the screen's own. Since #1271 the
+ * tag panel's Done reads "Saving…" and is disabled until the server has
+ * acknowledged the save, so `cy.contains('button', 'Done')` cannot click
+ * until the write has landed. Before that, the wait was meant to be the
+ * re-open inside the app (Back, then the pet again), and it was not one:
+ * `getDoc` lays a pending local write over what it reads, so the re-open
+ * showed the removal while it was still unsent, and the `cy.visit` after it
+ * dropped the write (run 41227390964: no `onFlatKinWrite` for the removal).
  */
 
 const STAMP = Date.now().toString(36);
@@ -61,8 +66,11 @@ describe('kin view tags (real triggers)', () => {
     cy.contains('button', 'Edit tags', KIN_LOAD).click();
     cy.get('[aria-label="Add a pet tag"]').type(`${TAG}{enter}`);
     cy.contains('.tag-chip__name', TAG).should('exist');
-    cy.contains('button', 'Done').click();
+    // Done is "Saving…" until the server acknowledges the write (#1271).
+    cy.contains('button', 'Done', KIN_LOAD).click();
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
+    // The band repaints from the saved list without a re-read.
+    cy.contains('.den-heading-badges .den-statuspill', TAG).should('exist');
 
     reopenInApp('Biscuit');
     cy.contains('.den-heading-badges .den-statuspill', TAG, KIN_LOAD).should('exist');
@@ -74,7 +82,8 @@ describe('kin view tags (real triggers)', () => {
     cy.contains('button', 'Edit tags').click();
     cy.get(`[aria-label="Remove ${TAG} tag"]`).click();
     cy.contains('.tag-chip__name', TAG).should('not.exist');
-    cy.contains('button', 'Done').click();
+    cy.contains('button', 'Done', KIN_LOAD).click();
+    cy.contains('.den-heading-badges .den-statuspill', TAG).should('not.exist');
 
     reopenInApp('Biscuit');
     cy.contains('.den-heading-badges .den-statuspill', TAG).should('not.exist');

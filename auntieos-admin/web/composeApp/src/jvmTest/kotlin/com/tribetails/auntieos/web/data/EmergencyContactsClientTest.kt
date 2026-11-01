@@ -92,6 +92,22 @@ class EmergencyContactsClientTest {
         assertEquals(setOf("tags"), JvmFirestoreFixtures.lastWrite?.fields)
     }
 
+    /**
+     * #1271: the profile keeps the household it LOADED while its tags panel
+     * saves. "Add Cats, then remove it" ends on the list that record already
+     * held, and the old diff wrote nothing, so Cats stayed on the household.
+     */
+    @Test
+    fun aTagSaveIsSentEvenWhenItMatchesTheLoadedRecord() = runBlocking {
+        FirestoreClient().updateKinfolkTags(onFile, listOf("VIP", "Cats"))
+        JvmFirestoreFixtures.lastWrite = null
+        FirestoreClient().updateKinfolkTags(onFile, listOf("VIP"))
+        val w = JvmFirestoreFixtures.lastWrite
+        assertEquals("MERGE", w?.op)
+        assertEquals("kinfolk", w?.collection)
+        assertEquals(setOf("tags"), w?.fields)
+    }
+
     @Test
     fun anUnchangedSaveWritesNothing() = runBlocking {
         val r = FirestoreClient().updateKinfolk(onFile, onFile.copy())

@@ -8,7 +8,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -56,6 +59,9 @@ fun KinViewScreen(
         kinRead.data?.firstOrNull { it._id == kinId }
     }
     val c = AuntieTheme.colors
+    // #1271: a tag add or remove is a write the server has not answered yet.
+    // Back and Edit are held until it settles; the Tags panel shows "Saving…".
+    var tagsSaving by remember { mutableStateOf(false) }
 
     ScreenScaffold {
         Column(
@@ -63,9 +69,9 @@ fun KinViewScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                GhostButton(label = "Back", onClick = onBack)
+                GhostButton(label = "Back", onClick = onBack, enabled = !tagsSaving)
                 Spacer(Modifier.weight(1f))
-                if (kin != null) GhostButton(label = "Edit", onClick = onEdit)
+                if (kin != null) GhostButton(label = "Edit", onClick = onEdit, enabled = !tagsSaving)
             }
 
             when {
@@ -102,12 +108,13 @@ fun KinViewScreen(
                     // Names live on this kin doc as a flat `tags` list; the color and
                     // emoji come from the `petTags` vocabulary in business_settings,
                     // resolved at render time. Saving goes through updateKinTags, which
-                    // diffs against the LOADED record and merges only `tags` (#895).
+                    // always sends the whole tag list as a tags-only merge (#1271).
                     ProfileTagsSection(
                         scope = TagScope.PET,
                         initialTags = kin.tags,
                         client = client,
                         onSaveTags = { next -> client.updateKinTags(kin, next) },
+                        onSavingChange = { tagsSaving = it },
                     )
 
                     DenPanel(title = "Basics") {

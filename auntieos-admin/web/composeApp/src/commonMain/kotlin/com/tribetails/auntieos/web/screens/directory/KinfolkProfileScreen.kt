@@ -168,6 +168,9 @@ fun KinfolkProfileScreen(
     // via the inviteKinfolkToPortal callable). Fail-loud toast on every outcome.
     val scope = rememberReportingScope()
     var inviteBusy by remember { mutableStateOf(false) }
+    // #1271: true while a household tag write is unanswered. Holds the header's
+    // Back so the screen is not left with the write in flight.
+    var tagsSaving by remember { mutableStateOf(false) }
     var inviteToast by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
     fun sendPortalInvite() {
         val k = kinfolk ?: return
@@ -346,6 +349,8 @@ fun KinfolkProfileScreen(
             subtitle = subtitle(kinfolk),
             icon     = Lucide.Users,
             onBack   = onBack,
+            // #1271: held while a tag write is unanswered; the Tags panel says "Saving…".
+            backEnabled = !tagsSaving,
             breadcrumbs = listOf("Directory", "Kinfolk"),
         )
 
@@ -373,13 +378,14 @@ fun KinfolkProfileScreen(
             // The names live on this kinfolk doc as a flat `tags` list; the color and
             // emoji come from the `householdTags` vocabulary in business_settings,
             // resolved at render time. Saving goes through updateKinfolkTags, which
-            // takes the LOADED record so the whole-document write round-trips every
-            // other field instead of wiping it.
+            // always sends the whole tag list as a tags-only merge (#1271), so no
+            // other field on the doc is touched.
             ProfileTagsSection(
                 scope = TagScope.HOUSEHOLD,
                 initialTags = kinfolk.tags,
                 client = client,
                 onSaveTags = { next -> client.updateKinfolkTags(kinfolk, next) },
+                onSavingChange = { tagsSaving = it },
             )
             Spacer(Modifier.height(18.dp))
             // ---- Identity & contact ----

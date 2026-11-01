@@ -285,6 +285,32 @@ class KinDetailViewModelTest {
         assertEquals(listOf("senior"), vm.uiState.value.kin?.tagNames())
     }
 
+    /**
+     * #1271: on desktop, "add a tag, then remove it" diffed the removal against
+     * the pet as first read, found nothing to write, and the tag stayed. Here
+     * every save sends its list, so the removal, back to the list the pet was
+     * read with, is written too.
+     */
+    @Test
+    fun `removing a tag just added still writes the shortened list`() = runTest(testDispatcher) {
+        val sent = mutableListOf<Any?>()
+        coEvery { repo.updateKinFields(any(), any(), any()) } answers {
+            sent += thirdArg<Map<String, Any>>()["tags"]
+            Result.success(Unit)
+        }
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        val asRead = vm.uiState.value.kin?.tagNames().orEmpty()
+
+        vm.saveTags("k1", "kf1", asRead + "cuddly")
+        vm.saveTags("k1", "kf1", asRead)
+        advanceUntilIdle()
+
+        assertEquals(listOf<Any?>(asRead + "cuddly", asRead), sent)
+        assertEquals(asRead, vm.uiState.value.kin?.tagNames())
+    }
+
     /** Fail-loud: a rejected tag write throws, which is what reverts the chip. */
     @Test(expected = RuntimeException::class)
     fun `a rejected tag write throws`() = runTest(testDispatcher) {

@@ -94,6 +94,29 @@ class DesktopKinMergeTest {
         assertEquals(str("written by the household portal"), stored["portalOnly"])
     }
 
+    /**
+     * #1271: KinViewScreen saves tags against the pet it LOADED, which stays as
+     * read until the next poll. Add "Cuddly", then remove it: the removal ends on
+     * the list the loaded record already held, the old diff found nothing to
+     * write, and Cuddly stayed on the pet while the panel showed it gone.
+     */
+    @Test
+    fun aTagRemovedAfterAnAddAgainstTheSameLoadedPetIsWritten() = runBlocking<Unit> {
+        seedKin()
+        val loaded = JvmFirestoreRest.getDoc<Kin>("kin", "k1")!!
+        val client = FirestoreClient()
+
+        assertEquals(WriteResult.Ok(Unit), client.updateKinTags(loaded, listOf("Calm", "Cuddly")))
+        assertEquals(WriteResult.Ok(Unit), client.updateKinTags(loaded, listOf("Calm")))
+
+        assertEquals(listOf<List<String>?>(listOf("tags"), listOf("tags")), masks, "both saves are sent, only tags each time")
+        assertEquals(
+            buildJsonObject { put("arrayValue", buildJsonObject { put("values", kotlinx.serialization.json.buildJsonArray { add(str("Calm")) }) }) },
+            stored["tags"],
+            "the removal reached the stored pet",
+        )
+    }
+
     @Test
     fun aTagChangeWritesOnlyTags() = runBlocking<Unit> {
         seedKin()

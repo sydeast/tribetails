@@ -148,6 +148,17 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
   // profile screen, never the edit form; see KinfolkEdit.tsx's note on the
   // same point).
   const [tagsOpen, setTagsOpen] = useState(false);
+  // #1271: a tag add or remove is a write the server has not acknowledged yet.
+  // Done used to close the panel at once, the screen could then be left and
+  // the page reloaded with the write still in flight, and a removal that never
+  // reached the server came back as a pill. Done is held as "Saving…" until the
+  // save settles, and a failure stays on screen in the panel's own banner.
+  const [tagsSaving, setTagsSaving] = useState(false);
+  // The pills are the loaded doc's. A save the server accepted repaints them,
+  // so closing the editor shows the list that was saved, not the one first read.
+  const applySavedTags = useCallback((saved: string[]) => {
+    setKin((prev) => (prev.status === 'ready' ? { status: 'ready', data: { ...prev.data, tags: saved } } : prev));
+  }, []);
 
   const load = useCallback(() => {
     let live = true;
@@ -282,9 +293,11 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
               <button
                 type="button"
                 className="kview__tags-edit"
+                disabled={tagsSaving}
+                aria-busy={tagsSaving}
                 onClick={() => setTagsOpen((open) => !open)}
               >
-                {tagsOpen ? 'Done' : 'Edit tags'}
+                {tagsSaving ? 'Saving…' : tagsOpen ? 'Done' : 'Edit tags'}
               </button>
             </>
           )
@@ -341,6 +354,8 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
                   scope="pet"
                   initialTags={k.tags}
                   onSaveTags={(next) => updateKinTags(petId, next)}
+                  onSavingChange={setTagsSaving}
+                  onSaved={applySavedTags}
                 />
               )}
 
