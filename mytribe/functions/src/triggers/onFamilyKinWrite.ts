@@ -35,6 +35,9 @@ type KinDoc = {
   _mirrorOrigin?: string;
 };
 
+/** #1370: flat-doc fields the admin `Kin` models decode as non-null `String`. */
+export const FLAT_NON_NULL_TEXT_FIELDS: readonly string[] = ['name', 'species', 'breed'];
+
 /**
  * Builds the flat `kin/{docId}` payload from a family kin doc. Only the
  * parent-owned fields are projected here, minus `status`, which the paths below
@@ -43,7 +46,16 @@ type KinDoc = {
  * `vetInfo`) is NEVER written by this trigger. One writer per field.
  */
 export function buildFlatMirrorPayload(after: KinDoc): Record<string, unknown> {
-  return pickDefined(after as Record<string, unknown>, FLAT_MIRROR_FIELDS);
+  const out = pickDefined(after as Record<string, unknown>, FLAT_MIRROR_FIELDS);
+  // #1370: the portal clears these with null on the family doc (updateKin's
+  // zod is `.nullable()`), but the admin Android and desktop `Kin` models
+  // declare them non-null `String`, and Firestore's mapper hands a null to the
+  // Kotlin setter. The flat doc gets "", the value those models already read
+  // as "none". The family doc keeps its null.
+  for (const k of FLAT_NON_NULL_TEXT_FIELDS) {
+    if (out[k] === null) out[k] = '';
+  }
+  return out;
 }
 
 /**

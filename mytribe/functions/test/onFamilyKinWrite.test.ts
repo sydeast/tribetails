@@ -77,6 +77,19 @@ describe('buildFlatMirrorPayload: projects parent-owned and household-shared fie
   });
 });
 
+describe('buildFlatMirrorPayload: a cleared field the admin decodes as non-null (#1370)', () => {
+  it('writes "" for a null species or breed, so the admin Kin decode never sees null', () => {
+    const payload = buildFlatMirrorPayload({ name: 'Rex', species: null, breed: null } as any);
+    expect(payload).toEqual({ name: 'Rex', species: '', breed: '' });
+  });
+  it('keeps null for the cleared fields the admin model does not declare', () => {
+    const payload = buildFlatMirrorPayload({ name: 'Rex', medications: null, ageYears: null } as any);
+    expect(payload).toEqual({ name: 'Rex', medications: null, ageYears: null });
+  });
+  it('leaves an absent field absent', () => {
+    expect(buildFlatMirrorPayload({ name: 'Rex' } as any)).toEqual({ name: 'Rex' });
+  });
+});
 describe('mirrorFamilyKinToFlat: CREATE', () => {
   it('creates a flat mirror, copies parent fields, stamps the symmetric link on BOTH docs', async () => {
     const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
