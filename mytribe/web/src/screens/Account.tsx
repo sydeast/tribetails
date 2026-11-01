@@ -28,6 +28,7 @@ import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { inviteEmailProblem, isInvitableEmail } from '../lib/inviteEmail';
 import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { billingAccessOf } from '../lib/billingAccess';
 import { resolveIdentity } from '../lib/identity';
@@ -441,7 +442,16 @@ export function Account() {
                       onChange={(e) => setBackupEmail(e.target.value)}
                       placeholder="name@example.com"
                       disabled={readOnly}
+                      aria-invalid={inviteEmailProblem(backupEmail) !== null}
+                      aria-describedby={inviteEmailProblem(backupEmail) !== null ? 'bemail-err' : undefined}
                     />
+                    {/* #1326: Send Invite stays disabled on a bad address; say why. */}
+                    {inviteEmailProblem(backupEmail) !== null && (
+                      <span id="bemail-err" className="note err" role="alert">
+                        <span className="dot" />
+                        {inviteEmailProblem(backupEmail)}
+                      </span>
+                    )}
                   </div>
                   <div className="field">
                     <label htmlFor="bphone">Backup Phone</label>
@@ -469,7 +479,7 @@ export function Account() {
                     className="btn ghost"
                     type="button"
                     onClick={() => invite.mutate()}
-                    disabled={invite.isPending || !backupEmail.trim().includes('@') || readOnly}
+                    disabled={invite.isPending || !isInvitableEmail(backupEmail) || readOnly}
                   >
                     {'✉️'}{' '}
                     <MutationLabel mutation={invite} busy="Sending…">
