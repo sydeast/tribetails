@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
@@ -450,7 +452,29 @@ describe('Account billing management', () => {
  * trade rather than a regression: Sign Out has to still be reachable, and
  * still work, from the screen the avatar now points at.
  */
-describe('Account: Sign Out', () => {
+describe('Account: Sign Out (#1307, #1308)', () => {
+  it('keeps Cancel and the confirm button together, and not in the Save Changes row', async () => {
+    const { getByRole, container } = await renderAccount();
+    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    const confirm = getByRole('button', { name: 'Yes, Sign Out' });
+    const cancel = getByRole('button', { name: 'Cancel' });
+    const save = getByRole('button', { name: /Save Changes/ });
+    expect(confirm.parentElement).toBe(cancel.parentElement);
+    expect(confirm.closest('.savebar')).toBeNull();
+    expect(save.closest('.signout')).toBeNull();
+    // Sign out sits below the Save row, so the primary action is never beside it.
+    const bar = container.querySelector('.savebar')!;
+    const out = container.querySelector('.signout')!;
+    expect(bar.compareDocumentPosition(out) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it('puts the Save row in the page flow, not in a fixed or sticky bar (#1307)', async () => {
+    const { container } = await renderAccount();
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/account.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(container.querySelector('.savebar')).not.toBeNull();
+    const rule = css.split('}').find((r) => r.includes('.acct .savebar {'))!;
+    expect(rule).not.toMatch(/position:\s*(sticky|fixed)/);
+  });
+
   it('offers Sign Out on the save bar', async () => {
     const { getByRole } = await renderAccount();
     expect(getByRole('button', { name: 'Sign Out' })).toBeTruthy();
