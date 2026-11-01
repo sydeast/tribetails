@@ -610,6 +610,11 @@ class PortalApi(private val fns: FunctionsClient) {
                 gpsRoute        = route,
                 gpsDistanceMeters  = summary?.get("distanceMeters")?.jsonPrimitive?.doubleOrNull,
                 gpsDurationSeconds = summary?.get("durationSeconds")?.jsonPrimitive?.longOrNull,
+                serviceLabel    = com.kinfolk.portal.util.decodeServiceLabel(
+                    labelPresent = o.containsKey("serviceLabel"),
+                    serviceLabel = o["serviceLabel"]?.jsonPrimitive?.contentOrNull,
+                    serviceType = o["serviceType"]?.jsonPrimitive?.contentOrNull,
+                ),
             )
         }.orEmpty()
         return VisitsResult(visits = list)
@@ -1800,6 +1805,11 @@ class PortalApi(private val fns: FunctionsClient) {
             else -> BookingStatus.Requested
         },
         serviceType = o["serviceType"]?.jsonPrimitive?.contentOrNull,
+        serviceLabel = com.kinfolk.portal.util.decodeServiceLabel(
+            labelPresent = o.containsKey("serviceLabel"),
+            serviceLabel = o["serviceLabel"]?.jsonPrimitive?.contentOrNull,
+            serviceType = o["serviceType"]?.jsonPrimitive?.contentOrNull,
+        ),
         title = o["title"]?.jsonPrimitive?.contentOrNull,
         startTimeMs = o["startTimeMs"]?.jsonPrimitive?.longOrNull,
         endTimeMs = o["endTimeMs"]?.jsonPrimitive?.longOrNull,

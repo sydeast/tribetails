@@ -342,7 +342,7 @@ fun AccountSettingsScreen(
                             ?: if (cardOnFile) {
                                 "Charges run through your care team."
                             } else {
-                                "Settle up directly with your Auntie until a card is on file."
+                                "Settle up with your Auntie directly until a card is on file."
                             },
                         style = type.sansMeta,
                     )
