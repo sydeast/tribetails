@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn(),
   getMyKinTales: vi.fn(),
   getMyInvoices: vi.fn(),
+  getMyAccount: vi.fn().mockResolvedValue({ displayName: 'Wren', email: 'sk@example.com', impersonated: false }),
   // The Invoices screen also reads the household's account credit (Q6).
   // Unmocked, it posted to production (#1138).
   getAccountCreditHistory: vi.fn(),
@@ -41,6 +42,10 @@ vi.mock('../api/portal', () => ({
   getMyKinTales: (...a: unknown[]) => mocks.getMyKinTales(...a),
   getBusinessContact: vi.fn().mockResolvedValue({}),
 }));
+vi.mock('../api/accountApi', async () => {
+  const actual = await vi.importActual<typeof import('../api/accountApi')>('../api/accountApi');
+  return { ...actual, getMyAccount: (...a: unknown[]) => mocks.getMyAccount(...a) };
+});
 vi.mock('../api/invoicesApi', async () => {
   const actual = await vi.importActual<typeof import('../api/invoicesApi')>('../api/invoicesApi');
   return {
@@ -97,7 +102,7 @@ describe('PortalNav', () => {
   it('draws no Invoices link for a member without billing access', async () => {
     mocks.getMyHome.mockResolvedValue({ ...HOME_BASE, billingAccess: false });
     const { PortalNav } = await import('../components/PortalNav');
-    wrap(<PortalNav active="home" displayName="Sam" />);
+    wrap(<PortalNav active="home" />);
     await waitFor(() => expect(mocks.getMyHome).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole('link', { name: 'Invoices' })).toBeNull());
     expect(screen.getByRole('link', { name: 'Schedule' })).toBeTruthy();
@@ -106,7 +111,7 @@ describe('PortalNav', () => {
   it('draws it for a member with billing access', async () => {
     mocks.getMyHome.mockResolvedValue({ ...HOME_BASE, billingAccess: true });
     const { PortalNav } = await import('../components/PortalNav');
-    wrap(<PortalNav active="home" displayName="Pat" />);
+    wrap(<PortalNav active="home" />);
     await waitFor(() => expect(mocks.getMyHome).toHaveBeenCalled());
     expect(screen.getByRole('link', { name: 'Invoices' })).toHaveAttribute('href', '/invoices');
   });

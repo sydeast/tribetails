@@ -121,6 +121,21 @@ export async function getMyAccountHandler(req: CallableRequest<unknown>): Promis
   return toAccountDto(uid, ownData, authUser, false);
 }
 
+/**
+ * #1289: what a household reads when a phone will not parse. The thrown text of
+ * `normalizeE164` names a function and echoes the input, which is for logs, not
+ * for a person. `details` is the typed half: a client can key off
+ * `{ field, reason: 'invalid-phone' }` instead of matching sentences.
+ */
+export const INVALID_PHONE_MESSAGE = 'Enter a 10-digit phone number.';
+export const INVALID_BACKUP_PHONE_MESSAGE = 'Enter a 10-digit backup phone number.';
+function normalizePhoneArg(raw: string | null, field: 'phone' | 'backupPhone', message: string): string | null {
+  try {
+    return normalizeE164(raw);
+  } catch {
+    throw new HttpsError('invalid-argument', message, { field, reason: 'invalid-phone' });
+  }
+}
 const SaveArgs = z.object({
   displayName: z.string().min(1).max(120).optional(),
   phone: z.string().max(40).nullable().optional(),
@@ -141,20 +156,12 @@ export async function saveMyAccountHandler(req: CallableRequest<unknown>): Promi
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (args.displayName !== undefined) update['displayName'] = args.displayName;
   if (args.phone !== undefined) {
-    try {
-      update['phone'] = normalizeE164(args.phone);
-    } catch (err) {
-      throw new HttpsError('invalid-argument', (err as Error).message);
-    }
+    update['phone'] = normalizePhoneArg(args.phone, 'phone', INVALID_PHONE_MESSAGE);
   }
   if (args.photoUrl !== undefined) update['photoUrl'] = args.photoUrl;
   if (args.backupEmail !== undefined) update['backupEmail'] = args.backupEmail;
   if (args.backupPhone !== undefined) {
-    try {
-      update['backupPhone'] = normalizeE164(args.backupPhone);
-    } catch (err) {
-      throw new HttpsError('invalid-argument', (err as Error).message);
-    }
+    update['backupPhone'] = normalizePhoneArg(args.backupPhone, 'backupPhone', INVALID_BACKUP_PHONE_MESSAGE);
   }
 
   await firestore.collection('clients').doc(uid).set(update, { merge: true });

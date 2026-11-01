@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOOKING_TIMELINE_STEPS,
+  auntieName,
   bookingChip,
   bookingStatusChip,
   bookingTimelineIndex,
@@ -19,6 +20,7 @@ import {
   visitTile,
   visitVariant,
   visitWhenLine,
+  visitBlockText,
   weekdayTime,
 } from './portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
@@ -51,6 +53,31 @@ describe('visitSubtitle', () => {
   });
 });
 
+describe('auntieName (#1322)', () => {
+  it('puts the role word in front of a plain name', () => {
+    expect(auntieName('Maya')).toBe('Auntie Maya');
+  });
+  it('says the role word once when the name already carries it, in any case or position', () => {
+    expect(auntieName('TEST SANDBOX Auntie')).toBe('TEST SANDBOX Auntie');
+    expect(auntieName('Auntie Maya')).toBe('Auntie Maya');
+    expect(auntieName('auntie maya')).toBe('auntie maya');
+    expect(auntieName('Auntie')).toBe('Auntie');
+  });
+  it('matches the whole word only', () => {
+    expect(auntieName('Aunties Club')).toBe('Auntie Aunties Club');
+  });
+  it('returns null for a missing or blank name so the caller keeps its fallback', () => {
+    expect(auntieName(null)).toBeNull();
+    expect(auntieName(undefined)).toBeNull();
+    expect(auntieName('   ')).toBeNull();
+  });
+  it('feeds visitSubtitle without doubling', () => {
+    expect(visitSubtitle(null, 'TEST SANDBOX Auntie')).toBe('With TEST SANDBOX Auntie');
+    expect(visitSubtitle(new Date(2026, 5, 1, 8, 0).getTime(), 'TEST SANDBOX Auntie')).toBe(
+      'Mon, 8:00 AM with TEST SANDBOX Auntie',
+    );
+  });
+});
 describe('relativeDay', () => {
   const now = new Date(2026, 5, 10, 9, 0).getTime();
 
@@ -219,6 +246,9 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleResponseNote: null,
     startTimePending: false,
     requestedDate: null,
+    timeBlockLabel: null,
+    timeBlockStartTime: null,
+    timeBlockEndTime: null,
     ...overrides,
   };
 }
@@ -326,5 +356,22 @@ describe('a visit whose start time the Auntie sets (#1098)', () => {
     const older = { ...booking(), startTimePending: undefined, requestedDate: undefined } as unknown as GetMyBookingsResultLiveVisit;
     expect(bookingSubtitle(older)).toBe('Time to be confirmed');
     expect(visitWhenLine(older)).toBe('Time to be confirmed');
+  });
+});
+
+describe('block-booked visits (#1301)', () => {
+  const ms = new Date(2026, 5, 7, 11, 0).getTime(); // a Sunday, the window's anchor
+  it('names the window, never the anchor clock', () => {
+    const b = { timeBlockLabel: 'Midday', timeBlockStartTime: '11:00', timeBlockEndTime: '15:00' };
+    expect(visitSubtitle(ms, null, b)).toBe('Sun, Midday (11 AM to 3 PM)');
+    expect(visitSubtitle(ms, 'Maya', b)).toBe('Sun, Midday (11 AM to 3 PM) with Auntie Maya');
+    expect(visitBlockText(b)).toBe('Midday (11 AM to 3 PM)');
+  });
+  it('falls back to the stored label when the window has been removed', () => {
+    expect(visitBlockText({ timeBlockLabel: 'Midday', timeBlockStartTime: null, timeBlockEndTime: null })).toBe('Midday');
+  });
+  it('leaves a clock visit alone', () => {
+    expect(visitSubtitle(ms, null, { timeBlockLabel: null })).toBe('Sun, 11:00 AM');
+    expect(visitBlockText({})).toBeNull();
   });
 });

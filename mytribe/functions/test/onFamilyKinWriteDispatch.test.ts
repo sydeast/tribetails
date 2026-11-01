@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
 // WARNING-27: `onFamilyKinWrite` used to fire `pets.updated` to the kinfolk on
-// EVERY write — including the echo of a STAFF edit on the flat doc (officeNotes
+// EVERY write — including the echo of a STAFF edit on the flat doc (vetInfo
 // etc. flow flat -> family carrying `_mirrorOrigin = flat`) and writes that
 // changed nothing the parent can see. These tests prove the dispatch is now
 // suppressed for (a) flat-origin echoes and (b) no-visible-change writes, while
@@ -51,7 +51,7 @@ function dbMock() {
 }
 
 describe('WARNING-27: onFamilyKinWrite pets.updated suppression', () => {
-  it('does NOT dispatch pets.updated for a flat-origin echo (staff officeNotes edit)', async () => {
+  it('does NOT dispatch pets.updated for a flat-origin echo (staff vetInfo edit)', async () => {
     const ctx = dbMock();
     mocks.dbFn.mockReturnValue(ctx.db);
     const { onFamilyKinWrite } = await import('../src/triggers/onFamilyKinWrite');
@@ -62,11 +62,11 @@ describe('WARNING-27: onFamilyKinWrite pets.updated suppression', () => {
       familyKinPath: `families/${KINFOLK}/kin/${KIN_ID}`,
       status: 'active',
     };
-    // Staff edited officeNotes on the flat doc; the echo carries _mirrorOrigin=flat
+    // Staff edited vetInfo on the flat doc; the echo carries _mirrorOrigin=flat
     // and changes no parent-owned field.
     const after = {
       ...before,
-      officeNotes: 'gate code 1234',
+      vetInfo: 'Riverside Animal Hospital',
       _mirrorOrigin: MIRROR_ORIGIN_FLAT,
     };
     await (onFamilyKinWrite as any).run(makeEvent(before, after));

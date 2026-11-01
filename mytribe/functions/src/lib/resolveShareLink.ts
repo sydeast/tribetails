@@ -2,6 +2,7 @@ import argon2 from 'argon2';
 import { db } from './firestoreAdmin';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
+import { mintShareUnlock, verifyShareUnlock } from './shareUnlock';
 
 /**
  * Shared "resolve a shared-KinTale link" lookup, extracted out of
@@ -14,6 +15,8 @@ import { AUDIT_EVENTS } from './auditEvents';
 
 export type ScrubbedSharePayload = {
   authorDisplayName?: string;
+  /** #1322. The tale's own title; empty or absent on older shares. */
+  title?: string;
   body?: string;
   photos?: string[];
   [key: string]: unknown;
@@ -45,6 +48,22 @@ export type ShareLinkResolution =
        * `getShareLink` is externally observed on and must keep byte-identical.
        */
       allowGuestComments: boolean;
+      /**
+       * #1280. Set only when THIS call verified a typed passcode against a
+       * passcode-protected share: a fresh unlock token the page stores in an
+       * HttpOnly cookie so the passcode never has to travel again. Null when
+       * the share has no passcode, or when an existing unlock token was what
+       * let the caller in.
+       */
+      unlockToken: string | null;
+      /**
+       * #1332. The token that proves this caller unlocked the share: the one
+       * just minted, or the presented one that verified. Null for a share with
+       * no passcode. The share page forwards it to
+       * `addGuestKinTaleCommentHandler`, which refuses a note on a protected
+       * share without proof.
+       */
+      proofToken: string | null;
     }
   | {
       ok: false;
@@ -61,6 +80,12 @@ export type ShareLinkResolution =
 export async function resolveShareLink(
   shareId: string,
   passcode?: string,
+  /**
+   * #1280. Unlock tokens the caller already holds (the share page's
+   * `__session` cookie values). Any one that verifies stands in for the
+   * passcode. `getShareLink` passes the one a POST body carries (#1331).
+   */
+  unlockTokens: string[] = [],
 ): Promise<ShareLinkResolution> {
   const snap = await db().doc(`sharedKinTales/${shareId}`).get();
   if (!snap.exists) {
@@ -82,10 +107,22 @@ export async function resolveShareLink(
     });
     return { ok: false, status: 410, error: 'expired' };
   }
+  let unlockToken: string | null = null;
+  let proofToken: string | null = null;
   if (data.passcodeHash) {
+    const hash = data.passcodeHash;
     const supplied = passcode ?? '';
-    if (!supplied || !(await argon2.verify(data.passcodeHash, supplied))) {
-      return { ok: false, status: 401, error: 'passcode-required' };
+    if (supplied) {
+      // A typed passcode is always checked, even beside a valid cookie, so a
+      // wrong guess is never reported as a success.
+      if (!(await argon2.verify(hash, supplied))) {
+        return { ok: false, status: 401, error: 'passcode-required' };
+      }
+      unlockToken = mintShareUnlock(shareId, hash);
+      proofToken = unlockToken;
+    } else {
+      proofToken = unlockTokens.find((t) => verifyShareUnlock(t, shareId, hash)) ?? null;
+      if (!proofToken) return { ok: false, status: 401, error: 'passcode-required' };
     }
   }
   const sourceKinTaleId = data.sourceKinTaleId ?? null;
@@ -100,5 +137,7 @@ export async function resolveShareLink(
     // same test `addGuestKinTaleComment` applies server-side, and the two must
     // not drift, or the page draws a form the callable will refuse.
     allowGuestComments: data.allowGuestComments !== false,
+    unlockToken,
+    proofToken,
   };
 }
