@@ -108,6 +108,18 @@ describe('paying an invoice by card (real payInvoice, Stripe test mode, real web
       'https://checkout.stripe.com',
       { args: { card: TEST_CARD, email: KINFOLK.email, name: KINFOLK.displayName, budget: BUDGET_MS.CHECKOUT } },
       ({ card, email, name, budget }) => {
+        // Stripe's own scripts on this page throw while it loads (#1275,
+        // run 41268330873: the page was fully drawn, the last request a POST
+        // to r.stripe.com). The browser hides another origin's exception
+        // behind the bare message "Script error.", and Cypress fails the test
+        // on any uncaught exception. Only that opaque line is ignored, and
+        // only here: a handler registered inside cy.origin runs on Stripe's
+        // origin alone, so the portal keeps the default. An error with a real
+        // message still fails, and the payment still has to land and read
+        // PAID below.
+        Cypress.on('uncaught:exception', (err) =>
+          /(^|\n)\s*(>\s*)?Script error\.\s*(\n|$)/.test(err.message) ? false : undefined,
+        );
         cy.get('#email', { timeout: budget }).type(email);
         cy.get('#cardNumber').type(card.number);
         cy.get('#cardExpiry').type(card.expiry);
