@@ -19,6 +19,7 @@ import {
   elapsedMinutes,
   greetingKick,
   kinVariant,
+  pendingChangeLabel,
   relativeDay,
   resolveHomeLayout,
   speciesEmoji,
@@ -196,6 +197,7 @@ export function Home() {
                 upcoming.map((b, i) => {
                   const tile = visitTile(b);
                   const chip = bookingChip(b.status);
+                  const change = pendingChangeLabel(b);
                   return (
                     <div className={`visit ${visitVariant(i)}`} key={b.id}>
                       <div className="cal">
@@ -205,6 +207,7 @@ export function Home() {
                       <div className="info">
                         <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
                         <small>{bookingSubtitle(b)}</small>
+                        {change && <small className="pending-change" data-testid="pending-change">{change}</small>}
                       </div>
                       <div className="pet">{speciesEmoji(null)}</div>
                       <span className={`chip ${chip.tone}`}>{chip.label}</span>
