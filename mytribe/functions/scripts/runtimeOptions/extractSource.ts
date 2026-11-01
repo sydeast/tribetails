@@ -1,6 +1,6 @@
 /**
  * Statically extracts, from real source, every runtime-options declaration
- * `index.ts` re-exports: the fleet default (`setGlobalOptions`), the named
+ * `index.ts` exports through its `FUNCTIONS` table: the fleet default (`setGlobalOptions`), the named
  * constants it can spread (`lib/runtimeOptions.ts`), and each function's own
  * options object. Nothing here evaluates code — it walks the TypeScript AST
  * and reads literal values, which is exactly what `setGlobalOptions` and
@@ -207,33 +207,63 @@ export function extractNamedConstants(
   return flat;
 }
 
-/** `export { a, b } from './module'` entries in `index.ts`, in source order. */
+/**
+ * The entries of `index.ts`'s `FUNCTIONS` table, in source order: each
+ * `name: () => require('./module'),` is one deployed function, defined by the
+ * export `name` of that module (#1337 replaced `export { name } from` with
+ * this so a cold start loads one module rather than all of them).
+ *
+ * Anything else inside the table, or no table at all, THROWS. A drift tool
+ * that read an empty list here would report "no drift" on a fleet it never
+ * looked at, which is the outcome this file's header exists to prevent.
+ */
 export function extractIndexExports(
   sourceFile: ts.SourceFile,
 ): { name: string; modulePath: string; line: number }[] {
-  const exports: { name: string; modulePath: string; line: number }[] = [];
+  let table: ts.ObjectLiteralExpression | undefined;
   for (const statement of sourceFile.statements) {
-    if (!ts.isExportDeclaration(statement)) continue;
-    const moduleSpecifier = statement.moduleSpecifier;
-    if (!moduleSpecifier || !ts.isStringLiteral(moduleSpecifier)) continue; // no module: skip
-    if (statement.isTypeOnly) continue; // `export type { Foo } from './types'`: not a runtime value
-    if (!statement.exportClause || !ts.isNamedExports(statement.exportClause)) continue;
-    for (const element of statement.exportClause.elements) {
-      if (element.isTypeOnly) continue; // `export { type Foo, health } from './x'`
-      // `export { a as b }` isn't used anywhere in this codebase (verified by
-      // grep before writing this), so the deployed name is always the local
-      // name. If that ever changes, `element.name` (not `propertyName`) is
-      // still correct: it's the identifier the deploy actually registers.
-      exports.push({
-        name: element.name.text,
-        modulePath: moduleSpecifier.text,
-        line: lineOf(sourceFile, element),
-      });
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (ts.isIdentifier(decl.name) && decl.name.text === 'FUNCTIONS' && decl.initializer) {
+        let init = decl.initializer;
+        if (ts.isAsExpression(init) || ts.isSatisfiesExpression(init)) init = init.expression;
+        if (!ts.isObjectLiteralExpression(init)) {
+          throw new ExtractionError('FUNCTIONS is not an object literal', 'index.ts');
+        }
+        table = init;
+      }
     }
+  }
+  if (!table) throw new ExtractionError('no `const FUNCTIONS = { ... }` table found', 'index.ts');
+  const exports: { name: string; modulePath: string; line: number }[] = [];
+  for (const property of table.properties) {
+    const where = `index.ts:${lineOf(sourceFile, property)}`;
+    if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) {
+      throw new ExtractionError('expected `name: () => require(...)`', where);
+    }
+    const loader = property.initializer;
+    const call = ts.isArrowFunction(loader) ? loader.body : undefined;
+    if (
+      !call ||
+      !ts.isCallExpression(call) ||
+      !ts.isIdentifier(call.expression) ||
+      call.expression.text !== 'require' ||
+      call.arguments.length !== 1 ||
+      !ts.isStringLiteral(call.arguments[0])
+    ) {
+      throw new ExtractionError(
+        `${property.name.text} is not \`() => require('<string literal>')\``,
+        where,
+      );
+    }
+    exports.push({
+      name: property.name.text,
+      modulePath: call.arguments[0].text,
+      line: lineOf(sourceFile, property),
+    });
   }
   return exports;
 }
-
 const V2_ARG_STYLE: Record<string, 'optsOrHandler' | 'optsHandler' | 'scheduleOptsHandler'> = {
   onCall: 'optsOrHandler',
   onRequest: 'optsOrHandler',
@@ -514,7 +544,7 @@ function toRepoRelativePath(absPath: string): string {
 }
 
 /**
- * Extracts every function `index.ts` re-exports. Parses each distinct module
+ * Extracts every function `index.ts` exports. Parses each distinct module
  * file exactly once (several exports commonly share a file, e.g.
  * `notificationPrefs.ts` exports both `getMyNotificationPrefs` and
  * `saveMyNotificationPrefs`).
