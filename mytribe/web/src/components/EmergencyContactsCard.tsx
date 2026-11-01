@@ -9,6 +9,7 @@ import {
 import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from './Loading';
 import { OfflineNotice } from './OfflineNotice';
+import { formatPhone } from '../lib/phone';
 
 interface Draft {
   name: string;
@@ -52,7 +53,7 @@ const NONE_READ_ONLY = 'No Emergency Contact on file. Someone with Home access c
 const EMPTY_DRAFT: Draft = { name: '', phone: '', relationship: '' };
 
 const toDrafts = (c: EmergencyContactDto[]): Draft[] =>
-  c.length > 0 ? c.map((x) => ({ name: x.name, phone: x.phone, relationship: x.relationship ?? '' })) : [{ ...EMPTY_DRAFT }];
+  c.length > 0 ? c.map((x) => ({ name: x.name, phone: formatPhone(x.phone), relationship: x.relationship ?? '' })) : [{ ...EMPTY_DRAFT }];
 
 /**
  * True when the drafts on screen say what the server copy says. #829 review item
@@ -294,7 +295,7 @@ function EmergencyContactsCardFor({
                   <span className="ec-list__name">{c.name}</span>
                   {c.relationship ? <span className="ec-list__rel">{c.relationship}</span> : null}
                   <a className="ec-list__phone mono" href={`tel:${c.phone}`}>
-                    {c.phone}
+                    {formatPhone(c.phone)}
                   </a>
                 </li>
               ))}
