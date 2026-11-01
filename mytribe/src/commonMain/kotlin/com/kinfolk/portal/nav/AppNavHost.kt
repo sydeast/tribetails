@@ -87,7 +87,12 @@ fun AppNavHost(
     notificationCatalog: NotificationCatalogRepository?,
     shellKinfolkId: String?,
     shellFamilyName: String,
+    /** #1290: the signed-in person, for the header avatar. Blank falls back to [shellFamilyName]. */
+    shellPersonName: String = "",
+    onPersonNameChanged: (String) -> Unit = {},
     shellLogoUrl: String = "",
+    /** #1369: `getMyHome.businessName`, for the footer. Blank draws no name. */
+    shellBusinessName: String = "",
     shellBanner: com.kinfolk.portal.portal.PortalBanner = com.kinfolk.portal.portal.PortalBanner(),
     shellBannerDismissedByUser: Boolean = false,
     onDismissBannerPerUser: ((bannerId: String) -> Unit)? = null,
@@ -153,8 +158,9 @@ fun AppNavHost(
     @Composable
     fun Shell(content: @Composable (Modifier) -> Unit) {
         TabShell(
-            familyName = shellFamilyName,
+            familyName = shellPersonName.ifBlank { shellFamilyName },
             logoUrl = shellLogoUrl,
+            businessName = shellBusinessName,
             navController = navController,
             onSignOut = onSignOut,
             onBackToDirectory = if (cameFromPicker) onBackToDirectory else null,
@@ -395,6 +401,7 @@ fun AppNavHost(
                             kinfolkId = kinId,
                             onSignOut = onSignOut,
                             billingAccess = shellBillingAccess,
+                            onAccountSaved = { onPersonNameChanged(resolveShellPersonName(it.displayName, it.email, shellFamilyName)) },
                             onOpenTribeProfile = {
                                 // Account is a chrome-level destination, so
                                 // save/restore is safe here; pop to the
@@ -507,6 +514,8 @@ fun AppNavHost(
                                 markScheduleDirty(navController)
                                 navController.popBackStack()
                             },
+                            onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
+                            onOpenInvoice = { invoiceId -> navController.navigate(InvoiceDetailRoute(invoiceId)) },
                         )
                     }
                 }

@@ -28,8 +28,11 @@ import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { billingAccessOf } from '../lib/billingAccess';
+import { resolveIdentity } from '../lib/identity';
 import { formatPhone, phoneProblem } from '../lib/phone';
+import { BusinessFootnote } from '../components/BusinessFootnote';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -181,7 +184,11 @@ export function Account() {
     onSuccess: () => setInviteStatus({ text: `Invite sent to ${backupEmail.trim().toLowerCase()}.`, tone: 'ok' }),
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
-      setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
+      // #1277: a missing backend setting is the operator's to fix; never show its name.
+      const text = isConfigGapError(err)
+        ? INVITES_UNAVAILABLE_MESSAGE
+        : `Invite failed: ${err instanceof Error ? err.message : 'try again'}`;
+      setInviteStatus({ text, tone: 'err' });
     },
   }, { policy: 'hold', what: 'this invite' });
 
@@ -307,9 +314,11 @@ export function Account() {
   // account, not theirs: the profile becomes a read-only view of that household.
   const readOnly = data.impersonated;
   const householdName = home.data?.displayName || data.displayName || 'this tribe';
-  const initial = (data.displayName || data.email || householdName || 'M').charAt(0).toUpperCase();
+  // The same answer the header avatar gives (lib/identity.ts), so the photo
+  // placeholder here cannot disagree with it (#1290).
+  const { initial } = resolveIdentity({ account: data, signInEmail: null, householdName });
   const roster = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, 4);
-  const businessName = home.data?.businessName || 'Tribe Tails Pet Care';
+  const businessName = (home.data?.businessName ?? '').trim();
   const nameValid = displayName.trim().length > 0;
   // #1289: caught on the field, in plain words, before Save is ever offered. The
   // server repeats the same sentence if a number slips past this floor.
@@ -325,14 +334,16 @@ export function Account() {
     ? formatCard(card)
     : cardOnFile
       ? 'Charges run through your care team'
-      : 'Settle up directly with your Auntie for now';
+      // #1330: the card's one billing sentence. A second line under the card
+      // used to say the same thing again, card or no card.
+      : 'Settle up with your Auntie directly until a card is on file.';
   const billingReadError = isPermissionDenied(paymentMethod.error)
     ? 'You need billing access to manage billing. Your primary kinfolk can give it to you.'
     : 'We could not read your billing details just now.';
 
   return (
     <>
-      <PortalNav active="account" displayName={(readOnly ? householdName : data.displayName) ?? ''} />
+      <PortalNav active="account" />
 
       <div className="wrap acct">
         <header className="hero-greet">
@@ -592,10 +603,6 @@ export function Account() {
                     )}
                   </div>
                 )}
-
-                <p className="sub" style={{ marginTop: 12 }}>
-                  No payment method on file means visits cannot be charged automatically.
-                </p>
               </section>
             )}
           </div>
@@ -632,7 +639,7 @@ export function Account() {
 
             <section className="glass card d4">
               <div className="sectlabel">Cared for by</div>
-              <h3 className="title">{businessName}</h3>
+              <h3 className="title">{businessName || 'Your Auntie'}</h3>
               <p className="sub">Your care team can see your profile name and contact details to reach you about visits.</p>
               <div style={{ marginTop: 14 }}>
                 <Link className="btn ghost block" to="/messages">
@@ -643,7 +650,9 @@ export function Account() {
           </div>
         </div>
 
-        {/* sticky save bar */}
+        {/* #1307: in flow, not sticky. The fixed bar sat on Backup Email and Send
+            Invite at default scroll on desktop, and on a phone stacked over the
+            bottom tab bar. The page already pads its bottom for the tab bar. */}
         <div className="savebar">
           {status && (
             <span className={`note${status.tone === 'err' ? ' err' : ''}`}>
@@ -652,35 +661,43 @@ export function Account() {
             </span>
           )}
           <span className="grow" />
-          {confirmingSignOut ? (
-            <>
-              <span className="sub">Sign out of MyTribe?</span>
-              <button className="btn ghost" type="button" onClick={() => setConfirmingSignOut(false)}>
-                Cancel
-              </button>
-              <button className="btn coral" type="button" onClick={signOut} disabled={signingOut}>
-                {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, Sign Out'}
-              </button>
-            </>
-          ) : (
-            <button className="btn coral" type="button" onClick={() => setConfirmingSignOut(true)}>
-              Sign Out
-            </button>
-          )}
           {!readOnly && (
-            <button className="btn grad" type="button" onClick={() => save.mutate()} disabled={save.isPending || !nameValid || !!phoneError || !!backupPhoneError}>
+            <button
+              className="btn grad"
+              type="button"
+              onClick={() => save.mutate()}
+              disabled={save.isPending || !nameValid || !!phoneError || !!backupPhoneError}
+            >
               <MutationLabel mutation={save} busy="Saving…">
                 {'✓'} Save Changes
               </MutationLabel>
             </button>
           )}
         </div>
-
         <OfflineMutationNotice phase={save.phase} what="this update" check="your details" />
 
-        <p className="footnote">
-          Cared for by <b>{businessName}</b>
-        </p>
+        {/* #1308: Sign Out is its own row, away from Save Changes, and its
+            confirmation keeps Cancel and the confirm button together. */}
+        <section className="signout" aria-label="Sign out">
+          {confirmingSignOut ? (
+            <>
+              <span className="sub">Sign out of MyTribe?</span>
+              <div className="signout__choices">
+                <button className="btn ghost" type="button" onClick={() => setConfirmingSignOut(false)}>
+                  Cancel
+                </button>
+                <button className="btn coral" type="button" onClick={signOut} disabled={signingOut}>
+                  {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, Sign Out'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <button className="btn coral" type="button" onClick={() => setConfirmingSignOut(true)}>
+              Sign Out
+            </button>
+          )}
+        </section>
+        <BusinessFootnote name={businessName} />
       </div>
     </>
   );

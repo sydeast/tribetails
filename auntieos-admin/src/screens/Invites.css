@@ -188,3 +188,14 @@
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
+
+/* #1339: the address links to the invite's own detail screen. */
+.invites__email-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.invites__email-link:hover,
+.invites__email-link:focus-visible {
+  text-decoration: underline;
+}

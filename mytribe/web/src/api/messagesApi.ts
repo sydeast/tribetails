@@ -207,7 +207,7 @@ export function mapGenerateError(err: unknown): string {
       return "You've used the writing helper a lot this hour. Please try again later.";
     }
     if (err.code === 'functions/failed-precondition') {
-      return 'There are no messages to reply to yet.';
+      return 'Nothing new to reply to.';
     }
     if (err.code === 'functions/unavailable') {
       return "The writing helper isn't available right now. Please try again in a moment.";

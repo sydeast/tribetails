@@ -93,13 +93,15 @@ class InvitesScreenUiTest {
     }
 
     @Test
-    fun `tapping a row opens that household, carrying its id and name`() {
+    fun `tapping the household line opens that household, carrying its id and name`() {
         var opened: Pair<String, String>? = null
+        var openedInvite: String? = null
         composeRule.setContent {
             AuntieOSTheme {
                 InvitesBody(
                     viewModel = vmReturning(listOf(row(tribeId = "fam_77"))),
                     onOpenHousehold = { id, name -> opened = id to name },
+                    onOpenInvite = { openedInvite = it },
                 )
             }
         }
@@ -109,6 +111,29 @@ class InvitesScreenUiTest {
         composeRule.waitForIdle()
 
         assertEquals("fam_77" to "the Demos", opened)
+        assertEquals(null, openedInvite)
+    }
+
+    @Test
+    fun `#1339 tapping the row opens that invite's own detail screen`() {
+        var opened: Pair<String, String>? = null
+        var openedInvite: String? = null
+        composeRule.setContent {
+            AuntieOSTheme {
+                InvitesBody(
+                    viewModel = vmReturning(listOf(row(id = "rq_detail1", tribeId = "fam_77"))),
+                    onOpenHousehold = { id, name -> opened = id to name },
+                    onOpenInvite = { openedInvite = it },
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("jane@example.com").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals("rq_detail1", openedInvite)
+        assertEquals(null, opened)
     }
 
     /**

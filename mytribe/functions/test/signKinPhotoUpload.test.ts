@@ -86,6 +86,38 @@ describe('signKinPhotoUploadHandler', () => {
     ).rejects.toMatchObject({ code: 'permission-denied' });
   });
 
+  it('#1291: a kin that belongs to ANOTHER household is not-found for this caller, and nothing is signed', async () => {
+    // u1 owns household 3. Pet k9 lives under household 7. Asking for it with
+    // kinfolkId omitted resolves to u1's own household, where k9 does not exist.
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3/kin/k1': { name: 'Buddy' },
+        'families/7/kin/k9': { name: 'Not yours' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { signKinPhotoUploadHandler } = await import('../src/portal/signKinPhotoUpload');
+    await expect(
+      signKinPhotoUploadHandler({ data: { kinId: 'k9' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'not-found' });
+    // Naming the other household outright is refused before the kin lookup.
+    await expect(
+      signKinPhotoUploadHandler({ data: { kinfolkId: '7', kinId: 'k9' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+
+  it('#1291: a kinId carrying path characters is rejected, so the signed folder cannot escape the kin', async () => {
+    const ctx = ctxWithKin();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { signKinPhotoUploadHandler } = await import('../src/portal/signKinPhotoUpload');
+    for (const kinId of ['../7/kin/k9', 'k1/../../x', 'k1 2', '']) {
+      await expect(
+        signKinPhotoUploadHandler({ data: { kinfolkId: '3', kinId }, auth: { uid: 'u1' } } as any),
+      ).rejects.toBeTruthy();
+    }
+  });
+
   it('throws failed-precondition when Cloudinary secrets are unset', async () => {
     mocks.secretValues.CLOUDINARY_API_SECRET = '';
     const ctx = ctxWithKin();

@@ -336,7 +336,10 @@ class InvoicesController internal constructor(
                 // the old balance and read like a save that had not worked.
                 val banner = when (target) {
                     CreditTarget.AccountBalance -> "Credit saved. ${formatCents(res.redeemedAmountCents)} is in your account balance."
-                    CreditTarget.OriginalPaymentMethod -> "Refunded ${formatCents(res.redeemedAmountCents)} to your original card."
+                    // #1338: no UI offers this target and the server refuses it
+                    // (no-refunds ruling), so this arm is unreachable. It must
+                    // never promise a card refund; kept only for exhaustiveness.
+                    CreditTarget.OriginalPaymentMethod -> "Credit of ${formatCents(res.redeemedAmountCents)} redeemed."
                 }
                 reload()
                 statusBanner = banner

@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
@@ -301,6 +303,19 @@ describe('Account: secondary invite confirmation (#1018 item 3)', () => {
     expect(await findByText(/Invite failed.*already invited/)).toBeInTheDocument();
     expect(queryByText(/Invite sent/)).not.toBeInTheDocument();
   });
+
+  // #1277: Account › Recovery Contacts › Send Invite showed
+  // "AUNTIE_OS_REVIEW_BASE_URL is not configured [400]" to the household.
+  it('never shows a backend setting name: a config refusal reads as a plain line', async () => {
+    const user = userEvent.setup();
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.addSecondaryContact).mockRejectedValue(new Error('CLAIM_LINK_BASE_URL is not configured [400]'));
+    const { getByLabelText, getByRole, findByText, queryByText } = await renderAccount();
+    await user.type(getByLabelText('Backup Email'), 'catch@hanasamku.com');
+    await user.click(getByRole('button', { name: /Send Invite/ }));
+    expect(await findByText("Invites can't be sent right now. It's been reported to Auntie.")).toBeInTheDocument();
+    expect(queryByText(/CLAIM_LINK_BASE_URL|is not configured/)).not.toBeInTheDocument();
+  });
 });
 
 describe('Account: Message your Auntie', () => {
@@ -450,7 +465,29 @@ describe('Account billing management', () => {
  * trade rather than a regression: Sign Out has to still be reachable, and
  * still work, from the screen the avatar now points at.
  */
-describe('Account: Sign Out', () => {
+describe('Account: Sign Out (#1307, #1308)', () => {
+  it('keeps Cancel and the confirm button together, and not in the Save Changes row', async () => {
+    const { getByRole, container } = await renderAccount();
+    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    const confirm = getByRole('button', { name: 'Yes, Sign Out' });
+    const cancel = getByRole('button', { name: 'Cancel' });
+    const save = getByRole('button', { name: /Save Changes/ });
+    expect(confirm.parentElement).toBe(cancel.parentElement);
+    expect(confirm.closest('.savebar')).toBeNull();
+    expect(save.closest('.signout')).toBeNull();
+    // Sign out sits below the Save row, so the primary action is never beside it.
+    const bar = container.querySelector('.savebar')!;
+    const out = container.querySelector('.signout')!;
+    expect(bar.compareDocumentPosition(out) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it('puts the Save row in the page flow, not in a fixed or sticky bar (#1307)', async () => {
+    const { container } = await renderAccount();
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/account.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(container.querySelector('.savebar')).not.toBeNull();
+    const rule = css.split('}').find((r) => r.includes('.acct .savebar {'))!;
+    expect(rule).not.toMatch(/position:\s*(sticky|fixed)/);
+  });
+
   it('offers Sign Out on the save bar', async () => {
     const { getByRole } = await renderAccount();
     expect(getByRole('button', { name: 'Sign Out' })).toBeTruthy();

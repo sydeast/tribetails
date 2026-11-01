@@ -163,7 +163,7 @@ private fun KinCareRow(kc: Booking, onClick: () -> Unit) {
         contentPadding = PaddingValues(KinfolkSpacing.l),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(kc.title ?: kc.serviceType ?: "Visit", style = type.heritageTitle)
+            Text(com.kinfolk.portal.util.visitTitle(kc.title, kc.serviceLabel) ?: "Visit", style = type.heritageTitle)
             Text(bookingWhenLabel(kc), style = type.sansLabel)
             val parts = listOfNotNull(
                 kc.auntieDisplayName,

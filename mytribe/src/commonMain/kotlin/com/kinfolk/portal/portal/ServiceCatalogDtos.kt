@@ -135,3 +135,26 @@ data class BusinessClosure(
     val date: String,
     val name: String,
 )
+/**
+ * #1284: one weekday of the business's weekly hours, from `getBusinessClosures`.
+ * [weekday] is 0 = Sunday (the web's `Date.getDay()`), [open] false means shut
+ * all day, and [startTime] / [endTime] are `HH:mm` in the business's zone, null
+ * when shut.
+ */
+data class WeekdayHours(
+    val weekday: Int,
+    val open: Boolean,
+    val startTime: String?,
+    val endTime: String?,
+)
+/**
+ * #1284: everything `getBusinessClosures` knows. [weeklyHours] is seven days
+ * (Sunday first), or empty when the business has none on file or one day does
+ * not read, which means "no restriction known". [timeZone] is the IANA zone the
+ * hours, closures and time blocks are stated in; blank from an older server.
+ */
+data class BusinessCalendar(
+    val closures: List<BusinessClosure>,
+    val weeklyHours: List<WeekdayHours> = emptyList(),
+    val timeZone: String = "",
+)

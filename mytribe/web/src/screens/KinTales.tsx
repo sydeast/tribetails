@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyKinTales } from '../api/portal';
 import type { KinTaleDto } from '../api/types';
@@ -33,6 +33,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { RouteMap } from '../components/RouteMap';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const PAGE_SIZE = 20;
 const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
@@ -96,7 +97,16 @@ export function KinTales() {
   }, { policy: 'hold', what: 'this page of KinTales' });
 
   const { signOut, signingOut } = useSignOut();
-
+  // #1303: a completed visit links here as `/kintales?tale=<id>`. Once that tale
+  // is on screen it is scrolled into view; if it is on a page not loaded yet the
+  // household simply lands on the list. Read off the address bar rather than the
+  // router so the screen keeps rendering without a router context.
+  const wantedTale = new URLSearchParams(window.location.search).get('tale');
+  const wantedTaleLoaded = wantedTale !== null && (firstPage.data?.tales ?? []).some((t) => t.id === wantedTale);
+  useEffect(() => {
+    if (!wantedTale || !wantedTaleLoaded) return;
+    document.getElementById(`tale-${wantedTale}`)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [wantedTale, wantedTaleLoaded]);
   if (firstPage.isError) {
     return (
       <LaunchError
@@ -189,9 +199,7 @@ export function KinTales() {
           </div>
         )}
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );
@@ -330,7 +338,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
     // have), or unchanged (today's paw glyph) when the tale has no photo.
     const featuredPhoto = thumbs.find((t) => isImageThumb(t.contentType));
     return (
-      <section className="glass feature">
+      <section className="glass feature" id={`tale-${tale.id}`}>
         <div className="banner">
           <div className="kick">Featured KinTale</div>
           <h2>{headline}</h2>
@@ -382,7 +390,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
   }
 
   return (
-    <section className={`glass talecard t${(index % 2) + 1}`}>
+    <section className={`glass talecard t${(index % 2) + 1}`} id={`tale-${tale.id}`}>
       <div className="tchead">
         <div className="tcphoto">{'\u{1F43E}'}</div>
         <div style={{ flex: 1 }}>

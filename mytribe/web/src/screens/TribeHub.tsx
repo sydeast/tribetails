@@ -12,6 +12,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { auntieName, relativeDay, speciesEmoji } from '../lib/portalFormat';
 import { BusyLabel } from '../components/Loading';
 import { formatPhone } from '../lib/phone';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
 
@@ -78,7 +79,7 @@ export function TribeHub() {
 
   return (
     <>
-      <PortalNav active="tribe" displayName={displayName} />
+      <PortalNav active="tribe" />
 
       <div className="wrap">
         <header className="hero-greet">
@@ -192,9 +193,7 @@ export function TribeHub() {
           </section>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );
