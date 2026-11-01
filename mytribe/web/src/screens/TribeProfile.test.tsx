@@ -983,3 +983,61 @@ describe('TribeProfile: the vet clinic is never shown as a database id (#1325)',
     expect(rows.find((f) => f.key === 'vetClinicId')?.value).toBe(CLINIC_ID);
   });
 });
+// #1387: a linked clinic can be unlinked, same as portal Android.
+describe('TribeProfile: Remove clinic (#1387)', () => {
+  const LINKED: GetMyTribeProfileResult = {
+    ...PROFILE,
+    profile: {
+      ...PROFILE.profile,
+      customFields: [{ key: 'vetClinicId', label: 'Vet Clinic', value: 'clinic-1' }],
+    },
+  };
+  const CLINIC_1 = {
+    id: 'clinic-1',
+    name: 'Riverside Animal Hospital',
+    phone: '(512) 555 0100',
+    address: '418 Mill St',
+    website: '',
+    googleMapsUrl: '',
+    isEmergency: false,
+  };
+  it('offers no Remove clinic control when no clinic is linked', async () => {
+    const view = await renderTribeProfile({ clinics: [CLINIC_1] });
+    await view.findByLabelText(/Search vet clinics/i);
+    expect(view.queryByRole('button', { name: /Remove clinic/ })).toBeNull();
+  });
+  it('clears vetClinicId through removeCustomFieldKeys only, shows a busy cue, then returns to the picker', async () => {
+    const view = await renderTribeProfile({ profile: LINKED, clinics: [CLINIC_1] });
+    const { saveTribeProfile } = await import('../api/tribeApi');
+    let release: (v: { ok: true }) => void = () => {};
+    vi.mocked(saveTribeProfile).mockImplementationOnce(() => new Promise((res) => { release = res; }));
+    const btn = await view.findByRole('button', { name: /Remove clinic/ });
+    expect(view.getByText('Clinic on file')).toBeInTheDocument();
+    await userEvent.click(btn);
+    await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(saveTribeProfile).mock.calls[0]?.[0]).toEqual({ kinfolkId: 'kin-fam-1', removeCustomFieldKeys: ['vetClinicId'] });
+    // Pessimistic: still linked, button busy and disabled while the save is out.
+    const busy = view.getByRole('button', { name: /Removing/ });
+    expect(busy).toBeDisabled();
+    expect(view.getByText('Clinic on file')).toBeInTheDocument();
+    release({ ok: true });
+    await waitFor(() => expect(view.queryByText('Clinic on file')).toBeNull());
+    expect(view.queryByRole('button', { name: /Remove clinic|Removing/ })).toBeNull();
+    expect(view.getByLabelText(/Search vet clinics/i)).toBeInTheDocument();
+  });
+  it('a refused removal keeps the clinic linked and says why', async () => {
+    const view = await renderTribeProfile({ profile: LINKED, clinics: [CLINIC_1] });
+    const { saveTribeProfile } = await import('../api/tribeApi');
+    vi.mocked(saveTribeProfile).mockRejectedValueOnce(new Error('too many saves'));
+    await userEvent.click(await view.findByRole('button', { name: /Remove clinic/ }));
+    expect(await view.findByText("Couldn't remove the clinic: too many saves")).toBeInTheDocument();
+    expect(view.getByText('Clinic on file')).toBeInTheDocument();
+    expect(view.getByRole('button', { name: /Remove clinic/ })).toBeEnabled();
+  });
+  it('can remove a clinic that is no longer on the shared list', async () => {
+    const view = await renderTribeProfile({ profile: LINKED, clinics: [] });
+    const { saveTribeProfile } = await import('../api/tribeApi');
+    await userEvent.click(await view.findByRole('button', { name: /Remove clinic/ }));
+    await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledWith({ kinfolkId: 'kin-fam-1', removeCustomFieldKeys: ['vetClinicId'] }));
+  });
+});

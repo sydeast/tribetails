@@ -148,6 +148,7 @@ export function TribeProfile() {
   const [afterHoursVetPhone, setAfterHoursVetPhone] = useState('');
   const [submittingClinic, setSubmittingClinic] = useState(false);
   const [submitClinicMsg, setSubmitClinicMsg] = useState<string | null>(null);
+  const [removingClinic, setRemovingClinic] = useState(false);
 
   const [saving, setSaving] = useState(false);
   /**
@@ -252,6 +253,30 @@ export function TribeProfile() {
     setSubmitClinicMsg(null);
   }
 
+  /**
+   * #1387: unlink the clinic. Pessimistic, like portal Android: the link is
+   * cleared on screen only after saveTribeProfile accepts it. `vetClinicId` is
+   * deleted by naming it in removeCustomFieldKeys; no other row is sent.
+   */
+  function removeClinic() {
+    if (removingClinic || vetClinicId === '') return;
+    setRemovingClinic(true);
+    setSubmitClinicMsg(null);
+    saveTribeProfile({
+      ...(kinfolkId !== undefined ? { kinfolkId } : {}),
+      removeCustomFieldKeys: ['vetClinicId'],
+    })
+      .then(async () => {
+        setVetClinicId('');
+        setVetQuery('');
+        setClinicCandidates([]);
+        await refreshAfterSave(queryClient, ['tribeProfile', kinfolkId]);
+      })
+      .catch((err: unknown) =>
+        setSubmitClinicMsg(`Couldn't remove the clinic: ${err instanceof Error ? err.message : 'unknown error'}`),
+      )
+      .finally(() => setRemovingClinic(false));
+  }
   /**
    * Add the typed name as a new clinic.
    *
@@ -652,12 +677,20 @@ export function TribeProfile() {
                       Details come from the shared list, so if they are wrong Auntie can fix them
                       once for every household. Search above to change your clinic.
                     </p>
+                    <button type="button" className="btn ghost" onClick={removeClinic} disabled={removingClinic} style={{ padding: '9px 14px', fontSize: 13, marginTop: 8 }}>
+                      {removingClinic ? <BusyLabel>Removing…</BusyLabel> : 'Remove clinic'}
+                    </button>
                   </div>
                 )}
                 {vetClinicId !== '' && !selectedClinic && (
                   <p className="hint" style={{ color: 'var(--coral)' }}>
                     The clinic on file is no longer on the shared list. Search above to pick it again.
                   </p>
+                )}
+                {vetClinicId !== '' && !selectedClinic && (
+                  <button type="button" className="btn ghost" onClick={removeClinic} disabled={removingClinic} style={{ padding: '9px 14px', fontSize: 13, marginTop: 8 }}>
+                    {removingClinic ? <BusyLabel>Removing…</BusyLabel> : 'Remove clinic'}
+                  </button>
                 )}
                 {submitClinicMsg && <p className="sub" style={{ marginTop: 8 }}>{submitClinicMsg}</p>}
 
