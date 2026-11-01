@@ -57,8 +57,11 @@
  *                        instructions, medications, allergies, emergencyNotes,
  *                        sitterNotes) copied when present and non-empty (only
  *                        exist on flat docs previously touched by the mirror).
- *   - staff fields       STAFF_EDITABLE_FIELDS (sex, weight, vetInfo, ...)
- *                        copied when present and non-empty-string.
+ *   - staff fields       STAFF_EDITABLE_FIELDS (sex, weight, colorMarkings,
+ *                        spayedNeutered, vetInfo) copied when present and
+ *                        non-empty-string. The staff-only fields (officeNotes,
+ *                        reactive, routine, vaccinations, tags...) are NEVER
+ *                        copied: the family doc is household-readable (#1335).
  *   - status             'active', unless the flat doc is marked
  *                        inactive/archived/noLongerWithUs -> 'noLongerWithUs'
  *                        (the ONLY inactive value getMyKin's whitelist and the
@@ -413,8 +416,8 @@ export function buildFamilyKinDoc(
     if (v) doc[f] = v;
   }
 
-  // Staff-owned descriptive fields (flat->family direction per kinMirror).
-  // Skip empty strings — AuntieOS models default every string field to "".
+  // Household-visible staff-edited facts (flat->family direction per
+  // kinMirror). Staff-only fields are not in this list (#1335). Skip empty strings — AuntieOS models default every string field to "".
   for (const f of STAFF_EDITABLE_FIELDS) {
     const v = data[f];
     if (v === undefined || v === null || v === '') continue;
