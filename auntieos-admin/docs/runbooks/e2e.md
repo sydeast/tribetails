@@ -668,8 +668,17 @@ legacy fallback. The `clients/{uid}` write is a field-masked merge, because the
 real `onAuthUserCreate` writes that document too and may get there first.
 
 On 2026-10-30 a local run with no vendor keys went: `invoice-open` passed, and
-the pay spec was pending (skipped, no keys). The pay spec has not run against
-Stripe yet. Its first real run is a dispatch of `e2e-real.yml` from main.
+the pay spec was pending (skipped, no keys).
+
+Its first run against Stripe, a dispatch of `e2e-real.yml` from main on
+2026-10-31 (run 41227390964), failed at `#email`: `payInvoice` made a real
+test Checkout Session and the browser reached it, but Checkout stayed on its
+grey loading skeleton inside Cypress's frame (#1269). The portal's
+`cypress.real.config.ts` now sets `experimentalModifyObstructiveThirdPartyCode`,
+which lets Stripe's page render in the runner. A local Cypress run showed the
+difference: with the flag off, a Checkout URL rendered nothing; with it on,
+Stripe's page text appeared. The admin real config does not set it, because no
+admin spec goes to Stripe's page.
 
 ## Pointing a Cypress run at a deployed host (added 2026-08-30)
 

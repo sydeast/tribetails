@@ -66,6 +66,17 @@ export default defineConfig({
     // Same posture as the PR-time suite: a retry turns a flake into a green.
     retries: 0,
     experimentalRunAllSpecs: false,
+    // STRIPE'S HOSTED CHECKOUT ONLY RENDERS WITH THIS ON (#1269). Cypress runs
+    // the app inside a frame, and Checkout's own scripts notice that and never
+    // paint: the first run against Stripe (run 41227390964, 2026-10-31) sat on
+    // Checkout's grey loading skeleton for 60 s and found no `#email`. This
+    // flag makes Cypress rewrite the frame-busting checks in third-party
+    // scripts too, not only in ours. Measured on a Checkout URL in the
+    // runner: off, the page body stays raw script and nothing renders (with
+    // `chromeWebSecurity` on or off); on, Stripe's page renders its copy. It
+    // also strips Subresource Integrity from rewritten scripts, which matters
+    // only to this test run, never to the app.
+    experimentalModifyObstructiveThirdPartyCode: true,
     // A real callable cold-starts inside the emulator on its first call, which
     // the PR-time stubs never had to wait for.
     defaultCommandTimeout: 15_000,

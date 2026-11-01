@@ -26,11 +26,16 @@ import { vendorConfigured } from '../support/e2e-real';
  * SKIPS, WITH THE MISSING VARIABLE NAMED, when the run has no Stripe test keys
  * or no webhook forwarder. Absent keys are never a pass and never a red run.
  *
- * NOT YET EXECUTED AGAINST STRIPE when it was written: the test keys live only
- * in the `e2e-real` GitHub environment, so its first real run is the workflow's
- * dispatch from main. The hosted checkout page's field ids (`#cardNumber` and
- * the rest) are Stripe's, not ours; if Stripe changes them this spec fails at
- * the card step, inside `cy.origin`, which names the field.
+ * STRIPE'S PAGE NEEDS `experimentalModifyObstructiveThirdPartyCode` (#1269).
+ * The first run against Stripe (run 41227390964, 2026-10-31) reached a real
+ * test Checkout Session, but inside Cypress's frame the page never got past
+ * its loading skeleton and `#email` never appeared. `cypress.real.config.ts`
+ * turns the flag on; its comment has the measurement. The test keys live only
+ * in the `e2e-real` GitHub environment, whose branch policy is main, so the
+ * spec runs against Stripe only on a dispatch from main. The hosted checkout
+ * page's field ids (`#cardNumber` and the rest) are Stripe's, not ours; if
+ * Stripe changes them this spec fails at the card step, inside `cy.origin`,
+ * which names the field.
  */
 
 const STAMP = Date.now().toString(36);
