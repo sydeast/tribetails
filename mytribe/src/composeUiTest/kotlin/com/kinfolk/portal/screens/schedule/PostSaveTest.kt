@@ -4,6 +4,7 @@ package com.kinfolk.portal.screens.schedule
 
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -146,6 +147,23 @@ class PostSaveTest {
         assertEquals(1, completions.size)
     }
 
+    /** #1382: the server's weekly-hours refusal reaches the household as sent, and Create stays usable. */
+    @Test
+    fun aWeeklyHoursRefusal_isShownAsSent_andTheHouseholdCanTryAgain() = runComposeUiTest {
+        val refusal = "2026-11-04: That time is outside our hours on Wednesdays (09:00 to 17:00). Pick a time inside them."
+        val fake = FakeFunctionsClient()
+        stubWizard(fake)
+        fake.stubError("requestBooking", IllegalStateException(refusal))
+        val completions = mutableListOf<BookingsResult?>()
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = { completions += it })
+        }
+        fillToReview()
+        clickFooter("Create Booking")
+        onNodeWithText(refusal).assertExists()
+        assertEquals(0, completions.size)
+        onNodeWithText("Create Booking").assertIsEnabled()
+    }
     @Test
     fun schedule_opensOnTheHandoff_withTheConfirmation_whileItsOwnReadIsStillOut() = runComposeUiTest {
         // Every read hangs, so only the handoff can explain what is on screen.

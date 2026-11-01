@@ -15,6 +15,7 @@ import { resolveDefaultAssignee, type Assignee } from '../lib/defaultAssignee';
 import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { assertWeeklyHoursForVisits } from '../lib/weeklyHoursRule';
 import { validateResponse } from '../lib/callableResponse';
 import { EnvelopeDtoSchema, readEnvelopeDto } from '../lib/portalBookingDto';
 import {
@@ -587,12 +588,16 @@ export async function loadBookingPolicy(): Promise<{
   policy: BookingPolicy;
   timeZone: string;
   serviceDurations: unknown;
+  /** The settings document for the weekly-hours rule (#1382); null when the read failed, which fails open. */
+  settings: Record<string, unknown> | null;
 }> {
   let raw: unknown = {};
+  let readFailed = false;
   try {
     const snap = await db().collection('business_settings').doc('business_settings').get();
     raw = snap.data() ?? {};
   } catch (err) {
+    readFailed = true;
     logEvent({
       severity: 'warn',
       function: 'requestBooking',
@@ -636,7 +641,12 @@ export async function loadBookingPolicy(): Promise<{
     });
   }
 
-  return { policy, timeZone, serviceDurations: (raw as Record<string, unknown>)['serviceDurations'] };
+  return {
+    policy,
+    timeZone,
+    serviceDurations: (raw as Record<string, unknown>)['serviceDurations'],
+    settings: readFailed ? null : (raw as Record<string, unknown>),
+  };
 }
 
 /**
@@ -1097,7 +1107,7 @@ export async function requestBookingHandler(
     //
     // #1098: read first of all now, because it also decides which visits are
     // nights awaiting the operator's start time (see `planVisit`).
-    const { policy, timeZone, serviceDurations } = await loadBookingPolicy();
+    const { policy, timeZone, serviceDurations, settings } = await loadBookingPolicy();
     const planned = args.visits.map((v) => planVisit(v, policy, timeZone, now));
     planned.forEach((v) => {
       if (v.kind !== 'timed') return;
@@ -1150,6 +1160,20 @@ export async function requestBookingHandler(
       firestore,
       visits: visits.map((v) => (v.kind === 'timed' ? v : { dateIso: v.requestedDate })),
     });
+    // #1382: the weekly business hours, the same rule (and sentences) a
+    // reschedule meets. Timed visits only: a night awaiting its start (#1098)
+    // has no clock time yet, and the operator sets it. Every visit of a series
+    // is checked and the request names the first bad date.
+    assertWeeklyHoursForVisits(
+      settings,
+      timeZone,
+      policy,
+      timedVisits.map((v) => ({
+        startTimeMs: v.startTimeMs,
+        timeBlockId: resolvedBlocks[visits.indexOf(v)]?.timeBlockId ?? null,
+        serviceId: v.serviceId,
+      })),
+    );
 
     // #644: the caller's key IS the envelope id when it sent one. Without one
     // this is the same server-minted id it has always been, and the dedupe read
@@ -1298,6 +1322,10 @@ export async function requestBookingHandler(
     firestore,
     visits: [{ startTimeMs: args.startTimeMs, endTimeMs: legacyEndTimeMs }],
   });
+  // #1382: the weekly business hours, as on the multi-visit path.
+  assertWeeklyHoursForVisits(legacyPolicy.settings, legacyPolicy.timeZone, legacyPolicy.policy, [
+    { startTimeMs: args.startTimeMs, timeBlockId: null, serviceId: args.serviceType },
+  ]);
 
   const batchId = args.idempotencyKey ?? `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const writtenLegacy = await writeEnvelope({
