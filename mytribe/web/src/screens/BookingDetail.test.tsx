@@ -51,7 +51,11 @@ vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOu
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('@tanstack/react-router', () => ({
   useParams: () => ({ visitId: 'v1' }),
-  Link: ({ children }: { children?: ReactNode }) => <a>{children}</a>,
+  Link: ({ children, search }: { children?: ReactNode; search?: unknown }) => (
+    <a href="#" data-search={JSON.stringify(search ?? null)}>
+      {children}
+    </a>
+  ),
 }));
 
 function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
@@ -588,5 +592,17 @@ describe('BookingDetail: #1281 the ask shows the moment it resolves', () => {
     expect(screen.getByRole('button', { name: /Sending/ })).toBeDisabled();
     answer(bookingsResult({ upcoming: [booking({ cancelRequested: true, cancelRequestStatus: 'pending' })] }));
     expect(await screen.findByText(/Cancellation requested/)).toBeInTheDocument();
+  });
+});
+
+describe('BookingDetail: back to the tab the visit lives in (#1304)', () => {
+  it('names Past Visits from a completed visit and the default tab from an upcoming one', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [booking({ status: 'completed' })] }));
+    const { unmount } = renderScreen();
+    expect(await screen.findByRole('link', { name: /Back to Schedule/ })).toHaveAttribute('data-search', JSON.stringify({ tab: 'past' }));
+    unmount();
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    expect(await screen.findByRole('link', { name: /Back to Schedule/ })).toHaveAttribute('data-search', JSON.stringify({}));
   });
 });
