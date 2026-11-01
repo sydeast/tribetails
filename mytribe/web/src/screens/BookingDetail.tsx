@@ -14,6 +14,7 @@ import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { applyBookingWrite } from '../lib/bookingsCache';
 import { viewOfQuery } from '../lib/queryState';
 import {
+  auntieName,
   BOOKING_TIMELINE_STEPS,
   bookingStatusChip,
   bookingStatusIcon,
@@ -220,7 +221,7 @@ export function BookingDetail() {
     found.rescheduleRequestedStartTimeMs !== null
       ? weekdayTime(found.rescheduleRequestedStartTimeMs)
       : '';
-  const auntieLabel = found.auntieDisplayName ? `Auntie ${found.auntieDisplayName}` : 'your Auntie';
+  const auntieLabel = auntieName(found.auntieDisplayName) ?? 'your Auntie';
   const submitReschedule = () => {
     const ms = parseLocalDateTime(proposedAt);
     if (ms === null) {

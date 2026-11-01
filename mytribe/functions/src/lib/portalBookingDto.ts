@@ -15,6 +15,7 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
+import { resolveBookingPolicy } from './bookingTimeBlocks';
 export const BookingDtoSchema = z
   .object({
     /** kinCare (per-visit) document id. */
@@ -37,6 +38,15 @@ export const BookingDtoSchema = z
     startTimePending: z.boolean(),
     /** #1098: the night asked for (business-local `YYYY-MM-DD`) while `startTimePending`; null otherwise. */
     requestedDate: z.string().nullable(),
+    /**
+     * #1301: the named window the household booked this visit into ("Midday"),
+     * or null for a by-the-clock visit. A block visit has a start time that is
+     * only the window's anchor, so clients show the window, never the clock.
+     */
+    timeBlockLabel: z.string().nullable(),
+    /** #1301: that window's `HH:MM` bounds in the business's zone, null when the block has since been removed. */
+    timeBlockStartTime: z.string().nullable(),
+    timeBlockEndTime: z.string().nullable(),
     kinIds: z.array(z.string()),
     kinNames: z.array(z.string()),
     auntieDisplayName: z.string().nullable(),
@@ -120,12 +130,43 @@ export const EnvelopeDtoSchema = z
   .strict();
 
 export type EnvelopeDto = z.infer<typeof EnvelopeDtoSchema>;
-/** One `kinCares/{id}` document as the portal reads it. */
+export type BlockBounds = { startTime: string; endTime: string };
+/**
+ * #1301: the business's current windows by id, so a block visit can be shown as
+ * its window. Read through the same resolver `getBookingPolicy` and
+ * `requestBooking` use. A failed read degrades to an empty map: the visit still
+ * carries its stored label, it just has no hours to print.
+ */
+export async function loadBlocksById(firestore: Firestore): Promise<Map<string, BlockBounds>> {
+  try {
+    const snap = await firestore.collection('business_settings').doc('business_settings').get();
+    const { policy } = resolveBookingPolicy(snap.data() ?? {});
+    return new Map(policy.timeBlocks.map((b) => [b.id, { startTime: b.startTime, endTime: b.endTime }]));
+  } catch {
+    return new Map();
+  }
+}
+function blockFieldsOf(data: Record<string, unknown>, blocksById: Map<string, BlockBounds>) {
+  const label = stringOrNull(data['timeBlockLabel']);
+  const id = stringOrNull(data['timeBlockId']);
+  const bounds = id === null ? undefined : blocksById.get(id);
+  return {
+    timeBlockLabel: label,
+    timeBlockStartTime: label === null ? null : (bounds?.startTime ?? null),
+    timeBlockEndTime: label === null ? null : (bounds?.endTime ?? null),
+  };
+}
+/**
+ * One `kinCares/{id}` document as the portal reads it. `blocksById` (#1301)
+ * supplies a block visit's window hours; without it the stored label still
+ * shows, with no hours.
+ */
 export function kinCareToDto(
   id: string,
   data: Record<string, unknown>,
   batchId: string | null,
   kinfolkId: string,
+  blocksById: Map<string, BlockBounds> = new Map(),
 ): BookingDto {
   const cancelStatus = cancelRequestStatusOf(data);
   return {
@@ -139,6 +180,7 @@ export function kinCareToDto(
     endTimeMs: tsMillis(data['endTime']),
     startTimePending: data['startTimePending'] === true,
     requestedDate: data['startTimePending'] === true ? stringOrNull(data['requestedDate']) : null,
+    ...blockFieldsOf(data, blocksById),
     kinIds: Array.isArray(data['kinIds']) ? (data['kinIds'] as string[]) : [],
     kinNames: Array.isArray(data['kinNames']) ? (data['kinNames'] as string[]) : [],
     auntieDisplayName: stringOrNull(data['auntieDisplayName']),
@@ -198,11 +240,15 @@ export async function readEnvelopeDto(
 ): Promise<EnvelopeDto | null> {
   try {
     const parentRef = firestore.doc(`families/${kinfolkId}/bookings/${batchId}`);
-    const [parentSnap, visitsSnap] = await Promise.all([parentRef.get(), parentRef.collection('kinCares').get()]);
+    const [parentSnap, visitsSnap, blocksById] = await Promise.all([
+      parentRef.get(),
+      parentRef.collection('kinCares').get(),
+      loadBlocksById(firestore),
+    ]);
     if (!parentSnap.exists) return null;
     const env = (parentSnap.data() ?? {}) as Record<string, unknown>;
     const visits = visitsSnap.docs.map((d) =>
-      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId),
+      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, blocksById),
     );
     return EnvelopeDtoSchema.parse(envelopeToDto(batchId, env, visits));
   } catch {
@@ -217,10 +263,13 @@ export async function readVisitDto(
   visitId: string,
 ): Promise<BookingDto | null> {
   try {
-    const snap = await firestore.doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`).get();
+    const [snap, blocksById] = await Promise.all([
+      firestore.doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`).get(),
+      loadBlocksById(firestore),
+    ]);
     if (!snap.exists) return null;
     const data = (snap.data() ?? {}) as Record<string, unknown>;
-    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId));
+    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, blocksById));
   } catch {
     return null;
   }

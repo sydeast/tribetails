@@ -79,7 +79,8 @@ import kotlin.time.Clock
  * flag), mirroring the old "reload on back" semantics.
  */
 /**
- * #1281: what the booking wizard leaves for Schedule. [bookings] is the list
+ * #1281, #1345: what the booking wizard leaves for the screen it returns to
+ * (Schedule or Home). [bookings] is the list
  * read right after the booking went in (null when that read failed), and
  * [notice] is the confirmation to show in words.
  */
@@ -171,20 +172,7 @@ fun ScheduleScreen(
                 }
                 KinButton(label = "Request a Booking", onClick = onOpenWizard)
             }
-            notice?.let { text ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = KinfolkSpacing.l)
-                        .testTag(SAVE_NOTICE_TAG),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
-                ) {
-                    Text("\u2713", style = type.sansBody.copy(color = KinfolkBrand.KinfolkOrange, fontWeight = FontWeight.Bold))
-                    Text(text, style = type.sansBody.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
-                    TextButton(onClick = { notice = null }) { Text("Dismiss") }
-                }
-            }
+            notice?.let { text -> SaveNoticeRow(text = text, onDismiss = { notice = null }) }
 
             val mainColumn: @Composable () -> Unit = {
                 UpcomingCard(
@@ -596,6 +584,23 @@ private fun LiveVisitCard(
     }
 }
 /** #1281: test tag on Schedule's post-save confirmation line. */
+/** The confirmation line a save leaves behind. Schedule and Home both draw it (#1345). */
+@Composable
+fun SaveNoticeRow(text: String, onDismiss: () -> Unit) {
+    val type = LocalKinfolkTypography.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = KinfolkSpacing.l)
+            .testTag(SAVE_NOTICE_TAG),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+    ) {
+        Text("\u2713", style = type.sansBody.copy(color = KinfolkBrand.KinfolkOrange, fontWeight = FontWeight.Bold))
+        Text(text, style = type.sansBody.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
+        TextButton(onClick = onDismiss) { Text("Dismiss") }
+    }
+}
 const val SAVE_NOTICE_TAG = "schedule-save-notice"
 /** #1281: how long the post-save confirmation stays up. Matches the web portal. */
 const val SAVE_NOTICE_MS = 8_000L

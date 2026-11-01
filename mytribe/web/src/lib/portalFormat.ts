@@ -5,7 +5,7 @@
  */
 import type { PortalHomeSection } from '../api/types';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
-import { parseDateKey } from './bookingWizardLogic';
+import { formatClockRange12, parseDateKey } from './bookingWizardLogic';
 
 /**
  * An alias for readability, not a declaration: writing the six-state status
@@ -33,15 +33,52 @@ export function weekdayTime(ms: number): string {
   return `${WEEKDAYS[d.getDay()]}, ${hours}:${minutes} ${ampm}`;
 }
 
-/** "Mon, 8:00 AM with Auntie Maya" / just the weekday-time if no auntie assigned yet. */
-export function visitSubtitle(startTimeMs: number | null, auntieDisplayName: string | null): string {
-  if (startTimeMs === null) return auntieDisplayName ? `With Auntie ${auntieDisplayName}` : 'Time to be confirmed';
-  const base = weekdayTime(startTimeMs);
-  return auntieDisplayName ? `${base} with Auntie ${auntieDisplayName}` : base;
+/** The named window a block-booked visit sits in (#1301); absent on by-the-clock visits and on older servers. */
+type VisitBlock = Partial<Pick<GetMyBookingsResultLiveVisit, 'timeBlockLabel' | 'timeBlockStartTime' | 'timeBlockEndTime'>>;
+/**
+ * #1301: "Midday (11 AM to 3 PM)" for a visit booked into a window, or null for
+ * a by-the-clock visit. A block visit's stored start is only the window's
+ * anchor, so printing it ("Sun, 11:00 AM") claims a precision nobody booked.
+ * When the window has since been removed there are no hours to print, and the
+ * stored label alone is the honest answer.
+ */
+export function visitBlockText(b: VisitBlock): string | null {
+  const label = b.timeBlockLabel ?? null;
+  if (label === null) return null;
+  const start = b.timeBlockStartTime ?? null;
+  const end = b.timeBlockEndTime ?? null;
+  return start !== null && end !== null ? `${label} (${formatClockRange12(start, end)})` : label;
 }
-
+/** "Mon, 8:00 AM" for a clock visit, "Mon, Midday (11 AM to 3 PM)" for a block visit. */
+function weekdayWhen(ms: number, block: VisitBlock): string {
+  const text = visitBlockText(block);
+  if (text === null) return weekdayTime(ms);
+  return `${WEEKDAYS[new Date(ms).getDay()]}, ${text}`;
+}
+/**
+ * #1322. An Auntie's name with the role word in front, said once: "Maya" reads
+ * "Auntie Maya", but a display name that already carries the word ("TEST
+ * SANDBOX Auntie", "Auntie Maya") is left as it is, where every screen used to
+ * print "Auntie TEST SANDBOX Auntie". The name itself is the operator's
+ * setting and is never rewritten, only the prefix is skipped.
+ *
+ * Returns null for a missing or blank name, so each caller keeps its own
+ * fallback ("Your Auntie", "your Auntie").
+ */
+export function auntieName(displayName: string | null | undefined): string | null {
+  const name = (displayName ?? '').trim();
+  if (name === '') return null;
+  return /\bauntie\b/i.test(name) ? name : `Auntie ${name}`;
+}
+/** "Mon, 8:00 AM with Auntie Maya" / just the weekday-time if no auntie assigned yet. */
+export function visitSubtitle(startTimeMs: number | null, auntieDisplayName: string | null, block: VisitBlock = {}): string {
+  const auntie = auntieName(auntieDisplayName);
+  if (startTimeMs === null) return auntie ? `With ${auntie}` : 'Time to be confirmed';
+  const base = weekdayWhen(startTimeMs, block);
+  return auntie ? `${base} with ${auntie}` : base;
+}
 /** The fields that say WHEN a booked visit happens. */
-type VisitWhen = Pick<GetMyBookingsResultLiveVisit, 'startTimeMs' | 'startTimePending' | 'requestedDate'>;
+type VisitWhen = Pick<GetMyBookingsResultLiveVisit, 'startTimeMs' | 'startTimePending' | 'requestedDate'> & VisitBlock;
 /** #1098: what a night-only visit says in place of a clock time until the Auntie sets one. */
 export const AUNTIE_SETS_START_TIME = 'Start time set by your Auntie';
 /**
@@ -72,12 +109,12 @@ export function visitWhenLine(b: VisitWhen): string {
     const night = requestedNight(b);
     return night === null ? AUNTIE_SETS_START_TIME : `${WEEKDAYS[night.getDay()]} night · ${AUNTIE_SETS_START_TIME}`;
   }
-  return b.startTimeMs !== null ? weekdayTime(b.startTimeMs) : 'Time to be confirmed';
+  return b.startTimeMs !== null ? weekdayWhen(b.startTimeMs, b) : 'Time to be confirmed';
 }
 /** {@link visitSubtitle} for a whole booking, so a night waiting on its start (#1098) says so. */
 export function bookingSubtitle(b: VisitWhen & Pick<GetMyBookingsResultLiveVisit, 'auntieDisplayName'>): string {
   if (isStartTimePending(b)) return visitWhenLine(b);
-  return visitSubtitle(b.startTimeMs, b.auntieDisplayName);
+  return visitSubtitle(b.startTimeMs, b.auntieDisplayName, b);
 }
 /** "Today" / "Yesterday" / "3 days ago" / falls back to a short date past a week out. */
 export function relativeDay(ms: number, now: number = Date.now()): string {

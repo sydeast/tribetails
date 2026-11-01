@@ -82,7 +82,7 @@ describe('SecondaryKinfolkCard', () => {
     mocks.list.mockResolvedValue([SAM]);
     mount();
     await userEvent.click(await screen.findByRole('button', { name: 'Edit Sam Lee' }));
-    expect(screen.getByLabelText('Phone (optional)')).toHaveValue('+18055550177');
+    expect(screen.getByLabelText('Phone (optional)')).toHaveValue('(805) 555-0177');
     await userEvent.clear(screen.getByLabelText('Phone (optional)'));
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() =>

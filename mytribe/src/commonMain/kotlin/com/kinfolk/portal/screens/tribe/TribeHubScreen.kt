@@ -1,5 +1,6 @@
 package com.kinfolk.portal.screens.tribe
 
+import com.kinfolk.portal.util.auntieName
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -230,7 +231,7 @@ private fun TaleLine(tale: KinTale) {
         )
         val meta = buildString {
             append("FROM ")
-            append((tale.authorDisplayName ?: "YOUR AUNTIE").uppercase())
+            append((auntieName(tale.authorDisplayName) ?: "YOUR AUNTIE").uppercase())
             tale.sentAtMs?.let { append(" · "); append(relativeTime(it).uppercase()) }
         }
         Text(meta, style = type.sansMeta)

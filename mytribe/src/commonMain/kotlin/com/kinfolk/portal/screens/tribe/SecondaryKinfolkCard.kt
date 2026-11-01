@@ -33,6 +33,7 @@ import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
+import com.kinfolk.portal.util.formatPhone
 
 /**
  * What "Give portal access" hands to the invite card: the person's email (blank
@@ -106,7 +107,7 @@ internal fun SecondaryKinfolkCard(
         formOpen = true
         editingId = p?.personId
         name = p?.name.orEmpty()
-        phone = p?.phone.orEmpty()
+        phone = formatPhone(p?.phone)
         email = p?.email.orEmpty()
         formError = null
     }
@@ -135,7 +136,7 @@ internal fun SecondaryKinfolkCard(
                         if (index > 0) CardDivider()
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(p.name, style = type.sansBody)
-                            listOfNotNull(p.phone, p.email).takeIf { it.isNotEmpty() }?.let {
+                            listOfNotNull(p.phone?.let { formatPhone(it) }?.takeIf { it.isNotEmpty() }, p.email).takeIf { it.isNotEmpty() }?.let {
                                 Text(it.joinToString(" · "), style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
                             }
                             Text(

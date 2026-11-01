@@ -47,7 +47,7 @@ private fun ComposeUiTest.fillToReview() {
     waitForIdle()
     onNodeWithText("10").performClick()
     waitForIdle()
-    onNodeWithText("Evening (17:00-21:00)").performScrollTo().performClick()
+    onNodeWithText("Evening (5 PM to 9 PM)").performScrollTo().performClick()
     waitForIdle()
     clickFooter("Next")
     clickFooter("Next")
@@ -187,5 +187,41 @@ class PostSaveTest {
         onNodeWithText("Park Adventure").assertIsDisplayed()
         onNodeWithTag(SAVE_NOTICE_TAG).assertDoesNotExist()
         assertNotNull(fake.calls.firstOrNull { it.first == "getMyBookings" })
+    }
+}
+class HomeHandoffTest {
+    @Test
+    fun home_opensOnTheHandoff_withTheConfirmation_whileItsOwnReadIsStillOut() = runComposeUiTest {
+        val hanging = object : FunctionsClient {
+            override suspend fun call(name: String, payload: JsonObject?): JsonObject = awaitCancellation()
+        }
+        val visit = Booking(
+            id = "v-new", kinfolkId = "3", status = BookingStatus.Requested, serviceType = null, title = "Evening walk",
+            startTimeMs = null, endTimeMs = null, kinIds = emptyList(), kinNames = emptyList(), auntieDisplayName = null,
+            auntieAvatarUrl = null, notes = null, createdAtMs = null, visitProgress = null, batchId = "batch-1",
+        )
+        var handoff: ScheduleHandoff? = ScheduleHandoff(
+            bookings = BookingsResult(liveVisit = null, upcoming = listOf(visit), recent = emptyList()),
+            notice = "Booking requested",
+        )
+        setThemedContent {
+            com.kinfolk.portal.screens.home.HomeScreen(
+                "The Foster", "3", PortalApi(hanging),
+                handoff = handoff,
+                onHandoffTaken = { handoff = null },
+            )
+        }
+        waitForIdle()
+        onNodeWithTag(SAVE_NOTICE_TAG).assertIsDisplayed()
+        onNodeWithText("Booking requested").assertIsDisplayed()
+        onNodeWithText("Evening walk").assertExists()
+        assertNull(handoff)
+    }
+    @Test
+    fun home_withNoHandoff_showsNoConfirmation() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        setThemedContent { com.kinfolk.portal.screens.home.HomeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag(SAVE_NOTICE_TAG).assertDoesNotExist()
     }
 }

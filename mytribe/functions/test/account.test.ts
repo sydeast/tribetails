@@ -117,4 +117,30 @@ describe('saveMyAccountHandler', () => {
     expect(w!.data.displayName).toBe('New Name');
     expect(w!.data.phone).toBe('+18005551234');
   });
+
+  it('refuses an unparseable phone with a plain, typed message and writes nothing (#1289)', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyAccountHandler } = await import('../src/portal/account');
+    const err = await saveMyAccountHandler({ data: { displayName: 'Casey', phone: 'abc123' }, auth: { uid: 'u1' } } as any).catch((e) => e);
+    expect(err).toMatchObject({
+      code: 'invalid-argument',
+      message: 'Enter a 10-digit phone number.',
+      details: { field: 'phone', reason: 'invalid-phone' },
+    });
+    expect(err.message).not.toMatch(/phoneNormalize|abc123/);
+    expect(ctx.writes.find((w) => w.path === 'clients/u1')).toBeUndefined();
+  });
+  it('names the backup phone when that is the bad one (#1289)', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { saveMyAccountHandler } = await import('../src/portal/account');
+    await expect(
+      saveMyAccountHandler({ data: { backupPhone: '12345' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'Enter a 10-digit backup phone number.',
+      details: { field: 'backupPhone', reason: 'invalid-phone' },
+    });
+  });
 });

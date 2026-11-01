@@ -9,6 +9,7 @@ import {
 import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from './Loading';
 import { OfflineNotice } from './OfflineNotice';
+import { formatPhone } from '../lib/phone';
 
 interface Draft {
   personId?: string;
@@ -132,7 +133,7 @@ export function SecondaryKinfolkCard(props: {
               {people.map((p) => (
                 <li key={p.personId} className="memberrow" data-testid="skin-row">
                   <div className="mname">{p.name}</div>
-                  <div className="msub">{[p.phone, p.email, ACCESS_LABEL[p.access]].filter(Boolean).join(' · ')}</div>
+                  <div className="msub">{[formatPhone(p.phone), p.email, ACCESS_LABEL[p.access]].filter(Boolean).join(' · ')}</div>
                   {confirmRemove === p.personId ? (
                     <div className="contactactions">
                       <span className="sub">Remove {p.name}?</span>
@@ -155,7 +156,7 @@ export function SecondaryKinfolkCard(props: {
                         aria-label={`Edit ${p.name}`}
                         onClick={() => {
                           setMessage(null);
-                          setDraft({ personId: p.personId, name: p.name, phone: p.phone ?? '', email: p.email ?? '' });
+                          setDraft({ personId: p.personId, name: p.name, phone: formatPhone(p.phone), email: p.email ?? '' });
                         }}
                       >
                         Edit

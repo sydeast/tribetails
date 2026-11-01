@@ -536,9 +536,16 @@ service cloud.firestore {
                     || (isTestAdmin() && kinfolkId == testScope());
     }
 
+ // #1344: READ IS STAFF-ONLY, same reasoning as `kinfolk/{id}` above. This
+ // flat doc is the canonical home of the staff-only pet fields (officeNotes,
+ // reactive, routine, vaccinations, tags...: functions/src/lib/kinStaffFields.ts),
+ // and a rule gates a document, never a field. The kinfolk branch that used to
+ // sit here handed every one of them to the household. No portal surface reads
+ // this collection: pet data reaches the portal through `getMyKin`, which reads
+ // `families/{fid}/kin` on the Admin SDK and projects its output, and that
+ // family doc never carries a staff-only field (#1335).
     match /kin/{docId} {
       allow read: if isStaff()
-                  || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
                   || testOwnsExisting();
       allow create: if isStaff() || testOwnsIncoming();
       allow update: if isStaff() || testOwnsExisting();
@@ -874,11 +881,17 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // #1335: every active member can read this whole doc, so it must never
+      // carry a staff-only pet field. The flat -> family mirror copies only the
+      // household-visible facts (STAFF_EDITABLE_FIELDS in
+      // functions/src/triggers/kinMirror.ts); officeNotes, routine, reactive and
+      // the rest stay on the staff-only flat `kin/{docId}`.
       match /kin/{kinId} {
         allow read: if activeMember(fid) || isStaff();
         allow create, delete: if hasPerm(fid, 'kin_edit');
-        // #1310: this doc also carries staff-only fields the flat -> family
-        // mirror copies in (officeNotes, reactive, routine, vaccinations...).
+        // #1310: older docs may still carry staff-only fields the flat -> family
+        // mirror used to copy in (officeNotes, reactive, routine...) until the
+        // #1335 strip runs, and no household write may ever add one back.
         // Even a kin_edit holder may only write what the portal edits: the
         // profile, the care block, and the five descriptive facts shared with
         // the admin (sex, weight, colorMarkings, spayedNeutered, vetInfo; see
