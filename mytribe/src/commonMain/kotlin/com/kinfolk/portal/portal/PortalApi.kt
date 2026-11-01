@@ -926,30 +926,15 @@ class PortalApi(private val fns: FunctionsClient) {
         )
     }
 
-    suspend fun saveMyNotificationPrefs(
-        byCategory: Map<String, Map<String, Boolean>>,
-        byKey: Map<String, Map<String, Boolean>>,
-        marketingOptIn: Map<String, Boolean>,
-    ) {
+    /**
+     * Save ONE change (#1292). The callable merges [patch] into the stored
+     * preferences; nothing here is rebuilt from screen state.
+     */
+    suspend fun saveMyNotificationPrefs(patch: NotificationPrefsPatch) {
         fns.call("saveMyNotificationPrefs", buildJsonObject {
-            put("prefs", buildJsonObject {
-                put("byCategory", buildJsonObject {
-                    byCategory.forEach { (cat, channels) ->
-                        put(cat, buildJsonObject { channels.forEach { (ch, v) -> put(ch, v) } })
-                    }
-                })
-                put("byKey", buildJsonObject {
-                    byKey.forEach { (key, channels) ->
-                        put(key, buildJsonObject { channels.forEach { (ch, v) -> put(ch, v) } })
-                    }
-                })
-                put("marketingOptIn", buildJsonObject {
-                    marketingOptIn.forEach { (k, v) -> put(k, v) }
-                })
-            })
+            put("patch", patch.toJson())
         })
     }
-
     private fun parseChannelMapMap(obj: JsonObject?): Map<String, Map<String, Boolean>> {
         if (obj == null) return emptyMap()
         return obj.entries.associate { (outerKey, channels) ->
