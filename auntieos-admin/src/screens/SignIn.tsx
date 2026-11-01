@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouter, useSearch } from '@tanstack/react-router';
+import { DEFAULT_SIGN_IN_LANDING, safeRedirectPath } from '../lib/signInRedirect';
 import { FirebaseError } from 'firebase/app';
 import { sendReset, signIn, signOutSilent, useAuth } from '../lib/auth';
 import { attestationOwnsRecaptcha } from '../lib/boot';
@@ -72,6 +73,16 @@ function PawMark() {
 
 export function SignIn() {
   const navigate = useNavigate();
+  // #1384: the location the route guard turned the operator away from. Checked
+  // again here, not trusted from the router: it is an address-bar value.
+  const { redirect: carried } = useSearch({ strict: false }) as { redirect?: unknown };
+  const landing = safeRedirectPath(carried);
+  /** Land on the carried deep link, or Home. pushed as a whole string so the link's own search and hash survive. */
+  const { history } = useRouter();
+  const land = async () => {
+    if (landing === null) await navigate({ to: DEFAULT_SIGN_IN_LANDING });
+    else history.push(landing);
+  };
   const authState = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -153,7 +164,7 @@ export function SignIn() {
         if (access.status === 'denied') {
           void denyEntry();
         } else {
-          void navigate({ to: '/home' });
+          void land();
         }
       })
       .catch((err: unknown) => {
@@ -171,7 +182,7 @@ export function SignIn() {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authState, navigate]);
+  }, [authState, navigate, landing]);
 
   async function doSignIn() {
     if (busy || resetting) return;
@@ -193,7 +204,7 @@ export function SignIn() {
         setError(DENIED_MSG);
         return;
       }
-      await navigate({ to: '/home' });
+      await land();
     } catch (err) {
       setError(authMessage(err));
     } finally {

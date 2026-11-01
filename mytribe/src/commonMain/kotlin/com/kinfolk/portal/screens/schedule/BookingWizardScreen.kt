@@ -62,10 +62,13 @@ import com.kinfolk.portal.portal.Service
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.attempt
 import com.kinfolk.portal.util.formatUsd
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -158,10 +161,20 @@ fun BookingWizardScreen(
      */
     var pricesVisible by remember { mutableStateOf(true) }
 
-    LaunchedEffect(kinfolkId) {
+    // #1282: the four reads start together and are applied in the old order,
+    // each with its old failure posture. They used to be awaited one after the
+    // other, and getServiceCatalog, getBusinessClosures and getBookingPolicy
+    // carry no minInstances, so a first open paid three cold starts in a row.
+    LaunchedEffect(kinfolkId) { coroutineScope {
+        val kinFetch = async { attempt { portalApi.getMyKin(kinfolkId) } }
+        val catalogFetch = async { attempt { portalApi.getServiceCatalog(kinfolkId) } }
+        val closuresFetch = async {
+            attempt { portalApi.getBusinessClosures(bookingDateKey(today), bookingDateKey(horizonEnd)) }
+        }
+        val policyFetch = async { attempt { portalApi.getBookingPolicy() } }
         try {
-            kin = portalApi.getMyKin(kinfolkId).kin.filter { it.status == com.kinfolk.portal.portal.KinStatus.Active }
-            val catalogRes = portalApi.getServiceCatalog(kinfolkId)
+            kin = kinFetch.await().getOrThrow().kin.filter { it.status == com.kinfolk.portal.portal.KinStatus.Active }
+            val catalogRes = catalogFetch.await().getOrThrow()
             services = catalogRes.services
             pricesVisible = catalogRes.pricesVisible
         } catch (c: CancellationException) {
@@ -172,8 +185,7 @@ fun BookingWizardScreen(
         // Deliberately AFTER, and in its own try: closures are a secondary
         // read. Losing them must not take the whole wizard down with it.
         try {
-            closedDates = portalApi
-                .getBusinessClosures(bookingDateKey(today), bookingDateKey(horizonEnd))
+            closedDates = closuresFetch.await().getOrThrow()
                 .associate { it.date to it.name }
         } catch (c: CancellationException) {
             throw c
@@ -183,14 +195,14 @@ fun BookingWizardScreen(
         // Same posture again: the booking policy is a secondary read, and
         // losing it leaves the wizard on clock times rather than dead.
         try {
-            policy = portalApi.getBookingPolicy()
+            policy = policyFetch.await().getOrThrow()
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) {
             policy = BookingPolicy.CLOCK_ONLY
         }
         policyLoaded = true
-    }
+    } }
 
     /**
      * The mode in force. Derived rather than stored, so it can never be a mode

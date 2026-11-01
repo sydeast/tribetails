@@ -54,6 +54,12 @@ process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT || 'auntieos-ttpc';
 process.env.FIREBASE_CONFIG =
   process.env.FIREBASE_CONFIG || JSON.stringify({ projectId: process.env.GCLOUD_PROJECT });
 
+// lib/index.js loads only FUNCTION_TARGET's module when that is set (#1337), the
+// way a deployed instance does. A value leaked into the release shell would make
+// this enumerate a fleet of one and hand release.sh a list missing every other
+// function, so it is cleared: this script always wants the whole fleet.
+delete process.env.FUNCTION_TARGET;
+
 const ROOT = path.resolve(__dirname, '..');
 const FUNCTIONS_DIR = path.join(ROOT, 'mytribe', 'functions');
 const LIB_DIR = path.join(FUNCTIONS_DIR, 'lib');
@@ -163,6 +169,308 @@ function ownersByIdentity(fleetValues) {
 // The module graph, read statically so LAZY requires are in it.
 // ---------------------------------------------------------------------------
 
+const REGEX_AFTER_WORDS = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void',
+  'throw', 'case', 'do', 'else', 'yield', 'await',
+]);
+// Non-ASCII outside a string or comment can only be part of an identifier, so
+// it counts as one; read as a punctuator it would make the next `/` a regex.
+const IDENT = /[A-Za-z0-9_$\u0080-\uffff]/;
+const OPENERS = { '(': ')', '[': ']', '{': '}' };
+
+/**
+ * The `require(...)` and `import(...)` calls in one emitted JS file, read by a
+ * small lexer so that text inside comments and string literals is not code
+ * (#1390). tsc keeps comments in lib/, and several source comments spell out
+ * "require()" in prose; a plain text scan read those as computed requires and
+ * sent every release to the full fleet.
+ *
+ * `import('...')` in code is read the same way as `require('...')`. tsc keeps a
+ * real dynamic import in a few modules, and the text scan before this matched
+ * `require(` only, so a module loaded only through `import()` was not in the
+ * graph at all (#1393).
+ *
+ * THE LEXER IS NEVER TRUSTED TO REMOVE AN EDGE. What it can do is call a
+ * `require(` mention prose, so a lexer bug can cost narrowing but has one narrow
+ * way to cost a function, and every other way it can go wrong is refused:
+ *
+ *   - every literal specifier the plain text scan sees, comments included, is
+ *     still an edge (when it resolves), so a commented-out require only ever
+ *     widens a deploy;
+ *   - a call in code whose argument is anything but one plain string literal
+ *     followed by `)` is computed: `require(x)`, `require('./a' + b)`,
+ *     `require(\`./${x}\`)`;
+ *   - `require` in code that is not called (`const r = require`,
+ *     `require.resolve`) is an alias the graph cannot follow;
+ *   - a quoted string or regex that hits a newline, a comment, template or
+ *     string still open at end of file, or a bracket count that goes negative or
+ *     does not end at zero means the lexer lost its place in this file.
+ *
+ * Each of those returns a `refusal`, which `buildGraph` turns into exit 3. What
+ * is left is a regex/division misread that keeps every bracket balanced, closes
+ * every string, and happens to hide a computed require. That is the residual,
+ * stated so nobody has to rediscover it.
+ */
+function scanCalls(text) {
+  const calls = []; // { spec | null, line, kind }
+  let line = 1;
+  let i = 0;
+  const n = text.length;
+  // What the previous significant code token was, for regex-vs-division.
+  // 'start' | 'value' (identifier, number, `)`, `]`, string, regex, template)
+  // | 'operator' (any other punctuator, `}`, or a REGEX_AFTER_WORDS keyword).
+  let prev = 'start';
+  const brackets = [];
+  const templateDepth = []; // brackets.length at each open `${`
+  const refuse = (why) => ({ calls, refusal: `line ${line}: ${why}` });
+
+  // Reads a quoted string starting at text[i] (the quote). Returns the index
+  // after the closing quote and the literal's value, or null on a newline.
+  const readQuoted = (start) => {
+    const q = text[start];
+    let j = start + 1;
+    let value = '';
+    while (j < n) {
+      const c = text[j];
+      if (c === '\\') {
+        if (text[j + 1] === '\n') line++;
+        value += text[j + 1] || '';
+        j += 2;
+        continue;
+      }
+      if (c === '\n') return null;
+      if (c === q) return { end: j + 1, value };
+      value += c;
+      j++;
+    }
+    return null;
+  };
+
+  // Reads template text from i (just past a backtick or a closing `}` of a
+  // `${`). Returns { end, done } where done means the closing backtick was hit
+  // and !done means a `${` opened at end - 2.
+  const readTemplate = (start) => {
+    let j = start;
+    while (j < n) {
+      const c = text[j];
+      if (c === '\\') {
+        if (text[j + 1] === '\n') line++;
+        j += 2;
+        continue;
+      }
+      if (c === '\n') line++;
+      if (c === '`') return { end: j + 1, done: true };
+      if (c === '$' && text[j + 1] === '{') return { end: j + 2, done: false };
+      j++;
+    }
+    return null;
+  };
+
+  const skipSpace = (j) => {
+    while (j < n && /\s/.test(text[j])) {
+      if (text[j] === '\n') line++;
+      j++;
+    }
+    return j;
+  };
+
+  // At a `require` or `import` word followed by `(`: classify the argument.
+  const readCallArg = (open) => {
+    let j = skipSpace(open + 1);
+    const c = text[j];
+    let spec = null;
+    let end = j;
+
+    if (c === '"' || c === "'") {
+      const q = readQuoted(j);
+      if (q) {
+        spec = q.value;
+        end = q.end;
+      }
+    } else if (c === '`') {
+      const close = text.indexOf('`', j + 1);
+      const body = close === -1 ? null : text.slice(j + 1, close);
+      if (body !== null && !body.includes('${') && !body.includes('\\') && !body.includes('\n')) {
+        spec = body;
+        end = close + 1;
+      }
+    }
+    if (spec === null) return { spec: null };
+    const after = skipSpace(end);
+    if (text[after] !== ')') return { spec: null };
+    return { spec };
+  };
+
+  while (i < n) {
+    const c = text[i];
+    const next = text[i + 1];
+
+    if (c === '\n') {
+      line++;
+      i++;
+      continue;
+    }
+
+    if (/\s/.test(c)) {
+      i++;
+      continue;
+    }
+
+    if (c === '/' && next === '/') {
+      const end = text.indexOf('\n', i);
+      i = end === -1 ? n : end;
+      continue;
+    }
+
+    if (c === '/' && next === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end === -1) return refuse('a /* comment is still open at end of file');
+      for (let k = i; k < end; k++) if (text[k] === '\n') line++;
+      i = end + 2;
+      continue;
+    }
+
+    if (c === '"' || c === "'") {
+      const q = readQuoted(i);
+      if (!q) return refuse('a quoted string runs into a newline or end of file');
+      i = q.end;
+      prev = 'value';
+      continue;
+    }
+
+    if (c === '`') {
+      const t = readTemplate(i + 1);
+      if (!t) return refuse('a template literal is still open at end of file');
+      i = t.end;
+      if (!t.done) {
+        templateDepth.push(brackets.length);
+        prev = 'operator';
+      } else {
+        prev = 'value';
+      }
+      continue;
+    }
+
+    if (c === '/') {
+      if (prev === 'value') {
+        i++;
+        prev = 'operator';
+        continue;
+      }
+      // A regex literal.
+      let j = i + 1;
+      let inClass = false;
+      for (;;) {
+        if (j >= n || text[j] === '\n') return refuse('a regex literal runs into a newline');
+        const r = text[j];
+        if (r === '\\') {
+          j += 2;
+          continue;
+        }
+        if (r === '[') inClass = true;
+        else if (r === ']') inClass = false;
+        else if (r === '/' && !inClass) break;
+        j++;
+      }
+      j++;
+      while (j < n && IDENT.test(text[j])) j++;
+      i = j;
+      prev = 'value';
+      continue;
+    }
+
+    if (IDENT.test(c)) {
+      let j = i;
+      while (j < n && IDENT.test(text[j])) j++;
+      const word = text.slice(i, j);
+      const before = i > 0 ? text[i - 1] : '';
+      if (/[0-9]/.test(c)) {
+        // A number, including 1e5 and 0x1f; a `.5` tail is a punctuator then a
+        // number, which lands in the same 'value' state.
+        i = j;
+        prev = 'value';
+        continue;
+      }
+
+      if (word === 'require' || (word === 'import' && before !== '.')) {
+        const k = skipSpace(j);
+        if (text[k] === '(') {
+          const callLine = line;
+          const { spec } = readCallArg(k);
+          calls.push({ spec, line: callLine, kind: word });
+          // Lex the argument normally from here, so its brackets and strings
+          // are counted like any other code.
+          line = callLine;
+          i = j;
+          prev = 'value';
+          continue;
+        }
+        if (word === 'require') {
+          calls.push({ spec: null, line, kind: 'require-value' });
+        }
+        // `import x from` / `import {` would be ESM, which tsc does not emit
+        // here; it is lexed as a plain word.
+      }
+      i = j;
+      prev = REGEX_AFTER_WORDS.has(word) && before !== '.' ? 'operator' : 'value';
+      continue;
+    }
+
+    if (OPENERS[c]) {
+      brackets.push(OPENERS[c]);
+      i++;
+      prev = 'operator';
+      continue;
+    }
+
+    if (c === ')' || c === ']' || c === '}') {
+      if (
+        c === '}' &&
+        templateDepth.length &&
+        templateDepth[templateDepth.length - 1] === brackets.length
+      ) {
+        templateDepth.pop();
+        const t = readTemplate(i + 1);
+        if (!t) return refuse('a template literal is still open at end of file');
+        i = t.end;
+        if (!t.done) {
+          templateDepth.push(brackets.length);
+          prev = 'operator';
+        } else {
+          prev = 'value';
+        }
+        continue;
+      }
+      if (brackets.pop() !== c) return refuse(`an unmatched '${c}'`);
+      i++;
+      prev = c === '}' ? 'operator' : 'value';
+      continue;
+    }
+
+    // Any other punctuator. `++` / `--` after a value keep it a value
+    // (`i++ / 2`), which is the only postfix case division cares about.
+    if ((c === '+' || c === '-') && next === c && prev === 'value') {
+      i += 2;
+      continue;
+    }
+    i++;
+    prev = 'operator';
+  }
+
+  if (templateDepth.length) return refuse('a template literal is still open at end of file');
+  if (brackets.length) return refuse(`${brackets.length} bracket(s) still open at end of file`);
+  return { calls, refusal: null };
+}
+
+/** Every literal `require('...')` / `import('...')` the plain text shows, comments included. */
+function rawLiteralSpecs(text) {
+  const specs = [];
+  const re = /\b(?:require|import)\s*\(\s*(?:"([^"\n]*)"|'([^'\n]*)')/g;
+  let m;
+  while ((m = re.exec(text)) !== null) specs.push(m[1] !== undefined ? m[1] : m[2]);
+  return specs;
+}
+
 /**
  * Every `require("...")` edge between built lib modules.
  *
@@ -173,8 +481,9 @@ function ownersByIdentity(fleetValues) {
  * emits every `import` and every `await import()` as a literal `require("...")`,
  * so scanning the emitted JS sees both kinds.
  *
- * A require whose argument is NOT a string literal, or a relative specifier that
- * does not resolve, means the graph has a hole. Either aborts narrowing (exit 3)
+ * A require in code whose argument is NOT a string literal, a relative
+ * specifier in code that does not resolve, or a file the lexer above cannot
+ * read cleanly means the graph has a hole. Each aborts narrowing (exit 3)
  * rather than producing a subset that quietly omits something.
  */
 function buildGraph() {
@@ -188,36 +497,65 @@ function buildGraph() {
   })(LIB_DIR);
 
   const deps = new Map();
+  let codeCalls = 0;
+  let notCode = 0;
+
   for (const file of files) {
     const text = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(ROOT, file);
+    const { calls, refusal } = scanCalls(text);
+    if (refusal) {
+      cannotNarrow(
+        `${rel} could not be read as JavaScript (${refusal}).`,
+        'Comments and strings cannot be told from code past that point, so a',
+        'require there cannot be ruled out. Deploying the full fleet instead.',
+      );
+    }
+
     const out = new Set();
-    const re = /\brequire\s*\(/g;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      const rest = text.slice(m.index + m[0].length);
-      const quoted = /^\s*("([^"\n]*)"|'([^'\n]*)')/.exec(rest);
-      if (!quoted) {
+    for (const call of calls) {
+      if (call.spec === null) {
         cannotNarrow(
-          `${path.relative(ROOT, file)} has a require() with a computed argument.`,
+          call.kind === 'require-value'
+            ? `${rel}:${call.line} uses require as a value rather than calling it.`
+            : `${rel}:${call.line} has a ${call.kind}() with a computed argument.`,
           'The module graph cannot be read statically past that, so a changed file',
           'cannot be attributed to the functions that load it. Deploying the full',
           'fleet instead, which is slower and correct.',
         );
       }
-      const spec = quoted[2] !== undefined ? quoted[2] : quoted[3];
-      if (!spec.startsWith('.')) continue;
-      const resolved = resolveRelative(file, spec);
+      if (!call.spec.startsWith('.')) continue;
+      const resolved = resolveRelative(file, call.spec);
       if (!resolved) {
         cannotNarrow(
-          `${path.relative(ROOT, file)} requires '${spec}', which resolves to nothing on disk.`,
+          `${rel}:${call.line} requires '${call.spec}', which resolves to nothing on disk.`,
           'A hole in the module graph makes any narrowed deploy a guess. Deploying',
           'the full fleet instead. A stale lib/ is the usual cause: npm run build:functions.',
         );
       }
       out.add(resolved);
     }
+
+    codeCalls += calls.length;
+    // The text scan's literal hits, comments and strings included. One that
+    // resolves joins the graph even though the lexer called it prose: an extra
+    // edge only ever widens a deploy, so the lexer is never trusted to remove
+    // one. One that resolves to nothing is prose about a path, not a hole.
+    const raw = rawLiteralSpecs(text);
+    const rawCount = (text.match(/\brequire\s*\(/g) || []).length;
+    notCode += Math.max(0, rawCount - calls.filter((c) => c.kind === 'require').length);
+    for (const spec of raw) {
+      if (!spec.startsWith('.')) continue;
+      const resolved = resolveRelative(file, spec);
+      if (resolved) out.add(resolved);
+    }
     deps.set(file, [...out]);
   }
+
+  console.error(
+    `read ${files.length} lib modules: ${codeCalls} require/import call(s) in code, ` +
+      `${notCode} require( mention(s) in comments or strings set aside.`,
+  );
   return { files, deps };
 }
 

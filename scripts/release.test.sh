@@ -1595,6 +1595,158 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 19b. require() in comments and strings is prose, not a computed require
+#      (#1390). tsc keeps comments in lib/, and one source comment saying
+#      "lowered to require()," sent every release to the full fleet. The scanner
+#      now lexes comments and strings out. These cases pin both directions:
+#      prose narrows, and every way a real require can hide still falls back to
+#      the whole fleet (exit 3), which is the safe direction.
+# ---------------------------------------------------------------------------
+# ft <dir> <changed-file> [env...]: run function-targets.js --changed-from in
+# that repo, stdout to $dir/ft.out, stderr to $dir/ft.err; prints the exit code.
+ft() {
+  local dir="$1" changed="$2"; shift 2
+  ( cd "$dir/repo" && env "$@" node scripts/function-targets.js --changed-from "$changed" \
+      > "$dir/ft.out" 2> "$dir/ft.err" )
+  printf '%s' "$?"
+}
+ft_names() { tr '\n' ' ' < "$1/ft.out"; }
+
+D19B="$(make_repo)"
+printf 'M\tmytribe/functions/src/portal/gamma.ts\n' > "$D19B/ch-gamma"
+printf 'M\tmytribe/functions/src/lib/shared.ts\n' > "$D19B/ch-shared"
+
+# gamma: every kind of prose require, then a regex holding both quote marks
+# with a REAL literal require after it on the same line. A regex misread as a
+# string would swallow that require and drop gamma from the shared-module set.
+cat > "$D19B/repo/mytribe/functions/lib/portal/gamma.js" <<'STUBFN'
+// this stays a real dynamic import rather than being lowered to require(),
+/* and why `await import()` and not `require(path)`.
+ * require(cjs build): +19.8 MiB */
+const prose = "a bare require(x) escapes"; const more = 'require(y)';
+const tpl = `require(${prose.length})`;
+const quoted = /^["']/.test(prose) ? require('../lib/shared') : null;
+exports.gamma = { __endpoint: { platform: 'gcfv2' }, quoted, more, tpl };
+STUBFN
+RC="$(ft "$D19B" "$D19B/ch-gamma")"
+if [ "$RC" = "0" ] && [ "$(ft_names "$D19B")" = "gamma " ]; then
+  ok "require() in comments, strings and templates narrows to the changed function"
+else
+  bad "prose require() did not narrow (rc=$RC, got '$(ft_names "$D19B")')"; cat "$D19B/ft.err"
+fi
+RC="$(ft "$D19B" "$D19B/ch-shared")"
+if [ "$RC" = "0" ] && [ "$(ft_names "$D19B")" = "alpha beta gamma " ]; then
+  ok "a literal require after a regex holding both quote marks is still an edge"
+else
+  bad "the require after the regex was lost (rc=$RC, got '$(ft_names "$D19B")')"; cat "$D19B/ft.err"
+fi
+
+# A commented-out literal require still counts when it resolves: the lexer
+# never removes an edge, so a misread can only ever widen a deploy. And an
+# await import() in code is an edge too. The text scan before #1390 matched
+# require( only, so a module loaded only through import() was invisible to it.
+printf "// const s = require('../lib/shared');\n" >> "$D19B/repo/mytribe/functions/lib/admin/epsilon.js"
+printf "exports.load = async () => await import('../lib/shared');\n" \
+  >> "$D19B/repo/mytribe/functions/lib/admin/zeta.js"
+RC="$(ft "$D19B" "$D19B/ch-shared")"
+if [ "$RC" = "0" ] && [ "$(ft_names "$D19B")" = "alpha beta epsilon gamma zeta " ]; then
+  ok "a commented-out require widens, and an await import() in code is an edge"
+else
+  bad "commented require / import() edges wrong (rc=$RC, got '$(ft_names "$D19B")')"; cat "$D19B/ft.err"
+fi
+
+# Every way a real require can hide must still fall back (exit 3, nothing on
+# stdout), naming the file. Each shape goes in a lib module that index.js never
+# loads: the scan walks every file under lib/, and a module that only runs (or
+# only parses) when its function is invoked is exactly the lazy case it guards.
+HAZARD="$D19B/repo/mytribe/functions/lib/lib/hazard.js"
+ft_refuses() {
+  local label="$1" body="$2" want="$3" rc
+  printf '%s\n' "$body" > "$HAZARD"
+  rc="$(ft "$D19B" "$D19B/ch-gamma")"
+  if [ "$rc" = "3" ] && grep -qF -- "$want" "$D19B/ft.err" && [ ! -s "$D19B/ft.out" ]; then
+    ok "$label falls back to the full fleet"
+  else
+    bad "$label did not fall back (rc=$rc)"; cat "$D19B/ft.err"
+  fi
+}
+ft_refuses "a computed require(name)" 'const m = require(process.env.X);' \
+  "lib/lib/hazard.js:1 has a require() with a computed argument"
+ft_refuses "a concatenated require('./a' + b)" "const m = require('./a' + process.env.X);" \
+  "computed argument"
+ft_refuses "a template require with a substitution" 'const m = require(`./${process.env.X}`);' \
+  "computed argument"
+ft_refuses "a computed await import(name)" 'exports.l = async () => import(process.env.X);' \
+  "has a import() with a computed argument"
+ft_refuses "require aliased as a value" 'const r = require; r(process.env.X);' \
+  "uses require as a value"
+ft_refuses "an unterminated string" 'const s = "open' "could not be read as JavaScript"
+ft_refuses "an unclosed block comment" '/* never closed' "could not be read as JavaScript"
+ft_refuses "an unbalanced bracket" 'if (x) {' "could not be read as JavaScript"
+rm -f "$HAZARD"
+
+# The #1337 index shape (PR #1391): a FUNCTIONS table of lazy loaders with
+# literal specifiers, a loop that loads only FUNCTION_TARGET's module when that
+# is set, and comments that talk about require. FUNCTION_TARGET leaking into
+# the release shell must not shrink the fleet to one function.
+cat > "$D19B/repo/mytribe/functions/lib/index.js" <<'STUBFN'
+"use strict";
+// tsc emits `export ... from` as a `require()` at its own source position.
+/** Every specifier stays a STRING LITERAL inside the require call. */
+const FUNCTIONS = {
+    alpha: () => require('./portal/alpha'),
+    beta: () => require('./portal/beta'),
+    gamma: () => require('./portal/gamma'),
+    delta: () => require('./admin/delta'),
+    epsilon: () => require('./admin/epsilon'),
+    zeta: () => require('./admin/zeta'),
+};
+function loadFunction(name) {
+    const value = FUNCTIONS[name]()[name];
+    if (!value) throw new Error(`${name} is not exported by its module`);
+    return value;
+}
+function exportedNames(env) {
+    const target = env.FUNCTION_TARGET;
+    if (!target || env.FUNCTIONS_CONTROL_API === 'true') return Object.keys(FUNCTIONS);
+    if (Object.prototype.hasOwnProperty.call(FUNCTIONS, target)) return [target];
+    return Object.keys(FUNCTIONS);
+}
+for (const name of exportedNames(process.env)) {
+    Object.defineProperty(module.exports, name, { enumerable: true, value: loadFunction(name) });
+}
+STUBFN
+FLEET="$(cd "$D19B/repo" && FUNCTION_TARGET=alpha node scripts/function-targets.js 2>/dev/null | tr '\n' ' ')"
+if [ "$FLEET" = "alpha beta delta epsilon gamma zeta " ]; then
+  ok "the lazy-loader index enumerates the whole fleet even with FUNCTION_TARGET set"
+else
+  bad "a leaked FUNCTION_TARGET shrank the fleet to '$FLEET'"
+fi
+RC="$(ft "$D19B" "$D19B/ch-gamma" FUNCTION_TARGET=alpha)"
+if [ "$RC" = "0" ] && [ "$(ft_names "$D19B")" = "gamma " ]; then
+  ok "the lazy-loader index narrows a one-function change to that function"
+else
+  bad "the lazy-loader index did not narrow (rc=$RC, got '$(ft_names "$D19B")')"; cat "$D19B/ft.err"
+fi
+
+# End to end: the same prose in a committed lib module, through release.sh.
+D19C="$(make_repo)"; write_stubs "$D19C"
+( cd "$D19C/repo"
+  printf '// lowered to require(),\nexports.tag = "v1";\n' > mytribe/functions/lib/lib/shared.js
+  git add -A && git commit -qm "prose require in lib" && git push -q origin main
+) >/dev/null 2>&1
+(cd "$D19C/repo" && git rev-parse HEAD) > "$D19C/repo/.release-state"
+commit_change "$D19C" "mytribe/functions/src/portal/gamma.ts" "// one line"
+arm_ci "$D19C"
+RC="$(run_release "$D19C" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_SETTLE=0 FIREBASE_CALL_LOG="$D19C/calls")"
+if [ "$RC" -eq 0 ] && [ "$(fn_deploys "$D19C/calls")" = "gamma" ]; then
+  ok "a release with require() prose in lib/ still deploys only the changed function"
+else
+  bad "the release deployed '$(fn_deploys "$D19C/calls")' (rc=$RC)"; tail -25 "$D19C/out"
+fi
+
+# ---------------------------------------------------------------------------
 # 20. BOTH Android apps ship, and the tag says so per app.
 #
 #     There are two registered, active Android apps in auntieos-ttpc, and until

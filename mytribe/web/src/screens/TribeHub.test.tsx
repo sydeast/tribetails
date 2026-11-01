@@ -107,4 +107,35 @@ describe('TribeHub gallery card', () => {
     expect(thumb?.querySelector('img')).toBeNull();
     expect(thumb?.textContent).toContain('\u{1F436}');
   });
+
+  // #1325: Home Information listed only "Key location on file" after a clinic was
+  // chosen, because it read the pre-picker `vetClinicName` row.
+  describe('the vet clinic (#1325)', () => {
+    const PROFILE_BASE = {
+      profile: { kinfolkId: 'kin-fam-1', displayName: 'The Ramirez Tribe', customFields: [{ key: 'vetClinicId', label: 'Vet Clinic', value: 'm5rTfebiqMxckecn4OCM' }] },
+      homeAccess: { gateCode: null, keyLocation: 'Under the planter', wifiPassword: null, customFields: [], updatedAtMs: null },
+    };
+    it('shows the chosen clinic by name, address and formatted phone, never its id', async () => {
+      mocks.getMyKin.mockResolvedValue({ kin: [] });
+      mocks.getMyTribeProfile.mockResolvedValue({
+        ...PROFILE_BASE,
+        vetClinic: { id: 'm5rTfebiqMxckecn4OCM', name: 'Banfield Pet Hospital', phone: '+18055550123', address: '1 Main St', isEmergency: false },
+      });
+      renderScreen();
+      expect(await screen.findByText('Vet: Banfield Pet Hospital · 1 Main St · (805) 555-0123')).toBeInTheDocument();
+      expect(screen.getByText('Key location on file')).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain('m5rTfebiqMxckecn4OCM');
+      expect(document.body.textContent).not.toContain('+1805');
+    });
+    it('falls back to the pre-picker clinic name, and shows nothing for a bare id', async () => {
+      mocks.getMyKin.mockResolvedValue({ kin: [] });
+      mocks.getMyTribeProfile.mockResolvedValue({
+        ...PROFILE_BASE,
+        profile: { ...PROFILE_BASE.profile, customFields: [...PROFILE_BASE.profile.customFields, { key: 'vetClinicName', label: 'Vet', value: 'Old Town Vet' }] },
+      });
+      renderScreen();
+      expect(await screen.findByText('Vet: Old Town Vet')).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain('m5rTfebiqMxckecn4OCM');
+    });
+  });
 });

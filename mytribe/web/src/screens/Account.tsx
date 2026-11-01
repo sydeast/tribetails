@@ -109,8 +109,11 @@ export function Account() {
   // schema. retry:false keeps that from hammering the callable; the error
   // itself is never surfaced (see block comment above).
   useQuery({ queryKey: ['formSchema', 'account'], queryFn: () => getFormSchema('account'), retry: false });
-  const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId), enabled: account.isSuccess });
-  const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId), enabled: account.isSuccess });
+  // #1282: home and kin start alongside the account read rather than after it.
+  // Neither takes anything from `account`, and waiting made the card row below
+  // (which needs both account and home) three round trips deep instead of two.
+  const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId) });
+  const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
 
   const [hydrated, setHydrated] = useState(false);
   const [displayName, setDisplayName] = useState('');

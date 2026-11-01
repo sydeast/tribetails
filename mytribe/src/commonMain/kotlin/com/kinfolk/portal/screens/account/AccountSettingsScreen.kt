@@ -51,6 +51,8 @@ import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.openExternalUrl
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 @Composable
@@ -113,7 +115,41 @@ fun AccountSettingsScreen(
     // keeps its values in a map, so it is checked the same way.
     val phoneError = phoneProblem(if (accountSchema != null) accountValues["phone"].orEmpty() else phone)
     val backupPhoneError = phoneProblem(if (accountSchema != null) accountValues["backupPhone"].orEmpty() else backupPhone)
-    LaunchedEffect(Unit) {
+    // #1282: the three reads start together. They used to run one after the
+    // other, and two of them (getFormSchema, getMyPaymentMethod) carry no
+    // minInstances, so a first open paid two cold starts back to back. Only
+    // the schema SEEDING needs the account answer, so the fetch runs alongside
+    // it and the seeding waits for both below.
+    LaunchedEffect(Unit) { coroutineScope {
+        val schemaFetch = async {
+            try {
+                portalApi.getFormSchema("account")
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Throwable) {
+                null // admin has not set up schema yet, keep static fields
+            }
+        }
+        // Card on file. Best-effort: a member without billing access is refused
+        // by the callable (cards take billing access, the PRIMARY or a
+        // SECONDARY granted it, D-2026-09-28-BILLING-ACCESS-PAYS), and that
+        // refusal is a fact about
+        // this screen's billing card, not a reason to fail the whole account
+        // load, so it lands in `billingError` and nowhere else.
+        if (billingAccess) {
+            launch {
+                loadingBilling = true
+                try {
+                    paymentMethod = portalApi.getMyPaymentMethod(kinfolkId)
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    billingError = t.message ?: "Could not read your billing details."
+                } finally {
+                    loadingBilling = false
+                }
+            }
+        }
         try {
             val a = portalApi.getMyAccount()
             loaded = a
@@ -132,8 +168,8 @@ fun AccountSettingsScreen(
             error = t.message ?: "Could not load account"
         }
         // Best-effort schema load. Fall back silently to static fields if missing.
-        try {
-            val s = portalApi.getFormSchema("account")
+        val s = schemaFetch.await()
+        if (s != null) {
             accountSchema = s
             // Seed schema values from the current account. secondaryEmail/secondaryRole
             // start blank (they drive the invite flow, not stored account fields).
@@ -145,28 +181,8 @@ fun AccountSettingsScreen(
                 "backupEmail" to backupEmail,
                 "backupPhone" to backupPhone,
             )
-        } catch (c: CancellationException) {
-            throw c
-        } catch (_: Throwable) { /* admin has not set up schema yet, keep static fields */ }
-        // Card on file. Best-effort: a member without billing access is refused
-        // by the callable (cards take billing access, the PRIMARY or a
-        // SECONDARY granted it, D-2026-09-28-BILLING-ACCESS-PAYS), and that
-        // refusal is a fact about
-        // this screen's billing card, not a reason to fail the whole account
-        // load, so it lands in `billingError` and nowhere else.
-        if (billingAccess) {
-            loadingBilling = true
-            try {
-                paymentMethod = portalApi.getMyPaymentMethod(kinfolkId)
-            } catch (c: CancellationException) {
-                throw c
-            } catch (t: Throwable) {
-                billingError = t.message ?: "Could not read your billing details."
-            } finally {
-                loadingBilling = false
-            }
         }
-    }
+    } }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
@@ -508,24 +524,31 @@ fun AccountSettingsScreen(
                     try {
                         // Persistence stays typed: read the schema values map when the
                         // schema drives the form, otherwise the static field state.
+                        // #1336: diffed against the loaded account, so an emptied
+                        // field is sent as a clear and an untouched one not at all.
+                        // A key the schema map lacks falls back to the static field,
+                        // which still holds the seeded value, so it reads as untouched.
                         val schema = accountSchema
-                        if (schema != null) {
-                            portalApi.saveMyAccount(
-                                displayName = accountValues["displayName"].orEmpty().trim().takeIf { it.isNotBlank() },
-                                phone = accountValues["phone"].orEmpty().trim().takeIf { it.isNotBlank() },
-                                photoUrl = photoUrl.trim().takeIf { it.isNotBlank() },
-                                backupEmail = accountValues["backupEmail"].orEmpty().trim().takeIf { it.isNotBlank() },
-                                backupPhone = accountValues["backupPhone"].orEmpty().trim().takeIf { it.isNotBlank() },
+                        val changes = if (schema != null) {
+                            accountChanges(
+                                loaded = loaded,
+                                displayName = accountValues["displayName"] ?: displayName,
+                                phone = accountValues["phone"] ?: phone,
+                                photoUrl = photoUrl,
+                                backupEmail = accountValues["backupEmail"] ?: backupEmail,
+                                backupPhone = accountValues["backupPhone"] ?: backupPhone,
                             )
                         } else {
-                            portalApi.saveMyAccount(
-                                displayName = displayName.trim().takeIf { it.isNotBlank() },
-                                phone = phone.trim().takeIf { it.isNotBlank() },
-                                photoUrl = photoUrl.trim().takeIf { it.isNotBlank() },
-                                backupEmail = backupEmail.trim().takeIf { it.isNotBlank() },
-                                backupPhone = backupPhone.trim().takeIf { it.isNotBlank() },
-                            )
+                            accountChanges(loaded, displayName, phone, photoUrl, backupEmail, backupPhone)
                         }
+                        portalApi.saveMyAccount(
+                            displayName = changes.displayName,
+                            phone = changes.phone,
+                            photoUrl = changes.photoUrl,
+                            backupEmail = changes.backupEmail,
+                            backupPhone = changes.backupPhone,
+                            clearFields = changes.clearFields,
+                        )
                         // Verify persistence by reloading from the server, so a
                         // silent write failure surfaces instead of a false "Saved."
                         val fresh = portalApi.getMyAccount()

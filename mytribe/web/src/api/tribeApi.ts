@@ -36,8 +36,21 @@ export interface HomeAccessDto {
   updatedAtMs: number | null;
 }
 
+/**
+ * #1325: the household's chosen vet clinic as the server resolved it, so no
+ * screen shows (or has to look up) the database id stored in `vetClinicId`.
+ * Null when none is chosen. Absent from a backend older than #1325.
+ */
+export interface VetClinicSummaryDto {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  isEmergency: boolean;
+}
 export interface GetMyTribeProfileResult {
   profile: TribeProfileDto;
+  vetClinic?: VetClinicSummaryDto | null;
   homeAccess: HomeAccessDto;
   /**
    * #843: may this caller change home details, the Emergency Contact included.
@@ -459,6 +472,9 @@ export function memberStatusLabel(status: MemberStatus): string {
  * shared between them and the keys never cross stores.
  */
 export const PROFILE_RESERVED_KEYS = [
+  // #1325: the Vet Clinic card owns the chosen clinic. Unreserved, the generic
+  // "Profile fields" list printed this row's value, the clinic's database id.
+  'vetClinicId',
   'vetClinicName',
   'vetClinicPhone',
   'vetClinicAddress',
@@ -602,6 +618,9 @@ export function homeAccessEditChanged(loaded: HomeAccessDto, next: HomeAccessEdi
   return JSON.stringify(next.customFields) !== JSON.stringify(unedited);
 }
 
+/** The worded confirmation after a clean page Save (#1324). */
+export const PAGE_SAVED = 'Tribe Profile saved.';
+
 /** #868: what became of one half of the page Save. */
 export type SaveHalf = { kind: 'saved' } | { kind: 'skipped' } | { kind: 'failed'; error: unknown };
 
@@ -621,7 +640,19 @@ function saveFailureReason(err: unknown): string {
  * what saved and what did not, and never starts "Save failed". It is still
  * coloured as a failure. Mirrors `pageSaveOutcome` in TribeScreen.kt.
  */
-export function pageSaveOutcome(profile: SaveHalf, home: SaveHalf, ecDirty: boolean): { text: string; ok: boolean } {
+export function pageSaveOutcome(
+  profile: SaveHalf,
+  home: SaveHalf,
+  cardFailures: readonly string[] = [],
+): { text: string; ok: boolean } {
+  const halves = halvesOutcome(profile, home);
+  if (cardFailures.length === 0) return halves;
+  // A card that did not save makes the whole page save a partial result, so it
+  // is coloured as a failure and the sentence says what did land.
+  const failures = cardFailures.join(' ');
+  return { text: halves.ok ? `The rest of your Tribe Profile saved. ${failures}` : `${halves.text} ${failures}`, ok: false };
+}
+function halvesOutcome(profile: SaveHalf, home: SaveHalf): { text: string; ok: boolean } {
   if (profile.kind === 'failed' && home.kind === 'saved') {
     return {
       text: `Home Information and the after-hours clinic saved. Family and Vet Clinic did not save: ${saveFailureReason(profile.error)} Your edits there are still on this page.`,
@@ -648,10 +679,7 @@ export function pageSaveOutcome(profile: SaveHalf, home: SaveHalf, ecDirty: bool
       ok: false,
     };
   }
-  return {
-    text: ecDirty ? 'Profile saved. Your Emergency Contacts are not saved yet: use Save Emergency Contacts.' : 'Saved.',
-    ok: true,
-  };
+  return { text: PAGE_SAVED, ok: true };
 }
 
 /**
