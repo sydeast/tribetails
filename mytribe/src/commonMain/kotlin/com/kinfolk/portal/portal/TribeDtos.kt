@@ -16,9 +16,22 @@ data class HomeAccess(
     val updatedAtMs: Long?,
 )
 
+/**
+ * #1325: the household's chosen vet clinic as the server resolved it from the
+ * `vetClinicId` row, so no screen shows (or looks up) the database id. Null when
+ * none is chosen. A backend older than #1325 sends nothing, which reads as null.
+ */
+data class VetClinicSummary(
+    val id: String,
+    val name: String,
+    val phone: String,
+    val address: String,
+    val isEmergency: Boolean = false,
+)
 data class TribeProfileResult(
     val profile: TribeProfile,
     val homeAccess: HomeAccess,
+    val vetClinic: VetClinicSummary? = null,
     /**
      * #843: may this caller change home details, the Emergency Contact included.
      * A backend older than #843 sends nothing, which reads as allowed; the

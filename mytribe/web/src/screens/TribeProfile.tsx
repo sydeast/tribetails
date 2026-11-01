@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
 import { SecretField } from '../components/SecretField';
@@ -48,6 +48,7 @@ import { inviteEmailProblem, isInvitableEmail } from '../lib/inviteEmail';
 import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFailure';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { formatPhone } from '../lib/phone';
+import type { CardSave } from '../components/cardSave';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
@@ -96,7 +97,8 @@ function schemaTextOrNull(values: Record<string, string>, key: string, staticVal
  *    stable keys.
  *  - Emergency Contacts (#829) are stored on the kinfolk record and go through
  *    `listEmergencyContacts` / `saveEmergencyContacts` in their own card
- *    (components/EmergencyContactsCard.tsx), which saves on its own button.
+ *    (components/EmergencyContactsCard.tsx). Since #1324 the page's one Save Changes
+ *    button saves that card too (and Secondary Kinfolk), through `CardSave`.
  *    The profile save no longer carries any `emergencyContact*` key.
  */
 export function TribeProfile() {
@@ -148,8 +150,13 @@ export function TribeProfile() {
   const [submitClinicMsg, setSubmitClinicMsg] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
-  /** The Emergency Contacts card has edits its own Save has not sent. Save Changes never sends them. */
-  const [ecDirty, setEcDirty] = useState(false);
+  /**
+   * #1324: the cards that keep their own form state (Emergency Contacts,
+   * Secondary Kinfolk) hand the page a way to save them, so Save Changes below
+   * is the page's only Save.
+   */
+  const ecSave = useRef<CardSave | null>(null);
+  const secondarySave = useRef<CardSave | null>(null);
   /** The page save's outcome. Coloured by `ok`, never by how the sentence starts. */
   const [status, setStatus] = useState<{ text: string; ok: boolean } | null>(null);
 
@@ -232,7 +239,12 @@ export function TribeProfile() {
   const vetMatches = vetQuery.trim().length > 0 ? clinics.filter((c) => c.name.toLowerCase().includes(vetQuery.trim().toLowerCase())).slice(0, 8) : [];
 
   /** The chosen catalog row, or undefined when nothing is selected yet. */
-  const selectedClinic = clinics.find((c) => c.id === vetClinicId);
+  // #1325: the picker list hides archived clinics and unapproved submissions,
+  // so a household linked to one resolves through the profile's own `vetClinic`.
+  const linkedClinic = profile.data?.vetClinic;
+  const selectedClinic =
+    clinics.find((c) => c.id === vetClinicId) ??
+    (linkedClinic && linkedClinic.id === vetClinicId ? linkedClinic : undefined);
   function pickClinic(c: { id: string }) {
     setVetClinicId(c.id);
     setVetQuery('');
@@ -285,6 +297,7 @@ export function TribeProfile() {
     setStatus(null);
     let profileHalf: SaveHalf = { kind: 'skipped' };
     let homeHalf: SaveHalf = { kind: 'skipped' };
+    const cardFailures: string[] = [];
     try {
       // #873: both saves start from the stored rows and change only the rows
       // this screen edits (schema fields and the vet cards). The callables merge
@@ -328,7 +341,8 @@ export function TribeProfile() {
       // #868: saveHomeAccess needs Home access. Without it the home details are
       // locked on screen and never sent; with it they are sent only when this
       // Save changes them, so a Family-only edit makes no home access call.
-      if (!canEditHome || !profile.data) return;
+      homeBlock: {
+      if (!canEditHome || !profile.data) break homeBlock;
 
       const homeSet: CustomFieldDto[] = [];
       const homeClear: string[] = [];
@@ -357,23 +371,34 @@ export function TribeProfile() {
         wifiPassword: nextWifi,
         ...editCustomFields(baseHomeFields, homeSet, homeClear, LEGACY_EMERGENCY_CONTACT_KEYS),
       };
-      if (!homeAccessEditChanged(profile.data.homeAccess, homeEdit, LEGACY_EMERGENCY_CONTACT_KEYS)) return;
+      if (!homeAccessEditChanged(profile.data.homeAccess, homeEdit, LEGACY_EMERGENCY_CONTACT_KEYS)) break homeBlock;
       try {
         await saveHomeAccess({ ...(kinfolkId !== undefined ? { kinfolkId } : {}), ...homeEdit });
         homeHalf = { kind: 'saved' };
       } catch (err) {
         homeHalf = { kind: 'failed', error: err };
       }
+      }
+      // #1324: the cards with their own form state save on the same press, one
+      // after another (each is its own callable), and a card with no edits is
+      // never called. A refusal is named on the status line; the card also
+      // keeps its own sentence and its typed values.
+      for (const [name, card] of [
+        ['Emergency Contacts', ecSave.current],
+        ['Secondary Kinfolk', secondarySave.current],
+      ] as const) {
+        if (!card?.dirty) continue;
+        const r = await card.save();
+        if (!r.ok) cardFailures.push(`${name} did not save: ${r.message.trim().replace(/[.\s]+$/, '')}. Your edits there are still on this page.`);
+      }
     } catch (err) {
       // Neither callable reaches here: both are caught above. This is the row
       // building around them, which used to sit under one catch-all.
       ({ profile: profileHalf, home: homeHalf } = blameUnfinishedHalf(profileHalf, homeHalf, err));
     } finally {
-      // The card saves on its own button, so "Saved." here would be false about
-      // any contact edit still sitting in it (#829). No "Auntie will be
-      // notified": neither saveTribeProfile nor saveHomeAccess notifies anyone,
-      // and portal Android says "Saved." too.
-      setStatus(pageSaveOutcome(profileHalf, homeHalf, ecDirty));
+      // No "Auntie will be notified": neither saveTribeProfile nor
+      // saveHomeAccess notifies anyone, and portal Android says the same.
+      setStatus(pageSaveOutcome(profileHalf, homeHalf, cardFailures));
       // #868: a refetch reseeds every input from the server. After a partial
       // result that would wipe the edits that did not save, so only a clean
       // save reloads.
@@ -660,9 +685,9 @@ export function TribeProfile() {
                 )}
               </section>
 
-              {/* EMERGENCY CONTACTS (#829): its own callables and its own Save.
-                  Locked with the #843 sentence when the caller lacks Home access. */}
-              <EmergencyContactsCard kinfolkId={kinfolkId} onDirtyChange={setEcDirty} />
+              {/* EMERGENCY CONTACTS (#829): its own callable, saved by the page's Save
+                  Changes (#1324). Locked with the #843 sentence without Home access. */}
+              <EmergencyContactsCard kinfolkId={kinfolkId} saveRef={ecSave} />
 
               {/* HOUSEHOLD MEMBERS — no mockup coverage; ported from HouseholdMembersCard in TribeScreen.kt.
                   PRIMARY-only: listMembers denies a SECONDARY caller, so this card degrades to an
@@ -692,6 +717,7 @@ export function TribeProfile() {
                   portal access. "Give portal access" pre-fills the invite below. */}
               <SecondaryKinfolkCard
                 kinfolkId={kinfolkId}
+                saveRef={secondarySave}
                 onGiveAccess={(p) => {
                   setInvitePrefill(p);
                   document.getElementById('invite-kinfolk')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
@@ -722,11 +748,6 @@ export function TribeProfile() {
                     </span>
                   )}
                   {effectiveDisplayName.trim().length === 0 && <span className="sub">Add a display name to save.</span>}
-                  {ecDirty && (
-                    <span className="sub" data-testid="ec-unsaved-page">
-                      Your Emergency Contacts have unsaved changes.
-                    </span>
-                  )}
                 </div>
               </section>
             </>

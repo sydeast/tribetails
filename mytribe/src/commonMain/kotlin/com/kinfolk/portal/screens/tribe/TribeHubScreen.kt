@@ -1,6 +1,7 @@
 package com.kinfolk.portal.screens.tribe
 
 import com.kinfolk.portal.util.auntieName
+import com.kinfolk.portal.util.formatPhone
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -147,7 +148,7 @@ fun TribeHubScreen(
                     p.homeAccess.gateCode?.takeIf { it.isNotBlank() }?.let { add("Gate / door code on file") }
                     p.homeAccess.keyLocation?.takeIf { it.isNotBlank() }?.let { add("Key location on file") }
                     p.homeAccess.wifiPassword?.takeIf { it.isNotBlank() }?.let { add("Wi-Fi on file") }
-                    p.profile.customFields.firstOrNull { it.key == "vetClinicName" && it.value.isNotBlank() }?.let { add("Vet: ${it.value}") }
+                    vetFact(p)?.let { add(it) }
                 }
                 if (facts.isEmpty()) {
                     Text("No home details yet. Add gate codes, key location, and your vet.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
@@ -236,4 +237,19 @@ private fun TaleLine(tale: KinTale) {
         }
         Text(meta, style = type.sansMeta)
     }
+}
+
+/**
+ * #1325: the Vet line on the Tribe page. The clinic the household picked, by name,
+ * address and formatted phone, as the server resolved it from `vetClinicId`; the
+ * old `vetClinicName` row (saved before the picker) is only the fallback and
+ * never wins over a pick. Never the database id. The twin of the Vet fact in
+ * portal web's `TribeHub.tsx`.
+ */
+internal fun vetFact(p: TribeProfileResult): String? {
+    val vet = p.vetClinic
+    if (vet != null) {
+        return "Vet: " + listOf(vet.name, vet.address, formatPhone(vet.phone)).filter { it.isNotBlank() }.joinToString(" · ")
+    }
+    return p.profile.customFields.firstOrNull { it.key == "vetClinicName" && it.value.isNotBlank() }?.let { "Vet: ${it.value}" }
 }

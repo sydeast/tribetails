@@ -929,6 +929,16 @@ class PortalApi(
             ),
             // #843. Absent from an older backend: allowed, and the server still enforces it.
             canEditHomeDetails = raw["canEditHomeDetails"]?.jsonPrimitive?.booleanOrNull ?: true,
+            // #1325. Null (JSON null, or absent from an older backend) means no clinic chosen.
+            vetClinic = (raw["vetClinic"] as? JsonObject)?.let { v ->
+                VetClinicSummary(
+                    id = v["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    name = v["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    phone = v["phone"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    address = v["address"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    isEmergency = v["isEmergency"]?.jsonPrimitive?.booleanOrNull ?: false,
+                )
+            },
         )
     }
 

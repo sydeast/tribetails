@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   listSecondaryKinfolk,
@@ -10,6 +10,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from './Loading';
 import { OfflineNotice } from './OfflineNotice';
 import { formatPhone } from '../lib/phone';
+import type { CardSaveRef, CardSaveResult } from './cardSave';
 
 interface Draft {
   personId?: string;
@@ -41,14 +42,20 @@ export const secondaryKinfolkQueryKey = (kinfolkId: string | undefined) => ['sec
  * primary picks the permissions with the same toggles as any invite. A person
  * who accepted is a Household Members row and is not repeated here.
  *
- * Saves are pessimistic: the form locks and reads "Saving…" until the server
- * answers, and a refusal keeps what was typed under the server's own sentence.
+ * One save model for the page (#1324): this card has no Save button of its own.
+ * What is typed in the form is added (or, when editing, updated) by the Tribe
+ * Profile page's Save Changes, through `saveRef`. Removing a person is a
+ * confirmed action on its row, not an edit, so it still goes straight through.
+ *
+ * Saves are pessimistic: the form locks until the server answers, and a refusal
+ * keeps what was typed under the server's own sentence.
  */
 export function SecondaryKinfolkCard(props: {
   kinfolkId: string | undefined;
   onGiveAccess: (person: SecondaryKinfolkDto) => void;
+  saveRef?: CardSaveRef;
 }) {
-  const { kinfolkId, onGiveAccess } = props;
+  const { kinfolkId, onGiveAccess, saveRef } = props;
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: secondaryKinfolkQueryKey(kinfolkId), queryFn: () => listSecondaryKinfolk(kinfolkId) });
   const view = viewOfQuery(q);
@@ -63,10 +70,18 @@ export function SecondaryKinfolkCard(props: {
     setMessage(null);
   };
 
-  async function save() {
+  /** The person being edited, as the list last showed them; null while adding. */
+  const source = draft.personId !== undefined ? people.find((p) => p.personId === draft.personId) : undefined;
+  const dirty =
+    source !== undefined
+      ? draft.name.trim() !== source.name.trim() ||
+        draft.phone.trim() !== formatPhone(source.phone).trim() ||
+        draft.email.trim() !== (source.email ?? '').trim()
+      : draft.name.trim() !== '' || draft.phone.trim() !== '' || draft.email.trim() !== '';
+  async function save(): Promise<CardSaveResult> {
     if (draft.name.trim() === '') {
       setMessage({ text: NAME_REQUIRED, ok: false });
-      return;
+      return { ok: false, message: NAME_REQUIRED };
     }
     setBusy(true);
     setMessage(null);
@@ -80,15 +95,24 @@ export function SecondaryKinfolkCard(props: {
         email: blank(draft.email),
       });
       setDraft({ ...EMPTY });
-      setMessage({ text: 'Saved.', ok: true });
       await queryClient.invalidateQueries({ queryKey: secondaryKinfolkQueryKey(kinfolkId) });
+      return { ok: true };
     } catch (err) {
-      setMessage({ text: err instanceof Error && err.message ? err.message : 'Not saved. Try again.', ok: false });
+      const text = err instanceof Error && err.message ? err.message : 'Not saved. Try again.';
+      setMessage({ text, ok: false });
+      return { ok: false, message: text };
     } finally {
       setBusy(false);
     }
   }
-
+  // #1324: the page's Save button saves this card. Re-pointed every render so
+  // the page always calls the closure that sees the current form.
+  useEffect(() => {
+    if (saveRef) saveRef.current = { dirty, save };
+    return () => {
+      if (saveRef) saveRef.current = null;
+    };
+  });
   async function remove(personId: string) {
     setBusy(true);
     setMessage(null);
@@ -187,16 +211,20 @@ export function SecondaryKinfolkCard(props: {
               </div>
             </div>
           </fieldset>
-          <div className="contactactions">
-            <button type="button" className="btn grad" disabled={busy} onClick={() => void save()}>
-              {busy ? <BusyLabel>Saving…</BusyLabel> : editing ? 'Save changes' : 'Add secondary kinfolk'}
-            </button>
-            {editing && (
+          {dirty && (
+            <p className="sub" role="status" data-testid="skin-unsaved">
+              {editing
+                ? `Changes to ${draft.name.trim() || 'this person'} are saved when you press Save Changes.`
+                : `${draft.name.trim() || 'This person'} is added when you press Save Changes.`}
+            </p>
+          )}
+          {editing && (
+            <div className="contactactions">
               <button type="button" className="btn ghost" disabled={busy} onClick={() => setDraft({ ...EMPTY })}>
                 Cancel
               </button>
-            )}
-          </div>
+            </div>
+          )}
           {message && (
             <p className="sub" role={message.ok ? 'status' : 'alert'} style={{ color: message.ok ? 'var(--teal)' : 'var(--coral)', marginTop: 8 }}>
               {message.text}
