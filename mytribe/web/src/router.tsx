@@ -23,6 +23,7 @@ import { SignIn } from './screens/SignIn';
 import { LaunchError } from './screens/LaunchError';
 import { SessionNotice } from './components/SessionNotice';
 import { RouteError } from './components/RouteError';
+import { NotFound } from './screens/NotFound';
 
 /**
  * Shared chrome: the two drifting orbs behind every screen, and the session
@@ -417,6 +418,8 @@ export const router = createRouter({
   // components/RouteError.tsx for the two arms and which of them withholds
   // Sign out.
   defaultErrorComponent: RouteError,
+  // #1293: an unknown path used to render the library's bare "Not Found".
+  defaultNotFoundComponent: NotFound,
 });
 /**
  * Re-launch when the connection comes back (#812).

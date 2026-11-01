@@ -11,6 +11,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { auntieName, relativeDay, speciesEmoji } from '../lib/portalFormat';
 import { BusyLabel } from '../components/Loading';
+import { formatPhone } from '../lib/phone';
 
 const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
 
@@ -63,8 +64,16 @@ export function TribeHub() {
     if (homeAccess.gateCode) homeFacts.push('Gate / door code on file');
     if (homeAccess.keyLocation) homeFacts.push('Key location on file');
     if (homeAccess.wifiPassword) homeFacts.push('Wi-Fi on file');
-    const vet = p.customFields.find((f) => f.key === 'vetClinicName' && f.value.trim().length > 0);
-    if (vet) homeFacts.push(`Vet: ${vet.value}`);
+    // #1325: the clinic the household picked, resolved by the server from its
+    // `vetClinicId`. The old `vetClinicName` row is only what a household saved
+    // before the picker, so it is the fallback and never wins over a pick.
+    const vet = profile.data.vetClinic;
+    const legacyVet = p.customFields.find((f) => f.key === 'vetClinicName' && f.value.trim().length > 0);
+    if (vet) {
+      homeFacts.push(`Vet: ${[vet.name, vet.address, formatPhone(vet.phone)].filter(Boolean).join(' · ')}`);
+    } else if (legacyVet) {
+      homeFacts.push(`Vet: ${legacyVet.value}`);
+    }
   }
 
   return (

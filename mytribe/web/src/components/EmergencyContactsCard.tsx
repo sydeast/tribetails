@@ -10,6 +10,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from './Loading';
 import { OfflineNotice } from './OfflineNotice';
 import { formatPhone } from '../lib/phone';
+import type { CardSaveRef, CardSaveResult } from './cardSave';
 
 interface Draft {
   name: string;
@@ -153,7 +154,7 @@ function InfoTip({ text, label }: { text: string; label: string }) {
  * nothing unsaved, and a save writes the reply into the query cache instead of
  * refetching, so the household sees exactly what the server stored.
  */
-export function EmergencyContactsCard(props: { kinfolkId: string | undefined; onDirtyChange?: (dirty: boolean) => void }) {
+export function EmergencyContactsCard(props: { kinfolkId: string | undefined; onDirtyChange?: (dirty: boolean) => void; saveRef?: CardSaveRef }) {
   // Keyed on the household: a switch starts a fresh card, so no draft, busy Save
   // or message from one household is ever shown on another.
   return <EmergencyContactsCardFor key={props.kinfolkId ?? ''} {...props} />;
@@ -162,9 +163,11 @@ export function EmergencyContactsCard(props: { kinfolkId: string | undefined; on
 function EmergencyContactsCardFor({
   kinfolkId,
   onDirtyChange,
+  saveRef,
 }: {
   kinfolkId: string | undefined;
   onDirtyChange?: (dirty: boolean) => void;
+  saveRef?: CardSaveRef;
 }) {
   /** False once this household's card has left the screen; a save reply that lands after that is not applied. */
   const alive = useRef(true);
@@ -197,6 +200,14 @@ function EmergencyContactsCardFor({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+  // #1324: the page's Save button saves this card. Re-pointed every render so
+  // the page always calls the closure that sees the current drafts.
+  useEffect(() => {
+    if (saveRef) saveRef.current = { dirty, save };
+    return () => {
+      if (saveRef) saveRef.current = null;
+    };
+  });
 
   /** Every user edit goes through here, so a stale "Saved." or error never outlives the change it described. */
   const edit = (next: (ds: Draft[]) => Draft[]) => {
@@ -205,7 +216,7 @@ function EmergencyContactsCardFor({
   };
   const set = (i: number, patch: Partial<Draft>) => edit((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d)));
 
-  async function save() {
+  async function save(): Promise<CardSaveResult> {
     const problem = precheck(drafts);
     if (problem) {
       // With none on file the prompt above already says this; a second copy
@@ -213,7 +224,7 @@ function EmergencyContactsCardFor({
       // household cleared them, where no prompt shows.
       const promptShowing = problem === REQUIRED && (q.data?.contacts.length ?? 0) === 0;
       setMessage(promptShowing ? null : { text: problem, ok: false });
-      return;
+      return { ok: false, message: problem };
     }
     setSaving(true);
     setMessage(null);
@@ -238,13 +249,16 @@ function EmergencyContactsCardFor({
       );
       // The household changed while the save was away: its card is gone, and
       // the reply must not seed another household's slots or say "Saved.".
-      if (!alive.current) return;
+      if (!alive.current) return { ok: true };
       setBaseline(res.contacts);
       setDrafts(toDrafts(res.contacts));
-      setMessage({ text: 'Saved.', ok: true });
+      // The page's status line carries the confirmation (#1324); this card
+      // keeps only its own refusals.
+      return { ok: true };
     } catch (err) {
-      if (!alive.current) return;
-      setMessage({ text: err instanceof Error && err.message ? err.message : 'The Emergency Contacts were not saved. Try again.', ok: false });
+      const text = err instanceof Error && err.message ? err.message : 'The Emergency Contacts were not saved. Try again.';
+      if (alive.current) setMessage({ text, ok: false });
+      return { ok: false, message: text };
     } finally {
       if (alive.current) setSaving(false);
     }
@@ -351,14 +365,9 @@ function EmergencyContactsCardFor({
           ))}
           {dirty && (
             <p className="sub ec-unsaved" data-testid="ec-unsaved" role="status">
-              Unsaved changes
+              Unsaved changes. Press Save Changes at the bottom of the page.
             </p>
           )}
-          <div className="contactactions ec-actions">
-            <button type="button" className="btn grad" disabled={saving} onClick={() => void save()}>
-              {saving ? <BusyLabel>Saving…</BusyLabel> : 'Save Emergency Contacts'}
-            </button>
-          </div>
           {message && (
             <p className="sub" role={message.ok ? 'status' : 'alert'} style={{ color: message.ok ? 'var(--teal)' : 'var(--coral)', marginTop: 8 }}>
               {message.text}

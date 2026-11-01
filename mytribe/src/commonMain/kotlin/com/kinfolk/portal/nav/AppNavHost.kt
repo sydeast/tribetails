@@ -57,6 +57,7 @@ import com.kinfolk.portal.screens.tribe.TribeScreen
 import com.kinfolk.portal.share.SharedKinTaleScreen
 import com.kinfolk.portal.ui.LaunchErrorScreen
 import com.kinfolk.portal.ui.NoTribesOnboarding
+import com.kinfolk.portal.ui.NotFoundScreen
 import com.kinfolk.portal.util.openExternalUrl
 
 /** Dirty-flag key the detail destinations set so Schedule reloads on return. */
@@ -104,6 +105,8 @@ fun AppNavHost(
     onSignOut: () -> Unit,
     onBackToDirectory: () -> Unit,
     onRefresh: () -> Unit,
+    /** #1293: "Back to Home" on the not-found screen; the caller clears the unknown launch link. */
+    onNotFoundHome: () -> Unit = {},
     /**
      * The "message Auntie" mailto on the no-tribes funnel. Nothing renders
      * `AppNavHost` from a test today (`NoTribesOnboardingTest` drives the
@@ -203,6 +206,7 @@ fun AppNavHost(
             LaunchedEffect(Unit) { tribes = resolveTribes() }
             TribePickerScreen(tribes = tribes, onPick = onPick, onSignOut = onSignOut)
         }
+        composable<NotFoundRoute> { NotFoundScreen(onHome = onNotFoundHome) }
         composable<LaunchErrorRoute> { entry ->
             LaunchErrorScreen(
                 message = entry.toRoute<LaunchErrorRoute>().message,

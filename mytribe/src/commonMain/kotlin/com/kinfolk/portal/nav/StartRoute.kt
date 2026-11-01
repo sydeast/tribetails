@@ -23,10 +23,15 @@ fun startRouteFor(
     dest: LaunchDestination?,
     resolvedKinfolkId: String?,
     cameFromPicker: Boolean = false,
+    unknownLink: Boolean = false,
 ): Any? = when {
     secureReset != null -> SecureResetRoute(secureReset.oobCode, secureReset.mode, secureReset.continueUrl)
     shareToken != null -> ShareRoute(shareToken)
     claimId != null -> ClaimRoute(claimId)
+    // #1293: a launch link nothing above could place. It wins over the shell so
+    // the household reads that the link did not lead anywhere, then taps Back to
+    // Home, which clears it.
+    unknownLink -> NotFoundRoute
     resolvedKinfolkId != null -> ShellGraph(resolvedKinfolkId, cameFromPicker = cameFromPicker)
     dest is LaunchDestination.SignIn -> SignInRoute
     dest is LaunchDestination.NoTribes -> NoTribesRoute
@@ -64,6 +69,7 @@ fun shellStartRoute(
     resolvedKinfolkId: String?,
     cameFromPicker: Boolean = false,
     homeLoaded: Boolean,
+    unknownLink: Boolean = false,
 ): Any? = if (resolvedKinfolkId != null && !homeLoaded) {
     null
 } else {
@@ -74,6 +80,7 @@ fun shellStartRoute(
         dest = dest,
         resolvedKinfolkId = resolvedKinfolkId,
         cameFromPicker = cameFromPicker,
+        unknownLink = unknownLink,
     )
 }
 /**

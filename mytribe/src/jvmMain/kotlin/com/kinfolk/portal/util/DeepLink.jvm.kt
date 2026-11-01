@@ -21,3 +21,6 @@ internal var jvmInitialSecureResetParams: SecureResetParams? = null
 actual fun readInitialClaimInviteId(): String? = jvmInitialClaimInviteId
 actual fun readInitialShareToken(): String? = jvmInitialShareToken
 actual fun readInitialSecureResetParams(): SecureResetParams? = jvmInitialSecureResetParams
+
+/** Desktop has no launch links beyond its own flags. */
+actual fun readInitialUnknownLink(): Boolean = false
