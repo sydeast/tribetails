@@ -298,14 +298,17 @@ class InvoicesController internal constructor(
         statusBanner = null
         scope.launch {
             try {
-                if (accept) {
+                // #1281: the confirmation is set AFTER the reload, so it never
+                // sits over a list that still shows the quote unanswered.
+                val banner = if (accept) {
                     portalApi.acceptQuote(invoiceId = invoice.id, kinfolkId = kinfolkId)
-                    statusBanner = "Quote accepted. It is an invoice now."
+                    "Quote accepted. It is an invoice now."
                 } else {
                     portalApi.denyQuote(invoiceId = invoice.id, kinfolkId = kinfolkId)
-                    statusBanner = "Quote declined. Your Auntie has been told."
+                    "Quote declined. Your Auntie has been told."
                 }
                 reload()
+                statusBanner = banner
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
@@ -327,11 +330,16 @@ class InvoicesController internal constructor(
                     kinfolkId = kinfolkId,
                     target = target,
                 )
-                statusBanner = when (target) {
-                    CreditTarget.AccountBalance -> "Saved ${formatCents(res.redeemedAmountCents)} to your account balance."
+                // #1281: "Working…" stays up through the reload (`redeeming`
+                // clears in `finally`), and the confirmation lands only once the
+                // list shows the new balance. Set before the reload, it sat over
+                // the old balance and read like a save that had not worked.
+                val banner = when (target) {
+                    CreditTarget.AccountBalance -> "Credit saved. ${formatCents(res.redeemedAmountCents)} is in your account balance."
                     CreditTarget.OriginalPaymentMethod -> "Refunded ${formatCents(res.redeemedAmountCents)} to your original card."
                 }
                 reload()
+                statusBanner = banner
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {

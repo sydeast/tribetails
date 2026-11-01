@@ -145,6 +145,62 @@ internal fun decodeAddBookingNoteResult(raw: Map<String, Any?>?): AddBookingNote
         noteId = (raw?.get("noteId") as? String).orEmpty(),
     )
 
+// ---------- getBookingNotes ----------
+
+/** Request payload for the `getBookingNotes` callable. */
+data class GetBookingNotesArgs(
+    /** Optional: omitted from the payload when null. */
+    val kinfolkId: String? = null,
+    val batchId: String,
+    val visitId: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        if (kinfolkId != null) put("kinfolkId", kinfolkId)
+        put("batchId", batchId)
+        put("visitId", visitId)
+    }
+}
+
+/** Nested in the `getBookingNotes` contract. */
+data class GetBookingNotesResultNote(
+    val id: String,
+    val body: String,
+    val createdAtMs: Long?,
+)
+
+/**
+ * Fail-soft decode of `GetBookingNotesResultNote` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetBookingNotesResultNote(raw: Map<String, Any?>?): GetBookingNotesResultNote =
+    GetBookingNotesResultNote(
+        id = (raw?.get("id") as? String).orEmpty(),
+        body = (raw?.get("body") as? String).orEmpty(),
+        createdAtMs = (raw?.get("createdAtMs") as? Number)?.toLong(),
+    )
+
+/** Response from the `getBookingNotes` callable. */
+data class GetBookingNotesResult(
+    val bookingNote: String?,
+    val notes: List<GetBookingNotesResultNote>,
+)
+
+/**
+ * Fail-soft decode of `GetBookingNotesResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetBookingNotesResult(raw: Map<String, Any?>?): GetBookingNotesResult =
+    GetBookingNotesResult(
+        bookingNote = raw?.get("bookingNote") as? String,
+        notes = (raw?.get("notes") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetBookingNotesResultNote(nested) } },
+    )
+
 // ---------- addInternalBookingNote ----------
 
 /**
@@ -374,11 +430,15 @@ data class GetMyBookingsResultLiveVisit(
     val status: String,
     val serviceType: String?,
     val serviceLabel: String?,
+    val serviceId: String?,
     val title: String?,
     val startTimeMs: Long?,
     val endTimeMs: Long?,
     val startTimePending: Boolean,
     val requestedDate: String?,
+    val timeBlockLabel: String?,
+    val timeBlockStartTime: String?,
+    val timeBlockEndTime: String?,
     val kinIds: List<String>,
     val kinNames: List<String>,
     val auntieDisplayName: String?,
@@ -402,6 +462,9 @@ data class GetMyBookingsResultLiveVisit(
     val rescheduleRequestedEndTimeMs: Long?,
     val rescheduleRequestReason: String?,
     val rescheduleResponseNote: String?,
+    val address: String?,
+    val kinTaleId: String?,
+    val invoiceId: String?,
 )
 
 /**
@@ -417,11 +480,15 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         status = (raw?.get("status") as? String).orEmpty(),
         serviceType = raw?.get("serviceType") as? String,
         serviceLabel = raw?.get("serviceLabel") as? String,
+        serviceId = raw?.get("serviceId") as? String,
         title = raw?.get("title") as? String,
         startTimeMs = (raw?.get("startTimeMs") as? Number)?.toLong(),
         endTimeMs = (raw?.get("endTimeMs") as? Number)?.toLong(),
         startTimePending = raw?.get("startTimePending") as? Boolean ?: false,
         requestedDate = raw?.get("requestedDate") as? String,
+        timeBlockLabel = raw?.get("timeBlockLabel") as? String,
+        timeBlockStartTime = raw?.get("timeBlockStartTime") as? String,
+        timeBlockEndTime = raw?.get("timeBlockEndTime") as? String,
         kinIds = (raw?.get("kinIds") as? List<*>).orEmpty().mapNotNull { it as? String },
         kinNames = (raw?.get("kinNames") as? List<*>).orEmpty().mapNotNull { it as? String },
         auntieDisplayName = raw?.get("auntieDisplayName") as? String,
@@ -442,6 +509,9 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         rescheduleRequestedEndTimeMs = (raw?.get("rescheduleRequestedEndTimeMs") as? Number)?.toLong(),
         rescheduleRequestReason = raw?.get("rescheduleRequestReason") as? String,
         rescheduleResponseNote = raw?.get("rescheduleResponseNote") as? String,
+        address = raw?.get("address") as? String,
+        kinTaleId = raw?.get("kinTaleId") as? String,
+        invoiceId = raw?.get("invoiceId") as? String,
     )
 
 /** Nested in the `getMyBookings` contract. */
@@ -684,6 +754,7 @@ data class RequestBookingResult(
     val batchId: String,
     val bookingIds: List<String>,
     val bookingId: String,
+    val envelope: GetMyBookingsResultEnvelope?,
 )
 
 /**
@@ -696,6 +767,7 @@ internal fun decodeRequestBookingResult(raw: Map<String, Any?>?): RequestBooking
         batchId = (raw?.get("batchId") as? String).orEmpty(),
         bookingIds = (raw?.get("bookingIds") as? List<*>).orEmpty().mapNotNull { it as? String },
         bookingId = (raw?.get("bookingId") as? String).orEmpty(),
+        envelope = contractRawMap(raw?.get("envelope"))?.let { nested -> decodeGetMyBookingsResultEnvelope(nested) },
     )
 
 // ---------- requestBookingCancellation ----------
@@ -726,6 +798,7 @@ data class RequestBookingCancellationResult(
     val ok: Boolean,
     val visitId: String,
     val alreadyPending: Boolean,
+    val visit: GetMyBookingsResultLiveVisit?,
 )
 
 /**
@@ -738,6 +811,7 @@ internal fun decodeRequestBookingCancellationResult(raw: Map<String, Any?>?): Re
         ok = raw?.get("ok") as? Boolean ?: false,
         visitId = (raw?.get("visitId") as? String).orEmpty(),
         alreadyPending = raw?.get("alreadyPending") as? Boolean ?: false,
+        visit = contractRawMap(raw?.get("visit"))?.let { nested -> decodeGetMyBookingsResultLiveVisit(nested) },
     )
 
 // ---------- requestBookingReschedule ----------
@@ -752,6 +826,8 @@ data class RequestBookingRescheduleArgs(
     /** Optional: omitted from the payload when null. */
     val proposedEndTimeMs: Long? = null,
     /** Optional: omitted from the payload when null. */
+    val timeBlockId: String? = null,
+    /** Optional: omitted from the payload when null. */
     val reason: String? = null,
 ) {
     /**
@@ -764,6 +840,7 @@ data class RequestBookingRescheduleArgs(
         put("visitId", visitId)
         put("proposedStartTimeMs", proposedStartTimeMs)
         if (proposedEndTimeMs != null) put("proposedEndTimeMs", proposedEndTimeMs)
+        if (timeBlockId != null) put("timeBlockId", timeBlockId)
         if (reason != null) put("reason", reason)
     }
 }
@@ -774,6 +851,7 @@ data class RequestBookingRescheduleResult(
     val visitId: String,
     val proposedStartTimeMs: Long,
     val proposedEndTimeMs: Long?,
+    val visit: GetMyBookingsResultLiveVisit?,
 )
 
 /**
@@ -787,6 +865,7 @@ internal fun decodeRequestBookingRescheduleResult(raw: Map<String, Any?>?): Requ
         visitId = (raw?.get("visitId") as? String).orEmpty(),
         proposedStartTimeMs = (raw?.get("proposedStartTimeMs") as? Number)?.toLong() ?: 0L,
         proposedEndTimeMs = (raw?.get("proposedEndTimeMs") as? Number)?.toLong(),
+        visit = contractRawMap(raw?.get("visit"))?.let { nested -> decodeGetMyBookingsResultLiveVisit(nested) },
     )
 
 // ---------- rescheduleBooking ----------

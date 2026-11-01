@@ -28,7 +28,30 @@ describe('onFamilyKinWrite: exports', () => {
   });
 });
 
-describe('buildFlatMirrorPayload: projects ONLY parent-owned fields', () => {
+describe('buildFlatMirrorPayload: projects parent-owned and household-shared fields only', () => {
+  it('copies the household-shared descriptive fields (#1310) and nothing else staff keeps', () => {
+    const payload = buildFlatMirrorPayload({
+      name: 'Rex',
+      sex: 'Male',
+      weight: '68 lbs',
+      colorMarkings: 'Yellow',
+      spayedNeutered: true,
+      vetInfo: 'Riverside Animal Hospital',
+      // staff-only, mirrored onto the family doc by the reverse trigger; must not bounce back:
+      officeNotes: 'bites',
+      reactive: true,
+      routine: 'morning walk',
+      vaccinations: 'Rabies 2027',
+    } as any);
+    expect(payload).toEqual({
+      name: 'Rex',
+      sex: 'Male',
+      weight: '68 lbs',
+      colorMarkings: 'Yellow',
+      spayedNeutered: true,
+      vetInfo: 'Riverside Animal Hospital',
+    });
+  });
   it('copies name/species/breed/photoUrl + care instructions, drops staff fields', () => {
     const payload = buildFlatMirrorPayload({
       name: 'Rex',
@@ -38,7 +61,7 @@ describe('buildFlatMirrorPayload: projects ONLY parent-owned fields', () => {
       feedingInstructions: 'twice daily',
       // staff-owned / non-projected fields must NOT appear:
       routine: 'morning walk',
-      vetInfo: 'Dr Smith',
+      officeNotes: 'staff only',
       status: 'active',
     } as any);
     expect(payload).toEqual({
@@ -49,7 +72,7 @@ describe('buildFlatMirrorPayload: projects ONLY parent-owned fields', () => {
       feedingInstructions: 'twice daily',
     });
     expect(payload).not.toHaveProperty('routine');
-    expect(payload).not.toHaveProperty('vetInfo');
+    expect(payload).not.toHaveProperty('officeNotes');
     expect(payload).not.toHaveProperty('status');
   });
 });
@@ -173,5 +196,63 @@ describe('mirrorFamilyKinToFlat: ARCHIVE soft-marks the flat mirror', () => {
     expect(flatWrite!.data).not.toHaveProperty('name');
     // Never hard-deletes.
     expect(ctx.deletes).toHaveLength(0);
+  });
+});
+
+// #1291: AuntieOS screens read the flat doc's `profilePictureUrl`, so a
+// household-uploaded photo has to land there too, without an unrelated
+// parent edit clobbering a portrait an Auntie set from the gallery.
+describe('mirrorFamilyKinToFlat: household photo reaches the admin portrait field (#1291)', () => {
+  const FLAT_ID = 'flat1';
+  const URL_A = 'https://res.cloudinary.com/demo/image/upload/v1/tribetails/kinfolks/kf1/kin/pet1/a.jpg';
+  const URL_B = 'https://res.cloudinary.com/demo/image/upload/v1/tribetails/kinfolks/kf1/kin/pet1/b.jpg';
+  const linked = { legacyKinId: FLAT_ID, familyKinPath: FAMILY_PATH, status: 'active', name: 'Rex' };
+
+  it('buildAdminPortraitStamp: create with a photo stamps it; create without one stamps nothing', async () => {
+    const { buildAdminPortraitStamp } = await import('../src/triggers/onFamilyKinWrite');
+    expect(buildAdminPortraitStamp(undefined, { photoUrl: URL_A })).toEqual({ profilePictureUrl: URL_A });
+    expect(buildAdminPortraitStamp(undefined, { name: 'Rex' })).toEqual({});
+  });
+
+  it('create: the flat mirror carries profilePictureUrl alongside photoUrl', async () => {
+    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, undefined, { name: 'Rex', status: 'active', photoUrl: URL_A } as any);
+    const flatWrite = ctx.writes.find((w) => w.path === `kin/${res.flatDocId}`);
+    expect(flatWrite!.data.photoUrl).toBe(URL_A);
+    expect(flatWrite!.data.profilePictureUrl).toBe(URL_A);
+  });
+
+  it('replace: a changed photoUrl overwrites profilePictureUrl on the flat doc', async () => {
+    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, { ...linked, photoUrl: URL_A } as any, { ...linked, photoUrl: URL_B } as any);
+    expect(res.action).toBe('updated');
+    const flatWrite = ctx.writes.find((w) => w.path === `kin/${FLAT_ID}`);
+    expect(flatWrite!.data.photoUrl).toBe(URL_B);
+    expect(flatWrite!.data.profilePictureUrl).toBe(URL_B);
+  });
+
+  it('remove: a cleared photoUrl clears profilePictureUrl to the empty string', async () => {
+    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, { ...linked, photoUrl: URL_A } as any, { ...linked, photoUrl: null } as any);
+    const flatWrite = ctx.writes.find((w) => w.path === `kin/${FLAT_ID}`);
+    expect(flatWrite!.data.photoUrl).toBeNull();
+    expect(flatWrite!.data.profilePictureUrl).toBe('');
+  });
+
+  it('an unrelated parent edit leaves profilePictureUrl alone (an Auntie-set portrait survives)', async () => {
+    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await mirrorFamilyKinToFlat(
+      KINFOLK,
+      KIN_ID,
+      { ...linked, photoUrl: URL_A } as any,
+      { ...linked, name: 'Rexy', photoUrl: URL_A } as any,
+    );
+    const flatWrite = ctx.writes.find((w) => w.path === `kin/${FLAT_ID}`);
+    expect(flatWrite!.data.name).toBe('Rexy');
+    expect(flatWrite!.data).not.toHaveProperty('profilePictureUrl');
   });
 });

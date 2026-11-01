@@ -32,7 +32,7 @@ describe('requestBookingCancellationHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingCancellationHandler } = await import('../src/portal/requestBookingCancellation');
     const res = await requestBookingCancellationHandler(CALLER);
-    expect(res).toEqual({ ok: true, visitId: 'v1', alreadyPending: false });
+    expect(res).toMatchObject({ ok: true, visitId: 'v1', alreadyPending: false });
     const write = ctx.writes.find((w) => w.path === VISIT);
     expect(write?.data?.cancelRequestedAt).toBe('__SERVER_TS__');
     expect(write?.data?.cancelRequestedByUid).toBe('u1');
@@ -94,6 +94,34 @@ describe('requestBookingCancellationHandler', () => {
     expect(write?.data?.cancelResolvedAt).toBeNull();
   });
 
+  it('#1299: refuses a cancellation while a reschedule ask is pending, and writes nothing', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        [VISIT]: { status: 'confirmed', rescheduleRequestStatus: 'pending' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingCancellationHandler } = await import('../src/portal/requestBookingCancellation');
+    await expect(requestBookingCancellationHandler(CALLER)).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: expect.stringContaining('new time is already waiting'),
+    });
+    expect(ctx.writes.find((w) => w.path === VISIT)).toBeFalsy();
+  });
+  it('#1299: a DECLINED reschedule ask does not block a cancellation', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        [VISIT]: { status: 'confirmed', rescheduleRequestStatus: 'declined' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingCancellationHandler } = await import('../src/portal/requestBookingCancellation');
+    const res = await requestBookingCancellationHandler(CALLER);
+    expect(res.alreadyPending).toBe(false);
+    expect(ctx.writes.find((w) => w.path === VISIT)?.data?.cancelRequestStatus).toBe('pending');
+  });
   it('rejects completed/cancelled visits', async () => {
     const ctx = buildDbMock({
       docs: {

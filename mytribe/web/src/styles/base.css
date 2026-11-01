@@ -26,6 +26,15 @@ body {
 .nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
   background: rgba(251, 251, 249, .72); border-bottom: 1px solid var(--hairline); }
 .nav .in { max-width: var(--maxw); margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 20px; }
+/* #1281: the confirmation a save leaves behind, drawn under the nav (components/SaveNotice.tsx). */
+.savenotice { position: sticky; top: 62px; z-index: 19; padding: 10px 24px 0; }
+.savenotice .in { max-width: var(--maxw); margin: 0 auto; display: flex; align-items: center; gap: 11px; padding: 11px 14px;
+  border-radius: 16px; background: rgba(10, 133, 149, .1); border: 1px solid rgba(10, 133, 149, .22); }
+.savenotice .ico { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
+  background: rgba(10, 133, 149, .16); color: var(--teal); font-weight: 700; }
+.savenotice .tt { font-size: 13.5px; font-weight: 600; color: var(--navy); }
+.savenotice .x { margin-left: auto; border: 0; background: none; font-size: 18px; color: var(--navy-muted); cursor: pointer; padding: 0 4px; }
+@media (max-width: 640px) { .savenotice { padding: 8px 16px 0; } }
 .wordmark { font-family: var(--serif); font-size: 23px; letter-spacing: -.01em; line-height: 1; white-space: nowrap; }
 /* Operator-supplied logo, left of the wordmark. Every dimension here is a CEILING,
    because the file is uploaded by an operator and this header is client-facing:
@@ -56,6 +65,14 @@ body {
   box-shadow: 0 0 0 3px var(--cream); }
 .avatar { width: 42px; height: 42px; border-radius: 50%; background: var(--tribe-grad); display: grid; place-items: center;
   color: #fff; font-family: var(--serif); font-size: 18px; cursor: pointer; box-shadow: var(--shadow-warm); }
+button.avatar { border: 0; padding: 0; }
+.avatar-menu { position: relative; }
+.avatar-menu__panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 50; min-width: 210px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px; border-radius: 16px; box-shadow: var(--shadow-lift); }
+.avatar-menu__panel a, .avatar-menu__panel button { display: block; width: 100%; text-align: left; padding: 11px 14px; border: 0;
+  border-radius: 11px; background: transparent; color: var(--navy); font: inherit; font-size: 14.5px; cursor: pointer; text-decoration: none; }
+.avatar-menu__panel a:hover, .avatar-menu__panel button:hover:not(:disabled) { background: rgba(223, 132, 49, .12); }
+.avatar-menu__panel .avatar-menu__out { color: var(--coral); border-top: 1px solid var(--glass-border); border-radius: 0 0 11px 11px; margin-top: 4px; }
 
 /* ===== layout shell ===== */
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 34px 24px 80px; position: relative; z-index: 1; }

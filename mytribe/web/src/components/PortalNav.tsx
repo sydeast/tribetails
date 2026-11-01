@@ -1,10 +1,13 @@
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '../lib/auth';
+import { useSignOut } from '../lib/auth';
+import { usePortalIdentity } from '../lib/identity';
+import { AvatarMenu } from './AvatarMenu';
 import { useAccessState, getActiveKinfolkId } from '../lib/activeTribe';
 import { getMyHome } from '../api/portal';
 import { BrandLogo } from './BrandLogo';
 import { billingAccessOf } from '../lib/billingAccess';
+import { SaveNoticeLine } from './SaveNotice';
 
 export type PortalNavTab = 'home' | 'tribe' | 'schedule' | 'kintales' | 'invoices' | 'account' | 'messages';
 
@@ -43,8 +46,7 @@ const TAB_ITEMS: (NavItem & { icon: string })[] = [
 ];
 
 /** Shared top nav + mobile bottom tab bar, extracted from the identical markup repeated across every mockup. */
-export function PortalNav(props: { active: PortalNavTab; displayName?: string }) {
-  const authState = useAuth();
+export function PortalNav(props: { active: PortalNavTab }) {
   const access = useAccessState();
 
   // Operator branding, off the EXISTING `getMyHome` payload rather than a new
@@ -74,11 +76,9 @@ export function PortalNav(props: { active: PortalNavTab; displayName?: string })
   // #1005: the same cached answer says whether this member has billing
   // access. Without it the Invoices link is not drawn at all.
   const navLinks = billingAccessOf(branding.data) ? NAV_LINKS : NAV_LINKS.filter((l) => l.id !== 'invoices');
-  const initial =
-    (props.displayName || (authState.status === 'signedIn' ? (authState.user.email ?? '') : '') || 'M')
-      .charAt(0)
-      .toUpperCase();
-
+  // #1290: one source for the avatar on every screen (see lib/identity.ts).
+  const { initial } = usePortalIdentity();
+  const { signOut, signingOut } = useSignOut();
   return (
     <>
       <nav className="nav">
@@ -112,19 +112,15 @@ export function PortalNav(props: { active: PortalNavTab; displayName?: string })
             <Link className="iconbtn" to="/account/notifications" aria-label="Notification settings">
               {'\u{1F514}'}
             </Link>
-            {/* #538: this used to be a bare div wired straight to signOut, so the
-                one control a kinfolk would reach for to find their profile
-                signed them out instead. Per the account mockup's own nav
-                (mytribe-account-2026-05-31.html, the only mock that renders
-                this element on its own active screen) the avatar's job is to
-                open Account, aria-label="Account" and all; Sign Out lives on
-                that screen's sticky save bar, not up here. */}
-            <Link className="avatar" to="/account" aria-label="Account" title="Account">
-              {initial}
-            </Link>
+            {/* #538 made the avatar a link to Account; #1309 makes it a small menu
+                (Account, Notification settings, Sign out). Sign out is its own
+                item the person has to open the menu to reach, which is the
+                difference from the bare sign-out div #538 removed. */}
+            <AvatarMenu initial={initial} onSignOut={signOut} signingOut={signingOut} />
           </div>
         </div>
       </nav>
+      <SaveNoticeLine />
 
       <nav className="tabbar">
         {TAB_ITEMS.map((tab) =>

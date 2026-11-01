@@ -1,47 +1,13 @@
 package com.kinfolk.portal.screens.schedule
 
 import com.kinfolk.portal.screens.schedule.util.parseClock24
-import com.kinfolk.portal.screens.schedule.util.proposedStartMillis
 import com.kinfolk.portal.screens.schedule.util.rescheduleProblem
-import kotlinx.datetime.LocalDate
-import kotlinx.datetime.TimeZone
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /** The arithmetic and the refusals behind the reschedule ask (#469). */
 class RescheduleProposalTest {
-
-    private val utc = TimeZone.UTC
-
-    @Test
-    fun `a date and a time become the instant the household meant`() {
-        // 2026-08-18T13:00:00Z.
-        assertEquals(
-            1_787_058_000_000L,
-            proposedStartMillis(LocalDate(2026, 8, 18), "13:00", utc),
-        )
-    }
-
-    @Test
-    fun `midnight is a real time, not a missing one`() {
-        assertEquals(
-            1_787_011_200_000L,
-            proposedStartMillis(LocalDate(2026, 8, 18), "00:00", utc),
-        )
-    }
-
-    @Test
-    fun `no date picked yet is null, never today by default`() {
-        assertNull(proposedStartMillis(null, "13:00", utc))
-    }
-
-    @Test
-    fun `a half-typed time is null rather than a guess`() {
-        assertNull(proposedStartMillis(LocalDate(2026, 8, 18), "13", utc))
-        assertNull(proposedStartMillis(LocalDate(2026, 8, 18), "", utc))
-        assertNull(proposedStartMillis(LocalDate(2026, 8, 18), "1pm", utc))
-    }
 
     @Test
     fun `parseClock24 refuses hours and minutes off the clock`() {

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOOKING_TIMELINE_STEPS,
+  auntieName,
   bookingChip,
+  bookingStatusIcon,
+  pendingChangeLabel,
+  pendingChangeOf,
   bookingStatusChip,
   bookingTimelineIndex,
   calTile,
@@ -19,6 +23,7 @@ import {
   visitTile,
   visitVariant,
   visitWhenLine,
+  visitBlockText,
   weekdayTime,
 } from './portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
@@ -51,6 +56,31 @@ describe('visitSubtitle', () => {
   });
 });
 
+describe('auntieName (#1322)', () => {
+  it('puts the role word in front of a plain name', () => {
+    expect(auntieName('Maya')).toBe('Auntie Maya');
+  });
+  it('says the role word once when the name already carries it, in any case or position', () => {
+    expect(auntieName('TEST SANDBOX Auntie')).toBe('TEST SANDBOX Auntie');
+    expect(auntieName('Auntie Maya')).toBe('Auntie Maya');
+    expect(auntieName('auntie maya')).toBe('auntie maya');
+    expect(auntieName('Auntie')).toBe('Auntie');
+  });
+  it('matches the whole word only', () => {
+    expect(auntieName('Aunties Club')).toBe('Auntie Aunties Club');
+  });
+  it('returns null for a missing or blank name so the caller keeps its fallback', () => {
+    expect(auntieName(null)).toBeNull();
+    expect(auntieName(undefined)).toBeNull();
+    expect(auntieName('   ')).toBeNull();
+  });
+  it('feeds visitSubtitle without doubling', () => {
+    expect(visitSubtitle(null, 'TEST SANDBOX Auntie')).toBe('With TEST SANDBOX Auntie');
+    expect(visitSubtitle(new Date(2026, 5, 1, 8, 0).getTime(), 'TEST SANDBOX Auntie')).toBe(
+      'Mon, 8:00 AM with TEST SANDBOX Auntie',
+    );
+  });
+});
 describe('relativeDay', () => {
   const now = new Date(2026, 5, 10, 9, 0).getTime();
 
@@ -71,6 +101,12 @@ describe('speciesEmoji', () => {
     expect(speciesEmoji('Cat')).toBe('\u{1F431}');
   });
 
+  it('reads the picker spellings, so Small mammal and Rabbit keep their icons (#1313)', () => {
+    expect(speciesEmoji('Small mammal')).toBe('\u{1F439}');
+    expect(speciesEmoji('Small Animal')).toBe('\u{1F439}');
+    expect(speciesEmoji(' Rabbit ')).toBe('\u{1F430}');
+    expect(speciesEmoji('Reptile')).toBe('\u{1F98E}');
+  });
   it('falls back to a paw print for unknown/null species', () => {
     expect(speciesEmoji('betta fish')).toBe('\u{1F43E}');
     expect(speciesEmoji(null)).toBe('\u{1F43E}');
@@ -80,11 +116,45 @@ describe('speciesEmoji', () => {
 describe('bookingChip', () => {
   it.each([
     ['confirmed', 'CONFIRMED', 'warm'],
-    ['requested', 'PENDING', 'go'],
+    ['requested', 'REQUESTED', 'go'],
+    ['enRoute', 'EN ROUTE', 'warm'],
+    ['active', 'IN PROGRESS', 'warm'],
     ['completed', 'COMPLETED', 'done'],
     ['cancelled', 'CANCELLED', 'done'],
   ] as const)('%s -> %s / %s', (status, label, tone) => {
     expect(bookingChip(status)).toEqual({ label, tone });
+  });
+  // #1298: the list pill and the detail badge were two spellings of one status.
+  it.each(['requested', 'confirmed', 'enRoute', 'active', 'completed', 'cancelled'] as const)(
+    'says %s with the same words the detail badge uses',
+    (status) => {
+      expect(bookingChip(status).label).toBe(bookingStatusChip(status).label);
+    },
+  );
+});
+describe('bookingStatusIcon (#1298)', () => {
+  it('is not a green check while the visit is only requested', () => {
+    expect(bookingStatusIcon('requested')).not.toBe('\u2705');
+    expect(bookingStatusIcon('confirmed')).toBe('\u2705');
+    expect(bookingStatusIcon('cancelled')).not.toBe('\u2705');
+  });
+});
+describe('pendingChange (#1299)', () => {
+  const none = { cancelRequestStatus: null, rescheduleRequestStatus: null } as const;
+  it('is null when nothing is open, including after an answer', () => {
+    expect(pendingChangeOf(none)).toBeNull();
+    expect(pendingChangeLabel({ cancelRequestStatus: 'declined', rescheduleRequestStatus: 'accepted' })).toBeNull();
+  });
+  it('names a pending new time', () => {
+    expect(pendingChangeLabel({ ...none, rescheduleRequestStatus: 'pending' })).toBe('New time requested');
+  });
+  it('names a pending cancellation', () => {
+    expect(pendingChangeLabel({ ...none, cancelRequestStatus: 'pending' })).toBe('Cancellation requested');
+  });
+  it('names the cancellation when a visit written before the rule carries both', () => {
+    expect(pendingChangeLabel({ cancelRequestStatus: 'pending', rescheduleRequestStatus: 'pending' })).toBe(
+      'Cancellation requested',
+    );
   });
 });
 
@@ -190,6 +260,7 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     serviceType: 'Drop-in Visit',
     // #1297: the server-resolved name; follows an overridden serviceType.
     serviceLabel: overrides.serviceType ?? 'Drop-in Visit',
+    serviceId: null,
     title: null,
     startTimeMs: null,
     endTimeMs: null,
@@ -213,8 +284,14 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleRequestedEndTimeMs: null,
     rescheduleRequestReason: null,
     rescheduleResponseNote: null,
+    address: null,
+    kinTaleId: null,
+    invoiceId: null,
     startTimePending: false,
     requestedDate: null,
+    timeBlockLabel: null,
+    timeBlockStartTime: null,
+    timeBlockEndTime: null,
     ...overrides,
   };
 }
@@ -322,5 +399,22 @@ describe('a visit whose start time the Auntie sets (#1098)', () => {
     const older = { ...booking(), startTimePending: undefined, requestedDate: undefined } as unknown as GetMyBookingsResultLiveVisit;
     expect(bookingSubtitle(older)).toBe('Time to be confirmed');
     expect(visitWhenLine(older)).toBe('Time to be confirmed');
+  });
+});
+
+describe('block-booked visits (#1301)', () => {
+  const ms = new Date(2026, 5, 7, 11, 0).getTime(); // a Sunday, the window's anchor
+  it('names the window, never the anchor clock', () => {
+    const b = { timeBlockLabel: 'Midday', timeBlockStartTime: '11:00', timeBlockEndTime: '15:00' };
+    expect(visitSubtitle(ms, null, b)).toBe('Sun, Midday (11 AM to 3 PM)');
+    expect(visitSubtitle(ms, 'Maya', b)).toBe('Sun, Midday (11 AM to 3 PM) with Auntie Maya');
+    expect(visitBlockText(b)).toBe('Midday (11 AM to 3 PM)');
+  });
+  it('falls back to the stored label when the window has been removed', () => {
+    expect(visitBlockText({ timeBlockLabel: 'Midday', timeBlockStartTime: null, timeBlockEndTime: null })).toBe('Midday');
+  });
+  it('leaves a clock visit alone', () => {
+    expect(visitSubtitle(ms, null, { timeBlockLabel: null })).toBe('Sun, 11:00 AM');
+    expect(visitBlockText({})).toBeNull();
   });
 });

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, waitFor } from '@testing-library/react';
 import type { RoutePoint } from '@tribetails/geo';
-import { RouteMap } from './RouteMap';
+import { RouteMap, MAP_UNAVAILABLE_MESSAGE } from './RouteMap';
 
 /**
  * RouteMap's contract after #520: a real Mapbox basemap when a token is
@@ -173,6 +173,8 @@ describe('RouteMap with a token', () => {
     // the empty map frame is out of the accessibility tree.
     expect(fallbackSvg(container)).not.toBeNull();
     expect(mapContainer(container)?.getAttribute('aria-hidden')).toBe('true');
+    // Still loading is not a failure: no apology yet.
+    expect(container.querySelector('[data-testid="routemap-unavailable"]')).toBeNull();
   });
 
   it('draws the route as a GeoJSON LineString with start and end markers, and fits the camera to it', async () => {
@@ -243,9 +245,10 @@ describe('RouteMap when the map fails', () => {
     await waitFor(() => expect(mapContainer(container)).toBeNull());
     expect(fallbackSvg(container)).not.toBeNull();
     expect(fallbackSvg(container)?.querySelector('path')).not.toBeNull();
-    // Logged for us, never surfaced to a kinfolk.
+    // Logged for us. The kinfolk gets the plain notice, never the raw error.
     expect(reportError).toHaveBeenCalledWith(FakeMap.throwOnConstruct, 'RouteMap.mapbox');
-    expect(container.textContent).not.toMatch(/error|failed|unavailable/i);
+    expect(container.querySelector('[data-testid="routemap-unavailable"]')?.textContent).toBe(MAP_UNAVAILABLE_MESSAGE);
+    expect(container.textContent).not.toMatch(/WebGL|error|failed/i);
   });
 
   it('degrades to the polyline when the style or tiles fail before the first paint', async () => {
@@ -260,6 +263,7 @@ describe('RouteMap when the map fails', () => {
     expect(fallbackSvg(container)).not.toBeNull();
     expect(map.removed).toBe(true);
     expect(reportError).toHaveBeenCalledWith(failure, 'RouteMap.mapbox');
+    expect(container.querySelector('[data-testid="routemap-unavailable"]')?.textContent).toBe(MAP_UNAVAILABLE_MESSAGE);
   });
 
   it('keeps a loaded map when a single tile fails afterwards', async () => {
@@ -270,6 +274,7 @@ describe('RouteMap when the map fails', () => {
     expect(map.removed).toBe(false);
     expect(mapContainer(container)).not.toBeNull();
     expect(fallbackSvg(container)).toBeNull();
+    expect(container.querySelector('[data-testid="routemap-unavailable"]')).toBeNull();
     expect(reportError).toHaveBeenCalledWith(expect.any(Error), 'RouteMap.mapbox.tiles');
   });
 

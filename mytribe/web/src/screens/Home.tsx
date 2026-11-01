@@ -12,12 +12,15 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import { billingAccessOf } from '../lib/billingAccess';
+import { usePortalIdentity } from '../lib/identity';
 import {
+  auntieName,
   bookingChip,
   bookingSubtitle,
   elapsedMinutes,
   greetingKick,
   kinVariant,
+  pendingChangeLabel,
   relativeDay,
   resolveHomeLayout,
   speciesEmoji,
@@ -61,6 +64,11 @@ export function Home() {
   });
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId), enabled: home.isSuccess });
 
+  // #1290: a first-name greeting off the signed-in person, not the household's
+  // (often upper-case) name. Until the account answers, the heading keeps the
+  // loading cue rather than greeting a name that is about to change.
+  const identity = usePortalIdentity();
+
   const { signOut, signingOut } = useSignOut();
 
   if (home.isError) {
@@ -73,7 +81,6 @@ export function Home() {
     );
   }
 
-  const displayName = home.data?.displayName ?? '';
   const liveVisit = bookings.data?.liveVisit ?? null;
   // `home.isError` is answered by the early return above, and `home` is not
   // gated, so homeView is only ever data / offline / loading. The other three
@@ -104,7 +111,7 @@ export function Home() {
 
   return (
     <>
-      <PortalNav active="home" displayName={displayName} />
+      <PortalNav active="home" />
 
       <div className="wrap">
         <header className="hero-greet">
@@ -114,7 +121,7 @@ export function Home() {
               // Not "Hi , your tribe is in good hands." We do not know whose
               // tribe this is right now, so we do not claim to.
               <>We can&rsquo;t reach your tribe right now.</>
-            ) : homeView.kind !== 'data' ? (
+            ) : homeView.kind !== 'data' || !identity.settled ? (
               // The bare ring rather than a LoadingLine: this wait lives inside
               // an <h1>, where a <div role="status"> is not allowed, and the
               // heading text is already the sentence. The escalation for the
@@ -127,7 +134,7 @@ export function Home() {
               </>
             ) : (
               <>
-                Hi {displayName}, your <span>tribe</span> is in good hands.
+                Hi {identity.firstName || 'there'}, your <span>tribe</span> is in good hands.
               </>
             )}
           </h1>
@@ -147,7 +154,7 @@ export function Home() {
                 <span className="tag">LIVE NOW</span>
               </div>
               <h2>
-                {liveVisit.auntieDisplayName ? `Auntie ${liveVisit.auntieDisplayName}` : 'Your Auntie'} is with{' '}
+                {auntieName(liveVisit.auntieDisplayName) ?? 'Your Auntie'} is with{' '}
                 {liveVisit.kinNames.join(', ') || 'your kin'}
               </h2>
               <p>
@@ -191,6 +198,7 @@ export function Home() {
                 upcoming.map((b, i) => {
                   const tile = visitTile(b);
                   const chip = bookingChip(b.status);
+                  const change = pendingChangeLabel(b);
                   return (
                     <div className={`visit ${visitVariant(i)}`} key={b.id}>
                       <div className="cal">
@@ -200,6 +208,7 @@ export function Home() {
                       <div className="info">
                         <b>{visitTitleOf(b) ?? 'Visit'}</b>
                         <small>{bookingSubtitle(b)}</small>
+                        {change && <small className="pending-change" data-testid="pending-change">{change}</small>}
                       </div>
                       <div className="pet">{speciesEmoji(null)}</div>
                       <span className={`chip ${chip.tone}`}>{chip.label}</span>
@@ -231,7 +240,7 @@ export function Home() {
                       <b>{t.title || t.body.slice(0, 60)}</b>
                       <p>{t.body}</p>
                       <div className="meta">
-                        {`FROM AUNTIE ${t.authorDisplayName.toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
+                        {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
                       </div>
                     </div>
                   </div>

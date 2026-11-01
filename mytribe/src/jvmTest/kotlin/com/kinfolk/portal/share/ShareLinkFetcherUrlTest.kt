@@ -4,6 +4,7 @@ import com.kinfolk.portal.firebase.RestEndpoints
 import com.kinfolk.portal.firebase.RestHttp
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.toByteArray
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -11,6 +12,8 @@ import io.ktor.http.headersOf
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * #889 review, item 2 and item 5: JvmShareLinkFetcher used to build its own
@@ -59,7 +62,7 @@ class ShareLinkFetcherUrlTest {
     fun postGuestCommentHitsTheFunctionsEmulatorWhenConfigured() = runBlocking {
         val urls = mutableListOf<String>()
         val fetcher = JvmShareLinkFetcher(prodBase, clientCapturing(urls, """{"commentId":"c1"}"""), endpoints(emulator = true))
-        fetcher.postGuestComment("tok", "tale1", "hi", "Guest", "g@x.com", "captcha", null)
+        fetcher.postGuestComment("tok", "tale1", "hi", "Guest", "g@x.com", "captcha", null, null)
         assertEquals("http://127.0.0.1:5001/auntieos-ttpc/us-central1/addGuestKinTaleComment", urls.single())
     }
 
@@ -67,7 +70,7 @@ class ShareLinkFetcherUrlTest {
     fun postGuestCommentHitsTheExplicitProdBaseWhenNoEmulatorIsConfigured() = runBlocking {
         val urls = mutableListOf<String>()
         val fetcher = JvmShareLinkFetcher(prodBase, clientCapturing(urls, """{"commentId":"c1"}"""), endpoints(emulator = false))
-        fetcher.postGuestComment("tok", "tale1", "hi", "Guest", "g@x.com", "captcha", null)
+        fetcher.postGuestComment("tok", "tale1", "hi", "Guest", "g@x.com", "captcha", null, null)
         assertEquals("$prodBase/addGuestKinTaleComment", urls.single())
     }
 
@@ -94,5 +97,61 @@ class ShareLinkFetcherUrlTest {
         val fetcher = JvmShareLinkFetcher(customBase, clientCapturing(urls, "{}"), endpoints)
         fetcher.getShareLink("share1", null)
         assertEquals("$customBase/getShareLink/share1", urls.single())
+    }
+
+    // #1331 / #1332: method and body, not just the URL.
+    private data class Seen(val method: String, val url: String, val body: String)
+
+    private fun clientRecording(seen: MutableList<Seen>, bodyJson: String) =
+        RestHttp.buildClient(MockEngine, guardRequests = false) {
+            engine {
+                addHandler { request ->
+                    seen += Seen(request.method.value, request.url.toString(), request.body.toByteArray().decodeToString())
+                    respond(
+                        content = bodyJson,
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+        }
+
+    @Test
+    fun getShareLinkPostsThePasscodeInTheBodyAndReturnsTheUnlockToken() = runBlocking {
+        val seen = mutableListOf<Seen>()
+        val fetcher = JvmShareLinkFetcher(
+            prodBase,
+            clientRecording(seen, """{"body":"x","unlockToken":"v1.1.sig"}"""),
+            endpoints(emulator = false),
+        )
+        val result = fetcher.getShareLink("share1", "1234")
+        val req = seen.single()
+        assertEquals("POST", req.method)
+        assertEquals("$prodBase/getShareLink/share1", req.url)
+        assertFalse(req.url.contains("1234"))
+        assertTrue(req.body.contains("\"passcode\":\"1234\""), req.body)
+        val ok = result as GetShareLinkResult.Ok
+        assertEquals("v1.1.sig", ok.unlockToken)
+        assertFalse(ok.payload.containsKey("unlockToken"))
+    }
+
+    @Test
+    fun getShareLinkWithoutAPasscodeIsAPlainGet() = runBlocking {
+        val seen = mutableListOf<Seen>()
+        val fetcher = JvmShareLinkFetcher(prodBase, clientRecording(seen, "{}"), endpoints(emulator = false))
+        fetcher.getShareLink("share1", null)
+        assertEquals("GET", seen.single().method)
+        assertEquals("$prodBase/getShareLink/share1", seen.single().url)
+    }
+
+    @Test
+    fun postGuestCommentSendsTheUnlockTokenInTheBody() = runBlocking {
+        val seen = mutableListOf<Seen>()
+        val fetcher = JvmShareLinkFetcher(prodBase, clientRecording(seen, """{"commentId":"c1"}"""), endpoints(emulator = false))
+        fetcher.postGuestComment("tok", "tale1", "hi", "Guest", "g@x.com", "captcha", null, "v1.1.sig")
+        val req = seen.single()
+        assertEquals("POST", req.method)
+        assertEquals("$prodBase/addGuestKinTaleComment", req.url)
+        assertTrue(req.body.contains("\"unlockToken\":\"v1.1.sig\""), req.body)
     }
 }

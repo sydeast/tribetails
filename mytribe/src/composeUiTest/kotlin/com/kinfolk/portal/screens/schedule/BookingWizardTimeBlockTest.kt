@@ -148,7 +148,7 @@ class BookingWizardTimeBlockTest {
         onNodeWithText("Next").performClick()
         waitForIdle()
         // The second Auntie's In moves to Evening; the first stays in Midday.
-        onAllNodesWithText("Evening (17:00-21:00)")[1].performScrollTo().performClick()
+        onAllNodesWithText("Evening (5 PM to 9 PM)")[1].performScrollTo().performClick()
         onNodeWithText("Repeating Schedule").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("Mon").performScrollTo().performClick()
@@ -169,8 +169,8 @@ class BookingWizardTimeBlockTest {
         }
         goToStep3()
 
-        onNodeWithText("Midday (11:00-15:00)").assertExists()
-        onNodeWithText("Evening (17:00-21:00)").assertExists()
+        onNodeWithText("Midday (11 AM to 3 PM)").assertExists()
+        onNodeWithText("Evening (5 PM to 9 PM)").assertExists()
         // The free time field is gone, not merely hidden behind a toggle.
         onNodeWithText("1. Auntie's In time (HH:MM)").assertDoesNotExist()
         // And there is no mode toggle: with one mode on offer there is nothing
@@ -189,7 +189,7 @@ class BookingWizardTimeBlockTest {
         }
         goToStep3()
         pickTenthOfNextMonth()
-        onNodeWithText("Evening (17:00-21:00)").performScrollTo().performClick()
+        onNodeWithText("Evening (5 PM to 9 PM)").performScrollTo().performClick()
         waitForIdle()
         clickFooter("Next")
         clickFooter("Next")
@@ -261,7 +261,7 @@ class BookingWizardTimeBlockTest {
         onNodeWithText("Next").assertIsNotEnabled()
 
         // Moving the second one to the other window is what unblocks it.
-        onAllNodesWithText("Evening (17:00-21:00)")[1].performScrollTo().performClick()
+        onAllNodesWithText("Evening (5 PM to 9 PM)")[1].performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("Next").assertIsEnabled()
     }
@@ -302,14 +302,14 @@ class BookingWizardTimeBlockTest {
         goToStep3()
 
         // defaultBookingMode is TIME_BLOCK.
-        onNodeWithText("Midday (11:00-15:00)").assertExists()
+        onNodeWithText("Midday (11 AM to 3 PM)").assertExists()
         onNodeWithText("A Specific Time").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("1. Auntie's In time (HH:MM)").assertExists()
-        onNodeWithText("Midday (11:00-15:00)").assertDoesNotExist()
+        onNodeWithText("Midday (11 AM to 3 PM)").assertDoesNotExist()
         onNodeWithText("Time Blocks").performScrollTo().performClick()
         waitForIdle()
-        onNodeWithText("Midday (11:00-15:00)").assertExists()
+        onNodeWithText("Midday (11 AM to 3 PM)").assertExists()
     }
 
     @Test
@@ -323,7 +323,7 @@ class BookingWizardTimeBlockTest {
         goToStep3()
 
         onNodeWithText("1. Auntie's In time (HH:MM)").assertExists()
-        onNodeWithText("Midday (11:00-15:00)").assertDoesNotExist()
+        onNodeWithText("Midday (11 AM to 3 PM)").assertDoesNotExist()
         onNodeWithText("Time Blocks").assertDoesNotExist()
     }
 
@@ -370,7 +370,7 @@ class BookingWizardTimeBlockTest {
         clickFooter("Next")
         pickTenthOfNextMonth()
         // One window row (Auntie's In), and the overnight with no control at all.
-        onAllNodesWithText("Midday (11:00-15:00)").assertCountEquals(1)
+        onAllNodesWithText("Midday (11 AM to 3 PM)").assertCountEquals(1)
         onNodeWithText("2. Overnight Stays").assertExists()
         onNodeWithText("Your Auntie sets the start time").assertExists()
         onAllNodes(hasSetTextAction()).assertCountEquals(0)

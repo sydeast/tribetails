@@ -102,4 +102,13 @@ class RouteMapSurfaceTest {
         assertFalse(isFatalMapLoadingError(MapLoadingErrorType.SPRITE))
         assertFalse(isFatalMapLoadingError(MapLoadingErrorType.GLYPHS))
     }
+
+    @Test
+    fun the_unavailable_note_accompanies_the_polyline_and_never_the_basemap() {
+        // #1287: a route on a blank card reads as a bug. The notice shows on
+        // every path that lands on the Canvas, and never over a real map.
+        assertTrue(routeSurfaceShowsNote(RouteSurface.Canvas))
+        assertFalse(routeSurfaceShowsNote(RouteSurface.Basemap))
+        assertEquals("Street map unavailable. Showing the route only.", MAP_UNAVAILABLE_MESSAGE)
+    }
 }

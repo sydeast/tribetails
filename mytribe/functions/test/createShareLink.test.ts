@@ -54,6 +54,41 @@ describe('createShareLinkHandler', () => {
     expect(auditMock).toHaveBeenCalled();
   });
 
+  it("copies the tale's title into the share payload (#1322)", async () => {
+    loadMemberMock.mockResolvedValue({ role: 'PRIMARY', status: 'ACTIVE', permissions: {} });
+    requirePrimaryMock.mockReturnValue(undefined);
+    taleGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ title: '  Biscuit at the beach ', bodyCopy: 'hi', mediaFileIds: [], authorDisplayName: 'P', kinfolkId: 'f1' }),
+    });
+    sharedAdd.mockResolvedValue({ id: 'share-1' });
+    const { createShareLinkHandler } = await import('../src/share/createShareLink');
+    await createShareLinkHandler({
+      auth: { uid: 'u-prim' },
+      data: { familyId: 'f1', kinTaleId: 't1', includePhotos: false },
+    } as never);
+    expect(sharedAdd.mock.calls[0][0].scrubbedPayload).toEqual({
+      authorDisplayName: 'P',
+      title: 'Biscuit at the beach',
+      body: 'hi',
+      photos: [],
+    });
+  });
+  it('stores an empty title for a tale that has none (#1322)', async () => {
+    loadMemberMock.mockResolvedValue({ role: 'PRIMARY', status: 'ACTIVE', permissions: {} });
+    requirePrimaryMock.mockReturnValue(undefined);
+    taleGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ bodyCopy: 'hi', mediaFileIds: [], authorDisplayName: 'P', kinfolkId: 'f1' }),
+    });
+    sharedAdd.mockResolvedValue({ id: 'share-1' });
+    const { createShareLinkHandler } = await import('../src/share/createShareLink');
+    await createShareLinkHandler({
+      auth: { uid: 'u-prim' },
+      data: { familyId: 'f1', kinTaleId: 't1', includePhotos: false },
+    } as never);
+    expect(sharedAdd.mock.calls[0][0].scrubbedPayload.title).toBe('');
+  });
   it('SECONDARY denied via requirePrimary', async () => {
     loadMemberMock.mockResolvedValue({ role: 'SECONDARY', status: 'ACTIVE', permissions: {} });
     requirePrimaryMock.mockImplementation(() => {

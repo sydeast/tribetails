@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Invoices } from './Invoices';
 import type { GetMyInvoicesResult } from '../contracts/invoiceContracts.generated';
+import { SaveNoticeLine } from '../components/SaveNotice';
 
 /**
  * The payInvoice and redeemCredit mutations had no onError handler, so a
@@ -261,5 +262,45 @@ describe('Invoices: paid dates carry the year (#1330)', () => {
     );
     expect((await screen.findAllByText(/Paid Dec 17, 2025/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Paid Dec 17$/)).toBeNull();
+  });
+});
+
+/**
+ * #1281 (F50): "Save to Account Balance" showed Working… for about 12s, then
+ * went back to the button with the balance unchanged. The credit had applied;
+ * the list was stale, and households pressed again. The button now stays busy
+ * until the reloaded list shows the credit, and the save is confirmed in words.
+ */
+describe('Invoices — #1281 a credit save waits for the fresh list', () => {
+  it('stays on Working… until the reloaded list arrives, then shows the new balance and "Credit saved"', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    let answer!: (r: GetMyInvoicesResult) => void;
+    vi.mocked(invoicesApi.getMyInvoices)
+      .mockReset()
+      .mockResolvedValueOnce({ open: [], paid: [], credits: [CREDIT_INVOICE], accountBalanceCents: 0 })
+      .mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    redeemCredit.mockReset().mockResolvedValue({ ok: true, redeemedAmountCents: 2000, target: 'accountBalance', newAccountBalanceCents: 2000 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SaveNoticeLine />
+        <Invoices />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /Save to Account Balance/ }));
+    await waitFor(() => expect(redeemCredit).toHaveBeenCalledTimes(1));
+    // The credit applied, but the list has not come back: still busy, not reset.
+    expect(await screen.findByRole('button', { name: 'Working…' })).toBeDisabled();
+    expect(screen.queryByText('Credit saved')).toBeNull();
+    answer({
+      open: [],
+      paid: [],
+      credits: [{ ...CREDIT_INVOICE, creditRedeemedAtMs: 1_780_000_000_000, creditTarget: 'accountBalance' }],
+      accountBalanceCents: 2000,
+    });
+    expect(await screen.findByText('Credit saved')).toBeInTheDocument();
+    expect(document.querySelector('.bnum')?.textContent).toBe('$20.00');
+    expect(screen.queryByRole('button', { name: /Save to Account Balance/ })).toBeNull();
+    expect(redeemCredit).toHaveBeenCalledTimes(1);
   });
 });

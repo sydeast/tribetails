@@ -188,4 +188,64 @@ describe('updateKinHandler', () => {
     expect(w!.data.medications).toBe('twice daily');
     expect(w!.data.updatedByUid).toBe('u1');
   });
+
+  // #1310: the household edits the descriptive facts the admin also persists.
+  it('writes sex, weight, markings, fixed flag and vet through to the family doc', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    await updateKinHandler({
+      data: {
+        kinfolkId: '3',
+        kinId: 'k1',
+        kin: { sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', spayedNeutered: true, vetInfo: 'Riverside Animal Hospital' },
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    const w = ctx.writes.find((w) => w.path === 'families/3/kin/k1');
+    expect(w!.data).toMatchObject({
+      sex: 'Female',
+      weight: '52 lbs',
+      colorMarkings: 'Black',
+      spayedNeutered: true,
+      vetInfo: 'Riverside Animal Hospital',
+    });
+  });
+  it('lets an empty string clear a shared field, and refuses null (the admin Android decode would crash on null)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    await updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { weight: '' } }, auth: { uid: 'u1' } } as any);
+    expect(ctx.writes.find((w) => w.path === 'families/3/kin/k1')!.data.weight).toBe('');
+    await expect(
+      updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { weight: null } }, auth: { uid: 'u1' } } as any),
+    ).rejects.toThrow();
+  });
+  it('enforces the length caps on the shared fields', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    for (const kin of [{ sex: 'x'.repeat(41) }, { weight: 'x'.repeat(41) }, { colorMarkings: 'x'.repeat(201) }, { vetInfo: 'x'.repeat(2001) }]) {
+      await expect(updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin }, auth: { uid: 'u1' } } as any)).rejects.toThrow();
+    }
+    await expect(
+      updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { spayedNeutered: 'yes' } }, auth: { uid: 'u1' } } as any),
+    ).rejects.toThrow();
+  });
+  it('silently drops staff-only keys a client sends (officeNotes, reactive, routine...): they never reach the doc', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    await updateKinHandler({
+      data: {
+        kinfolkId: '3',
+        kinId: 'k1',
+        kin: { sex: 'Male', officeNotes: 'x', reactive: true, routine: 'x', vaccinations: 'x', tags: ['Microchipped'] },
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    const data = ctx.writes.find((w) => w.path === 'families/3/kin/k1')!.data;
+    expect(data.sex).toBe('Male');
+    for (const k of ['officeNotes', 'reactive', 'routine', 'vaccinations', 'tags']) expect(data).not.toHaveProperty(k);
+  });
 });

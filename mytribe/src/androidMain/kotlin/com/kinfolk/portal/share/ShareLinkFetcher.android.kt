@@ -11,6 +11,6 @@ actual fun makeShareLinkFetcher(base: String): ShareLinkFetcher =
             throw ShareFetchException("Share viewer is web-only. Open the share link in a browser.")
         override suspend fun postGuestComment(
             shareToken: String, taleId: String, body: String, guestName: String, guestEmail: String,
-            recaptchaToken: String, parentCommentId: String?,
+            recaptchaToken: String, parentCommentId: String?, unlockToken: String?,
         ): String = throw ShareFetchException("Share viewer is web-only.")
     }

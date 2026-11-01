@@ -44,6 +44,8 @@ import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
+import { refreshAfterSave } from '../lib/refreshAfterSave';
+import { formatPhone } from '../lib/phone';
 
 /**
  * Reads one of the three reserved home-access fields when a homeAccess schema
@@ -373,7 +375,9 @@ export function TribeProfile() {
       // result that would wipe the edits that did not save, so only a clean
       // save reloads.
       if (profileHalf.kind !== 'failed' && homeHalf.kind !== 'failed') {
-        void queryClient.invalidateQueries({ queryKey: ['tribeProfile', kinfolkId] });
+        // #1281: awaited, so the save button stays busy until the reloaded
+        // profile is what the inputs show.
+        await refreshAfterSave(queryClient, ['tribeProfile', kinfolkId]);
       }
       setSaving(false);
     }
@@ -381,7 +385,7 @@ export function TribeProfile() {
 
   return (
     <>
-      <PortalNav active="tribe" displayName={displayName} />
+      <PortalNav active="tribe" />
 
       <div className="wrap">
         <header className="hero-greet">
@@ -596,7 +600,7 @@ export function TribeProfile() {
                         <div className="suggestrow" key={c.id} onClick={() => pickClinic(c)}>
                           <b>{c.isEmergency ? `${c.name} · 24hr` : c.name}</b>
                           <small>
-                            {[c.address, c.phone].filter(Boolean).join(' · ')}
+                            {[c.address, formatPhone(c.phone)].filter(Boolean).join(' · ')}
                             {!c.verified && ' · waiting for approval'}
                           </small>
                         </div>
@@ -613,8 +617,8 @@ export function TribeProfile() {
                     <label>Clinic on file</label>
                     <p className="sub">
                       <b>{selectedClinic.name}</b>
-                      {[selectedClinic.phone, selectedClinic.address].filter(Boolean).length > 0 &&
-                        ` · ${[selectedClinic.phone, selectedClinic.address].filter(Boolean).join(' · ')}`}
+                      {[formatPhone(selectedClinic.phone), selectedClinic.address].filter(Boolean).length > 0 &&
+                        ` · ${[formatPhone(selectedClinic.phone), selectedClinic.address].filter(Boolean).join(' · ')}`}
                     </p>
                     <p className="hint">
                       Details come from the shared list, so if they are wrong Auntie can fix them
@@ -874,7 +878,8 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
           home_access: canAccessHome,
         },
       }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['members', kinfolkId] }),
+    // #1281: pending until the member list shows the new permissions.
+    onSuccess: () => refreshAfterSave(queryClient, ['members', kinfolkId]),
   }, { policy: 'hold', what: 'this permission change' });
 
   const title = member.secondaryLabel?.trim() || member.invitedEmail?.trim() || 'Member';

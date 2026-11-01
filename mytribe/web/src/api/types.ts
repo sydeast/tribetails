@@ -185,6 +185,12 @@ export interface KinDto {
   allergies: string | null;
   emergencyNotes: string | null;
   sitterNotes: string | null;
+  /** Descriptive facts the household shares with the admin (getMyKin.ts, #1310). */
+  sex: string | null;
+  weight: string | null;
+  colorMarkings: string | null;
+  spayedNeutered: boolean;
+  vetInfo: string | null;
 }
 
 export interface GetMyKinResult {
@@ -221,6 +227,16 @@ export interface KinPayloadPartial {
   emergencyNotes?: string | null;
   sitterNotes?: string | null;
   legacyKinId?: string | null;
+  /**
+   * The five facts the admin also keeps on the pet (kinWrites.ts, #1310). Not
+   * nullable: '' clears a text one, because the admin Android model decodes
+   * these as non-null.
+   */
+  sex?: string;
+  weight?: string;
+  colorMarkings?: string;
+  spayedNeutered?: boolean;
+  vetInfo?: string;
 }
 
 export interface UpdateKinRequest {

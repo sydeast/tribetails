@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { serviceEyebrowOf, serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getMyBookings, getMyVisits } from '../api/portal';
 import { useSignOut } from '../lib/auth';
@@ -12,7 +12,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { LaunchError } from './LaunchError';
 import { countLabel, countOfQuery, viewOfQuery } from '../lib/queryState';
-import { bookingChip, bookingSubtitle, fullDateKick, isoTime, speciesEmoji, visitTile, visitVariant } from '../lib/portalFormat';
+import { auntieName, bookingChip, bookingSubtitle, fullDateKick, isoTime, pendingChangeLabel, speciesEmoji, visitTile, visitVariant } from '../lib/portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
 
 type Tab = 'upcoming' | 'past';
@@ -45,7 +45,15 @@ function findBookingBySessionId(
  * time." Households booked the same visit twice off that sentence.
  */
 export function Schedule() {
-  const [tab, setTab] = useState<Tab>('upcoming');
+  // #1304: the tab is in the URL (`?tab=past`), not in component state, so the
+  // browser's back button from a visit returns to the tab it left. Switching
+  // tabs REPLACES the entry rather than pushing one: back from a visit should
+  // be one step, not a walk through every tab the household flicked between.
+  const search = useSearch({ from: '/schedule' });
+  const navigate = useNavigate();
+  const tab: Tab = search.tab === 'past' ? 'past' : 'upcoming';
+  const setTab = (next: Tab) =>
+    void navigate({ to: '/schedule', search: next === 'past' ? { tab: 'past' } : {}, replace: true });
   const [openReplayId, setOpenReplayId] = useState<string | null>(null);
 
   const kinfolkId = getActiveKinfolkId();
@@ -95,34 +103,43 @@ export function Schedule() {
           </Link>
         </header>
 
-        <div className="tabrow" role="tablist" aria-label="Schedule view">
-          <button className={tab === 'upcoming' ? 'act' : ''} role="tab" aria-selected={tab === 'upcoming'} onClick={() => setTab('upcoming')}>
-            Upcoming{' '}
-            <span className="count" title={upcomingCount.hint ?? undefined} aria-label={upcomingCount.hint ?? undefined}>
-              {upcomingCount.text}
-            </span>
-          </button>
-          <button className={tab === 'past' ? 'act' : ''} role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')}>
-            Past Visits{' '}
-            <span className="count" title={pastCount.hint ?? undefined} aria-label={pastCount.hint ?? undefined}>
-              {pastCount.text}
-            </span>
-          </button>
-        </div>
-
         {/*
+          slot that is always there. It used to be its own row above the lists:
+          it showed on load, then vanished when the answer arrived and pulled
+          everything up ~10px, so a tap aimed at a row landed on the gap. The
+          slot keeps its height whether it is saying something or not, so the
+          answer arriving moves nothing. (A live visit still adds its hero,
+          which is content arriving, not a line leaving.)
           The hero used to appear out of nothing: `visits.isLoading` was never
           read, so between mount and the answer landing there was no sign the
           screen was still deciding, and while paused there never would be one.
-          A compact line rather than a second full panel, because the card below
-          already carries the offline panel for the same outage.
+          A compact line rather than a second full panel, because the card
+          below already carries the offline panel for the same outage.
         */}
-        {!liveVisit && visitsView.kind === 'offline' && <OfflineNotice compact what="whether a visit is under way" />}
-        {!liveVisit && visitsView.kind === 'loading' && (
-          <LoadingLine what="whether a visit is under way" retry={() => void visits.refetch()}>
-            Checking whether a visit is under way&hellip;
-          </LoadingLine>
-        )}
+        <div className="tabbar">
+          <div className="tabrow" role="tablist" aria-label="Schedule view">
+            <button className={tab === 'upcoming' ? 'act' : ''} role="tab" aria-selected={tab === 'upcoming'} onClick={() => setTab('upcoming')}>
+              Upcoming{' '}
+              <span className="count" title={upcomingCount.hint ?? undefined} aria-label={upcomingCount.hint ?? undefined}>
+                {upcomingCount.text}
+              </span>
+            </button>
+            <button className={tab === 'past' ? 'act' : ''} role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')}>
+              Past Visits{' '}
+              <span className="count" title={pastCount.hint ?? undefined} aria-label={pastCount.hint ?? undefined}>
+                {pastCount.text}
+              </span>
+            </button>
+          </div>
+          <div className="livecheck">
+            {!liveVisit && visitsView.kind === 'offline' && <OfflineNotice compact what="whether a visit is under way" />}
+            {!liveVisit && visitsView.kind === 'loading' && (
+              <LoadingLine what="whether a visit is under way" retry={() => void visits.refetch()}>
+                Checking whether a visit is under way&hellip;
+              </LoadingLine>
+            )}
+          </div>
+        </div>
         {liveVisit && (
           <section className="live" aria-label="Visit in progress">
             <div className="lrow">
@@ -130,7 +147,7 @@ export function Schedule() {
               <span className="tag">VISIT IN PROGRESS</span>
             </div>
             <h2>
-              {liveBooking?.auntieDisplayName ? `Auntie ${liveBooking.auntieDisplayName}` : 'Your Auntie'} is at your place
+              {auntieName(liveBooking?.auntieDisplayName) ?? 'Your Auntie'} is at your place
               {liveBooking?.kinNames.length ? ` with ${liveBooking.kinNames.join(', ')}` : ''}
             </h2>
             <p>
@@ -204,6 +221,9 @@ export function Schedule() {
                             {serviceEyebrowOf(b) && <span className="svc">{serviceEyebrowOf(b)}</span>}
                             <b>{visitTitleOf(b) ?? 'Visit'}</b>
                             <small>{bookingSubtitle(b)}</small>
+                            {pendingChangeLabel(b) && (
+                              <small className="pending-change" data-testid="pending-change">{pendingChangeLabel(b)}</small>
+                            )}
                           </div>
                           <div className="pet">{speciesEmoji(null)}</div>
                           <span className={`chip ${chip.tone}`}>{chip.label}</span>
@@ -247,6 +267,9 @@ export function Schedule() {
                             {serviceEyebrowOf(b) && <span className="svc">{serviceEyebrowOf(b)}</span>}
                             <b>{visitTitleOf(b) ?? 'Visit'}</b>
                             <small>{bookingSubtitle(b)}</small>
+                            {pendingChangeLabel(b) && (
+                              <small className="pending-change" data-testid="pending-change">{pendingChangeLabel(b)}</small>
+                            )}
                           </div>
                           {route.length > 0 && (
                             <button

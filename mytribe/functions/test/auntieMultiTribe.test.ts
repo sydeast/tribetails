@@ -127,6 +127,7 @@ const CASES: Case[] = [
   { name: 'getMyKinTaleMedia', load: async () => (await p('getMyKinTaleMedia')).getMyKinTaleMediaHandler, data: { taleId: 't1' }, expect: HOUSEHOLD },
   { name: 'getMyKinPhotos', load: async () => (await p('getMyKinPhotos')).getMyKinPhotosHandler, data: {}, expect: NOT_HERS },
   { name: 'getMyVisits', load: async () => (await p('getMyVisits')).getMyVisitsHandler, data: {}, expect: NOT_HERS },
+  { name: 'getBookingNotes', load: async () => (await p('getBookingNotes')).getBookingNotesHandler, data: { batchId: 'b1', visitId: 'v1' }, expect: NOT_HERS },
   { name: 'getMyBookings', load: async () => (await p('getMyBookings')).getMyBookingsHandler, data: {}, expect: NOT_HERS },
   { name: 'getMyTribeProfile', load: async () => (await p('getMyTribeProfile')).getMyTribeProfileHandler, data: {}, expect: NOT_HERS },
   { name: 'saveTribeProfile', load: async () => (await p('saveTribeProfile')).saveTribeProfileHandler, data: { displayName: 'Park tribe' }, expect: NOT_HERS },

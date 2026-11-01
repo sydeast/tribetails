@@ -19,6 +19,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.navigation
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navDeepLink
 import androidx.navigation.toRoute
@@ -49,6 +50,7 @@ import com.kinfolk.portal.screens.notifications.NotificationSettingsScreen
 import com.kinfolk.portal.screens.schedule.BookingEnvelopeScreen
 import com.kinfolk.portal.screens.schedule.BookingWizardScreen
 import com.kinfolk.portal.screens.schedule.KinCareDetailScreen
+import com.kinfolk.portal.screens.schedule.ScheduleHandoff
 import com.kinfolk.portal.screens.schedule.ScheduleScreen
 import com.kinfolk.portal.screens.tribe.TribeHubScreen
 import com.kinfolk.portal.screens.tribe.TribeScreen
@@ -84,6 +86,9 @@ fun AppNavHost(
     notificationCatalog: NotificationCatalogRepository?,
     shellKinfolkId: String?,
     shellFamilyName: String,
+    /** #1290: the signed-in person, for the header avatar. Blank falls back to [shellFamilyName]. */
+    shellPersonName: String = "",
+    onPersonNameChanged: (String) -> Unit = {},
     shellLogoUrl: String = "",
     shellBanner: com.kinfolk.portal.portal.PortalBanner = com.kinfolk.portal.portal.PortalBanner(),
     shellBannerDismissedByUser: Boolean = false,
@@ -148,7 +153,7 @@ fun AppNavHost(
     @Composable
     fun Shell(content: @Composable (Modifier) -> Unit) {
         TabShell(
-            familyName = shellFamilyName,
+            familyName = shellPersonName.ifBlank { shellFamilyName },
             logoUrl = shellLogoUrl,
             navController = navController,
             onSignOut = onSignOut,
@@ -172,6 +177,9 @@ fun AppNavHost(
         }
     }
 
+    // #1281: lives above the NavHost, so it outlasts the wizard's destination
+    // and reaches Schedule's. See ScheduleHandoff.
+    var scheduleHandoff by remember { mutableStateOf<ScheduleHandoff?>(null) }
     NavHost(navController = navController, startDestination = startRoute) {
         // ---- Pre-shell funnel ----
         composable<SignInRoute> {
@@ -275,6 +283,8 @@ fun AppNavHost(
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
                             onAddKin = { navController.navigate(KinAddEditRoute()) },
                             onBookVisit = { navController.navigate(BookingWizardRoute(startWeekly = false)) },
+                            handoff = scheduleHandoff,
+                            onHandoffTaken = { scheduleHandoff = null },
                             onOpenInvoices = if (shellBillingAccess) {
                                 { navController.navigate(InvoicesRoute) { launchSingleTop = true } }
                             } else {
@@ -301,6 +311,8 @@ fun AppNavHost(
                             onOpenRecurring = { navController.navigate(BookingWizardRoute(startWeekly = true)) },
                             onOpenMessageAuntie = { navController.navigate(MessageAuntieRoute) },
                             reloadSignal = reloadSignal,
+                            handoff = scheduleHandoff,
+                            onHandoffTaken = { scheduleHandoff = null },
                         )
                     }
                 }
@@ -382,6 +394,7 @@ fun AppNavHost(
                             kinfolkId = kinId,
                             onSignOut = onSignOut,
                             billingAccess = shellBillingAccess,
+                            onAccountSaved = { onPersonNameChanged(resolveShellPersonName(it.displayName, it.email, shellFamilyName)) },
                             onOpenTribeProfile = {
                                 // Account is a chrome-level destination, so
                                 // save/restore is safe here; pop to the
@@ -494,6 +507,8 @@ fun AppNavHost(
                                 markScheduleDirty(navController)
                                 navController.popBackStack()
                             },
+                            onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
+                            onOpenInvoice = { invoiceId -> navController.navigate(InvoiceDetailRoute(invoiceId)) },
                         )
                     }
                 }
@@ -518,7 +533,15 @@ fun AppNavHost(
                             kinfolkId = kinId,
                             portalApi = portalApi,
                             onClose = { navController.popBackStack() },
-                            onComplete = {
+                            onComplete = { fresh ->
+                                // #1345: Home and Schedule are the only entry
+                                // points, and each takes the handoff. Guarded
+                                // so a handoff never waits for a screen that
+                                // does not read it and surfaces out of context.
+                                val back = navController.previousBackStackEntry?.destination
+                                if (back?.hasRoute(ScheduleRoute::class) == true || back?.hasRoute(HomeRoute::class) == true) {
+                                    scheduleHandoff = ScheduleHandoff(bookings = fresh, notice = "Booking requested")
+                                }
                                 markScheduleDirty(navController)
                                 navController.popBackStack()
                             },
