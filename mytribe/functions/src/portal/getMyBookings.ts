@@ -9,6 +9,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { resolveBookingPolicy } from '../lib/bookingTimeBlocks';
 import { FULL_CPU } from '../lib/runtimeOptions';
 
 interface GetMyBookingsRequest { kinfolkId?: string }
@@ -41,6 +42,15 @@ const BookingDtoSchema = z
     startTimePending: z.boolean(),
     /** #1098: the night asked for (business-local `YYYY-MM-DD`) while `startTimePending`; null otherwise. */
     requestedDate: z.string().nullable(),
+    /**
+     * #1301: the named window the household booked this visit into ("Midday"),
+     * or null for a by-the-clock visit. A block visit has a start time that is
+     * only the window's anchor, so clients show the window, never the clock.
+     */
+    timeBlockLabel: z.string().nullable(),
+    /** #1301: that window's `HH:MM` bounds in the business's zone, null when the block has since been removed. */
+    timeBlockStartTime: z.string().nullable(),
+    timeBlockEndTime: z.string().nullable(),
     kinIds: z.array(z.string()),
     kinNames: z.array(z.string()),
     auntieDisplayName: z.string().nullable(),
@@ -134,6 +144,32 @@ export const Result = z
   })
   .strict();
 
+type BlockBounds = { startTime: string; endTime: string };
+/**
+ * #1301: the business's current windows by id, so a block visit can be shown as
+ * its window. Read through the same resolver `getBookingPolicy` and
+ * `requestBooking` use. A failed read degrades to an empty map: the visit still
+ * carries its stored label, it just has no hours to print.
+ */
+async function loadBlocksById(firestore: FirebaseFirestore.Firestore): Promise<Map<string, BlockBounds>> {
+  try {
+    const snap = await firestore.collection('business_settings').doc('business_settings').get();
+    const { policy } = resolveBookingPolicy(snap.data() ?? {});
+    return new Map(policy.timeBlocks.map((b) => [b.id, { startTime: b.startTime, endTime: b.endTime }]));
+  } catch {
+    return new Map();
+  }
+}
+function blockFieldsOf(data: Record<string, unknown>, blocksById: Map<string, BlockBounds>) {
+  const label = stringOrNull(data['timeBlockLabel']);
+  const id = stringOrNull(data['timeBlockId']);
+  const bounds = id === null ? undefined : blocksById.get(id);
+  return {
+    timeBlockLabel: label,
+    timeBlockStartTime: label === null ? null : (bounds?.startTime ?? null),
+    timeBlockEndTime: label === null ? null : (bounds?.endTime ?? null),
+  };
+}
 /**
  * Returns all visits split into live + upcoming + recent buckets, plus the
  * envelope grouping. READ-ONLY.
@@ -155,6 +191,7 @@ export async function getMyBookingsHandler(
     .where('familyId', '==', kinfolkId)
     .get();
 
+  const blocksById = await loadBlocksById(firestore);
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
   const byBatch = new Map<string, BookingDto[]>();
@@ -173,6 +210,7 @@ export async function getMyBookingsHandler(
       endTimeMs: tsMillis(data['endTime']),
       startTimePending: data['startTimePending'] === true,
       requestedDate: data['startTimePending'] === true ? stringOrNull(data['requestedDate']) : null,
+      ...blockFieldsOf(data, blocksById),
       kinIds: Array.isArray(data['kinIds']) ? (data['kinIds'] as string[]) : [],
       kinNames: Array.isArray(data['kinNames']) ? (data['kinNames'] as string[]) : [],
       auntieDisplayName: stringOrNull(data['auntieDisplayName']),
@@ -251,6 +289,9 @@ export async function getMyBookingsHandler(
       // A session always has its time; only a kinCares visit can await one.
       startTimePending: false,
       requestedDate: null,
+      timeBlockLabel: null,
+      timeBlockStartTime: null,
+      timeBlockEndTime: null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
       kinNames: [],
       auntieDisplayName: null,

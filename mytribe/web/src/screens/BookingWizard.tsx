@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
 import { getBookingPolicy, getBusinessClosures, getServiceCatalog, pricesVisibleOf, requestBooking } from '../api/bookingApi';
@@ -208,6 +208,17 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const kinfolkId = getActiveKinfolkId();
 
   const [step, setStep] = useState(1);
+  // #1300: every step change lands on the stepper. Without this the page kept
+  // the scroll offset of the long step it just left and opened the next one
+  // mid-page with the stepper out of sight. Skipped on the first render so
+  // opening the wizard does not jump the page.
+  const stepperRef = useRef<HTMLDivElement>(null);
+  const lastStep = useRef(step);
+  useEffect(() => {
+    if (lastStep.current === step) return;
+    lastStep.current = step;
+    stepperRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  }, [step]);
   const [allKinMode, setAllKinMode] = useState(true);
   const [selectedKinIds, setSelectedKinIds] = useState<Set<string>>(new Set());
   // #541 / #543: a LIST of KinCares, each with its own time of day, not one
@@ -313,6 +324,8 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   // access is shown no price label and no estimate row. The server has already
   // stripped the prices; this only keeps the empty rows off the screen.
   const showPrices = pricesVisibleOf(servicesQuery.data);
+  // #1300: the summary names the chosen Kin ("Biscuit, Maple"), not a count.
+  const selectedKinNames = activeKin.filter((k) => selectedKinIds.has(k.id)).map((k) => k.name ?? 'Unnamed Kin');
   const resolvedKinIds = allKinMode ? activeKin.map((k) => k.id) : [...selectedKinIds];
 
   // Single source of truth for the visit list, BOTH patterns; see the doc
@@ -528,7 +541,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
           </h1>
         </header>
 
-        <div className="stepper" role="list" aria-label="Booking steps">
+        <div className="stepper" role="list" aria-label="Booking steps" ref={stepperRef}>
           {STEP_LABELS.map((label, idx) => {
             const n = idx + 1;
             const state = n === step ? 'on' : n < step ? 'done' : '';
@@ -613,7 +626,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
               {step === 4 && <Step4ExtraLoveAndContext notes={notes} onNotesChange={setNotes} />}
               {step === 5 && (
                 <Step5Review
-                  kinNames={allKinMode ? ['All Kin in this home'] : activeKin.filter((k) => selectedKinIds.has(k.id)).map((k) => k.name ?? 'Unnamed Kin')}
+                  kinNames={allKinMode ? ['All Kin in this home'] : selectedKinNames}
                   kinCareSummary={summariseSlots(slots, services)}
                   pattern={pattern}
                   visits={plannedVisits}
@@ -658,70 +671,67 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
           </div>
 
           {/*
-            #547: the rail stands down on Review. The operator's words were
-            "why are we displaying review & confirm AND booking summary on the
-            same page" — and they are right, Review IS the summary, in more
-            detail, three inches to the left. Every earlier step still needs it,
-            because on those the summary is the only place the plan is visible.
+            Dropping it on the last step re-flowed the whole page from two
+            columns to one at the moment a household is checking their plan,
+            which the QA walk caught as a layout jump. Review keeps its detail;
+            the rail keeps the running price and the Kin and dates at a glance.
           */}
-          {step < 5 && (
-            <div className="stack">
-              <section className="glass card d3">
-                <div className="sectlabel">Booking summary</div>
+          <div className="stack">
+            <section className="glass card d3">
+              <div className="sectlabel">Booking summary</div>
 
-                <div className="sum-row">
-                  <div className="sk">KinCare</div>
-                  {slots.length > 0 ? (
-                    <div className="sv">{summariseSlots(slots, services)}</div>
-                  ) : (
-                    <div className="sv muted">Not chosen yet</div>
-                  )}
-                </div>
-
-                <div className="sum-row">
-                  <div className="sk">Kin</div>
-                  <div className={`sv ${allKinMode || selectedKinIds.size > 0 ? '' : 'muted'}`}>
-                    {allKinMode ? 'All Kin in this home' : selectedKinIds.size > 0 ? `${selectedKinIds.size} chosen` : 'Not chosen yet'}
-                  </div>
-                </div>
-
-                <div className="sum-row">
-                  <div className="sk">{pattern === 'weekly' ? 'Schedule' : 'Dates'}</div>
-                  {visitCount > 0 ? (
-                    <div className="sv">
-                      {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
-                      <small>
-                        {pattern === 'weekly'
-                          ? `over ${weekCount} weeks`
-                          : `across ${dayCount} ${dayCount === 1 ? 'day' : 'days'}`}
-                      </small>
-                    </div>
-                  ) : (
-                    <div className="sv muted">No dates selected yet.</div>
-                  )}
-                </div>
-
-                {showPrices && (
-                  <>
-                    <div className="price-box">
-                      <span className="pl">Estimated Price</span>
-                      <span className="pv">{formatEstimate(estimate)}</span>
-                    </div>
-                    <p className="sub" style={{ marginTop: 12 }}>
-                      {/*
-                        The old line here promised the estimate updates "as you add
-                        Kin and dates". Kin have never moved the price — the catalog
-                        is priced per visit, not per animal — so half of that
-                        sentence was describing something the app does not do.
-                      */}
-                      Your estimate updates as you add KinCare and dates. Your Auntie confirms the final price before the
-                      booking starts.
-                    </p>
-                  </>
+              <div className="sum-row">
+                <div className="sk">KinCare</div>
+                {slots.length > 0 ? (
+                  <div className="sv">{summariseSlots(slots, services)}</div>
+                ) : (
+                  <div className="sv muted">Not chosen yet</div>
                 )}
-              </section>
-            </div>
-          )}
+              </div>
+
+              <div className="sum-row">
+                <div className="sk">Kin</div>
+                <div className={`sv ${allKinMode || selectedKinIds.size > 0 ? '' : 'muted'}`}>
+                  {allKinMode ? 'All Kin in this home' : selectedKinNames.length > 0 ? selectedKinNames.join(', ') : 'Not chosen yet'}
+                </div>
+              </div>
+
+              <div className="sum-row">
+                <div className="sk">{pattern === 'weekly' ? 'Schedule' : 'Dates'}</div>
+                {visitCount > 0 ? (
+                  <div className="sv">
+                    {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
+                    <small>
+                      {pattern === 'weekly'
+                        ? `over ${weekCount} weeks`
+                        : `across ${dayCount} ${dayCount === 1 ? 'day' : 'days'}`}
+                    </small>
+                  </div>
+                ) : (
+                  <div className="sv muted">No dates selected yet.</div>
+                )}
+              </div>
+
+              {showPrices && (
+                <>
+                  <div className="price-box">
+                    <span className="pl">Estimated Price</span>
+                    <span className="pv">{formatEstimate(estimate)}</span>
+                  </div>
+                  <p className="sub" style={{ marginTop: 12 }}>
+                    {/*
+                      The old line here promised the estimate updates "as you add
+                      Kin and dates". Kin have never moved the price — the catalog
+                      is priced per visit, not per animal — so half of that
+                      sentence was describing something the app does not do.
+                    */}
+                    Your estimate updates as you add KinCare and dates. Your Auntie confirms the final price before the
+                    booking starts.
+                  </p>
+                </>
+              )}
+            </section>
+          </div>
         </div>
 
         <p className="footnote">
@@ -1187,7 +1197,7 @@ function Step4ExtraLoveAndContext(props: { notes: string; onNotesChange: (v: str
           onChange={(e) => props.onNotesChange(e.target.value)}
           placeholder="e.g. She's a bit shy today, or the gate is tricky to open…"
         />
-        <span className="hint" style={{ color: 'var(--coral)' }}>
+        <span className="hint">
           This note will be highlighted for Auntie during the visit.
         </span>
       </div>

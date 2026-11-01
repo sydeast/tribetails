@@ -7,6 +7,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { parseClosureEntry, closureOccurrencesInRange } from '../lib/closureRecurrence';
 import { refuseAuntie } from '../lib/staffGate';
+import { businessHoursForDayName, hasSpecialHours } from '../lib/businessHours';
 
 /**
  * C1: the ONE way a kinfolk client can find out which dates are closed.
@@ -52,6 +53,38 @@ export interface GetBusinessClosuresResult {
 
 /** Whole-day span in ms, for the range-size gate below. */
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** `businessHours` is keyed by Monday-first full day names; index = `Date#getUTCDay()` (Sunday first). */
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+/**
+ * #1301: the calendar dates in the range whose weekday the operator has left
+ * with no hours at all, as `{ date, name }` rows the same shape a company
+ * holiday uses, so the portal needs no second concept of "closed".
+ *
+ * Reads `business_settings.businessHours` through `lib/businessHours.ts`, the
+ * same Chicago-zone business-hours logic the phone line uses. A calendar date's
+ * weekday does not depend on a timezone, so it is read off the date string in
+ * UTC. NOTHING IS INVENTED: a weekday is closed only when its key is PRESENT in
+ * the map and blank (the way Settings writes "Closed"). A missing map, a
+ * missing key or a value that will not parse is "unknown" and closes nothing,
+ * and a date with a `specialHours` entry is skipped because the weekly pattern
+ * is known to be wrong for it.
+ */
+function weeklyClosedDates(settings: Record<string, unknown>, fromDate: string, toDate: string) {
+  const hours = settings['businessHours'];
+  if (!hours || typeof hours !== 'object') return [];
+  const map = hours as Record<string, unknown>;
+  const out: BusinessClosureDto[] = [];
+  const end = Date.parse(`${toDate}T00:00:00.000Z`);
+  for (let ms = Date.parse(`${fromDate}T00:00:00.000Z`); ms <= end; ms += DAY_MS) {
+    const iso = new Date(ms).toISOString().slice(0, 10);
+    const dayName = WEEKDAY_NAMES[new Date(ms).getUTCDay()]!;
+    if (!(dayName in map)) continue;
+    if (businessHoursForDayName(map, dayName).kind !== 'closed') continue;
+    if (hasSpecialHours(settings['specialHours'], iso)) continue;
+    out.push({ date: iso, name: `${dayName}s` });
+  }
+  return out;
+}
 
 export async function getBusinessClosuresHandler(
   req: CallableRequest<unknown>,
@@ -85,7 +118,8 @@ export async function getBusinessClosuresHandler(
   }
 
   const settingsSnap = await db().collection('business_settings').doc('business_settings').get();
-  const raw = settingsSnap.data()?.companyHolidays;
+  const settings = (settingsSnap.data() ?? {}) as Record<string, unknown>;
+  const raw = settings['companyHolidays'];
   const entries = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string').map(parseClosureEntry) : [];
 
   const closures: BusinessClosureDto[] = [];
@@ -93,6 +127,11 @@ export async function getBusinessClosuresHandler(
     for (const date of closureOccurrencesInRange(entry, args.fromDate, args.toDate)) {
       closures.push({ date, name: entry.name.trim() || 'Closed' });
     }
+  }
+  // A company holiday keeps its own name when it lands on a day off too.
+  const held = new Set(closures.map((c) => c.date));
+  for (const c of weeklyClosedDates(settings, args.fromDate, args.toDate)) {
+    if (!held.has(c.date)) closures.push(c);
   }
   closures.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 

@@ -19,6 +19,7 @@ import {
   visitTile,
   visitVariant,
   visitWhenLine,
+  visitBlockText,
   weekdayTime,
 } from './portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
@@ -213,6 +214,9 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleResponseNote: null,
     startTimePending: false,
     requestedDate: null,
+    timeBlockLabel: null,
+    timeBlockStartTime: null,
+    timeBlockEndTime: null,
     ...overrides,
   };
 }
@@ -320,5 +324,22 @@ describe('a visit whose start time the Auntie sets (#1098)', () => {
     const older = { ...booking(), startTimePending: undefined, requestedDate: undefined } as unknown as GetMyBookingsResultLiveVisit;
     expect(bookingSubtitle(older)).toBe('Time to be confirmed');
     expect(visitWhenLine(older)).toBe('Time to be confirmed');
+  });
+});
+
+describe('block-booked visits (#1301)', () => {
+  const ms = new Date(2026, 5, 7, 11, 0).getTime(); // a Sunday, the window's anchor
+  it('names the window, never the anchor clock', () => {
+    const b = { timeBlockLabel: 'Midday', timeBlockStartTime: '11:00', timeBlockEndTime: '15:00' };
+    expect(visitSubtitle(ms, null, b)).toBe('Sun, Midday (11 AM to 3 PM)');
+    expect(visitSubtitle(ms, 'Maya', b)).toBe('Sun, Midday (11 AM to 3 PM) with Auntie Maya');
+    expect(visitBlockText(b)).toBe('Midday (11 AM to 3 PM)');
+  });
+  it('falls back to the stored label when the window has been removed', () => {
+    expect(visitBlockText({ timeBlockLabel: 'Midday', timeBlockStartTime: null, timeBlockEndTime: null })).toBe('Midday');
+  });
+  it('leaves a clock visit alone', () => {
+    expect(visitSubtitle(ms, null, { timeBlockLabel: null })).toBe('Sun, 11:00 AM');
+    expect(visitBlockText({})).toBeNull();
   });
 });

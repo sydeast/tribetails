@@ -65,6 +65,15 @@ data class Booking(
     val startTimePending: Boolean = false,
     /** #1098: the night asked for, `YYYY-MM-DD`, or null. */
     val requestedDate: String? = null,
+    /**
+     * #1301: the named window this visit was booked into ("Midday"), or null
+     * for a by-the-clock visit. [timeBlockStartTime] / [timeBlockEndTime] are
+     * the window's `HH:MM` bounds, null when the window has since been removed
+     * or an older server omits them.
+     */
+    val timeBlockLabel: String? = null,
+    val timeBlockStartTime: String? = null,
+    val timeBlockEndTime: String? = null,
 )
 
 /**
