@@ -235,7 +235,7 @@ export function Home() {
                 </LoadingLine>
               ) : (
                 tales.map((t, i) => (
-                  <div className={`tale a${(i % 3) + 1}`} key={t.id}>
+                  <Link className={`tale a${(i % 3) + 1}`} to="/kintales" search={{ tale: t.id }} key={t.id}>
                     <div className="photo">{'\u{1F43E}'}</div>
                     <div className="tb">
                       <b>{t.title || t.body.slice(0, 60)}</b>
@@ -244,7 +244,7 @@ export function Home() {
                         {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 ))
               )}
             </section>

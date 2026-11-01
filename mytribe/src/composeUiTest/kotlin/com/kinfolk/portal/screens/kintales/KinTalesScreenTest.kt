@@ -303,4 +303,31 @@ class KinTalesScreenTest {
         onNodeWithText("A fine walk, no checklist.").assertIsDisplayed()
         onAllNodesWithTag("kinTaleChecklistChip").assertCountEquals(0)
     }
+
+    private fun taleJson(id: String, body: String, sentAtMs: Long) = buildJsonObject {
+        put("id", id)
+        put("body", body)
+        put("authorDisplayName", "Maya")
+        put("mediaIds", buildJsonArray {})
+        put("sentAtMs", sentAtMs)
+        put("shared", false)
+    }
+    @Test
+    fun focusTaleId_pagesPastTheFirstPageUntilTheTaleIsFound() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubSequence("getMyKinTales",
+            buildJsonObject {
+                put("hasMore", true)
+                put("tales", buildJsonArray { add(taleJson("a", "First page tale.", 300)) })
+            },
+            buildJsonObject {
+                put("hasMore", false)
+                put("tales", buildJsonArray { add(taleJson("deep", "Deep tale body.", 100)) })
+            },
+        )
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake), focusTaleId = "deep") }
+        waitForIdle()
+        onNodeWithText("Deep tale body.").assertIsDisplayed()
+        kotlin.test.assertEquals(2, fake.calls.count { it.first == "getMyKinTales" })
+    }
 }

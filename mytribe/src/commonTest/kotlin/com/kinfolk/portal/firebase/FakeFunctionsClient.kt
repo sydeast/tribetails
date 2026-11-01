@@ -20,6 +20,13 @@ class FakeFunctionsClient(
         errors.remove(name)
     }
 
+    private val sequences: MutableMap<String, ArrayDeque<JsonObject>> = mutableMapOf()
+    /** Answers [name] with each response in turn, then keeps answering with the last one. */
+    fun stubSequence(name: String, vararg answers: JsonObject) {
+        errors.remove(name)
+        responses[name] = answers.last()
+        sequences[name] = ArrayDeque(answers.toList())
+    }
     fun stubError(name: String, t: Throwable) {
         errors[name] = t
         responses.remove(name)
@@ -28,6 +35,7 @@ class FakeFunctionsClient(
     override suspend fun call(name: String, payload: JsonObject?): JsonObject {
         calls += name to payload
         errors[name]?.let { throw it }
+        sequences[name]?.let { q -> if (q.size > 1) return q.removeFirst() }
         return responses[name] ?: error("FakeFunctionsClient: no stub for '$name'")
     }
 }

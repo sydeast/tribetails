@@ -96,3 +96,12 @@ describe('scheduleSearch (#1304)', () => {
     expect(scheduleSearch({ tab: 'bogus', step: '4' })).toEqual({});
   });
 });
+describe('kinTalesSearch (/kintales search validation, #1329)', () => {
+  it('keeps a tale id and drops anything blank, non-string or unknown', () => {
+    expect(kinTalesSearch({ tale: 't1' })).toEqual({ tale: 't1' });
+    expect(kinTalesSearch({ tale: ' t1 ' })).toEqual({ tale: 't1' });
+    expect(kinTalesSearch({ tale: '' })).toEqual({});
+    expect(kinTalesSearch({ tale: 42 })).toEqual({});
+    expect(kinTalesSearch({ other: 'x' })).toEqual({});
+  });
+});

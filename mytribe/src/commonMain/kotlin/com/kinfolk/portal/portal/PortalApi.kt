@@ -1688,7 +1688,7 @@ class PortalApi(private val fns: FunctionsClient) {
             KinTaleComment(
                 id = o["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 authorRole = role,
-                authorDisplayName = null,
+                authorDisplayName = o["authorDisplayName"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
                 guestName = o["guestName"]?.jsonPrimitive?.contentOrNull,
                 body = o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 parentCommentId = o["parentCommentId"]?.jsonPrimitive?.contentOrNull,
