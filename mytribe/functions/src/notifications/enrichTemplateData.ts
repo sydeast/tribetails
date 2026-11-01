@@ -1,4 +1,5 @@
 import { db } from '../lib/firestoreAdmin';
+import { businessTokens, loadBusinessName } from '../lib/businessName';
 import { logEvent } from '../lib/logger';
 import { businessTimeZone } from '../lib/bookingTimeBlocks';
 import { isInactiveKinStatus } from '../lib/kinStatus';
@@ -75,9 +76,9 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // cancelled and edited are all genuinely news about ONE visit.
   'assignment.changed': ['bookingDate', 'kinName', 'serviceType'],
   'account.welcome.kinfolk': ['kinfolkName'],
-  'auth.account.locked': ['email'],
-  'auth.failedLogin.attempts': ['attemptsInWindow', 'email'],
-  'auth.password.reset': ['displayName', 'link'],
+  'auth.account.locked': ['business', 'email'],
+  'auth.failedLogin.attempts': ['attemptsInWindow', 'business', 'email'],
+  'auth.password.reset': ['Business', 'displayName', 'link'],
   'invite.expired': ['invitedEmail'],
   'invoice.charge.failed': ['invoiceNumber', 'kinfolkName'],
   'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'kinfolkName', 'kinName'],
@@ -121,22 +122,22 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // `note` is emitter-supplied, like the dispute fields above: it is the
   // operator's own words, carried on the dispatch, with no entity to hydrate
   // it from. The four below are the ones this enricher fills.
-  'kincare.cancel.declined': ['bookingDate', 'kinfolkName', 'kinName', 'note', 'serviceType'],
+  'kincare.cancel.declined': ['Business', 'bookingDate', 'kinfolkName', 'kinName', 'note', 'serviceType'],
   'kincare.changed': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.note.auntie': ['kinName'],
   'kincare.note.kinfolk': ['kinName'],
   'kincare.report.sent': ['kinfolkName', 'kinName'],
   'kincare.requested': ['bookingDates', 'kinfolkName', 'kinName', 'serviceType'],
-  'kincare.request.declined': ['bookingDates', 'kinfolkName', 'kinName', 'note', 'serviceType'],
+  'kincare.request.declined': ['Business', 'bookingDates', 'kinfolkName', 'kinName', 'note', 'serviceType'],
   'kincare.reschedule.requested': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.unavailable': ['bookingDate', 'kinfolkName', 'serviceType'],
   'kincare.upcoming.reminder': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
   'kintale.comment.added': ['kinName'],
   'kintale.note.added': ['kinName'],
   'kintale.published': ['kinfolkName', 'kinName'],
-  'marketing.optin': [],
+  'marketing.optin': ['business'],
   'message.received': ['kinfolkName', 'preview'],
-  'newsletter.announcement': [],
+  'newsletter.announcement': ['business'],
   'pet.marked.inactive': ['kinName'],
   'pets.updated': ['kinName'],
   'profile.updated': [],
@@ -176,6 +177,9 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
  * in `buildNotificationDetail.ts` and issue #380.
  */
 const ENRICHABLE: ReadonlySet<string> = new Set([
+  // #1381: the business name from settings, "your Auntie" when unset.
+  'business',
+  'Business',
   'kinfolkName',
   'kinName',
   'serviceType',
@@ -738,6 +742,13 @@ export async function enrichTemplateData(
     if (!v) v = str((await loadBooking())?.notes);
     if (!v) v = str((await loadBookingEnvelope())?.notes);
     fill('notes', v);
+  }
+
+  // #1381: `{{business}}` / `{{Business}}`, the settings name or "your Auntie".
+  if (want.has('business') || want.has('Business')) {
+    const tokens = businessTokens(await loadBusinessName('enrichTemplateData'));
+    fill('business', tokens.business);
+    fill('Business', tokens.Business);
   }
 
   return ctx;

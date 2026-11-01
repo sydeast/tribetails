@@ -126,7 +126,7 @@ class NotificationSettingsScreenTest {
     // #451: the line names who decides. It does not say "always on", which the
     // operator can falsify at any time by switching the row off in the gate.
     @Test
-    fun lockedChannel_showsSetByTribeTailsReason() = runComposeUiTest {
+    fun lockedChannel_showsSetByTheBusinessReason() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyNotificationPrefs", buildJsonObject {
             put("prefs", buildJsonObject {})
@@ -160,7 +160,51 @@ class NotificationSettingsScreenTest {
         // Per-key channel chips (and the lock reason) live in the expanded section.
         onNodeWithText("Visit Updates").performClick()
         waitForIdle()
-        onNodeWithText("Set by Tribe Tails Pet Care, can't be changed here: SMS").assertExists()
+        onNodeWithText("Set by your Auntie, can't be changed here: SMS").assertExists()
+    }
+
+    // #1381: the same lock line names the business from settings.
+    @Test
+    fun lockedChannel_namesTheBusinessFromSettings() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyNotificationPrefs", buildJsonObject {
+            put("prefs", buildJsonObject {})
+            put("updatedAtMs", JsonNull)
+        })
+        // Business-gated catalog: one Visit key with SMS locked on by the business.
+        fake.stub("getNotificationCatalog", buildJsonObject {
+            put("schemaVersion", 1)
+            put("categories", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "visit")
+                    put("title", "Visit Updates")
+                    put("description", "Real-time status")
+                    put("keys", buildJsonArray {
+                        add(buildJsonObject {
+                            put("key", "kincare.auntie.on_my_way")
+                            put("title", "Auntie On Her Way")
+                            put("description", "When your Auntie is en route.")
+                            put("allowedChannels", buildJsonArray { add("email"); add("sms"); add("push") })
+                            put("required", buildJsonArray { })
+                            put("lockedChannels", buildJsonArray { add("sms") })
+                            put("marketingCategory", JsonNull)
+                        })
+                    })
+                })
+            })
+        })
+        val catalog = NotificationCatalogRepository(fake)
+        setThemedContent {
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.kinfolk.portal.components.LocalBusinessName provides "Test Business",
+            ) { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        }
+        waitForIdle()
+        // Per-key channel chips (and the lock reason) live in the expanded section.
+        onNodeWithText("Visit Updates").performClick()
+        waitForIdle()
+        onNodeWithText("Set by Test Business, can't be changed here: SMS").assertExists()
+        onNodeWithText("Set by your Auntie, can't be changed here: SMS").assertDoesNotExist()
     }
 
     // Notification revamp: when the operator authored a lockReason, the kinfolk
@@ -200,7 +244,7 @@ class NotificationSettingsScreenTest {
         onNodeWithText("Visit Updates").performClick()
         waitForIdle()
         onNodeWithText("We text when your Auntie is en route so nobody misses her arrival.").assertExists()
-        onNodeWithText("Set by Tribe Tails Pet Care, can't be changed here: SMS").assertDoesNotExist()
+        onNodeWithText("Set by your Auntie, can't be changed here: SMS").assertDoesNotExist()
     }
 
     // Notification revamp: always-on keys (e.g. password reset, receipts) now
@@ -257,7 +301,7 @@ class NotificationSettingsScreenTest {
         setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
         waitForIdle()
         // Collapsed card: the select-all row is replaced by the honest note.
-        onNodeWithText("Set by Tribe Tails Pet Care. Can't be changed here.").assertExists()
+        onNodeWithText("Set by your Auntie. Can't be changed here.").assertExists()
         onNodeWithText("All in category:").assertDoesNotExist()
         onNodeWithText("Always on. Required by Tribe Tails.").assertDoesNotExist()
         // Expanded: each fully locked key carries the same sentence (3 in all:
@@ -265,7 +309,7 @@ class NotificationSettingsScreenTest {
         onNodeWithText("Account & Security").performClick()
         waitForIdle()
         val honestLines = onAllNodesWithText(
-            "Set by Tribe Tails Pet Care. Can't be changed here.",
+            "Set by your Auntie. Can't be changed here.",
         ).fetchSemanticsNodes().size
         assertTrue(honestLines == 3, "expected the category note plus both key lines, got $honestLines")
         val oldPromise = onAllNodesWithText(

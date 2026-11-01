@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.runtime.CompositionLocalProvider
 import com.kinfolk.portal.screens.setThemedContent
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -60,13 +61,26 @@ class KinLoadingTest {
         setThemedContent { KinLoading(text = "Loading your schedule…", onSync = {}) }
         mainClock.advanceTimeBy(SLOW_WAIT_MS + 16L)
 
-        onNodeWithText("Tribe Tails has not answered yet.").assertIsDisplayed()
+        onNodeWithText("Your Auntie has not answered yet.").assertIsDisplayed()
         onNodeWithText("Tap to sync").assertIsDisplayed()
         // Still pessimistic. The read has not ended, so the cue has not either,
         // and nothing has been painted as though the wait were over.
         onNodeWithText("Loading your schedule…").assertIsDisplayed()
     }
 
+    // #1381: the sentence names the business from settings, not a hard-coded one.
+    @Test
+    fun past_the_threshold_it_names_the_business_from_settings() = runComposeUiTest {
+        mainClock.autoAdvance = false
+        setThemedContent {
+            CompositionLocalProvider(LocalBusinessName provides "Test Business") {
+                KinLoading(text = "Loading your schedule…", onSync = {})
+            }
+        }
+        mainClock.advanceTimeBy(SLOW_WAIT_MS + 16L)
+        onNodeWithText("Test Business has not answered yet.").assertIsDisplayed()
+        onNodeWithText("Your Auntie has not answered yet.").assertDoesNotExist()
+    }
     @Test
     fun tapping_sync_retries_and_says_what_it_is_doing() = runComposeUiTest {
         var asked = 0
@@ -83,7 +97,7 @@ class KinLoadingTest {
         onNodeWithText("Tap to sync").assertDoesNotExist()
 
         mainClock.advanceTimeBy(SLOW_WAIT_MS + 16L)
-        onNodeWithText("Asked again. Still waiting on Tribe Tails.").assertIsDisplayed()
+        onNodeWithText("Asked again. Still waiting on your Auntie.").assertIsDisplayed()
         onNodeWithText("Ask again").assertIsDisplayed()
     }
 
@@ -101,7 +115,7 @@ class KinLoadingTest {
         mainClock.advanceTimeBy(SLOW_WAIT_MS * 6)
 
         onNodeWithText("Tap to sync").assertDoesNotExist()
-        onNodeWithText("Tribe Tails has not answered yet.").assertDoesNotExist()
+        onNodeWithText("Your Auntie has not answered yet.").assertDoesNotExist()
         onNodeWithText("Loading your schedule…").assertIsDisplayed()
     }
 }

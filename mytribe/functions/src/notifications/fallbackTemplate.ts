@@ -61,16 +61,19 @@ export interface FallbackEmail {
  * The catalog's own `label` and `description` are written for the operator's
  * settings screen, not for a customer, so they are deliberately not used here.
  */
-export function fallbackEmail(def: NotificationDef): FallbackEmail {
+export function fallbackEmail(def: NotificationDef, businessName = ''): FallbackEmail {
   if (isKinfolkFacing(def)) {
+    // #1381: the name comes from settings, as a merge field so a `{` in it is
+    // never read as Handlebars. The caller adds `businessLabel` to the data.
+    // Unset reads "your Auntie" in the sentence and drops the name from the sign-off.
     return {
       subject: 'An update about your care',
       body: [
-        "There's an update about your care with Tribe Tails Pet Care.",
+        "There's an update about your care with {{businessLabel}}.",
         '',
         `Sign in to see it: ${KINFOLK_URL}`,
         '',
-        "Tribe Tails Pet Care. Your Kin's Favorite Auntie.",
+        businessName.trim() === '' ? "Your Kin's Favorite Auntie." : "{{businessLabel}}. Your Kin's Favorite Auntie.",
       ].join('\n'),
     };
   }

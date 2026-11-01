@@ -13,6 +13,7 @@ import { speciesEmoji } from '../lib/portalFormat';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { usePortalMutation } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const FALLBACK = 'Not set';
 
@@ -270,9 +271,7 @@ export function KinDetail() {
           </div>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

@@ -199,6 +199,21 @@ describe('requestBookingRescheduleHandler', () => {
     });
     expect(ctx.writes).toHaveLength(0);
   });
+  it('#1381: names the business from settings in the refusal, "your Auntie" when unset', async () => {
+    const docs = {
+      'clients/u1': { kinfolkIds: ['f1'] },
+      [VISIT]: { status: 'confirmed', cancelRequestStatus: 'pending' },
+    };
+    const { requestBookingRescheduleHandler } = await import('../src/portal/requestBookingReschedule');
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { ...docs, 'business_settings/business_settings': { businessName: 'Test Business' } } }).db);
+    await expect(requestBookingRescheduleHandler(callableRequest(args(), { uid: 'u1' }))).rejects.toMatchObject({
+      message: expect.stringContaining('cancellation is already waiting on Test Business for this visit'),
+    });
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs }).db);
+    await expect(requestBookingRescheduleHandler(callableRequest(args(), { uid: 'u1' }))).rejects.toMatchObject({
+      message: expect.stringContaining('cancellation is already waiting on your Auntie for this visit'),
+    });
+  });
   it('#1299: a pre-#438 bare cancellation stamp also blocks a new time', async () => {
     const ctx = buildDbMock({
       docs: {

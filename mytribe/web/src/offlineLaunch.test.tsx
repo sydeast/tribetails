@@ -170,7 +170,7 @@ describe('#812 a portal deep link opened with no signal', () => {
 
     await boot();
 
-    expect(await screen.findByText(/We can’t reach Tribe Tails/i)).toBeInTheDocument();
+    expect(await screen.findByText(/We can’t reach your Auntie/i)).toBeInTheDocument();
     expect(screen.queryByText(/having trouble loading your tribe/i)).not.toBeInTheDocument();
   });
 
@@ -179,7 +179,7 @@ describe('#812 a portal deep link opened with no signal', () => {
     getMyAccess.mockRejectedValue(new Error('internal'));
 
     await boot();
-    await screen.findByText(/We can’t reach Tribe Tails/i);
+    await screen.findByText(/We can’t reach your Auntie/i);
 
     // #805's ruling, honoured here: sign-out clears the cache that is the only
     // thing this household can still read, and signing back in needs the
@@ -203,7 +203,7 @@ describe('#812 a portal deep link opened with no signal', () => {
     await boot();
 
     expect(await screen.findByText('THE BOOKING')).toBeInTheDocument();
-    expect(screen.queryByText(/We can’t reach Tribe Tails/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/We can’t reach your Auntie/i)).not.toBeInTheDocument();
   });
 
   it('still sends a genuinely broken account to the launch-error screen, sign out and all', async () => {
@@ -218,7 +218,7 @@ describe('#812 a portal deep link opened with no signal', () => {
 
     expect(await screen.findByText(/having trouble loading your tribe/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
-    expect(screen.queryByText(/We can’t reach Tribe Tails/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/We can’t reach your Auntie/i)).not.toBeInTheDocument();
   });
 
   it('opens the booking as usual when the tribe resolves', async () => {
@@ -242,7 +242,7 @@ describe('#812 a portal deep link opened with no signal', () => {
     getMyAccess.mockRejectedValueOnce(new Error('internal'));
 
     await boot();
-    await screen.findByText(/We can’t reach Tribe Tails/i);
+    await screen.findByText(/We can’t reach your Auntie/i);
 
     // The way out is the signal returning, not a tap. `clearAccess` is what
     // makes the next pass call getMyAccess again instead of replaying the

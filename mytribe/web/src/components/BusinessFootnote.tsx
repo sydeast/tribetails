@@ -23,6 +23,22 @@ export function useBusinessName(): string {
   return (home.data?.businessName ?? '').trim();
 }
 /**
+ * The business name for a sentence, read from the `['myHome', kinfolkId]` cache
+ * WITHOUT fetching (#1381). For shared pieces that render on pre-auth screens as
+ * well (the slow-wait cue, the offline card): they must not fire a tenant read of
+ * their own, and a cold cache just means the neutral "your Auntie" wording.
+ */
+export function useCachedBusinessName(): string {
+  const kinfolkId = getActiveKinfolkId();
+  const home = useQuery({
+    queryKey: ['myHome', kinfolkId],
+    queryFn: () => getMyHome(kinfolkId),
+    staleTime: 5 * 60_000,
+    enabled: false,
+  });
+  return (home.data?.businessName ?? '').trim();
+}
+/**
  * The page footnote, "Cared for by <business>" (or "Billed by <business>" on an
  * invoice). Renders nothing when [name] is empty or absent.
  *

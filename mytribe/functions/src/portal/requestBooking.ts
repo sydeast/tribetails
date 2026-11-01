@@ -10,6 +10,7 @@ import { resolveNonStaffKinfolkId } from '../lib/resolveNonStaffKinfolkId';
 import { refuseAuntie } from '../lib/staffGate';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { businessLabel } from '../lib/businessName';
 import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
 import { resolveDefaultAssignee, type Assignee } from '../lib/defaultAssignee';
 import { materializeKinRoster } from '../lib/kinRoster';
@@ -717,6 +718,7 @@ export function planVisit(
   policy: BookingPolicy,
   timeZone: string,
   nowMs: number,
+  businessName = '',
 ): PlannedVisit {
   if (policy.startTimeServiceIds.includes(visit.serviceId)) {
     const requestedDate =
@@ -724,7 +726,7 @@ export function planVisit(
     if (requestedDate === null) {
       throw new HttpsError(
         'invalid-argument',
-        `Choose a night for the ${visit.serviceName}. Tribe Tails sets its start time when your request is approved.`,
+        `Choose a night for the ${visit.serviceName}. ${businessLabel(businessName, { capital: true })} sets the start time when your request is approved.`,
       );
     }
     if (!isRealCalendarDate(requestedDate)) {
@@ -1108,7 +1110,9 @@ export async function requestBookingHandler(
     // #1098: read first of all now, because it also decides which visits are
     // nights awaiting the operator's start time (see `planVisit`).
     const { policy, timeZone, serviceDurations, settings } = await loadBookingPolicy();
-    const planned = args.visits.map((v) => planVisit(v, policy, timeZone, now));
+    const planned = args.visits.map((v) =>
+      planVisit(v, policy, timeZone, now, typeof settings?.['businessName'] === 'string' ? settings['businessName'] : ''),
+    );
     planned.forEach((v) => {
       if (v.kind !== 'timed') return;
       if (v.startTimeMs < now - 60_000) {

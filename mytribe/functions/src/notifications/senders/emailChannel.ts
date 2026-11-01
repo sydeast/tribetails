@@ -6,6 +6,7 @@ import { loadEmailFrame } from '../../lib/emailFrameStore';
 import { logEvent } from '../../lib/logger';
 import { isEmailHardBounced } from '../../lib/suppressions';
 import { fallbackEmail } from '../fallbackTemplate';
+import { businessLabel, loadBusinessName } from '../../lib/businessName';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
 /**
@@ -59,7 +60,8 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
   const tpl = await loadEmailTemplate(templateId);
 
   if (!tpl) {
-    const generic = fallbackEmail(def);
+    const businessName = await loadBusinessName('emailChannel');
+    const generic = fallbackEmail(def, businessName);
     logEvent({
       severity: 'error',
       function: 'emailChannel',
@@ -75,7 +77,7 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
       to: email,
       subjectTemplate: generic.subject,
       bodyTemplate: generic.body,
-      data: renderData,
+      data: { ...renderData, businessLabel: businessLabel(businessName) },
       templateKey: def.key,
     });
     return { providerMessageId, usedFallback: true, fallbackReason: `emailTemplates/${templateId}` };

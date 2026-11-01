@@ -30,6 +30,7 @@ import { errorLine, usePortalMutation, type MutationPhase } from '../lib/mutatio
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { announceSaved } from '../lib/saveNotice';
 import '../styles/invoices.css';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Invoices list, ported from ui-ideas/mytribe-invoices-2026-05-31.html.
@@ -238,9 +239,7 @@ export function Invoices() {
           </div>
         </div>
 
-        <p className="footnote">
-          Billed by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote lead="Billed by" />
       </div>
     </>
   );

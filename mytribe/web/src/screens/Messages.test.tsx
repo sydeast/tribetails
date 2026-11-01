@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   useSignOut: vi.fn(),
 }));
 
+// #1381: the business footnote reads the name from getMyHome; no network in a unit test.
+vi.mock('../api/portal', () => ({ getMyHome: vi.fn().mockResolvedValue({ businessName: '' }) }));
 vi.mock('../api/messagesApi', async () => {
   const actual = await vi.importActual<typeof import('../api/messagesApi')>('../api/messagesApi');
   return {

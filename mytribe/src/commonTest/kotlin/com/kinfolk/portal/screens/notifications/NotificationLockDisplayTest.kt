@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 
 /**
  * Pure lock-display rules for the notification revamp:
- *  - operator lockReason wins over the stock "Set by Tribe Tails Pet Care." line
+ *  - operator lockReason wins over the stock "Set by <business>." line
  *  - a fully locked key (no toggleable channels) gets that stock line, which
  *    names who decides rather than promising "always on" (#451)
  *  - the "All in category" row only offers channels at least one key can
@@ -109,7 +109,8 @@ class NotificationLockDisplayTest {
             key(allowed = setOf(EMAIL), locked = setOf(EMAIL), keyId = "a"),
             key(allowed = setOf(EMAIL, SMS), locked = setOf(EMAIL, SMS), keyId = "b"),
         )
-        assertEquals("Set by Tribe Tails Pet Care. Can't be changed here.", categorySetByBusinessNote(cat))
+        assertEquals("Set by your Auntie. Can't be changed here.", categorySetByBusinessNote(cat))
+        assertEquals("Set by Test Business. Can't be changed here.", categorySetByBusinessNote(cat, "Test Business"))
     }
 
     @Test
@@ -152,7 +153,7 @@ class NotificationLockDisplayTest {
     fun explanation_falls_back_to_default_line_listing_channels() {
         val k = key(allowed = setOf(EMAIL, SMS, PUSH), locked = setOf(EMAIL, SMS))
         assertEquals(
-            "Set by Tribe Tails Pet Care, can't be changed here: Email, SMS",
+            "Set by your Auntie, can't be changed here: Email, SMS",
             lockExplanation(k),
         )
     }
@@ -161,11 +162,41 @@ class NotificationLockDisplayTest {
     fun explanation_treats_blank_lockReason_as_absent() {
         val k = key(allowed = setOf(EMAIL, SMS, PUSH), locked = setOf(SMS), lockReason = "   ")
         assertEquals(
-            "Set by Tribe Tails Pet Care, can't be changed here: SMS",
+            "Set by your Auntie, can't be changed here: SMS",
             lockExplanation(k),
         )
     }
 
+    // #1381: the stock lines name the business from settings.
+    @Test
+    fun stockLines_name_the_business_from_settings() {
+        val partly = key(allowed = setOf(EMAIL, SMS, PUSH), locked = setOf(EMAIL, SMS))
+        assertEquals(
+            "Set by Test Business, can't be changed here: Email, SMS",
+            lockExplanation(partly, "Test Business"),
+        )
+        val fully = key(allowed = setOf(EMAIL, SMS), locked = setOf(EMAIL, SMS))
+        assertEquals("Set by Test Business. Can't be changed here.", lockExplanation(fully, "Test Business"))
+        assertEquals("Set by your Auntie. Can't be changed here.", lockExplanation(fully, "  "))
+        val withLock = category(key(allowed = setOf(EMAIL, SMS), locked = setOf(SMS)))
+        assertEquals(
+            "A check or a lock means Test Business sets that channel; you can't change it here.",
+            categoryMarkerLegend(withLock, "Test Business"),
+        )
+    }
+    @Test
+    fun keyDescription_fills_the_fallback_catalog_placeholder() {
+        val k = key(allowed = setOf(EMAIL), keyId = "newsletter.announcement")
+            .copy(householdDescription = "News and announcements from {business}, if you opt in.")
+        assertEquals(
+            "News and announcements from Test Business, if you opt in.",
+            keyDescriptionLine(k, "Test Business"),
+        )
+        assertEquals(
+            "News and announcements from your Auntie, if you opt in.",
+            keyDescriptionLine(k),
+        )
+    }
     @Test
     fun explanation_trims_operator_lockReason() {
         val k = key(allowed = setOf(EMAIL, SMS, PUSH), locked = setOf(SMS), lockReason = "  Kept on for safety.  ")
@@ -176,7 +207,7 @@ class NotificationLockDisplayTest {
     fun explanation_fullyLocked_without_reason_names_who_decides() {
         val k = key(allowed = setOf(EMAIL, SMS), locked = setOf(EMAIL, SMS))
         assertEquals(
-            "Set by Tribe Tails Pet Care. Can't be changed here.",
+            "Set by your Auntie. Can't be changed here.",
             lockExplanation(k),
         )
     }
@@ -206,7 +237,7 @@ class NotificationLockDisplayTest {
         stock.forEach { line ->
             assertFalse(line.contains("always", ignoreCase = true), "still promises always: $line")
             assertTrue(
-                line.contains("Tribe Tails Pet Care"),
+                line.contains("your Auntie"),
                 "does not name who decides: $line",
             )
         }
@@ -315,7 +346,7 @@ class NotificationLockDisplayTest {
         // #451: the two markers mean the same thing from the household's seat, so
         // the legend says that once instead of promising one of them is "always on".
         val expected =
-            "A check or a lock means Tribe Tails Pet Care sets that channel; you can't change it here."
+            "A check or a lock means your Auntie sets that channel; you can't change it here."
         val withLock = category(key(allowed = setOf(EMAIL, SMS), locked = setOf(SMS)))
         val withRequired = category(key(allowed = setOf(EMAIL), required = setOf(EMAIL)))
         assertEquals(expected, categoryMarkerLegend(withLock))

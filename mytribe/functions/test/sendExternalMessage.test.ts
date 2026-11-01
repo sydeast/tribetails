@@ -31,7 +31,7 @@ import {
   suppressExternalRecipientHandler,
   redactRecipient,
   normalizeRecipient,
-  UNSUBSCRIBE_FOOTER,
+  unsubscribeFooter,
 } from '../src/admin/sendExternalMessage';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
@@ -78,7 +78,7 @@ describe('sendExternalMessage happy paths', () => {
     });
     expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
     const sgArgs = mocks.sendTemplatedEmail.mock.calls[0][0];
-    expect(sgArgs.bodyTemplate.endsWith(UNSUBSCRIBE_FOOTER)).toBe(true);
+    expect(sgArgs.bodyTemplate.endsWith(unsubscribeFooter(''))).toBe(true);
     expect(sgArgs.bodyTemplate.startsWith('Hi there')).toBe(true);
     expect(sgArgs.subjectTemplate).toBe('Hello');
   });
@@ -297,7 +297,7 @@ describe('sendExternalMessage transactional flag (1:1 inbox reply)', () => {
     expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
     const sgArgs = mocks.sendTemplatedEmail.mock.calls[0][0];
     expect(sgArgs.bodyTemplate).toBe('See you at 3pm');
-    expect(sgArgs.bodyTemplate.includes(UNSUBSCRIBE_FOOTER)).toBe(false);
+    expect(sgArgs.bodyTemplate.includes(unsubscribeFooter(''))).toBe(false);
   });
 });
 

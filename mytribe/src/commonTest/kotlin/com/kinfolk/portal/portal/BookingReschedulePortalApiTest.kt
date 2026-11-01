@@ -122,13 +122,13 @@ class BookingReschedulePortalApiTest {
         val fake = FakeFunctionsClient()
         fake.stubError(
             "requestBookingReschedule",
-            IllegalStateException("A new time is already waiting on Tribe Tails for this visit."),
+            IllegalStateException("A new time is already waiting on your Auntie for this visit."),
         )
 
         val failure = assertFailsWith<IllegalStateException> {
             PortalApi(fake).requestBookingReschedule("batch-1", "v1", proposedMs)
         }
-        assertEquals("A new time is already waiting on Tribe Tails for this visit.", failure.message)
+        assertEquals("A new time is already waiting on your Auntie for this visit.", failure.message)
     }
 
     // -- Reading the ask's state back off getMyBookings --

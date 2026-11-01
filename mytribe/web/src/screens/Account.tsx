@@ -34,6 +34,7 @@ import { billingAccessOf } from '../lib/billingAccess';
 import { resolveIdentity } from '../lib/identity';
 import { formatPhone, phoneProblem } from '../lib/phone';
 import { BusinessFootnote } from '../components/BusinessFootnote';
+import { businessLabel } from '../lib/businessLabel';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -551,7 +552,7 @@ export function Account() {
                       <>
                         <p className="sub" style={{ marginTop: 0 }}>
                           {cardOnFile
-                            ? 'Cards are held by Stripe. Tribe Tails never sees the full number.'
+                            ? `Cards are held by Stripe. ${businessLabel(businessName, { capital: true })} never sees the full number.`
                             : 'Adding a card sends you to Stripe. Nothing is charged when you save it.'}
                         </p>
                         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>

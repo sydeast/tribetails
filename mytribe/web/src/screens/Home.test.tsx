@@ -123,7 +123,7 @@ describe('Home, online and genuinely empty', () => {
     // #1290: the person's first name, not the household's upper-case name.
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Hi Casey, your tribe is in good hands/);
     expect(screen.getByRole('heading', { level: 1 })).not.toHaveTextContent(/TEST SANDBOX/i);
-    expect(screen.queryByText(/We can.t reach Tribe Tails/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/We can.t reach your Auntie/)).not.toBeInTheDocument();
   });
 });
 

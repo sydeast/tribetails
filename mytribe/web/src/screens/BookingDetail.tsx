@@ -33,7 +33,8 @@ import {
   weekdayTime,
 } from '../lib/portalFormat';
 import '../styles/bookingdetail.css';
-import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
+import { SettingsBusinessFootnote, useBusinessName } from '../components/BusinessFootnote';
+import { businessLabel } from '../lib/businessLabel';
 
 /**
  * Booking drill-in (B3, punchlist item): ported from
@@ -58,6 +59,7 @@ import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 export function BookingDetail() {
   const { visitId } = useParams({ from: '/schedule/$visitId' });
   const queryClient = useQueryClient();
+  const businessName = useBusinessName();
   const kinfolkId = getActiveKinfolkId();
 
   const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId) });
@@ -540,7 +542,7 @@ export function BookingDetail() {
                     {found.rescheduleRequestStatus === 'declined' && (
                       <div className="note err" role="status" data-testid="reschedule-declined">
                         <span className="dot" />
-                        {`Tribe Tails could not take ${proposedLabel || 'that time'}. ${found.rescheduleResponseNote ?? ''}`.trim()}
+                        {`${businessLabel(businessName, { capital: true })} could not take ${proposedLabel || 'that time'}. ${found.rescheduleResponseNote ?? ''}`.trim()}
                       </div>
                     )}
                     {awaitingStartTime && (
@@ -552,7 +554,7 @@ export function BookingDetail() {
                       (proposingReschedule ? (
                         <div className="cancel-confirm" data-testid="reschedule-form">
                           <p className="sub">
-                            This proposes a new time to Tribe Tails. The visit stays where it is until they accept.
+                            This proposes a new time to {businessLabel(businessName)}. The visit stays where it is until they accept.
                           </p>
                           <ReschedulePicker
                             serviceId={found.serviceId}
@@ -578,7 +580,7 @@ export function BookingDetail() {
                             disabled={reschedule.isPending || proposal === null}
                           >
                             <MutationLabel mutation={reschedule} busy="Sending…">
-                              Send this time to Tribe Tails
+                              Send this time to {businessLabel(businessName)}
                             </MutationLabel>
                           </button>
                           <button
@@ -605,7 +607,7 @@ export function BookingDetail() {
                 {found.cancelRequestStatus === 'pending' ? (
                   <div className="cancel-pending" data-testid="cancel-pending">
                     <span className="dot" />
-                    Cancellation requested. Tribe Tails has it in their queue and will answer soon.
+                    Cancellation requested. {businessLabel(businessName, { capital: true })} has it in their queue and will answer soon.
                   </div>
                 ) : (
                   <>
@@ -618,14 +620,14 @@ export function BookingDetail() {
                     {found.cancelRequestStatus === 'declined' && (
                       <div className="note err" role="status" data-testid="cancel-declined">
                         <span className="dot" />
-                        {`Tribe Tails is keeping this visit on the books. ${found.cancelResponseNote ?? ''}`.trim()}
+                        {`${businessLabel(businessName, { capital: true })} is keeping this visit on the books. ${found.cancelResponseNote ?? ''}`.trim()}
                       </div>
                     )}
                     {canRequestCancel ? (
                   confirmingCancel ? (
                     <div className="cancel-confirm">
                       <p className="sub">
-                        This asks Tribe Tails to cancel the visit, it is not instant. It goes to their
+                        This asks {businessLabel(businessName)} to cancel the visit, it is not instant. It goes to their
                         requests queue and they will accept or decline it. Add a reason if you&rsquo;d like.
                       </p>
                       <textarea
@@ -676,7 +678,7 @@ export function BookingDetail() {
                     )
                   ) : found.rescheduleRequestStatus === 'pending' && canAct ? (
                     <p className="sub" style={{ margin: 0 }} data-testid="cancel-held">
-                      You can ask to cancel once Tribe Tails answers your new time.
+                      You can ask to cancel once {businessLabel(businessName)} answers your new time.
                     </p>
                   ) : null}
                   </>

@@ -1,5 +1,7 @@
 package com.kinfolk.portal.screens.notifications
 
+import com.kinfolk.portal.components.businessLabel
+import com.kinfolk.portal.components.fillBusinessPlaceholders
 import com.kinfolk.portal.notifications.CategoryDef
 import com.kinfolk.portal.notifications.NotificationChannel
 import com.kinfolk.portal.notifications.NotificationKey
@@ -38,7 +40,8 @@ import com.kinfolk.portal.notifications.NotificationKey
  * channel the recipient cannot change).
  */
 /** The one sentence for a channel the household cannot change here. */
-internal const val SET_BY_BUSINESS_NOTE = "Set by Tribe Tails Pet Care. Can't be changed here."
+internal fun setByBusinessNote(businessName: String): String =
+    "Set by ${businessLabel(businessName)}. Can't be changed here."
 
 /** Channels the kinfolk can actually toggle on this key. */
 internal fun NotificationKey.toggleableChannels(): Set<NotificationChannel> =
@@ -65,9 +68,9 @@ internal fun CategoryDef.toggleableChannelsInCategory(): Set<NotificationChannel
  * so the "All in category" row is replaced by this note. Null when the row
  * should render its chips as usual.
  */
-internal fun categorySetByBusinessNote(cat: CategoryDef): String? =
+internal fun categorySetByBusinessNote(cat: CategoryDef, businessName: String = ""): String? =
     if (cat.keys.isNotEmpty() && cat.toggleableChannelsInCategory().isEmpty()) {
-        SET_BY_BUSINESS_NOTE
+        setByBusinessNote(businessName)
     } else {
         null
     }
@@ -84,7 +87,7 @@ internal fun categorySetByBusinessNote(cat: CategoryDef): String? =
  * lockedChannels is intersected with allowedChannels defensively so we never
  * explain a channel we don't render.
  */
-internal fun lockExplanation(key: NotificationKey): String? {
+internal fun lockExplanation(key: NotificationKey, businessName: String = ""): String? {
     val lockedLabels = NotificationChannel.entries
         .filter { it in key.lockedChannels && it in key.allowedChannels }
         .map { it.label }
@@ -92,8 +95,8 @@ internal fun lockExplanation(key: NotificationKey): String? {
     val reason = key.lockReason?.trim()?.takeUnless { it.isEmpty() }
     return when {
         reason != null -> reason
-        key.isFullyLocked() -> SET_BY_BUSINESS_NOTE
-        else -> "Set by Tribe Tails Pet Care, can't be changed here: ${lockedLabels.joinToString(", ")}"
+        key.isFullyLocked() -> setByBusinessNote(businessName)
+        else -> "Set by ${businessLabel(businessName)}, can't be changed here: ${lockedLabels.joinToString(", ")}"
     }
 }
 
@@ -116,12 +119,12 @@ internal data class ChannelChipState(
  * header when any rendered channel in the category carries a check or a lock.
  * Null when no key in the category has a marked channel (no legend needed).
  */
-internal fun categoryMarkerLegend(cat: CategoryDef): String? {
+internal fun categoryMarkerLegend(cat: CategoryDef, businessName: String = ""): String? {
     val hasMarker = cat.keys.any { k ->
         k.allowedChannels.any { it in k.required || it in k.lockedChannels }
     }
     return if (hasMarker) {
-        "A check or a lock means Tribe Tails Pet Care sets that channel; you can't change it here."
+        "A check or a lock means ${businessLabel(businessName)} sets that channel; you can't change it here."
     } else {
         null
     }
@@ -192,10 +195,13 @@ internal fun channelInheritedChecked(
  * catalog's description is sometimes the title with a full stop ("KinCare
  * booking confirmed." under "KinCare booking confirmed"), which is noise (#1317).
  */
-internal fun keyDescriptionLine(key: NotificationKey): String? {
+internal fun keyDescriptionLine(key: NotificationKey, businessName: String = ""): String? {
     fun norm(t: String) = t.trim().trimEnd('.', '!', ':', ';', ',', ' ').lowercase()
     // #1359: the household's wording wins; `description` is the operator's text
     // and only the fallback for a callable that predates the field.
-    val description = (key.householdDescription?.takeIf { it.isNotBlank() } ?: key.description).trim()
+    val description = fillBusinessPlaceholders(
+        key.householdDescription?.takeIf { it.isNotBlank() } ?: key.description,
+        businessName,
+    ).trim()
     return description.takeUnless { it.isEmpty() || norm(it) == norm(key.title) }
 }

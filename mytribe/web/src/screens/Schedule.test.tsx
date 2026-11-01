@@ -81,7 +81,7 @@ describe('Schedule, signal lost with the tab open', () => {
   it('says the schedule could not be reached instead of showing the empty state', () => {
     renderOffline();
 
-    expect(screen.getAllByText(/We can.t reach Tribe Tails/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/We can.t reach your Auntie/).length).toBeGreaterThan(0);
     expect(screen.getByText(/your schedule has not loaded/)).toBeInTheDocument();
 
     expect(screen.queryByText('No upcoming bookings')).not.toBeInTheDocument();
@@ -130,7 +130,7 @@ describe('Schedule, online and genuinely empty', () => {
     );
 
     expect(await screen.findByText('No upcoming bookings')).toBeInTheDocument();
-    expect(screen.queryByText(/We can.t reach Tribe Tails/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/We can.t reach your Auntie/)).not.toBeInTheDocument();
     expect(within(screen.getByRole('tab', { name: /Upcoming/ })).getByText('0')).toBeInTheDocument();
   });
 });

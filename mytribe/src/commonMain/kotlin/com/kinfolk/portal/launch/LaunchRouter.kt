@@ -1,5 +1,6 @@
 package com.kinfolk.portal.launch
 
+import com.kinfolk.portal.components.BUSINESS_FALLBACK
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -48,7 +49,7 @@ sealed interface LaunchDestination {
  * useful, rather than on a screen where it is not.
  */
 const val COULD_NOT_CHECK_SIGN_IN =
-    "Couldn't reach Tribe Tails to check your sign-in. Your account is fine. Retry when you're back online."
+    "Couldn't reach $BUSINESS_FALLBACK to check your sign-in. Your account is fine. Retry when you're back online."
 fun resolveLaunchDestination(
     authState: AuthState,
     access: MyAccessResult?,

@@ -35,6 +35,8 @@ import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinChip
 import com.kinfolk.portal.components.KinField
+import com.kinfolk.portal.components.LocalBusinessName
+import com.kinfolk.portal.components.businessLabel
 import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingMode
@@ -585,7 +587,7 @@ private fun RescheduleRequestSection(
                 )
                 status == RescheduleRequestStatus.Declined -> Text(
                     listOfNotNull(
-                        "Tribe Tails could not take ${proposedLabel.ifEmpty { "that time" }}.",
+                        "${businessLabel(LocalBusinessName.current, capital = true)} could not take ${proposedLabel.ifEmpty { "that time" }}.",
                         responseNote,
                     ).joinToString(" "),
                     style = type.sansMeta,
@@ -660,7 +662,7 @@ private fun RescheduleProposalForm(
         return
     }
     Text(
-        "This proposes a new time to Tribe Tails. The visit stays where it is until they accept.",
+        "This proposes a new time to ${businessLabel(LocalBusinessName.current)}. The visit stays where it is until they accept.",
         style = type.sansMeta,
     )
     if (calendar == null || policy == null) {
@@ -760,7 +762,7 @@ private fun RescheduleProposalForm(
         Text(problem, style = type.sansMeta, color = KinfolkBrand.SnuggleCoral)
     }
     KinButton(
-        label = if (sending) "Sending..." else "Send this time to Tribe Tails",
+        label = if (sending) "Sending..." else "Send this time to ${businessLabel(LocalBusinessName.current)}",
         onClick = {
             val result = resolveProposal(
                 day = pickedDate,
@@ -876,7 +878,7 @@ private fun CancelRequestSection(
             Text("Need to cancel?", style = type.heritageSection)
             when {
                 pending -> Text(
-                    "Cancellation requested. Tribe Tails has it in their queue and will answer soon.",
+                    "Cancellation requested. ${businessLabel(LocalBusinessName.current, capital = true)} has it in their queue and will answer soon.",
                     style = type.sansMeta,
                     color = KinfolkBrand.NavyMuted,
                 )
@@ -887,7 +889,7 @@ private fun CancelRequestSection(
                 )
                 status == CancelRequestStatus.Declined -> Text(
                     listOfNotNull(
-                        "Tribe Tails is keeping this visit on the books.",
+                        "${businessLabel(LocalBusinessName.current, capital = true)} is keeping this visit on the books.",
                         responseNote,
                     ).joinToString(" "),
                     style = type.sansMeta,
@@ -898,7 +900,7 @@ private fun CancelRequestSection(
             if (heldByReschedule && !pending && kinCare.isAwaitingVisit()) {
                 // #1299: say why the button is not here.
                 Text(
-                    "You can ask to cancel once Tribe Tails answers your new time.",
+                    "You can ask to cancel once ${businessLabel(LocalBusinessName.current)} answers your new time.",
                     style = type.sansMeta,
                     color = KinfolkBrand.NavyMuted,
                 )
@@ -918,7 +920,7 @@ private fun CancelRequestSection(
                     )
                 } else {
                     Text(
-                        "This goes to Tribe Tails' requests queue. The visit stays on the books until they accept it.",
+                        "This goes to ${businessLabel(LocalBusinessName.current, possessive = true)} requests queue. The visit stays on the books until they accept it.",
                         style = type.sansMeta,
                     )
                     KinField(

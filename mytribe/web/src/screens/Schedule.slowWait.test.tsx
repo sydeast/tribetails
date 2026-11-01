@@ -83,12 +83,12 @@ describe('Schedule: an offline pause is not a slow server', () => {
     act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS * 2));
 
     // The #805 treatment is what is on screen.
-    expect(screen.getAllByText(/Your phone is offline|We can.t reach Tribe Tails/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Your phone is offline|We can.t reach your Auntie/).length).toBeGreaterThan(0);
 
     // And the slow-server treatment is not, in any of its parts.
     expect(screen.queryByRole('button', { name: 'Tap to sync' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Ask again' })).toBeNull();
-    expect(screen.queryByText('Tribe Tails has not answered yet.')).toBeNull();
+    expect(screen.queryByText('Your Auntie has not answered yet.')).toBeNull();
     expect(document.querySelector('.slow-wait')).toBeNull();
 
     // The pause is genuine: the read was never even attempted.

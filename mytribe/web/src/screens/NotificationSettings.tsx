@@ -33,7 +33,8 @@ import { OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import '../styles/notifications.css';
-import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
+import { SettingsBusinessFootnote, useBusinessName } from '../components/BusinessFootnote';
+import { businessLabel } from '../lib/businessLabel';
 
 /**
  * Notification Settings, ported from
@@ -97,7 +98,9 @@ import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
  * What IS true at this layer, and all this sentence claims: the household is not
  * the one who decides this channel, and this screen is not where it changes.
  */
-export const SET_BY_BUSINESS_NOTE = 'Set by Tribe Tails Pet Care. Can’t be changed here.';
+export function setByBusinessNote(businessName: string | null | undefined): string {
+  return `Set by ${businessLabel(businessName)}. Can’t be changed here.`;
+}
 const CATEGORY_ICON: Record<string, string> = {
   visit: '\u{1F43E}', // paw
   kintale: '\u{1F4DD}', // memo
@@ -236,6 +239,7 @@ function MasterSwitch({ state, label, disabled, onChange }: { state: MasterState
   );
 }
 export function NotificationSettings() {
+  const businessName = useBusinessName();
   const queryClient = useQueryClient();
 
   const catalog = useQuery({ queryKey: ['notificationCatalog'], queryFn: getNotificationCatalog });
@@ -428,7 +432,7 @@ export function NotificationSettings() {
                       <div className="cico">{copy.icon}</div>
                       <div className="cinfo">
                         <b>{copy.label}</b>
-                        <small>{locked ? SET_BY_BUSINESS_NOTE : copy.desc}</small>
+                        <small>{locked ? setByBusinessNote(businessName) : copy.desc}</small>
                       </div>
                       <label className={`sw ${locked ? 'dis' : ''}`}>
                         <input
@@ -476,7 +480,7 @@ export function NotificationSettings() {
                               <div className="nf-key-chinfo">
                                 <b>{copy.label}</b>
                                 {locked ? (
-                                  <small>{k.lockReason?.trim() || SET_BY_BUSINESS_NOTE}</small>
+                                  <small>{k.lockReason?.trim() || setByBusinessNote(businessName)}</small>
                                 ) : (
                                   <span className={`nf-key-badge ${overridden ? 'overridden' : 'following'}`}>
                                     {overridden ? 'Overridden' : 'Following category'}
