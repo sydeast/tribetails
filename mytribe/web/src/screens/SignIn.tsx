@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouter, useSearch } from '@tanstack/react-router';
+import { DEFAULT_SIGN_IN_LANDING, safeRedirectPath } from '../lib/signInRedirect';
 import { sendReset, signIn } from '../lib/auth';
 import { isRateLimitedError, mapAuthError } from '../lib/authErrors';
 import { readAndClearSessionEndedNotice } from '../lib/revokedSession';
@@ -17,6 +18,11 @@ type ResetToast =
  */
 export function SignIn() {
   const navigate = useNavigate();
+  // #1384: the email link the route guard turned this household away from.
+  // Re-checked here: it is an address-bar value, not a trusted router value.
+  const { redirect: carried } = useSearch({ strict: false }) as { redirect?: unknown };
+  const landing = safeRedirectPath(carried);
+  const { history } = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -44,7 +50,8 @@ export function SignIn() {
     setBusy(true);
     try {
       await signIn(email.trim(), password);
-      void navigate({ to: '/home' });
+      if (landing === null) void navigate({ to: DEFAULT_SIGN_IN_LANDING });
+      else history.push(landing); // whole string, so the link's own search and hash survive
     } catch (err) {
       setError(mapAuthError(err).message);
     } finally {

@@ -1,11 +1,21 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SignIn } from './SignIn';
 import { CARETAKER_REASON, SESSION_ENDED_STORAGE_KEY, sessionEndedMessage } from '../lib/revokedSession';
 
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }));
-vi.mock('../lib/auth', () => ({ signIn: vi.fn(), sendReset: vi.fn() }));
+const { navigate, push, search, signIn } = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  push: vi.fn(),
+  search: { current: {} as Record<string, unknown> },
+  signIn: vi.fn(),
+}));
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => navigate,
+  useSearch: () => search.current,
+  useRouter: () => ({ history: { push } }),
+}));
+vi.mock('../lib/auth', () => ({ signIn, sendReset: vi.fn() }));
 
 /**
  * #557, the last step of the chain. The backend refuses a revoked session, the
@@ -46,5 +56,52 @@ describe('SignIn session-ended notice', () => {
     first.unmount();
     render(<SignIn />);
     expect(screen.queryByTestId('session-ended-notice')).toBeNull();
+  });
+});
+
+/**
+ * #1384: a household that opened an email link while signed out lands on that
+ * link after signing in, and a `redirect` that is not an in-app path is
+ * ignored rather than followed.
+ */
+describe('SignIn, landing after sign-in', () => {
+  async function submit() {
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'pawsome@hanasamku.com' } });
+    fireEvent.change(screen.getByLabelText(/^password/i), { target: { value: 'pw-not-real' } });
+    fireEvent.submit(screen.getByLabelText(/email/i).closest('form') as HTMLFormElement);
+    await waitFor(() => expect(navigate.mock.calls.length + push.mock.calls.length).toBe(1));
+  }
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStorage.clear();
+    search.current = {};
+    signIn.mockResolvedValue(undefined);
+  });
+  it('goes to Home when no redirect was carried', async () => {
+    render(<SignIn />);
+    await submit();
+    expect(navigate).toHaveBeenCalledWith({ to: '/home' });
+    expect(push).not.toHaveBeenCalled();
+  });
+  it('lands on the carried deep link, search and all', async () => {
+    search.current = { redirect: '/invoices/inv_1?from=email' };
+    render(<SignIn />);
+    await submit();
+    expect(push).toHaveBeenCalledWith('/invoices/inv_1?from=email');
+    expect(navigate).not.toHaveBeenCalled();
+  });
+  it.each([
+    'https://evil.example/home',
+    '//evil.example',
+    '/\\evil.example',
+    'javascript:alert(1)',
+    'home',
+    '/signin',
+  ])('ignores %s and goes to Home', async (bad) => {
+    search.current = { redirect: bad };
+    render(<SignIn />);
+    await submit();
+    expect(navigate).toHaveBeenCalledWith({ to: '/home' });
+    expect(push).not.toHaveBeenCalled();
   });
 });

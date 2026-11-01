@@ -7,6 +7,7 @@ import {
   redirect,
 } from '@tanstack/react-router';
 import { waitForAuthReady } from './lib/auth';
+import { signInSearch, signInSearchFor } from './lib/signInRedirect';
 import { resolveAccess, type AdminAccess } from './lib/access';
 import {
   getSessionHealth,
@@ -108,6 +109,8 @@ const indexRoute = createRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/signin',
+  // #1384: `redirect` is the location the guard turned the operator away from.
+  validateSearch: signInSearch,
   component: SignIn,
 });
 
@@ -147,9 +150,11 @@ const signInRoute = createRoute({
  * is set), but a direct `onSnapshot` started on this pass would be unscoped,
  * and the sandbox banner is absent until a gate pass succeeds.
  */
-async function requireAdmin() {
+async function requireAdmin({ location }: { location: Parameters<typeof signInSearchFor>[0] }) {
+  // #1384: every /signin bounce below carries where the operator was going.
+  const toSignIn = () => redirect({ to: '/signin', search: signInSearchFor(location) });
   const state = await waitForAuthReady();
-  if (state.status !== 'signedIn') throw redirect({ to: '/signin' });
+  if (state.status !== 'signedIn') throw toSignIn();
   let access: AdminAccess;
   try {
     access = await resolveAccess(state.user);
@@ -158,11 +163,11 @@ async function requireAdmin() {
     // existing banner says it on this paint instead of a minute from now, and
     // so the retry loop that eventually clears the state starts at the same
     // moment the operator first sees it.
-    if (noteRefreshFailure(err) === 'expired') throw redirect({ to: '/signin' });
+    if (noteRefreshFailure(err) === 'expired') throw toSignIn();
     enterReadOnlySession();
     return { access: null };
   }
-  if (access.status === 'denied') throw redirect({ to: '/signin' });
+  if (access.status === 'denied') throw toSignIn();
   // A resolved token is proof the session can mint one, so the degraded state
   // and the banner that explains it both go at the same moment.
   leaveReadOnlySession();

@@ -9,7 +9,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
  */
 
 const { signIn, sendReset } = vi.hoisted(() => ({ signIn: vi.fn(), sendReset: vi.fn() }));
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => vi.fn(),
+  useSearch: () => ({}),
+  useRouter: () => ({ history: { push: vi.fn() } }),
+}));
 vi.mock('../lib/auth', () => ({ signIn, sendReset }));
 
 import { SignIn } from './SignIn';
