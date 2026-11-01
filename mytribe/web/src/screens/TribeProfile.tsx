@@ -46,6 +46,7 @@ import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutat
 import { errorLine, usePortalMutation } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { formatPhone } from '../lib/phone';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Reads one of the three reserved home-access fields when a homeAccess schema
@@ -730,9 +731,7 @@ export function TribeProfile() {
           )}
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

@@ -25,6 +25,7 @@ import {
   visitTile,
   visitVariant,
 } from '../lib/portalFormat';
+import { BusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Home, ported from ui-ideas/mytribe-home-2026-05-31.html. `getMyHome` only
@@ -349,9 +350,7 @@ export function Home() {
             of its own on iOS. See components/InstallAndAlerts.tsx. */}
         <InstallAndAlerts />
 
-        <p className="footnote">
-          Cared for by <b>{home.data?.businessName || 'Tribe Tails Pet Care'}</b>
-        </p>
+        <BusinessFootnote name={home.data?.businessName} />
       </div>
     </>
   );

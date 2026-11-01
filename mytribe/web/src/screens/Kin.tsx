@@ -10,6 +10,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const CARD_VARIANTS = ['p1', 'p2', 'p3', 'p4'] as const;
 
@@ -97,9 +98,7 @@ export function Kin() {
           </div>
         )}
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

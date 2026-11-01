@@ -29,6 +29,7 @@ import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutat
 import { usePortalMutation } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import '../styles/notifications.css';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Notification Settings, ported from
@@ -540,9 +541,7 @@ export function NotificationSettings() {
           </>
         )}
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

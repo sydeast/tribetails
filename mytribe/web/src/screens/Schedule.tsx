@@ -13,6 +13,7 @@ import { LaunchError } from './LaunchError';
 import { countLabel, countOfQuery, viewOfQuery } from '../lib/queryState';
 import { auntieName, bookingChip, bookingSubtitle, fullDateKick, isoTime, speciesEmoji, visitTile, visitVariant } from '../lib/portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 type Tab = 'upcoming' | 'past';
 
@@ -300,9 +301,7 @@ export function Schedule() {
           </div>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

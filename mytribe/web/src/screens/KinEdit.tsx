@@ -18,6 +18,7 @@ import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEd
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { useIsMounted, usePortalMutation } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -272,9 +273,7 @@ export function KinEdit() {
           </section>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );

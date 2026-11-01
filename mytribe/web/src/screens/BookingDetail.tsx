@@ -27,6 +27,7 @@ import {
   weekdayTime,
 } from '../lib/portalFormat';
 import '../styles/bookingdetail.css';
+import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Booking drill-in (B3, punchlist item): ported from
@@ -557,9 +558,7 @@ export function BookingDetail() {
           </div>
         </div>
 
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <SettingsBusinessFootnote />
       </div>
     </>
   );
