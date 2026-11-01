@@ -188,6 +188,8 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     kinfolkId: 'fam1',
     status: 'confirmed',
     serviceType: 'Drop-in Visit',
+    // #1297: the server-resolved name; follows an overridden serviceType.
+    serviceLabel: overrides.serviceType ?? 'Drop-in Visit',
     title: null,
     startTimeMs: null,
     endTimeMs: null,

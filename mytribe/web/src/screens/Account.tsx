@@ -320,7 +320,9 @@ export function Account() {
     ? formatCard(card)
     : cardOnFile
       ? 'Charges run through your care team'
-      : 'Settle up directly with your Auntie for now';
+      // #1330: the card's one billing sentence. A second line under the card
+      // used to say the same thing again, card or no card.
+      : 'Settle up with your Auntie directly until a card is on file.';
   const billingReadError = isPermissionDenied(paymentMethod.error)
     ? 'You need billing access to manage billing. Your primary kinfolk can give it to you.'
     : 'We could not read your billing details just now.';
@@ -563,10 +565,6 @@ export function Account() {
                     )}
                   </div>
                 )}
-
-                <p className="sub" style={{ marginTop: 12 }}>
-                  No payment method on file means visits cannot be charged automatically.
-                </p>
               </section>
             )}
           </div>

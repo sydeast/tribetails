@@ -366,7 +366,7 @@ private fun UpcomingRow(b: Booking) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(b.title ?: b.serviceType ?: "Booking", style = type.heritageTitle)
+            Text(com.kinfolk.portal.util.visitTitle(b.title, b.serviceLabel) ?: "Booking", style = type.heritageTitle)
             Text(bookingWhenLabel(b), style = type.sansLabel)
             val withText = (listOf(b.auntieDisplayName).filterNotNull() + b.kinNames).joinToString(" • ").ifBlank { null }
             if (withText != null) Text(withText, style = type.sansMeta)
@@ -589,7 +589,7 @@ private fun LiveVisitCard(b: Booking) {
             ) {
                 Column {
                     Text(b.auntieDisplayName ?: "Auntie", style = type.heritageTitle.copy(color = Color.White))
-                    Text(b.serviceType ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
+                    Text(b.serviceLabel ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
                 }
                 LivePill(onGradient = true)
             }

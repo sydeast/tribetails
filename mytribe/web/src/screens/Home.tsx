@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from 'react';
+import { serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getMyBookings, getMyHome, getMyKin, getMyKinTales } from '../api/portal';
@@ -151,13 +152,13 @@ export function Home() {
               </h2>
               <p>
                 {liveVisit.startTimeMs !== null ? `Checked in ${elapsedMinutes(liveVisit.startTimeMs)} minutes ago` : 'Checked in'} for{' '}
-                {liveVisit.title ?? liveVisit.serviceType ?? 'a visit'}. You&rsquo;ll get a KinTale the moment they wrap up.
+                {visitTitleOf(liveVisit) ?? 'a visit'}. You&rsquo;ll get a KinTale the moment they wrap up.
               </p>
               <div className="lwho">
                 <div className="lav">{speciesEmoji(null)}</div>
                 <div style={{ flex: '0 0 auto' }}>
                   <b>{liveVisit.kinNames[0] ?? 'Your kin'}</b>
-                  <small>{(liveVisit.serviceType ?? liveVisit.title ?? 'VISIT').toUpperCase()}</small>
+                  <small>{(serviceLabelOf(liveVisit) ?? visitTitleOf(liveVisit) ?? 'Visit').toUpperCase()}</small>
                 </div>
                 <div className="track">
                   <i />
@@ -197,7 +198,7 @@ export function Home() {
                         <div className="d">{tile.day}</div>
                       </div>
                       <div className="info">
-                        <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
+                        <b>{visitTitleOf(b) ?? 'Visit'}</b>
                         <small>{bookingSubtitle(b)}</small>
                       </div>
                       <div className="pet">{speciesEmoji(null)}</div>

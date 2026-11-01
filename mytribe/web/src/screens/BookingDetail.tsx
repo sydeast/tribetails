@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyBookings } from '../api/portal';
@@ -239,7 +240,7 @@ export function BookingDetail() {
         <header className="hero-greet" style={{ marginBottom: 22 }}>
           <div className="kick">Schedule</div>
           <div className="bk-head">
-            <h1>{found.title ?? found.serviceType ?? 'Booking Details'}</h1>
+            <h1>{visitTitleOf(found) ?? 'Booking Details'}</h1>
             <span className={`chip lg ${chip.tone}`}>
               <span className="dot" />
               {chip.label}
@@ -276,7 +277,7 @@ export function BookingDetail() {
                         business sells by length of visit, so the word is a duration. */}
                     <div className="lab">KinCare Duration</div>
                     <div className="val">
-                      {found.serviceType ?? 'Visit'}
+                      {serviceLabelOf(found) ?? 'Visit'}
                       <small>{visitWhenLine(found)}</small>
                     </div>
                   </div>
@@ -372,7 +373,7 @@ export function BookingDetail() {
                   <div className="d">{visitTile(found).day}</div>
                 </div>
                 <div className="info">
-                  <b>{found.title ?? found.serviceType ?? 'Visit'}</b>
+                  <b>{visitTitleOf(found) ?? 'Visit'}</b>
                   <small>{bookingSubtitle(found)}</small>
                 </div>
                 <div className="pet">{speciesEmoji(null)}</div>

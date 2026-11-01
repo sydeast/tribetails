@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { serviceEyebrowOf, serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getMyBookings, getMyVisits } from '../api/portal';
@@ -133,7 +134,7 @@ export function Schedule() {
               {liveBooking?.kinNames.length ? ` with ${liveBooking.kinNames.join(', ')}` : ''}
             </h2>
             <p>
-              {liveVisit.serviceType ?? liveBooking?.title ?? liveBooking?.serviceType ?? 'A visit'} in progress. You&rsquo;ll get a
+              {serviceLabelOf(liveVisit) ?? visitTitleOf(liveBooking) ?? 'A visit'} in progress. You&rsquo;ll get a
               KinTale the moment {liveBooking?.auntieDisplayName ?? 'they'} wraps up.
             </p>
             {liveVisit.arrivedAtIso && <div className="laddr">{'\u{1F4CD}'} Arrived {isoTime(liveVisit.arrivedAtIso)}</div>}
@@ -141,7 +142,7 @@ export function Schedule() {
               <div className="lav">{speciesEmoji(null)}</div>
               <div style={{ flex: '0 0 auto' }}>
                 <b>{liveBooking?.kinNames[0] ?? 'Your kin'}</b>
-                <small>{(liveVisit.serviceType ?? 'VISIT').toUpperCase()}</small>
+                <small>{(serviceLabelOf(liveVisit) ?? 'Visit').toUpperCase()}</small>
               </div>
               <div className="track">
                 <i />
@@ -200,8 +201,8 @@ export function Schedule() {
                             <div className="d">{tile.day}</div>
                           </div>
                           <div className="info">
-                            <span className="svc">Service Type &middot; {b.serviceType ?? 'Visit'}</span>
-                            <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
+                            {serviceEyebrowOf(b) && <span className="svc">{serviceEyebrowOf(b)}</span>}
+                            <b>{visitTitleOf(b) ?? 'Visit'}</b>
                             <small>{bookingSubtitle(b)}</small>
                           </div>
                           <div className="pet">{speciesEmoji(null)}</div>
@@ -243,8 +244,8 @@ export function Schedule() {
                             <div className="d">{tile.day}</div>
                           </div>
                           <div className="info">
-                            <span className="svc">Service Type &middot; {b.serviceType ?? 'Visit'}</span>
-                            <b>{b.title ?? b.serviceType ?? 'Visit'}</b>
+                            {serviceEyebrowOf(b) && <span className="svc">{serviceEyebrowOf(b)}</span>}
+                            <b>{visitTitleOf(b) ?? 'Visit'}</b>
                             <small>{bookingSubtitle(b)}</small>
                           </div>
                           {route.length > 0 && (

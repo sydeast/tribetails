@@ -373,6 +373,7 @@ data class GetMyBookingsResultLiveVisit(
     /** One of `requested`, `confirmed`, `enRoute`, `active`, `completed`, `cancelled`. `""` when the payload omits it. */
     val status: String,
     val serviceType: String?,
+    val serviceLabel: String?,
     val title: String?,
     val startTimeMs: Long?,
     val endTimeMs: Long?,
@@ -415,6 +416,7 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
         status = (raw?.get("status") as? String).orEmpty(),
         serviceType = raw?.get("serviceType") as? String,
+        serviceLabel = raw?.get("serviceLabel") as? String,
         title = raw?.get("title") as? String,
         startTimeMs = (raw?.get("startTimeMs") as? Number)?.toLong(),
         endTimeMs = (raw?.get("endTimeMs") as? Number)?.toLong(),

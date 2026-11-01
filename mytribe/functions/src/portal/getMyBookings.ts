@@ -10,6 +10,7 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
 
 interface GetMyBookingsRequest { kinfolkId?: string }
 
@@ -28,6 +29,13 @@ const BookingDtoSchema = z
     kinfolkId: z.string().min(1),
     status: z.enum(['requested', 'confirmed', 'enRoute', 'active', 'completed', 'cancelled']),
     serviceType: z.string().nullable(),
+    /**
+     * #1297: what the household is shown for the service, resolved on the
+     * server against the operator's KinCare list (`lib/serviceDisplayName.ts`).
+     * `serviceType` stays the raw stored value; no client prints it. Null when
+     * there is no name to show, and the client uses its own word for a visit.
+     */
+    serviceLabel: z.string().nullable(),
     title: z.string().nullable(),
     startTimeMs: z.number().int().nullable(),
     endTimeMs: z.number().int().nullable(),
@@ -150,10 +158,17 @@ export async function getMyBookingsHandler(
   const firestore = db();
   const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, householdStaffFlag(req.auth, 'getMyBookings'), 'getMyBookings');
 
-  const snap = await firestore
-    .collectionGroup('kinCares')
-    .where('familyId', '==', kinfolkId)
-    .get();
+  // The settings read rides alongside the visit query. Fail-soft: a settings
+  // doc that will not load leaves names unresolved, never the schedule empty.
+  const [snap, settingsSnap] = await Promise.all([
+    firestore.collectionGroup('kinCares').where('familyId', '==', kinfolkId).get(),
+    firestore
+      .collection('business_settings')
+      .doc('business_settings')
+      .get()
+      .catch(() => null),
+  ]);
+  const serviceCatalog = settingsSnap ? serviceNameCatalogFrom(settingsSnap.data()) : EMPTY_SERVICE_NAME_CATALOG;
 
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
@@ -168,6 +183,7 @@ export async function getMyBookingsHandler(
       kinfolkId,
       status: (data['status'] as BookingDto['status']) ?? 'requested',
       serviceType: stringOrNull(data['serviceType']) ?? stringOrNull(data['serviceName']),
+      serviceLabel: serviceDisplayName(data['serviceType'], serviceCatalog, data['serviceName']),
       title: stringOrNull(data['title']),
       startTimeMs: tsMillis(data['startTime']),
       endTimeMs: tsMillis(data['endTime']),
@@ -245,7 +261,9 @@ export async function getMyBookingsHandler(
       kinfolkId,
       status,
       serviceType: stringOrNull(s['serviceType']),
-      title: stringOrNull(s['serviceType']),
+      serviceLabel: serviceDisplayName(s['serviceType'], serviceCatalog, s['serviceName']),
+      // #1297: was the raw `serviceType`, so a code became the visit's title.
+      title: serviceDisplayName(s['serviceType'], serviceCatalog, s['serviceName']),
       startTimeMs,
       endTimeMs: isoMillis(s['endTime']),
       // A session always has its time; only a kinCares visit can await one.

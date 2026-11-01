@@ -129,9 +129,11 @@ fun InvoiceDetailScreen(
                 Spacer(Modifier.height(KinfolkSpacing.xs))
                 // Same friendly labels as the list's status chips (never enum names).
                 DetailRow("Status", invoiceStatusLabel(invoice.status))
-                DetailRow("Client", invoice.client)
-                DetailRow("Date", invoice.date)
-                DetailRow("Due Date", invoice.dueDate)
+                // #1288: the household the bill was issued under when it names no client.
+                DetailRow("Client", invoice.client ?: invoice.kinfolkName)
+                // #1330: "Jul 01, 2026", as the web detail prints it, not the stored string.
+                DetailRow("Date", com.kinfolk.portal.util.invoiceDayLabel(invoice.date))
+                DetailRow("Due Date", com.kinfolk.portal.util.invoiceDayLabel(invoice.dueDate))
                 DetailRow("Discount", invoice.discount)
                 DetailRow("Terms", invoice.terms)
                 DetailRow("Address", invoice.address)

@@ -209,3 +209,57 @@ describe('Invoices: a declined quote row names who declined it (#1039)', () => {
     expect(screen.queryByText(/declined this/)).toBeNull();
   });
 });
+// #1294: credit is admin-chosen and only counts once it is saved, so nothing
+// on this screen may say a credit was applied automatically.
+describe('Invoices: the balance hero says which number can be spent (#1294)', () => {
+  async function renderWith(res: GetMyInvoicesResult) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(res);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Invoices />
+      </QueryClientProvider>,
+    );
+  }
+  it('drops the AUTO APPLIED chip and labels an unsaved credit as waiting', async () => {
+    await renderWith({ open: [], paid: [], credits: [CREDIT_INVOICE], accountBalanceCents: 1500 });
+    expect(await screen.findByText('ACCOUNT BALANCE')).toBeInTheDocument();
+    expect(screen.queryByText(/AUTO APPLIED/i)).toBeNull();
+    expect(screen.getByText('What you can spend. It comes off your next invoice.')).toBeInTheDocument();
+    expect(screen.getByText('Credits to save')).toBeInTheDocument();
+    expect(screen.getByText(/Save it to your account balance to spend it\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Save to Account Balance/ })).toBeInTheDocument();
+  });
+  it('shows no waiting-credit cell once every credit is saved', async () => {
+    await renderWith({
+      open: [],
+      paid: [],
+      credits: [{ ...CREDIT_INVOICE, creditRedeemedAtMs: 1_760_000_000_000, creditTarget: 'accountBalance' }],
+      accountBalanceCents: 3500,
+    });
+    expect(await screen.findByText('ACCOUNT BALANCE')).toBeInTheDocument();
+    expect(screen.queryByText('Credits to save')).toBeNull();
+    expect(screen.queryByText(/AUTO APPLIED/i)).toBeNull();
+  });
+});
+// #1330: a paid history that spans New Year must say which year each is.
+describe('Invoices: paid dates carry the year (#1330)', () => {
+  it('prints "Paid Dec 17, 2025", not "Paid Dec 17"', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({
+      open: [],
+      paid: [{ ...OPEN_INVOICE, id: 'inv-dec', status: 'paid', isPaid: true, amountDue: 0, date: '2025-12-17' }],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Invoices />
+      </QueryClientProvider>,
+    );
+    expect((await screen.findAllByText(/Paid Dec 17, 2025/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Paid Dec 17$/)).toBeNull();
+  });
+});
