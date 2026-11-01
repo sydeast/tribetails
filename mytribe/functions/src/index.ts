@@ -220,8 +220,10 @@ type FunctionModuleLoader = () => Record<string, unknown>;
  * which builds the release's module graph from the literal requires in lib/ and
  * deploys the whole fleet whenever it meets a computed one. A table of paths
  * handed to one shared require of a variable would work at run time and
- * quietly turn every release into a full deploy. (That scan reads comments
- * too, so this file's comments never spell a require call out.)
+ * quietly turn every release into a full deploy. (Since #1390 that scan
+ * judges only calls in code, so a comment here that mentions a require no
+ * longer forces a full deploy. A literal specifier inside a comment still
+ * joins the graph, which can only widen a release.)
  *
  * Read statically by scripts/runtimeOptions/extractSource.ts (the runtime
  * options drift tool), test/auntieAccess.test.ts and
