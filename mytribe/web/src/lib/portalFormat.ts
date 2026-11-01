@@ -118,22 +118,66 @@ export interface ChipInfo {
   tone: 'warm' | 'go' | 'done';
 }
 
-/** Chip label + color tone for a booking's status, per the mockup's CONFIRMED/PENDING/COMPLETED chips. */
+/**
+ * Chip label + color tone for a booking's status, per the mockup's
+ * CONFIRMED/PENDING/COMPLETED chips. #1298: the LABEL is not chosen here. It
+ * comes from {@link bookingStatusChip}, the same source the detail badge uses,
+ * so one booking cannot read PENDING in a list and REQUESTED on its page. This
+ * function only picks the coarser three-tone colour.
+ */
 export function bookingChip(status: BookingStatus): ChipInfo {
+  const { label } = bookingStatusChip(status);
   switch (status) {
-    case 'confirmed':
-      return { label: 'CONFIRMED', tone: 'warm' };
     case 'requested':
-      return { label: 'PENDING', tone: 'go' };
+      return { label, tone: 'go' };
     case 'completed':
-      return { label: 'COMPLETED', tone: 'done' };
     case 'cancelled':
-      return { label: 'CANCELLED', tone: 'done' };
+      return { label, tone: 'done' };
     default:
-      return { label: status.toUpperCase(), tone: 'warm' };
+      return { label, tone: 'warm' };
   }
 }
-
+/**
+ * A change the household has asked for that the office has not ruled on yet,
+ * for the line under a visit on Home and Schedule (#1299). `requestBooking
+ * Cancellation` and `requestBookingReschedule` now refuse a second ask while
+ * one is open, so a visit carries one at most. A visit written before that
+ * rule can carry both; the cancellation is the one named, because it is the
+ * larger of the two and the one that ends the visit.
+ */
+export type PendingChange = 'cancellation' | 'reschedule';
+type ChangeFields = Pick<GetMyBookingsResultLiveVisit, 'cancelRequestStatus' | 'rescheduleRequestStatus'>;
+export function pendingChangeOf(b: ChangeFields): PendingChange | null {
+  if (b.cancelRequestStatus === 'pending') return 'cancellation';
+  if (b.rescheduleRequestStatus === 'pending') return 'reschedule';
+  return null;
+}
+/** The sentence for {@link pendingChangeOf}, or null. One wording on every screen. */
+export function pendingChangeLabel(b: ChangeFields): string | null {
+  switch (pendingChangeOf(b)) {
+    case 'cancellation':
+      return 'Cancellation requested';
+    case 'reschedule':
+      return 'New time requested';
+    case null:
+      return null;
+  }
+}
+/**
+ * The glyph beside the Status tile on the detail page (#1298). It used to be a
+ * green check for every status, which on REQUESTED read as confirmed. Only a
+ * visit that is confirmed or beyond gets the check.
+ */
+export function bookingStatusIcon(status: BookingStatus): string {
+  switch (status) {
+    case 'requested':
+      return '\u{1F552}';
+    case 'cancelled':
+      return '\u2715';
+    default:
+      return '\u2705';
+  }
+}
 /**
  * Finds one booking by its visit id across the live/upcoming/recent buckets
  * of a getMyBookings result — the drill-in lookup BookingDetail.tsx uses.

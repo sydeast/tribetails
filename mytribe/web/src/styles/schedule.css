@@ -63,3 +63,5 @@
 .live .routemap-canvas { background: rgba(255, 255, 255, .18); }
 .live .routemap-stat .k, .live .routemap-stat .v { color: #fff; }
 .live .routemap-stat .k { opacity: .8; }
+/* #1299: a change the household asked for that the office has not ruled on. */
+.visit .info small.pending-change { color: var(--orange); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }

@@ -11,7 +11,7 @@ import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { validateResponse } from '../lib/callableResponse';
-import { BookingDtoSchema, readVisitDto } from '../lib/portalBookingDto';
+import { BookingDtoSchema, cancelRequestStatusOf, readVisitDto } from '../lib/portalBookingDto';
 
 /**
  * A kinfolk PROPOSES a new time for a visit (issue #399, item 2).
@@ -123,6 +123,8 @@ export async function requestBookingRescheduleHandler(
   const data = snap.data() as {
     status?: string;
     rescheduleRequestStatus?: string;
+    cancelRequestStatus?: unknown;
+    cancelRequestedAt?: unknown;
     startTime?: { toMillis?: () => number } | null;
     endTime?: { toMillis?: () => number } | null;
     startTimePending?: unknown;
@@ -151,6 +153,16 @@ export async function requestBookingRescheduleHandler(
     );
   }
 
+  // #1299: one change at a time, in both directions. A cancellation ask that
+  // nobody has ruled on makes a new time meaningless, and answering the two in
+  // either order leaves the visit in a state neither answer describes.
+  // `cancelRequestStatusOf` also reads a pre-#438 bare stamp as pending.
+  if (cancelRequestStatusOf(data as Record<string, unknown>) === 'pending') {
+    throw new HttpsError(
+      'failed-precondition',
+      'A cancellation is already waiting on Tribe Tails for this visit. Wait for their answer before asking for a new time.',
+    );
+  }
   // Omitted end: keep the visit's current length. A visit with no end time on
   // record gets none on the proposal either, rather than a guessed duration.
   const currentStartMs = millisOf(data.startTime);

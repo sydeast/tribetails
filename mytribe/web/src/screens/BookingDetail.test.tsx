@@ -452,6 +452,30 @@ describe('BookingDetail: reschedule request', () => {
     expect(banner.textContent).toMatch(/new time requested/i);
     expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
   });
+  it('#1299: offers no cancellation while a new time is waiting, and says when it will', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({ upcoming: [booking({ rescheduleRequestStatus: 'pending' })] }),
+    );
+    renderScreen();
+    await screen.findByTestId('reschedule-pending');
+    expect(screen.queryByRole('button', { name: /request cancellation/i })).toBeNull();
+    expect(screen.getByTestId('cancel-held').textContent).toMatch(/once Tribe Tails answers your new time/i);
+  });
+  it('#1299: offers no new time while a cancellation is waiting', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({ upcoming: [booking({ cancelRequested: true, cancelRequestStatus: 'pending' })] }),
+    );
+    renderScreen();
+    await screen.findByTestId('cancel-pending');
+    expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
+  });
+  it('#1298: a requested visit shows REQUESTED in the badge and a clock, not a green check, on the Status tile', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'requested' })] }));
+    renderScreen();
+    await screen.findByText('REQUESTED');
+    expect(screen.queryByText('\u2705')).toBeNull();
+    expect(screen.getByText('\u{1F552}')).toBeInTheDocument();
+  });
   it('renders the accepted answer', async () => {
     const accepted = booking({
       rescheduleRequestStatus: 'accepted',
