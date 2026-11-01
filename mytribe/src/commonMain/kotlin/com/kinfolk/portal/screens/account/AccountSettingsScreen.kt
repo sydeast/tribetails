@@ -508,24 +508,31 @@ fun AccountSettingsScreen(
                     try {
                         // Persistence stays typed: read the schema values map when the
                         // schema drives the form, otherwise the static field state.
+                        // #1336: diffed against the loaded account, so an emptied
+                        // field is sent as a clear and an untouched one not at all.
+                        // A key the schema map lacks falls back to the static field,
+                        // which still holds the seeded value, so it reads as untouched.
                         val schema = accountSchema
-                        if (schema != null) {
-                            portalApi.saveMyAccount(
-                                displayName = accountValues["displayName"].orEmpty().trim().takeIf { it.isNotBlank() },
-                                phone = accountValues["phone"].orEmpty().trim().takeIf { it.isNotBlank() },
-                                photoUrl = photoUrl.trim().takeIf { it.isNotBlank() },
-                                backupEmail = accountValues["backupEmail"].orEmpty().trim().takeIf { it.isNotBlank() },
-                                backupPhone = accountValues["backupPhone"].orEmpty().trim().takeIf { it.isNotBlank() },
+                        val changes = if (schema != null) {
+                            accountChanges(
+                                loaded = loaded,
+                                displayName = accountValues["displayName"] ?: displayName,
+                                phone = accountValues["phone"] ?: phone,
+                                photoUrl = photoUrl,
+                                backupEmail = accountValues["backupEmail"] ?: backupEmail,
+                                backupPhone = accountValues["backupPhone"] ?: backupPhone,
                             )
                         } else {
-                            portalApi.saveMyAccount(
-                                displayName = displayName.trim().takeIf { it.isNotBlank() },
-                                phone = phone.trim().takeIf { it.isNotBlank() },
-                                photoUrl = photoUrl.trim().takeIf { it.isNotBlank() },
-                                backupEmail = backupEmail.trim().takeIf { it.isNotBlank() },
-                                backupPhone = backupPhone.trim().takeIf { it.isNotBlank() },
-                            )
+                            accountChanges(loaded, displayName, phone, photoUrl, backupEmail, backupPhone)
                         }
+                        portalApi.saveMyAccount(
+                            displayName = changes.displayName,
+                            phone = changes.phone,
+                            photoUrl = changes.photoUrl,
+                            backupEmail = changes.backupEmail,
+                            backupPhone = changes.backupPhone,
+                            clearFields = changes.clearFields,
+                        )
                         // Verify persistence by reloading from the server, so a
                         // silent write failure surfaces instead of a false "Saved."
                         val fresh = portalApi.getMyAccount()

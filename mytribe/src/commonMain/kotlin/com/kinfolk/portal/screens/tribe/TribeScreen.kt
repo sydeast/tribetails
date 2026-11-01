@@ -503,9 +503,12 @@ fun TribeScreen(
                             val kl: String?
                             val wf: String?
                             if (hsSave != null) {
-                                gc = homeValues["gateCode"]?.trim()?.ifBlank { null } ?: gateCode.trim().ifBlank { null }
-                                kl = homeValues["keyLocation"]?.trim()?.ifBlank { null } ?: keyLocation.trim().ifBlank { null }
-                                wf = homeValues["wifiPassword"]?.trim()?.ifBlank { null } ?: wifi.trim().ifBlank { null }
+                                // #1336: a schema field the household emptied is a clear,
+                                // not a fall back to the static seed (which still holds the
+                                // old value). Only a key the schema lacks falls back.
+                                gc = schemaTextOrNull(homeValues, "gateCode", gateCode)
+                                kl = schemaTextOrNull(homeValues, "keyLocation", keyLocation)
+                                wf = schemaTextOrNull(homeValues, "wifiPassword", wifi)
                                 hsSave.sections.flatMap { it.fields }
                                     .filter { it.key != "gateCode" && it.key != "keyLocation" && it.key != "wifiPassword" }
                                     .forEach { f -> schemaFieldRow(accessFields, f.key, f.label, homeValues[f.key])?.let { homeSet += it } }
@@ -1038,6 +1041,16 @@ internal data class PageSaveStatus(val text: String, val ok: Boolean)
  * Save calls saveHomeAccess only then. Mirrors `homeAccessEditChanged` in web
  * `api/tribeApi.ts`.
  */
+/**
+ * #1336. The trimmed schema value for [key], or null when the household emptied
+ * it. Only a key the schema map does not carry falls back to [staticValue].
+ * Mirrors `schemaTextOrNull` in web `screens/TribeProfile.tsx`.
+ */
+internal fun schemaTextOrNull(values: Map<String, String>, key: String, staticValue: String): String? {
+    val fromSchema = values[key]
+    if (fromSchema != null) return fromSchema.trim().ifBlank { null }
+    return staticValue.trim().ifBlank { null }
+}
 internal fun homeAccessEditChanged(
     loaded: HomeAccess,
     gateCode: String?,
