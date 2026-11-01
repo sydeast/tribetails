@@ -110,4 +110,33 @@ class StartRouteTest {
         assertTrue(r is LaunchErrorRoute)
         assertEquals("boom", (r as LaunchErrorRoute).message)
     }
+
+    // #1293: a launch link the app could not place.
+    @Test
+    fun unknownLink_winsOverTheShell_butNotOverARecognisedLink() {
+        val shell = startRouteFor(
+            secureReset = null, shareToken = null, claimId = null,
+            dest = null, resolvedKinfolkId = "3", unknownLink = true,
+        )
+        assertEquals(NotFoundRoute, shell)
+        val signedOut = startRouteFor(
+            secureReset = null, shareToken = null, claimId = null,
+            dest = LaunchDestination.SignIn, resolvedKinfolkId = null, unknownLink = true,
+        )
+        assertEquals(NotFoundRoute, signedOut)
+        // A claim or share link that did parse still goes where it names.
+        val claim = startRouteFor(
+            secureReset = null, shareToken = null, claimId = "inv",
+            dest = null, resolvedKinfolkId = "3", unknownLink = true,
+        )
+        assertTrue(claim is ClaimRoute)
+    }
+    @Test
+    fun clearingTheUnknownLink_returnsTheHouseholdToWhereTheyBelong() {
+        val after = startRouteFor(
+            secureReset = null, shareToken = null, claimId = null,
+            dest = null, resolvedKinfolkId = "3", unknownLink = false,
+        )
+        assertTrue(after is ShellGraph)
+    }
 }

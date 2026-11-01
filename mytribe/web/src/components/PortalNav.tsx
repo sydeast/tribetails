@@ -46,7 +46,8 @@ const TAB_ITEMS: (NavItem & { icon: string })[] = [
 ];
 
 /** Shared top nav + mobile bottom tab bar, extracted from the identical markup repeated across every mockup. */
-export function PortalNav(props: { active: PortalNavTab }) {
+/** `active` is null on a screen that is none of the tabs, such as the not-found page. */
+export function PortalNav(props: { active: PortalNavTab | null }) {
   const access = useAccessState();
 
   // Operator branding, off the EXISTING `getMyHome` payload rather than a new

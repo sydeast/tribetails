@@ -39,6 +39,9 @@ actual fun readInitialShareToken(): String? {
  */
 actual fun readInitialSecureResetParams(): SecureResetParams? = parseEmailActionUrl(window.location.href)
 
+/** The web build routes in the browser; the React portal owns its not-found page. */
+actual fun readInitialUnknownLink(): Boolean = false
+
 private fun parseSegment(s: String, prefix: String): String? {
     val parts = s.trim('/').split("/")
     if (parts.size >= 2 && parts[0] == prefix) {

@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import { useRef, useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { EmergencyContactsCard } from './EmergencyContactsCard';
+import type { CardSave } from './cardSave';
 
 /**
  * The portal's Emergency Contacts card (#829). It reads and writes only through
@@ -21,16 +23,45 @@ vi.mock('../api/tribeApi', async () => {
   };
 });
 
+/**
+ * Stands in for the Tribe Profile page (#1324): the card has no Save button of
+ * its own, the page's one Save asks it to save through `saveRef`. This button
+ * does exactly that, with the page's busy label and a worded result.
+ */
+function PageHarness(props: { kinfolkId: string; onDirtyChange?: (dirty: boolean) => void }) {
+  const ref = useRef<CardSave | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  return (
+    <>
+      <EmergencyContactsCard kinfolkId={props.kinfolkId} saveRef={ref} {...(props.onDirtyChange ? { onDirtyChange: props.onDirtyChange } : {})} />
+      <button
+        type="button"
+        disabled={saving}
+        onClick={() => {
+          setSaving(true);
+          setOutcome(null);
+          void ref.current?.save().then((r) => {
+            setOutcome(r.ok ? 'Saved.' : null);
+            setSaving(false);
+          });
+        }}
+      >
+        {saving ? 'Saving…' : 'Save Emergency Contacts'}
+      </button>
+      {outcome && <p>{outcome}</p>}
+    </>
+  );
+}
 function mount(props: { onDirtyChange?: (dirty: boolean) => void } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={qc}>
-      <EmergencyContactsCard kinfolkId="kin-fam-1" {...props} />
+      <PageHarness kinfolkId="kin-fam-1" {...props} />
     </QueryClientProvider>,
   );
   return { ...view, qc };
 }
-
 const RAE = { name: 'Rae Mercer', phone: '+18055550199', relationship: 'Sister', recordedAt: null, updatedAt: null };
 const LOCKED = 'Only someone with Home access can change the Emergency Contact.';
 const WHO_GETS_CALLED = 'Called only when no kinfolk can be reached.';
@@ -136,7 +167,7 @@ describe('EmergencyContactsCard', () => {
     expect(screen.getByText('(805) 555-0199')).toBeInTheDocument();
     expect(screen.getByTestId('ec-locked')).toHaveTextContent(LOCKED);
     expect(screen.queryByRole('textbox')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save Emergency Contacts' })).toBeNull();
+    expect(within(screen.getByRole('region', { name: /Emergency Contacts/ })).queryByRole('button', { name: /save/i })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a second Emergency Contact' })).toBeNull();
   });
 
@@ -173,6 +204,12 @@ describe('EmergencyContactsCard', () => {
     expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
   });
 
+  it('has no Save button of its own: the page Save saves it (#1324)', async () => {
+    mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
+    mount();
+    await screen.findByDisplayValue('Rae Mercer');
+    expect(within(screen.getByRole('region', { name: /Emergency Contacts/ })).queryByRole('button', { name: /save/i })).toBeNull();
+  });
   it('with Home access there is no lock line', async () => {
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
     mount();
@@ -210,21 +247,20 @@ describe('EmergencyContactsCard', () => {
     expect(tip).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('marks unsaved edits, reports them to the page, and an edit after a save clears "Saved."', async () => {
+  it('marks unsaved edits, reports them to the page, and clears the mark once the page Save lands', async () => {
     const onDirtyChange = vi.fn();
     mocks.listEmergencyContacts.mockResolvedValue({ contacts: [RAE], canEdit: true, legacy: false });
     mount({ onDirtyChange });
     const name = await screen.findByDisplayValue('Rae Mercer');
     expect(screen.queryByTestId('ec-unsaved')).toBeNull();
     await userEvent.type(name, 'x');
-    expect(screen.getByTestId('ec-unsaved')).toHaveTextContent('Unsaved changes');
+    expect(screen.getByTestId('ec-unsaved')).toHaveTextContent('Unsaved changes. Press Save Changes at the bottom of the page.');
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contacts' }));
     expect(await screen.findByText('Saved.')).toBeInTheDocument();
     expect(screen.queryByTestId('ec-unsaved')).toBeNull();
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
     await userEvent.type(screen.getByLabelText('Name', { selector: '#ec-0-name' }), 'y');
-    expect(screen.queryByText('Saved.')).toBeNull();
     expect(screen.getByTestId('ec-unsaved')).toBeInTheDocument();
   });
 
@@ -348,7 +384,7 @@ describe('EmergencyContactsCard', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = render(
       <QueryClientProvider client={qc}>
-        <EmergencyContactsCard kinfolkId="kin-fam-1" />
+        <PageHarness kinfolkId="kin-fam-1" />
       </QueryClientProvider>,
     );
     const name = await screen.findByDisplayValue('Rae Mercer');
@@ -359,11 +395,10 @@ describe('EmergencyContactsCard', () => {
 
     view.rerender(
       <QueryClientProvider client={qc}>
-        <EmergencyContactsCard kinfolkId="kin-fam-2" />
+        <PageHarness kinfolkId="kin-fam-2" />
       </QueryClientProvider>,
     );
     expect(await screen.findByDisplayValue('Lee Park')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save Emergency Contacts' })).not.toBeDisabled();
 
     const saved = { ...RAE, name: 'Rae Changed' };
     await act(async () => {
@@ -371,9 +406,7 @@ describe('EmergencyContactsCard', () => {
       await new Promise((r) => setTimeout(r, 30));
     });
     expect(screen.getByLabelText('Name', { selector: '#ec-0-name' })).toHaveValue('Lee Park');
-    expect(screen.queryByText('Saved.')).toBeNull();
     expect(screen.queryByTestId('ec-unsaved')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Save Emergency Contacts' })).not.toBeDisabled();
     // Each household's cache holds its own copy.
     expect(qc.getQueryData(['emergencyContacts', 'kin-fam-2'])).toEqual({ contacts: [LEE], canEdit: true, legacy: false });
     expect(qc.getQueryData(['emergencyContacts', 'kin-fam-1'])).toEqual({ contacts: [saved], canEdit: true, legacy: false });

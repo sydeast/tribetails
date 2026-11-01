@@ -34,8 +34,24 @@ interface HomeAccessDto {
   updatedAtMs: number | null;
 }
 
+/**
+ * #1325: the household's chosen vet clinic, resolved from the `vetClinicId` row
+ * in the family's profile fields, so no client has to show (or look up) a
+ * database id. Read straight from `vet_clinics/{id}`, NOT through the picker
+ * catalog: the picker hides archived clinics and unapproved submissions, but a
+ * household already linked to one still has to read its name, address and phone.
+ * Null when no clinic is chosen, or the linked row is gone or has no name.
+ */
+interface VetClinicSummaryDto {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  isEmergency: boolean;
+}
 interface GetMyTribeProfileResult {
   profile: TribeProfileDto;
+  vetClinic: VetClinicSummaryDto | null;
   homeAccess: HomeAccessDto;
   /** #843: may this caller change home details, the Emergency Contact included. Same `home_access` rule saveTribeProfile enforces. */
   canEditHomeDetails: boolean;
@@ -109,11 +125,27 @@ export async function getMyTribeProfileHandler(
     updatedAtMs: canSeeHome ? tsMillis(acc['updatedAt']) : null,
   };
 
+  const vetClinic = await resolveVetClinic(firestore, storedFields);
   await bookkeeping;
   logEvent({ severity: 'info', function: 'getMyTribeProfile', event: 'portal.tribe.resolved', uid, extra: { kinfolkId } });
-  return { profile, homeAccess, canEditHomeDetails: canSeeHome };
+  return { profile, vetClinic, homeAccess, canEditHomeDetails: canSeeHome };
 }
 
+async function resolveVetClinic(
+  firestore: ReturnType<typeof db>,
+  fields: CustomField[],
+): Promise<VetClinicSummaryDto | null> {
+  const id = fields.find((f) => f.key === 'vetClinicId')?.value.trim() ?? '';
+  // A clinic id is a single document id; a slash would read some other path.
+  if (id === '' || id.includes('/')) return null;
+  const snap = await firestore.doc(`vet_clinics/${id}`).get();
+  if (!snap.exists) return null;
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const name = str(data['name']);
+  if (name === '') return null;
+  return { id, name, phone: str(data['phone']), address: str(data['address']), isEmergency: data['isEmergency'] === true };
+}
 function parseCustomFields(v: unknown): CustomField[] {
   if (!Array.isArray(v)) return [];
   return v

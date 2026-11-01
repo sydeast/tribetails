@@ -38,6 +38,7 @@ import com.kinfolk.portal.firebase.FunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
@@ -66,6 +67,36 @@ class EmergencyContactsCardTest {
         Column(Modifier.verticalScroll(rememberScrollState())) { content() }
     }
 
+    /**
+     * Stands in for the Tribe Profile page (#1324): the card has no Save button of
+     * its own, so this draws the page's one, asks the card to save through its
+     * [CardSaveHandle], and prints a worded result. The page's own wiring is held
+     * to account in TribeScreenTest.
+     */
+    @Composable
+    private fun PageCard(kinfolkId: String, portalApi: PortalApi, onDirtyChange: (Boolean) -> Unit = {}) {
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        val handle = androidx.compose.runtime.remember { CardSaveHandle() }
+        val saving = androidx.compose.runtime.remember(kinfolkId) { mutableStateOf(false) }
+        val outcome = androidx.compose.runtime.remember(kinfolkId) { mutableStateOf<String?>(null) }
+        Column {
+            EmergencyContactsCard(kinfolkId = kinfolkId, portalApi = portalApi, onDirtyChange = onDirtyChange, saveHandle = handle)
+            com.kinfolk.portal.components.KinButton(
+                label = if (saving.value) "Saving…" else "Save Emergency Contacts",
+                enabled = !saving.value,
+                onClick = {
+                    saving.value = true
+                    outcome.value = null
+                    scope.launch {
+                        val r = handle.save()
+                        outcome.value = if (r is CardSaveResult.Ok) "Saved." else null
+                        saving.value = false
+                    }
+                },
+            )
+            outcome.value?.let { androidx.compose.material3.Text(it) }
+        }
+    }
     private val locked = "Only someone with Home access can change the Emergency Contact."
     private val required = "A household needs at least one Emergency Contact."
 
@@ -92,7 +123,7 @@ class EmergencyContactsCardTest {
         fake.stub("saveEmergencyContacts", buildJsonObject {
             put("contacts", buildJsonArray { add(raeJson()) })
         })
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithText(required).assertIsDisplayed()
         onNodeWithTag("ec-0-name").performTextInput("Rae Mercer")
@@ -108,14 +139,14 @@ class EmergencyContactsCardTest {
         onNodeWithText(required).assertDoesNotExist()
         // Seeded from the reply: the stored E.164 phone, not the typed spelling.
         onNodeWithTag("ec-0-phone").assertTextEquals("(805) 555-0199")
-        onNodeWithText("Unsaved changes").assertDoesNotExist()
+        onNodeWithText("Unsaved changes", substring = true).assertDoesNotExist()
     }
 
     @Test
     fun anEmptyCardIsRefusedBeforeDiallingAndSaysItOnce() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = false)
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
         waitForIdle()
@@ -128,7 +159,7 @@ class EmergencyContactsCardTest {
     fun clearingTheContactsOnFileIsRefusedWithTheSentence() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         // No prompt while the server holds one.
         onNodeWithText(required).assertDoesNotExist()
@@ -146,7 +177,7 @@ class EmergencyContactsCardTest {
     fun oneOnFileOffersNoAddCallFirstRemoveOrNotice() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithTag("ec-0-name").assertIsDisplayed()
         assertTrue(onAllNodesWithText("Add a second Emergency Contact").fetchSemanticsNodes().isEmpty())
@@ -160,7 +191,7 @@ class EmergencyContactsCardTest {
         val fake = FakeFunctionsClient()
         fake.stub("listEmergencyContacts", listJson(true, raeJson(), contactJson("Lee Park", "+18055550177")))
         fake.stub("saveEmergencyContacts", buildJsonObject { put("contacts", buildJsonArray { add(raeJson()) }) })
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithText(EMERGENCY_CONTACTS_OVER_LIMIT).assertIsDisplayed()
         assertEquals(2, onAllNodesWithText("Remove").fetchSemanticsNodes().size)
@@ -172,7 +203,7 @@ class EmergencyContactsCardTest {
         onAllNodesWithText("Remove")[1].performScrollTo().performClick()
         assertTrue(onAllNodesWithTag("ec-1-name").fetchSemanticsNodes().isEmpty())
         assertTrue(onAllNodesWithText(EMERGENCY_CONTACTS_OVER_LIMIT).fetchSemanticsNodes().isEmpty())
-        onNodeWithText("Unsaved changes").assertIsDisplayed()
+        onNodeWithText("Unsaved changes", substring = true).assertIsDisplayed()
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
         waitForIdle()
         val slots = fake.calls.last { it.first == "saveEmergencyContacts" }.second!!["contacts"]!!.jsonArray
@@ -199,7 +230,7 @@ class EmergencyContactsCardTest {
     fun readOnlyWithNoneOnFileSaysWhoCanAddOne() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = false, withRae = false)
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("No Emergency Contact on file. Someone with Home access can add one.").assertIsDisplayed()
         onNodeWithText(required).assertDoesNotExist()
@@ -212,14 +243,14 @@ class EmergencyContactsCardTest {
     fun aStraySpaceIsNotAnUnsavedChange() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithTag("ec-0-name").performTextReplacement("Rae Mercer ")
         waitForIdle()
-        onNodeWithText("Unsaved changes").assertDoesNotExist()
+        onNodeWithText("Unsaved changes", substring = true).assertDoesNotExist()
         onNodeWithTag("ec-0-name").performTextReplacement("Rae Mercer Jr")
         waitForIdle()
-        onNodeWithText("Unsaved changes").assertIsDisplayed()
+        onNodeWithText("Unsaved changes", substring = true).assertIsDisplayed()
     }
 
     // #829 review item 4: the server's own wording before the round trip.
@@ -227,7 +258,7 @@ class EmergencyContactsCardTest {
     fun aMissingPhoneIsRefusedInTheServerWording() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithTag("ec-0-phone").performTextReplacement("")
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
@@ -240,7 +271,7 @@ class EmergencyContactsCardTest {
     fun withHomeAccessThereIsNoLockLine() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithText(locked).assertDoesNotExist()
         onNodeWithTag("ec-0-name").assertTextEquals("Rae Mercer")
@@ -251,36 +282,35 @@ class EmergencyContactsCardTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
         fake.stubError("saveEmergencyContacts", IllegalStateException("An Emergency Contact has to be someone outside the household."))
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         waitForIdle()
         onNodeWithTag("ec-0-name").performTextReplacement("Rae Mercer Jr")
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("An Emergency Contact has to be someone outside the household.").assertIsDisplayed()
         onNodeWithTag("ec-0-name").assertTextEquals("Rae Mercer Jr")
-        onNodeWithText("Unsaved changes").assertIsDisplayed()
+        onNodeWithText("Unsaved changes", substring = true).assertIsDisplayed()
     }
 
     @Test
-    fun anEditAfterASaveClearsSaved() = runComposeUiTest {
+    fun hasNoSaveButtonOfItsOwn_andSaysWhereTheEditsAreSaved() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
-        fake.stub("saveEmergencyContacts", buildJsonObject { put("contacts", buildJsonArray { add(raeJson()) }) })
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+        setCard {
+            EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake))
+        }
         waitForIdle()
-        onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
-        waitForIdle()
-        onNodeWithText("Saved.").assertIsDisplayed()
+        assertTrue(onAllNodesWithText("Save Emergency Contacts").fetchSemanticsNodes().isEmpty())
+        assertTrue(onAllNodesWithText("Save", substring = true).fetchSemanticsNodes().isEmpty())
         onNodeWithTag("ec-0-relationship").performTextInput("!")
-        onNodeWithText("Saved.").assertDoesNotExist()
+        onNodeWithText("Unsaved changes. Press Save Changes at the bottom of the page.").assertIsDisplayed()
     }
-
     @Test
     fun reportsUnsavedEditsToThePage() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
         var dirty = false
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake), onDirtyChange = { dirty = it }) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake), onDirtyChange = { dirty = it }) }
         waitForIdle()
         assertEquals(false, dirty)
         onNodeWithTag("ec-0-name").performTextReplacement("Rae Mercer Jr")
@@ -297,7 +327,7 @@ class EmergencyContactsCardTest {
             override suspend fun call(name: String, payload: JsonObject?): JsonObject =
                 if (name == "saveEmergencyContacts") gate.await() else fake.call(name, payload)
         }
-        setCard { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(gated)) }
+        setCard { PageCard(kinfolkId = "fam1", portalApi = PortalApi(gated)) }
         waitForIdle()
 
         // One slot: Save and the inputs are on screen.
@@ -345,7 +375,7 @@ class EmergencyContactsCardTest {
             }
         }
         var household by mutableStateOf("fam1")
-        setCard { EmergencyContactsCard(kinfolkId = household, portalApi = PortalApi(client)) }
+        setCard { PageCard(kinfolkId = household, portalApi = PortalApi(client)) }
         waitForIdle()
         onNodeWithTag("ec-0-name").performTextReplacement("Rae Mercer Jr")
         onNodeWithText("Save Emergency Contacts").performScrollTo().performClick()
@@ -362,7 +392,7 @@ class EmergencyContactsCardTest {
         waitForIdle()
         onNodeWithTag("ec-0-name").assertTextEquals("Lee Park")
         onNodeWithText("Saved.").assertDoesNotExist()
-        onNodeWithText("Unsaved changes").assertDoesNotExist()
+        onNodeWithText("Unsaved changes", substring = true).assertDoesNotExist()
         onNodeWithText("Save Emergency Contacts").assertIsEnabled()
     }
 
@@ -371,7 +401,7 @@ class EmergencyContactsCardTest {
         val fake = FakeFunctionsClient()
         fake.list(canEdit = true, withRae = true)
         setThemedContent {
-            Box(Modifier.width(360.dp)) { EmergencyContactsCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
+            Box(Modifier.width(360.dp)) { PageCard(kinfolkId = "fam1", portalApi = PortalApi(fake)) }
         }
         waitForIdle()
         val title = onNodeWithText("Emergency Contacts").assertIsDisplayed().getUnclippedBoundsInRoot()

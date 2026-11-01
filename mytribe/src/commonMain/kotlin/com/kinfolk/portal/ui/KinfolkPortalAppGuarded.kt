@@ -25,6 +25,7 @@ import com.kinfolk.portal.launch.LaunchDestination
 import com.kinfolk.portal.util.readInitialClaimInviteId
 import com.kinfolk.portal.util.readInitialSecureResetParams
 import com.kinfolk.portal.util.readInitialShareToken
+import com.kinfolk.portal.util.readInitialUnknownLink
 import com.kinfolk.portal.launch.rememberLaunchDestination
 import com.kinfolk.portal.nav.AppNavHost
 import com.kinfolk.portal.nav.shellStartRoute
@@ -72,6 +73,8 @@ fun KinfolkPortalAppGuarded() {
     var personName by remember { mutableStateOf("") }
     var claimInviteId by remember { mutableStateOf<String?>(readInitialClaimInviteId()) }
     val initialShareToken = remember { readInitialShareToken() }
+    // #1293: a launch link we could not place; cleared by Back to Home.
+    var unknownLink by remember { mutableStateOf(readInitialUnknownLink()) }
     val initialSecureResetParams = remember { readInitialSecureResetParams() }
     var featureFlags by remember { mutableStateOf(com.kinfolk.portal.config.FeatureFlags()) }
 
@@ -137,6 +140,7 @@ fun KinfolkPortalAppGuarded() {
         resolvedKinfolkId = resolvedKinfolkId,
         cameFromPicker = cameFromPicker,
         homeLoaded = home != null,
+        unknownLink = unknownLink,
     )
 
     KinfolkPortalTheme(themeId = home?.portal?.themeId ?: "default") {
@@ -182,6 +186,7 @@ fun KinfolkPortalAppGuarded() {
                                 }
                             },
                             cameFromPicker = cameFromPicker,
+                            onNotFoundHome = { unknownLink = false },
                             resolveTribes = {
                                 val ids = (dest as? LaunchDestination.Pick)?.kinfolkIds ?: emptyList()
                                 portalApi.getTribeSummaries(ids)
