@@ -194,6 +194,8 @@ internal fun channelInheritedChecked(
  */
 internal fun keyDescriptionLine(key: NotificationKey): String? {
     fun norm(t: String) = t.trim().trimEnd('.', '!', ':', ';', ',', ' ').lowercase()
-    val description = key.description.trim()
+    // #1359: the household's wording wins; `description` is the operator's text
+    // and only the fallback for a callable that predates the field.
+    val description = (key.householdDescription?.takeIf { it.isNotBlank() } ?: key.description).trim()
     return description.takeUnless { it.isEmpty() || norm(it) == norm(key.title) }
 }

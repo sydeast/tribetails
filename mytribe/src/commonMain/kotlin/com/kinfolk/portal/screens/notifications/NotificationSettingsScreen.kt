@@ -10,12 +10,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
@@ -426,7 +428,7 @@ private fun CategoryChannelRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text("All in category:", style = type.sansLabel)
+        CategoryRowLabel(cat.id)
         Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             NotificationChannel.entries.forEach { ch ->
                 if (ch !in channelsInCategory) return@forEach
@@ -447,22 +449,44 @@ private fun CategoryChannelRow(
             }
         }
     }
-    // Task 27a defect #2: this row used to wipe every key's byKey entry
-    // in the category on every click — reviewer called that over-broad.
-    // byKey always wins over byCategory, so this control only changes
-    // what UNoverridden keys inherit; said here, before the control
-    // acts, per "fail loud, never fake" (a control that COULD destroy
-    // deliberate choices must say so — this one doesn't destroy them,
-    // but leaving that unsaid was the other half of the complaint). A
-    // sibling of the Row above, not a child of it — it must stack as its
-    // own line under "All in category: <chips>", not get squeezed onto
-    // that SpaceBetween row.
-    Text(
-        "Keys below with their own channel choice won't change when you flip this.",
-        style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
-        modifier = Modifier.padding(top = KinfolkSpacing.xs),
-    )
 }
+
+/**
+ * "All in category:" with an info icon. The note that a key's own channel choice
+ * survives this control used to sit under the chips as a line of text; the
+ * operator ruled (2026-09-11) that panels carry no explanatory copy, so it lives
+ * behind the icon and shows on tap (#1359). Task 27a defect #2 is why it exists:
+ * byKey always wins over byCategory, so this row only moves keys with no choice
+ * of their own.
+ */
+@Composable
+private fun CategoryRowLabel(catId: String) {
+    val type = LocalKinfolkTypography.current
+    var showNote by remember { mutableStateOf(false) }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+            Text("All in category:", style = type.sansLabel)
+            Icon(
+                imageVector = Icons.Filled.Info,
+                contentDescription = "About this switch: $CATEGORY_OVERRIDE_NOTE",
+                tint = KinfolkBrand.NavyMuted,
+                modifier = Modifier
+                    .size(18.dp)
+                    .testTag("catinfo-$catId")
+                    .clickable { showNote = !showNote },
+            )
+        }
+        if (showNote) {
+            Text(
+                CATEGORY_OVERRIDE_NOTE,
+                style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+                modifier = Modifier.testTag("catinfo-note-$catId"),
+            )
+        }
+    }
+}
+
+internal const val CATEGORY_OVERRIDE_NOTE = "Keys below with their own channel choice won't change when you flip this."
 
 @Composable
 private fun PerKeyRow(

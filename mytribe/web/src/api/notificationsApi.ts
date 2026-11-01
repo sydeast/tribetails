@@ -17,7 +17,14 @@ export type MarketingCategory = 'newsletter' | 'survey' | 'marketing';
 export interface NotificationKeyDto {
   key: string;
   title: string;
+  /** Operator-voice text the admin matrix prints. Households never read it unless `householdDescription` is missing. */
   description: string;
+  /**
+   * The row described to the household (#1359). OPTIONAL for the same deploy
+   * skew reason as `lockedChannelValues`: an older callable does not send it,
+   * and the screen then falls back to `description` instead of breaking.
+   */
+  householdDescription?: string;
   allowedChannels: Channel[];
   required: Channel[];
   /** Channels the operator (or the catalog's `required`) decides; render read-only. Already computed server-side. */
@@ -194,9 +201,11 @@ export function marketingMasterState(cat: CategoryDto, marketingOptIn: Partial<R
  * the title with a full stop ("KinCare booking confirmed." under "KinCare
  * booking confirmed"), which is noise, so that case returns an empty string.
  */
-export function keyDescription(key: Pick<NotificationKeyDto, 'title' | 'description'>): string {
+export function keyDescription(key: Pick<NotificationKeyDto, 'title' | 'description' | 'householdDescription'>): string {
   const norm = (t: string) => t.trim().replace(/[\s.!:;,]+$/u, '').toLowerCase();
-  const description = key.description.trim();
+  // #1359: the household's wording wins; `description` is the operator's text
+  // and is only the fallback for a callable that predates the field.
+  const description = (key.householdDescription?.trim() || key.description).trim();
   return norm(description) === norm(key.title) ? '' : description;
 }
 /**

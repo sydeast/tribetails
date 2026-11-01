@@ -100,3 +100,14 @@
 @media (max-width: 880px) {
   .savehint { margin-left: 0; width: 100%; }
 }
+
+/* Info tooltip beside a category's master switch (#1359). Shown on hover and
+   keyboard focus; the text is also linked with aria-describedby. */
+.nf-tip { position: relative; display: inline-flex; align-items: center; }
+.nf-tip-btn { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--hairline); background: transparent;
+  color: var(--navy-soft); font-family: var(--mono); font-size: 11px; line-height: 1; cursor: help; padding: 0; }
+.nf-tip-btn:hover, .nf-tip-btn:focus-visible { color: var(--navy); border-color: var(--navy-soft); }
+.nf-tip-text { position: absolute; left: 0; top: calc(100% + 8px); z-index: 5; width: max-content; max-width: 260px;
+  padding: 8px 10px; border-radius: 10px; background: var(--navy); color: #fff; font-size: 12.5px; line-height: 1.45;
+  text-transform: none; letter-spacing: normal; box-shadow: var(--shadow-card); visibility: hidden; opacity: 0; transition: opacity .15s; }
+.nf-tip:hover .nf-tip-text, .nf-tip:focus-within .nf-tip-text { visibility: visible; opacity: 1; }

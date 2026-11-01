@@ -45,6 +45,18 @@ describe('getNotificationCatalogHandler', () => {
     expect(visitKeys).toContain('kincare.auntie.departed');
   });
 
+  // #1359: the payload carries the household's wording beside the operator's.
+  it('sends householdDescription for every key, distinct from the operator description', async () => {
+    const result = await getNotificationCatalogHandler({ data: {}, auth: SIGNED_IN } as never);
+    const all = result.categories.flatMap((c) => c.keys);
+    expect(all.length).toBeGreaterThan(20);
+    for (const k of all) {
+      expect(k.householdDescription.length).toBeGreaterThan(0);
+    }
+    const changed = all.find((k) => k.key === 'kincare.changed')!;
+    expect(changed.description).toBe('Kinfolk/Auntie updated, deleted, or requested changes to KinCare.');
+    expect(changed.householdDescription).not.toBe(changed.description);
+  });
   // Audience revamp 2026-07: alwaysEnabled keys are no longer hidden from the
   // kinfolk portal. They are surfaced with their REQUIRED channels locked and
   // the rest free.

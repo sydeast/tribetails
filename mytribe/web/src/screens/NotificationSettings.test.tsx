@@ -379,9 +379,13 @@ describe('category control and existing overrides', () => {
     expect(patch.byKey).toBeUndefined();
     expect(stored.byKey).toEqual({ 'kincare.auntie.on_my_way': { sms: true } });
   });
-  it('explains that per-key overrides survive the category control', async () => {
-    await renderLoaded();
-    expect(screen.getByText(/won.t change when you flip this/i)).toBeTruthy();
+  it('says that per-key overrides survive the category control in a tooltip, not a line under the panel (#1359)', async () => {
+    const { container } = await renderLoaded();
+    const tip = screen.getAllByRole('tooltip', { hidden: true })[0]!;
+    expect(tip.textContent).toMatch(/won.t change when you flip this/i);
+    const trigger = screen.getAllByRole('button', { name: 'About this switch' })[0]!;
+    expect(trigger.getAttribute('aria-describedby')).toBe(tip.id);
+    expect(container.querySelector('p.nf-helper')).toBeNull();
   });
 });
 describe('mixed master state (#1317)', () => {
@@ -448,6 +452,35 @@ describe('household-facing copy (#1317)', () => {
     expect(screen.getAllByText('Marketing SMS')).toHaveLength(1);
     expect(screen.getAllByText('Marketing email')).toHaveLength(1);
     expect(screen.getAllByText('Marketing push')).toHaveLength(1);
+  });
+  it('prints the household wording, not the operator text, when the catalog sends both (#1359)', async () => {
+    mocks.getNotificationCatalog.mockResolvedValue({
+      categories: [
+        {
+          id: 'visit',
+          title: 'Visit Updates',
+          description: 'x',
+          keys: [
+            key({
+              key: 'kincare.changed',
+              title: 'KinCare updated or change requested',
+              description: 'Kinfolk/Auntie updated, deleted, or requested changes to KinCare.',
+              householdDescription: 'When a KinCare visit on your schedule is changed.',
+              allowedChannels: ['email'],
+            }),
+            key({ key: 'old', title: 'Old callable', description: 'Sent by an older server.', allowedChannels: ['email'] }),
+          ],
+        },
+      ],
+      schemaVersion: 1,
+    });
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: {}, updatedAtMs: 1 });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Old callable')).toBeTruthy());
+    expect(screen.getByText('When a KinCare visit on your schedule is changed.')).toBeTruthy();
+    expect(screen.queryByText(/Kinfolk\/Auntie updated/)).toBeNull();
+    // A callable that predates the field still renders; the screen falls back.
+    expect(screen.getByText('Sent by an older server.')).toBeTruthy();
   });
   it('does not repeat the title as its own subtitle', async () => {
     mocks.getNotificationCatalog.mockResolvedValue({

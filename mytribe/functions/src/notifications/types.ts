@@ -127,8 +127,16 @@ export interface NotificationDef {
    * this row's template and binding.
    */
   external?: boolean;
-  /** Human description shown in admin UI for clarity. */
+  /** Human description shown in admin UI for clarity. Written in the operator's voice. */
   description: string;
+  /**
+   * The same row described to the household (#1359): "When you request a visit",
+   * not "Kinfolk requested a KinCare visit". `getNotificationCatalog` sends it to
+   * the portal, which prints it in place of `description`. Required for every key
+   * whose `audiences.kinfolk` is true (notificationCatalogHouseholdCopy.test.ts
+   * enforces it); the admin matrix keeps reading `description`.
+   */
+  householdDescription?: string;
 }
 
 /** Effective per-channel resolution returned by the prefs merger. */

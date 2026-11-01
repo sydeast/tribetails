@@ -17,4 +17,26 @@ describe('household-visible notification copy', () => {
       expect(`${label} ${description}`).not.toMatch(VENDOR_OR_PLUMBING);
     },
   );
+
+  // #1359: `description` is the operator's text and also feeds the admin matrix.
+  // The household reads `householdDescription`, written to them.
+  describe('householdDescription', () => {
+    const OPERATOR_VOICE = /\bkinfolk\b|\bkinfolk\/|\bthe household\b|debounce|digest|trailing|\bdefault\b|\d+\s*-?\s*(min|minutes|hours?)\b|\bdetected\b/i;
+    it.each(kinfolkDefs.map((d) => [d.key, d.label, d.householdDescription]))(
+      '%s has household copy in the household\'s voice',
+      (_key, label, household) => {
+        expect(typeof household).toBe('string');
+        const text = String(household).trim();
+        expect(text.length).toBeGreaterThan(10);
+        expect(text.toLowerCase()).not.toBe(String(label).toLowerCase());
+        expect(text).not.toMatch(VENDOR_OR_PLUMBING);
+        expect(text).not.toMatch(OPERATOR_VOICE);
+      },
+    );
+    it('leaves the operator text alone for the admin matrix', () => {
+      expect(NOTIFICATION_CATALOG['kincare.changed'].description).toBe(
+        'Kinfolk/Auntie updated, deleted, or requested changes to KinCare.',
+      );
+    });
+  });
 });

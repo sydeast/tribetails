@@ -32,7 +32,13 @@ enum class MarketingCategory(val id: String, val label: String) {
 data class NotificationKey(
     val key: String,
     val title: String,
+    // Operator-voice text. The admin matrix prints this one; do not show it to a
+    // household when `householdDescription` exists (#1359).
     val description: String,
+    // The row described to the household ("When you request a visit"). Null from
+    // a callable that predates the field, and for the static fallback below,
+    // whose `description` is already written to the household.
+    val householdDescription: String? = null,
     val allowedChannels: Set<NotificationChannel>,
     val required: Set<NotificationChannel> = emptySet(),
     // Run-4 #13: channels the business admin LOCKED. Shown but read-only; the kinfolk
@@ -101,7 +107,7 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
             NotificationKey(
                 key = "kincare.unavailable",
                 title = "Visit Marked Unavailable",
-                description = "Usually triggered when home access is blocked.",
+                description = "When a KinCare visit can't go ahead, for example when your Auntie can't get into your home.",
                 allowedChannels = ALL,
             ),
         ),
@@ -120,7 +126,7 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
             NotificationKey(
                 key = "kintale.comment.added",
                 title = "New comment on a KinTale (comment box)",
-                description = "Five-minute trailing digest of new comments on your KinTales.",
+                description = "When someone comments on one of your KinTales. New comments arrive together in one message.",
                 allowedChannels = EMAIL_PUSH,
             ),
             NotificationKey(
@@ -164,7 +170,7 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
             NotificationKey(
                 key = "kincare.upcoming.reminder",
                 title = "Upcoming KinCare Reminder",
-                description = "Default: 24–48 hours ahead. Adjustable per delivery channel.",
+                description = "A reminder before each KinCare visit on your schedule.",
                 allowedChannels = ALL,
             ),
         ),
@@ -177,13 +183,13 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
             NotificationKey(
                 key = "pets.updated",
                 title = "Pet Records Updated",
-                description = "30-minute debounced summary of pet adds, edits, or removals.",
+                description = "When a pet on your household is added or changed.",
                 allowedChannels = EMAIL_PUSH,
             ),
             NotificationKey(
                 key = "profile.updated",
                 title = "Profile Updated",
-                description = "30-minute debounced summary of profile field changes.",
+                description = "When your household profile is changed.",
                 allowedChannels = EMAIL_PUSH,
             ),
         ),
@@ -196,21 +202,21 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
             NotificationKey(
                 key = "newsletter.announcement",
                 title = "Newsletters & Announcements",
-                description = "Periodic news from your Auntie business.",
+                description = "News and announcements from Tribe Tails, if you opt in.",
                 allowedChannels = EMAIL_PUSH,
                 marketingCategory = MarketingCategory.NEWSLETTER,
             ),
             NotificationKey(
                 key = "survey.event",
                 title = "Surveys & Events",
-                description = "Community surveys and event invitations.",
+                description = "Surveys and community event invitations, if you opt in.",
                 allowedChannels = EMAIL_PUSH,
                 marketingCategory = MarketingCategory.SURVEY,
             ),
             NotificationKey(
                 key = "marketing.optin",
                 title = "Marketing Promotions",
-                description = "Promotional offers and product news. Includes unsubscribe footer.",
+                description = "General updates and offers from Tribe Tails, if you opt in.",
                 allowedChannels = EMAIL_ONLY,
                 marketingCategory = MarketingCategory.MARKETING,
             ),

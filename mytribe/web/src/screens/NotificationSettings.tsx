@@ -370,6 +370,20 @@ export function NotificationSettings() {
         <div className="catbar">
           <div className="master">
             <span className="lbl">All in category:</span>
+            {/* Task 27a defect #2: byKey always wins over byCategory, so this
+                switch only moves keys with no choice of their own. That used to
+                be a paragraph under the panel; it is a tooltip now (operator
+                ruling 2026-09-11: no explanatory copy under panel titles). */}
+            {!isMarketing && cat.keys.length > 0 && (
+              <span className="nf-tip">
+                <button type="button" className="nf-tip-btn" aria-label="About this switch" aria-describedby={`nf-tip-${cat.id}`}>
+                  i
+                </button>
+                <span role="tooltip" id={`nf-tip-${cat.id}`} className="nf-tip-text">
+                  Keys below with their own channel choice won&rsquo;t change when you flip this.
+                </span>
+              </span>
+            )}
             <MasterSwitch
               state={masterState}
               label={`All in category: ${displayTitle(cat)}`}
@@ -386,17 +400,6 @@ export function NotificationSettings() {
             </button>
           </div>
         </div>
-
-        {/* Task 27a defect #2: byKey always wins over byCategory (server-side
-            and in keyChannelChecked), so this category control only changes
-            what UNoverridden keys inherit — a deliberate per-key choice below
-            is never touched by it. Said here, before the control acts, per
-            "fail loud, never fake": a control that could destroy deliberate
-            choices must say so; this one doesn't destroy them, but the
-            silence around that fact was PR27's reviewer's other complaint. */}
-        {!isMarketing && cat.keys.length > 0 && (
-          <p className="nf-helper">Keys below with their own channel choice won&rsquo;t change when you flip this.</p>
-        )}
 
         <div className={`chans ${isExpanded ? '' : 'collapsed'}`}>
           <div className="inner">

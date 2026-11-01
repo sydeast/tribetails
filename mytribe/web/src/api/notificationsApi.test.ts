@@ -184,6 +184,15 @@ describe('keyDescription', () => {
     expect(keyDescription({ title: 'KinCare booking confirmed', description: 'KinCare booking confirmed.' })).toBe('');
     expect(keyDescription({ title: 'Invoice overdue', description: ' invoice overdue! ' })).toBe('');
   });
+  it('prefers the household wording over the operator text (#1359)', () => {
+    expect(
+      keyDescription({ title: 'Changed', description: 'Kinfolk requested a KinCare visit.', householdDescription: 'When you request a visit.' }),
+    ).toBe('When you request a visit.');
+  });
+  it('falls back to the description when householdDescription is missing or blank', () => {
+    expect(keyDescription({ title: 'Receipt', description: 'Receipt issued for an invoice.' })).toBe('Receipt issued for an invoice.');
+    expect(keyDescription({ title: 'Receipt', description: 'Receipt issued.', householdDescription: '  ' })).toBe('Receipt issued.');
+  });
   it('keeps a description that says something', () => {
     expect(keyDescription({ title: 'Receipt', description: 'Receipt issued for an invoice.' })).toBe('Receipt issued for an invoice.');
   });

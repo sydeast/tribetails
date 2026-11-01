@@ -534,13 +534,56 @@ class NotificationSettingsScreenTest {
         onNodeWithText("KinCare booking confirmed.").assertDoesNotExist()
     }
     @Test
-    fun categoryCard_explainsThatPerKeyOverridesSurviveTheCategoryControl() = runComposeUiTest {
+    fun categoryCard_keepsThePerKeyOverrideNoteBehindAnInfoIcon() = runComposeUiTest {
+        // #1359: no explanatory copy sits under a panel; the note shows on tap.
         val fake = FakeFunctionsClient()
         stubVisitPrefs(fake)
         stubVisitCatalog(fake)
         val catalog = NotificationCatalogRepository(fake)
         setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
         waitForIdle()
+        onNodeWithText("Keys below with their own channel choice won't change when you flip this.").assertDoesNotExist()
+        onNodeWithTag("catinfo-visit").assertExists()
+        onNodeWithTag("catinfo-visit").performClick()
+        waitForIdle()
+        onNodeWithTag("catinfo-note-visit").assertExists()
         onNodeWithText("Keys below with their own channel choice won't change when you flip this.").assertExists()
+        onNodeWithTag("catinfo-visit").performClick()
+        waitForIdle()
+        onNodeWithTag("catinfo-note-visit").assertDoesNotExist()
+    }
+    @Test
+    fun keyRow_showsTheHouseholdWordingNotTheOperatorText() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisitPrefs(fake)
+        fake.stub("getNotificationCatalog", buildJsonObject {
+            put("schemaVersion", 2)
+            put("categories", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "visit")
+                    put("title", "Visit Updates")
+                    put("description", "Check ins.")
+                    put("keys", buildJsonArray {
+                        add(buildJsonObject {
+                            put("key", "kincare.changed")
+                            put("title", "KinCare updated or change requested")
+                            put("description", "Kinfolk/Auntie updated, deleted, or requested changes to KinCare.")
+                            put("householdDescription", "When a KinCare visit on your schedule is changed.")
+                            put("allowedChannels", buildJsonArray { add("email") })
+                            put("required", buildJsonArray { })
+                            put("lockedChannels", buildJsonArray { })
+                            put("marketingCategory", JsonNull)
+                        })
+                    })
+                })
+            })
+        })
+        val catalog = NotificationCatalogRepository(fake)
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        waitForIdle()
+        onNodeWithText("Visit Updates").performClick()
+        waitForIdle()
+        onNodeWithText("When a KinCare visit on your schedule is changed.").assertExists()
+        onNodeWithText("Kinfolk/Auntie updated, deleted, or requested changes to KinCare.").assertDoesNotExist()
     }
 }

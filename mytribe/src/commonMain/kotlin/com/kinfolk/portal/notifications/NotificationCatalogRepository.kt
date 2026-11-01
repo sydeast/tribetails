@@ -103,6 +103,7 @@ class NotificationCatalogRepository(private val fns: FunctionsClient) {
             key = key,
             title = obj["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             description = obj["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            householdDescription = obj["householdDescription"]?.jsonPrimitive?.contentOrNull,
             allowedChannels = allowed,
             required = required,
             lockedChannels = locked,
