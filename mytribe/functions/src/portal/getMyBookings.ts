@@ -9,11 +9,15 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
+import { hasBillingAccess } from '../lib/memberGate';
+import { loadVisitExtras, NO_EXTRAS, type VisitExtras } from '../lib/portalVisitLinks';
 import {
   BookingDtoSchema,
   EnvelopeDtoSchema,
   envelopeToDto,
   kinCareToDto,
+  loadBlocksById,
   stringOrNull,
   visitSortMs,
   resolveBatchId,
@@ -54,18 +58,43 @@ export async function getMyBookingsHandler(
   const firestore = db();
   const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, householdStaffFlag(req.auth, 'getMyBookings'), 'getMyBookings');
 
-  const snap = await firestore
-    .collectionGroup('kinCares')
-    .where('familyId', '==', kinfolkId)
-    .get();
+  // The settings read rides alongside the visit query. Fail-soft: a settings
+  // doc that will not load leaves names unresolved, never the schedule empty.
+  const [snap, settingsSnap] = await Promise.all([
+    firestore.collectionGroup('kinCares').where('familyId', '==', kinfolkId).get(),
+    firestore
+      .collection('business_settings')
+      .doc('business_settings')
+      .get()
+      .catch(() => null),
+  ]);
+  const serviceCatalog = settingsSnap ? serviceNameCatalogFrom(settingsSnap.data()) : EMPTY_SERVICE_NAME_CATALOG;
 
+  // #1303: the address, and for completed visits the KinTale and invoice they
+  // point at. Billing access is asked after the household is resolved, as the
+  // helper requires, and only when a completed visit could use the answer.
+  const completedSessions = snap.docs.filter((d) => {
+    const data = d.data() as Record<string, unknown>;
+    return data['status'] === 'completed' && stringOrNull(data['sessionId']) !== null;
+  });
+  let extras: VisitExtras = NO_EXTRAS;
+  try {
+    const billingAccess =
+      completedSessions.length > 0
+        ? await hasBillingAccess(uid, kinfolkId, req.auth?.token?.admin === true, 'getMyBookings')
+        : false;
+    extras = await loadVisitExtras(firestore, kinfolkId, { wantLinks: completedSessions.length > 0, billingAccess });
+  } catch {
+    extras = NO_EXTRAS;
+  }
+  const blocksById = await loadBlocksById(firestore);
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
   const byBatch = new Map<string, BookingDto[]>();
   const all: BookingDto[] = snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>;
     const batchId = resolveBatchId(d, data);
-    const dto = kinCareToDto(d.id, data, batchId, kinfolkId);
+    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, blocksById, serviceCatalog);
     if (batchId) {
       const bucket = byBatch.get(batchId) ?? [];
       bucket.push(dto);
@@ -117,12 +146,18 @@ export async function getMyBookingsHandler(
       kinfolkId,
       status,
       serviceType: stringOrNull(s['serviceType']),
-      title: stringOrNull(s['serviceType']),
+      serviceLabel: serviceDisplayName(s['serviceType'], serviceCatalog, s['serviceName']),
+      // #1297: was the raw `serviceType`, so a code became the visit's title.
+      title: serviceDisplayName(s['serviceType'], serviceCatalog, s['serviceName']),
+      serviceId: null,
       startTimeMs,
       endTimeMs: isoMillis(s['endTime']),
       // A session always has its time; only a kinCares visit can await one.
       startTimePending: false,
       requestedDate: null,
+      timeBlockLabel: null,
+      timeBlockStartTime: null,
+      timeBlockEndTime: null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
       kinNames: [],
       auntieDisplayName: null,
@@ -146,6 +181,9 @@ export async function getMyBookingsHandler(
       rescheduleRequestedEndTimeMs: null,
       rescheduleRequestReason: null,
       rescheduleResponseNote: null,
+      address: extras.address,
+      kinTaleId: null,
+      invoiceId: null,
     };
     if (status === 'active' || status === 'enRoute') {
       if (!liveVisit) liveVisit = dto;

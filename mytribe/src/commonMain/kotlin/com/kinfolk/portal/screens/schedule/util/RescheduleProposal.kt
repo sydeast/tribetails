@@ -1,39 +1,15 @@
 package com.kinfolk.portal.screens.schedule.util
 
-import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toInstant
 
 /** Longest reason the server will store (`requestBookingReschedule` Args). */
 const val RESCHEDULE_REASON_MAX = 500
 
 /**
  * The pure half of the reschedule ask (#469), kept out of the screen so the
- * arithmetic and the refusals have direct test coverage.
+ * refusals have direct test coverage. The day-and-time arithmetic moved to
+ * `RescheduleTime.kt` (#1284), which reads the time on the business clock.
  */
-
-/**
- * Epoch millis for [date] at [time], read in the household's own zone.
- *
- * Null when no date is picked or the time does not parse, which is the
- * screen's cue to say so rather than to send something guessed. The zone is
- * the caller's: a household typing 3pm means 3pm where it lives, and routing
- * this through UTC would move every proposal by the offset. Same reading the
- * web portal gives its `datetime-local` field.
- */
-fun proposedStartMillis(
-    date: LocalDate?,
-    time: String,
-    timeZone: TimeZone = TimeZone.currentSystemDefault(),
-): Long? {
-    if (date == null) return null
-    val t = parseClock24(time) ?: return null
-    return LocalDateTime(date.year, date.month, date.day, t.hour, t.minute)
-        .toInstant(timeZone)
-        .toEpochMilliseconds()
-}
 
 /**
  * A user-facing problem with the proposal, or null when it is worth sending.

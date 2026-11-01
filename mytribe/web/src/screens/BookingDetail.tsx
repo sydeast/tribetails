@@ -1,8 +1,12 @@
 import { useState } from 'react';
+import { serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMyBookings } from '../api/portal';
-import { addBookingNote, requestBookingCancellation, requestBookingReschedule } from '../api/bookingApi';
+import { getMyBookings, getMyVisits } from '../api/portal';
+import { RouteMap } from '../components/RouteMap';
+import { addBookingNote, getBookingNotes, requestBookingCancellation, requestBookingReschedule } from '../api/bookingApi';
+import { ReschedulePicker } from '../components/ReschedulePicker';
+import type { RescheduleProposal } from '../lib/rescheduleTime';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
@@ -17,6 +21,7 @@ import {
   auntieName,
   BOOKING_TIMELINE_STEPS,
   bookingStatusChip,
+  bookingStatusIcon,
   bookingTimelineIndex,
   bookingSubtitle,
   findBookingById,
@@ -24,6 +29,7 @@ import {
   speciesEmoji,
   visitTile,
   visitWhenLine,
+  noteWrittenAt,
   weekdayTime,
 } from '../lib/portalFormat';
 import '../styles/bookingdetail.css';
@@ -62,11 +68,33 @@ export function BookingDetail() {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [proposingReschedule, setProposingReschedule] = useState(false);
-  const [proposedAt, setProposedAt] = useState('');
+  const [proposal, setProposal] = useState<RescheduleProposal | null>(null);
   const [rescheduleReason, setRescheduleReason] = useState('');
   const [rescheduleProblem, setRescheduleProblem] = useState<string | null>(null);
 
   const found = findBookingById(bookings.data, visitId);
+  // #1283: what this household already told its Auntie about the visit. The
+  // server returns the household's own notes only.
+  const notesQueryKey = ['bookingNotes', kinfolkId, found?.batchId ?? null, found?.id ?? null] as const;
+  const savedNotes = useQuery({
+    queryKey: notesQueryKey,
+    queryFn: () => getBookingNotes(found!.kinfolkId, found!.batchId!, found!.id),
+    enabled: !!found?.batchId,
+  });
+  const finished = found?.status === 'completed' || found?.status === 'cancelled';
+  // #1303: the replay of a completed visit comes from the same getMyVisits row
+  // the Schedule list's Past Visits replay reads (GPS lives on the AuntieOS
+  // session, not the booking). Best effort, like there: a failure only drops
+  // the replay, never the page. Asked only when there is a session to look up.
+  const sessionId = found?.status === 'completed' ? found.sessionId : null;
+  const visits = useQuery({
+    queryKey: ['myVisits', kinfolkId],
+    queryFn: () => getMyVisits(kinfolkId, 20),
+    retry: false,
+    enabled: sessionId !== null,
+  });
+  const replay = sessionId !== null ? visits.data?.visits.find((v) => v.id === sessionId) : undefined;
+  const replayRoute = replay?.gpsSummary?.route ?? [];
 
   // ABANDON. `addBookingNote` is a bare `.add()` on the visit's notes
   // subcollection with no dedupe key, and its only precondition (a 3-hour
@@ -76,9 +104,11 @@ export function BookingDetail() {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so notes are not available.');
       return addBookingNote(found.kinfolkId, found.batchId, found.id, body);
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       setNoteSaved(true);
       setNoteBody('');
+      // The saved note joins the list the household reads above the box.
+      await queryClient.invalidateQueries({ queryKey: ['bookingNotes', kinfolkId] });
     },
   }, { policy: 'abandon', what: 'your note' });
 
@@ -107,16 +137,16 @@ export function BookingDetail() {
   // can do is surface that refusal — which is the right answer, and is already
   // the sentence `onError` shows. It cannot stack two proposed times.
   const reschedule = usePortalMutation({
-    mutationFn: (proposedStartTimeMs: number) => {
+    mutationFn: (p: RescheduleProposal) => {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be moved here.');
-      return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, proposedStartTimeMs, rescheduleReason);
+      return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, p.startMs, rescheduleReason, p.timeBlockId);
     },
     // #1281: same as the cancellation ask above. "New time requested for …"
     // is drawn from the cached visit, so it shows the moment the panel closes.
     onSuccess: async (res) => {
       await applyBookingWrite(queryClient, kinfolkId, { visit: res.visit ?? null });
       setProposingReschedule(false);
-      setProposedAt('');
+      setProposal(null);
       setRescheduleReason('');
       setRescheduleProblem(null);
     },
@@ -192,11 +222,20 @@ export function BookingDetail() {
 
   const chip = bookingStatusChip(found.status);
   const timelineIndex = bookingTimelineIndex(found.status);
+  // #1303: Completed is the last step and nothing comes after it, so on a
+  // completed visit it is done too. It used to stay "current" and draw a 5.
+  const stepDone = (i: number) => timelineIndex !== null && (i < timelineIndex || found.status === 'completed');
   const canAct = found.batchId !== null;
   // `cancelRequested` means an ask is PENDING, not "was ever asked". A declined
   // ask therefore reopens the button, which is the point: the household can ask
   // again with new information rather than being stuck behind a banner.
-  const canRequestCancel = canAct && !found.cancelRequested && (found.status === 'requested' || found.status === 'confirmed');
+  const canRequestCancel =
+    canAct &&
+    !found.cancelRequested &&
+    // #1299: the server refuses a cancellation while a new time is waiting
+    // (and the reverse), so the control is not offered to fail.
+    found.rescheduleRequestStatus !== 'pending' &&
+    (found.status === 'requested' || found.status === 'confirmed');
   // Same window as a cancellation ask, and for the same reason: a visit that is
   // under way or finished is not moved by asking. A pending ask is handled
   // above this flag, by the branch that renders the waiting state instead.
@@ -209,6 +248,7 @@ export function BookingDetail() {
     canAct &&
     !awaitingStartTime &&
     found.rescheduleRequestStatus !== 'pending' &&
+    found.cancelRequestStatus !== 'pending' &&
     (found.status === 'requested' || found.status === 'confirmed');
   const proposedLabel =
     found.rescheduleRequestedStartTimeMs !== null
@@ -216,17 +256,16 @@ export function BookingDetail() {
       : '';
   const auntieLabel = auntieName(found.auntieDisplayName) ?? 'your Auntie';
   const submitReschedule = () => {
-    const ms = parseLocalDateTime(proposedAt);
-    if (ms === null) {
-      setRescheduleProblem('Pick a date and time first.');
+    if (proposal === null) {
+      setRescheduleProblem('Pick a day and a time first.');
       return;
     }
-    if (ms <= Date.now()) {
+    if (proposal.startMs <= Date.now()) {
       setRescheduleProblem('Pick a time in the future.');
       return;
     }
     setRescheduleProblem(null);
-    reschedule.mutate(ms);
+    reschedule.mutate(proposal);
   };
 
   const submitNote = () => {
@@ -241,7 +280,9 @@ export function BookingDetail() {
 
       <div className="wrap">
         <div className="crumbrow">
-          <Link className="backlink" to="/schedule">
+          {/* #1304: back lands on the tab this visit lives in, so a past visit
+              returns to Past Visits and not to the default tab. */}
+          <Link className="backlink" to="/schedule" search={found.status === 'completed' || found.status === 'cancelled' ? { tab: 'past' } : {}}>
             {'←'} Back to Schedule
           </Link>
         </div>
@@ -249,7 +290,7 @@ export function BookingDetail() {
         <header className="hero-greet" style={{ marginBottom: 22 }}>
           <div className="kick">Schedule</div>
           <div className="bk-head">
-            <h1>{found.title ?? found.serviceType ?? 'Booking Details'}</h1>
+            <h1>{visitTitleOf(found) ?? 'Booking Details'}</h1>
             <span className={`chip lg ${chip.tone}`}>
               <span className="dot" />
               {chip.label}
@@ -265,8 +306,8 @@ export function BookingDetail() {
                 <i style={{ width: `${(timelineIndex / (BOOKING_TIMELINE_STEPS.length - 1)) * 100}%` }} />
               </span>
               {BOOKING_TIMELINE_STEPS.map((step, i) => (
-                <div key={step.id} className={`tl-step ${i < timelineIndex ? 'done' : i === timelineIndex ? 'now' : ''}`}>
-                  <div className="tl-dot">{i < timelineIndex ? '✓' : i + 1}</div>
+                <div key={step.id} className={`tl-step ${stepDone(i) ? 'done' : i === timelineIndex ? 'now' : ''}`}>
+                  <div className="tl-dot">{stepDone(i) ? '✓' : i + 1}</div>
                   <div className="lbl">{step.label}</div>
                 </div>
               ))}
@@ -286,7 +327,7 @@ export function BookingDetail() {
                         business sells by length of visit, so the word is a duration. */}
                     <div className="lab">KinCare Duration</div>
                     <div className="val">
-                      {found.serviceType ?? 'Visit'}
+                      {serviceLabelOf(found) ?? 'Visit'}
                       <small>{visitWhenLine(found)}</small>
                     </div>
                   </div>
@@ -306,7 +347,7 @@ export function BookingDetail() {
                   </div>
                 </div>
                 <div className="bk-field f4">
-                  <div className="ic">{'✅'}</div>
+                  <div className="ic">{bookingStatusIcon(found.status)}</div>
                   <div>
                     <div className="lab">Status</div>
                     <div className="val">{chip.label.charAt(0) + chip.label.slice(1).toLowerCase()}</div>
@@ -322,55 +363,136 @@ export function BookingDetail() {
               </section>
             )}
 
-            <section className="glass card d4">
-              <div className="sectlabel">Add a note</div>
-              {canAct ? (
-                <>
-                  <h3 className="title">Leave a note for {auntieLabel}</h3>
-                  <p className="sub" style={{ marginBottom: 14 }}>
-                    Anything you want them to know before this visit.
-                  </p>
-                  <textarea
-                    className={`note-ta${addNote.isError ? ' err' : ''}`}
-                    placeholder="For example, a vet check this week, please keep an eye on their appetite."
-                    value={noteBody}
-                    onChange={(e) => {
-                      setNoteBody(e.target.value);
-                      setNoteSaved(false);
-                    }}
-                    disabled={addNote.isPending}
-                  />
-                  <OfflineMutationNotice phase={addNote.phase} what="your note" check="the notes above" />
-                  {addNote.phase === 'failed' && (
-                    <div className="note-err">
-                      {`⚠ ${addNote.error instanceof Error ? addNote.error.message : 'Could not save your note. Try again.'}`}
-                    </div>
-                  )}
-                  <div className="note-foot">
-                    <button
-                      className="btn grad"
-                      type="button"
-                      onClick={submitNote}
-                      disabled={addNote.isPending || noteBody.trim().length === 0}
-                    >
-                      {'\u{1F4DD}'}{' '}
-                      <MutationLabel mutation={addNote} busy="Saving…">
-                        Save Note
-                      </MutationLabel>
+            {canAct && (
+              <section className="glass card d3" data-testid="saved-notes">
+                <div className="sectlabel">Your notes to {auntieLabel}</div>
+                {savedNotes.isPending && savedNotes.fetchStatus === 'fetching' ? (
+                  <LoadingLine what="your notes" retry={() => void savedNotes.refetch()}>
+                    Loading your notes…
+                  </LoadingLine>
+                ) : savedNotes.isError ? (
+                  <p className="sub">
+                    We couldn&rsquo;t load your notes.{' '}
+                    <button type="button" className="btn ghost" onClick={() => void savedNotes.refetch()}>
+                      Try again
                     </button>
-                    {noteSaved && !addNote.isError ? (
-                      <span className="note-ok">{'✓'} Note saved</span>
-                    ) : (
-                      <span className="sub" style={{ margin: 0 }}>
-                        Saved notes go straight to {auntieLabel}.
-                      </span>
+                  </p>
+                ) : savedNotes.data && (savedNotes.data.bookingNote || savedNotes.data.notes.length > 0) ? (
+                  <>
+                    {savedNotes.data.bookingNote && (
+                      <p className="info-line" style={{ whiteSpace: 'pre-wrap' }} data-testid="booking-note">
+                        <b>When you booked</b>
+                        <br />
+                        {savedNotes.data.bookingNote}
+                      </p>
                     )}
+                    {savedNotes.data.notes.map((n) => (
+                      <p className="info-line" style={{ whiteSpace: 'pre-wrap' }} key={n.id} data-testid="saved-note">
+                        {n.createdAtMs !== null && (
+                          <>
+                            <b>{noteWrittenAt(n.createdAtMs)}</b>
+                            <br />
+                          </>
+                        )}
+                        {n.body}
+                      </p>
+                    ))}
+                  </>
+                ) : (
+                  <p className="sub">Nothing yet.</p>
+                )}
+              </section>
+            )}
+            {/* #1285: a note is for the Auntie to read before the visit. Once the visit is
+                completed or cancelled there is nobody to read it, so the box is gone. */}
+            {!finished && (
+              <section className="glass card d4">
+                <div className="sectlabel">Add a note</div>
+                {canAct ? (
+                  <>
+                    <h3 className="title">Leave a note for {auntieLabel}</h3>
+                    <p className="sub" style={{ marginBottom: 14 }}>
+                      Anything you want them to know before this visit.
+                    </p>
+                    <textarea
+                      className={`note-ta${addNote.isError ? ' err' : ''}`}
+                      placeholder="For example, a vet check this week, please keep an eye on their appetite."
+                      value={noteBody}
+                      onChange={(e) => {
+                        setNoteBody(e.target.value);
+                        setNoteSaved(false);
+                      }}
+                      disabled={addNote.isPending}
+                    />
+                    <OfflineMutationNotice phase={addNote.phase} what="your note" check="the notes above" />
+                    {addNote.phase === 'failed' && (
+                      <div className="note-err">
+                        {`⚠ ${addNote.error instanceof Error ? addNote.error.message : 'Could not save your note. Try again.'}`}
+                      </div>
+                    )}
+                    <div className="note-foot">
+                      <button
+                        className="btn grad"
+                        type="button"
+                        onClick={submitNote}
+                        disabled={addNote.isPending || noteBody.trim().length === 0}
+                      >
+                        {'\u{1F4DD}'}{' '}
+                        <MutationLabel mutation={addNote} busy="Saving…">
+                          Save Note
+                        </MutationLabel>
+                      </button>
+                      {noteSaved && !addNote.isError ? (
+                        <span className="note-ok">{'✓'} Note saved</span>
+                      ) : (
+                        <span className="sub" style={{ margin: 0 }}>
+                          Saved notes go straight to {auntieLabel}.
+                        </span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="sub">This visit isn&rsquo;t linked to a booking yet, so notes aren&rsquo;t available here.</p>
+                )}
+              </section>
+            )}
+            {found.status === 'completed' && (
+              <section className="glass card d4" aria-label="After the visit" data-testid="after-visit">
+                <div className="sectlabel">After the visit</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                  {found.kinTaleId && (
+                    <Link className="btn ghost block" to="/kintales" search={{ tale: found.kinTaleId }}>
+                      {'\u{1F4DD}'} Read the KinTale
+                    </Link>
+                  )}
+                  {found.invoiceId && (
+                    <Link className="btn ghost block" to="/invoices/$invoiceId" params={{ invoiceId: found.invoiceId }}>
+                      {'\u{1F9FE}'} See the invoice
+                    </Link>
+                  )}
+                  {!found.kinTaleId && !found.invoiceId && replayRoute.length === 0 && visits.isLoading === false && (
+                    <p className="sub" style={{ margin: 0 }}>
+                      Nothing has been sent for this visit yet.
+                    </p>
+                  )}
+                  {sessionId !== null && visits.isLoading && (
+                    <LoadingLine what="the visit replay" retry={() => void visits.refetch()}>
+                      Looking for the visit replay&hellip;
+                    </LoadingLine>
+                  )}
+                </div>
+                {replayRoute.length > 0 && (
+                  <div className="visit-replay-panel" data-testid="visit-replay">
+                    <div className="sectlabel">Visit Replay</div>
+                    <RouteMap
+                      route={replayRoute}
+                      distanceMeters={replay?.gpsSummary?.distanceMeters}
+                      durationSeconds={replay?.gpsSummary?.durationSeconds}
+                    />
                   </div>
-                </>
-              ) : (
-                <p className="sub">This visit isn&rsquo;t linked to a booking yet, so notes aren&rsquo;t available here.</p>
-              )}
-            </section>
+                )}
+              </section>
+            )}
           </div>
 
           <div className="stack">
@@ -382,8 +504,13 @@ export function BookingDetail() {
                   <div className="d">{visitTile(found).day}</div>
                 </div>
                 <div className="info">
-                  <b>{found.title ?? found.serviceType ?? 'Visit'}</b>
+                  <b>{visitTitleOf(found) ?? 'Visit'}</b>
                   <small>{bookingSubtitle(found)}</small>
+                  {found.address && (
+                    <small className="bk-address" data-testid="visit-address">
+                      {'\u{1F4CD}'} {found.address}
+                    </small>
+                  )}
                 </div>
                 <div className="pet">{speciesEmoji(null)}</div>
               </div>
@@ -427,16 +554,13 @@ export function BookingDetail() {
                           <p className="sub">
                             This proposes a new time to Tribe Tails. The visit stays where it is until they accept.
                           </p>
-                          <label className="sub" htmlFor="new-visit-time" style={{ margin: 0 }}>
-                            New date and time
-                          </label>
-                          <input
-                            className="input"
-                            id="new-visit-time"
-                            type="datetime-local"
-                            value={proposedAt}
-                            onChange={(e) => setProposedAt(e.target.value)}
+                          <ReschedulePicker
+                            serviceId={found.serviceId}
                             disabled={reschedule.isPending}
+                            onChange={(p) => {
+                              setProposal(p);
+                              setRescheduleProblem(null);
+                            }}
                           />
                           <textarea
                             className="note-ta"
@@ -451,7 +575,7 @@ export function BookingDetail() {
                             className="btn purple block"
                             type="button"
                             onClick={() => submitReschedule()}
-                            disabled={reschedule.isPending || proposedAt.trim().length === 0}
+                            disabled={reschedule.isPending || proposal === null}
                           >
                             <MutationLabel mutation={reschedule} busy="Sending…">
                               Send this time to Tribe Tails
@@ -550,6 +674,10 @@ export function BookingDetail() {
                         {'✕'} {found.cancelRequestStatus === 'declined' ? 'Ask again' : 'Request cancellation'}
                       </button>
                     )
+                  ) : found.rescheduleRequestStatus === 'pending' && canAct ? (
+                    <p className="sub" style={{ margin: 0 }} data-testid="cancel-held">
+                      You can ask to cancel once Tribe Tails answers your new time.
+                    </p>
                   ) : null}
                   </>
                 )}
@@ -562,18 +690,4 @@ export function BookingDetail() {
       </div>
     </>
   );
-}
-/**
- * Epoch millis from an `<input type="datetime-local">` value, or null when the
- * field is blank or unparseable.
- *
- * `new Date('2026-09-01T15:00')` is read as LOCAL time by every browser that
- * ships this input, which is what the household typed. Appending a Z, or
- * routing through Date.UTC, would silently move the proposal by the viewer's
- * offset.
- */
-function parseLocalDateTime(value: string): number | null {
-  if (!value.trim()) return null;
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : null;
 }

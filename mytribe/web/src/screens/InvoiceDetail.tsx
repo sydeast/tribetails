@@ -350,7 +350,7 @@ export function InvoiceDetail() {
                   </div>
                   <div className="party">
                     <div className="lbl">Client</div>
-                    <div className="who">{inv.client ?? 'Not set'}</div>
+                    <div className="who">{inv.client ?? inv.kinfolkName ?? 'Not set'}</div>
                     {inv.address && (
                       <>
                         <div className="lbl" style={{ marginTop: 12 }}>

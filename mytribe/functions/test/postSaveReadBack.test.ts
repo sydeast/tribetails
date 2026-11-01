@@ -178,3 +178,63 @@ describe('#1281 reschedule and cancellation asks hand back the visit as stored',
     expect(res.visit!.status).toBe('confirmed');
   });
 });
+/**
+ * #1301 meets #1281: the record a writer hands back goes straight into the
+ * portal's cache, so a block-booked visit must carry its window's hours there
+ * too, or it reads as a bare label until the refetch lands.
+ */
+describe('#1301 read-back carries a block visit\'s window', () => {
+  it('readVisitDto and readEnvelopeDto return the label with the current hours', async () => {
+    const { readVisitDto, readEnvelopeDto } = await import('../src/lib/portalBookingDto');
+    const blockVisit = {
+      status: 'requested', batchId: 'b1', timeBlockId: 'midday', timeBlockLabel: 'Midday',
+      startTime: Timestamp.fromMillis(Date.now() + DAY),
+    };
+    const ctx = buildDbMock({
+      docs: {
+        'business_settings/business_settings': {
+          allowTimeBlockBooking: true,
+          timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }],
+        },
+        'families/kf1/bookings/b1': { envelopeStatus: 'requested', pattern: 'individual' },
+        'families/kf1/bookings/b1/kinCares/v1': blockVisit,
+      },
+      queryDocs: { 'families/kf1/bookings/b1/kinCares': [{ id: 'v1', data: blockVisit }] },
+    });
+    const visit = await readVisitDto(ctx.db as any, 'kf1', 'b1', 'v1');
+    expect(visit).toMatchObject({ timeBlockLabel: 'Midday', timeBlockStartTime: '11:00', timeBlockEndTime: '15:00' });
+    const env = await readEnvelopeDto(ctx.db as any, 'kf1', 'b1');
+    expect(env?.kinCares[0]).toMatchObject({ timeBlockLabel: 'Midday', timeBlockStartTime: '11:00', timeBlockEndTime: '15:00' });
+  });
+  it('keeps the stored label with no hours when the window has been removed', async () => {
+    const { readVisitDto } = await import('../src/lib/portalBookingDto');
+    const ctx = buildDbMock({
+      docs: {
+        'business_settings/business_settings': { allowTimeBlockBooking: true, timeBlocks: [] },
+        'families/kf1/bookings/b1/kinCares/v1': {
+          status: 'requested', batchId: 'b1', timeBlockId: 'brunch', timeBlockLabel: 'Brunch',
+          startTime: Timestamp.fromMillis(Date.now() + DAY),
+        },
+      },
+    });
+    const visit = await readVisitDto(ctx.db as any, 'kf1', 'b1', 'v1');
+    expect(visit).toMatchObject({ timeBlockLabel: 'Brunch', timeBlockStartTime: null, timeBlockEndTime: null });
+  });
+});
+/** #1297 meets #1281: a written visit's read-back names its service the way the list does. */
+describe('#1297 read-back carries the resolved service name', () => {
+  it('readVisitDto resolves serviceLabel against the KinCare list', async () => {
+    const { readVisitDto } = await import('../src/lib/portalBookingDto');
+    const ctx = buildDbMock({
+      docs: {
+        'business_settings/business_settings': { serviceRates: { '60Minute': '40' }, serviceDurations: {} },
+        'families/kf1/bookings/b1/kinCares/v1': {
+          status: 'requested', batchId: 'b1', serviceType: 'visit_60', startTime: Timestamp.fromMillis(Date.now() + DAY),
+        },
+      },
+    });
+    const visit = await readVisitDto(ctx.db as any, 'kf1', 'b1', 'v1');
+    expect(visit?.serviceType).toBe('visit_60');
+    expect(visit?.serviceLabel).toBe('60 Minute');
+  });
+});

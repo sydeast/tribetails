@@ -57,6 +57,7 @@ import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.CustomField
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.HomeAccess
+import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.MapboxSuggestion
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeProfileResult
@@ -1456,7 +1457,8 @@ private fun SecondaryInviteCard(
                         } catch (c: CancellationException) {
                             throw c
                         } catch (t: Throwable) {
-                            msg = "Invite failed: ${t.message ?: t}"
+                            // #1277: a missing backend setting never shows its name.
+                            msg = inviteFailureLine(t)
                         } finally {
                             inviting = false
                         }

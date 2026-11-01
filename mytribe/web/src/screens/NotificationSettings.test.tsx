@@ -9,6 +9,7 @@ import type {
   GetMyNotificationPrefsResult,
   GetNotificationCatalogResult,
   NotificationKeyDto,
+  NotificationPrefsPatch,
   SaveMyNotificationPrefsResult,
   UserNotificationPrefs,
 } from '../api/notificationsApi';
@@ -23,7 +24,7 @@ import type {
 const mocks = vi.hoisted(() => ({
   getNotificationCatalog: vi.fn<() => Promise<GetNotificationCatalogResult>>(),
   getMyNotificationPrefs: vi.fn<() => Promise<GetMyNotificationPrefsResult>>(),
-  saveMyNotificationPrefs: vi.fn<(prefs: UserNotificationPrefs) => Promise<SaveMyNotificationPrefsResult>>(),
+  saveMyNotificationPrefs: vi.fn<(patch: NotificationPrefsPatch) => Promise<SaveMyNotificationPrefsResult>>(),
 }));
 
 vi.mock('../api/notificationsApi', async () => {
@@ -32,7 +33,7 @@ vi.mock('../api/notificationsApi', async () => {
     ...actual,
     getNotificationCatalog: () => mocks.getNotificationCatalog(),
     getMyNotificationPrefs: () => mocks.getMyNotificationPrefs(),
-    saveMyNotificationPrefs: (prefs: UserNotificationPrefs) => mocks.saveMyNotificationPrefs(prefs),
+    saveMyNotificationPrefs: (patch: NotificationPrefsPatch) => mocks.saveMyNotificationPrefs(patch),
   };
 });
 
@@ -235,150 +236,252 @@ describe('a channel the household cannot change', () => {
     expect(emailBox.disabled).toBe(true);
   });
 });
-describe('saving byKey', () => {
-  it('toggling a key channel writes byKey[key][channel] and leaves byCategory untouched', async () => {
-    await renderLoaded();
-    const smsBox = screen.getByRole('checkbox', { name: 'SMS for Auntie On The Way' }) as HTMLInputElement;
-    expect(smsBox.checked).toBe(false); // inherits category default (sms: false)
-
-    await userEvent.click(smsBox);
-    expect(smsBox.checked).toBe(true);
-
-    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
-    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
-
-    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
-    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved.byCategory).toEqual(BASE_PREFS.byCategory);
-    expect(saved.byKey).toEqual({ 'kincare.auntie.on_my_way': { sms: true } });
+/**
+ * A stand-in for the server: the save mock merges the patch into `stored`, and
+ * the prefs read returns `stored`. The screen shows what the server holds after
+ * a save, so the tests need a server that remembers.
+ */
+let stored: UserNotificationPrefs;
+function installFakeServer() {
+  stored = structuredClone(BASE_PREFS);
+  mocks.getMyNotificationPrefs.mockImplementation(async () => ({ prefs: structuredClone(stored), updatedAtMs: 1 }));
+  mocks.saveMyNotificationPrefs.mockImplementation(async (patch) => {
+    const byCategory = { ...(stored.byCategory ?? {}) };
+    for (const [cat, ch] of Object.entries(patch.byCategory ?? {})) byCategory[cat] = { ...(byCategory[cat] ?? {}), ...ch };
+    const byKey = { ...(stored.byKey ?? {}) };
+    for (const [k, chans] of Object.entries(patch.byKey ?? {})) {
+      if (chans === null) {
+        delete byKey[k];
+        continue;
+      }
+      const next = { ...(byKey[k] ?? {}) } as Record<string, boolean>;
+      for (const [c, v] of Object.entries(chans)) {
+        if (v === null) delete next[c];
+        else if (v !== undefined) next[c] = v;
+      }
+      if (Object.keys(next).length === 0) delete byKey[k];
+      else byKey[k] = next;
+    }
+    stored = { ...stored, byCategory, byKey, marketingOptIn: { ...(stored.marketingOptIn ?? {}), ...(patch.marketingOptIn ?? {}) } };
+    return { ok: true };
   });
-
+}
+async function renderWithServer() {
+  mocks.getNotificationCatalog.mockResolvedValue(CATALOG);
+  installFakeServer();
+  const result = renderScreen();
+  await waitFor(() => expect(screen.getByText('Auntie On The Way')).toBeTruthy());
+  return result;
+}
+const box = (name: string) => screen.getByRole('checkbox', { name }) as HTMLInputElement;
+describe('save on change (#1292)', () => {
+  it('has no Save button; each toggle saves itself', async () => {
+    await renderWithServer();
+    expect(screen.queryByRole('button', { name: /Save Notification Preferences/ })).toBeNull();
+    await userEvent.click(box('SMS for Auntie On The Way'));
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
+  });
+  it('a key toggle sends a patch naming only that key and channel', async () => {
+    await renderWithServer();
+    await userEvent.click(box('SMS for Auntie On The Way'));
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
+    expect(mocks.saveMyNotificationPrefs.mock.calls[0]![0]).toEqual({
+      byKey: { 'kincare.auntie.on_my_way': { sms: true } },
+    });
+    await waitFor(() => expect(box('SMS for Auntie On The Way').checked).toBe(true));
+    await waitFor(() => expect(screen.getByText(/Saved\./).closest('.savedchip')?.className).toContain('show'));
+  });
+  it('a category channel row sends only that channel', async () => {
+    await renderWithServer();
+    const rows = screen.getAllByRole('checkbox').filter((c) => !c.getAttribute('aria-label'));
+    // The category SMS row is the unlabeled sms switch whose key rows are labeled; find it by its row text.
+    const smsRow = rows.find((c) => c.closest('.crow')?.textContent?.startsWith('\u{1F4AC}SMS'));
+    expect(smsRow).toBeTruthy();
+    await userEvent.click(smsRow!);
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
+    expect(mocks.saveMyNotificationPrefs.mock.calls[0]![0]).toEqual({ byCategory: { visit: { sms: true } } });
+  });
   it('creates no byKey entry for keys the user never touched', async () => {
-    await renderLoaded();
-    const pushBox = screen.getByRole('checkbox', { name: 'Push for Auntie On The Way' }) as HTMLInputElement;
-    await userEvent.click(pushBox); // touch exactly one channel on exactly one key
-
-    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
-    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
-
+    await renderWithServer();
+    await userEvent.click(box('Push for Auntie On The Way'));
     await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
-    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(Object.keys(saved.byKey ?? {})).toEqual(['kincare.auntie.on_my_way']);
-    expect(saved.byKey?.['kincare.invoice.posted']).toBeUndefined();
-    expect(saved.byKey?.['kincare.checkin.push_only']).toBeUndefined();
+    const patch = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
+    expect(Object.keys(patch.byKey ?? {})).toEqual(['kincare.auntie.on_my_way']);
   });
-
-  // Task 27b: web used to OMIT `byKey` when there was nothing in it, while
-  // Compose sent `{}`. That was the one cell where the two clients put
-  // different bytes on the wire, and it sat on exactly the path this work is
-  // about. Both send an empty map now, so a reader does not have to re-derive
-  // that the two are equivalent under the handler's mergeFields write.
-  it('an untouched session still sends byKey, as an empty map', async () => {
-    await renderLoaded();
-    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
-    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
-
-    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
-    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved.byKey).toEqual({});
+  it('pessimistic: every switch is disabled and a Saving cue shows until the server answers', async () => {
+    await renderWithServer();
+    let release!: () => void;
+    mocks.saveMyNotificationPrefs.mockImplementationOnce(
+      () => new Promise((resolve) => { release = () => resolve({ ok: true }); }),
+    );
+    await userEvent.click(box('SMS for Auntie On The Way'));
+    await waitFor(() => expect(screen.getByText('Saving your change…')).toBeTruthy());
+    expect(box('SMS for Auntie On The Way').checked).toBe(false); // nothing moves before confirmation
+    expect(box('Push for Auntie On The Way').disabled).toBe(true);
+    expect(box('All in category: Visit Updates').disabled).toBe(true);
+    release();
+    await waitFor(() => expect(screen.queryByText('Saving your change…')).toBeNull());
   });
-
-  it('sends byCategory, byKey and marketingOptIn together in one call', async () => {
-    await renderLoaded();
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Push for Auntie On The Way' }));
-
-    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
-    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
-
+  it('on failure the switch stays where it was and a message says so', async () => {
+    const { container } = await renderWithServer();
+    mocks.saveMyNotificationPrefs.mockRejectedValueOnce(new Error('network down'));
+    await userEvent.click(box('SMS for Auntie On The Way'));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('network down'));
+    expect(screen.getByRole('alert').textContent).toContain('back where it was');
+    expect(box('SMS for Auntie On The Way').checked).toBe(false);
+    expect(box('SMS for Auntie On The Way').disabled).toBe(false); // the household can try again
+    expect(container.querySelector('.savedchip.show')).toBeNull();
+  });
+  it('the saved choice is what a reload shows (SMS stays on)', async () => {
+    const first = await renderWithServer();
+    await userEvent.click(box('SMS for Auntie On The Way'));
     await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
-    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved).toHaveProperty('byCategory');
-    expect(saved).toHaveProperty('byKey');
-    expect(saved).toHaveProperty('marketingOptIn');
+    first.unmount();
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Auntie On The Way')).toBeTruthy());
+    await waitFor(() => expect(box('SMS for Auntie On The Way').checked).toBe(true));
   });
 });
-
 describe('reverting an override', () => {
   // Task 27a: byKey is an override, absence means inherit. Toggling a key
   // channel back to the value it would have inherited anyway must clear the
-  // override, not pin an explicit duplicate of it — otherwise the key
-  // silently stops following future category changes forever.
-  it('toggling a key channel back to its inherited value clears the override entirely', async () => {
-    await renderLoaded();
-    const smsBox = screen.getByRole('checkbox', { name: 'SMS for Auntie On The Way' }) as HTMLInputElement;
-    expect(smsBox.checked).toBe(false); // inherits category default (sms: false)
-
-    await userEvent.click(smsBox); // create an override: sms true
-    expect(smsBox.checked).toBe(true);
-    await userEvent.click(smsBox); // undo: back to the inherited value (false)
-    expect(smsBox.checked).toBe(false);
-
-    const row = smsBox.closest('.nf-key-crow');
-    expect(row?.textContent).toContain('Following category');
-    expect(row?.textContent).not.toContain('Overridden');
-
-    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
-    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
-
-    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
-    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved.byKey).toEqual({});
+  // override (sent as null), not pin an explicit duplicate of it.
+  it('toggling a key channel back to its inherited value sends null to clear the override', async () => {
+    await renderWithServer();
+    await userEvent.click(box('SMS for Auntie On The Way')); // override: true
+    await waitFor(() => expect(box('SMS for Auntie On The Way').checked).toBe(true));
+    const row = box('SMS for Auntie On The Way').closest('.nf-key-crow');
+    expect(row?.textContent).toContain('Overridden');
+    await userEvent.click(box('SMS for Auntie On The Way')); // back to inherited (false)
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(2));
+    expect(mocks.saveMyNotificationPrefs.mock.calls[1]![0]).toEqual({
+      byKey: { 'kincare.auntie.on_my_way': { sms: null } },
+    });
+    await waitFor(() => expect(box('SMS for Auntie On The Way').checked).toBe(false));
+    expect(box('SMS for Auntie On The Way').closest('.nf-key-crow')?.textContent).toContain('Following category');
   });
-
   it('leaves other overridden channels on the same key alone when one channel reverts', async () => {
-    await renderLoaded();
-    const smsBox = screen.getByRole('checkbox', { name: 'SMS for Auntie On The Way' }) as HTMLInputElement;
-    const pushBox = screen.getByRole('checkbox', { name: 'Push for Auntie On The Way' }) as HTMLInputElement;
-
-    await userEvent.click(smsBox); // override sms: true
-    await userEvent.click(pushBox); // override push: false
-    await userEvent.click(smsBox); // undo sms back to inherited (false)
-
-    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
-    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
-
-    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
-    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved.byKey).toEqual({ 'kincare.auntie.on_my_way': { push: false } });
+    await renderWithServer();
+    await userEvent.click(box('SMS for Auntie On The Way'));
+    await waitFor(() => expect(box('SMS for Auntie On The Way').checked).toBe(true));
+    await userEvent.click(box('Push for Auntie On The Way')); // push: false
+    await waitFor(() => expect(box('Push for Auntie On The Way').checked).toBe(false));
+    await userEvent.click(box('SMS for Auntie On The Way')); // undo sms
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(stored.byKey).toEqual({ 'kincare.auntie.on_my_way': { push: false } }));
   });
 });
-
 describe('category control and existing overrides', () => {
-  // Task 27a defect #2 (Compose side): a category control must not silently
-  // destroy deliberate per-key choices. The model this task adopts is that
-  // byKey always wins over byCategory (already true both server-side and in
-  // keyChannelChecked), so the category control simply changes what
-  // unoverridden keys inherit — it must never touch byKey itself.
-  it('does not clear an existing per-key override when the category master switch is flipped', async () => {
-    await renderLoaded();
-    const smsBox = screen.getByRole('checkbox', { name: 'SMS for Auntie On The Way' }) as HTMLInputElement;
-    await userEvent.click(smsBox); // create an override: sms true
-
-    const masterBox = screen.getByRole('checkbox', { name: 'All in category: Visit Updates' });
-    await userEvent.click(masterBox);
-
-    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
-    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
-
-    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
-    const saved = mocks.saveMyNotificationPrefs.mock.calls[0]![0];
-    expect(saved.byKey).toEqual({ 'kincare.auntie.on_my_way': { sms: true } });
+  it('flipping the category master never names byKey, so overrides survive', async () => {
+    await renderWithServer();
+    await userEvent.click(box('SMS for Auntie On The Way'));
+    await waitFor(() => expect(box('SMS for Auntie On The Way').checked).toBe(true));
+    await userEvent.click(box('All in category: Visit Updates'));
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(2));
+    const patch = mocks.saveMyNotificationPrefs.mock.calls[1]![0];
+    expect(patch.byKey).toBeUndefined();
+    expect(stored.byKey).toEqual({ 'kincare.auntie.on_my_way': { sms: true } });
   });
-
   it('explains that per-key overrides survive the category control', async () => {
     await renderLoaded();
     expect(screen.getByText(/won.t change when you flip this/i)).toBeTruthy();
   });
 });
-
-describe('failed save', () => {
-  it('surfaces the error and does not claim the preferences were saved', async () => {
-    const { container } = await renderLoaded();
-    mocks.saveMyNotificationPrefs.mockRejectedValue(new Error('network down'));
-
-    await userEvent.click(screen.getByRole('button', { name: /Save Notification Preferences/ }));
-
-    await waitFor(() => expect(screen.getByText('Couldn’t save. Try again.')).toBeTruthy());
-    expect(container.querySelector('.savedchip.show')).toBeNull();
+describe('mixed master state (#1317)', () => {
+  it('reads mixed, not off, when Email is on and Push and SMS are off', async () => {
+    mocks.getNotificationCatalog.mockResolvedValue({
+      categories: [
+        {
+          id: 'invoice',
+          title: 'Invoices & Payments',
+          description: 'Invoice updates.',
+          keys: [key({ key: 'invoice.new', title: 'New invoice', description: 'Invoice sent.', allowedChannels: ['push', 'email', 'sms'] })],
+        },
+      ],
+      schemaVersion: 1,
+    });
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: { byCategory: { invoice: { email: true } } }, updatedAtMs: 1 });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('New invoice')).toBeTruthy());
+    const master = box('All in category: Invoices & Payments');
+    expect(master.indeterminate).toBe(true);
+    expect(master.getAttribute('aria-checked')).toBe('mixed');
+    expect(master.checked).toBe(false);
+  });
+  it('clicking a mixed master turns every channel on', async () => {
+    mocks.getNotificationCatalog.mockResolvedValue({
+      categories: [
+        {
+          id: 'invoice',
+          title: 'Invoices & Payments',
+          description: 'Invoice updates.',
+          keys: [key({ key: 'invoice.new', title: 'New invoice', description: 'Invoice sent.', allowedChannels: ['push', 'email', 'sms'] })],
+        },
+      ],
+      schemaVersion: 1,
+    });
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: { byCategory: { invoice: { email: true } } }, updatedAtMs: 1 });
+    mocks.saveMyNotificationPrefs.mockResolvedValue({ ok: true });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('New invoice')).toBeTruthy());
+    await userEvent.click(box('All in category: Invoices & Payments'));
+    await waitFor(() => expect(mocks.saveMyNotificationPrefs).toHaveBeenCalledTimes(1));
+    expect(mocks.saveMyNotificationPrefs.mock.calls[0]![0]).toEqual({
+      byCategory: { invoice: { push: true, email: true, sms: true } },
+    });
+  });
+});
+describe('household-facing copy (#1317)', () => {
+  const MARKETING: CategoryDto = {
+    id: 'marketing',
+    title: 'Newsletters & Community',
+    description: 'Opt-in announcements.',
+    keys: [
+      key({ key: 'newsletter.announcement', title: 'Newsletters', description: 'Newsletters.', allowedChannels: ['push', 'email', 'sms'], marketingCategory: 'newsletter' }),
+    ],
+  };
+  async function renderMarketing() {
+    mocks.getNotificationCatalog.mockResolvedValue({ categories: [MARKETING], schemaVersion: 1 });
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: {}, updatedAtMs: 1 });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Marketing push')).toBeTruthy());
+  }
+  it('lists one row per channel under Newsletters & Community, with push labeled push', async () => {
+    await renderMarketing();
+    expect(screen.getAllByText('Marketing SMS')).toHaveLength(1);
+    expect(screen.getAllByText('Marketing email')).toHaveLength(1);
+    expect(screen.getAllByText('Marketing push')).toHaveLength(1);
+  });
+  it('does not repeat the title as its own subtitle', async () => {
+    mocks.getNotificationCatalog.mockResolvedValue({
+      categories: [
+        {
+          id: 'visit',
+          title: 'Visit Updates',
+          description: 'x',
+          keys: [
+            key({ key: 'a', title: 'KinCare booking confirmed', description: 'KinCare booking confirmed.', allowedChannels: ['email'] }),
+            key({ key: 'b', title: 'Auntie arrived', description: 'When your Auntie gets there.', allowedChannels: ['email'] }),
+          ],
+        },
+      ],
+      schemaVersion: 1,
+    });
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: {}, updatedAtMs: 1 });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Auntie arrived')).toBeTruthy());
+    expect(screen.queryByText('KinCare booking confirmed.')).toBeNull();
+    expect(screen.getByText('KinCare booking confirmed')).toBeTruthy();
+    expect(screen.getByText('When your Auntie gets there.')).toBeTruthy();
+  });
+  it('explains the Suggestion badge in a tooltip', async () => {
+    mocks.getNotificationCatalog.mockResolvedValue({
+      categories: [{ id: 'schedule', title: 'Upcoming Care', description: 'x', keys: [AUNTIE_ON_THE_WAY] }],
+      schemaVersion: 1,
+    });
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: {}, updatedAtMs: 1 });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Suggestion')).toBeTruthy());
+    expect(screen.getByText('Suggestion').getAttribute('title')).toMatch(/suggested/i);
   });
 });
