@@ -114,8 +114,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * 410 since #1160 (was 400, which main had reached exactly): that change adds
  * `lib/googleBusySlot.ts`, one pure module whose only import is
  * `lib/businessHours.ts`, already resident. Not a structural change.
+ *
+ * 420 since #1382 (main had reached 410 exactly): that change adds
+ * `lib/weeklyHoursRule.ts`, the shared weekly-hours check `requestBooking` and
+ * `rescheduleTimeRules` both call. One helper module over modules already
+ * resident; not a structural change.
  */
-const MAX_OWN_EAGER_MODULES = 410;
+const MAX_OWN_EAGER_MODULES = 420;
 
 interface Edge {
   spec: string;
