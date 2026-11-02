@@ -576,7 +576,12 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
           })}
         </div>
 
-        <div className="cols">
+        {/*
+          #1453: `cols-review` is the one-column form of the grid. It is set in
+          the same render that drops the rail (below), so the first paint of
+          step 5 is already full width.
+        */}
+        <div className={step === 5 ? 'cols cols-review' : 'cols'}>
           <div className="stack">
             <section className="glass card d1">
               {step === 1 && (
@@ -701,67 +706,78 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
           </div>
 
           {/*
-            Dropping it on the last step re-flowed the whole page from two
-            columns to one at the moment a household is checking their plan,
-            which the QA walk caught as a layout jump. Review keeps its detail;
-            the rail keeps the running price and the Kin and dates at a glance.
+            #547, restored by the 2026-11-01 ruling (#1453): the rail stands
+            down on Review. Review IS the summary, in more detail, so the two
+            were saying the same things twice on one page. Every earlier step
+            still needs it, because on those the summary is the only place the
+            plan is visible.
+
+            #1300 had put the rail back on Review because dropping it left the
+            grid at two tracks with one child, and the page re-flowed as the
+            household opened their plan. That is why `cols-review` above goes
+            on in the same render as this condition: React commits both at
+            once, the grid is one track before step 5 is first painted, and
+            nothing moves after the step opens. On a phone `.cols` is already
+            one column and the rail simply stops appearing below the buttons.
           */}
-          <div className="stack">
-            <section className="glass card d3">
-              <div className="sectlabel">Booking summary</div>
+          {step < 5 && (
+            <div className="stack">
+              <section className="glass card d3">
+                <div className="sectlabel">Booking summary</div>
 
-              <div className="sum-row">
-                <div className="sk">KinCare</div>
-                {slots.length > 0 ? (
-                  <div className="sv">{summariseSlots(slots, services)}</div>
-                ) : (
-                  <div className="sv muted">Not chosen yet</div>
-                )}
-              </div>
-
-              <div className="sum-row">
-                <div className="sk">Kin</div>
-                <div className={`sv ${allKinMode || selectedKinIds.size > 0 ? '' : 'muted'}`}>
-                  {allKinMode ? 'All Kin in this home' : selectedKinNames.length > 0 ? selectedKinNames.join(', ') : 'Not chosen yet'}
+                <div className="sum-row">
+                  <div className="sk">KinCare</div>
+                  {slots.length > 0 ? (
+                    <div className="sv">{summariseSlots(slots, services)}</div>
+                  ) : (
+                    <div className="sv muted">Not chosen yet</div>
+                  )}
                 </div>
-              </div>
 
-              <div className="sum-row">
-                <div className="sk">{pattern === 'weekly' ? 'Schedule' : 'Dates'}</div>
-                {visitCount > 0 ? (
-                  <div className="sv">
-                    {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
-                    <small>
-                      {pattern === 'weekly'
-                        ? `over ${weekCount} weeks`
-                        : `across ${dayCount} ${dayCount === 1 ? 'day' : 'days'}`}
-                    </small>
+                <div className="sum-row">
+                  <div className="sk">Kin</div>
+                  <div className={`sv ${allKinMode || selectedKinIds.size > 0 ? '' : 'muted'}`}>
+                    {allKinMode ? 'All Kin in this home' : selectedKinNames.length > 0 ? selectedKinNames.join(', ') : 'Not chosen yet'}
                   </div>
-                ) : (
-                  <div className="sv muted">No dates selected yet.</div>
+                </div>
+
+                <div className="sum-row">
+                  <div className="sk">{pattern === 'weekly' ? 'Schedule' : 'Dates'}</div>
+                  {visitCount > 0 ? (
+                    <div className="sv">
+                      {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
+                      <small>
+                        {pattern === 'weekly'
+                          ? `over ${weekCount} weeks`
+                          : `across ${dayCount} ${dayCount === 1 ? 'day' : 'days'}`}
+                      </small>
+                    </div>
+                  ) : (
+                    <div className="sv muted">No dates selected yet.</div>
+                  )}
+                </div>
+
+                {showPrices && (
+                  <>
+                    <div className="price-box">
+                      <span className="pl">Estimated Price</span>
+                      <span className="pv">{formatEstimate(estimate)}</span>
+                    </div>
+                    <p className="sub" style={{ marginTop: 12 }}>
+                      {/*
+                        The old line here promised the estimate updates "as you add
+                        Kin and dates". Kin have never moved the price — the catalog
+                        is priced per visit, not per animal — so half of that
+                        sentence was describing something the app does not do.
+                      */}
+                      Your estimate updates as you add KinCare and dates. Your Auntie confirms the final price before the
+                      booking starts.
+                    </p>
+                  </>
                 )}
-              </div>
-
-              {showPrices && (
-                <>
-                  <div className="price-box">
-                    <span className="pl">Estimated Price</span>
-                    <span className="pv">{formatEstimate(estimate)}</span>
-                  </div>
-                  <p className="sub" style={{ marginTop: 12 }}>
-                    {/*
-                      The old line here promised the estimate updates "as you add
-                      Kin and dates". Kin have never moved the price — the catalog
-                      is priced per visit, not per animal — so half of that
-                      sentence was describing something the app does not do.
-                    */}
-                    Your estimate updates as you add KinCare and dates. Your Auntie confirms the final price before the
-                    booking starts.
-                  </p>
-                </>
-              )}
-            </section>
-          </div>
+              </section>
+            </div>
+          )}
         </div>
 
         <SettingsBusinessFootnote />

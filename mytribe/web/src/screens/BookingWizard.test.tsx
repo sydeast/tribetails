@@ -516,21 +516,48 @@ describe('BookingWizard: #546/#547 the estimate follows the plan', () => {
     const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(TOMORROW);
     const date = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(TOMORROW);
     expect(screen.getByText(`${weekday}, ${date} at 9:00 AM`)).toBeInTheDocument();
-    expect(screen.getAllByText('$42.00').length).toBeGreaterThan(0); // Review and, since #1300, the rail
+    // Review's Est. Price row alone: since #1453 the rail is not on this step.
+    expect(screen.getByText('$42.00')).toBeInTheDocument();
   });
 
   /**
    * #547's third complaint: Review & Confirm and the Booking Summary rail were
-   * on screen together, saying the same things twice.
+   * on screen together, saying the same things twice. #1300 put the rail back
+   * on Review to stop a layout jump; the 2026-11-01 ruling (#1453) hides it
+   * again and fixes the jump at the grid instead.
    */
-  it('keeps the summary rail on every step including Review (#1300)', async () => {
+  it('shows the summary rail on steps 1 to 4 and not on Review (#1453)', async () => {
     const user = userEvent.setup();
-    renderWizard();
-    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    const { container } = renderWizard();
+    const cols = () => container.querySelector('.cols')!;
+    await screen.findByText('Select Kin'); // step 1
     expect(screen.getByText('Booking summary')).toBeInTheDocument();
+    expect(cols()).not.toHaveClass('cols-review');
+    await goToStep2(user);
+    expect(screen.getByText('Booking summary')).toBeInTheDocument();
+    expect(cols()).not.toHaveClass('cols-review');
+    await addKinCare(user, 'Daily Visit');
+    await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 3
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+    expect(screen.getByText('Booking summary')).toBeInTheDocument();
+    expect(cols()).not.toHaveClass('cols-review');
     await pickDay(user, TOMORROW);
-    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 4
+    await screen.findByRole('heading', { name: 'Extra Love & Context' });
     expect(screen.getByText('Booking summary')).toBeInTheDocument();
+    expect(cols()).not.toHaveClass('cols-review');
+    await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 5
+    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    expect(screen.queryByText('Booking summary')).not.toBeInTheDocument();
+    expect(screen.queryByText('Estimated Price')).not.toBeInTheDocument();
+    // The one-column grid is the state carrier for "full width from the first
+    // paint": jsdom lays nothing out, so the class is what can be asserted.
+    expect(cols()).toHaveClass('cols-review');
+    // Back to step 4 brings the rail and the two tracks back together.
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await screen.findByRole('heading', { name: 'Extra Love & Context' });
+    expect(screen.getByText('Booking summary')).toBeInTheDocument();
+    expect(cols()).not.toHaveClass('cols-review');
   });
 });
 

@@ -142,6 +142,11 @@
 .wiz-foot .cancel { margin-right: auto; color: var(--coral); background: transparent; border: 1px solid var(--hairline); }
 .wiz-foot .cancel:hover { background: rgba(213, 83, 90, .08); }
 
+/* #1453: Review has no summary rail, so its grid is one track. The wizard
+   sets this class in the same render that drops the rail; without it the
+   Review card would sit in the 1.6fr track beside an empty 1fr one. */
+.cols.cols-review { grid-template-columns: 1fr; }
+
 @media (max-width: 880px) {
   .svc-grid { grid-template-columns: 1fr; }
   .step .lbl { display: none; }
