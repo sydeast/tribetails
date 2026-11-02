@@ -15,6 +15,12 @@ vi.mock('@tanstack/react-router', () => ({
   useRouter: () => ({ history: { push: vi.fn() } }),
 }));
 vi.mock('../lib/auth', () => ({ signIn, sendReset }));
+// #1321: the screen reads the public business card; an absent card is the quiet case.
+vi.mock('firebase/firestore', () => ({
+  doc: () => ({ path: 'business_public/card' }),
+  getDoc: () => Promise.resolve({ exists: () => false, data: () => undefined }),
+}));
+vi.mock('../lib/firebase', () => ({ firestore: {} }));
 
 import { SignIn } from './SignIn';
 import { ACCOUNT_LOCKED_MESSAGE } from '../lib/authErrors';

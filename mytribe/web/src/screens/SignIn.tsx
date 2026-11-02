@@ -4,6 +4,7 @@ import { DEFAULT_SIGN_IN_LANDING, safeRedirectPath } from '../lib/signInRedirect
 import { sendReset, signIn } from '../lib/auth';
 import { isRateLimitedError, mapAuthError } from '../lib/authErrors';
 import { readAndClearSessionEndedNotice } from '../lib/revokedSession';
+import { useBusinessPublicCard } from '../lib/businessPublicCard';
 import { BusyLabel } from '../components/Loading';
 
 type ResetToast =
@@ -37,6 +38,8 @@ export function SignIn() {
    * reading on every render would fight the clear.
    */
   const [sessionEndedNotice] = useState<string | null>(readAndClearSessionEndedNotice);
+  /** #1321: `business_public/card.name`, cached copy first, then live. '' omits the line. */
+  const businessName = useBusinessPublicCard().name;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -100,10 +103,17 @@ export function SignIn() {
       <div className="authcol">
         <header className="brandhead">
           <div className="mark">{'\u{1F43E}'}</div>
+          {/* #1321: the app is MyTribe; the business it is for follows when the
+              public card arrives, and is left out while the operator has set
+              no name. The headline never waits on the read. */}
           <div className="wm">
-            Tribe <span className="grad">Tails</span>
+            My<span className="grad">Tribe</span>
           </div>
-          <div className="kick">Pet Care Portal</div>
+          {businessName !== '' && (
+            <div className="kick" data-testid="business-byline">
+              by {businessName}
+            </div>
+          )}
         </header>
 
         <section className="glass card authcard d1">
@@ -185,9 +195,11 @@ export function SignIn() {
           </div>
         )}
 
-        <p className="authfoot">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        {businessName !== '' && (
+          <p className="authfoot" data-testid="business-footnote">
+            Cared for by <b>{businessName}</b>
+          </p>
+        )}
       </div>
     </main>
   );

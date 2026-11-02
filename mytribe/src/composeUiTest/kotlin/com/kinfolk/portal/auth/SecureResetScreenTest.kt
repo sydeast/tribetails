@@ -83,9 +83,17 @@ class SecureResetScreenTest {
         link: SecureResetParams = SecureResetParams(oobCode = "code1"),
         onSignIn: () -> Unit = {},
         openUrl: (String) -> Unit = {},
+        businessName: String = "",
     ) {
         setThemedContent {
-            SecureResetScreen(link = link, auth = auth, fetcher = fetcher, onSignIn = onSignIn, openUrl = openUrl)
+            SecureResetScreen(
+                link = link,
+                auth = auth,
+                fetcher = fetcher,
+                onSignIn = onSignIn,
+                openUrl = openUrl,
+                businessName = businessName,
+            )
         }
         waitForIdle()
     }
@@ -133,6 +141,36 @@ class SecureResetScreenTest {
         assertEquals(1, fetcher.calls.size)
         assertEquals(emptyList(), auth.resets)
         onNodeWithText("Your account is secured.").assertIsDisplayed()
+    }
+
+    // ── #1321: the business is named from settings, never a literal ──────────
+
+    @Test
+    fun namesTheBusinessFromThePublicCardInTheFooterAndTheAlertSentences() = runComposeUiTest {
+        show(ScriptedAuth(), businessName = "Sunny Paws")
+        onNodeWithText("MyTribe").assertIsDisplayed()
+        onNodeWithTag("business-footnote").assertIsDisplayed()
+        onNodeWithText("Cared for by Sunny Paws").assertIsDisplayed()
+        onNodeWithText("Tribe Tails", substring = true).assertDoesNotExist()
+        onNodeWithTag("intent-toggle").performClick()
+        waitForIdle()
+        onNodeWithText("Sunny Paws will be alerted", substring = true).assertIsDisplayed()
+        typeBothPasswords("hunter2hunter2")
+        onNodeWithTag("reset-submit").performClick()
+        waitForIdle()
+        onNodeWithText("Sunny Paws has been alerted", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun saysYourAuntieAndDrawsNoFooterWhileNoNameIsSet() = runComposeUiTest {
+        show(ScriptedAuth())
+        onNodeWithText("MyTribe").assertIsDisplayed()
+        onNodeWithTag("business-footnote").assertDoesNotExist()
+        onNodeWithText("Cared for by", substring = true).assertDoesNotExist()
+        onNodeWithTag("intent-toggle").performClick()
+        waitForIdle()
+        onNodeWithText("your Auntie will be alerted", substring = true).assertIsDisplayed()
+        onNodeWithText("Tribe Tails", substring = true).assertDoesNotExist()
     }
 
     @Test

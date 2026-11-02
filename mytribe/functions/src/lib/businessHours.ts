@@ -54,7 +54,7 @@ import { parseClosureEntry, closureOccurrencesInRange, type ClosureEntry } from 
  */
 
 /** `businessHours` is keyed by Monday-first full day names, the list Settings writes. */
-const DAY_NAMES = [
+export const DAY_NAMES = [
   'Monday',
   'Tuesday',
   'Wednesday',

@@ -43,7 +43,15 @@ const COLLECTION = 'kin_care_sessions';
  */
 // #1282: `kinDirectRead.ts` reads `families/{fid}/kin`, which the rules grant
 // to any active member of the household (`activeMember(fid) || isStaff()`).
-const FIRESTORE_IMPORTERS = ['lib/breadcrumbs.ts', 'lib/firebase.ts', 'lib/kinDirectRead.ts', 'lib/messagesListener.ts'];
+// #1321: `businessPublicCard.ts` reads `business_public/card`, the mirror the
+// rules open to everyone (`allow read: if true`) and no client may write.
+const FIRESTORE_IMPORTERS = [
+  'lib/breadcrumbs.ts',
+  'lib/businessPublicCard.ts',
+  'lib/firebase.ts',
+  'lib/kinDirectRead.ts',
+  'lib/messagesListener.ts',
+];
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -104,7 +112,7 @@ describe('the portal reads visits through getMyVisits, never the session documen
     expect(breadcrumbUses.map((m) => m.file)).toContain('lib/breadcrumbs.ts');
   });
 
-  it('touches Firestore from four files and no others', () => {
+  it('touches Firestore from five files and no others', () => {
     const importers = sourceFiles(SRC)
       .filter((f) => /from '(firebase\/firestore|firebase-admin\/firestore)'/.test(readFileSync(f, 'utf8')))
       .map(rel)

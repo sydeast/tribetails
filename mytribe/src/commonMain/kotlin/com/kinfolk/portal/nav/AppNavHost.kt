@@ -93,6 +93,12 @@ fun AppNavHost(
     shellLogoUrl: String = "",
     /** #1369: `getMyHome.businessName`, for the footer. Blank draws no name. */
     shellBusinessName: String = "",
+    /**
+     * #1321: `business_public/card.name`, the PRE-AUTH business name for the
+     * sign-in and email-action screens, which have no `getMyHome` to read.
+     * Cached copy first, then live; blank omits the "by ..." line.
+     */
+    publicBusinessName: String = "",
     shellBanner: com.kinfolk.portal.portal.PortalBanner = com.kinfolk.portal.portal.PortalBanner(),
     shellBannerDismissedByUser: Boolean = false,
     onDismissBannerPerUser: ((bannerId: String) -> Unit)? = null,
@@ -190,7 +196,7 @@ fun AppNavHost(
         // ---- Pre-shell funnel ----
         composable<SignInRoute> {
             // Sign-in success flips the reactive gate, which re-navigates here.
-            SignInScreen(repo = repo, onSignedIn = {})
+            SignInScreen(repo = repo, onSignedIn = {}, businessName = publicBusinessName)
         }
         composable<NoTribesRoute> {
             // No shell chrome here, so overlay the pre-shell sign-out
@@ -247,6 +253,7 @@ fun AppNavHost(
                 },
                 mode = r.mode,
                 continueUrl = r.continueUrl,
+                businessName = publicBusinessName,
             )
         }
         composable<ShareRoute>(

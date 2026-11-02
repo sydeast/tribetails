@@ -245,6 +245,23 @@ service cloud.firestore {
       allow write: if isOwner();
     }
 
+ // ── Public business card (#1321) - public read, no client write ──────────
+ //
+ // `business_public/card` is what the sign-in screen reads BEFORE anyone is
+ // signed in, to put "by <business name>" under the MyTribe wordmark so a
+ // household knows it has the right app. It is a mirror, not a source: the
+ // `onBusinessSettingsWrite` trigger copies four fields out of the staff-only
+ // `business_settings` document (name, published phone, weekly hours, privacy
+ // policy URL) and nothing else; `functions/src/lib/businessPublicCard.ts` is
+ // the closed list. Readable by anyone because the page that needs it has no
+ // user yet. Writable by NO client, owner included: the Admin SDK inside the
+ // trigger bypasses these rules, and a client able to write here could put a
+ // name or a phone number of its choosing on every household's sign-in screen.
+    match /business_public/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
  // ── Shared catalogs - readable by any signed-in user, written by callables ──
  //
  // Write is CLOSED to every client (punchlist B4, 2026-08-01). It was

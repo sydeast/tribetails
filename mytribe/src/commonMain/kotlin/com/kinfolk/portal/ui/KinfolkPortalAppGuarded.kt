@@ -75,6 +75,23 @@ fun KinfolkPortalAppGuarded() {
     val initialShareToken = remember { readInitialShareToken() }
     // #1293: a launch link we could not place; cleared by Back to Home.
     var unknownLink by remember { mutableStateOf(readInitialUnknownLink()) }
+    // #1321: the public business card, for the pre-auth screens (sign-in, email
+    // action). The cached copy is on screen with the first frame; the live read
+    // replaces it when it returns and is cached for the next cold open. It needs
+    // no user: `business_public/card` is readable by anyone, writable by no
+    // client. A failed read keeps whatever was showing and is never surfaced,
+    // because a missing "by ..." line is not a degraded state worth a banner.
+    val publicCardCache = remember { com.kinfolk.portal.config.BusinessPublicCardCache() }
+    var publicCard by remember { mutableStateOf(publicCardCache.read() ?: com.kinfolk.portal.config.BusinessPublicCard()) }
+    LaunchedEffect(firestoreClient) {
+        try {
+            val fresh = com.kinfolk.portal.config.readBusinessPublicCard(firestoreClient)
+            publicCard = fresh
+            publicCardCache.write(fresh)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) { /* keep the cached or empty card */ }
+    }
     val initialSecureResetParams = remember { readInitialSecureResetParams() }
     var featureFlags by remember { mutableStateOf(com.kinfolk.portal.config.FeatureFlags()) }
 
@@ -169,6 +186,7 @@ fun KinfolkPortalAppGuarded() {
                             onPersonNameChanged = { personName = it },
                             shellLogoUrl = home?.businessLogoUrl ?: "",
                             shellBusinessName = home?.businessName ?: "",
+                            publicBusinessName = publicCard.name,
                             shellBanner = home?.portal?.banner ?: com.kinfolk.portal.portal.PortalBanner(),
                             shellBannerDismissedByUser = home?.bannerDismissedByUser ?: false,
                             shellHomeSections = home?.portal?.home ?: emptyList(),

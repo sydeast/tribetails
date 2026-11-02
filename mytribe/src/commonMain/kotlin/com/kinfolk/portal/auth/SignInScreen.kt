@@ -69,6 +69,13 @@ fun SignInScreen(
     repo: AuthRepository,
     onSignedIn: () -> Unit,
     socialLinks: SignInSocialLinks = SignInSocialLinks(),
+    /**
+     * #1321: `business_public/card.name`, read pre-auth by the app root (cached
+     * copy first, then live). Drawn as "by <name>" under the MyTribe wordmark so
+     * a household knows it has the right app; blank omits the line. Never a
+     * literal: the operator names the business in settings.
+     */
+    businessName: String = "",
 ) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
@@ -133,7 +140,7 @@ fun SignInScreen(
             verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.l),
         ) {
             // Brand mark — paw circle + "MyTribe" wordmark over the operating
-            // business tagline. Bundled Material vector (like TabRoute's tab
+            // business's name from settings (#1321). Bundled Material vector (like TabRoute's tab
             // icons) instead of an emoji glyph, which tofu-boxes on web.
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -158,10 +165,13 @@ fun SignInScreen(
                     text = "MyTribe",
                     style = type.heritageTitle.copy(color = Color.White, fontWeight = FontWeight.SemiBold),
                 )
-                Text(
-                    text = "by Tribe Tails Pet Care",
-                    style = type.sansMeta.copy(color = Color.White.copy(alpha = 0.88f)),
-                )
+                if (businessName.isNotBlank()) {
+                    Text(
+                        text = "by ${businessName.trim()}",
+                        style = type.sansMeta.copy(color = Color.White.copy(alpha = 0.88f)),
+                        modifier = Modifier.testTag("business-byline"),
+                    )
+                }
             }
 
             // Card: email + password + reset + submit
