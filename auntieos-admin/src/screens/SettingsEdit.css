@@ -18,6 +18,14 @@
   margin: 0;
 }
 
+/* #1409: a required field (the business name) carries " *" after its label.
+   Drawn by the stylesheet, the FormSchemaEditor convention, so the control's
+   accessible name stays the label's own words; `aria-required` on the input is
+   what a screen reader hears. */
+.settingsEdit__fieldLabel--required::after {
+  content: ' *';
+}
+
 /* Read-only value shown inside an otherwise-editable panel (the MyTribe Home
    layout's live "N of M sections shown" summary, above its editable rows). */
 .settingsEdit__readonlyValue {
