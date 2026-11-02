@@ -51,7 +51,7 @@ import {
   parseDraftLines,
   type DraftLine,
 } from './InvoiceLineItems';
-import { centsToInputDollars } from '../lib/invoiceMoneyInput';
+import { centsToInputDollars, normalizeMoneyText } from '../lib/invoiceMoneyInput';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
@@ -325,9 +325,10 @@ function quoteDecidedLabel(invoice: InvoiceEntry): string {
   return ` on ${at.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}`;
 }
 export function parseOptionalMoney(raw: string): number | null {
-  const trimmed = raw.trim();
+  const trimmed = normalizeMoneyText(raw);
+  if (trimmed === null) return null;
   if (trimmed === '') return 0;
-  const parsed = Number(trimmed.replace(/^\$/, ''));
+  const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
   return parsed;
 }
@@ -1143,7 +1144,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // against a household.
         let amount: number | undefined;
         if (typed !== '') {
-          const parsed = Number(typed.replace(/^\$/, ''));
+          const normalized = normalizeMoneyText(typed);
+          const parsed = normalized === null || normalized === '' ? NaN : Number(normalized);
           if (!Number.isFinite(parsed) || parsed <= 0) {
             setBusy(false);
             setActionError(`"${typed}" is not an amount. Enter dollars, for example 20 or 20.50.`);

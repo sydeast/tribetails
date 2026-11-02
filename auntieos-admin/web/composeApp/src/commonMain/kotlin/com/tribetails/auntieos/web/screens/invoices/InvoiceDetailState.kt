@@ -116,7 +116,7 @@ fun parseRecordPaymentForm(
     credit: String,
     sendConfirmationEmail: Boolean,
 ): RecordPaymentForm {
-    fun money(s: String): Double? = s.trim().removePrefix("$").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+    fun money(s: String): Double? = normalizeMoneyText(s)?.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
     fun optionalMoney(s: String): Double? = if (s.isBlank()) 0.0 else money(s)
     val paid = money(amountPaid)?.takeIf { it > 0.0 }
         ?: return RecordPaymentForm.Invalid("\"${amountPaid.trim()}\" is not a payment amount. Enter dollars, for example 300 or 300.50.")
@@ -173,7 +173,7 @@ sealed interface RecordPaymentSplit {
 }
 
 fun recordPaymentSplit(amountPaid: String, applyAmount: String, tip: String, credit: String): RecordPaymentSplit? {
-    fun money(s: String): Double? = s.trim().removePrefix("$").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+    fun money(s: String): Double? = normalizeMoneyText(s)?.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
     fun optionalMoney(s: String): Double? = if (s.isBlank()) 0.0 else money(s)
     // Compared in cents, so 0.1 + 0.2 style float error cannot refuse a payment that fits.
     fun cents(d: Double) = kotlin.math.round(d * 100).toLong()
@@ -211,7 +211,7 @@ fun recordPaymentSplitLine(split: RecordPaymentSplit?, fee: String): String = wh
     null -> "Not yet: one of the amounts above cannot be read."
     is RecordPaymentSplit.Refused -> split.message
     is RecordPaymentSplit.Ok -> {
-        val feeValue = fee.trim().removePrefix("$").trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        val feeValue = normalizeMoneyText(fee)?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
         val feeClause = if (feeValue != null) " (the ${formatMoney(feeValue)} fee comes out of it)" else ""
         "${formatMoney(split.paidCents / 100.0)} paid: ${formatMoney(split.appliedCents / 100.0)} to this invoice, " +
             "${formatMoney(split.tipCents / 100.0)} tip$feeClause, ${formatMoney(split.creditCents / 100.0)} account credit."

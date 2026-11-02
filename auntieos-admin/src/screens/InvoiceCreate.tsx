@@ -13,7 +13,7 @@ import { useCollection } from '../lib/firestore';
 import { computeInvoiceTotals, centsToDollars, type InvoiceLineItemInput } from '../lib/invoiceMath';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import { localDateIso } from '../lib/invoiceFormat';
-import { parseDollarsToCents, MAX_UNIT_CENTS } from '../lib/invoiceMoneyInput';
+import { parseDollarsToCents, normalizeMoneyText, MAX_UNIT_CENTS } from '../lib/invoiceMoneyInput';
 import { invoiceTermsDefs, resolveDueDate, type InvoiceTermsCode } from '../lib/invoiceTerms';
 import { Dialog } from '../components/Dialog';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -107,7 +107,8 @@ export interface BlankInvoiceFormValues {
  * its total, a computed output that was being asked for as an input.
  */
 export function validateBlankInvoice(v: BlankInvoiceFormValues): string | null {
-  const total = Number(v.totalText);
+  const normalized = normalizeMoneyText(v.totalText);
+  const total = normalized === null || normalized === '' ? NaN : Number(normalized);
   if (v.kinfolkId.trim() === '') return 'Pick a household for this invoice';
   if (v.totalText.trim() === '' || Number.isNaN(total) || total < 0) return 'Total must be zero or greater';
   if (v.date.trim() !== '' && !isValidInvoiceDate(v.date)) return 'Date must be a real YYYY-MM-DD date';
@@ -377,7 +378,8 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
       // total was typed by hand, so a later due-date correction would rewrite
       // it to $0. Amount due IS the total: nothing has been paid on an invoice
       // that does not exist yet.
-      moneyFields = { total: Number(totalText), amountDue: Number(totalText) };
+      const typedTotal = Number(normalizeMoneyText(totalText));
+      moneyFields = { total: typedTotal, amountDue: typedTotal };
     }
 
     if (termsCode !== 'custom' && due.dueDate === null) {

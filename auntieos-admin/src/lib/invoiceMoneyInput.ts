@@ -24,6 +24,20 @@ export const MAX_UNIT_CENTS = 10_000_000;
 export const MAX_QTY = 999;
 
 /**
+ * Typed money text with a leading `$` and thousands commas removed, or null when
+ * the commas are not real thousands grouping. THE one place the money inputs
+ * (record payment, tip, fee, credit, invoice composer) agree on what a grouped
+ * figure looks like: "1,234.50" and "$1,234.50" read, "1,2,3" and "12,34" do not,
+ * because deleting stray commas would turn a typo into a different amount.
+ * Does not validate the number itself; callers do that.
+ */
+export function normalizeMoneyText(raw: string): string | null {
+  const s = raw.trim().replace(/^\$/, '').trim();
+  if (!s.includes(',')) return s;
+  if (!/^\d{1,3}(,\d{3})+(\.\d*)?$/.test(s)) return null;
+  return s.replace(/,/g, '');
+}
+/**
  * "12.50" -> 1250. Returns null for anything that is not a readable, non-negative
  * amount of money.
  *
@@ -35,8 +49,8 @@ export const MAX_QTY = 999;
  * call to make.
  */
 export function parseDollarsToCents(raw: string): number | null {
-  const s = raw.trim().replace(/^\$/, '').replace(/,/g, '');
-  if (s === '') return null;
+  const s = normalizeMoneyText(raw);
+  if (s === null || s === '') return null;
   if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
   const dollars = Number(s);
   if (!Number.isFinite(dollars)) return null;

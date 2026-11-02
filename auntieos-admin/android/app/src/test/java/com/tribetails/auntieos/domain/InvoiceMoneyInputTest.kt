@@ -76,4 +76,16 @@ class InvoiceMoneyInputTest {
         assertEquals(10_000_000L, MAX_UNIT_CENTS)
         assertEquals(999.0, MAX_QTY, 0.0001)
     }
+
+    @Test
+    fun `normalizeMoneyText strips a dollar sign and real thousands commas only (1495)`() {
+        assertEquals("1234.50", normalizeMoneyText("1234.50"))
+        assertEquals("1234.50", normalizeMoneyText("1,234.50"))
+        assertEquals("1234.50", normalizeMoneyText("$1,234.50"))
+        assertNull(normalizeMoneyText("1,2,3"))
+        assertNull(normalizeMoneyText("12,34"))
+        assertNull(parseDollarsToCents("1,2,3"))
+        assertNull(parseDollarsToCents(""))
+        assertEquals(123450L, parseDollarsToCents("$1,234.50"))
+    }
 }

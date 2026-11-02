@@ -1664,7 +1664,7 @@ private fun RecordPaymentDialog(
     // OFF by default. A confirmation is a message to a real household, so it
     // goes out because she ticked the box, never because the dialog assumed.
     var sendConfirmation by remember(invoice.id) { mutableStateOf(false) }
-    val amountValue = amount.trim().toDoubleOrNull()
+    val amountValue = parseOptionalMoney(amount)
     val tipValue    = parseOptionalMoney(tip)
     val feeValue    = parseOptionalMoney(fee)
     // #988: WHERE THE MONEY GOES, recomputed as she types: the applied part, the
