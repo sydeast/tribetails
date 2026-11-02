@@ -34,7 +34,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
-import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinfolkAvatar
 import com.kinfolk.portal.components.ScreenHeader
@@ -52,7 +51,8 @@ import kotlin.coroutines.cancellation.CancellationException
 /**
  * The Tribe tab as a family-base HUB (per smoke-test): Kin profile cards, a
  * photo gallery, Home info summary, and a recent KinTales feed — with profile
- * editing moved behind an Edit button (and the avatar menu). KinTales is no
+ * editing behind the avatar menu's Edit Tribe Profile entry and the Home
+ * Information card's Edit link (#1454, no page-level button). KinTales is no
  * longer a top-nav tab; it lives here and is still reachable via "All tales".
  * Read-only surface — every section links out to its dedicated screen.
  */
@@ -92,11 +92,9 @@ fun TribeHubScreen(
             title = familyName.ifBlank { "Your family base" },
             kicker = "Your family base",
         )
-        KinGhostButton(
-            label = "Edit Tribe Profile",
-            onClick = onEditProfile,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
-        )
+        // #1454 (operator ruling on #1295): no Edit Tribe Profile button on the
+        // page. On Android the account menu's entry (TabRoute.kt accountMenu) is
+        // the only one; the Home Information card keeps its own "Edit" link.
 
         // ---- Kin profile cards ----
         SectionCard(title = "Your Kin", linkText = "Manage", onLink = onManageKin) {
