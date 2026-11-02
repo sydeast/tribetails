@@ -279,6 +279,9 @@ export interface SetKinArchivedResult {
  * a removal request hidden from them. The callable writes both copies in one
  * transaction. Owner-only on the server (archiving is destructive); `KinEdit`
  * hides the control from an Auntie.
+ *
+ * #1493: the callable also writes the `ARCHIVE_KIN` / `RESTORE_KIN` Activity
+ * Log entry, once for every client, so this writes none of its own.
  */
 export async function setKinArchived(kinId: string, archived: boolean): Promise<SetKinArchivedResult> {
   const id = kinId.trim();
