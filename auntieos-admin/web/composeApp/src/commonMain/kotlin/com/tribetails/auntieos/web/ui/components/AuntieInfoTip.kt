@@ -12,6 +12,7 @@ import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Info
@@ -42,7 +43,10 @@ fun AuntieInfoTip(text: String, modifier: Modifier = Modifier) {
     ) {
         IconButton(
             onClick = { scope.launch { state.show() } },
-            modifier = Modifier.size(24.dp).testTag(AUNTIE_INFO_TIP_TAG),
+            // Keyboard reach: tabbing onto the icon opens the tip, tabbing off closes it.
+            modifier = Modifier.size(24.dp).testTag(AUNTIE_INFO_TIP_TAG).onFocusChanged {
+                if (it.isFocused) scope.launch { state.show() } else state.dismiss()
+            },
         ) {
             Icon(
                 imageVector = Lucide.Info,

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -95,10 +96,10 @@ fun DenScreenHeading(
                         color = c.primary,
                     )
                 }
-            }
-            if (subtitle != null) {
-                Spacer(Modifier.height(6.dp))
-                Text(subtitle, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                if (subtitle != null) {
+                    Spacer(Modifier.width(8.dp))
+                    AuntieInfoTip(subtitle)
+                }
             }
         }
         if (trailing != null) {
@@ -250,10 +251,12 @@ fun DenPanel(
                 },
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(title, style = AuntieTheme.typography.headlineSmall, color = c.textPrimary)
-                    if (subtitle != null) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(subtitle, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(title, style = AuntieTheme.typography.headlineSmall, color = c.textPrimary)
+                        if (subtitle != null) {
+                            Spacer(Modifier.width(6.dp))
+                            AuntieInfoTip(subtitle)
+                        }
                     }
                 }
                 if (trailing != null) trailing()
