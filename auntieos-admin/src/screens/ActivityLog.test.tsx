@@ -363,7 +363,8 @@ describe('ActivityLog against its mock', () => {
   });
   it('labels today and yesterday by name, the way the mock separates its days', () => {
     const today = new Date();
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
     const key = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     useCollection.mockReturnValue({
