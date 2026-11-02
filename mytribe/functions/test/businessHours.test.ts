@@ -113,12 +113,14 @@ describe('businessHoursForDayName', () => {
     expect(businessHoursForDayName({ Monday: '09:00 - 17:00' }, 'Monday')).toMatchObject({ kind: 'open' });
   });
 
-  it('treats a blank value and an absent key alike as closed', () => {
+  it('treats a present blank value as closed', () => {
     expect(businessHoursForDayName({ Monday: '' }, 'Monday')).toEqual({ kind: 'closed' });
-    expect(businessHoursForDayName({}, 'Monday')).toEqual({ kind: 'closed' });
-    expect(businessHoursForDayName(undefined, 'Monday')).toEqual({ kind: 'closed' });
   });
-
+  it('treats an absent key, or no map at all, as unknown rather than closed (#1424)', () => {
+    expect(businessHoursForDayName({}, 'Monday')).toEqual({ kind: 'unknown' });
+    expect(businessHoursForDayName({ Tuesday: '09:00-17:00' }, 'Monday')).toEqual({ kind: 'unknown' });
+    expect(businessHoursForDayName(undefined, 'Monday')).toEqual({ kind: 'unknown' });
+  });
   it('reports free text as unreadable rather than guessing', () => {
     expect(businessHoursForDayName({ Monday: 'by appointment' }, 'Monday')).toEqual({
       kind: 'unreadable',
@@ -232,6 +234,15 @@ describe('resolveBusinessOpen', () => {
     });
   });
 
+  it('FAILS OPEN on a weekday with no key and says it is uncertain (#1424)', () => {
+    const { Tuesday: _omitted, ...noTuesday } = LIVE_HOURS;
+    const settings = { ...LIVE, businessHours: noTuesday };
+    expect(resolveBusinessOpen(settings, THE_CALL_MS)).toMatchObject({
+      open: true,
+      reason: 'weekday-unknown',
+      uncertain: true,
+    });
+  });
   it('closes on a company holiday even during business hours', () => {
     const settings = { ...LIVE, companyHolidays: ['2026-08-11|Staff day'] };
     expect(resolveBusinessOpen(settings, THE_CALL_MS)).toMatchObject({
@@ -314,11 +325,11 @@ describe('resolveBusinessOpen', () => {
     });
   });
 
-  it('reports closed-day when the zone is fine but hours are entirely missing', () => {
+  it('fails open when the zone is fine but hours are entirely missing (#1424)', () => {
     expect(resolveBusinessOpen({ timeZone: 'America/Chicago' }, THE_CALL_MS)).toMatchObject({
-      open: false,
-      reason: 'closed-day',
-      uncertain: false,
+      open: true,
+      reason: 'weekday-unknown',
+      uncertain: true,
     });
   });
 
