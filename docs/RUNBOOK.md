@@ -18,6 +18,7 @@ Everything else that used to live here moved to `docs/runbooks/` on
 | `docs/runbooks/staff-accounts.md` | Adding an Owner or an Auntie |
 | `docs/runbooks/stripe.md` | Connecting Stripe |
 | `docs/runbooks/twilio-webhooks.md` | Activating the Twilio inbound webhooks |
+| `docs/runbooks/go-live.md` | The switches to flip at go-live: Stripe live keys first |
 | `docs/DECISIONS.md` | The operator rulings the code obeys |
 
 ---
