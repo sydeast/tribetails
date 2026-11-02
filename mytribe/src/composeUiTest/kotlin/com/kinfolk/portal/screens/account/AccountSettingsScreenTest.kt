@@ -56,6 +56,8 @@ class AccountSettingsScreenTest {
         onNodeWithText("Manage your family, home & vet → Tribe profile").assertDoesNotExist()
         onNodeWithText("Tribe profile", substring = true).assertDoesNotExist()
         onNodeWithText("Recovery Contacts").assertExists()
+        // #1469: web draws the household role name as the card title under the label.
+        onNodeWithText("Secondary Kinfolk").assertExists()
         onNodeWithText("Billing Details").assertExists()
         onNodeWithText("Sign Out").assertExists()
         onNodeWithText("n@x.com").assertExists()
