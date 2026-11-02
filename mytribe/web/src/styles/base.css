@@ -95,6 +95,11 @@ h2.sectlabel { font-weight: 400; }
 .sectlabel a.sect-head { margin-left: 0; color: inherit; font-weight: inherit; letter-spacing: inherit; display: inline-flex; align-items: center; gap: 6px; }
 .sectlabel a.sect-head:hover { color: var(--teal); }
 .sectlabel a.sect-head:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; border-radius: 4px; }
+/* #1462: Home's one-line Balance due cue, opening Invoices. */
+a.balance-due { display: flex; align-items: center; gap: 10px; padding: 16px 22px; color: inherit; text-decoration: none; }
+a.balance-due .label { flex: 1; font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--navy-muted); }
+a.balance-due b { font-family: var(--serif); font-size: 20px; font-weight: 400; }
+a.balance-due:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display: flex; align-items: center; gap: 8px; }
 .sub { color: var(--navy-muted); font-size: 13px; margin-top: 3px; }
 

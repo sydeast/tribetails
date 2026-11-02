@@ -152,7 +152,7 @@ describe('getMyHomeHandler', () => {
     // The fields legacy DOES decode must survive untouched. `payMethods`
     // (PR30) and `billingAccess` (#1005) are the additions since O-19 was pinned.
     expect(Object.keys(res).sort()).toEqual(
-      ['bannerDismissedByUser', 'billingAccess', 'businessLogoUrl', 'businessName', 'displayName', 'kinfolkId', 'payMethods', 'portal'].sort(),
+      ['balanceDueCents', 'bannerDismissedByUser', 'billingAccess', 'businessLogoUrl', 'businessName', 'displayName', 'kinfolkId', 'payMethods', 'portal'].sort(),
     );
   });
 

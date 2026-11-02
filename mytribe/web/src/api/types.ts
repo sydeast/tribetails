@@ -106,6 +106,13 @@ export interface GetMyHomeResult {
    * `billingAccessOf` (lib/billingAccess.ts), which treats absent as true.
    */
   billingAccess?: boolean;
+  /**
+   * #1462: what the household owes, in cents: the sum of its `open` invoices
+   * with a balance above zero (the `offersPayment` rule, summed on the server).
+   * 0 without billing access. Not the account credit. Optional because an older
+   * server does not send it; absent reads as 0, so Home draws no line.
+   */
+  balanceDueCents?: number;
 }
 
 // ── getMyBookings (functions/src/portal/getMyBookings.ts) ───────────────────

@@ -67,6 +67,8 @@ class PortalApi(
             payMethods = decodePayMethods(raw["payMethods"] as? JsonArray),
             // #1005: absent means an older server that gated nothing, so true.
             billingAccess = raw["billingAccess"]?.jsonPrimitive?.booleanOrNull ?: true,
+            // #1462: absent means an older server, which knows of nothing owed.
+            balanceDueCents = raw["balanceDueCents"]?.jsonPrimitive?.longOrNull ?: 0L,
         )
     }
 
@@ -2171,6 +2173,13 @@ data class MyHomeResult(
      * Defaults true so an older server never hides a household's bills.
      */
     val billingAccess: Boolean = true,
+    /**
+     * #1462: what the household owes, in cents: the sum of its `open` invoices
+     * with a balance above zero, summed on the server by the same rule the
+     * Invoices screen uses to offer payment. 0 without billing access, and 0
+     * from an older server that does not send it. Not the account credit.
+     */
+    val balanceDueCents: Long = 0L,
 )
 
 data class MyAccessResult(

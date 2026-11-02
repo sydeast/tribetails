@@ -9,6 +9,7 @@ import { refuseAuntie } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { payMethodSettingsFrom, resolveHomePayMethods, type PayMethod } from '../lib/paymentMethods';
+import { openBalanceCentsOf } from './getMyInvoices';
 
 interface GetMyHomeRequest {
   kinfolkId?: string;
@@ -98,6 +99,14 @@ interface GetMyHomeResult {
    * skewed deploy hides nothing from a household that has access.
    */
   billingAccess: boolean;
+  /**
+   * #1462: what the household owes, in cents: the sum of the balances of its
+   * `open` invoices with something due, the same per-invoice reading and rule
+   * the Invoices screen uses (`openBalanceCentsOf`). Home draws a Balance due
+   * line only when this is above zero. Always 0 without billing access. Not the
+   * account credit (`accountBalanceCents`). Clients decode a missing field as 0.
+   */
+  balanceDueCents: number;
 }
 
 /**
@@ -139,11 +148,15 @@ export async function getMyHomeHandler(
   // banner dismiss mode.
   // The billing answer joins the same batch: one member-doc read, asked after
   // the household resolved above, which `hasBillingAccess` requires.
-  const [familySnap, settingsSnap, clientSnap, billingAccess] = await Promise.all([
+  // #1462: the household's invoices ride the same batch so the Balance due
+  // figure adds no round trip to the landing read. They are summed only when
+  // the caller has billing access (below); otherwise nothing from them leaves.
+  const [familySnap, settingsSnap, clientSnap, billingAccess, invoiceSnap] = await Promise.all([
     firestore.collection('families').doc(kinfolkId).get(),
     firestore.collection('business_settings').doc('business_settings').get(),
     firestore.collection('clients').doc(uid).get(),
     hasBillingAccess(uid, kinfolkId, hasAdminClaim, 'getMyHome'),
+    firestore.collection('invoices').where('kinfolkId', '==', kinfolkId).get(),
   ]);
   let displayName = (familySnap.data()?.displayName as string | undefined) ?? null;
 
@@ -256,6 +269,11 @@ export async function getMyHomeHandler(
     ? resolveHomePayMethods(payMethodSettingsFrom(settings), { amountDue: 1 })
     : [];
 
+  // #1462: money owed is billing too, so 0 for a member without access.
+  const balanceDueCents = billingAccess
+    ? openBalanceCentsOf(invoiceSnap.docs.map((d) => d.data() as Record<string, unknown>))
+    : 0;
+
   logEvent({
     severity: 'info',
     function: 'getMyHome',
@@ -273,6 +291,7 @@ export async function getMyHomeHandler(
     bannerDismissedByUser,
     payMethods,
     billingAccess,
+    balanceDueCents,
   };
 }
 

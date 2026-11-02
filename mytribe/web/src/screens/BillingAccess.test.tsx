@@ -118,8 +118,12 @@ describe('PortalNav', () => {
 });
 
 describe('Home', () => {
-  function stubHomeReads(billingAccess: boolean | undefined) {
-    mocks.getMyHome.mockResolvedValue({ ...HOME_BASE, ...(billingAccess === undefined ? {} : { billingAccess }) });
+  function stubHomeReads(billingAccess: boolean | undefined, balanceDueCents?: number) {
+    mocks.getMyHome.mockResolvedValue({
+      ...HOME_BASE,
+      ...(billingAccess === undefined ? {} : { billingAccess }),
+      ...(balanceDueCents === undefined ? {} : { balanceDueCents }),
+    });
     mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
     mocks.getMyKinTales.mockResolvedValue({ tales: [] });
     mocks.getMyKin.mockResolvedValue({ kin: [] });
@@ -137,6 +141,40 @@ describe('Home', () => {
       expect(screen.queryByRole('link', { name: /View invoices/ })).toBeNull();
       view.unmount();
     }
+  });
+
+  // #1462: one Balance due line, only when money is owed, only with billing access.
+  it('shows Balance due, opening Invoices, when money is owed and the member has billing access', async () => {
+    for (const access of [true, undefined]) {
+      stubHomeReads(access, 4250);
+      const { Home } = await import('./Home');
+      const view = wrap(<Home />);
+      const line = await screen.findByRole('link', { name: /Balance due \$42\.50/ });
+      expect(line).toHaveAttribute('href', '/invoices');
+      view.unmount();
+    }
+  });
+
+  it('draws no Balance due when nothing is owed, or when an older server sends no figure', async () => {
+    for (const due of [0, undefined]) {
+      stubHomeReads(true, due);
+      const { Home } = await import('./Home');
+      const view = wrap(<Home />);
+      await screen.findByText('Nothing on the calendar yet.');
+      await screen.findByRole('heading', { level: 1, name: /in good hands/ });
+      expect(screen.queryByText(/Balance due/)).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it('draws no Balance due for a member without billing access, even with a figure', async () => {
+    stubHomeReads(false, 4250);
+    const { Home } = await import('./Home');
+    wrap(<Home />);
+    await screen.findByText('Nothing on the calendar yet.');
+    // The hero answering means `home` has resolved, so the gate has run.
+    await screen.findByRole('heading', { level: 1, name: /in good hands/ });
+    expect(screen.queryByText(/Balance due/)).toBeNull();
   });
 });
 

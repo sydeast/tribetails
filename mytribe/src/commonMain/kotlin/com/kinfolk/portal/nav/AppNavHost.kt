@@ -323,6 +323,12 @@ fun AppNavHost(
                             onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
                             onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
                             onBookVisit = { navController.navigate(BookingWizardRoute(startWeekly = false)) },
+                            // #1462: the Balance due line; null hides it for a member without billing access.
+                            onOpenInvoices = if (shellBillingAccess) {
+                                { navController.navigate(InvoicesRoute) { launchSingleTop = true } }
+                            } else {
+                                null
+                            },
                             handoff = scheduleHandoff,
                             onHandoffTaken = { scheduleHandoff = null },
                         )

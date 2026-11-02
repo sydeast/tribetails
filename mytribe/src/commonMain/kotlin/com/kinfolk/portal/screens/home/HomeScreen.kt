@@ -62,6 +62,7 @@ import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.bookingWhenLabel
+import com.kinfolk.portal.util.formatUsd
 import com.kinfolk.portal.util.relativeTime
 import kotlinx.coroutines.delay
 import kotlin.coroutines.cancellation.CancellationException
@@ -90,6 +91,11 @@ fun HomeScreen(
     /** #1329: a Recent KinTales card opens that tale. */
     onOpenKinTale: (String) -> Unit = {},
     onBookVisit: () -> Unit = {},
+    /**
+     * #1462: opens Invoices from the Balance due line. Null for a member
+     * without billing access: Home then neither reads the balance nor draws it.
+     */
+    onOpenInvoices: (() -> Unit)? = null,
     /** #1345: what the booking wizard leaves when it returns here. Taken once, then [onHandoffTaken] clears it. */
     handoff: ScheduleHandoff? = null,
     onHandoffTaken: () -> Unit = {},
@@ -110,6 +116,11 @@ fun HomeScreen(
     // LaunchedEffect below; nulling the data puts the section back into its
     // waiting state so the cue is visible while the retry runs.
     var bookingsReloadKey by remember { mutableStateOf(0) }
+    // #1462: what the household owes. Read fresh on every visit to Home (the
+    // shell's copy of getMyHome is loaded once per session, so it would still
+    // show a bill the household just paid). Null while the read runs.
+    var balanceDueCents by remember { mutableStateOf<Long?>(null) }
+    var balanceReloadKey by remember { mutableStateOf(0) }
 
     // Resolve the section layout from the operator config. Empty/absent config →
     // the canonical hardcoded order, every section enabled (today's behavior).
@@ -140,6 +151,18 @@ fun HomeScreen(
         if (notice != null) {
             delay(SAVE_NOTICE_MS)
             notice = null
+        }
+    }
+    LaunchedEffect(kinfolkId, onOpenInvoices != null, balanceReloadKey) {
+        if (onOpenInvoices == null) return@LaunchedEffect
+        balanceDueCents = try {
+            portalApi.getMyHome(kinfolkId).balanceDueCents
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            // Fails soft to no line: Invoices is still one tap away in the
+            // avatar menu, and a failed money cue must not read as "owes $0".
+            0L
         }
     }
     // Tales load independently and fail soft: a broken tales card never takes
@@ -179,6 +202,16 @@ fun HomeScreen(
             onOpenBooking = onOpenBooking,
             onReloadBookings = { data = null; bookingsReloadKey += 1 },
         )
+    }
+    val balanceDueSection: @Composable () -> Unit = {
+        val open = onOpenInvoices
+        if (open != null) {
+            BalanceDueLine(
+                cents = balanceDueCents,
+                onOpen = open,
+                onReload = { balanceDueCents = null; balanceReloadKey += 1 },
+            )
+        }
     }
     val talesSection: @Composable () -> Unit = {
         TalesSection(
@@ -232,6 +265,9 @@ fun HomeScreen(
             if (custom) {
                 // Operator order: liveVisit spans full width, everything else
                 // stacks in the configured order within the padded column.
+                // #1462: Balance due follows Up next, or goes last when Up next
+                // is switched off, the same as web.
+                val hasUpNext = layout.any { it.id == "upNext" }
                 layout.forEach { sec ->
                     val render = renderById(sec.id) ?: return@forEach
                     if (sec.id == "liveVisit") {
@@ -239,13 +275,23 @@ fun HomeScreen(
                     } else {
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
-                        ) { render() }
+                            verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
+                        ) {
+                            render()
+                            if (sec.id == "upNext") balanceDueSection()
+                        }
+                    }
+                }
+                if (!hasUpNext) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l)) {
+                        balanceDueSection()
                     }
                 }
             } else {
                 liveVisitSection()
                 val mainColumn: @Composable () -> Unit = {
                     upNextSection()
+                    balanceDueSection()
                     talesSection()
                 }
                 val asideColumn: @Composable () -> Unit = {
@@ -479,6 +525,37 @@ private fun QuickStartSection(onBookVisit: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             SectLabel("Quick start")
             KinButton("Book a visit", onClick = onBookVisit, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/**
+ * #1462: Home's one money cue. Drawn only when the household owes something;
+ * the whole line opens Invoices. While the read runs it shows the same loading
+ * cue as every other wait on Home.
+ */
+@Composable
+private fun BalanceDueLine(cents: Long?, onOpen: () -> Unit, onReload: () -> Unit) {
+    val type = LocalKinfolkTypography.current
+    when {
+        cents == null -> KinLoading(text = "Checking your balance\u2026", onSync = onReload)
+        cents <= 0L -> Unit
+        else -> GlassCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(KinfolkShapes.card)
+                .clickable(role = Role.Button, onClickLabel = "Open invoices", onClick = onOpen),
+            contentPadding = PaddingValues(horizontal = KinfolkSpacing.m, vertical = KinfolkSpacing.s),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+            ) {
+                Text("BALANCE DUE", style = type.sansMeta, modifier = Modifier.weight(1f))
+                Text(formatUsd(cents.toDouble() / 100.0), style = type.heritageTitle)
+                Text("\u203A", style = type.sansMeta, modifier = Modifier.clearAndSetSemantics {})
+            }
         }
     }
 }
