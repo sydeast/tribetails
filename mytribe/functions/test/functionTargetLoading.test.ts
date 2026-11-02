@@ -14,7 +14,9 @@ import { resolve } from 'node:path';
  * The runtime half runs the BUILT lib/index.js in a child node process,
  * because that is the artifact Cloud Run and the emulator load and because
  * FUNCTION_TARGET is read once at module load. CI runs `npm run build` before
- * `npm run test:ci`; locally, build first.
+ * `npm run test:ci`, and the root `npm run check` (release step 1) runs
+ * `build:functions` before `npm test` (#1401). Running vitest on its own, build
+ * first.
  */
 const ROOT = resolve(__dirname, '..');
 const SRC_INDEX = resolve(ROOT, 'src/index.ts');

@@ -37,7 +37,9 @@
 #                       compiles these values INTO the bundle, so after the
 #                       build it is too late: there is no server process to
 #                       inject them into later. See scripts/client-secrets.mjs.
-#   1. npm run check  - typecheck, lint, test, build. This is also what
+#   1. npm run check  - typecheck, lint, build the functions, test, build the
+#                       web apps. The functions build comes before the tests
+#                       because one suite loads lib/ (#1401). This is also what
 #                       produces the dist/ that step 5 uploads, so it is not
 #                       optional theatre: skipping it ships a stale bundle.
 #  1c. android build  - assemble BOTH signed release APKs (the AuntieOS
@@ -1389,7 +1391,7 @@ fi  # end of the summary/confirm guard skipped under RELEASE_PREFLIGHT_ONLY
 banner "0b. CI verdict for HEAD"
 
 # WHY THIS EXISTS
-# Step 1 runs `npm run check`: typecheck, lint, contracts:check, test, build. It
+# Step 1 runs `npm run check`: typecheck, lint, contracts:check, build, test. It
 # does NOT run `npm run e2e`, and never did. So the Playwright suite could not
 # stop a release no matter how red it was. That suite is the only thing in this
 # repo that drives the admin in a REAL browser, against the real

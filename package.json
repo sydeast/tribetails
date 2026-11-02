@@ -51,7 +51,7 @@
     "e2e:cy:admin": "npm --prefix auntieos-admin run e2e:cy",
     "e2e:cy:portal": "npm --prefix mytribe/web run e2e:cy",
 
-    "check": "npm run typecheck && npm run lint && npm run contracts:check && npm run seeds:check && npm test && npm run build",
+    "check": "npm run typecheck && npm run lint && npm run contracts:check && npm run seeds:check && npm run build:functions && npm test && npm run build:admin && npm run build:portal",
 
     "deploy": "bash scripts/release.sh",
     "deploy:bg": "bash scripts/release-bg.sh"
