@@ -1,1 +1,1 @@
-Tribe Tails: an Auntie added a note on {{kinName}}'s visit.
+{{Business}}: an Auntie added a note on {{kinName}}'s visit.

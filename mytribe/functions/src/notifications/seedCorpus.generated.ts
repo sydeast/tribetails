@@ -38,7 +38,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "{{kinName}}'s KinCare is yours",
     emailHeadline: "{{kinName}}'s KinCare is yours",
     emailContent: "<p>Good news: {{kinName}}'s {{serviceType}} just landed on your schedule. Here are the days:</p><ul>{{#each visits}}\n                <li>{{this.weekday}}, {{this.date}} at {{this.time}}</li>{{/each}}\n            </ul><p>Give the details a look so you're set before you head out.</p><p><a class=\"button\" href=\"{{portalUrl}}\">See your schedule</a></p>",
-    smsTxt: "Tribe Tails: {{kinName}}'s {{serviceType}} is yours, {{visitCount}} in all. First up {{nextVisit.weekday}} {{nextVisit.date}} at {{nextVisit.time}}. Every date: {{portalUrl}}\n",
+    smsTxt: "{{Business}}: {{kinName}}'s {{serviceType}} is yours, {{visitCount}} in all. First up {{nextVisit.weekday}} {{nextVisit.date}} at {{nextVisit.time}}. Every date: {{portalUrl}}\n",
     pushTxt: "New KinCare assigned. {{kinName}}'s {{serviceType}}, {{visitCount}} in all, starting {{nextVisit.weekday}} {{nextVisit.date}}. Tap for every date.\n",
   },
   {
@@ -46,7 +46,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Your KinCare assignment changed",
     emailHeadline: "Your KinCare assignment changed",
     emailContent: "<p>Heads up: the {{serviceType}} for {{kinName}} on {{bookingDate}} on your schedule was changed, reassigned, or canceled.</p><p>Check your schedule so nothing catches you off guard.</p><p><a class=\"button\" href=\"https://auntie.tribetails.com\">Check your schedule</a></p>",
-    smsTxt: "Tribe Tails: your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled.\n",
+    smsTxt: "{{Business}}: your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled.\n",
     pushTxt: "Assignment changed. Your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled. Tap to review.\n",
   },
   {
@@ -78,7 +78,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "An invite expired before it was accepted",
     emailHeadline: "An invite expired before it was accepted",
     emailContent: "<p>Heads up: the MyTribe invite you sent to {{invitedEmail}} expired before it was accepted.</p><p>If you still want them in the fold, you can send a fresh invite anytime.</p>",
-    smsTxt: "Tribe Tails: your invite to {{invitedEmail}} expired before it was accepted.\n",
+    smsTxt: "{{Business}}: your invite to {{invitedEmail}} expired before it was accepted.\n",
     pushTxt: "Invite expired. The invite to {{invitedEmail}} expired. Tap to resend.\n",
   },
   {
@@ -118,7 +118,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Card dispute update: {{disputeStatus}}",
     emailHeadline: "Card dispute update: {{disputeStatus}}",
     emailContent: "<p>{{disputeAmount}} on invoice {{invoiceNumber}} is being disputed through the cardholder's bank. Reason given: {{disputeReason}}.</p><blockquote><p>When a dispute opens, Stripe holds that money back out of the balance while the bank decides, and charges its dispute fee on top. A dispute that closes as won reinstates the funds. Check the status line above for where this one stands.</p></blockquote><p>The invoice still reads paid in AuntieOS. That is on purpose, and nothing has gone to the household about it. What happens to the money is your call once the bank rules.</p><p>If the status says needs_response, there is a deadline. Submit evidence in Stripe before it runs out, or the dispute closes as lost.</p>",
-    smsTxt: "Tribe Tails: {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Reason: {{disputeReason}}.\n",
+    smsTxt: "{{Business}}: {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Reason: {{disputeReason}}.\n",
     pushTxt: "Card dispute update. {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Tap to review.\n",
   },
   {
@@ -126,7 +126,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Card payment not applied: {{unappliedAmount}}",
     emailHeadline: "Card payment not applied",
     emailContent: "<p>A card payment of {{unappliedAmount}} came in for invoice {{invoiceNumber}}, but {{unappliedReason}}.</p><p>Nothing has been done with the money. It is not on the invoice and it is not on the household's account balance. The payment is recorded on the invoice as not applied.</p><p>Open the household in AuntieOS and go to Account credit, then Payments needing a decision. You can put some or all of it into account credit, apply it to another open invoice, or keep it as recorded. Account credit happens only when you enter an amount. There are no refunds.</p>",
-    smsTxt: "Tribe Tails: a card payment of {{unappliedAmount}} on invoice {{invoiceNumber}} was not applied because {{unappliedReason}}. Open the household in AuntieOS to decide.\n",
+    smsTxt: "{{Business}}: a card payment of {{unappliedAmount}} on invoice {{invoiceNumber}} was not applied because {{unappliedReason}}. Open the household in AuntieOS to decide.\n",
     pushTxt: "Card payment of {{unappliedAmount}} on invoice {{invoiceNumber}} was not applied. Tap to decide what it becomes.\n",
   },
   {
@@ -206,7 +206,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "A kinfolk asked to cancel a visit",
     emailHeadline: "A kinfolk asked to cancel a visit",
     emailContent: "<p>Heads up: {{kinfolkName}} asked to cancel the {{serviceType}} for {{kinName}} on {{bookingDate}}.</p><p>Nothing is canceled yet. Review the visit and confirm or keep it on the books.</p><p><a class=\"button\" href=\"https://auntie.tribetails.com\">Review the visit</a></p>",
-    smsTxt: "Tribe Tails: {{kinfolkName}} asked to cancel the {{serviceType}} for {{kinName}} on {{bookingDate}}.\n",
+    smsTxt: "{{Business}}: {{kinfolkName}} asked to cancel the {{serviceType}} for {{kinName}} on {{bookingDate}}.\n",
     pushTxt: "Cancellation ask. {{kinfolkName}} wants to cancel {{kinName}}'s {{serviceType}} on {{bookingDate}}. Tap to review.\n",
   },
   {
@@ -222,7 +222,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "An Auntie left a note on a visit",
     emailHeadline: "An Auntie left a note on a visit",
     emailContent: "<p>Quick one: an Auntie just added a note on {{kinName}}'s visit.</p><p>Have a read so the office stays in the loop.</p><p><a class=\"button\" href=\"https://auntie.tribetails.com\">Read the note</a></p>",
-    smsTxt: "Tribe Tails: an Auntie added a note on {{kinName}}'s visit.\n",
+    smsTxt: "{{Business}}: an Auntie added a note on {{kinName}}'s visit.\n",
     pushTxt: "New visit note. An Auntie left a note on {{kinName}}'s visit. Tap to read.\n",
   },
   {
@@ -230,7 +230,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "A Kinfolk left a note on a booking",
     emailHeadline: "A Kinfolk left a note on a booking",
     emailContent: "<p>Quick one: a new note just landed on {{kinName}}'s booking from the Kinfolk.</p><p>Have a read so you're set for the visit.</p>",
-    smsTxt: "Tribe Tails: a Kinfolk added a note on {{kinName}}'s booking.\n",
+    smsTxt: "{{Business}}: a Kinfolk added a note on {{kinName}}'s booking.\n",
     pushTxt: "New note on a booking. A Kinfolk left a note on {{kinName}}'s booking. Tap to read.\n",
   },
   {
@@ -254,7 +254,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "New care request just came in",
     emailHeadline: "New care request just came in",
     emailContent: "<p>Heads up: {{kinfolkName}} requested a {{serviceType}} for {{kinName}}.</p><p><strong>When:</strong> {{bookingDates}}</p><p>Take a look and confirm or adjust when you get a sec.</p>",
-    smsTxt: "Tribe Tails: new care request from {{kinfolkName}}, {{serviceType}} for {{kinName}}. {{bookingDates}}.\n",
+    smsTxt: "{{Business}}: new care request from {{kinfolkName}}, {{serviceType}} for {{kinName}}. {{bookingDates}}.\n",
     pushTxt: "New care request. {{kinfolkName}} requested a {{serviceType}}. {{bookingDates}}. Tap to review.\n",
   },
   {
@@ -262,7 +262,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "A kinfolk asked for a new visit time",
     emailHeadline: "A kinfolk asked for a new visit time",
     emailContent: "<p>Heads up: {{kinfolkName}} asked to move the {{serviceType}} for {{kinName}} that is currently set for {{bookingDate}} at {{bookingTime}}.</p><p>Nothing has moved yet. Open Bookings to accept the time they proposed or send them a reason it does not work.</p><p><a class=\"button\" href=\"https://auntie.tribetails.com\">Review the request</a></p>",
-    smsTxt: "Tribe Tails: {{kinfolkName}} asked to move the {{serviceType}} for {{kinName}} from {{bookingDate}} at {{bookingTime}}. Nothing has moved yet.\n",
+    smsTxt: "{{Business}}: {{kinfolkName}} asked to move the {{serviceType}} for {{kinName}} from {{bookingDate}} at {{bookingTime}}. Nothing has moved yet.\n",
     pushTxt: "New time asked for. {{kinfolkName}} wants to move {{kinName}}'s {{serviceType}} from {{bookingDate}} at {{bookingTime}}. Tap to review.\n",
   },
   {
@@ -318,7 +318,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "New message from {{kinfolkName}}",
     emailHeadline: "New message from {{kinfolkName}}",
     emailContent: "<p>{{kinfolkName}} just sent you a message:</p><p>\"{{preview}}\"</p><p>Hop into the inbox to reply.</p><p><a class=\"button\" href=\"https://auntie.tribetails.com\">Open the inbox</a></p>",
-    smsTxt: "Tribe Tails: new message from {{kinfolkName}}: \"{{preview}}\".\n",
+    smsTxt: "{{Business}}: new message from {{kinfolkName}}: \"{{preview}}\".\n",
     pushTxt: "New message. {{kinfolkName}} wrote to you. Tap to read and reply.\n",
   },
   {
@@ -334,7 +334,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "A Kin was marked inactive",
     emailHeadline: "A Kin was marked inactive",
     emailContent: "<p>Quick records note: {{kinName}} was just marked inactive. I've updated the file so they won't show on active rosters.</p><p>Nothing to do unless this looks off, in which case you can flip it back anytime.</p>",
-    smsTxt: "Tribe Tails: {{kinName}} was marked inactive and the file is updated.\n",
+    smsTxt: "{{Business}}: {{kinName}} was marked inactive and the file is updated.\n",
     pushTxt: "Kin marked inactive. {{kinName}} was set to inactive. Tap to review.\n",
   },
   {
@@ -366,7 +366,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "A quote was declined",
     emailHeadline: "A quote was declined",
     emailContent: "<p>Heads up: {{actorName}} just declined one of your quotes.</p><p>Might be worth a quick follow-up to see if there's another way to help.</p>",
-    smsTxt: "Tribe Tails: {{actorName}} declined a quote.\n",
+    smsTxt: "{{Business}}: {{actorName}} declined a quote.\n",
     pushTxt: "Quote declined. {{actorName}} turned down a quote. Tap to review and follow up.\n",
   },
   {
@@ -374,7 +374,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "A tough rating just came in",
     emailHeadline: "A tough rating just came in",
     emailContent: "<p>Heads up, and take a breath first: a Kinfolk left a {{score}}-star rating. Those sting, but they're also where the real growth lives.</p><p>Have a look when you're ready, then reach out to make it right. You've got this.</p>",
-    smsTxt: "Tribe Tails: a {{score}}-star rating just came in.\n",
+    smsTxt: "{{Business}}: a {{score}}-star rating just came in.\n",
     pushTxt: "A tough rating came in. A Kinfolk left a {{score}}-star rating. Tap to review and make it right.\n",
   },
   {
@@ -382,7 +382,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Somebody loves what you do",
     emailHeadline: "Somebody loves what you do",
     emailContent: "<p>Good news to start the day: a Kinfolk just left you a {{score}}-star rating. That's the trust you've earned by showing up.</p><p>Soak it in for a second, then maybe save it for the harder days.</p>",
-    smsTxt: "Tribe Tails: a {{score}}-star rating just came in.\n",
+    smsTxt: "{{Business}}: a {{score}}-star rating just came in.\n",
     pushTxt: "A glowing rating came in. A Kinfolk left you a {{score}}-star rating. Tap to see it.\n",
   },
   {
@@ -390,7 +390,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Your week ahead",
     emailHeadline: "Your week ahead",
     emailContent: "<p>Good morning. You've got {{count}} visits on the calendar coming up.</p><p>Here's the rundown so you can plan your routes and your day.</p>",
-    smsTxt: "Tribe Tails: you've got {{count}} visits coming up.\n",
+    smsTxt: "{{Business}}: you've got {{count}} visits coming up.\n",
     pushTxt: "Your week ahead. {{count}} visits are on the calendar. Tap to see your schedule.\n",
   },
   {
@@ -398,7 +398,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Account locked: {{kinfolkName}} ({{kinfolkEmail}})",
     emailHeadline: "Account locked: {{kinfolkName}} ({{kinfolkEmail}})",
     emailContent: "<p>A kinfolk account just locked after 10 failed sign-in attempts in 20 minutes.</p><blockquote><p><strong>Household:</strong> {{kinfolkName}}</p><p><strong>Account email:</strong> {{kinfolkEmail}}</p></blockquote><p>The lock clears by itself after 30 minutes, or as soon as they reset their password. You do not need to unlock it.</p><p>If the household did not cause this, someone may be guessing their password. Check with them, and look at the failed sign-ins in the Activity Log for the IP they came from.</p>",
-    smsTxt: "Tribe Tails SECURITY: {{kinfolkName}} ({{kinfolkEmail}}) locked after 10 failed sign-ins. Clears in 30 min or on a password reset. Check it was them.\n",
+    smsTxt: "{{Business}} SECURITY: {{kinfolkName}} ({{kinfolkEmail}}) locked after 10 failed sign-ins. Clears in 30 min or on a password reset. Check it was them.\n",
     pushTxt: "Kinfolk account locked. {{kinfolkName}} ({{kinfolkEmail}}) hit 10 failed sign-ins. Check whether it was them.\n",
   },
   {
@@ -406,7 +406,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "{{lockedAccounts}} kinfolk accounts locked in {{windowMinutes}} minutes",
     emailHeadline: "{{lockedAccounts}} kinfolk accounts locked in {{windowMinutes}} minutes",
     emailContent: "<p>{{lockedAccounts}} different kinfolk accounts have locked after failed sign-ins within {{windowMinutes}} minutes.</p><blockquote><p>You got a separate alert for each lock, naming the household. One household locking itself happens; several at once usually means someone is trying passwords across accounts.</p></blockquote><p>Look at the failed sign-ins in the Activity Log for an IP the locks share, and check with the households. Each lock clears by itself after 30 minutes, or when the household resets their password.</p><p>You will not get another of these for the next {{windowMinutes}} minutes, even if more accounts lock.</p>",
-    smsTxt: "Tribe Tails SECURITY: {{lockedAccounts}} kinfolk accounts locked within {{windowMinutes}} min. Possible password guessing across accounts. Check the Activity Log.\n",
+    smsTxt: "{{Business}} SECURITY: {{lockedAccounts}} kinfolk accounts locked within {{windowMinutes}} min. Possible password guessing across accounts. Check the Activity Log.\n",
     pushTxt: "Several accounts locked. {{lockedAccounts}} kinfolk accounts locked within {{windowMinutes}} minutes. Check the Activity Log for a shared IP.\n",
   },
   {
@@ -414,7 +414,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Security alert: an unrequested password reset was completed",
     emailHeadline: "Security alert: an unrequested password reset was completed",
     emailContent: "<p>This one needs your eyes. {{kinfolkEmail}} received a password reset email they did not request, went through the secure-reset flow, and set a new password. This alert fired automatically and the incident is logged.</p><p>Here is exactly what I recorded:</p><blockquote><p><strong>Kinfolk email:</strong> {{kinfolkEmail}}</p><p><strong>Reset completed:</strong> {{timestampIso}}</p><p><strong>IP address:</strong> {{ip}}</p><p><strong>Device:</strong> {{userAgent}}</p><p><strong>Incident record:</strong> securityIncidents/{{incidentId}}</p></blockquote><p>Please look into who started that reset. If you see repeated attempts from the same IP, consider blocking it and reaching out to the Kinfolk directly to confirm they are safe.</p>",
-    smsTxt: "Tribe Tails SECURITY: {{kinfolkEmail}} completed an unrequested password reset. IP {{ip}}. Incident securityIncidents/{{incidentId}}. Investigate now.\n",
+    smsTxt: "{{Business}} SECURITY: {{kinfolkEmail}} completed an unrequested password reset. IP {{ip}}. Incident securityIncidents/{{incidentId}}. Investigate now.\n",
     pushTxt: "Security alert: unrequested reset. {{kinfolkEmail}} completed a reset they didn't request. Review securityIncidents/{{incidentId}} now.\n",
   },
   {
@@ -422,7 +422,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Security alert: a staff account flagged a password reset it did not ask for",
     emailHeadline: "Security alert: a staff account flagged a password reset it did not ask for",
     emailContent: "<p>A staff account said it did not ask for a password reset, then set a new password on the secure-reset page. The incident is logged.</p><blockquote><p><strong>Staff account:</strong> {{staffEmail}}</p><p><strong>Reset completed:</strong> {{timestampIso}}</p><p><strong>IP address:</strong> {{ip}}</p><p><strong>Device:</strong> {{userAgent}}</p><p><strong>Incident record:</strong> securityIncidents/{{incidentId}}</p></blockquote><p>Someone may have tried to take over an admin account. Confirm with the account holder that they made this change, and check the Activity Log for other sign-ins from that IP.</p>",
-    smsTxt: "Tribe Tails SECURITY: staff account {{staffEmail}} flagged an unrequested password reset and set a new password. Incident securityIncidents/{{incidentId}}. Check it now.\n",
+    smsTxt: "{{Business}} SECURITY: staff account {{staffEmail}} flagged an unrequested password reset and set a new password. Incident securityIncidents/{{incidentId}}. Check it now.\n",
     pushTxt: "Staff account flagged an unrequested reset. {{staffEmail}} set a new password after a reset they did not ask for. Review securityIncidents/{{incidentId}} now.\n",
   },
   {
@@ -430,7 +430,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Failed sign-ins: {{kinfolkName}} ({{kinfolkEmail}})",
     emailHeadline: "Failed sign-ins: {{kinfolkName}} ({{kinfolkEmail}})",
     emailContent: "<p>A kinfolk account has had {{attemptsInWindow}} failed sign-in attempts in the last 10 minutes.</p><blockquote><p><strong>Household:</strong> {{kinfolkName}}</p><p><strong>Account email:</strong> {{kinfolkEmail}}</p></blockquote><p>The account is not locked. It locks for 30 minutes at 10 failed attempts in 20 minutes, and you will get a separate alert if that happens.</p><p>If the household is not having trouble signing in, someone may be guessing their password. Check with them, and look at the failed sign-ins in the Activity Log for the IP they came from.</p>",
-    smsTxt: "Tribe Tails SECURITY: {{attemptsInWindow}} failed sign-ins in 10 min on {{kinfolkName}} ({{kinfolkEmail}}). Not locked yet, locks at 10. Check it was them.\n",
+    smsTxt: "{{Business}} SECURITY: {{attemptsInWindow}} failed sign-ins in 10 min on {{kinfolkName}} ({{kinfolkEmail}}). Not locked yet, locks at 10. Check it was them.\n",
     pushTxt: "Failed sign-ins on a kinfolk account. {{kinfolkName}} ({{kinfolkEmail}}) has {{attemptsInWindow}} in 10 minutes. Not locked yet. Check whether it was them.\n",
   },
   {
@@ -438,7 +438,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     emailSubject: "Sign-in protection paused: {{kinfolkName}} ({{kinfolkEmail}})",
     emailHeadline: "Sign-in protection paused: {{kinfolkName}} ({{kinfolkEmail}})",
     emailContent: "<p>Failed sign-ins on a kinfolk account have hit the daily limit of {{reportLimit}} reports.</p><blockquote><p><strong>Household:</strong> {{kinfolkName}}</p><p><strong>Account email:</strong> {{kinfolkEmail}}</p></blockquote><p>For the next 24 hours, more failed sign-ins on this account are not counted. The household gets no warning and the account does not lock, even if someone keeps guessing.</p><p>Reports sent slowly enough never trigger the 5-failure warning, so this can be the first sign that someone is working on this account. Check with the household, and look at the failed sign-ins in the Activity Log for the IPs they came from.</p>",
-    smsTxt: "Tribe Tails SECURITY: {{kinfolkName}} ({{kinfolkEmail}}) hit {{reportLimit}} failed sign-in reports today. No warning or lock for 24h. Check the Activity Log.\n",
+    smsTxt: "{{Business}} SECURITY: {{kinfolkName}} ({{kinfolkEmail}}) hit {{reportLimit}} failed sign-in reports today. No warning or lock for 24h. Check the Activity Log.\n",
     pushTxt: "Sign-in protection paused. {{kinfolkName}} ({{kinfolkEmail}}) hit {{reportLimit}} failed sign-in reports today. No warning or lock for 24 hours.\n",
   },
   {
