@@ -11,6 +11,7 @@ import { Banner } from '../components/Banner';
 import { BreedField } from '../components/BreedField';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
+import { useAdminAccess } from '../lib/access';
 import './KinEdit.css';
 
 interface KinEditProps {
@@ -240,6 +241,8 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   }
 
   const busy = saving || archiving;
+  const access = useAdminAccess();
+  const isOwner = access?.status === 'admin';
 
   return (
     <div className="screen">
@@ -376,17 +379,21 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
               </DenPanel>
 
               <div className="kedit__actions">
-                <GhostButton
-                  label={
-                    archiving
-                      ? 'Updating…'
-                      : form.status === 'archived'
-                        ? 'Restore'
-                        : 'Archive'
-                  }
-                  onClick={() => void handleArchiveToggle()}
-                  disabled={busy}
-                />
+                {/* #1492: owner-only on the server (archiving is destructive),
+                    so an Auntie is not offered a control that would refuse her. */}
+                {isOwner && (
+                  <GhostButton
+                    label={
+                      archiving
+                        ? 'Updating…'
+                        : form.status === 'archived'
+                          ? 'Restore'
+                          : 'Archive'
+                    }
+                    onClick={() => void handleArchiveToggle()}
+                    disabled={busy}
+                  />
+                )}
                 <div className="kedit__actions-right">
                   <GhostButton label="Cancel" onClick={onCancel} disabled={busy} />
                   <PrimaryButton

@@ -33,6 +33,9 @@ vi.mock('../api/breeds', async (orig) => ({
   useBreedBanks: () => ({ banks: breedBanks.current, loading: false, failed: breedsFailed.current }),
 }));
 
+// #1492: the Archive / Restore control is owner-only, like the server callable.
+const access = vi.hoisted(() => ({ current: { status: 'admin' } as { status: string } | null }));
+vi.mock('../lib/access', () => ({ useAdminAccess: () => access.current }));
 import { KinEdit } from './KinEdit';
 import { mergeKinDetail } from '../api/kinView';
 
@@ -44,6 +47,7 @@ beforeEach(() => {
   getKin.mockReset();
   updateKin.mockReset();
   setKinArchived.mockReset();
+  access.current = { status: 'admin' };
   breedBanks.current = { dogBreeds: ['Border Collie', 'Boxer'], catBreeds: ['Bengal'] };
   breedsFailed.current = false;
 });
@@ -156,6 +160,15 @@ describe('KinEdit', () => {
     expect(await screen.findByText('Willow is active again.')).toBeInTheDocument();
   });
 
+  it('#1492: an Auntie is not offered Archive or Restore (owner-only on the server)', async () => {
+    access.current = { status: 'caretaker' };
+    getKin.mockResolvedValue(kin({ status: 'active' }));
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    expect(screen.queryByRole('button', { name: /^archive$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /restore/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+  });
   it('shows Restore (not Archive) for an already-archived pet', async () => {
     getKin.mockResolvedValue(kin({ status: 'archived' }));
     render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);

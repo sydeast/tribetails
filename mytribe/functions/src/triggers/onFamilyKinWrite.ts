@@ -38,6 +38,11 @@ type KinDoc = {
    * Kin at the household's request. Its arrival is the office's own decision.
    */
   removalRequestId?: string;
+  /**
+   * #1492: stamped fresh by the admin's Archive / Restore
+   * (`admin/kinArchive.ts`) on every write it makes to this copy.
+   */
+  officeStatusWriteId?: string;
 };
 
 /**
@@ -51,6 +56,16 @@ export function isRemovalArchiveWrite(before: KinDoc | undefined, after: KinDoc)
     && after.removalRequestId !== before?.removalRequestId;
 }
 
+/**
+ * #1492. True on a write the admin's Archive / Restore made: its stamp is new
+ * on this write. A later household write leaves the stamp as it was, so it
+ * reads false and the household's own change still notifies.
+ */
+export function isOfficeStatusWrite(before: KinDoc | undefined, after: KinDoc): boolean {
+  return typeof after.officeStatusWriteId === 'string'
+    && after.officeStatusWriteId !== ''
+    && after.officeStatusWriteId !== before?.officeStatusWriteId;
+}
 /** #1370: flat-doc fields the admin `Kin` models decode as non-null `String`. */
 export const FLAT_NON_NULL_TEXT_FIELDS: readonly string[] = ['name', 'species', 'breed'];
 
@@ -332,6 +347,17 @@ export const onFamilyKinWrite = onDocumentWritten(
           function: 'onFamilyKinWrite',
           event: 'pet.marked.inactive.suppressed.removal-archive',
           extra: { kinfolkId, kinId, removalRequestId: after.removalRequestId },
+        });
+        return;
+      }
+      // #1492: the office archived it from the admin; "Kinfolk marked a pet
+      // as inactive" would tell the office about its own decision.
+      if (isOfficeStatusWrite(before, after)) {
+        logEvent({
+          severity: 'debug',
+          function: 'onFamilyKinWrite',
+          event: 'pet.marked.inactive.suppressed.office-archive',
+          extra: { kinfolkId, kinId },
         });
         return;
       }

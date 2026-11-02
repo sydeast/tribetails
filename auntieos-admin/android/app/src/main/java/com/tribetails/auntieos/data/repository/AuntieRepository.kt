@@ -729,6 +729,27 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to update kin $documentId", it) }
 
     /**
+     * #1492. Archive or restore a pet through the `setKinArchived` callable,
+     * which writes BOTH copies of the Kin in one transaction: this flat
+     * `kin/{id}` doc and the household's `families/{kinfolkId}/kin/{kinId}`
+     * copy the portal roster reads. A direct write of `status` here (the old
+     * path, through [updateKinFields]) never reached the household, because
+     * status does not travel flat to family. Owner-only on the server.
+     *
+     * Returns the status now on the flat doc (`archived`, `active`, or
+     * `inactive` when a restore puts a household's memorial back).
+     */
+    suspend fun setKinArchived(kinId: String, archived: Boolean): Result<String> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(kinId.isNotBlank()) { "setKinArchived needs a kin document id" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("setKinArchived")
+            .call(mapOf("kinId" to kinId.trim(), "archived" to archived))
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("setKinArchived: non-map payload")
+        raw["flatStatus"] as? String ?: if (archived) "archived" else "active"
+    }.onFailure { AuntieLog.e("Failed to set kin $kinId archived=$archived", it) }
+    /**
      * Additively stamps the MyTribe mirror FK (kinfolkId + familyKinPath) onto a
      * flat kin/{kinId} doc. No-op when the pet has no known kinfolk. Used by
      * createKin/updateKin so onFlatKinWrite can mirror staff pets into the family
