@@ -1165,18 +1165,25 @@ export async function requestBookingHandler(
       visits: visits.map((v) => (v.kind === 'timed' ? v : { dateIso: v.requestedDate })),
     });
     // #1382: the weekly business hours, the same rule (and sentences) a
-    // reschedule meets. Timed visits only: a night awaiting its start (#1098)
-    // has no clock time yet, and the operator sets it. Every visit of a series
-    // is checked and the request names the first bad date.
+    // reschedule meets. Every visit of a series is checked and the request
+    // names the first bad date.
+    // #1406 (ruling on #1301: block every type): a night awaiting its start
+    // (#1098) is checked by its requested DATE, like the holiday guard above.
+    // A night on a weekday with no hours at all is refused; on an open day it
+    // gets no clock check, since the operator sets the start.
     assertWeeklyHoursForVisits(
       settings,
       timeZone,
       policy,
-      timedVisits.map((v) => ({
-        startTimeMs: v.startTimeMs,
-        timeBlockId: resolvedBlocks[visits.indexOf(v)]?.timeBlockId ?? null,
-        serviceId: v.serviceId,
-      })),
+      visits.map((v, idx) =>
+        v.kind === 'timed'
+          ? {
+              startTimeMs: v.startTimeMs,
+              timeBlockId: resolvedBlocks[idx]?.timeBlockId ?? null,
+              serviceId: v.serviceId,
+            }
+          : { requestedDate: v.requestedDate, serviceId: v.serviceId },
+      ),
     );
 
     // #644: the caller's key IS the envelope id when it sent one. Without one
