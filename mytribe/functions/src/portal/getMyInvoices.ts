@@ -632,6 +632,26 @@ export function statusFromStamp(data: Record<string, unknown>): { status: Status
   return { status: 'open', stamped: false };
 }
 
+/**
+ * #1462: what the household owes right now, in CENTS, for Home's Balance due
+ * line. Each invoice is read exactly the way this callable reads it for the
+ * Invoices screen (`statusFromStamp`, then `amountDueCentsOf` on the doc's own
+ * `paidCents`), and an invoice counts under the rule the portals use to offer
+ * payment (`offersPayment` in mytribe/web/src/lib/invoiceFormat.ts): status
+ * `open` and a balance above zero. Paid, cancelled, credit, draft and quote
+ * invoices add nothing. This is NOT the account credit (`accountBalanceCents`),
+ * which is money the office holds for the household.
+ */
+export function openBalanceCentsOf(docs: ReadonlyArray<Record<string, unknown>>): number {
+  let sum = 0;
+  for (const data of docs) {
+    if (statusFromStamp(data).status !== 'open') continue;
+    const due = amountDueCentsOf(data, integerCentsFrom(data['paidCents']));
+    if (due > 0) sum += due;
+  }
+  return sum;
+}
+
 /** The stamp's stored edit scope, or null when the doc carries none. */
 function editScopeFrom(raw: unknown): InvoiceEditScope | null {
   return raw === 'all' || raw === 'metadataOnly' || raw === 'none' ? raw : null;

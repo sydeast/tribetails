@@ -11,6 +11,8 @@ import { PortalNav } from '../components/PortalNav';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
+import { billingAccessOf } from '../lib/billingAccess';
+import { formatCentsUsd } from '../lib/invoiceFormat';
 import { usePortalIdentity } from '../lib/identity';
 import {
   auntieName,
@@ -231,6 +233,19 @@ export function Home() {
             </section>
           );
 
+          // #1462 (mobile map, #1295): with View invoices gone from Quick
+          // Start, money owed gets one cue here, only when something is owed
+          // and only for a member with billing access. It rides `home`, whose
+          // wait the hero's spinner already shows, so it has no cue of its own.
+          const balanceDueCents = home.data?.balanceDueCents ?? 0;
+          const balanceDueSection =
+            homeView.kind === 'data' && billingAccessOf(home.data) && balanceDueCents > 0 ? (
+              <Link className="glass card balance-due" to="/invoices">
+                <span className="label">Balance due</span> <b>{formatCentsUsd(balanceDueCents)}</b>
+                <span aria-hidden="true">&rsaquo;</span>
+              </Link>
+            ) : null;
+
           const talesSection = (
             <section className="glass card d3">
               <h2 className="sectlabel">
@@ -293,6 +308,9 @@ export function Home() {
           // order can't be meaningfully forced into two fixed columns) —
           // matches HomeScreen.kt's `custom` branch.
           if (custom) {
+            // The Balance due line follows Up next; with Up next switched off
+            // it goes last, so a configured layout never hides money owed.
+            const hasUpNext = layout.some((s) => s.id === 'upNext');
             return (
               <>
                 {layout.map((sec) => {
@@ -303,9 +321,11 @@ export function Home() {
                   ) : (
                     <div className="stack" key={sec.id}>
                       {el}
+                      {sec.id === 'upNext' && balanceDueSection}
                     </div>
                   );
                 })}
+                {!hasUpNext && balanceDueSection && <div className="stack">{balanceDueSection}</div>}
               </>
             );
           }
@@ -325,6 +345,7 @@ export function Home() {
                 </div>
                 <div className="stack">
                   {upNextSection}
+                  {balanceDueSection}
                   {talesSection}
                 </div>
               </div>

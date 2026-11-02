@@ -1090,6 +1090,9 @@ One helper answers it, `hasBillingAccess` / `requireBillingAccess` in
   show nothing.
 - `getMyHome`: never refuses on billing. It answers `billingAccess: boolean`
   and sends `payMethods: []` when false. Clients read a missing field as true.
+  `balanceDueCents` (#1462) is the sum of the household's `open` invoices with
+  a balance above zero, in cents, and is 0 when `billingAccess` is false.
+  Clients read a missing field as 0.
 - `getAccountCreditHistory`: unchanged gate, now through the same helper.
 - `payInvoice`, `redeemCredit`, `acceptQuote`/`denyQuote` and the four card
   callables take the same billing access (operator ruling 2026-09-28,
