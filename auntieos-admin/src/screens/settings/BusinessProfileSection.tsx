@@ -9,7 +9,7 @@ import {
   isUsableTimeZone,
   timeZoneOptions,
 } from '../../lib/businessOperations';
-import { BUSINESS_PROFILE_FIELDS, type StringFieldKey } from './sections';
+import { BUSINESS_PROFILE_FIELDS, FieldErrorNote, textFieldErrors, type StringFieldKey } from './sections';
 import '../SettingsEdit.css';
 
 /**
@@ -64,6 +64,11 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
   const fieldsDirty = BUSINESS_PROFILE_FIELDS.some((f) => (draft.values[f.key] ?? '') !== data[f.key]);
   const zoneDirty = draft.timeZone !== data.timeZone;
   const dirty = fieldsDirty || zoneDirty;
+  // #1410: a field whose value the rules would refuse (the privacy policy link)
+  // blocks the whole panel's Save the way an unusable zone does, with the
+  // reason beside the field.
+  const fieldErrors = textFieldErrors(BUSINESS_PROFILE_FIELDS, draft.values);
+  const fieldsValid = Object.keys(fieldErrors).length === 0;
 
   function updateField(key: StringFieldKey, next: string) {
     setDraft((d) => ({ ...d, values: { ...d.values, [key]: next } }));
@@ -76,7 +81,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
   }
 
   async function handleSave() {
-    if (!dirty || busy || !usable) return;
+    if (!dirty || busy || !usable || !fieldsValid) return;
     setBusy(true);
     setError(null);
     const textPatch: Partial<Pick<BusinessSettings, StringFieldKey>> = {};
@@ -122,6 +127,9 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
                 disabled={busy}
                 onChange={(e) => updateField(f.key, e.target.value)}
                 {...(f.hint ? { 'aria-describedby': `${f.key}-hint` } : {})}
+                {...(fieldErrors[f.key] !== undefined
+                  ? { 'aria-invalid': true, 'aria-errormessage': `${f.key}-error` }
+                  : {})}
               />
             </label>
             {f.hint ? (
@@ -129,6 +137,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
                 {f.hint}
               </span>
             ) : null}
+            <FieldErrorNote fieldKey={f.key} message={fieldErrors[f.key]} />
           </div>
         ))}
       </div>
@@ -176,7 +185,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save'}
           onClick={() => void handleSave()}
-          disabled={!dirty || busy || !usable}
+          disabled={!dirty || busy || !usable || !fieldsValid}
           busy={busy}
         />
         {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}

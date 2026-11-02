@@ -119,6 +119,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   businessEmail: '',
   businessPhone: '',
   businessAddress: '',
+  privacyPolicyUrl: '',
   timeZone: 'America/New_York',
   serviceRates: {},
   serviceDurations: {},
@@ -516,11 +517,13 @@ describe('Settings — Business profile editor', () => {
     // renders, and it renders that one since mark 16 moved it here.
     // `timeZone` rides along too: issue #709 folded it into this panel, so it
     // is one of the fields this Save carries, unchanged from what loaded.
+    // `privacyPolicyUrl` (#1410) rides along the same way, blank until set.
     expect(saveBusinessSettings).toHaveBeenCalledWith({
       businessName: 'New Name',
       businessEmail: '',
       businessPhone: '',
       businessAddress: '',
+      privacyPolicyUrl: '',
       weatherLocation: '',
       timeZone: 'America/New_York',
     });

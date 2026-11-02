@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.UserProfile
@@ -97,6 +98,7 @@ class AccountSettingsScreenTest {
             businessEmail = "hello@tribetails.com",
             businessPhone = "555-0199",
             businessAddress = "100 Creekside Ln",
+            privacyPolicyUrl = "https://example.com/privacy",
             weatherLocation = "Austin, TX",
         )
         composeRule.setContent {
@@ -106,7 +108,7 @@ class AccountSettingsScreenTest {
         }
         composeRule.waitForIdle()
 
-        for (label in listOf("Business name", "Email", "Phone", "Address", "Weather area")) {
+        for (label in listOf("Business name", "Email", "Phone", "Address", "Privacy policy link", "Weather area")) {
             composeRule.onNodeWithContentDescription(label).assertIsDisplayed()
         }
         // Nothing typed yet, so there is nothing to save.
@@ -124,6 +126,41 @@ class AccountSettingsScreenTest {
         assertEquals("Tribe Tails Pet Care", saved?.businessName)
         assertEquals("hello@tribetails.com", saved?.businessEmail)
         assertEquals("100 Creekside Ln", saved?.businessAddress)
+        assertEquals("https://example.com/privacy", saved?.privacyPolicyUrl)
         assertEquals("Austin, TX", saved?.weatherLocation)
+    }
+
+    /**
+     * #1410: a link the rules would refuse keeps Save off and says why beside the
+     * field; a full https link saves, trimmed, with every other field untouched.
+     */
+    @Test
+    fun businessProfileRefusesANonHttpsPrivacyPolicyLinkAndSavesAnHttpsOne() {
+        var saved: BusinessSettings? = null
+        val settings = BusinessSettings(businessName = "Tribe Tails Pet Care", businessPhone = "555-0199")
+        composeRule.setContent {
+            AuntieOSTheme {
+                BusinessProfilePanel(settings = settings, onSave = { saved = it })
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("Privacy policy link").performTextInput("http://example.com/privacy")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Enter a full https:// link.").assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+        assertNull(saved)
+
+        composeRule.onNodeWithContentDescription("Privacy policy link").performTextClearance()
+        composeRule.onNodeWithContentDescription("Privacy policy link").performTextInput(" https://example.com/privacy ")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Enter a full https:// link.").assertDoesNotExist()
+        composeRule.onNodeWithText("Save").assertIsEnabled()
+        composeRule.onNodeWithText("Save").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals("https://example.com/privacy", saved?.privacyPolicyUrl)
+        assertEquals("Tribe Tails Pet Care", saved?.businessName)
+        assertEquals("555-0199", saved?.businessPhone)
     }
 }

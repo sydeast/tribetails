@@ -10,6 +10,14 @@
   margin: 0;
 }
 
+/* #1410: the refusal under a field whose value Save will not write (the
+   privacy policy link). A state line, not a hint: it appears only while the
+   typed value is one the rules would refuse. */
+.settingsEdit__fieldError {
+  color: var(--color-error);
+  margin: 0;
+}
+
 /* Read-only value shown inside an otherwise-editable panel (the MyTribe Home
    layout's live "N of M sections shown" summary, above its editable rows). */
 .settingsEdit__readonlyValue {

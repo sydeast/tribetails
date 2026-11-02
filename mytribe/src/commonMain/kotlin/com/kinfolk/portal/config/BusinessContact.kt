@@ -14,4 +14,10 @@ data class BusinessContact(
     val email: String = "",
     val phone: String = "",
     val address: String = "",
+    /**
+     * #1410: the operator's privacy policy link, blank until one is set. The
+     * server hands out only a plain https URL, so a screen may open it as is;
+     * while blank the link is omitted, like the buttons above.
+     */
+    val privacyPolicyUrl: String = "",
 )

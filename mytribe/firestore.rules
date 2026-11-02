@@ -358,6 +358,19 @@ service cloud.firestore {
       return !bsHas(field)
              || (request.resource.data[field] is list && request.resource.data[field].size() <= maxLen);
     }
+ // #1410: a link the readers put straight into an href. Blank is legal and
+ // means "none published yet"; anything else has to be an https URL with a
+ // host and no whitespace, at most maxLen characters. The same sentence is
+ // `isValidPrivacyPolicyUrl` in `functions/src/lib/privacyPolicyUrl.ts` and
+ // the validator on each of the three admin editors; this is the floor under
+ // them, so a client bug cannot store `javascript:` or an http link.
+    function bsHttpsUrl(field, maxLen) {
+      return !bsHas(field)
+             || (request.resource.data[field] is string
+                 && request.resource.data[field].size() <= maxLen
+                 && (request.resource.data[field] == ''
+                     || request.resource.data[field].matches('https://[^\\s/?#"\'<>`\\\\]+[^\\s"\'<>`\\\\]*')));
+    }
     function validBusinessSettings() {
       return bsString('timeZone')
              && bsString('defaultBookingMode')
@@ -400,6 +413,9 @@ service cloud.firestore {
  // wants no check has the switch next to it; the ceiling is 5 km because a
  // radius larger than that is not a check.
              && bsInt('arrivalRadiusMeters', 10, 5000)
+ // #1410: the cap matches PRIVACY_POLICY_URL_MAX_LENGTH on the server and the
+ // three admin editors. Change all of them together or none.
+             && bsHttpsUrl('privacyPolicyUrl', 2048)
              && bsList('timeBlocks', 12)
              && bsList('etaMinuteOptions', 12)
              && bsList('draftRetentionOptions', 12);

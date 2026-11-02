@@ -5,6 +5,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { refuseAuntie } from '../lib/staffGate';
+import { readPrivacyPolicyUrl } from '../lib/privacyPolicyUrl';
 
 interface BusinessContactDto {
   name: string;
@@ -12,6 +13,12 @@ interface BusinessContactDto {
   phone: string;
   /** Free-form business address, surfaced for completeness; rarely used. */
   address: string;
+  /**
+   * #1410: the operator's privacy policy link, or blank until one is set. Only
+   * a value `readPrivacyPolicyUrl` accepts (a plain https URL within the cap)
+   * ever leaves here, so the portal may put it straight into a link.
+   */
+  privacyPolicyUrl: string;
 }
 
 /**
@@ -40,6 +47,7 @@ export async function getBusinessContactHandler(
     email:   typeof data['businessEmail']   === 'string' ? (data['businessEmail']   as string) : '',
     phone:   typeof data['businessPhone']   === 'string' ? (data['businessPhone']   as string) : '',
     address: typeof data['businessAddress'] === 'string' ? (data['businessAddress'] as string) : '',
+    privacyPolicyUrl: readPrivacyPolicyUrl(data),
   };
 
   logEvent({ severity: 'info', function: 'getBusinessContact', event: 'portal.businessContact.resolved', uid });

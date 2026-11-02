@@ -565,6 +565,7 @@ class PortalApi(
             email   = raw["email"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             phone   = raw["phone"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             address = raw["address"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            privacyPolicyUrl = raw["privacyPolicyUrl"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         )
     }
 

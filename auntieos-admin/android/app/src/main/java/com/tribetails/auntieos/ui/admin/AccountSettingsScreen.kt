@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.Bell
@@ -54,6 +55,7 @@ import com.tribetails.auntieos.data.model.accountChannelScopes
 import com.tribetails.auntieos.data.model.applyChannelToggle
 import com.tribetails.auntieos.data.model.channelMasterCount
 import com.tribetails.auntieos.data.model.channelMasterOn
+import com.tribetails.auntieos.data.model.privacyPolicyUrlError
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -423,12 +425,18 @@ internal fun ProfilePanel(
 
 /**
  * The mock's Business Profile card, with the web panel's field list: name,
- * email, phone, address and, since mark 16 of the 2026-08-17 walk, the weather
- * area. Its own Save, separate from the hero's, as the mock draws.
+ * email, phone, address, the privacy policy link (#1410) and, since mark 16 of
+ * the 2026-08-17 walk, the weather area. Its own Save, separate from the
+ * hero's, as the mock draws.
  *
  * A local draft over [settings], reset whenever the loaded copy changes, so a
  * save that fails leaves the typed values on screen. The save itself is the
  * view model's diff-and-save: only the fields that changed reach Firestore.
+ *
+ * The privacy policy link is checked as it is typed ([privacyPolicyUrlError]):
+ * a value `firestore.rules` would refuse keeps Save off and says why beside the
+ * field, so the refusal is seen where the operator is typing, not as a rules
+ * error after the click.
  */
 @Composable
 internal fun BusinessProfilePanel(
@@ -440,12 +448,15 @@ internal fun BusinessProfilePanel(
     var email by remember(settings.businessEmail) { mutableStateOf(settings.businessEmail) }
     var phone by remember(settings.businessPhone) { mutableStateOf(settings.businessPhone) }
     var address by remember(settings.businessAddress) { mutableStateOf(settings.businessAddress) }
+    var privacyPolicyUrl by remember(settings.privacyPolicyUrl) { mutableStateOf(settings.privacyPolicyUrl) }
     var weather by remember(settings.weatherLocation) { mutableStateOf(settings.weatherLocation) }
     val dirty = name != settings.businessName ||
         email != settings.businessEmail ||
         phone != settings.businessPhone ||
         address != settings.businessAddress ||
+        privacyPolicyUrl != settings.privacyPolicyUrl ||
         weather != settings.weatherLocation
+    val privacyPolicyError = privacyPolicyUrlError(privacyPolicyUrl)
 
     DenPanel(title = "Business profile", subtitle = "Identity used on invoices, emails, and KinTales.") {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
@@ -453,6 +464,16 @@ internal fun BusinessProfilePanel(
             BottomBorderField(value = email, onValueChange = { email = it }, label = "Email", modifier = Modifier.fillMaxWidth())
             BottomBorderField(value = phone, onValueChange = { phone = it }, label = "Phone", modifier = Modifier.fillMaxWidth())
             BottomBorderField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.fillMaxWidth())
+            BottomBorderField(
+                value = privacyPolicyUrl,
+                onValueChange = { privacyPolicyUrl = it },
+                label = "Privacy policy link",
+                placeholder = "https://",
+                isError = privacyPolicyError != null,
+                errorMessage = privacyPolicyError,
+                keyboardType = KeyboardType.Uri,
+                modifier = Modifier.fillMaxWidth(),
+            )
             BottomBorderField(
                 value = weather,
                 onValueChange = { weather = it },
@@ -463,7 +484,7 @@ internal fun BusinessProfilePanel(
             Spacer(Modifier.height(dims.space1))
             PrimaryButton(
                 label = "Save",
-                enabled = dirty,
+                enabled = dirty && privacyPolicyError == null,
                 onClick = {
                     onSave(
                         settings.copy(
@@ -471,6 +492,7 @@ internal fun BusinessProfilePanel(
                             businessEmail = email.trim(),
                             businessPhone = phone.trim(),
                             businessAddress = address.trim(),
+                            privacyPolicyUrl = privacyPolicyUrl.trim(),
                             weatherLocation = weather.trim(),
                         ),
                     )

@@ -26,6 +26,7 @@ import {
   RESET_HOME_SECTIONS,
 } from '../../lib/settingsFormat';
 import { type ImageDecoder } from '../../lib/brandAssetFile';
+import { privacyPolicyUrlError } from '../../lib/privacyPolicyUrl';
 import { LogoUploadField } from './LogoUploadField';
 // The `settingsEdit__*` class vocabulary these sections use lives here. It is
 // also depended on by the sibling editors (BusinessHoursEditor, TimeOffEditor,
@@ -60,6 +61,7 @@ export type StringFieldKey =
   | 'businessEmail'
   | 'businessPhone'
   | 'businessAddress'
+  | 'privacyPolicyUrl'
   | 'weatherLocation'
   | 'venmoHandle'
   | 'paypalHandle'
@@ -73,9 +75,45 @@ export interface TextFieldSpec {
   key: StringFieldKey;
   label: string;
   placeholder?: string;
-  type?: 'text' | 'email' | 'tel';
+  type?: 'text' | 'email' | 'tel' | 'url';
   /** Small caption under the input. PR30: the Payments fields use it for the processor's fee schedule. */
   hint?: string;
+  /**
+   * #1410: what to say beside the field for a value that must not be saved, or
+   * null when it may be. Run on the live value; a field with a message keeps
+   * the panel's Save disabled, so the operator sees the refusal where she is
+   * typing instead of as a rules error after the click.
+   */
+  validate?: (value: string) => string | null;
+}
+
+/**
+ * The message for every field whose current value its `validate` refuses,
+ * keyed by field. Empty when the panel may save. Shared by the two renderers
+ * of a field list (`TextFieldsSection`, `BusinessProfileSection`) so the gate
+ * and the text beside the field cannot drift between the Account and Settings
+ * copies of the same panel.
+ */
+export function textFieldErrors(
+  fields: readonly TextFieldSpec[],
+  values: Record<string, string>,
+): Partial<Record<StringFieldKey, string>> {
+  const errors: Partial<Record<StringFieldKey, string>> = {};
+  for (const f of fields) {
+    const message = f.validate?.(values[f.key] ?? '') ?? null;
+    if (message !== null) errors[f.key] = message;
+  }
+  return errors;
+}
+
+/** The refusal line under a field, when `textFieldErrors` has one for it. */
+export function FieldErrorNote({ fieldKey, message }: { fieldKey: StringFieldKey; message: string | undefined }) {
+  if (message === undefined) return null;
+  return (
+    <span id={`${fieldKey}-error`} className="settingsEdit__fieldError" role="alert">
+      {message}
+    </span>
+  );
 }
 
 /**
@@ -91,6 +129,10 @@ export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
   { key: 'businessEmail', label: 'Email', type: 'email' },
   { key: 'businessPhone', label: 'Phone', type: 'tel' },
   { key: 'businessAddress', label: 'Address' },
+  // #1410: blank until the operator publishes a policy; the email footer and
+  // the portal About screen omit the link while it is blank. No hint, by the
+  // 2026-09-11 subtitle ruling: the label and the placeholder carry it.
+  { key: 'privacyPolicyUrl', label: 'Privacy policy link', type: 'url', placeholder: 'https://', validate: privacyPolicyUrlError },
   {
     key: 'weatherLocation',
     label: 'Weather area',
@@ -167,6 +209,8 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
   const [justSaved, setJustSaved] = useState(false);
 
   const dirty = fields.some((f) => (values[f.key] ?? '') !== data[f.key]);
+  const fieldErrors = textFieldErrors(fields, values);
+  const invalid = Object.keys(fieldErrors).length > 0;
 
   function update(key: StringFieldKey, next: string) {
     setValues((v) => ({ ...v, [key]: next }));
@@ -174,7 +218,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
   }
 
   async function handleSave() {
-    if (!dirty || busy) return;
+    if (!dirty || busy || invalid) return;
     setBusy(true);
     setError(null);
     const patch: Partial<Pick<BusinessSettings, StringFieldKey>> = {};
@@ -209,6 +253,9 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
                 disabled={busy}
                 onChange={(e) => update(f.key, e.target.value)}
                 {...(f.hint ? { 'aria-describedby': `${f.key}-hint` } : {})}
+                {...(fieldErrors[f.key] !== undefined
+                  ? { 'aria-invalid': true, 'aria-errormessage': `${f.key}-error` }
+                  : {})}
               />
             </label>
             {f.hint ? (
@@ -221,6 +268,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
                 {f.hint}
               </span>
             ) : null}
+            <FieldErrorNote fieldKey={f.key} message={fieldErrors[f.key]} />
           </div>
         ))}
       </div>
@@ -228,7 +276,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save'}
           onClick={() => void handleSave()}
-          disabled={!dirty || busy}
+          disabled={!dirty || busy || invalid}
           busy={busy}
         />
         {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}

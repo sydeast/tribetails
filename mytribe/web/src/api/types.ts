@@ -332,6 +332,12 @@ export interface BusinessContactDto {
   email: string;
   phone: string;
   address: string;
+  /**
+   * #1410: the operator's privacy policy link, blank until one is set. The
+   * server returns only a plain https URL here, so it may go straight into an
+   * href. Shown by the About screen (#1411); omitted while blank.
+   */
+  privacyPolicyUrl: string;
 }
 
 // ── getInvitePreview (functions/src/portal/getInvitePreview.ts, public) ─────

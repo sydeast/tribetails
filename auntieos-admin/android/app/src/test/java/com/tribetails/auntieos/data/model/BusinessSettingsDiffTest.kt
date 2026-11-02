@@ -45,6 +45,23 @@ class BusinessSettingsDiffTest {
     }
 
     /**
+     * #1410: the privacy policy link diffs like the other profile strings, and
+     * clearing it is a write (blank is how "none published" is stored).
+     */
+    @Test
+    fun `the privacy policy link is written when set and when cleared`() {
+        val set = loaded.copy(privacyPolicyUrl = "https://example.com/privacy")
+        assertEquals(
+            mapOf<String, Any?>("privacyPolicyUrl" to "https://example.com/privacy"),
+            businessSettingsFieldChanges(loaded, set),
+        )
+        assertEquals(
+            mapOf<String, Any?>("privacyPolicyUrl" to ""),
+            businessSettingsFieldChanges(set, set.copy(privacyPolicyUrl = "")),
+        )
+    }
+
+    /**
      * SCHEDULING A JOB, AND UNSCHEDULING IT AGAIN.
      *
      * The two send hours are the only nullable fields on this model, and the

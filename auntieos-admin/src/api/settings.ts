@@ -335,6 +335,14 @@ export interface BusinessSettings {
   businessEmail: string;
   businessPhone: string;
   businessAddress: string;
+  /**
+   * #1410: the operator's privacy policy link, blank until one is set. Blank or
+   * a plain https URL within `PRIVACY_POLICY_URL_MAX_LENGTH`
+   * (`lib/privacyPolicyUrl.ts`); `firestore.rules` refuses anything else. Read
+   * by the email footer (#1399) and the portal About screen through
+   * `getBusinessContact`.
+   */
+  privacyPolicyUrl: string;
   timeZone: string;
   serviceRates: Record<string, string>;
   /**
@@ -556,6 +564,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   businessEmail: '',
   businessPhone: '',
   businessAddress: '',
+  privacyPolicyUrl: '',
   // Blank, not a zone: a document with no `timeZone` is a settings problem the
   // Business profile panel flags (#1109), and every reader resolves it through
   // `resolveBusinessTimeZone`, the same America/Chicago the server uses.
@@ -806,6 +815,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     businessEmail: pickString(r.businessEmail, d.businessEmail),
     businessPhone: pickString(r.businessPhone, d.businessPhone),
     businessAddress: pickString(r.businessAddress, d.businessAddress),
+    privacyPolicyUrl: pickString(r.privacyPolicyUrl, d.privacyPolicyUrl),
     timeZone: pickString(r.timeZone, d.timeZone),
     serviceRates: pickMap(r.serviceRates, d.serviceRates),
     serviceDurations: pickMap(r.serviceDurations, d.serviceDurations),

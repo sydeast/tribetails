@@ -156,6 +156,12 @@ class DataModelDefaultsTest {
         assertTrue(s.serviceRates.isEmpty())
     }
 
+    /** #1410: no policy published is the shipped state, and it reads as blank, never null. */
+    @Test
+    fun businessSettings_defaultPrivacyPolicyUrl_isBlank() {
+        assertEquals("", BusinessSettings().privacyPolicyUrl)
+    }
+
     @Test
     fun businessSettings_fields_roundtripCorrectly() {
         val s = TestData.businessSettings
@@ -237,6 +243,7 @@ class DataModelDefaultsTest {
             businessEmail = "hello@tribetails.example",
             businessPhone = "555-9000",
             businessAddress = "1 Bark Ln",
+            privacyPolicyUrl = "https://example.com/privacy",
             timeZone = "America/Chicago",
             serviceRates = mapOf("Dog Walking" to "25.00"),
             businessHours = mapOf("monday" to "09:00-17:00"),
