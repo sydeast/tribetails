@@ -75,7 +75,6 @@ fun GalleryScreen(
     portalApi: PortalApi,
     onBack: () -> Unit,
     onOpenKinDetail: (String) -> Unit,
-    onOpenKinTales: () -> Unit,
     controller: GalleryController = rememberGalleryController(kinfolkId, portalApi),
 ) {
     val type = LocalKinfolkTypography.current
@@ -112,18 +111,8 @@ fun GalleryScreen(
                 contentPadding = PaddingValues(KinfolkSpacing.l),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("From your KinTales", style = type.heritageSection)
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            "All tales",
-                            style = type.sansMeta.copy(color = KinfolkBrand.KinTeal),
-                            modifier = Modifier
-                                .clip(KinfolkShapes.pill)
-                                .clickable { onOpenKinTales() }
-                                .padding(horizontal = KinfolkSpacing.xs, vertical = 2.dp),
-                        )
-                    }
+                    // #1463: no "All tales" link here. Tales is the next tab.
+                    Text("From your KinTales", style = type.heritageSection)
 
                     val photos = controller.photos
                     when {

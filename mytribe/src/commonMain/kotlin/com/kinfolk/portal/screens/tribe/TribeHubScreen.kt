@@ -1,7 +1,7 @@
 package com.kinfolk.portal.screens.tribe
 
-import com.kinfolk.portal.util.auntieName
 import com.kinfolk.portal.util.formatPhone
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,30 +31,63 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinfolkAvatar
+import com.kinfolk.portal.components.KinfolkRemoteImage
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.portal.Kin
-import com.kinfolk.portal.portal.KinTale
+import com.kinfolk.portal.portal.KinPhotosResult
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeProfileResult
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
-import com.kinfolk.portal.util.relativeTime
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
- * The Tribe tab as a family-base HUB (per smoke-test): Kin profile cards, a
- * photo gallery, Home info summary, and a recent KinTales feed — with profile
- * editing behind the avatar menu's Edit Tribe Profile entry and the Home
- * Information card's Edit link (#1454, no page-level button). KinTales is no
- * longer a top-nav tab; it lives here and is still reachable via "All tales".
- * Read-only surface — every section links out to its dedicated screen.
+ * #1463: the Gallery card reads the same first page the Gallery screen reads
+ * (GALLERY_PAGE_SIZE). `limit` counts KinTales, not pictures, so a smaller page
+ * could come back with no photos for a household that has plenty, and the card
+ * would wrongly say there are none. The card draws at most
+ * [GALLERY_CARD_THUMBS] of what comes back. Same numbers as portal web's
+ * `TribeHub.tsx`.
+ */
+internal const val GALLERY_CARD_PAGE = 12
+internal const val GALLERY_CARD_THUMBS = 8
+
+/** One thumbnail on the Tribe page's Gallery card. */
+internal data class GalleryCardThumb(val key: String, val url: String, val label: String, val isImage: Boolean)
+
+/**
+ * Newest KinTale media first, then the Kin portraits, capped at
+ * [GALLERY_CARD_THUMBS]. The same order portal web's Gallery card uses.
+ */
+internal fun galleryCardThumbs(page: KinPhotosResult): List<GalleryCardThumb> =
+    (
+        page.photos.map { GalleryCardThumb("p-${it.id}", it.url, it.taleTitle.ifBlank { "A KinTale" }, it.isImage()) } +
+            page.portraits.map { GalleryCardThumb("k-${it.kinId}", it.url, it.kinName, isImage = true) }
+        ).take(GALLERY_CARD_THUMBS)
+
+/**
+ * The Tribe tab as a family-base HUB (per smoke-test): Kin profile cards, the
+ * Gallery card and a Home info summary, with profile editing behind the avatar
+ * menu's Edit Tribe Profile entry and the Home Information card's Edit link
+ * (#1454, no page-level button). Read-only surface; every section links out to
+ * its dedicated screen.
+ *
+ * #1463 (operator, 2026-11-02): "KinTales have media taken for the visit. but
+ * Gallery is the collection of all media over time." The Gallery card is always
+ * drawn and shows the newest KinTale media plus the Kin portraits from
+ * `getMyKinPhotos`, not just the roster's faces. The KinTales section that used
+ * to sit here is gone; it repeated the Tales tab.
  */
 @Composable
 fun TribeHubScreen(
@@ -64,21 +97,23 @@ fun TribeHubScreen(
     onEditProfile: () -> Unit,
     onOpenKinDetail: (String) -> Unit,
     onManageKin: () -> Unit,
-    onOpenKinTales: () -> Unit,
     onOpenGallery: () -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
     var kin by remember { mutableStateOf<List<Kin>?>(null) }
     var kinFailed by remember { mutableStateOf(false) }
-    var tales by remember { mutableStateOf<List<KinTale>?>(null) }
-    var talesFailed by remember { mutableStateOf(false) }
+    var media by remember { mutableStateOf<KinPhotosResult?>(null) }
+    var mediaFailed by remember { mutableStateOf(false) }
     var profile by remember { mutableStateOf<TribeProfileResult?>(null) }
 
     LaunchedEffect(kinfolkId) {
         try { kin = portalApi.getMyKin(kinfolkId).kin; kinFailed = false } catch (c: CancellationException) { throw c } catch (_: Throwable) { kinFailed = true }
     }
     LaunchedEffect(kinfolkId) {
-        try { tales = portalApi.getMyKinTales(kinfolkId, limit = 4).tales; talesFailed = false } catch (c: CancellationException) { throw c } catch (_: Throwable) { talesFailed = true }
+        try {
+            media = portalApi.getMyKinPhotos(kinfolkId = kinfolkId, limit = GALLERY_CARD_PAGE)
+            mediaFailed = false
+        } catch (c: CancellationException) { throw c } catch (_: Throwable) { mediaFailed = true }
     }
     LaunchedEffect(kinfolkId) {
         try { profile = portalApi.getMyTribeProfile(kinfolkId) } catch (c: CancellationException) { throw c } catch (_: Throwable) { /* home info card hides */ }
@@ -108,32 +143,21 @@ fun TribeHubScreen(
             }
         }
 
-        // ---- Gallery (Kin faces here; "All photos" opens the whole archive) ----
-        // The strip is the roster's portraits, so it hides when no Kin has a
-        // photo on file. Same gating the web hub applies to the same card.
-        val withPhotos = kin?.filter { !it.photoUrl.isNullOrBlank() }.orEmpty()
-        if (withPhotos.isNotEmpty()) {
-            SectionCard(title = "Gallery", linkText = "All photos", onLink = onOpenGallery) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                    items(withPhotos) { k ->
-                        KinfolkAvatar(
-                            url = k.photoUrl.orEmpty(),
-                            contentDescription = k.name ?: "Kin",
-                            size = 64.dp,
-                        )
-                    }
-                }
-            }
-        }
-
-        // ---- KinTales feed ----
-        SectionCard(title = "KinTales", linkText = "All tales", onLink = onOpenKinTales) {
+        // ---- Gallery: the household's media over time (#1463), always drawn ----
+        SectionCard(title = "Gallery", linkText = "All photos", onLink = onOpenGallery) {
+            val page = media
+            val thumbs = page?.let { galleryCardThumbs(it) }.orEmpty()
             when {
-                talesFailed -> Text("KinTales unavailable right now.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
-                tales == null -> Box(Modifier.fillMaxWidth().padding(KinfolkSpacing.m), contentAlignment = Alignment.Center) { KinSpinner() }
-                tales!!.isEmpty() -> Text("After each visit, your Auntie's KinTale lands here.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
-                else -> Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                    tales!!.take(3).forEach { TaleLine(it) }
+                mediaFailed -> Text("Photos unavailable right now.", style = type.sansBody.copy(color = KinfolkBrand.NavyMuted))
+                page == null -> Box(Modifier.fillMaxWidth().padding(KinfolkSpacing.m).testTag("tribeGalleryLoading"), contentAlignment = Alignment.Center) { KinSpinner() }
+                // The page counts KinTales, so a household whose newest tales
+                // carry no pictures can still have older ones behind it.
+                thumbs.isEmpty() -> Text(
+                    if (page.hasMore) "No recent photos. Older ones are in All photos." else "No photos yet.",
+                    style = type.sansBody.copy(color = KinfolkBrand.NavyMuted),
+                )
+                else -> LazyRow(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                    items(thumbs, key = { it.key }) { t -> GalleryThumb(t) }
                 }
             }
         }
@@ -218,22 +242,33 @@ private fun KinTile(kin: Kin, onOpen: (String) -> Unit) {
     }
 }
 
+/**
+ * A 64dp square, the same size as portal web's `.gallery-thumb`. A video is
+ * drawn as a play glyph, the same as the Gallery screen's tiles: an image
+ * request pointed at an mp4 draws a broken picture.
+ */
 @Composable
-private fun TaleLine(tale: KinTale) {
-    val type = LocalKinfolkTypography.current
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = tale.body.ifBlank { "A new tale from your Auntie" },
-            style = type.sansBody,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
+private fun GalleryThumb(thumb: GalleryCardThumb) {
+    val shape = KinfolkShapes.cardSmall
+    if (thumb.isImage) {
+        KinfolkRemoteImage(
+            url = thumb.url,
+            contentDescription = thumb.label,
+            modifier = Modifier.size(64.dp).testTag("tribeGalleryThumb"),
+            cornerRadius = 16.dp,
         )
-        val meta = buildString {
-            append("FROM ")
-            append((auntieName(tale.authorDisplayName) ?: "YOUR AUNTIE").uppercase())
-            tale.sentAtMs?.let { append(" · "); append(relativeTime(it).uppercase()) }
+    } else {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(shape)
+                .background(KinfolkBrand.GlassSurfaceDim)
+                .testTag("tribeGalleryThumb")
+                .semantics { contentDescription = thumb.label },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("▶️", fontSize = 22.sp)
         }
-        Text(meta, style = type.sansMeta)
     }
 }
 

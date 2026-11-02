@@ -109,9 +109,8 @@ export function Gallery() {
           )}
 
           <section className="glass card d2">
-            <div className="sectlabel">
-              From your KinTales <Link to="/kintales">All tales</Link>
-            </div>
+            {/* #1463: no "All tales" link here. Tales is the next tab. */}
+            <div className="sectlabel">From your KinTales</div>
 
             {photosView.kind === 'offline' ? (
               <OfflineNotice what="your photos" />

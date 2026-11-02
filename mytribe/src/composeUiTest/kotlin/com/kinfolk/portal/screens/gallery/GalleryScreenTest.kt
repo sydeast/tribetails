@@ -5,6 +5,7 @@ package com.kinfolk.portal.screens.gallery
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -61,7 +62,6 @@ class GalleryScreenTest {
             portalApi = PortalApi(fake),
             onBack = {},
             onOpenKinDetail = {},
-            onOpenKinTales = {},
         )
     }
 
@@ -76,6 +76,19 @@ class GalleryScreenTest {
         onNodeWithText("The Gallery").assertIsDisplayed()
         onNodeWithText("From your KinTales").assertIsDisplayed()
         assertEquals(4, onAllNodesWithTag("galleryTile").fetchSemanticsNodes().size)
+    }
+
+    /** #1463: Tales is the next tab, so the KinTales heading carries no link. */
+    @Test
+    fun kinTalesHeading_hasNoAllTalesLink() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinPhotos", page(listOf("m1")))
+
+        setThemedContent { Screen(fake) }
+        waitForIdle()
+
+        onNodeWithText("From your KinTales").assertIsDisplayed()
+        assertEquals(0, onAllNodesWithText("All tales").fetchSemanticsNodes().size)
     }
 
     @Test

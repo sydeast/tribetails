@@ -96,6 +96,16 @@ describe('Gallery', () => {
     expect(screen.queryByTestId('gallery-grid')).toBeNull();
   });
 
+  // #1463: Tales is the next tab, so the KinTales heading carries no link.
+  it('has no "All tales" link under "From your KinTales"', async () => {
+    mocks.getMyKinPhotos.mockResolvedValue(page({ photos: [photo('a')] }));
+    renderScreen();
+    await screen.findByTestId('gallery-grid');
+    expect(screen.getByText('From your KinTales')).toBeInTheDocument();
+    expect(screen.queryByText('All tales')).toBeNull();
+    expect(document.querySelector('.sectlabel a[href="/kintales"]')).toBeNull();
+  });
+
   it('renders a tile per photo, captioned with the tale it came from', async () => {
     mocks.getMyKinPhotos.mockResolvedValue(page({ photos: [photo('a'), photo('b')] }));
     renderScreen();
