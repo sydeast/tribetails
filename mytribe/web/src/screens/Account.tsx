@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMyHome, getMyKin } from '../api/portal';
+import { getMyHome } from '../api/portal';
 import {
   addSecondaryContact,
   createBillingSetupSession,
@@ -19,11 +18,9 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { SignedImageUpload } from '../components/SignedImageUpload';
-import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
-import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
@@ -110,11 +107,11 @@ export function Account() {
   // schema. retry:false keeps that from hammering the callable; the error
   // itself is never surfaced (see block comment above).
   useQuery({ queryKey: ['formSchema', 'account'], queryFn: () => getFormSchema('account'), retry: false });
-  // #1282: home and kin start alongside the account read rather than after it.
-  // Neither takes anything from `account`, and waiting made the card row below
-  // (which needs both account and home) three round trips deep instead of two.
+  // #1282: home starts alongside the account read rather than after it. It
+  // takes nothing from `account`, and waiting made the card row below (which
+  // needs both account and home) three round trips deep instead of two.
+  // #1465: the kin read left with the kin list; Tribe owns the roster.
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId) });
-  const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
 
   const [hydrated, setHydrated] = useState(false);
   const [displayName, setDisplayName] = useState('');
@@ -290,7 +287,6 @@ export function Account() {
   // with nothing to say. The offline arm goes above it.
   const accountView = viewOfQuery(account);
   const paymentView = viewOfQuery(paymentMethod, { gate: account });
-  const kinView = viewOfQuery(kin, { gate: account });
   if (accountView.kind === 'offline') {
     return (
       <>
@@ -322,7 +318,6 @@ export function Account() {
   // The same answer the header avatar gives (lib/identity.ts), so the photo
   // placeholder here cannot disagree with it (#1290).
   const { initial } = resolveIdentity({ account: data, signInEmail: null, householdName });
-  const roster = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, 4);
   const businessName = (home.data?.businessName ?? '').trim();
   const nameValid = displayName.trim().length > 0;
   // #1289: caught on the field, in plain words, before Save is ever offered. The
@@ -621,45 +616,13 @@ export function Account() {
             )}
           </div>
 
-          {/* aside */}
+          {/* aside. #1465: the kin list and the Messages link left this page;
+              Tribe owns the roster and Messages is a bar tab. */}
           <div className="stack">
-            <section className="glass card d4">
-              <div className="sectlabel">
-                Your tribe <Link to="/kin">The Kin</Link>
-              </div>
-              {kinView.kind === 'offline' ? (
-                <OfflineNotice what="your kin" />
-              ) : kinView.kind !== 'data' ? (
-                <p className="sub">Loading your kin…</p>
-              ) : (
-                roster.map((k, i) => (
-                  <Link className={`kinrow ${kinVariant(i)}`} to="/kin/$kinId" params={{ kinId: k.id }} key={k.id}>
-                    <div className="pic">
-                      <FallbackImage
-                        src={k.photoUrl}
-                        alt=""
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        fallback={speciesEmoji(k.species)}
-                      />
-                    </div>
-                    <div>
-                      <b>{k.name ?? 'Unnamed Kin'}</b>
-                      <small>{[k.breed, k.ageYears !== null ? `${k.ageYears} yrs` : null].filter(Boolean).join(', ').toUpperCase()}</small>
-                    </div>
-                  </Link>
-                ))
-              )}
-            </section>
-
             <section className="glass card d4">
               <div className="sectlabel">Cared for by</div>
               <h3 className="title">{businessName || 'Your Auntie'}</h3>
               <p className="sub">Your care team can see your profile name and contact details to reach you about visits.</p>
-              <div style={{ marginTop: 14 }}>
-                <Link className="btn ghost block" to="/messages">
-                  {'\u{1F4AC}'} Message your Auntie
-                </Link>
-              </div>
             </section>
           </div>
         </div>

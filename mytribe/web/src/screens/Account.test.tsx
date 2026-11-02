@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Account } from './Account';
 import type { AccountDto, PaymentMethodDto } from '../api/accountApi';
-import type { GetMyHomeResult, GetMyKinResult } from '../api/types';
+import type { GetMyHomeResult } from '../api/types';
 
 /**
  * Covers the one thing this session changed: Account.tsx's avatar upload,
@@ -63,6 +63,8 @@ vi.mock('../api/accountApi', async () => {
   };
 });
 
+// #1465: `getMyKin` stays mocked only so the suite can assert it is never
+// called; Account no longer reads the roster.
 vi.mock('../api/portal', () => ({
   getMyHome: vi.fn(),
   getMyKin: vi.fn(),
@@ -121,14 +123,11 @@ const HOME: GetMyHomeResult = {
   payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 
-const KIN: GetMyKinResult = { kin: [] };
-
 async function renderAccount() {
   const accountApi = await import('../api/accountApi');
   const portalApi = await import('../api/portal');
   vi.mocked(accountApi.getMyAccount).mockResolvedValue(ACCOUNT);
   vi.mocked(portalApi.getMyHome).mockResolvedValue(HOME);
-  vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
 
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const result = render(
@@ -152,7 +151,6 @@ async function renderAccountWithBilling(overrides: {
   const portalApi = await import('../api/portal');
   vi.mocked(accountApi.getMyAccount).mockResolvedValue({ ...ACCOUNT, ...overrides.account });
   vi.mocked(portalApi.getMyHome).mockResolvedValue(HOME);
-  vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
   const pm = overrides.paymentMethod ?? { hasPaymentMethod: false, card: null, updatedAtMs: null };
   if (pm instanceof Error) {
     vi.mocked(accountApi.getMyPaymentMethod).mockRejectedValue(pm);
@@ -251,13 +249,6 @@ describe('Account avatar upload', () => {
   });
 });
 /**
- * Issue #401's sibling: "Message your Auntie" on Account was a
- * `<span class="btn ghost block navlink-inert" title="Coming soon">`, styled
- * as a button and doing nothing, while `/messages` was a live route this same
- * app already linked from Home.tsx:222. A tooltip is not a label; it never
- * appears on touch.
- */
-/**
  * #1018 item 3: `addSecondaryContact` used to send no email of its own, which
  * made "Invite sent." false. It now sends the real invite email
  * (mytribe/functions/src/portal/addSecondaryContact.ts, via
@@ -333,12 +324,49 @@ describe('Account: invite email check (#1326)', () => {
     expect(getByRole('button', { name: /Send Invite/ })).toBeEnabled();
   });
 });
-describe('Account: Message your Auntie', () => {
-  it('is a real link to /messages, not a coming-soon span', async () => {
-    const { getByRole, queryByTitle } = await renderAccount();
-    expect(getByRole('link', { name: /message your auntie/i })).toHaveAttribute('href', '/messages');
-    // It is not still a span wearing a tooltip.
-    expect(queryByTitle('Coming soon')?.textContent ?? '').not.toMatch(/message your auntie/i);
+/**
+ * #1465 (the #1295 mobile map): Account keeps Profile, Secondary Kinfolk,
+ * Billing Details and Sign out with its confirm step. The kin list went to the
+ * roster Tribe owns, and "Message your Auntie" (once #401's sibling, a real
+ * link to /messages) went with the Messages bar tab. Neither is drawn here.
+ */
+describe('Account: kin list and Messages link are gone (#1465)', () => {
+  it('draws no "Your tribe" section, no kin rows and no The Kin link', async () => {
+    const { queryByText, queryByRole, container } = await renderAccount();
+    expect(queryByText('Your tribe')).toBeNull();
+    expect(queryByRole('link', { name: 'The Kin' })).toBeNull();
+    expect(container.querySelector('.kinrow')).toBeNull();
+    expect(queryByText(/Loading your kin/)).toBeNull();
+  });
+
+  it('never asks for the kin roster', async () => {
+    const portalApi = await import('../api/portal');
+    vi.mocked(portalApi.getMyKin).mockClear();
+    await renderAccount();
+    expect(portalApi.getMyKin).not.toHaveBeenCalled();
+  });
+
+  it('keeps the "Cared for by" card without the Message your Auntie link', async () => {
+    const { container, queryByRole, queryByText } = await renderAccount();
+    // The page footnote also reads "Cared for by", so look at the card itself.
+    const label = Array.from(container.querySelectorAll('.sectlabel')).find((el) => el.textContent === 'Cared for by');
+    expect(label).toBeTruthy();
+    const card = label!.closest('section')!;
+    expect(card.querySelector('.title')?.textContent).toBe('Tribe Tails Pet Care');
+    expect(card.querySelector('a')).toBeNull();
+    expect(queryByRole('link', { name: /message your auntie/i })).toBeNull();
+    expect(queryByText(/message your auntie/i)).toBeNull();
+  });
+
+  it('still shows Profile, Secondary Kinfolk, Billing Details and the Sign Out confirm step', async () => {
+    const { getByText, getByRole, findByText } = await renderAccountWithBilling();
+    expect(getByText('Profile')).toBeTruthy();
+    expect(getByText('Secondary Kinfolk')).toBeTruthy();
+    expect(getByText('Billing Details')).toBeTruthy();
+    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    await findByText('Sign out of MyTribe?');
+    expect(getByRole('button', { name: 'Yes, Sign Out' })).toBeTruthy();
+    expect(signOutSpy).not.toHaveBeenCalled();
   });
 });
 /**
@@ -543,7 +571,6 @@ describe('Account billing, member without billing access (#1005)', () => {
     vi.mocked(accountApi.getMyPaymentMethod).mockClear();
     vi.mocked(accountApi.getMyAccount).mockResolvedValue(ACCOUNT);
     vi.mocked(portalApi.getMyHome).mockResolvedValue({ ...HOME, payMethods: [], billingAccess: false });
-    vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const result = render(
       <QueryClientProvider client={queryClient}>
@@ -573,7 +600,6 @@ describe('Account: phone (#1289, #1306)', () => {
     const portalApi = await import('../api/portal');
     vi.mocked(accountApi.getMyAccount).mockResolvedValue({ ...ACCOUNT, ...account });
     vi.mocked(portalApi.getMyHome).mockResolvedValue(HOME);
-    vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const result = render(
       <QueryClientProvider client={queryClient}>
@@ -634,12 +660,13 @@ describe('Account: phone (#1289, #1306)', () => {
 });
 
 describe('Account, reads start together (#1282)', () => {
-  it('asks for home and kin while getMyAccount is still in flight', async () => {
+  // #1465: the kin read is gone with the kin list, so only home starts early.
+  it('asks for home while getMyAccount is still in flight, and never for kin', async () => {
     const accountApi = await import('../api/accountApi');
     const portalApi = await import('../api/portal');
     vi.mocked(accountApi.getMyAccount).mockReturnValue(new Promise(() => {}));
     vi.mocked(portalApi.getMyHome).mockResolvedValue(HOME);
-    vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
+    vi.mocked(portalApi.getMyKin).mockClear();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>
@@ -647,7 +674,7 @@ describe('Account, reads start together (#1282)', () => {
       </QueryClientProvider>,
     );
     await waitFor(() => expect(portalApi.getMyHome).toHaveBeenCalledWith('kin-fam-1'));
-    expect(portalApi.getMyKin).toHaveBeenCalledWith('kin-fam-1');
+    expect(portalApi.getMyKin).not.toHaveBeenCalled();
     // The card row still waits for the account answer: it needs `impersonated`.
     expect(accountApi.getMyPaymentMethod).not.toHaveBeenCalled();
   });
