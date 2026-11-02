@@ -1,6 +1,15 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import pkg from './package.json';
+
+// #1411: the release number the About screen prints (`lib/appVersion.ts`).
+// RELEASE_VERSION when scripts/release.sh builds (step 0 exports it before the
+// hosting predeploy runs this build), otherwise package.json's version plus
+// "-dev", so a local build never looks like a release. The same rule as
+// `appVersionName()` in mytribe/build.gradle.kts, so Android and web print one
+// number for one release.
+const appVersion = process.env['RELEASE_VERSION']?.trim() || `${pkg.version}-dev`;
 
 // MyTribe web portal. PWA notes:
 // - Navigations are NETWORK-FIRST (repo gotcha: stale-while-revalidate kept
@@ -16,6 +25,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 //   caching rules below are now hand-written in src/sw.ts using the same
 //   Workbox primitives generateSW used to configure automatically.
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(appVersion) },
   plugins: [
     react(),
     VitePWA({

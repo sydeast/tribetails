@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
 import { SecretField } from '../components/SecretField';
+import { PhoneActions } from '../components/PhoneActions';
 import { EmergencyContactsCard } from '../components/EmergencyContactsCard';
 import { SecondaryKinfolkCard, secondaryKinfolkQueryKey } from '../components/SecondaryKinfolkCard';
 import {
@@ -456,16 +457,7 @@ export function TribeProfile() {
             <section className="glass card d1">
               <h3 className="title">Contact {contact.name || 'Auntie'}</h3>
               <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-                {contact.phone && (
-                  <>
-                    <a className="btn ghost" href={`tel:${contact.phone}`} style={{ padding: '9px 14px', fontSize: 13 }}>
-                      {'\u{1F4DE}'} Call
-                    </a>
-                    <a className="btn ghost" href={`sms:${contact.phone}`} style={{ padding: '9px 14px', fontSize: 13 }}>
-                      {'\u{1F4AC}'} Text
-                    </a>
-                  </>
-                )}
+                <PhoneActions phone={contact.phone} />
                 {contact.email && (
                   <a className="btn ghost" href={`mailto:${contact.email}`} style={{ padding: '9px 14px', fontSize: 13 }}>
                     {'✉'} Email
@@ -595,12 +587,7 @@ export function TribeProfile() {
                   </div>
                   {selectedClinic?.phone && (
                     <div className="actions">
-                      <a className="btn ghost" href={`tel:${selectedClinic.phone}`} style={{ padding: '9px 14px', fontSize: 13 }}>
-                        {'\u{1F4DE}'} Call
-                      </a>
-                      <a className="btn ghost" href={`sms:${selectedClinic.phone}`} style={{ padding: '9px 14px', fontSize: 13 }}>
-                        {'\u{1F4AC}'} Text
-                      </a>
+                      <PhoneActions phone={selectedClinic.phone} />
                     </div>
                   )}
                 </div>
