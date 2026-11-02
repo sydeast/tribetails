@@ -439,8 +439,6 @@ internal actual suspend fun platformUpdateFields(collection: String, id: String,
         if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges(collection, id, changes)
         WriteResult.Ok(Unit)
     }
-internal actual suspend fun platformArchiveKin(id: String): WriteResult<Unit> =
-    transportWrite("archive failed") { JvmFirestoreRest.patchFields("kin", id, mapOf("status" to JsonPrimitive("archived"))) }
 internal actual suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit> =
     transportWrite("patch failed") { JvmFirestoreRest.patchFields("kin_care_sessions", id, patch.mapValues { JsonPrimitive(it.value) }) }
 

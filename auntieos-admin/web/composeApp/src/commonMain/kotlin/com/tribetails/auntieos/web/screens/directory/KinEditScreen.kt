@@ -203,6 +203,11 @@ fun KinEditScreen(
     }
 
     var saving       by remember { mutableStateOf(false) }
+    /** #1501: true while the setKinArchived callable is in flight; the button shows it and cannot be tapped again. */
+    var archiving    by remember(kinId) { mutableStateOf(false) }
+    var archiveError by remember(kinId) { mutableStateOf<String?>(null) }
+    /** #1501: set after a successful Restore so the block follows at once, before the poll re-reads the Kin. */
+    var archivedNow  by remember(kinId) { mutableStateOf<Boolean?>(null) }
     /** #853: true while a photo upload + write is in flight, so the change-photo
      * control shows a loading cue and cannot be clicked again mid-save. */
     var photoSaving  by remember(kinId) { mutableStateOf(false) }
@@ -546,16 +551,27 @@ fun KinEditScreen(
             Spacer(Modifier.height(20.dp))
             ArchiveKinBlock(
                 name      = existing.name.ifBlank { "this Kin" },
-                archived  = existing.status == "archived",
-                disabled  = saving,
-                onArchive = {
-                    saving = true
+                archived  = archivedNow ?: (existing.status == "archived"),
+                disabled  = saving || archiving,
+                busy      = archiving,
+                error     = archiveError,
+                onToggle  = { toArchived ->
+                    archiving = true
+                    archiveError = null
                     scope.launch {
-                        val r = client.archiveKin(existing._id)
-                        saving = false
+                        val r = client.setKinArchived(existing._id, toArchived)
+                        archiving = false
                         when (r) {
-                            is WriteResult.Ok  -> { routeToast.show("Archived ${existing.name}.", ToastKind.Success); onArchived() }
-                            is WriteResult.Err -> showToast("Archive failed: ${r.message}", ToastKind.Error)
+                            is WriteResult.Ok  -> if (toArchived) {
+                                routeToast.show("Archived ${existing.name}.", ToastKind.Success)
+                                onArchived()
+                            } else {
+                                archivedNow = false
+                                routeToast.show("Restored ${existing.name}.", ToastKind.Success)
+                            }
+                            // #1501: the server's refusal (an Auntie is refused, the
+                            // callable is owner-only) shows inline beside the button.
+                            is WriteResult.Err -> archiveError = r.message
                         }
                     }
                 },
@@ -563,7 +579,6 @@ fun KinEditScreen(
         }
     }
 }
-
 /** Avatar + name hero strip, matching the mockup detail header. */
 @Composable
 private fun KinHero(
@@ -677,7 +692,9 @@ private fun ArchiveKinBlock(
     name: String,
     archived: Boolean,
     disabled: Boolean,
-    onArchive: () -> Unit,
+    busy: Boolean,
+    error: String?,
+    onToggle: (toArchived: Boolean) -> Unit,
 ) {
     val c = AuntieTheme.colors
     Column(
@@ -700,12 +717,24 @@ private fun ArchiveKinBlock(
             style = AuntieTheme.typography.bodySmall,
             color = c.textDim,
         )
-        if (!archived) {
-            GhostButton(label = "Archive", onClick = onArchive, enabled = !disabled, modifier = Modifier.fillMaxWidth())
+        if (error != null) {
+            AuntieBanner(tone = AuntieBannerTone.Error) {
+                Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
         }
+        GhostButton(
+            label    = when {
+                busy && archived  -> "Restoring…"
+                busy              -> "Archiving…"
+                archived          -> "Restore"
+                else              -> "Archive"
+            },
+            onClick  = { onToggle(!archived) },
+            enabled  = !disabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
-
 // ---- Run-4 #6: breed dropdown (pure helpers + field) ----
 
 /**

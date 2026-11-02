@@ -782,7 +782,25 @@ class FirestoreClient {
             is WriteResult.Err -> WriteResult.Err(r.message)
         }
     }
-    suspend fun archiveKin(id: String):      WriteResult<Unit>   = platformArchiveKin(id)
+    /**
+     * #1501: Archive (`archived = true`) or restore a Kin through the owner-only
+     * `setKinArchived` callable, which writes the flat `kin/{id}` doc and the
+     * household's family copy in one transaction (admin web and Android call
+     * the same one). The old direct write of `status` on the flat doc alone left
+     * the Kin on the household's roster and wrote no audit entry. An Auntie gets
+     * the server's refusal as the Err message.
+     */
+    suspend fun setKinArchived(id: String, archived: Boolean): WriteResult<Unit> {
+        if (id.isBlank()) return WriteResult.Err("setKinArchived requires a kin id")
+        val payload = buildJsonObject {
+            put("kinId", JsonPrimitive(id.trim()))
+            put("archived", JsonPrimitive(archived))
+        }
+        return when (val r = platformInvokeCallable("setKinArchived", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok  -> WriteResult.Ok(Unit)
+        }
+    }
 
     /**
      * #994: the one write behind every diffed update in this client that has no
@@ -2538,7 +2556,6 @@ internal expect suspend fun platformCreateKin(k: Kin):          WriteResult<Stri
 internal expect suspend fun platformUpdateKinFields(kinId: String, changes: List<FieldChange>): WriteResult<Unit>
 /** #994: a masked merge of exactly [changes] at collection/id. Never a whole-document write. */
 internal expect suspend fun platformUpdateFields(collection: String, id: String, changes: List<FieldChange>): WriteResult<Unit>
-internal expect suspend fun platformArchiveKin(id: String):     WriteResult<Unit>
 internal expect suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit>
 internal expect suspend fun platformMarkVoicemailReplied(
     voicemailId: String,
