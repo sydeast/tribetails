@@ -544,6 +544,19 @@ fun AppNavHost(
                             // #1363: open the KinTales tab on this visit's tale.
                             onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
                             onOpenInvoice = { invoiceId -> navController.navigate(InvoiceDetailRoute(invoiceId)) },
+                            // #1466: Messages is a chrome destination, so this
+                            // reaches it the tab way, popping to the Home leaf.
+                            // Not openMessages(): that helper saves the stack it
+                            // leaves, which is only safe from a chrome screen,
+                            // and this is a detail leaf. From a leaf
+                            // TabShell.navigateTab pops clean with no
+                            // save/restore, and so does this.
+                            onOpenMessages = {
+                                navController.navigate(MessageAuntieRoute) {
+                                    popUpTo(navController.graph.findStartDestination().id)
+                                    launchSingleTop = true
+                                }
+                            },
                         )
                     }
                 }

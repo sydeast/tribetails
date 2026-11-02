@@ -64,6 +64,7 @@ import com.kinfolk.portal.screens.schedule.util.rescheduleProblem
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.auntieName
 import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.noteWrittenAt
 import com.kinfolk.portal.util.weekdayTime
@@ -98,6 +99,11 @@ fun KinCareDetailScreen(
     onOpenKinTale: (taleId: String) -> Unit = {},
     /** #1303: and its bill on the invoice screen. */
     onOpenInvoice: (invoiceId: String) -> Unit = {},
+    /**
+     * #1466: the per-visit line to the Auntie, the web BookingDetail's
+     * "Message {auntieLabel}" link. Opens the Messages tab.
+     */
+    onOpenMessages: () -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -228,6 +234,7 @@ fun KinCareDetailScreen(
                     replayLoading = replayLoading,
                     onOpenKinTale = onOpenKinTale,
                     onOpenInvoice = onOpenInvoice,
+                    onOpenMessages = onOpenMessages,
                     kinCare = b,
                     noteInput = noteInput,
                     onNoteInputChange = { noteInput = it },
@@ -350,6 +357,7 @@ private fun KinCareDetailBody(
     replayLoading: Boolean,
     onOpenKinTale: (taleId: String) -> Unit,
     onOpenInvoice: (invoiceId: String) -> Unit,
+    onOpenMessages: () -> Unit,
     kinCare: Booking,
     noteInput: String,
     onNoteInputChange: (String) -> Unit,
@@ -490,6 +498,24 @@ private fun KinCareDetailBody(
                 }
             }
         }
+        // #1466: the per-visit line to the Auntie, the first thing in the web
+        // BookingDetail's "Need a change" card. Always offered, whatever the
+        // visit's status, like the web link; the reschedule and cancel asks
+        // below keep their own windows.
+        GlassCard(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(KinfolkSpacing.l),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                Text("Need a change", style = type.heritageSection)
+                KinGhostButton(
+                    label = "Message ${auntieName(kinCare.auntieDisplayName) ?: "your Auntie"}",
+                    onClick = onOpenMessages,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+
         // Reschedule ask. The card also carries the office's answer, so an
         // accepted or declined ask stays readable after the window to make a
         // new one has closed.
