@@ -73,7 +73,7 @@ class HomeScreenTest {
     }
 
     @Test
-    fun emptyState_rendersBothEmptySections() = runComposeUiTest {
+    fun emptyState_drawsNothingForIdleVisit() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyBookings", buildJsonObject {
             put("liveVisit", kotlinx.serialization.json.JsonNull)
@@ -86,8 +86,10 @@ class HomeScreenTest {
         waitForIdle()
         // Hero header (no longer the family name).
         onNodeWithText("Your tribe is in good hands.").assertIsDisplayed()
-        // The two sections driven by the stubbed-empty bookings data.
-        onNodeWithText("No active visit").assertIsDisplayed()
+        // #1421: no live visit means no heading and no card, like web.
+        onNodeWithText("No active visit").assertDoesNotExist()
+        onNodeWithText("Live Visit").assertDoesNotExist()
+        onNodeWithText("LIVE").assertDoesNotExist()
         onNodeWithText("Nothing scheduled").assertIsDisplayed()
     }
 
@@ -113,6 +115,7 @@ class HomeScreenTest {
         waitForIdle()
         onNodeWithText("Auntie Avery").assertIsDisplayed()
         onNodeWithText("LIVE").assertIsDisplayed()
+        onNodeWithText("Live Visit").assertDoesNotExist()
         onNodeWithText("With Buddy").assertIsDisplayed()
     }
 

@@ -159,17 +159,15 @@ fun HomeScreen(
     // operator-chosen order. limit 0 = unlimited; the canonical caps (5/3)
     // apply only when the operator hasn't set one.
     val liveVisitSection: @Composable () -> Unit = {
-        Text("Live Visit", style = type.heritageSection, modifier = Modifier.padding(horizontal = KinfolkSpacing.l))
+        // #1421: matches web. Nothing is drawn for the common case (no visit
+        // under way), so there is no heading and no empty card.
         when {
             error != null -> EmptyState(title = "Couldn't load Home", message = error ?: "")
             data == null -> KinLoading(
                 text = "Checking whether a visit is under way\u2026",
                 onSync = { data = null; bookingsReloadKey += 1 },
             )
-            data?.liveVisit == null -> EmptyState(
-                title = "No active visit",
-                message = "When an Auntie checks in for a visit, you'll see live status here.",
-            )
+            data?.liveVisit == null -> Unit
             else -> LiveVisitCard(data!!.liveVisit!!)
         }
     }
