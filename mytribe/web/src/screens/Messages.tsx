@@ -18,7 +18,7 @@ import {
 import { useConversationMessages } from '../lib/messagesListener';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
-import { PortalNav, type PortalNavTab } from '../components/PortalNav';
+import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
@@ -53,12 +53,9 @@ import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
  *     the readAt!==null check itself so a message already marked by either
  *     path is never re-marked).
  *
- * PortalNav has no 'messages' tab yet (nav wiring is the integrator's job
- * per this build's brief) — passed a value outside PortalNavTab's union so
- * no existing tab lights up as falsely active; add 'messages' to
- * PortalNavTab + NAV_LINKS/TAB_ITEMS when wiring the route.
+ * Nav: 'messages' is a real PortalNav tab, a desktop link and, since #1413,
+ * the fifth mobile tab, so this screen lights it up like any other.
  */
-const MESSAGES_NAV_TAB = 'messages' as PortalNavTab;
 
 type ToolbarActionId = 'bold' | 'italic' | 'underline' | 'bulletList' | 'orderedList' | 'blockquote' | 'link';
 
@@ -361,7 +358,7 @@ export function Messages() {
 
   return (
     <>
-      <PortalNav active={MESSAGES_NAV_TAB} />
+      <PortalNav active="messages" />
 
       <div className="wrap">
         <header className="pagehead">

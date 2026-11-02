@@ -107,10 +107,42 @@ describe('PortalNav avatar menu (#1309, was #538)', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: 'Account' }));
     expect(screen.queryByRole('menu')).toBeNull();
   });
-  it('renders the Account tab in the mobile bar as its own separate link', () => {
+  it('keeps Account reachable from the menu once it has left the mobile bar (#1413)', async () => {
     renderNav('account');
-    const links = screen.getAllByRole('link', { name: /Account/ });
-    expect(links.map((el) => el.getAttribute('href'))).toContain('/account');
+    expect(screen.queryByRole('link', { name: /Account/ })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    expect(screen.getByRole('menuitem', { name: 'Account' })).toHaveAttribute('href', '/account');
+  });
+});
+/**
+ * #1413 (operator ruling on #1295): the fifth mobile tab is Messages, the
+ * direct line to the auntie, not Account. Account moves to the avatar menu,
+ * which the specs above already pin. These read the `.tabbar` element itself
+ * because the desktop `.navlinks` row also carries Home/Tribe/Schedule links
+ * and a role query alone cannot tell the two bars apart.
+ */
+describe('PortalNav mobile tab bar (#1413)', () => {
+  const tabLinks = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLAnchorElement>('.tabbar a'));
+  it('is Home / Tribe / Schedule / Tales / Messages, in that order, with no Account tab', () => {
+    const { container } = renderNav('home');
+    const tabs = tabLinks(container);
+    expect(tabs.map((a) => a.querySelector('small')?.textContent)).toEqual(['Home', 'Tribe', 'Schedule', 'Tales', 'Messages']);
+    expect(tabs.map((a) => a.getAttribute('href'))).toEqual(['/home', '/tribe', '/schedule', '/kintales', '/messages']);
+    expect(container.querySelector('.tabbar a[href="/account"]')).toBeNull();
+  });
+  it('lights up the Messages tab on the Messages screen and nothing else', () => {
+    const { container } = renderNav('messages');
+    const on = tabLinks(container).filter((a) => a.classList.contains('on'));
+    expect(on.map((a) => a.getAttribute('href'))).toEqual(['/messages']);
+  });
+  it('lights up no tab on Account, which is a menu screen now', () => {
+    const { container } = renderNav('account');
+    expect(tabLinks(container).filter((a) => a.classList.contains('on'))).toEqual([]);
+  });
+  it('still lights up Tales on the KinTales feed', () => {
+    const { container } = renderNav('kintales');
+    const on = tabLinks(container).filter((a) => a.classList.contains('on'));
+    expect(on.map((a) => a.getAttribute('href'))).toEqual(['/kintales']);
   });
 });
 /** #1290: the letter on the avatar is the person's, whichever screen draws it. */

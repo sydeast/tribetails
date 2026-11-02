@@ -3,6 +3,7 @@ package com.kinfolk.portal.nav
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
@@ -47,6 +48,14 @@ enum class ShellDestination(
     Account("Account", "Account", Icons.Filled.PersonOutline, AccountRoute, AccountRoute::class),
     Notifications("Notifications", "Notifications", Icons.Filled.Notifications, NotificationsRoute, NotificationsRoute::class),
     TribeEdit("Edit Tribe Profile", "Edit", Icons.Filled.Edit, TribeEditRoute, TribeEditRoute::class),
+
+    /**
+     * #1413: the direct line to the auntie is a narrow tab, so it is a chrome
+     * destination like Account, not a detail leaf. Every entry point (tab tap,
+     * Home quick-start, Schedule CTA) must therefore navigate to it the tab way
+     * (pop to Home, save/restore), see AppNavHost's openMessages.
+     */
+    Messages("Messages", "Messages", Icons.Filled.ChatBubble, MessageAuntieRoute, MessageAuntieRoute::class),
 }
 
 /** One entry in the avatar dropdown. */
@@ -84,12 +93,19 @@ object ShellNav {
     fun wideLinksFor(billingAccess: Boolean): List<ShellDestination> =
         if (billingAccess) wideLinks else wideLinks.filter { it != ShellDestination.Invoices }
 
-    /** Narrow (< 880dp) bottom tab bar. Account is a tab here (Invoices via Home/menu). */
+    /**
+     * Narrow (< 880dp) bottom tab bar, the same five as the web portal's
+     * PortalNav TAB_ITEMS. #1413 (operator ruling on #1295): Messages takes the
+     * slot Account held and Tales joins the bar; Account is reached from the
+     * avatar menu, Invoices stays one tap deeper (Home/Tribe/Account) until the
+     * operator rules otherwise.
+     */
     val narrowTabs: List<ShellDestination> = listOf(
         ShellDestination.Home,
         ShellDestination.Tribe,
         ShellDestination.Schedule,
-        ShellDestination.Account,
+        ShellDestination.KinTales,
+        ShellDestination.Messages,
     )
 
     /** Avatar dropdown entries; "Back to Directory" only for operators. */
@@ -116,7 +132,7 @@ fun resolveActiveDestination(
 /**
  * True when the live back stack currently sits on a chrome-level shell
  * destination (a tab or avatar-menu screen) rather than a detail/wizard leaf
- * (KinDetail, BookingWizard, MessageAuntie, ...). Tab taps may save/restore
+ * (KinDetail, BookingWizard, KinCareDetail, ...). Tab taps may save/restore
  * per-tab stacks only from these destinations: a stack saved while on a detail
  * leaf restores corrupt and — combined with the browser-history binding on web
  * — silently wedges every later navigate/pop until reload.

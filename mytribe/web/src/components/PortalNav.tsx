@@ -30,19 +30,25 @@ const NAV_LINKS: NavItem[] = [
   { id: 'invoices', label: 'Invoices', to: '/invoices' },
   // S5: no mockup exists for a Messages nav entry (Message Auntie has no
   // mockup at all — see web/src/screens/Messages.tsx's own header comment).
-  // Desktop-only, like Account — mobile reaches it one tap deeper via Home's
-  // "Message your Auntie" quick-start, matching how Invoices already skips
-  // the fixed 5-slot bottom tab bar.
+  // Since #1413 it is also the fifth mobile tab, see TAB_ITEMS.
   { id: 'messages', label: 'Messages', to: '/messages' },
 ];
 
-/** Mobile bottom tab bar: Home / Tribe / Schedule / Tales / Account (per mockup — a distinct label set from the desktop nav; Invoices lives one tap deeper, from Home/Tribe/Account, not its own mobile tab). */
+/**
+ * Mobile bottom tab bar: Home / Tribe / Schedule / Tales / Messages. A distinct
+ * label set from the desktop nav. #1413 (operator ruling on #1295): Messages,
+ * the direct line to the auntie, takes the fifth slot that the mockup gave to
+ * Account; Account is reached from the avatar menu in the header instead, the
+ * same way desktop always reached it. Invoices lives one tap deeper, from
+ * Home/Tribe/Account, not its own mobile tab, until the operator rules
+ * otherwise. The same five tabs ship on Android (TabRoute.kt narrowTabs).
+ */
 const TAB_ITEMS: (NavItem & { icon: string })[] = [
   { id: 'home', label: 'Home', to: '/home', icon: '\u{1F3E0}' },
   { id: 'tribe', label: 'Tribe', to: '/tribe', icon: '\u{1F43E}' },
   { id: 'schedule', label: 'Schedule', to: '/schedule', icon: '\u{1F4C5}' },
   { id: 'kintales', label: 'Tales', to: '/kintales', icon: '\u{1F4DD}' },
-  { id: 'account', label: 'Account', to: '/account', icon: '\u{1F464}' },
+  { id: 'messages', label: 'Messages', to: '/messages', icon: '\u{1F4AC}' },
 ];
 
 /** Shared top nav + mobile bottom tab bar, extracted from the identical markup repeated across every mockup. */
