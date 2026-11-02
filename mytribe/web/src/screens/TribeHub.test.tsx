@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+import { readdirSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TribeHub } from './TribeHub';
 
@@ -27,9 +29,14 @@ vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'kin-fam-1' }))
 vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 // `to` is carried into href: a test that cannot see a link's destination cannot
-// tell a working link from the inert span it replaced.
+// tell a working link from the inert span it replaced. The other props ride
+// along too, so the #1454 specs below can read the button's class.
 vi.mock('@tanstack/react-router', () => ({
-  Link: ({ children, to }: { children?: ReactNode; to?: string }) => <a href={to}>{children}</a>,
+  Link: ({ children, to, ...rest }: { children?: ReactNode; to?: string } & Record<string, unknown>) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
 }));
 
 const KIN_WITH_PHOTO = {
@@ -57,6 +64,75 @@ beforeEach(() => {
   mocks.getMyTribeProfile.mockReset();
   mocks.getMyKinTales.mockResolvedValue({ tales: [], hasMore: false });
   mocks.getMyTribeProfile.mockRejectedValue(new Error('not needed here'));
+});
+
+/**
+ * #1454 (operator ruling on #1295): "On full web, the edit Tribe can stay but
+ * does not need to be at the very top as it is. Either off to the side or at
+ * the bottom of the page. On Android/mobile web, the edit option should only be
+ * under the account icon."
+ *
+ * So the page's own Edit Tribe Profile button comes after the last card, and at
+ * phone width it is not shown at all; the avatar menu (AvatarMenu.test.tsx) is
+ * the only entry there. jsdom has no layout and loads no stylesheet, so the
+ * phone half is pinned the way styles/tabbarOwnership.test.ts pins the tab bar:
+ * the button carries `.tribehub-edit`, and base.css hides that class under the
+ * same `max-width: 880px` query that hides `.navlinks` for the phone tab bar.
+ */
+describe('TribeHub Edit Tribe Profile button (#1454)', () => {
+  const stylesDir = resolve(__dirname, '../styles');
+  const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+  /** Bodies of every `@media (max-width: 880px)` block in a sheet. */
+  const phoneBlocks = (css: string) =>
+    Array.from(stripComments(css).matchAll(/@media\s*\(max-width:\s*880px\)\s*\{([\s\S]*?)\n\}/g), (m) => m[1] ?? '');
+
+  const editButton = async () => {
+    const links = await screen.findAllByRole('link', { name: /Edit Tribe Profile/ });
+    expect(links).toHaveLength(1);
+    return links[0]!;
+  };
+
+  it('is a real link to the editor, after the last card and not under the heading', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [KIN_WITH_PHOTO] });
+    renderScreen();
+    const button = await editButton();
+    expect(button.tagName).toBe('A');
+    expect(button).toHaveAttribute('href', '/tribe/edit');
+    expect(button.className.split(' ')).toEqual(expect.arrayContaining(['btn', 'ghost', 'tribehub-edit']));
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    const cards = Array.from(document.querySelectorAll('section.glass.card'));
+    expect(cards.length).toBeGreaterThan(0);
+    const lastCard = cards[cards.length - 1]!;
+    const follows = (a: Node, b: Node) => (b.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(button, heading)).toBe(true);
+    expect(follows(button, lastCard)).toBe(true);
+    // Nothing between the heading and the first card is the button any more.
+    expect(heading.closest('header')?.nextElementSibling?.classList.contains('stack')).toBe(true);
+  });
+
+  it('leaves the Home Information card its own Edit link', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    renderScreen();
+    await editButton();
+    const homeInfo = screen.getByText('Home Information').closest('section');
+    const cardEdit = within(homeInfo!).getByRole('link', { name: 'Edit' });
+    expect(cardEdit).toHaveAttribute('href', '/tribe/edit');
+  });
+
+  it('is hidden at phone width by base.css, under the same query that hides the desktop nav links', () => {
+    const base = readFileSync(resolve(stylesDir, 'base.css'), 'utf8');
+    const hidesEdit = phoneBlocks(base).filter((body) => /\.tribehub-edit\s*\{\s*display:\s*none;?\s*\}/.test(body));
+    expect(hidesEdit).toHaveLength(1);
+    expect(hidesEdit[0]).toMatch(/\.navlinks\s*\{\s*display:\s*none;?\s*\}/);
+  });
+
+  it('is declared by base.css alone, so no later sheet can show it on a phone again (#1419)', () => {
+    const owners = readdirSync(stylesDir)
+      .filter((f) => f.endsWith('.css') && f !== 'base.css')
+      .filter((f) => /(^|[^\w-])\.tribehub-edit(?![\w-])[^{]*\{/m.test(stripComments(readFileSync(resolve(stylesDir, f), 'utf8'))));
+    expect(owners).toEqual([]);
+  });
 });
 
 describe('TribeHub gallery card', () => {

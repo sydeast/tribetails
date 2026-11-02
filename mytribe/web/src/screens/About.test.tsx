@@ -178,7 +178,7 @@ describe('About in the avatar menu (#1411)', () => {
     render(<AvatarMenu initial="J" onSignOut={() => {}} signingOut={false} />);
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
-    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Notification settings', 'About', 'Sign out']);
+    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About', 'Sign out']);
     expect(screen.getByRole('menuitem', { name: 'About' })).toHaveAttribute('href', '/about');
   });
 });

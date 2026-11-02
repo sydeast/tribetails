@@ -10,6 +10,11 @@ import { BusyLabel } from './Loading';
  * `aria-haspopup`/`aria-expanded`, the items are real links and one button, and
  * Escape or a click outside closes it. Items are plain tab stops in order, so
  * the keyboard path needs no roving focus.
+ *
+ * #1454: Edit Tribe Profile sits between Account and Notification settings at
+ * every width. At phone width it is the only way into the editor, since the
+ * Tribe page's own button is hidden there; the same entry the Android account
+ * menu has had (TabRoute.kt accountMenu).
  */
 export function AvatarMenu(props: { initial: string; onSignOut: () => void; signingOut: boolean }) {
   const [open, setOpen] = useState(false);
@@ -49,6 +54,9 @@ export function AvatarMenu(props: { initial: string; onSignOut: () => void; sign
         <div className="avatar-menu__panel glass" role="menu" aria-label="Account menu">
           <Link role="menuitem" to="/account" onClick={() => setOpen(false)}>
             Account
+          </Link>
+          <Link role="menuitem" to="/tribe/edit" onClick={() => setOpen(false)}>
+            Edit Tribe Profile
           </Link>
           <Link role="menuitem" to="/account/notifications" onClick={() => setOpen(false)}>
             Notification settings

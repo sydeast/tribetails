@@ -167,11 +167,16 @@ h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display
 .d1 { animation: rise .6s var(--ease) .14s both; } .d2 { animation: rise .6s var(--ease) .2s both; }
 .d3 { animation: rise .6s var(--ease) .26s both; } .d4 { animation: rise .6s var(--ease) .32s both; }
 
+/* #1454: the Tribe page's own Edit Tribe Profile button, after the last card.
+   Hidden below the phone breakpoint, where the avatar menu is the only entry. */
+.tribehub-edit { margin-top: 24px; }
+
 /* ===== responsive: tablet + phone ===== */
 @media (max-width: 880px) {
   .cols { grid-template-columns: 1fr; }
   .cols > .aside { order: 0; }
   .navlinks { display: none; }
+  .tribehub-edit { display: none; }
   .wrap { padding: 24px 16px 96px; }
 }
 .tabbar { display: none; }
