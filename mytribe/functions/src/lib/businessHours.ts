@@ -137,6 +137,12 @@ export interface BusinessHoursSettings {
    * reader; see its comment for why absent means on.
    */
   voiceLiveTransferEnabled?: unknown;
+  /**
+   * #1399: the business name the phone greeting speaks. Read off this same
+   * document for the same one-read reason as `voiceLiveTransferEnabled`;
+   * `businessName.ts` holds the wording rule (blank is never invented).
+   */
+  businessName?: unknown;
 }
 
 /**

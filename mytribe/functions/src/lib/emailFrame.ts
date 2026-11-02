@@ -2,6 +2,16 @@ import { parseDocument } from 'htmlparser2';
 import type { ChildNode, Element } from 'domhandler';
 import type { EmailTemplateDoc } from './sendFromTemplate';
 import { DEFAULT_EMAIL_FRAME, type EmailFrame } from './emailFrameConfig';
+import { businessLabel } from './businessName';
+import { composeFooter, EMPTY_FOOTER_FACTS, type EmailFooterFacts } from './emailFooter';
+
+/**
+ * #1399: the frame a send renders, with the business facts its footer and
+ * logo alt text are composed from. `loadEmailFrame` attaches `business`; a
+ * caller that passes a bare `EmailFrame` (a unit test, an older call site)
+ * renders the footer of a business that has set nothing.
+ */
+export type RenderableEmailFrame = EmailFrame & { business?: EmailFooterFacts };
 
 /**
  * #953: the one shared frame every visual email is sent in, and the text part
@@ -22,8 +32,14 @@ import { DEFAULT_EMAIL_FRAME, type EmailFrame } from './emailFrameConfig';
  * #957: the colors, the footer line, an optional header line and an optional
  * logo are now the operator's (`emailFrameConfig.ts`, stored in
  * `business_settings/email_frame`, read per send by `emailFrameStore.ts`).
- * The values above are the defaults, and with nothing stored the output is
- * byte-identical to the frame before it was editable.
+ * The values above are the defaults.
+ *
+ * #1399: the footer is REQUIRED and composed from settings (`emailFooter.ts`:
+ * business name, weekly hours, published phone, privacy policy link), with the
+ * operator's `footerText` as an optional extra line under it. The logo's alt
+ * text names the business from settings too. A business that never opened the
+ * frame editor still sends a complete footer, because the facts come from the
+ * settings document, not the frame document.
  */
 function frameStyle(f: EmailFrame): string {
   return `
@@ -89,10 +105,12 @@ function escapeAttr(s: string): string {
  * The optional header additions. Inline styles, not new `<style>` rules, so a
  * frame with neither set renders the exact `<style>` block it always has.
  */
-function headerExtras(f: EmailFrame): string {
+function headerExtras(f: RenderableEmailFrame): string {
   const parts: string[] = [];
   if (f.logoUrl) {
-    const alt = f.headerText || 'Tribe Tails';
+    // #1399: the alt text is the header line when set, else the business name
+    // from settings ("Your Auntie" when none is set), never a hardcoded name.
+    const alt = f.headerText || businessLabel(f.business?.name, { capital: true });
     parts.push(
       `<img src="${escapeAttr(f.logoUrl)}" alt="${escapeAttr(alt)}" width="160" style="display: block; max-width: 160px; height: auto; margin: 0 0 12px 0; border: 0;">`,
     );
@@ -105,7 +123,31 @@ function headerExtras(f: EmailFrame): string {
   return parts.join('');
 }
 
-export function frameHtml(headline: string, content: string, frame: EmailFrame = DEFAULT_EMAIL_FRAME): string {
+/**
+ * #1399: the footer block. One line each for the business name, the weekly
+ * hours, the published phone and the privacy policy link, each omitted when
+ * settings leave it blank (`composeFooter`), then the operator's optional
+ * `footerText` line. Inline styles, not new `<style>` rules, so the frame's
+ * `<style>` block is unchanged. Every line is operator text: `escapeText`, and
+ * `escapeAttr` on the one href, so a `{` in a business name never becomes a
+ * merge field and a `<` never becomes markup.
+ */
+export function footerHtml(f: RenderableEmailFrame): string {
+  const composed = composeFooter(f.business ?? EMPTY_FOOTER_FACTS);
+  const lines: string[] = [];
+  if (composed.nameLine) lines.push(`<strong>${escapeText(composed.nameLine)}</strong>`);
+  if (composed.hoursLine) lines.push(escapeText(composed.hoursLine));
+  if (composed.phoneLine) lines.push(escapeText(composed.phoneLine));
+  if (composed.privacyPolicyUrl) {
+    lines.push(
+      `<a href="${escapeAttr(composed.privacyPolicyUrl)}" style="color: ${f.footerTextColor}; text-decoration: underline;">Privacy policy</a>`,
+    );
+  }
+  if (f.footerText) lines.push(escapeText(f.footerText));
+  return lines.map((line) => `<div style="margin: 0 0 4px 0;">${line}</div>`).join('');
+}
+
+export function frameHtml(headline: string, content: string, frame: RenderableEmailFrame = DEFAULT_EMAIL_FRAME): string {
   return [
     '<!DOCTYPE html>',
     '<html>',
@@ -117,7 +159,7 @@ export function frameHtml(headline: string, content: string, frame: EmailFrame =
     '    <div class="container">',
     `        <div class="header">${headerExtras(frame)}<h2>${escapeHtml(headline)}</h2></div>`,
     `        <div class="content">${content}</div>`,
-    `        <div class="footer">${escapeText(frame.footerText)}</div>`,
+    `        <div class="footer">${footerHtml(frame)}</div>`,
     '    </div>',
     '</body>',
     '</html>',
@@ -235,11 +277,12 @@ export interface SendParts {
 
 /**
  * Any stored template, old or visual, as the three Handlebars templates the
- * transport takes. `frame` is the stored frame the send route read once for
- * this invocation (`loadEmailFrame`); it only affects a visual template, since
- * an old-format template carries its own full HTML.
+ * transport takes. `frame` is the stored frame, with the business facts for
+ * the footer, that the send route read once for this invocation
+ * (`loadEmailFrame`); it only affects a visual template, since an old-format
+ * template carries its own full HTML.
  */
-export function sendPartsFor(doc: EmailTemplateDoc, frame: EmailFrame = DEFAULT_EMAIL_FRAME): SendParts {
+export function sendPartsFor(doc: EmailTemplateDoc, frame: RenderableEmailFrame = DEFAULT_EMAIL_FRAME): SendParts {
   if (isVisualTemplate(doc)) {
     return {
       subjectTemplate: doc.subject,

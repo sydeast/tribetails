@@ -9,7 +9,7 @@ import { logEvent } from '../lib/logger';
 import { assertCloudinaryUrlInFolder } from '../lib/cloudinary';
 import { sendPartsFor } from '../lib/emailFrame';
 import { renderEmailParts } from '../lib/email';
-import { readStoredEmailFrame } from '../lib/emailFrameStore';
+import { loadEmailFooterFacts, readStoredEmailFrame } from '../lib/emailFrameStore';
 import {
   DEFAULT_EMAIL_FRAME,
   EMAIL_FRAME_DOC_PATH,
@@ -200,7 +200,10 @@ export async function previewEmailFrameHandler(
   if (!parsedArgs.success) {
     throw new HttpsError('invalid-argument', parsedArgs.error.issues.map((i) => i.message).join(' '));
   }
-  const frame = resolveEmailFrame(parseFrameFields(parsedArgs.data.frame));
+  // #1399: the footer is composed from settings, so the preview reads them the
+  // way a send does. Otherwise the editor would show a footer no email gets.
+  const business = await loadEmailFooterFacts('previewEmailFrame');
+  const frame = { ...resolveEmailFrame(parseFrameFields(parsedArgs.data.frame)), business };
   const parts = sendPartsFor({ ...FRAME_PREVIEW_SAMPLE, format: 'visual' }, frame);
   const out = renderEmailParts({ ...parts, data: {} });
   return { subject: out.subject, html: out.html ?? '', text: out.text };

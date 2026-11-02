@@ -190,7 +190,9 @@ private fun EmailFrameEditor(
                 value = s.draft[EmailFrameFields.FOOTER_TEXT].orEmpty(),
                 onValueChange = { vm.edit(EmailFrameFields.FOOTER_TEXT, it.take(EmailFrameFields.FOOTER_TEXT_MAX)) },
                 label = "Footer line",
-                placeholder = frame.defaults[EmailFrameFields.FOOTER_TEXT].orEmpty(),
+                // #1399: the footer is composed from Business settings on the server
+                // and shows in the preview; this is the optional extra line, blank by default.
+                placeholder = frame.defaults[EmailFrameFields.FOOTER_TEXT].orEmpty().ifBlank { "None" },
                 enabled = !busy,
                 isError = problems[EmailFrameFields.FOOTER_TEXT] != null,
                 modifier = Modifier.fillMaxWidth(),
