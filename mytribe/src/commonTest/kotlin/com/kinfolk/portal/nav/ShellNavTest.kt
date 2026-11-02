@@ -273,6 +273,28 @@ class ShellNavTest {
         )
     }
 
+    /**
+     * #1459: the full #1295 map order for an operator with billing access, the
+     * same order web's AvatarMenu draws (AvatarMenu.test.tsx "lists the full
+     * map order"): Account, Invoices, Edit Tribe Profile, Notification
+     * settings, About, Back to Directory, Sign out.
+     */
+    @Test
+    fun accountMenu_fullMapOrder() {
+        assertEquals(
+            listOf(
+                AccountMenuItem.Open(ShellDestination.Account),
+                AccountMenuItem.Open(ShellDestination.Invoices),
+                AccountMenuItem.Open(ShellDestination.TribeEdit),
+                AccountMenuItem.Open(ShellDestination.Notifications),
+                AccountMenuItem.Open(ShellDestination.About),
+                AccountMenuItem.BackToDirectory,
+                AccountMenuItem.SignOut,
+            ),
+            ShellNav.accountMenu(isOperator = true, billingAccess = true),
+        )
+    }
+
     @Test
     fun accountMenu_openEntries_targetTheRightDestinations() {
         val opens = ShellNav.accountMenu(isOperator = false, billingAccess = true).filterIsInstance<AccountMenuItem.Open>()

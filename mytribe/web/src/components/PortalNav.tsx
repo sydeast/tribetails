@@ -113,19 +113,22 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
             )}
           </div>
           <div className="right">
-            {access?.isOperator && (
-              <Link className="iconbtn" to="/pick" aria-label="Switch tribe" title="Back to Directory">
-                {'\u{1F4C7}'}
-              </Link>
-            )}
             <Link className="iconbtn" to="/account/notifications" aria-label="Notification settings">
               {'\u{1F514}'}
             </Link>
             {/* #538 made the avatar a link to Account; #1309 makes it a small menu
                 (Account, Notification settings, Sign out). Sign out is its own
                 item the person has to open the menu to reach, which is the
-                difference from the bare sign-out div #538 removed. */}
-            <AvatarMenu initial={initial} onSignOut={signOut} signingOut={signingOut} billingAccess={billingAccess} />
+                difference from the bare sign-out div #538 removed. #1459: an
+                operator's Back to Directory lives in it too; the header's
+                Switch tribe icon is gone at every width. */}
+            <AvatarMenu
+              initial={initial}
+              onSignOut={signOut}
+              signingOut={signingOut}
+              billingAccess={billingAccess}
+              isOperator={access?.isOperator === true}
+            />
           </div>
         </div>
       </nav>
