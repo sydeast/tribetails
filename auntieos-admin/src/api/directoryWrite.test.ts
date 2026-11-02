@@ -185,6 +185,16 @@ describe('setKinArchived (#1492)', () => {
     expect(call).toHaveBeenCalledWith('setKinArchived', { kinId: 'p1', archived: true });
     expect(updateDoc).not.toHaveBeenCalled();
   });
+  // #1493: the callable writes the ARCHIVE_KIN / RESTORE_KIN Activity Log
+  // entry for every client. Web adds none of its own (no `logActivity` call),
+  // so an archive from the web leaves exactly one entry, like Android.
+  it('makes one call and writes no client audit entry of its own', async () => {
+    call.mockResolvedValue({ ok: true, archived: true, flatStatus: 'archived', familyStatus: null, familyUpdated: false });
+    await setKinArchived('p1', true);
+    await setKinArchived('p1', false);
+    expect(call.mock.calls.map((c) => c[0])).toEqual(['setKinArchived', 'setKinArchived']);
+    expect(addDoc).not.toHaveBeenCalled();
+  });
   it('restores through the same callable', async () => {
     call.mockResolvedValue({ ok: true, archived: false, flatStatus: 'active', familyStatus: 'active', familyUpdated: true });
     await setKinArchived('p1', false);

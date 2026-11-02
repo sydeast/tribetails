@@ -6,6 +6,8 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
+import { writeAuditEntry } from '../lib/writeAuditEntry';
+import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import {
@@ -51,6 +53,9 @@ import {
  *
  * Owner-only: archiving is destructive, which `lib/auntieAccess.ts` rule 6
  * keeps from an Auntie.
+ *
+ * #1493: writes the `ARCHIVE_KIN` / `RESTORE_KIN` Activity Log entry, once,
+ * for every client.
  */
 
 export const SetKinArchivedArgs = z.object({
@@ -159,6 +164,36 @@ export async function setKinArchivedHandler(
     };
   });
 
+  // #1493: one Activity Log entry per archive or restore, whichever client
+  // asked. Admin Android used to write it itself and web wrote nothing; the
+  // Android client entry is gone, so there is exactly one. After the commit
+  // and wrapped: the archive stands whether or not the entry lands.
+  await writeAuditEntry({
+    status: 'SUCCESS',
+    event: args.archived ? AUDIT_EVENTS.ARCHIVE_KIN : AUDIT_EVENTS.RESTORE_KIN,
+    severity: 'info',
+    actorRole: 'AUNTIE',
+    actorUid: uid,
+    targetUid: args.kinId,
+    targetCollection: 'kin',
+    ...(outcome.kinfolkId ? { familyId: outcome.kinfolkId } : {}),
+    description: `${args.archived ? 'Archived' : 'Restored'} kin ${outcome.kinName ?? args.kinId}`,
+    payload: {
+      kinId: args.kinId,
+      kinfolkId: outcome.kinfolkId,
+      flatStatus: outcome.flatStatus,
+      familyStatus: outcome.familyStatus,
+      familyUpdated: outcome.familyUpdated,
+    },
+  }).catch((err) => {
+    logEvent({
+      severity: 'warn',
+      function: 'setKinArchived',
+      event: 'audit.write.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  });
   logEvent({
     severity: 'info',
     function: 'setKinArchived',

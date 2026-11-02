@@ -2009,14 +2009,9 @@ class DirectoryViewModel(
             repository.setKinArchived(state.kinId, archived)
                 .onSuccess { written ->
                     loadedKin = baseline.copy(status = written)
-                    com.tribetails.auntieos.data.admin.AuditLog.fire(
-                        scope            = viewModelScope,
-                        repository       = repository,
-                        actionType       = if (archived) "ARCHIVE_KIN" else "RESTORE_KIN",
-                        description      = "${if (archived) "Archived" else "Restored"} kin ${baseline.name}",
-                        targetId         = state.kinId,
-                        targetCollection = "kin",
-                    )
+                    // #1493: the callable writes the ARCHIVE_KIN / RESTORE_KIN
+                    // Activity Log entry for every client. Writing one here too
+                    // would record every Android archive twice.
                     _editKinState.value = EditKinUiState(isSuccess = true, successMessage = toggleMessage)
                     loadProfile(state.kinfolkId)
                 }

@@ -278,6 +278,12 @@ export const AUDIT_EVENTS = {
   // history (resolveKinRemovalRequest): archived it, or declined. A decline
   // changes no Kin, so this is the only trace of that decision.
   KIN_REMOVAL_REQUEST_RESOLVED: 'KIN_REMOVAL_REQUEST_RESOLVED',
+  // #1493: the admin's Kin Archive / Restore (setKinArchived, #1492). Admin
+  // Android wrote these same actionTypes from the client and web wrote none;
+  // the callable now writes one for every client, and the values are
+  // unchanged so the Activity Log reads old and new entries alike.
+  ARCHIVE_KIN: 'ARCHIVE_KIN',
+  RESTORE_KIN: 'RESTORE_KIN',
   // A3: ONE operator transition on ONE flat `kin_care_sessions` row
   // (transitionBookingStatus callable): APPROVE / REJECT / CANCEL / COMPLETE.
   // These four used to be a bare client `updateDoc` on the session document

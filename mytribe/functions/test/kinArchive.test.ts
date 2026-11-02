@@ -11,12 +11,14 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   enqueue: vi.fn(),
   resolveUid: vi.fn(),
+  audit: vi.fn(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.audit }));
 vi.mock('../src/lib/wrapTrigger', () => ({
   wrapTrigger: (_name: string, fn: (...a: unknown[]) => unknown) => fn,
 }));
@@ -29,6 +31,7 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.enqueue.mockReset().mockResolvedValue(['n1']);
   mocks.resolveUid.mockReset().mockResolvedValue('household-uid');
+  mocks.audit.mockReset().mockResolvedValue('a1');
 });
 
 const FAMILY_PATH = 'families/3/kin/k1';
@@ -235,6 +238,62 @@ describe('setKinArchived (#1492)', () => {
   });
 });
 
+describe('setKinArchived audit entry (#1493)', () => {
+  const kinAudits = () => mocks.audit.mock.calls.map((c) => c[0]).filter((e) => e.event === 'ARCHIVE_KIN' || e.event === 'RESTORE_KIN');
+  it('an archive writes exactly one ARCHIVE_KIN entry, the same actionType Android wrote', async () => {
+    const ctx = office();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinArchivedHandler } = await import('../src/admin/kinArchive');
+    await setKinArchivedHandler(call({ kinId: 'flat1', archived: true }));
+    expect(kinAudits()).toHaveLength(1);
+    expect(kinAudits()[0]).toMatchObject({
+      status: 'SUCCESS',
+      event: 'ARCHIVE_KIN',
+      actorUid: 'owner',
+      targetUid: 'flat1',
+      targetCollection: 'kin',
+      familyId: '3',
+      description: 'Archived kin Buddy',
+      payload: { kinId: 'flat1', kinfolkId: '3', flatStatus: 'archived', familyStatus: 'archived', familyUpdated: true },
+    });
+  });
+  it('a restore writes exactly one RESTORE_KIN entry', async () => {
+    const ctx = office({
+      [FAMILY_PATH]: { ...FAMILY_KIN, status: 'archived', removalRequestId: '3_k1' },
+      'kin/flat1': { ...FLAT_KIN, status: 'archived' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinArchivedHandler } = await import('../src/admin/kinArchive');
+    await setKinArchivedHandler(call({ kinId: 'flat1', archived: false }));
+    expect(kinAudits()).toHaveLength(1);
+    expect(kinAudits()[0]).toMatchObject({ event: 'RESTORE_KIN', targetUid: 'flat1', description: 'Restored kin Buddy' });
+  });
+  it('an admin-only Kin is audited too, with no household on the entry', async () => {
+    const { familyKinPath: _p, kinfolkId: _k, ...flatOnly } = FLAT_KIN;
+    const ctx = office({ 'kin/flat1': flatOnly });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinArchivedHandler } = await import('../src/admin/kinArchive');
+    await setKinArchivedHandler(call({ kinId: 'flat1', archived: true }));
+    expect(kinAudits()).toHaveLength(1);
+    expect(kinAudits()[0]).not.toHaveProperty('familyId');
+  });
+  it('a failed audit write does not undo or fail the archive', async () => {
+    mocks.audit.mockRejectedValue(new Error('activity_log down'));
+    const ctx = office();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinArchivedHandler } = await import('../src/admin/kinArchive');
+    const res = await setKinArchivedHandler(call({ kinId: 'flat1', archived: true }));
+    expect(res.ok).toBe(true);
+    expect(flatWrite(ctx)).toMatchObject({ status: 'archived' });
+  });
+  it('a refused call writes no entry', async () => {
+    const ctx = office({ 'kin/flat1': null });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinArchivedHandler } = await import('../src/admin/kinArchive');
+    await expect(setKinArchivedHandler(call({ kinId: 'flat1', archived: true }))).rejects.toMatchObject({ code: 'not-found' });
+    expect(kinAudits()).toEqual([]);
+  });
+});
 describe('resolveKinRemovalRequest archive remembers a memorial too (#1492)', () => {
   it('stashes noLongerWithUs so the admin Restore can put it back', async () => {
     const ctx = office({
@@ -242,7 +301,6 @@ describe('resolveKinRemovalRequest archive remembers a memorial too (#1492)', ()
       'kin_removal_requests/3_k1': { kinfolkId: '3', kinId: 'k1', flatKinId: 'flat1', kinName: 'Buddy', status: 'pending' },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
-    vi.doMock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('a1') }));
     const { resolveKinRemovalRequestHandler } = await import('../src/admin/kinRemovalRequests');
     await resolveKinRemovalRequestHandler(call({ requestId: '3_k1', decision: 'archive' }));
     expect(familyWrite(ctx)).toMatchObject({ status: 'archived', statusBeforeArchive: 'noLongerWithUs', removalRequestId: '3_k1' });

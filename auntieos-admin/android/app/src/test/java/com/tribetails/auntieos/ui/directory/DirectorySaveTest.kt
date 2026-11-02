@@ -412,6 +412,21 @@ class DirectorySaveTest {
         coVerify(exactly = 1) { repo.setKinArchived("k1", true) }
         coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
     }
+    /**
+     * #1493: the `setKinArchived` callable writes the ARCHIVE_KIN / RESTORE_KIN
+     * Activity Log entry for every client, so Android writes none of its own.
+     */
+    @Test
+    fun `archive and restore write no client audit entry, the server does`() = runTest(testDispatcher) {
+        coEvery { repo.setKinArchived(any(), any()) } returns Result.success("active")
+        val vm = kinEditor()
+        vm.setKinArchived(false)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { repo.setKinArchived("k1", false) }
+        coVerify(exactly = 0) {
+            repo.logActivity(match { it.actionType == "ARCHIVE_KIN" || it.actionType == "RESTORE_KIN" })
+        }
+    }
     /** Already in the state being asked for: nothing written, no stamp moved. */
     @Test
     fun `archiving an already archived pet writes nothing`() = runTest(testDispatcher) {
