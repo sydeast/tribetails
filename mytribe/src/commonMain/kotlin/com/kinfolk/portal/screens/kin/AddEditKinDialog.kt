@@ -26,6 +26,7 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +55,7 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
@@ -72,6 +74,17 @@ fun AddEditKinDialog(
      * Null (the Add dialog) hides the action.
      */
     onArchive: (suspend (restore: Boolean) -> String?)? = null,
+    /**
+     * #1314. Edit only: asks the server whether this Kin may be deleted (true
+     * only with no visits, KinTales, photos or records on file). Null, false,
+     * or a failed check hides the row.
+     */
+    canDelete: (suspend () -> Boolean)? = null,
+    /**
+     * #1314. Edit only: hard-deletes the Kin. Returns null on success, else an
+     * inline message (the server's refusal sentence when history exists).
+     */
+    onDelete: (suspend () -> String?)? = null,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -82,7 +95,26 @@ fun AddEditKinDialog(
     var confirmingArchive by remember { mutableStateOf(false) }
     var archiving by remember { mutableStateOf(false) }
     var archiveError by remember { mutableStateOf<String?>(null) }
-    val busy = saving || archiving
+    // #1314 delete state, same shape. `deleteAllowed` is the server's answer,
+    // false until it arrives, so the row never shows before the check.
+    var deleteAllowed by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
+    val busy = saving || archiving || deleting
+    LaunchedEffect(initial?.id) {
+        deleteAllowed = if (initial != null && canDelete != null && onDelete != null) {
+            try {
+                canDelete()
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Throwable) {
+                false
+            }
+        } else {
+            false
+        }
+    }
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var species by remember { mutableStateOf(initial?.species.orEmpty()) }
     var breed by remember { mutableStateOf(initial?.breed.orEmpty()) }
@@ -286,9 +318,11 @@ fun AddEditKinDialog(
                 }
 
                 // #1311: the memorial action, edit only, last in the form behind a
-                // hairline. One row today; #1314 and #1408 add theirs below it.
-                // AlertDialog draws Save / Cancel in its own chrome under this
-                // column, so "last control" here means last in the body.
+                // hairline. Memorial first, then delete (#1314, only when the
+                // server found nothing on file); #1408 adds "Request removal"
+                // below for a Kin with history. AlertDialog draws Save / Cancel in
+                // its own chrome under this column, so "last control" here means
+                // last in the body.
                 if (initial != null && onArchive != null) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(KinfolkBrand.NavyHairline))
                     MemorialAction(
@@ -310,6 +344,30 @@ fun AddEditKinDialog(
                         },
                     )
                 }
+                // #1314: delete, edit only, only when the server found nothing on file.
+                if (initial != null && onDelete != null && deleteAllowed) {
+                    if (onArchive == null) {
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(KinfolkBrand.NavyHairline))
+                    }
+                    DeleteAction(
+                        kinName = initial.name,
+                        busy = deleting,
+                        enabled = !busy,
+                        error = deleteError,
+                        confirming = confirmingDelete,
+                        onConfirmingChange = { confirmingDelete = it },
+                        onDelete = {
+                            scope.launch {
+                                deleting = true
+                                deleteError = null
+                                val err = onDelete()
+                                deleting = false
+                                if (err == null) onClose() else deleteError = err
+                            }
+                        },
+                    )
+                }
+                // #1408: "Request removal" for a Kin with history lands here.
             }
         },
         confirmButton = {
@@ -433,6 +491,54 @@ private fun MemorialAction(
             else -> SolidPillButton(
                 label = "Mark No Longer With Us",
                 color = KinfolkBrand.FamilyPurple,
+                onClick = { if (enabled) onConfirmingChange(true) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        error?.let { problem ->
+            Text(text = problem, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
+        }
+    }
+}
+
+/**
+ * #1314. Delete control under the memorial action, shown only when the server
+ * found nothing on file for this Kin. Coral outline, behind a confirm step,
+ * matching the web KinEdit row.
+ */
+@Composable
+private fun DeleteAction(
+    kinName: String?,
+    busy: Boolean,
+    enabled: Boolean,
+    error: String?,
+    confirming: Boolean,
+    onConfirmingChange: (Boolean) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val type = LocalKinfolkTypography.current
+    Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+        if (confirming) {
+            Text(
+                "Delete ${kinName ?: "this Kin"}? The profile is removed for good.",
+                style = type.sansMeta,
+            )
+            OutlinePillButton(
+                label = if (busy) "Deleting…" else "Yes, delete this Kin",
+                color = KinfolkBrand.SnuggleCoral,
+                onClick = { if (enabled) onDelete() },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            KinGhostButton(
+                label = "Never mind",
+                onClick = { onConfirmingChange(false) },
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            OutlinePillButton(
+                label = "Delete this Kin",
+                color = KinfolkBrand.SnuggleCoral,
                 onClick = { if (enabled) onConfirmingChange(true) },
                 modifier = Modifier.fillMaxWidth(),
             )

@@ -209,6 +209,24 @@ export interface ArchiveKinResult {
   ok: true;
 }
 
+// ── deleteKin (functions/src/portal/kinWrites.ts, authed, #1314) ────────────
+
+export type KinHistoryKind = 'visits' | 'tales' | 'photos' | 'records';
+
+export interface DeleteKinRequest {
+  kinfolkId?: string;
+  kinId: string;
+  /** Omitted: report only, nothing is written. `true`: delete when there is no history. */
+  confirm?: boolean;
+}
+
+export interface DeleteKinResult {
+  ok: true;
+  deleted: boolean;
+  canDelete: boolean;
+  blockedBy: KinHistoryKind[];
+}
+
 // ── updateKin (functions/src/portal/kinWrites.ts, authed) ───────────────────
 // Editable subset of a kin doc, mirroring the KinPayload zod schema in
 // kinWrites.ts. `name` is required when present; every other field is

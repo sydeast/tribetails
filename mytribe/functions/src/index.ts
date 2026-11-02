@@ -311,6 +311,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   addKin: () => require('./portal/kinWrites'),
   updateKin: () => require('./portal/kinWrites'),
   archiveKin: () => require('./portal/kinWrites'),
+  // #1314: household self-delete of a Kin with no history (check + confirm).
+  deleteKin: () => require('./portal/kinWrites'),
   setActiveTribe: () => require('./portal/setActiveTribe'),
   signKinPhotoUpload: () => require('./portal/signKinPhotoUpload'),
   confirmKinPhotoUpload: () => require('./portal/signKinPhotoUpload'),
