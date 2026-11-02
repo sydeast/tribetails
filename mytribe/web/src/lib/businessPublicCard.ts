@@ -88,6 +88,14 @@ export function readCachedBusinessPublicCard(): BusinessPublicCard | null {
   }
 }
 
+/**
+ * The cached business name and nothing else: no live read, so a screen that
+ * draws offline (#1428: LaunchOffline, LaunchError) never waits on the network.
+ * '' on a cold cache, and the screen leaves its footer out.
+ */
+export function readCachedBusinessName(): string {
+  return readCachedBusinessPublicCard()?.name ?? '';
+}
 export function cacheBusinessPublicCard(card: BusinessPublicCard): void {
   try {
     localStorage.setItem(BUSINESS_PUBLIC_CARD_CACHE_KEY, JSON.stringify(card));

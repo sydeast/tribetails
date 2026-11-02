@@ -1,4 +1,5 @@
 import { OfflineNotice } from '../components/OfflineNotice';
+import { readCachedBusinessName } from '../lib/businessPublicCard';
 
 /**
  * What a household sees when a deep route cannot launch because the phone has
@@ -28,6 +29,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
  * This screen is the launch-shaped frame around that one component.
  */
 export function LaunchOffline() {
+  const name = readCachedBusinessName();
   return (
     <main className="errshell">
       <div className="errbrand">
@@ -38,9 +40,11 @@ export function LaunchOffline() {
         <OfflineNotice what="your tribe" />
       </section>
 
-      <p className="errfoot">
-        Cared for by <b>Tribe Tails Pet Care</b>
-      </p>
+      {name !== '' && (
+        <p className="errfoot">
+          Cared for by <b>{name}</b>
+        </p>
+      )}
     </main>
   );
 }
