@@ -91,7 +91,7 @@ class ShellNavTest {
     fun narrowTabs_excludeAccount_whichLivesInTheAvatarMenu() {
         assertFalse(ShellDestination.Account in ShellNav.narrowTabs, "Account is reached from the avatar menu, not a narrow tab (#1413)")
         assertTrue(
-            ShellNav.accountMenu(isOperator = false).any { it is AccountMenuItem.Open && it.destination == ShellDestination.Account },
+            ShellNav.accountMenu(isOperator = false, billingAccess = false).any { it is AccountMenuItem.Open && it.destination == ShellDestination.Account },
             "Account must still be reachable from the avatar menu",
         )
     }
@@ -129,7 +129,7 @@ class ShellNavTest {
             resolveActiveDestination(ShellNav.wideLinksFor(billingAccess = false)) { it == MessageAuntieRoute::class },
         )
         assertFalse(
-            ShellNav.accountMenu(isOperator = true).any { it is AccountMenuItem.Open && it.destination == ShellDestination.Messages },
+            ShellNav.accountMenu(isOperator = true, billingAccess = true).any { it is AccountMenuItem.Open && it.destination == ShellDestination.Messages },
             "Messages is a wide link, not a menu item",
         )
     }
@@ -190,21 +190,48 @@ class ShellNavTest {
 
     // ---- account menu ----
 
-    /** #1458: KinTales and The Kin left the menu. #1411 added About. */
+    /** #1458: KinTales and The Kin left the menu. #1411 added About. #1457: no Invoices without billing access. */
     @Test
-    fun accountMenu_nonOperator_hasAccountTribeEditNotificationsAboutSignOut() {
-        val menu = ShellNav.accountMenu(isOperator = false)
+    fun accountMenu_nonOperator_withoutBillingAccess_hasAccountTribeEditNotificationsAboutSignOut() {
+        val menu = ShellNav.accountMenu(isOperator = false, billingAccess = false)
         assertEquals(
             listOf("Account", "Edit Tribe Profile", "Notifications", "About", "Sign Out"),
             menu.map { it.label },
         )
         assertFalse(menu.any { it is AccountMenuItem.BackToDirectory })
+        assertFalse(menu.any { it is AccountMenuItem.Open && it.destination == ShellDestination.Invoices })
+    }
+
+    /** #1457 (#1295 mobile map): Invoices between Account and Edit Tribe Profile for billing access. */
+    @Test
+    fun accountMenu_nonOperator_withBillingAccess_putsInvoicesAfterAccount() {
+        val menu = ShellNav.accountMenu(isOperator = false, billingAccess = true)
+        assertEquals(
+            listOf("Account", "Invoices", "Edit Tribe Profile", "Notifications", "About", "Sign Out"),
+            menu.map { it.label },
+        )
+        val invoices = menu[1]
+        assertTrue(invoices is AccountMenuItem.Open && invoices.destination == ShellDestination.Invoices)
+        assertEquals(InvoicesRoute, ShellDestination.Invoices.route)
+    }
+
+    /** #1457: the menu item follows the same billing flag as the wide link, for kinfolk and operators. */
+    @Test
+    fun accountMenu_invoicesFollowsBillingAccess_likeTheWideLink() {
+        listOf(false, true).forEach { operator ->
+            listOf(false, true).forEach { billing ->
+                val inMenu = ShellNav.accountMenu(isOperator = operator, billingAccess = billing)
+                    .any { it is AccountMenuItem.Open && it.destination == ShellDestination.Invoices }
+                assertEquals(billing, inMenu, "operator=$operator billing=$billing")
+                assertEquals(ShellDestination.Invoices in ShellNav.wideLinksFor(billing), inMenu)
+            }
+        }
     }
 
     /** #1411: About is reached from the avatar menu on both platforms, and nowhere in the bars. */
     @Test
     fun accountMenu_includesAbout_whichIsNeitherATabNorAWideLink() {
-        val menu = ShellNav.accountMenu(isOperator = false)
+        val menu = ShellNav.accountMenu(isOperator = false, billingAccess = true)
         assertTrue(menu.any { it is AccountMenuItem.Open && it.destination == ShellDestination.About })
         assertFalse(ShellDestination.About in ShellNav.narrowTabs)
         assertFalse(ShellDestination.About in ShellNav.wideLinks)
@@ -219,11 +246,13 @@ class ShellNavTest {
     @Test
     fun accountMenu_dropsKinTalesAndTheKin_butTheDestinationsStay() {
         listOf(false, true).forEach { operator ->
-            val opens = ShellNav.accountMenu(isOperator = operator)
-                .filterIsInstance<AccountMenuItem.Open>()
-                .map { it.destination }
-            assertFalse(ShellDestination.KinTales in opens, "KinTales is a tab, not a menu item (operator=$operator)")
-            assertFalse(ShellDestination.Kin in opens, "The Kin is reached from Tribe, not the menu (operator=$operator)")
+            listOf(false, true).forEach { billing ->
+                val opens = ShellNav.accountMenu(isOperator = operator, billingAccess = billing)
+                    .filterIsInstance<AccountMenuItem.Open>()
+                    .map { it.destination }
+                assertFalse(ShellDestination.KinTales in opens, "KinTales is a tab, not a menu item (operator=$operator)")
+                assertFalse(ShellDestination.Kin in opens, "The Kin is reached from Tribe, not the menu (operator=$operator)")
+            }
         }
         assertTrue(ShellDestination.KinTales in ShellNav.narrowTabs)
         assertTrue(ShellDestination.KinTales in ShellNav.wideLinks)
@@ -234,19 +263,23 @@ class ShellNavTest {
 
     @Test
     fun accountMenu_operator_includesBackToDirectoryBeforeSignOut() {
-        val menu = ShellNav.accountMenu(isOperator = true)
+        assertEquals(
+            listOf("Account", "Invoices", "Edit Tribe Profile", "Notifications", "About", "Back to Directory", "Sign Out"),
+            ShellNav.accountMenu(isOperator = true, billingAccess = true).map { it.label },
+        )
         assertEquals(
             listOf("Account", "Edit Tribe Profile", "Notifications", "About", "Back to Directory", "Sign Out"),
-            menu.map { it.label },
+            ShellNav.accountMenu(isOperator = true, billingAccess = false).map { it.label },
         )
     }
 
     @Test
     fun accountMenu_openEntries_targetTheRightDestinations() {
-        val opens = ShellNav.accountMenu(isOperator = false).filterIsInstance<AccountMenuItem.Open>()
+        val opens = ShellNav.accountMenu(isOperator = false, billingAccess = true).filterIsInstance<AccountMenuItem.Open>()
         assertEquals(
             listOf(
                 ShellDestination.Account,
+                ShellDestination.Invoices,
                 ShellDestination.TribeEdit,
                 ShellDestination.Notifications,
                 ShellDestination.About,
