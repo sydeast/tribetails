@@ -342,7 +342,6 @@ fun AppNavHost(
                             onOpenEnvelope = { batchId -> navController.navigate(BookingEnvelopeRoute(batchId)) },
                             onOpenWizard = { navController.navigate(BookingWizardRoute(startWeekly = false)) },
                             onOpenRecurring = { navController.navigate(BookingWizardRoute(startWeekly = true)) },
-                            onOpenMessageAuntie = { openMessages() },
                             reloadSignal = reloadSignal,
                             handoff = scheduleHandoff,
                             onHandoffTaken = { scheduleHandoff = null },

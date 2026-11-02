@@ -94,7 +94,6 @@ fun ScheduleScreen(
     onOpenKinCare: (visitId: String, batchId: String?) -> Unit = { _, _ -> },
     onOpenEnvelope: (batchId: String) -> Unit = {},
     onOpenWizard: () -> Unit = {},
-    onOpenMessageAuntie: () -> Unit = {},
     onOpenRecurring: () -> Unit = {},
     reloadSignal: Int = 0,
     /** #1281: see [ScheduleHandoff]. Taken once, then [onHandoffTaken] clears it. */
@@ -223,18 +222,15 @@ fun ScheduleScreen(
                 }
             }
 
-            // "Good to know" aside. Both actions are REAL (16.4 Message Auntie,
-            // 16.3 recurring visit): each opens its live flow. Recurring visits are
-            // not a contract; the Auntie confirms each visit.
+            // "Good to know" aside. The recurring-visit action (16.3) is REAL: it
+            // opens the live wizard. Recurring visits are not a contract; the
+            // Auntie confirms each visit. #1464: the "Message Auntie" button that
+            // used to sit here is gone; Messages is a bar tab and each booking
+            // keeps its own message link.
             val asideColumn: @Composable () -> Unit = {
                 GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.l)) {
                     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                         Text("Good to know", style = type.heritageSection)
-                        KinGhostButton(
-                            label = "Message Auntie",
-                            onClick = onOpenMessageAuntie,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
                         KinGhostButton(
                             label = "Set up a recurring visit",
                             onClick = onOpenRecurring,

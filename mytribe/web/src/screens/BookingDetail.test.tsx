@@ -204,6 +204,16 @@ describe('BookingDetail: lookup', () => {
     expect(screen.getByText('CONFIRMED')).toBeInTheDocument();
   });
 
+  it('#1464: keeps its own link to Messages for this visit', async () => {
+    // The Schedule page lost its "Message your Auntie" button; the per-booking
+    // link is where a household messages about a visit, so it must stay.
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Drop-in Visit' });
+    const link = screen.getByRole('link', { name: /Message Auntie Maya/ });
+    expect(link).toHaveAttribute('data-to', '/messages');
+  });
+
   it('surfaces a getMyBookings failure via LaunchError rather than a blank page', async () => {
     mocks.getMyBookings.mockRejectedValue(new Error('network down'));
     renderScreen();

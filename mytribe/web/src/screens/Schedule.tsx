@@ -311,9 +311,6 @@ export function Schedule() {
                 Good to know <span className="sugtag">SUGGESTION</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                <Link className="btn ghost block" to="/messages">
-                  {'\u{1F4AC}'} Message your Auntie
-                </Link>
                 <Link className="btn ghost block" to="/schedule/book" search={{ weekly: true }}>
                   {'\u{1F504}'} Set up a recurring visit
                 </Link>

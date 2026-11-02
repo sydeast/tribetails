@@ -15,7 +15,6 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
-import kotlin.test.assertTrue
 
 class ScheduleScreenTest {
 
@@ -171,35 +170,37 @@ class ScheduleScreenTest {
             ScheduleScreen("The Foster", "3", PortalApi(fake), com.kinfolk.portal.firebase.FakeFirestoreClient())
         }
         waitForIdle()
-        // The "Good to know" aside with both shortcuts is always present.
+        // The "Good to know" aside with its recurring-visit shortcut is always present.
         onNodeWithText("Good to know").assertIsDisplayed()
         onNodeWithText("Set up a recurring visit").assertIsDisplayed()
     }
 
     @Test
-    fun messageAuntieCta_navigates() = runComposeUiTest {
+    fun schedule_hasNoMessageAuntieControl() = runComposeUiTest {
+        // #1464: Messages is a bar tab and each booking keeps its own message
+        // link, so the Schedule aside no longer offers a "Message Auntie" button.
+        // Schedule does not wire the ScreenHeader chip either, so no Messages
+        // control of any kind should render on this screen.
         val fake = FakeFunctionsClient()
         fake.stub("getMyBookings", buildJsonObject {
             put("liveVisit", JsonNull)
-            put("upcoming", buildJsonArray {})
+            put("upcoming", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "b1")
+                    put("status", "confirmed")
+                    put("title", "Park Adventure")
+                })
+            })
             put("recent", buildJsonArray {})
         })
-        var opened = false
-        // Schedule does not wire the ScreenHeader chip (it's opt-in + hidden there),
-        // so "Message Auntie" is the aside KinGhostButton. Click it and assert
-        // the navigation callback fired (no more "Coming soon" stub).
         setThemedContent {
-            ScheduleScreen(
-                "The Foster", "3", PortalApi(fake), com.kinfolk.portal.firebase.FakeFirestoreClient(),
-                onOpenMessageAuntie = { opened = true },
-            )
+            ScheduleScreen("The Foster", "3", PortalApi(fake), com.kinfolk.portal.firebase.FakeFirestoreClient())
         }
         waitForIdle()
         onNodeWithText("Good to know").assertIsDisplayed()
-        onNodeWithText("Message Auntie").performClick()
-        waitForIdle()
-        assertTrue(opened, "Message Auntie CTA should fire onOpenMessageAuntie")
-        onNodeWithText("Coming soon.").assertDoesNotExist()
+        onNodeWithText("Set up a recurring visit").assertIsDisplayed()
+        onNodeWithText("Message Auntie", substring = true, ignoreCase = true).assertDoesNotExist()
+        onNodeWithText("Message your Auntie", substring = true, ignoreCase = true).assertDoesNotExist()
     }
 
     @Test
