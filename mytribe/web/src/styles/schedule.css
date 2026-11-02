@@ -14,7 +14,7 @@
   animation: rise .6s var(--ease) .06s both; }
 /* #1305: tabs and the live-visit check share one row. The slot keeps a fixed
    minimum height, so the check finishing moves nothing below it. */
-.tabbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 26px; }
+.sched-tabbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 26px; }
 .livecheck { flex: 1 1 240px; min-height: 28px; display: flex; align-items: center; }
 .livecheck .loading-line { width: 100%; }
 .tabrow button { border: none; cursor: pointer; font-family: var(--sans); font-size: 14px; font-weight: 700; color: var(--navy-soft);

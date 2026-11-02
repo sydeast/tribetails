@@ -248,14 +248,14 @@ describe('Schedule, nothing moves when the live-visit check finishes (#1305)', (
       </QueryClientProvider>,
     );
     const line = await screen.findByText(/Checking whether a visit is under way/);
-    const slot = container.querySelector('.tabbar > .livecheck');
+    const slot = container.querySelector('.sched-tabbar > .livecheck');
     expect(slot).not.toBeNull();
     expect(slot).toContainElement(line);
     // Nothing between the tabs and the lists: the check is not a row of its own.
-    expect(container.querySelector('.tabbar')!.nextElementSibling?.classList.contains('cols')).toBe(true);
+    expect(container.querySelector('.sched-tabbar')!.nextElementSibling?.classList.contains('cols')).toBe(true);
     finishVisits({ visits: [] });
     await waitFor(() => expect(screen.queryByText(/Checking whether a visit is under way/)).toBeNull());
-    expect(container.querySelector('.tabbar > .livecheck')).toBe(slot);
+    expect(container.querySelector('.sched-tabbar > .livecheck')).toBe(slot);
   });
   it('shows no count while the list is still loading, never a 0', async () => {
     mocks.getMyBookings.mockReturnValue(new Promise(() => {}));
