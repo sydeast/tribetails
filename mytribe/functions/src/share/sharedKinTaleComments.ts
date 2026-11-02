@@ -22,14 +22,12 @@ import { db } from '../lib/firestoreAdmin';
  *  - `authorUid`. A household member's Firebase uid on a page anyone can open.
  *  - A household member's full name. Ruling 2026-11-01 on #1322 (issue #1407):
  *    a note from a household member is signed with first name and last initial
- *    ("Pat R."), and with "The family" when no name can be resolved. Staff
- *    (`admin`) comments stay "The family"; no staff record is read here. The
- *    in-app thread names (#1371) are a separate ruling and are untouched.
+ *    ("Pat R."), and with "The family" when no name can be resolved.
  *
- * The Auntie's display name is a deliberate exception and is NOT resolved here
- * either. `scrubbedPayload.authorDisplayName` already names her at the top of
- * the page, because she authored the thing being shared; a comment does not
- * need to re-derive it, and doing so would mean reading a second collection.
+ * A staff (`admin`) comment is signed the way the in-app thread signs it
+ * (#1371, #1416): "Auntie Maya" from `staff/{uid}.displayName`, or a bare
+ * "Auntie" when none resolves. It is never "The family", which would put her
+ * words in the household's mouth. Only the display name leaves this module.
  */
 
 /** One thread row, already scrubbed for a public reader. */
@@ -80,41 +78,64 @@ export function householdSignature(displayName: unknown): string | null {
   return `${tokens[0]} ${initial}.`;
 }
 /**
- * Resolve household authors to signatures, one batched read per distinct author.
- * Member record first, `clients` record for accounts that predate the member
- * model (same order as `getKinTaleComments`). A failed or empty lookup leaves
- * the author unnamed, so the note reads "The family" rather than failing the page.
+ * "Auntie Maya" from a stored staff display name, the same rule the in-app
+ * thread applies (#1322, #1371): the role word is said once, so a name that
+ * already carries "Auntie" is left as it is. Blank yields null so the caller
+ * falls back to a bare "Auntie".
  */
-async function resolveHouseholdSignatures(
-  taleId: string,
-  docs: CommentDoc[],
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  const uids = [
-    ...new Set(
-      docs
-        .filter((d) => d.authorRole === 'kinfolk' && !(d.guestName ?? '').trim() && d.authorUid)
-        .map((d) => d.authorUid as string),
-    ),
+export function staffSignature(displayName: unknown): string | null {
+  const name = (typeof displayName === 'string' ? displayName : '').trim();
+  if (name === '') return null;
+  return /\bauntie\b/i.test(name) ? name : `Auntie ${name}`;
+}
+/** Shown for a staff comment when no staff name resolves. */
+export const AUNTIE_FALLBACK_NAME = 'Auntie';
+/** Signatures resolved for one thread, keyed by author uid. */
+type Signatures = { household: Map<string, string>; staff: Map<string, string> };
+/**
+ * Resolve comment authors to signatures in ONE batched read per thread:
+ * household members (member record first, `clients` record for accounts that
+ * predate the member model, same order as `getKinTaleComments`) and staff
+ * (`staff/{uid}`, as `getKinTaleComments` reads it) share a single getAll. A
+ * failed or empty lookup leaves the author unnamed, so the note reads "The
+ * family" / "Auntie" rather than failing the page.
+ */
+async function resolveSignatures(taleId: string, docs: CommentDoc[]): Promise<Signatures> {
+  const out: Signatures = { household: new Map(), staff: new Map() };
+  const named = docs.filter((d) => !(d.guestName ?? '').trim() && d.authorUid);
+  const householdUids = [
+    ...new Set(named.filter((d) => d.authorRole === 'kinfolk').map((d) => d.authorUid as string)),
   ];
-  if (uids.length === 0) return out;
+  const staffUids = [
+    ...new Set(named.filter((d) => d.authorRole === 'admin').map((d) => d.authorUid as string)),
+  ];
+  if (householdUids.length === 0 && staffUids.length === 0) return out;
   try {
     const firestore = db();
-    const taleSnap = await firestore.doc(`kin_care_reports/${taleId}`).get();
-    const kinfolkId = (taleSnap.data() as { kinfolkId?: unknown } | undefined)?.kinfolkId;
-    if (typeof kinfolkId !== 'string' || !kinfolkId) return out;
+    let kinfolkId: string | null = null;
+    if (householdUids.length > 0) {
+      const taleSnap = await firestore.doc(`kin_care_reports/${taleId}`).get();
+      const id = (taleSnap.data() as { kinfolkId?: unknown } | undefined)?.kinfolkId;
+      if (typeof id === 'string' && id) kinfolkId = id;
+    }
+    const hUids = kinfolkId ? householdUids : [];
     const snaps = await firestore.getAll(
-      ...uids.map((u) => firestore.doc(`families/${kinfolkId}/members/${u}`)),
-      ...uids.map((u) => firestore.doc(`clients/${u}`)),
+      ...hUids.map((u) => firestore.doc(`families/${kinfolkId}/members/${u}`)),
+      ...hUids.map((u) => firestore.doc(`clients/${u}`)),
+      ...staffUids.map((u) => firestore.doc(`staff/${u}`)),
     );
-    uids.forEach((u, i) => {
-      const nameOf = (s: { data(): unknown } | undefined): unknown =>
-        (s?.data() as { displayName?: unknown } | undefined)?.displayName;
-      const sig = householdSignature(nameOf(snaps[i])) ?? householdSignature(nameOf(snaps[i + uids.length]));
-      if (sig) out.set(u, sig);
+    const nameOf = (s: { data(): unknown } | undefined): unknown =>
+      (s?.data() as { displayName?: unknown } | undefined)?.displayName;
+    hUids.forEach((u, i) => {
+      const sig = householdSignature(nameOf(snaps[i])) ?? householdSignature(nameOf(snaps[i + hUids.length]));
+      if (sig) out.household.set(u, sig);
+    });
+    staffUids.forEach((u, i) => {
+      const sig = staffSignature(nameOf(snaps[hUids.length * 2 + i]));
+      if (sig) out.staff.set(u, sig);
     });
   } catch {
-    // Best-effort: an unresolvable author is signed "The family".
+    // Best-effort: an unresolvable author is signed "The family" / "Auntie".
   }
   return out;
 }
@@ -127,7 +148,7 @@ async function resolveHouseholdSignatures(
  */
 export function toPublicComment(
   data: CommentDoc,
-  householdSignature?: string | null,
+  signature?: string | null,
 ): PublicComment | null {
   const body = (data.body ?? '').trim();
   if (body === '') return null;
@@ -138,9 +159,11 @@ export function toPublicComment(
   return {
     name: fromGuest
       ? guestName || ANONYMOUS_GUEST_NAME
-      : data.authorRole === 'kinfolk' && householdSignature
-        ? householdSignature
-        : FAMILY_NAME,
+      : data.authorRole === 'admin'
+        ? signature || AUNTIE_FALLBACK_NAME
+        : data.authorRole === 'kinfolk' && signature
+          ? signature
+          : FAMILY_NAME,
     body,
     createdAtMs: typeof data.createdAtMs === 'number' ? data.createdAtMs : null,
     fromGuest,
@@ -167,12 +190,14 @@ export async function listPublicComments(taleId: string): Promise<PublicComment[
     .get();
 
   const rows = snap.docs.map((d) => d.data() as CommentDoc);
-  const signatures = await resolveHouseholdSignatures(taleId, rows);
+  const signatures = await resolveSignatures(taleId, rows);
   const out: PublicComment[] = [];
   for (const row of rows) {
     const scrubbed = toPublicComment(
       row,
-      row.authorUid ? signatures.get(row.authorUid) : null,
+      row.authorUid
+        ? (row.authorRole === 'admin' ? signatures.staff : signatures.household).get(row.authorUid)
+        : null,
     );
     if (scrubbed) out.push(scrubbed);
   }
