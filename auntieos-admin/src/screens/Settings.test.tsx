@@ -825,7 +825,7 @@ describe('Settings — MyTribe portal Home layout editor', () => {
     await screen.findByLabelText('Business name');
     const panel = await openSection('MyTribe portal');
 
-    for (const label of ['Live visit', 'Up next', 'Recent KinTales', 'Tribe roster', 'Quick start']) {
+    for (const label of ['Live visit', 'Up next', 'Recent KinTales', 'Quick start']) {
       expect(within(panel).getByText(label)).toBeInTheDocument();
     }
     // Top and bottom rows can't move further in their own direction.
@@ -853,7 +853,6 @@ describe('Settings — MyTribe portal Home layout editor', () => {
             { id: 'upNext', enabled: true, limit: 0 },
             { id: 'liveVisit', enabled: true, limit: 0 },
             { id: 'tales', enabled: true, limit: 0 },
-            { id: 'roster', enabled: true, limit: 0 },
             { id: 'quickStart', enabled: true, limit: 0 },
           ],
         },
@@ -868,14 +867,14 @@ describe('Settings — MyTribe portal Home layout editor', () => {
     await screen.findByLabelText('Business name');
     const panel = await openSection('MyTribe portal');
 
-    await userEvent.click(within(panel).getByRole('switch', { name: 'Show Tribe roster on Home' }));
+    await userEvent.click(within(panel).getByRole('switch', { name: 'Show Quick start on Home' }));
     await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
 
     const changes = saveBusinessSettings.mock.calls[0]?.[0] as {
       mytribePortal: { home: { sections: Array<{ id: string; enabled: boolean }> } };
     };
-    const roster = changes.mytribePortal.home.sections.find((s) => s.id === 'roster');
-    expect(roster).toEqual({ id: 'roster', enabled: false, limit: 0 });
+    const quickStart = changes.mytribePortal.home.sections.find((s) => s.id === 'quickStart');
+    expect(quickStart).toEqual({ id: 'quickStart', enabled: false, limit: 0 });
   });
 
   it('setting a limit round-trips through Save', async () => {
@@ -977,7 +976,6 @@ describe('Settings — MyTribe portal Home layout editor', () => {
               { id: 'liveVisit', enabled: true, limit: 0 },
               { id: 'upNext', enabled: false, limit: 0 },
               { id: 'tales', enabled: true, limit: 0 },
-              { id: 'roster', enabled: true, limit: 0 },
               { id: 'quickStart', enabled: true, limit: 0 },
             ],
           },

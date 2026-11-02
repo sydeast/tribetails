@@ -28,9 +28,9 @@ class PortalHomeSectionTest {
 
     @Test fun `preserves row order -- order IS the persisted layout`() {
         val out = decodeHomeSections(
-            portal(listOf(row("roster", true, 0), row("upNext", false, 3), row("tales", true, 0)))
+            portal(listOf(row("quickStart", true, 0), row("upNext", false, 3), row("tales", true, 0)))
         )
-        assertEquals(listOf("roster", "upNext", "tales"), out.map { it.id })
+        assertEquals(listOf("quickStart", "upNext", "tales"), out.map { it.id })
     }
 
     @Test fun `a limit stored as a Long or Double still decodes as an Int`() {
@@ -57,17 +57,22 @@ class PortalHomeSectionTest {
     }
 
     @Test fun `drops a row that is not a map, keeping the well-formed ones`() {
-        val out = decodeHomeSections(portal(listOf("upNext", null, 7, row("roster", true, 0))))
-        assertEquals(listOf("roster"), out.map { it.id })
+        val out = decodeHomeSections(portal(listOf("upNext", null, 7, row("quickStart", true, 0))))
+        assertEquals(listOf("quickStart"), out.map { it.id })
     }
 
     @Test fun `never throws on a fully hand-mangled sections list`() {
         // Only non-Map entries are dropped outright; a Map with no usable keys
-        // still decodes (an id-less row, defaulted), which is why "roster" is
+        // still decodes (an id-less row, defaulted), which is why "quickStart" is
         // not the ONLY id in the result -- the point of this test is that
         // decoding a pile of garbage never throws, not that every row survives.
-        val out = decodeHomeSections(portal(listOf(null, 1, "x", listOf("nested"), row("roster", true, 0))))
-        assertEquals(listOf("roster"), out.map { it.id })
+        val out = decodeHomeSections(portal(listOf(null, 1, "x", listOf("nested"), row("quickStart", true, 0))))
+        assertEquals(listOf("quickStart"), out.map { it.id })
+    }
+
+    @Test fun `a saved config still carrying the retired roster row decodes without error`() {
+        val out = decodeHomeSections(portal(listOf(row("upNext", true, 0), row("roster", true, 0))))
+        assertEquals(listOf("upNext", "roster"), out.map { it.id })
     }
 
     // ── Encode: patches home.sections, preserves every sibling key ───────────
