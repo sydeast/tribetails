@@ -664,6 +664,10 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   onFamilyKinWrite: () => require('./triggers/onFamilyKinWrite'),
   onFlatKinWrite: () => require('./triggers/onFlatKinWrite'),
   onFamilyProfileWrite: () => require('./triggers/onFamilyProfileWrite'),
+  // #1321: mirrors the public business card (name, phone, hours, privacy policy
+  // URL) from the staff-only settings document to `business_public/card`, which
+  // the sign-in screen reads before anyone is signed in.
+  onBusinessSettingsWrite: () => require('./triggers/onBusinessSettingsWrite'),
   onInvoicesWrite: () => require('./triggers/onInvoicesWrite'),
   // A SECOND trigger on the same collection, deliberately: onInvoicesWrite
   // decides who to tell about a state change and writes nothing, this one moves

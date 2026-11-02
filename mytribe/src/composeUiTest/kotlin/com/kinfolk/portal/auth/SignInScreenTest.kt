@@ -44,16 +44,44 @@ class SignInScreenTest {
         onNodeWithContentDescription("Show password").assertDoesNotExist()
     }
 
+    /**
+     * #1321 ruling, 2026-11-01: the app is MyTribe, and the business it is for is
+     * named under it FROM SETTINGS (the public card), so a household knows it
+     * has the right app. The headline never waits on that read.
+     */
     @Test
-    fun showsMyTribeBrandWithTribeTailsTagline() = runComposeUiTest {
+    fun showsMyTribeBrandWithTheBusinessNameFromSettings() = runComposeUiTest {
+        setThemedContent {
+            SignInScreen(repo = repo(), onSignedIn = {}, businessName = "Sunny Paws")
+        }
+        waitForIdle()
+        onNodeWithText("MyTribe").assertIsDisplayed()
+        onNodeWithTag("business-byline").assertIsDisplayed()
+        onNodeWithText("by Sunny Paws").assertIsDisplayed()
+        onNodeWithText("by Tribe Tails Pet Care").assertDoesNotExist()
+        onNodeWithText("Welcome back to your Tribe!").assertIsDisplayed()
+    }
+
+    /** No name set, or the card not read yet: the headline stands alone and no name is invented. */
+    @Test
+    fun omitsTheBusinessLineWhileNoNameIsKnown() = runComposeUiTest {
         setThemedContent {
             SignInScreen(repo = repo(), onSignedIn = {})
         }
         waitForIdle()
-        // Product brand is MyTribe; the operating business is the tagline.
         onNodeWithText("MyTribe").assertIsDisplayed()
-        onNodeWithText("by Tribe Tails Pet Care").assertIsDisplayed()
-        onNodeWithText("Welcome back to your Tribe!").assertIsDisplayed()
+        onNodeWithTag("business-byline").assertDoesNotExist()
+        onNodeWithText("by ", substring = true).assertDoesNotExist()
+        onNodeWithText("Tribe Tails", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun aBlankNameIsNoName() = runComposeUiTest {
+        setThemedContent {
+            SignInScreen(repo = repo(), onSignedIn = {}, businessName = "   ")
+        }
+        waitForIdle()
+        onNodeWithTag("business-byline").assertDoesNotExist()
     }
 
     /**

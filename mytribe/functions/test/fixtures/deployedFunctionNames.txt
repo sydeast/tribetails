@@ -163,6 +163,7 @@ onAuthUserCreate
 onBookingEnvelopeCreate
 onBookingNoteCreate
 onBookingsWrite
+onBusinessSettingsWrite
 onClientsWrite
 onFamilyKinWrite
 onFamilyProfileWrite

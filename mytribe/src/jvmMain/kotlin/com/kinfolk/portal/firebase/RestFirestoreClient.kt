@@ -58,11 +58,17 @@ internal class RestFirestoreClient(
 
     override suspend fun getDocument(collection: String, documentId: String): Map<String, Any?>? {
         val url = "$root/$collection/$documentId"
-        val token = idToken() ?: return null
+        // #1321: with no session the request goes out with NO Authorization
+        // header, which is how a rules-public document (`business_public/card`,
+        // read by the sign-in screen before anyone is signed in) is readable from
+        // the desktop at all. A protected document answers that request 401/403,
+        // and that reads as null here, exactly as a signed-out read always did.
+        val token = idToken()
         val res = client.get(url) {
-            headers { append(HttpHeaders.Authorization, "Bearer $token") }
+            if (token != null) headers { append(HttpHeaders.Authorization, "Bearer $token") }
         }
         if (res.status.value == 404) return null
+        if (token == null && (res.status.value == 401 || res.status.value == 403)) return null
         if (!res.status.isSuccess()) {
             throw FirebaseRestException("getDocument $collection/$documentId", res.status.value, res.bodyAsText())
         }

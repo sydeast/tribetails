@@ -26,6 +26,13 @@ vi.mock('../lib/auth', () => ({
   sendReset: mocks.sendReset,
 }));
 vi.mock('../api/portal', () => ({ confirmSecureReset: mocks.confirmSecureReset }));
+/** #1321: what `business_public/card` answers; `null` is a document that is not there. */
+const publicCard = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+vi.mock('firebase/firestore', () => ({
+  doc: () => ({ path: 'business_public/card' }),
+  getDoc: () => Promise.resolve({ exists: () => publicCard.current !== null, data: () => publicCard.current ?? undefined }),
+}));
+vi.mock('../lib/firebase', () => ({ firestore: {} }));
 
 import { SecureReset } from './SecureReset';
 
@@ -46,6 +53,8 @@ function typePasswords(pw: string, confirm = pw) {
 const NATIVE = '?mode=resetPassword&oobCode=CODE-1&apiKey=AIzaFake&lang=en';
 
 beforeEach(() => {
+  localStorage.clear();
+  publicCard.current = null;
   Object.values(mocks).forEach((m) => m.mockReset());
   mocks.readActionCode.mockResolvedValue({ operation: 'PASSWORD_RESET', email: 'pepper@example.com', previousEmail: null });
   mocks.completeReset.mockResolvedValue(undefined);
@@ -262,6 +271,36 @@ describe('SecureReset: "I did not ask for this reset"', () => {
     typePasswords('new-password-9');
     fireEvent.click(screen.getByRole('button', { name: 'Secure my account' }));
     expect(await screen.findByText(/reset link may have expired/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1321: this page is pre-auth like the sign-in screen, so the business is named
+ * from the public card and never from a literal. An unset name leaves the
+ * footnote out and lets the sentences say "your Auntie".
+ */
+describe('SecureReset names the business from the public card (#1321)', () => {
+  it('says who was alerted, from settings, and signs the page with the same name', async () => {
+    publicCard.current = { name: 'Sunny Paws' };
+    const { container } = openLink(NATIVE);
+    await screen.findByText('pepper@example.com');
+    await waitFor(() => expect(container.querySelector('.footnote')).toHaveTextContent('Cared for by Sunny Paws'));
+    fireEvent.click(screen.getByRole('button', { name: 'I did not ask for this reset' }));
+    expect(screen.getByText(/Sunny Paws will be alerted to look into it/)).toBeInTheDocument();
+    typePasswords('new-password-9');
+    fireEvent.click(screen.getByRole('button', { name: 'Secure my account' }));
+    expect(await screen.findByText(/Sunny Paws has been alerted/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Tribe Tails/);
+  });
+
+  it('falls back to "your Auntie" and no footnote while no name is set', async () => {
+    const { container } = openLink(NATIVE);
+    await screen.findByText('pepper@example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'I did not ask for this reset' }));
+    expect(screen.getByText(/your Auntie will be alerted to look into it/)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/Cared for by/);
+    expect(container.textContent).not.toMatch(/Tribe Tails/);
+    expect(container.querySelector('.wordmark')).toHaveTextContent('MyTribe');
   });
 });
 

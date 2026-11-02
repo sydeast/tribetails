@@ -15,6 +15,10 @@
 .brandhead .wm { font-family: var(--serif); font-size: 27px; letter-spacing: -.01em; line-height: 1; }
 .brandhead .wm .grad { background: var(--tribe-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .brandhead .kick { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--navy-muted); margin-top: 9px; }
+/* #1321: the kicker now carries the operator's business name, which keeps its
+   own casing (Android draws it in sansMeta as typed). The uppercase tracking
+   above was for the fixed "PET CARE PORTAL" label. */
+.brandhead .byline { text-transform: none; letter-spacing: .02em; font-size: 12px; }
 
 .authcard { padding: 26px 26px 24px; }
 .authcard h2 { font-family: var(--serif); font-size: 26px; font-weight: 400; line-height: 1.1; }

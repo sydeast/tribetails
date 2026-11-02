@@ -41,6 +41,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
+import com.kinfolk.portal.components.businessLabel
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
@@ -86,6 +87,8 @@ fun SecureResetScreen(
     continueUrl: String? = null,
     fetcher: SecureResetFetcher = remember { makeSecureResetFetcher() },
     openUrl: (String) -> Unit = { openExternalUrl(it) },
+    /** #1321: `business_public/card.name`, read pre-auth by the app root. Blank omits the footer and says "your Auntie". */
+    businessName: String = "",
 ) {
     val auth = remember(repo) { repo.emailActionAuth() }
     SecureResetScreen(
@@ -104,6 +107,7 @@ fun SecureResetScreen(
         fetcher = fetcher,
         onSignIn = onSignIn,
         openUrl = openUrl,
+        businessName = businessName,
     )
 }
 
@@ -115,6 +119,7 @@ fun SecureResetScreen(
     fetcher: SecureResetFetcher,
     onSignIn: () -> Unit,
     openUrl: (String) -> Unit = { openExternalUrl(it) },
+    businessName: String = "",
 ) {
     val scope = rememberCoroutineScope()
     val controller = remember(link.oobCode, link.mode) {
@@ -132,12 +137,17 @@ fun SecureResetScreen(
             verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.l),
         ) {
             Wordmark()
-            ActionBody(controller, onSignIn, openUrl)
-            Text(
-                text = "Cared for by Tribe Tails Pet Care",
-                style = KinfolkTheme.typography.sansMeta.copy(color = Color.White.copy(alpha = 0.72f)),
-                textAlign = TextAlign.Center,
-            )
+            ActionBody(controller, onSignIn, openUrl, businessName)
+            // #1321: the footer names the business from settings and is left out
+            // while the operator has set none. Never a literal.
+            if (businessName.isNotBlank()) {
+                Text(
+                    text = "Cared for by ${businessName.trim()}",
+                    style = KinfolkTheme.typography.sansMeta.copy(color = Color.White.copy(alpha = 0.72f)),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("business-footnote"),
+                )
+            }
         }
     }
 }
@@ -147,6 +157,7 @@ private fun ActionBody(
     controller: SecureResetController,
     onSignIn: () -> Unit,
     openUrl: (String) -> Unit,
+    businessName: String,
 ) {
     when (val phase = controller.phase) {
         ActionPhase.Checking -> Busy("Checking your link…")
@@ -177,15 +188,15 @@ private fun ActionBody(
             )
         }
 
-        is ActionPhase.ResetReady -> ResetForm(controller, phase.email)
+        is ActionPhase.ResetReady -> ResetForm(controller, phase.email, businessName)
 
         is ActionPhase.EmailReady -> EmailApply(controller, phase.email)
 
         is ActionPhase.ResetDone -> Success(
             title = if (phase.secured) "Your account is secured." else "Your password is updated.",
             note = if (phase.secured) {
-                "Your new password is set, and Tribe Tails has been alerted to look into the reset " +
-                    "you did not ask for."
+                "Your new password is set, and ${businessLabel(businessName)} has been alerted to look " +
+                    "into the reset you did not ask for."
             } else {
                 null
             },
@@ -202,7 +213,7 @@ private fun ActionBody(
 // ── Reset ────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ResetForm(controller: SecureResetController, email: String) {
+private fun ResetForm(controller: SecureResetController, email: String, businessName: String) {
     val type = KinfolkTheme.typography
     val c = KinfolkTheme.colors
     var newPassword by remember { mutableStateOf("") }
@@ -215,7 +226,7 @@ private fun ResetForm(controller: SecureResetController, email: String) {
             AlertBanner(
                 title = "Secure your account",
                 body = "Someone may be trying to get into your account. Set a new password now, and " +
-                    "Tribe Tails will be alerted to look into it.",
+                    "${businessLabel(businessName)} will be alerted to look into it.",
             )
         } else {
             Text(
@@ -521,8 +532,9 @@ private fun Card(content: @Composable () -> Unit) {
 
 @Composable
 private fun Wordmark() {
+    // #1321: the app is MyTribe; the business is named in the footer, from settings.
     Text(
-        text = "Tribe Tails",
+        text = "MyTribe",
         style = KinfolkTheme.typography.heritageTitle.copy(
             color = Color.White,
             fontWeight = FontWeight.SemiBold,

@@ -4,7 +4,10 @@ import { validateNewPassword } from '../api/claimFlow';
 import { BusyLabel } from '../components/Loading';
 import { applyEmailAction, completeReset, readActionCode, sendReset } from '../lib/auth';
 import { isRateLimitedError } from '../lib/authErrors';
+import { businessLabel } from '../lib/businessLabel';
+import { useBusinessPublicCard } from '../lib/businessPublicCard';
 import { parseEmailActionLink, type EmailActionLink } from '../lib/emailAction';
+import { BusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * The project's Firebase email action handler (#892).
@@ -25,6 +28,12 @@ import { parseEmailActionLink, type EmailActionLink } from '../lib/emailAction';
  */
 export function SecureReset() {
   const link = useMemo(() => parseEmailActionLink(window.location.search, window.location.origin), []);
+  /**
+   * #1321: the business name from the public card, cached copy first. Pre-auth,
+   * like the sign-in screen, so it is the only source this page can have. ''
+   * leaves the footnote out and lets the sentences say "your Auntie".
+   */
+  const businessName = useBusinessPublicCard().name;
 
   let body: React.ReactNode;
   if (!link) {
@@ -35,7 +44,7 @@ export function SecureReset() {
       </Notice>
     );
   } else if (link.mode === 'resetPassword') {
-    body = <ResetPasswordFlow link={link} />;
+    body = <ResetPasswordFlow link={link} businessName={businessName} />;
   } else if (link.mode === 'unsupported') {
     body = (
       <Notice title="This link can't be completed here.">
@@ -50,15 +59,13 @@ export function SecureReset() {
     <>
       <header className="secguesthead">
         <div className="wordmark">
-          Tribe <span className="grad">Tails</span>
+          My<span className="grad">Tribe</span>
         </div>
       </header>
 
       <main className="secwrap">
         {body}
-        <p className="footnote">
-          Cared for by <b>Tribe Tails Pet Care</b>
-        </p>
+        <BusinessFootnote name={businessName} />
       </main>
     </>
   );
@@ -259,7 +266,7 @@ type ResetPhase =
   | { kind: 'ready'; email: string }
   | { kind: 'done'; secured: boolean };
 
-function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
+function ResetPasswordFlow({ link, businessName }: { link: EmailActionLink; businessName: string }) {
   const [phase, setPhase] = useState<ResetPhase>({ kind: 'checking' });
   const [attempt, setAttempt] = useState(0);
   const [intent, setIntent] = useState<'reset' | 'secure'>('reset');
@@ -366,8 +373,8 @@ function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
     return phase.secured ? (
       <Success title="Your account is secured." continueUrl={link.continueUrl}>
         <p className="helper" style={{ marginTop: 14 }}>
-          Your new password is set, and Tribe Tails has been alerted to look into the reset you did not
-          ask for.
+          Your new password is set, and {businessLabel(businessName)} has been alerted to look into the
+          reset you did not ask for.
         </p>
       </Success>
     ) : (
@@ -384,8 +391,8 @@ function ResetPasswordFlow({ link }: { link: EmailActionLink }) {
           <div className="at">
             <b>Secure your account</b>
             <p>
-              Someone may be trying to get into your account. Set a new password now, and Tribe Tails
-              will be alerted to look into it.
+              Someone may be trying to get into your account. Set a new password now, and{' '}
+              {businessLabel(businessName)} will be alerted to look into it.
             </p>
           </div>
         </div>
