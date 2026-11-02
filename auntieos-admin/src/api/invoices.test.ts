@@ -356,6 +356,17 @@ describe('invoiceMatchesSearch', () => {
     const missing = { invoiceNumber: '1042' } as unknown as InvoiceEntry;
     expect(invoiceMatchesSearch(missing, '$0.00')).toBe(true);
   });
+  it('finds a four-figure invoice with or without the thousands comma (#1488)', () => {
+    const big = { ...row, total: 1234.5 };
+    expect(invoiceMatchesSearch(big, '$1,234.50')).toBe(true);
+    expect(invoiceMatchesSearch(big, '1234.50')).toBe(true);
+    expect(invoiceMatchesSearch(big, '$1234')).toBe(true);
+    expect(invoiceMatchesSearch(big, '1,234')).toBe(true);
+    expect(invoiceMatchesSearch(big, '$1,235')).toBe(false);
+  });
+  it('does not treat a comma-only query as matching every amount', () => {
+    expect(invoiceMatchesSearch(row, ',')).toBe(false);
+  });
 });
 describe('invoiceDispute', () => {
   const clean: Pick<

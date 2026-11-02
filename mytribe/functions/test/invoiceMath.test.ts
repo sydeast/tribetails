@@ -136,6 +136,11 @@ describe('validateInvoiceMoney', () => {
     expect(err).toContain('10.00');
   });
 
+  it('names four-figure amounts with the thousands grouped (#1488)', () => {
+    const err = validateInvoiceMoney([line({ unitCents: 100000 })], 250000);
+    expect(err).toBe('Invoice discount ($2,500.00) is larger than the subtotal ($1,000.00).');
+  });
+
   it('refuses a per-line discount larger than that line', () => {
     expect(validateInvoiceMoney([line({ qty: 1, unitCents: 1000, discountCents: 1500 })], 0)).toContain(
       'Dog walking',

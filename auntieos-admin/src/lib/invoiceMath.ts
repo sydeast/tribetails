@@ -59,6 +59,8 @@
  * a deliberate decision about fractional cents, not floating-point slop.
  */
 
+import { formatCentsUsd } from './invoiceFormat';
+
 export interface InvoiceLineItemInput {
   description: string;
   /** Units billed. May be fractional (2.5 hours); the line rounds to whole cents. */
@@ -195,11 +197,9 @@ export function centsToDollars(cents: number): number {
   return Number((finite(cents) / 100).toFixed(2));
 }
 
-/** "$36.00" / "-$12.50" from an integer count of cents. */
+/** "$36.00" / "-$12.50" / "$1,234.50" from an integer count of cents. */
 function usd(cents: number): string {
-  const n = finite(cents);
-  const sign = n < 0 ? '-' : '';
-  return `${sign}$${(Math.abs(n) / 100).toFixed(2)}`;
+  return formatCentsUsd(finite(cents));
 }
 
 /**

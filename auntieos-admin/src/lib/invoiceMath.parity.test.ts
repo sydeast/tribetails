@@ -68,6 +68,11 @@ const KNOWN_SERVER_ONLY_EXPORTS: readonly string[] = [
   'isPartiallyPaid',
   'InvoiceSettlementState',
   'InvoiceSettlement',
+  // #1488: the server's one money-string formatter. The admin console formats
+  // money in `invoiceFormat.ts` (`formatUsd` / `formatCentsUsd`), which the
+  // mirror's own refusal text already routes through, so it needs no copy here.
+  'formatUsd',
+  'formatUsdCents',
 ];
 
 /**

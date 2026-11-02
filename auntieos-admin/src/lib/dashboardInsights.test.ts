@@ -306,6 +306,9 @@ describe('formatCents', () => {
     expect(formatCents(0)).toBe('$0.00');
     expect(formatCents(-500)).toBe('-$5.00');
   });
+  it('groups thousands (#1488)', () => {
+    expect(formatCents(123450)).toBe('$1,234.50');
+  });
 
   it('reads a non-finite amount as $0.00, never "$NaN"', () => {
     expect(formatCents(Number.NaN)).toBe('$0.00');

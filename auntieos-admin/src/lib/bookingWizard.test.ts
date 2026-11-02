@@ -476,6 +476,7 @@ describe('totals', () => {
     // The review PNG's own arithmetic: two Peek-Ins at $15 read as $30.00.
     expect(wizardTotal(state, OPTIONS)).toEqual({ cents: 3000, unpriced: [] });
     expect(formatCents(3000)).toBe('$30.00');
+    expect(formatCents(123450)).toBe('$1,234.50');
   });
 
   it('NAMES an unpriced service rather than adding it as zero', () => {

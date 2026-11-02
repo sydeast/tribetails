@@ -911,11 +911,23 @@ export function invoiceMatchesSearch(
   const needle = search.trim().toLowerCase();
   if (needle === '') return true;
   const total = typeof row.total === 'number' && Number.isFinite(row.total) ? row.total : 0;
-  const money = `${total < 0 ? '-' : ''}$${Math.abs(total).toFixed(2)}`;
-  return [row.invoiceNumber ?? '', row.kinfolkName ?? '', row.client ?? '', money].some((field) =>
+  const money = `${total < 0 ? '-' : ''}$${SEARCH_USD_DIGITS.format(Math.abs(total))}`;
+  if ([row.invoiceNumber ?? '', row.kinfolkName ?? '', row.client ?? '', money].some((field) =>
     field.toLowerCase().includes(needle),
-  );
+  )) {
+    return true;
+  }
+  // The row prints "$1,234.50" (#1488), and an operator may type the figure with
+  // or without the comma. Compared comma-free on both sides so "1234.50" and
+  // "1,234.50" both find it; a needle that is only commas matches nothing.
+  const plainNeedle = needle.replace(/,/g, '');
+  return plainNeedle !== '' && money.replace(/,/g, '').includes(plainNeedle);
 }
+/** Same digits as `lib/invoiceFormat.ts#formatUsd`: two decimals, thousands grouped. */
+const SEARCH_USD_DIGITS = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 /** What the invoice screen says about the open payment links (#1113). */
 export interface InvoiceCheckoutClosure {
