@@ -89,6 +89,12 @@ button.avatar { border: 0; padding: 0; }
 .sectlabel { display: flex; align-items: center; gap: 8px; margin: 0 2px 12px; font-family: var(--mono); font-size: 11px;
   letter-spacing: .14em; text-transform: uppercase; color: var(--navy-muted); }
 .sectlabel a { margin-left: auto; color: var(--teal); text-decoration: none; font-weight: 500; letter-spacing: .04em; }
+/* #1461: a section heading that opens its list. The h2 keeps it a heading; the
+   link keeps the label's own look instead of the trailing teal link's. */
+h2.sectlabel { font-weight: 400; }
+.sectlabel a.sect-head { margin-left: 0; color: inherit; font-weight: inherit; letter-spacing: inherit; display: inline-flex; align-items: center; gap: 6px; }
+.sectlabel a.sect-head:hover { color: var(--teal); }
+.sectlabel a.sect-head:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; border-radius: 4px; }
 h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display: flex; align-items: center; gap: 8px; }
 .sub { color: var(--navy-muted); font-size: 13px; margin-top: 3px; }
 

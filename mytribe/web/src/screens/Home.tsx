@@ -187,9 +187,13 @@ export function Home() {
 
           const upNextSection = (
             <section className="glass card d2">
-              <div className="sectlabel">
-                Up next <Link to="/schedule">Full schedule</Link>
-              </div>
+              {/* #1461: the heading itself opens Schedule; the separate "Full
+                  schedule" link is gone. Still an h2, so it reads as a heading. */}
+              <h2 className="sectlabel">
+                <Link className="sect-head" to="/schedule">
+                  Up next <span aria-hidden="true">&rsaquo;</span>
+                </Link>
+              </h2>
               {bookingsView.kind === 'offline' ? (
                 <OfflineNotice what="your schedule" />
               ) : bookingsView.kind === 'empty' ? (
@@ -205,8 +209,10 @@ export function Home() {
                   const tile = visitTile(b);
                   const chip = bookingChip(b.status);
                   const change = pendingChangeLabel(b);
+                  // #1461: each row opens that booking, the same route the
+                  // Schedule rows use.
                   return (
-                    <div className={`visit ${visitVariant(i)}`} key={b.id}>
+                    <Link className={`visit ${visitVariant(i)}`} to="/schedule/$visitId" params={{ visitId: b.id }} key={b.id}>
                       <div className="cal">
                         <div className="m">{tile.month}</div>
                         <div className="d">{tile.day}</div>
@@ -218,7 +224,7 @@ export function Home() {
                       </div>
                       <div className="pet">{speciesEmoji(null)}</div>
                       <span className={`chip ${chip.tone}`}>{chip.label}</span>
-                    </div>
+                    </Link>
                   );
                 })
               )}
@@ -227,7 +233,11 @@ export function Home() {
 
           const talesSection = (
             <section className="glass card d3">
-              <div className="sectlabel">Recent KinTales</div>
+              <h2 className="sectlabel">
+                <Link className="sect-head" to="/kintales">
+                  Recent KinTales <span aria-hidden="true">&rsaquo;</span>
+                </Link>
+              </h2>
               {talesView.kind === 'offline' ? (
                 <OfflineNotice what="your KinTales" />
               ) : talesView.kind === 'empty' ? (
