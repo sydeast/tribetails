@@ -184,6 +184,7 @@ fun TabShell(
                     active = active,
                     isOperator = onBackToDirectory != null,
                     billingAccess = billingAccess,
+                    businessName = businessName,
                     onLink = { onTabLink(it) },
                     onBell = { navigateMenu(NotificationsRoute) },
                     onMenuItem = ::onMenuItem,
@@ -208,6 +209,7 @@ fun TabShell(
                         logoUrl = logoUrl,
                         isOperator = onBackToDirectory != null,
                         billingAccess = billingAccess,
+                        businessName = businessName,
                         onBell = { navigateMenu(NotificationsRoute) },
                         onMenuItem = ::onMenuItem,
                     )
@@ -240,6 +242,7 @@ private fun WideTopNav(
     active: ShellDestination?,
     isOperator: Boolean,
     billingAccess: Boolean,
+    businessName: String,
     onLink: (ShellDestination) -> Unit,
     onBell: () -> Unit,
     onMenuItem: (AccountMenuItem) -> Unit,
@@ -272,6 +275,7 @@ private fun WideTopNav(
                     familyName = familyName,
                     isOperator = isOperator,
                     billingAccess = billingAccess,
+                    businessName = businessName,
                     onMenuItem = onMenuItem,
                 )
             }
@@ -323,6 +327,7 @@ private fun NarrowTopBar(
     logoUrl: String?,
     isOperator: Boolean,
     billingAccess: Boolean,
+    businessName: String,
     onBell: () -> Unit,
     onMenuItem: (AccountMenuItem) -> Unit,
 ) {
@@ -342,6 +347,7 @@ private fun NarrowTopBar(
                 familyName = familyName,
                 isOperator = isOperator,
                 billingAccess = billingAccess,
+                businessName = businessName,
                 onMenuItem = onMenuItem,
             )
         }
@@ -457,6 +463,7 @@ private fun AvatarMenuButton(
     familyName: String,
     isOperator: Boolean,
     billingAccess: Boolean,
+    businessName: String,
     onMenuItem: (AccountMenuItem) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
@@ -479,7 +486,7 @@ private fun AvatarMenuButton(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
         ) {
-            ShellNav.accountMenu(isOperator, billingAccess).forEach { item ->
+            ShellNav.accountMenu(isOperator, billingAccess, businessName).forEach { item ->
                 DropdownMenuItem(
                     text = { Text(item.label, style = type.sansBody) },
                     onClick = {

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Pets
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.kinfolk.portal.components.businessLabel
 import kotlin.reflect.KClass
 
 /**
@@ -47,7 +48,7 @@ enum class ShellDestination(
     Invoices("Invoices", "Invoices", Icons.Filled.CreditCard, InvoicesRoute, InvoicesRoute::class),
     Kin("The Kin", "Kin", Icons.Filled.Pets, KinRoute, KinRoute::class),
     Account("Account", "Account", Icons.Filled.PersonOutline, AccountRoute, AccountRoute::class),
-    Notifications("Notifications", "Notifications", Icons.Filled.Notifications, NotificationsRoute, NotificationsRoute::class),
+    Notifications("Notification settings", "Notifications", Icons.Filled.Notifications, NotificationsRoute, NotificationsRoute::class),
     TribeEdit("Edit Tribe Profile", "Edit", Icons.Filled.Edit, TribeEditRoute, TribeEditRoute::class),
 
     /**
@@ -71,8 +72,8 @@ sealed interface AccountMenuItem {
     val label: String
 
     /** Navigates to a shell destination. */
-    data class Open(val destination: ShellDestination) : AccountMenuItem {
-        override val label: String get() = destination.label
+    data class Open(val destination: ShellDestination, val labelOverride: String? = null) : AccountMenuItem {
+        override val label: String get() = labelOverride ?: destination.label
     }
 
     /** Operator-only: leaves the shell back to the tribe directory. */
@@ -81,7 +82,7 @@ sealed interface AccountMenuItem {
     }
 
     data object SignOut : AccountMenuItem {
-        override val label: String = "Sign Out"
+        override val label: String = "Sign out"
     }
 }
 
@@ -135,15 +136,21 @@ object ShellNav {
      * Profile for a member with billing access, at every width, the same as
      * web's AvatarMenu. Without billing access it is not drawn, the way
      * [wideLinksFor] drops the wide link.
+     *
+     * #1490: the Notifications entry reads "Notification settings" (its
+     * [ShellDestination.label]; the narrow bar uses [ShellDestination.tabLabel],
+     * which stays "Notifications"), and About carries [businessName].
      */
-    fun accountMenu(isOperator: Boolean, billingAccess: Boolean): List<AccountMenuItem> = buildList {
+    fun accountMenu(isOperator: Boolean, billingAccess: Boolean, businessName: String = ""): List<AccountMenuItem> = buildList {
         add(AccountMenuItem.Open(ShellDestination.Account))
         if (billingAccess) add(AccountMenuItem.Open(ShellDestination.Invoices))
         add(AccountMenuItem.Open(ShellDestination.TribeEdit))
         add(AccountMenuItem.Open(ShellDestination.Notifications))
         // #1411: the business's hours, number and privacy policy, before the
         // items that leave the shell, the same slot as the web AvatarMenu.
-        add(AccountMenuItem.Open(ShellDestination.About))
+        // #1490: "About {business name}", "About your Auntie" when none is cached,
+        // the same words the About screen titles itself with and web's AvatarMenu.
+        add(AccountMenuItem.Open(ShellDestination.About, labelOverride = "About ${businessLabel(businessName)}"))
         if (isOperator) add(AccountMenuItem.BackToDirectory)
         add(AccountMenuItem.SignOut)
     }

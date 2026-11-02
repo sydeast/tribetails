@@ -26,10 +26,10 @@ vi.mock('@tanstack/react-router', () => ({
   ),
 }));
 
-async function openMenu(billingAccess = false, isOperator = false) {
+async function openMenu(billingAccess = false, isOperator = false, businessName?: string | null) {
   const onSignOut = vi.fn();
   render(
-    <AvatarMenu initial="J" onSignOut={onSignOut} signingOut={false} billingAccess={billingAccess} isOperator={isOperator} />,
+    <AvatarMenu initial="J" onSignOut={onSignOut} signingOut={false} billingAccess={billingAccess} isOperator={isOperator} businessName={businessName} />,
   );
   await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
   return { onSignOut, items: within(screen.getByRole('menu')).getAllByRole('menuitem') };
@@ -38,7 +38,7 @@ async function openMenu(billingAccess = false, isOperator = false) {
 describe('AvatarMenu items (#1454)', () => {
   it('lists Account, Edit Tribe Profile, Notification settings, About, Sign out in that order without billing access', async () => {
     const { items } = await openMenu();
-    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About', 'Sign out']);
+    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About your Auntie', 'Sign out']);
   });
 
   it('sends Edit Tribe Profile to the Tribe Profile editor as a real link', async () => {
@@ -79,7 +79,7 @@ describe('AvatarMenu Invoices (#1457)', () => {
       'Invoices',
       'Edit Tribe Profile',
       'Notification settings',
-      'About',
+      'About your Auntie',
       'Sign out',
     ]);
     expect(items[1]!.tagName).toBe('A');
@@ -137,7 +137,7 @@ describe('AvatarMenu Back to Directory (#1459)', () => {
       'Invoices',
       'Edit Tribe Profile',
       'Notification settings',
-      'About',
+      'About your Auntie',
       'Back to Directory',
       'Sign out',
     ]);
@@ -150,5 +150,26 @@ describe('AvatarMenu Back to Directory (#1459)', () => {
       '/pick',
       null,
     ]);
+  });
+});
+
+/**
+ * #1490: the About item reads "About {business name}" (the #1295 map), and
+ * "About your Auntie" when no name is cached, the About screen's own title.
+ * Android's ShellNav.accountMenu(businessName) gives the same words.
+ */
+describe('AvatarMenu About label (#1490)', () => {
+  it('names the business', async () => {
+    const { items } = await openMenu(false, false, 'Sunny Paws');
+    expect(items[3]).toHaveTextContent('About Sunny Paws');
+    expect(items[3]).toHaveAttribute('href', '/about');
+  });
+  it('trims the name', async () => {
+    const { items } = await openMenu(false, false, '  Sunny Paws  ');
+    expect(items[3]!.textContent).toBe('About Sunny Paws');
+  });
+  it.each([[undefined], [null], [''], ['   ']])('falls back to About your Auntie for %j', async (name) => {
+    const { items } = await openMenu(false, false, name);
+    expect(items[3]!.textContent).toBe('About your Auntie');
   });
 });

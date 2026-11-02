@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { BusyLabel } from './Loading';
+import { businessLabel } from '../lib/businessLabel';
 /**
  * The header avatar and its small menu (#1309): Account, Notification settings,
  * About (#1411), Sign out. Before this the avatar was a bare link that went straight to
@@ -25,6 +26,10 @@ import { BusyLabel } from './Loading';
  * sits directly above Sign out for operators only. It replaces the header's
  * "Switch tribe" icon, so the menu is the one place an operator leaves a tribe,
  * the same as Android's accountMenu.
+ *
+ * #1490: About reads "About {business name}" (the #1295 map), "About your
+ * Auntie" when no name is cached, the About screen's own title. Android's
+ * accountMenu takes the name the same way.
  */
 export function AvatarMenu(props: {
   initial: string;
@@ -34,6 +39,8 @@ export function AvatarMenu(props: {
   billingAccess: boolean;
   /** Operators only: true draws Back to Directory above Sign out. */
   isOperator: boolean;
+  /** `getMyHome.businessName`; blank or missing reads "About your Auntie". */
+  businessName?: string | null | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -86,7 +93,7 @@ export function AvatarMenu(props: {
           </Link>
           {/* #1411: the business's hours, number and privacy policy. */}
           <Link role="menuitem" to="/about" onClick={() => setOpen(false)}>
-            About
+            About {businessLabel(props.businessName)}
           </Link>
           {props.isOperator && (
             <Link role="menuitem" to="/pick" onClick={() => setOpen(false)}>
