@@ -237,3 +237,78 @@ describe('rules: staff-only pet fields are unreadable by the household (#1335, #
     await assertSucceeds(asUser(env, 'staff-1', { admin: true }).firestore().doc('families/f1/kin/k1').get());
   });
 });
+// #1442: kin delete is callable-only. `deleteKin` runs the history check
+// (visits, KinTales, photos, admin records) and removes the flat mirror with
+// the family doc; a client deleteDoc skips both. The Admin SDK bypasses rules,
+// so the callable keeps working. Create, update and read must be untouched.
+describe('rules: kin delete is callable-only (#1442)', () => {
+  afterEach(async () => cleanup());
+  afterAll(async () => shutdown());
+  async function seedKin(): Promise<void> {
+    await seedFamily({
+      fid: 'f1',
+      primaryUid: 'u-prim',
+      secondaries: [
+        { uid: 'u-sec', perms: { kin_edit: true } },
+        { uid: 'u-plain', perms: {} },
+      ],
+    });
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('families/f1/kin/k1').set({ name: 'Kai' });
+      await ctx.firestore().doc('kin/flat1').set({ kinfolkId: 'f1', name: 'Kai' });
+    });
+  }
+  it('a kin_edit holder cannot delete a family kin doc', async () => {
+    const env = await getEnv();
+    await seedKin();
+    await assertFails(asUser(env, 'u-sec').firestore().doc('families/f1/kin/k1').delete());
+  });
+  it('the PRIMARY cannot delete a family kin doc', async () => {
+    const env = await getEnv();
+    await seedKin();
+    await assertFails(asUser(env, 'u-prim').firestore().doc('families/f1/kin/k1').delete());
+  });
+  it('a member without kin_edit cannot delete a family kin doc', async () => {
+    const env = await getEnv();
+    await seedKin();
+    await assertFails(asUser(env, 'u-plain').firestore().doc('families/f1/kin/k1').delete());
+  });
+  it('the owner and an Auntie cannot delete a family kin doc from a client', async () => {
+    const env = await getEnv();
+    await seedKin();
+    await assertFails(asUser(env, 'staff-1', { admin: true }).firestore().doc('families/f1/kin/k1').delete());
+    await assertFails(asUser(env, 'auntie-1', { staffRole: 'auntie' }).firestore().doc('families/f1/kin/k1').delete());
+  });
+  it('the owner, an Auntie and a test admin cannot delete the flat kin doc from a client', async () => {
+    const env = await getEnv();
+    await seedKin();
+    await assertFails(asUser(env, 'staff-1', { admin: true }).firestore().doc('kin/flat1').delete());
+    await assertFails(asUser(env, 'auntie-1', { staffRole: 'auntie' }).firestore().doc('kin/flat1').delete());
+    await assertFails(asUser(env, 'tester-1', { testTribeId: 'f1' }).firestore().doc('kin/flat1').delete());
+  });
+  it('a refused delete leaves both docs in place', async () => {
+    const env = await getEnv();
+    await seedKin();
+    await assertFails(asUser(env, 'u-sec').firestore().doc('families/f1/kin/k1').delete());
+    await assertFails(asUser(env, 'staff-1', { admin: true }).firestore().doc('kin/flat1').delete());
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      expect((await ctx.firestore().doc('families/f1/kin/k1').get()).exists).toBe(true);
+      expect((await ctx.firestore().doc('kin/flat1').get()).exists).toBe(true);
+    });
+  });
+  it('everything that was allowed before still is: create, update, read', async () => {
+    const env = await getEnv();
+    await seedKin();
+    await assertSucceeds(asUser(env, 'u-sec').firestore().doc('families/f1/kin/k-new').set({ name: 'Lou' }));
+    await assertSucceeds(
+      asUser(env, 'u-sec').firestore().doc('families/f1/kin/k1').update({ name: 'Kai II', updatedAt: new Date() }),
+    );
+    await assertSucceeds(asUser(env, 'u-plain').firestore().doc('families/f1/kin/k1').get());
+    await assertSucceeds(asUser(env, 'staff-1', { admin: true }).firestore().doc('kin/flat1').update({ name: 'Kai III' }));
+    await assertSucceeds(asUser(env, 'staff-1', { admin: true }).firestore().doc('kin/flat1').get());
+    await assertSucceeds(
+      asUser(env, 'staff-1', { admin: true }).firestore().doc('kin/flat2').set({ kinfolkId: 'f1', name: 'Mo' }),
+    );
+  });
+});
