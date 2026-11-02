@@ -10,7 +10,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
-import kotlin.math.abs
 
 /**
  * #881: the desktop Record Payment dialog goes through the `recordPayment`
@@ -119,11 +118,7 @@ fun decodeRecordPaymentOutcome(body: String): RecordPaymentOutcome {
     )
 }
 
-private fun centsUsd(cents: Long): String {
-    val sign = if (cents < 0) "-" else ""
-    val a = abs(cents)
-    return sign + "$" + (a / 100).toString() + "." + (a % 100).toString().padStart(2, '0')
-}
+private fun centsUsd(cents: Long): String = com.tribetails.auntieos.web.util.formatUsdCents(cents)
 
 /**
  * The sentence the operator reads after the call answers. It says what the

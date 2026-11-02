@@ -365,6 +365,7 @@ class DashboardInsightsTest {
         assertEquals("$0.05", formatCents(5))
         assertEquals("$8.00", formatCents(800))
         assertEquals("-$1.50", formatCents(-150))
+        assertEquals("$1,234.50", formatCents(123450))
     }
 
     // ── AO-41 supplies tracker ──────────────────────────────────────────────────

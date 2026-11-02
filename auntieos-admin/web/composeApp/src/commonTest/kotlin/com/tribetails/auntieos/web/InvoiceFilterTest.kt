@@ -93,4 +93,13 @@ class InvoiceFilterTest {
     fun formatMoney_singleDigitCents() {
         assertEquals("\$1.05", formatMoney(1.05))
     }
+    // #1488: grouped thousands, matching the portal, admin web and the server.
+    @Test
+    fun formatMoney_groupsThousands() {
+        assertEquals("\$999.99", formatMoney(999.99))
+        assertEquals("\$1,000.00", formatMoney(1000.0))
+        assertEquals("\$1,234.50", formatMoney(1234.5))
+        assertEquals("-\$1,234.50", formatMoney(-1234.5))
+        assertEquals("\$1,000,000.00", formatMoney(1_000_000.0))
+    }
 }

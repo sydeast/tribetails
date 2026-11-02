@@ -293,6 +293,9 @@ class InvoiceEditTest {
         assertNull(parseDollarsToCents("12.345"))
         assertEquals("12.05", centsToInputDollars(1205))
         assertEquals("-\$3.50", formatEditCents(-350))
+        assertEquals("\$1,234.50", formatEditCents(123450))
+        // The input seed stays ungrouped: it is parsed back.
+        assertEquals("1234.50", centsToInputDollars(123450))
         assertEquals("2.5", formatEditQty(2.5))
         assertEquals("3", formatEditQty(3.0))
         assertNotNull(parseQty("0.5"))

@@ -224,16 +224,8 @@ fun humanizeDate(raw: String): String {
     return "$name $day"
 }
 
-fun formatMoney(amount: Double): String {
-    // Two-decimal formatting without java.text (avoids stdlib gaps on Wasm).
-    val abs     = if (amount < 0) -amount else amount
-    val cents   = ((abs * 100) + 0.5).toLong()
-    val whole   = cents / 100
-    val frac    = cents % 100
-    val fracStr = if (frac < 10) "0$frac" else "$frac"
-    val sign    = if (amount < 0) "-" else ""
-    return "$sign\$$whole.$fracStr"
-}
+/** "$36.00" / "-$12.50" / "$1,234.50". Display only; an input is seeded with `centsToInputDollars`. */
+fun formatMoney(amount: Double): String = com.tribetails.auntieos.web.util.formatUsd(amount)
 
 /**
  * Den filter tabs. The same seven tabs, labels and order as the admin web

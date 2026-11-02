@@ -331,13 +331,7 @@ fun recentExpenses(list: List<ExpenseItem>, limit: Int = 5): List<ExpenseItem> =
  * Whole-cents money as "$12.34" (AO-40). Negative amounts keep the sign in front
  * of the dollar sign ("-$1.50"). Mirrors the React formatCents.
  */
-fun formatCents(cents: Int): String {
-    val sign = if (cents < 0) "-" else ""
-    val abs = if (cents < 0) -cents else cents
-    val dollars = abs / 100
-    val rem = (abs % 100).toString().padStart(2, '0')
-    return "$sign$$dollars.$rem"
-}
+fun formatCents(cents: Int): String = com.tribetails.auntieos.web.util.formatUsdCents(cents.toLong())
 
 // ── AO-41 supplies tracker ────────────────────────────────────────────────────
 
