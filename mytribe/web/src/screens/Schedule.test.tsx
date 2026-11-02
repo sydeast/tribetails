@@ -135,6 +135,40 @@ describe('Schedule, online and genuinely empty', () => {
   });
 });
 
+/**
+ * #1464: Messages is a bar tab and each booking keeps its own message link, so
+ * the Schedule page offers no "Message your Auntie" control of its own. The
+ * recurring-visit shortcut beside it stays.
+ */
+describe('Schedule offers no Messages control (#1464)', () => {
+  function renderOnline(upcoming: unknown[]) {
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming, recent: [] });
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Schedule />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('renders the Good to know aside without a Message your Auntie link', async () => {
+    renderOnline([]);
+    await screen.findByText('No upcoming bookings');
+    const aside = screen.getByRole('region', { name: 'Schedule tips' });
+    expect(within(aside).getByText(/Set up a recurring visit/)).toBeInTheDocument();
+    expect(within(aside).queryByText(/Message/i)).toBeNull();
+    expect(screen.queryByText(/Message your Auntie/i)).toBeNull();
+  });
+
+  it('offers no Messages control with bookings listed either', async () => {
+    renderOnline([pendingOvernight()]);
+    await screen.findByText('Fri night · Start time set by your Auntie');
+    expect(screen.queryByText(/Message your Auntie/i)).toBeNull();
+    expect(screen.queryByText(/Message Auntie/i)).toBeNull();
+  });
+});
+
 /** #1098: a night-only visit waiting on the Auntie's start time. */
 function pendingOvernight() {
   return {
