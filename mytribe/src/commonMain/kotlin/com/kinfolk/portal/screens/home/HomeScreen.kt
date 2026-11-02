@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.EmptyState
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
-import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.KinLoading
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinStaggerReveal
@@ -81,15 +80,11 @@ fun HomeScreen(
     kinfolkId: String,
     portalApi: PortalApi,
     sections: List<PortalHomeSection> = emptyList(),
-    chatEnabled: Boolean = true,
-    onMessageAuntie: () -> Unit = {},
     onOpenSchedule: () -> Unit = {},
     onOpenKinTales: () -> Unit = {},
     /** #1329: a Recent KinTales card opens that tale. */
     onOpenKinTale: (String) -> Unit = {},
     onBookVisit: () -> Unit = {},
-    /** #1005: null for a member without billing access, and "View invoices" is not drawn. */
-    onOpenInvoices: (() -> Unit)? = {},
     /** #1345: what the booking wizard leaves when it returns here. Taken once, then [onHandoffTaken] clears it. */
     handoff: ScheduleHandoff? = null,
     onHandoffTaken: () -> Unit = {},
@@ -195,12 +190,7 @@ fun HomeScreen(
         )
     }
     val quickStartSection: @Composable () -> Unit = {
-        QuickStartSection(
-            showMessageAuntie = chatEnabled,
-            onBookVisit = onBookVisit,
-            onMessageAuntie = onMessageAuntie,
-            onOpenInvoices = onOpenInvoices,
-        )
+        QuickStartSection(onBookVisit = onBookVisit)
     }
 
     fun renderById(id: String): (@Composable () -> Unit)? = when (id) {
@@ -457,23 +447,16 @@ private fun TaleRow(tale: KinTale, onOpen: () -> Unit) {
     }
 }
 
+/**
+ * #1460 (mobile map, #1295): one button. Messages is on the bar and Invoices
+ * is in the avatar menu, so Home no longer repeats them.
+ */
 @Composable
-private fun QuickStartSection(
-    showMessageAuntie: Boolean,
-    onBookVisit: () -> Unit,
-    onMessageAuntie: () -> Unit,
-    onOpenInvoices: (() -> Unit)?,
-) {
+private fun QuickStartSection(onBookVisit: () -> Unit) {
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             SectLabel("Quick start")
             KinButton("Book a visit", onClick = onBookVisit, modifier = Modifier.fillMaxWidth())
-            if (showMessageAuntie) {
-                KinGhostButton("Message your Auntie", onClick = onMessageAuntie, modifier = Modifier.fillMaxWidth())
-            }
-            if (onOpenInvoices != null) {
-                KinGhostButton("View invoices", onClick = onOpenInvoices, modifier = Modifier.fillMaxWidth())
-            }
         }
     }
 }

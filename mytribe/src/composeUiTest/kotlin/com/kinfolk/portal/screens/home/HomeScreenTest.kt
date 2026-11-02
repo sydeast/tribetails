@@ -51,6 +51,32 @@ class HomeScreenTest {
         onNodeWithText("QUICK START").assertExists()
     }
 
+    /**
+     * #1460: Quick Start keeps one button. Messages is on the bar and Invoices
+     * is in the avatar menu, so Home draws neither "Message your Auntie" nor
+     * "View invoices", and Book a visit still opens the wizard.
+     */
+    @Test
+    fun quickStart_keepsOnlyBookAVisit() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", kotlinx.serialization.json.JsonNull)
+            put("upcoming", buildJsonArray {})
+            put("recent", buildJsonArray {})
+        })
+        var booked = 0
+        setThemedContent {
+            HomeScreen("The Foster", "demo-1", PortalApi(fake), onBookVisit = { booked += 1 })
+        }
+        waitForIdle()
+        onNodeWithText("Message your Auntie").assertDoesNotExist()
+        onNodeWithText("View invoices").assertDoesNotExist()
+        onNodeWithText("Book a visit").assertIsDisplayed()
+        onNodeWithText("Book a visit").performClick()
+        waitForIdle()
+        kotlin.test.assertEquals(1, booked)
+    }
+
     /** #1412: on a phone, Quick Start sits above Up next, above the fold. */
     @Test
     fun narrow_quickStartIsAboveUpNext() = runComposeUiTest {
