@@ -93,10 +93,6 @@ export function TribeHub() {
           </h1>
         </header>
 
-        <Link className="btn ghost" to="/tribe/edit" style={{ marginBottom: 24 }}>
-          {'✎'} Edit Tribe Profile
-        </Link>
-
         <div className="stack">
           <section className="glass card d1">
             <div className="sectlabel">
@@ -192,6 +188,16 @@ export function TribeHub() {
             )}
           </section>
         </div>
+
+        {/* #1454 (operator ruling on #1295): on wide web the page keeps its own
+            Edit Tribe Profile button, after the last card instead of under the
+            heading. At phone width base.css hides `.tribehub-edit` under the
+            same media query that swaps `.navlinks` for `.tabbar`, so the avatar
+            menu's entry is the only one, the same as Android. The Home
+            Information card's "Edit" link above is that card's own and stays. */}
+        <Link className="btn ghost tribehub-edit" to="/tribe/edit">
+          {'✎'} Edit Tribe Profile
+        </Link>
 
         <SettingsBusinessFootnote />
       </div>
