@@ -20,6 +20,11 @@ import { BusyLabel } from './Loading';
  * Profile for a member with billing access (`billingAccessOf(home)`), at every
  * width. On a phone it is the one door to the bills; the desktop nav keeps its
  * own Invoices link as well. Android's accountMenu takes the same flag.
+ *
+ * #1459 (#1295 mobile map): Back to Directory, to the tribe picker at /pick,
+ * sits directly above Sign out for operators only. It replaces the header's
+ * "Switch tribe" icon, so the menu is the one place an operator leaves a tribe,
+ * the same as Android's accountMenu.
  */
 export function AvatarMenu(props: {
   initial: string;
@@ -27,6 +32,8 @@ export function AvatarMenu(props: {
   signingOut: boolean;
   /** `billingAccessOf(home)`: false leaves Invoices out of the menu. */
   billingAccess: boolean;
+  /** Operators only: true draws Back to Directory above Sign out. */
+  isOperator: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -81,6 +88,11 @@ export function AvatarMenu(props: {
           <Link role="menuitem" to="/about" onClick={() => setOpen(false)}>
             About
           </Link>
+          {props.isOperator && (
+            <Link role="menuitem" to="/pick" onClick={() => setOpen(false)}>
+              Back to Directory
+            </Link>
+          )}
           <button
             type="button"
             role="menuitem"

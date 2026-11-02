@@ -26,9 +26,11 @@ vi.mock('@tanstack/react-router', () => ({
   ),
 }));
 
-async function openMenu(billingAccess = false) {
+async function openMenu(billingAccess = false, isOperator = false) {
   const onSignOut = vi.fn();
-  render(<AvatarMenu initial="J" onSignOut={onSignOut} signingOut={false} billingAccess={billingAccess} />);
+  render(
+    <AvatarMenu initial="J" onSignOut={onSignOut} signingOut={false} billingAccess={billingAccess} isOperator={isOperator} />,
+  );
   await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
   return { onSignOut, items: within(screen.getByRole('menu')).getAllByRole('menuitem') };
 }
@@ -94,5 +96,59 @@ describe('AvatarMenu Invoices (#1457)', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: 'Invoices' }));
     expect(screen.queryByRole('menu')).toBeNull();
     expect(onSignOut).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #1459 (#1295 mobile map): an operator's way back to the tribe picker moves
+ * from the header icon into this menu, directly above Sign out. A kinfolk
+ * account never sees it. Android's ShellNav.accountMenu has had the same item.
+ */
+describe('AvatarMenu Back to Directory (#1459)', () => {
+  it('shows an operator Back to Directory, linking to /pick, directly above Sign out', async () => {
+    const { items } = await openMenu(false, true);
+    const labels = items.map((el) => el.textContent);
+    expect(labels.slice(-2)).toEqual(['Back to Directory', 'Sign out']);
+    const back = screen.getByRole('menuitem', { name: 'Back to Directory' });
+    expect(back.tagName).toBe('A');
+    expect(back).toHaveAttribute('href', '/pick');
+  });
+
+  it('does not show Back to Directory to a kinfolk account', async () => {
+    await openMenu(true, false);
+    expect(screen.queryByRole('menuitem', { name: 'Back to Directory' })).toBeNull();
+  });
+
+  it('closes after choosing Back to Directory and does not sign out', async () => {
+    const { onSignOut } = await openMenu(false, true);
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Back to Directory' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(onSignOut).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The full #1295 map order, the same as Android's ShellNav.accountMenu for an
+   * operator with billing access (ShellNavTest.accountMenu_fullMapOrder).
+   */
+  it('lists the full map order for an operator with billing access', async () => {
+    const { items } = await openMenu(true, true);
+    expect(items.map((el) => el.textContent)).toEqual([
+      'Account',
+      'Invoices',
+      'Edit Tribe Profile',
+      'Notification settings',
+      'About',
+      'Back to Directory',
+      'Sign out',
+    ]);
+    expect(items.map((el) => el.getAttribute('href'))).toEqual([
+      '/account',
+      '/invoices',
+      '/tribe/edit',
+      '/account/notifications',
+      '/about',
+      '/pick',
+      null,
+    ]);
   });
 });

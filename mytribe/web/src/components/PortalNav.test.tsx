@@ -35,8 +35,9 @@ vi.mock('@tanstack/react-router', () => ({
   ),
 }));
 
+const accessMock = vi.hoisted(() => ({ isOperator: false }));
 vi.mock('../lib/activeTribe', () => ({
-  useAccessState: () => ({ isOperator: false }),
+  useAccessState: () => ({ isOperator: accessMock.isOperator }),
   getActiveKinfolkId: () => 'kin-1',
 }));
 
@@ -60,6 +61,7 @@ function renderNav(active: Parameters<typeof PortalNav>[0]['active'] = 'home') {
   );
 }
 beforeEach(() => {
+  accessMock.isOperator = false;
   signOutSpy.mockReset();
   accountMock.getMyAccount.mockReset();
   accountMock.getMyAccount.mockResolvedValue({ displayName: 'Jordan Kinfolk', email: 'jordan@example.com', impersonated: false });
@@ -191,5 +193,44 @@ describe('PortalNav avatar initial (#1290)', () => {
     renderNav();
     await waitFor(() => expect(accountMock.getMyAccount).toHaveBeenCalled());
     expect(screen.getByRole('button', { name: 'Account menu' })).toHaveTextContent('J');
+  });
+});
+
+/**
+ * #1459 (#1295 mobile map): operators leave a tribe from the avatar menu, not a
+ * header icon. The icon is gone at every width; jsdom draws one tree for every
+ * width, so its absence here is its absence everywhere.
+ */
+describe('PortalNav Back to Directory (#1459)', () => {
+  it('has no Switch tribe control in the header for an operator', () => {
+    accessMock.isOperator = true;
+    renderNav();
+    expect(screen.queryByRole('link', { name: 'Switch tribe' })).toBeNull();
+    expect(screen.queryByTitle('Back to Directory')).toBeNull();
+    expect(document.querySelector('.nav a[href="/pick"]')).toBeNull();
+  });
+
+  it('puts Back to Directory in an operator\'s menu, in the full map order', async () => {
+    accessMock.isOperator = true;
+    renderNav();
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
+    expect(items.map((el) => el.textContent)).toEqual([
+      'Account',
+      'Invoices',
+      'Edit Tribe Profile',
+      'Notification settings',
+      'About',
+      'Back to Directory',
+      'Sign out',
+    ]);
+    expect(screen.getByRole('menuitem', { name: 'Back to Directory' })).toHaveAttribute('href', '/pick');
+  });
+
+  it('gives a kinfolk account neither the header icon nor the menu item', async () => {
+    renderNav();
+    expect(screen.queryByRole('link', { name: 'Switch tribe' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    expect(screen.queryByRole('menuitem', { name: 'Back to Directory' })).toBeNull();
   });
 });
