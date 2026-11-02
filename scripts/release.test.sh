@@ -198,6 +198,13 @@ if [ "${GRADLE_FAIL:-}" = "$1" ]; then
   echo "stub gradlew: FAILING $1 on request" >&2
   exit 1
 fi
+# What Gradle printed on 2026-11-01 when the daemon ran on 17 (#1402).
+if [ "${GRADLE_FAIL_JAVA:-}" = "$1" ]; then
+  echo "Could not determine the dependencies of task ':app:lintVitalReportRelease'." >&2
+  echo "> The Gradle daemon is running on Java 17, but the project is compiled for Java 21." >&2
+  exit 1
+fi
+echo "STUB gradlew JAVA_HOME=${JAVA_HOME:-unset}"
 mkdir -p "$(dirname "$out")"
 printf 'apk built by %s\n' "$1" > "$out"
 # The versionName the build would stamp (#1061), so a case can read it back.
@@ -232,6 +239,26 @@ STUB
 # write_stubs <dir>: the fake outside world.
 write_stubs() {
   local dir="$1"
+
+  # FAKE JDKs (#1402). Step 0 reads `$JAVA_HOME/bin/java -version`, so a case
+  # that did not choose a JDK would otherwise be testing the machine running
+  # it. run_release defaults JAVA_HOME to jdk21 and RELEASE_JAVA_HOME_FINDER to
+  # the fake finder below; the JDK cases override both.
+  local v
+  for v in 8:1.8.0_402 17:17.0.12 21:21.0.4; do
+    mkdir -p "$dir/jdk${v%%:*}/bin"
+    printf '#!/usr/bin/env bash\necho '"'"'openjdk version "%s" 2024-07-16'"'"' >&2\n' "${v#*:}" \
+      > "$dir/jdk${v%%:*}/bin/java"
+    chmod +x "$dir/jdk${v%%:*}/bin/java"
+  done
+  # The finder answers with $JAVA_FINDER_ANSWER, and like the real one exits
+  # non-zero with nothing on stdout when it has no JDK to offer.
+  cat > "$dir/java_home" <<'STUB'
+#!/usr/bin/env bash
+[ -n "${JAVA_FINDER_ANSWER:-}" ] || { echo "Unable to find any JVMs matching version \"$2\"." >&2; exit 1; }
+echo "$JAVA_FINDER_ANSWER"
+STUB
+  chmod +x "$dir/java_home"
 
   # gh: answers ci.yml's own run history for a commit from $GH_FIXTURES/<sha>,
   # one "name<TAB>status<TAB>conclusion" line per job. No fixture means ci.yml
@@ -592,6 +619,8 @@ run_release() {
     cd "$dir/repo"
     export PATH="$dir/stubs:$PATH"
     export GH_FIXTURES="$dir/fixtures"
+    export JAVA_HOME="$dir/jdk21" RELEASE_JAVA_HOME_FINDER="$dir/java_home"
+    unset JAVA_FINDER_ANSWER
     export "$@" >/dev/null 2>&1 || true
     env "$@" bash scripts/release.sh
   ) > "$dir/out" 2>&1
@@ -3682,6 +3711,125 @@ if [ -z "$ORDER_OUT" ]; then
   ok "#1401: check builds the functions once, before the tests, and still runs every build step"
 else
   bad "#1401: check order: $ORDER_OUT"
+fi
+
+# ---------------------------------------------------------------------------
+# #1402. Step 0 checks the JDK each Android build needs, before step 1 runs.
+#   On 2026-11-01 JAVA_HOME was openjdk@17, JDK 21 was installed, and the
+#   release failed at step 1c minutes in with a refusal that blamed the signing
+#   keys. auntieos-admin/android needs Gradle on 21; mytribe asks for 17.
+# ---------------------------------------------------------------------------
+# J1. JAVA_HOME is 17 and the finder has a 21: the auntieos build gets the 21,
+#     mytribe keeps the shell's 17, the run says so, and the release completes.
+DJ1="$(make_repo)"; write_stubs "$DJ1"
+fixture_all_green "$DJ1/fixtures/$(cd "$DJ1/repo" && git rev-parse HEAD)"
+RC="$(run_release "$DJ1" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+      JAVA_HOME="$DJ1/jdk17" JAVA_FINDER_ANSWER="$DJ1/jdk21")"
+OUT="$(stripped "$DJ1/out")"
+if [ "$RC" = "0" ] &&
+   printf '%s' "$OUT" | grep -qF "Step 1c runs its Gradle on $DJ1/jdk21 (Java 21) instead." &&
+   printf '%s' "$OUT" | grep -qF "jdk/mytribe: Java 17 (JAVA_HOME=$DJ1/jdk17), needs 17"; then
+  ok "#1402: an old JAVA_HOME with a 21 installed uses the 21 for auntieos and says so"
+else
+  bad "#1402: an old JAVA_HOME with a 21 installed did not switch, or did not say so (rc=$RC)"
+  printf '%s\n' "$OUT" | grep -iE "jdk|java" | head -10
+fi
+# The stubs print the JAVA_HOME each gradlew ran with, in loop order:
+# auntieos (:app:assembleRelease) first, then mytribe.
+GW_JAVA="$(printf '%s\n' "$OUT" | grep '^STUB gradlew JAVA_HOME=' | tr '\n' ' ')"
+if [ "$GW_JAVA" = "STUB gradlew JAVA_HOME=$DJ1/jdk21 STUB gradlew JAVA_HOME=$DJ1/jdk17 " ]; then
+  ok "#1402: auntieos's Gradle ran on the 21 step 0 found, mytribe's on the shell's 17"
+else
+  bad "#1402: the Gradle steps ran on the wrong JDKs: '$GW_JAVA'"
+fi
+
+# J2. JAVA_HOME is 17 and no 21 exists: refuse at step 0, name the JDK, and
+#     never reach step 1 or Gradle.
+DJ2="$(make_repo)"; write_stubs "$DJ2"
+fixture_all_green "$DJ2/fixtures/$(cd "$DJ2/repo" && git rev-parse HEAD)"
+RC="$(run_release "$DJ2" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+      JAVA_HOME="$DJ2/jdk17")"
+OUT="$(stripped "$DJ2/out")"
+if [ "$RC" != "0" ] &&
+   printf '%s' "$OUT" | grep -qF "REFUSED: no JDK 21 for the auntieos Android build." &&
+   printf '%s' "$OUT" | grep -qF "JAVA_HOME=$DJ2/jdk17 is Java 17" &&
+   printf '%s' "$OUT" | grep -qF "RELEASE STOPPED during: checking the JDK for the Android builds"; then
+  ok "#1402: no JDK 21 anywhere refuses at step 0 and names the JDK it found"
+else
+  bad "#1402: no JDK 21 did not refuse at step 0 (rc=$RC)"; printf '%s\n' "$OUT" | tail -12
+fi
+if printf '%s' "$OUT" | grep -qE "^STUB gradlew|0a\. Dependency drift|1\. Check"; then
+  bad "#1402: the JDK refusal still ran later steps"
+else
+  ok "#1402: the JDK refusal stops before step 0a, step 1 and any Gradle"
+fi
+
+# J3. The same machine with RELEASE_SKIP_ANDROID=1 is fine: no Android build,
+#     no JDK needed.
+DJ3="$(make_repo)"; write_stubs "$DJ3"
+fixture_all_green "$DJ3/fixtures/$(cd "$DJ3/repo" && git rev-parse HEAD)"
+RC="$(run_release "$DJ3" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 JAVA_HOME="$DJ3/jdk17")"
+OUT="$(stripped "$DJ3/out")"
+if [ "$RC" = "0" ] && ! printf '%s' "$OUT" | grep -qF "REFUSED: no JDK" &&
+   printf '%s' "$OUT" | grep -qF "jdk/auntieos: not checked"; then
+  ok "#1402: RELEASE_SKIP_ANDROID=1 skips the JDK check"
+else
+  bad "#1402: RELEASE_SKIP_ANDROID=1 still checked the JDK (rc=$RC)"; printf '%s\n' "$OUT" | grep -i jdk
+fi
+
+# J4. Only auntieos needs 21: skipping it lets a 17 shell ship mytribe.
+DJ4="$(make_repo)"; write_stubs "$DJ4"
+fixture_all_green "$DJ4/fixtures/$(cd "$DJ4/repo" && git rev-parse HEAD)"
+RC="$(run_release "$DJ4" DRY_RUN=1 RELEASE_YES=1 RELEASE_SKIP_ANDROID_AUNTIEOS=1 \
+      JAVA_HOME="$DJ4/jdk17")"
+OUT="$(stripped "$DJ4/out")"
+if [ "$RC" = "0" ] && ! printf '%s' "$OUT" | grep -qF "REFUSED: no JDK"; then
+  ok "#1402: a 17 shell with auntieos skipped is enough for mytribe"
+else
+  bad "#1402: a 17 shell with auntieos skipped refused (rc=$RC)"; printf '%s\n' "$OUT" | grep -i jdk
+fi
+
+# J5. A JDK 8 reports "1.8.0_x"; it is Java 8, not Java 1, and the 21 the
+#     finder offers is what a dry run says it would use.
+DJ5="$(make_repo)"; write_stubs "$DJ5"
+fixture_all_green "$DJ5/fixtures/$(cd "$DJ5/repo" && git rev-parse HEAD)"
+RC="$(run_release "$DJ5" DRY_RUN=1 RELEASE_YES=1 \
+      JAVA_HOME="$DJ5/jdk8" JAVA_FINDER_ANSWER="$DJ5/jdk21")"
+OUT="$(stripped "$DJ5/out")"
+if [ "$RC" = "0" ] && printf '%s' "$OUT" | grep -qF "JAVA_HOME=$DJ5/jdk8 is Java 8, and this build needs 21." &&
+   printf '%s' "$OUT" | grep -qF "with JAVA_HOME=$DJ5/jdk21 (step 0 picked it)"; then
+  ok "#1402: a 1.8 JDK reads as Java 8 and the dry run names the JDK it would use"
+else
+  bad "#1402: JDK 8 or the dry-run JDK line was wrong (rc=$RC)"; printf '%s\n' "$OUT" | grep -iE "jdk|java"
+fi
+
+# J6. Gradle itself says it is on the wrong Java: step 1c's refusal says so
+#     instead of sending the operator to the keystore and Mapbox token.
+DJ6="$(make_repo)"; write_stubs "$DJ6"
+fixture_all_green "$DJ6/fixtures/$(cd "$DJ6/repo" && git rev-parse HEAD)"
+RC="$(run_release "$DJ6" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+      GRADLE_FAIL_JAVA=:app:assembleRelease)"
+OUT="$(stripped "$DJ6/out")"
+if [ "$RC" != "0" ] &&
+   printf '%s' "$OUT" | grep -qF "REFUSED: the auntieos Android release APK did not build." &&
+   printf '%s' "$OUT" | grep -qF "Gradle ran on the wrong JDK, not a signing or Mapbox problem:" &&
+   printf '%s' "$OUT" | grep -qF "The Gradle daemon is running on Java 17, but the project is compiled for Java 21." &&
+   ! printf '%s' "$OUT" | grep -qF "KEYSTORE_PATH"; then
+  ok "#1402: a wrong-JDK Gradle failure is refused as a JDK problem, not a signing one"
+else
+  bad "#1402: step 1c's refusal does not name the JDK (rc=$RC)"; printf '%s\n' "$OUT" | tail -12
+fi
+# The ordinary failure still gets the signing hint.
+DJ7="$(make_repo)"; write_stubs "$DJ7"
+fixture_all_green "$DJ7/fixtures/$(cd "$DJ7/repo" && git rev-parse HEAD)"
+RC="$(run_release "$DJ7" RELEASE_YES=1 RELEASE_ANDROID_TESTERS=a@b.test \
+      GRADLE_FAIL=:app:assembleRelease)"
+OUT="$(stripped "$DJ7/out")"
+if [ "$RC" != "0" ] && printf '%s' "$OUT" | grep -qF "KEYSTORE_PATH" &&
+   ! printf '%s' "$OUT" | grep -qF "wrong JDK"; then
+  ok "#1402: any other Gradle failure still gets the signing and Mapbox hint"
+else
+  bad "#1402: an ordinary Gradle failure lost its hint (rc=$RC)"; printf '%s\n' "$OUT" | tail -12
 fi
 
 echo

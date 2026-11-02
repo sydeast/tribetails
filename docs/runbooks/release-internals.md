@@ -83,13 +83,13 @@ and prints `resumed:` instead of refusing. It uses the same rule as the release
 
 | # | Step | Why here |
 |---|---|---|
-| 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. |
+| 0 | Preconditions | Clean tree, on `main`, synced with origin. Shipping uncommitted or stale code is the classic incident. Falls back to `gh` if the SSH agent is down, since it must verify the fact, not one transport. Also reads the JDK (#1402): the operator app needs Gradle on 21, the portal on 17. When `JAVA_HOME` is older and `/usr/libexec/java_home -v <n>` finds one, that build's Gradle runs on it and the run says so; when none exists, it refuses here instead of at 1c. Skipped for an app the run does not build. |
 | 0a | Dependency drift | Is `node_modules` what each `package-lock.json` says it should be, for every root this run builds, tests, or deploys? Refuses and names the exact `npm ci` command, before step 1 tests anything against tools it cannot trust. See below. |
 | 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
 | 0c | Client build config (`VITE_*`) | Writes each web app's `.env.production.local` from Secret Manager. Runs before step 1 because `vite build` inlines these values; a value that arrives later ships as an empty string. See "Client build config (`VITE_*`) comes from the store too". |
 | 1 | `npm run check` | Typecheck, lint, contracts, seeds, functions build, test, web builds. The functions build runs before the tests because `functionTargetLoading.test.ts` loads `lib/index.js` and refuses a missing or stale one (#1401). Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
 | 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
-| 1c | Android build | Assembles **both** signed release APKs, operator and portal. Runs before the first deploy so a build failure costs nothing; the uploads are step 6b. |
+| 1c | Android build | Assembles **both** signed release APKs, operator and portal. Runs before the first deploy so a build failure costs nothing; the uploads are step 6b. When Gradle's output says it is "running on Java" the wrong version, the refusal names the JDK instead of the signing keys. |
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
 | 4 | Firestore rules | From `mytribe` only. Refused outright if the admin mirror has drifted. |
