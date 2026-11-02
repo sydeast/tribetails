@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
@@ -16,6 +17,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
+import kotlin.test.assertTrue
 
 class BookingDetailsScreenTest {
 
@@ -203,6 +205,34 @@ class BookingDetailsScreenTest {
         onNodeWithText("schedule down").assertIsDisplayed()
     }
 
+    // -- Message the Auntie (#1466) --
+
+    @Test
+    fun upcomingVisit_offersMessageAuntie_andTapOpensMessages() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubBooking(fake, "b1", fixedNow + tenHoursMs)
+        var opened = false
+
+        setThemedContent {
+            KinCareDetailScreen(
+                kinCareId = "b1",
+                kinfolkId = "3",
+                portalApi = PortalApi(fake),
+                onBack = {},
+                nowMs = { fixedNow },
+                onOpenMessages = { opened = true },
+            )
+        }
+        waitForIdle()
+
+        // Labelled from the booking's Auntie, the way the web BookingDetail is.
+        onNodeWithText("Need a change").assertIsDisplayed()
+        onNodeWithText("Message Auntie Avery").assertIsDisplayed()
+        onNodeWithText("Message Auntie Avery").performClick()
+        waitForIdle()
+        assertTrue(opened)
+    }
+
     // -- Cancellation ask --
 
     @Test
@@ -286,15 +316,17 @@ class BookingDetailsScreenTest {
         }
         waitForIdle()
 
-        onNodeWithText("Request cancellation").performClick()
+        // #1466: the Message card above pushes this ask below the test
+        // host's fold, so each step scrolls to its control first.
+        onNodeWithText("Request cancellation").performScrollTo().performClick()
         waitForIdle()
-        onNodeWithText("Send request").assertIsDisplayed()
-        onNodeWithText("Keep visit").assertIsDisplayed()
+        onNodeWithText("Send request").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Keep visit").performScrollTo().assertIsDisplayed()
 
-        onNodeWithText("Send request").performClick()
+        onNodeWithText("Send request").performScrollTo().performClick()
         waitForIdle()
 
-        onNodeWithText("Cancellation requested. Your Auntie has it in their queue and will answer soon.").assertIsDisplayed()
+        onNodeWithText("Cancellation requested. Your Auntie has it in their queue and will answer soon.").performScrollTo().assertIsDisplayed()
         onNodeWithText("Request cancellation").assertDoesNotExist()
     }
 
@@ -407,12 +439,13 @@ class BookingDetailsScreenTest {
         }
         waitForIdle()
 
-        onNodeWithText("Request cancellation").performClick()
+        // #1466: same scroll as the happy path above.
+        onNodeWithText("Request cancellation").performScrollTo().performClick()
         waitForIdle()
-        onNodeWithText("Send request").performClick()
+        onNodeWithText("Send request").performScrollTo().performClick()
         waitForIdle()
 
-        onNodeWithText("office is offline").assertIsDisplayed()
-        onNodeWithText("Send request").assertIsDisplayed()
+        onNodeWithText("office is offline").performScrollTo().assertIsDisplayed()
+        onNodeWithText("Send request").performScrollTo().assertIsDisplayed()
     }
 }
