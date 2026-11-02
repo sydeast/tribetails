@@ -127,6 +127,9 @@ h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display
 /* ===== two-column content ===== */
 .cols { display: grid; grid-template-columns: 1.6fr 1fr; gap: 24px; align-items: start; }
 .stack { display: flex; flex-direction: column; gap: 24px; }
+/* #1412: Home's aside (Quick Start) is first in the DOM so the phone column
+   leads with it; on wide screens `order` sends it to the right-hand 1fr track. */
+.cols > .aside { order: 2; }
 
 /* booking rows */
 .visit { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 16px; cursor: pointer; border: 1px solid transparent; transition: .2s var(--ease); }
@@ -167,6 +170,7 @@ h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display
 /* ===== responsive: tablet + phone ===== */
 @media (max-width: 880px) {
   .cols { grid-template-columns: 1fr; }
+  .cols > .aside { order: 0; }
   .navlinks { display: none; }
   .wrap { padding: 24px 16px 96px; }
 }

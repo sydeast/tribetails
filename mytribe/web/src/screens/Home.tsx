@@ -2,7 +2,7 @@ import { Fragment, type ReactNode } from 'react';
 import { serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { getMyBookings, getMyHome, getMyKin, getMyKinTales } from '../api/portal';
+import { getMyBookings, getMyHome, getMyKinTales } from '../api/portal';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { LaunchError } from './LaunchError';
@@ -19,7 +19,6 @@ import {
   bookingSubtitle,
   elapsedMinutes,
   greetingKick,
-  kinVariant,
   pendingChangeLabel,
   relativeDay,
   resolveHomeLayout,
@@ -31,10 +30,17 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
 
 /**
  * Home, ported from ui-ideas/mytribe-home-2026-05-31.html. `getMyHome` only
- * carries identity/config. The live sections come from three independent,
- * best-effort calls: getMyBookings, getMyKinTales, getMyKin. A failure in any
- * one of those degrades that section only; only a failed getMyHome (identity)
- * blocks the whole screen.
+ * carries identity/config. The live sections come from two independent,
+ * best-effort calls: getMyBookings, getMyKinTales. A failure in either
+ * degrades that section only; only a failed getMyHome (identity) blocks the
+ * whole screen.
+ *
+ * #1412 (operator ruling on #1295): Home is the dashboard. Quick Start sits at
+ * the top, above the fold on a phone, and the kin roster lives on Tribe only
+ * (TribeHub.tsx renders it), so `getMyKin` is no longer read here. The live
+ * hero's kin names come from the booking itself (`liveVisit.kinNames`). An
+ * operator `portal.home` config that still names `roster` is tolerated and
+ * skipped: `sectionById` has no renderer for it.
  *
  * O-14 parity fix: the operator-configurable section layout
  * (`portal.home`, resolved via resolveHomeLayout — a direct port of
@@ -48,17 +54,17 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
  * Every branch reads lib/queryState.ts rather than `isLoading` plus a length.
  * A signal drop with the tab open pauses these queries: `isLoading` goes false
  * without `isError` going true, so this screen used to greet the household
- * "Hi , your tribe is in good hands." over three sections claiming there was
- * nothing on the calendar, no KinTales and no kin. The three gated queries make
- * it worse than most screens: while `home` is paused they are `enabled: false`,
- * so they never even reach 'paused' and sit at pending/idle. `gate: home` is
- * what makes them answer with home's reason instead of with silence.
+ * "Hi , your tribe is in good hands." over sections claiming there was
+ * nothing on the calendar and no KinTales. The gated queries make it worse
+ * than most screens: while `home` is paused they are `enabled: false`, so they
+ * never even reach 'paused' and sit at pending/idle. `gate: home` is what
+ * makes them answer with home's reason instead of with silence.
  *
- * #1282: the three no longer WAIT for `home` (they used to be
+ * #1282: the section queries no longer WAIT for `home` (they used to be
  * `enabled: home.isSuccess`). That gate made the first paint two round trips
- * deep for no reason the data needed: none of the three reads anything out of
- * `home`. They now start alongside it, and `gate: home` still makes a failed or
- * paused `home` the reason every section reports.
+ * deep for no reason the data needed: neither reads anything out of `home`.
+ * They now start alongside it, and `gate: home` still makes a failed or paused
+ * `home` the reason every section reports.
  */
 export function Home() {
   const kinfolkId = getActiveKinfolkId();
@@ -68,7 +74,6 @@ export function Home() {
     queryKey: ['myKinTales', 'home-preview', kinfolkId],
     queryFn: () => getMyKinTales(kinfolkId, { limit: 3 }),
   });
-  const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
 
   // #1290: a first-name greeting off the signed-in person, not the household's
   // (often upper-case) name. Until the account answers, the heading keeps the
@@ -89,7 +94,7 @@ export function Home() {
 
   const liveVisit = bookings.data?.liveVisit ?? null;
   // `home.isError` is answered by the early return above, and `home` is not
-  // gated, so homeView is only ever data / offline / loading. The other three
+  // gated, so homeView is only ever data / offline / loading. The other two
   // are best-effort (see the header): each can fail on its own while the rest of
   // the screen is fine, so each gets its own error arm below. Folding an error
   // into the loading arm would swap the old false-empty for a false spinner
@@ -97,9 +102,6 @@ export function Home() {
   const homeView = viewOfQuery(home);
   const bookingsView = viewOfQuery(bookings, { isEmpty: (d) => d.upcoming.length === 0, gate: home });
   const talesView = viewOfQuery(kinTales, { isEmpty: (d) => d.tales.length === 0, gate: home });
-  // The roster has no empty state to protect: it always ends with the Add Kin
-  // row, which reads correctly whether or not there is anybody above it.
-  const kinView = viewOfQuery(kin, { gate: home });
 
   const sections = home.data?.portal.home ?? [];
   const layout = resolveHomeLayout(sections);
@@ -110,10 +112,9 @@ export function Home() {
   }
 
   // Fallbacks match HomeScreen.kt's resolveHomeLayout defaults exactly
-  // (upNext 5, tales 3, roster 4) — parity, not arbitrary web-specific values.
+  // (upNext 5, tales 3) — parity, not arbitrary web-specific values.
   const upcoming = (bookings.data?.upcoming ?? []).slice(0, sectionLimit('upNext', 5));
   const tales = (kinTales.data?.tales ?? []).slice(0, sectionLimit('tales', 3));
-  const activeKin = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, sectionLimit('roster', 4));
 
   return (
     <>
@@ -186,7 +187,7 @@ export function Home() {
           );
 
           const upNextSection = (
-            <section className="glass card d1">
+            <section className="glass card d2">
               <div className="sectlabel">
                 Up next <Link to="/schedule">Full schedule</Link>
               </div>
@@ -226,7 +227,7 @@ export function Home() {
           );
 
           const talesSection = (
-            <section className="glass card d2">
+            <section className="glass card d3">
               <div className="sectlabel">Recent KinTales</div>
               {talesView.kind === 'offline' ? (
                 <OfflineNotice what="your KinTales" />
@@ -255,42 +256,9 @@ export function Home() {
             </section>
           );
 
-          const rosterSection = (
-            <section className="glass card d3">
-              <div className="sectlabel">
-                Your tribe <Link to="/kin">The Kin</Link>
-              </div>
-              {kinView.kind === 'offline' ? (
-                <OfflineNotice what="your kin" />
-              ) : kinView.kind === 'error' ? (
-                <p className="sub">Your kin list is unavailable right now.</p>
-              ) : kinView.kind !== 'data' ? (
-                <LoadingLine what="your kin" retry={() => void kin.refetch()}>
-                  Loading your kin…
-                </LoadingLine>
-              ) : (
-                activeKin.map((k, i) => (
-                  <Link className={`kinrow ${kinVariant(i)}`} to="/kin/$kinId" params={{ kinId: k.id }} key={k.id}>
-                    <div className="pic">{speciesEmoji(k.species)}</div>
-                    <div>
-                      <b>{k.name ?? 'Unnamed Kin'}</b>
-                      <small>{[k.breed, k.ageYears !== null ? `${k.ageYears} yrs` : null].filter(Boolean).join(', ').toUpperCase()}</small>
-                    </div>
-                  </Link>
-                ))
-              )}
-              <Link className="kinrow add" to="/kin">
-                <div className="pic">+</div>
-                <div>
-                  <b>Add Kin</b>
-                  <small>NEW PROFILE</small>
-                </div>
-              </Link>
-            </section>
-          );
-
+          // #1412: first card on the page, so it carries the first stagger step.
           const quickStartSection = (
-            <section className="glass card d4">
+            <section className="glass card d1">
               <div className="sectlabel">Quick start</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
                 <Link className="btn grad block" to="/schedule/book" search={{ weekly: false }}>
@@ -312,14 +280,15 @@ export function Home() {
             liveVisit: liveVisitSection,
             upNext: upNextSection,
             tales: talesSection,
-            roster: rosterSection,
+            // No `roster`: the kin list is Tribe's (#1412). A config row that
+            // still names it falls through `if (!el)` below and is skipped.
             quickStart: quickStartSection,
           };
 
-          // Empty operator config -> the same fixed two-column layout as
-          // always. A configured layout -> the configured order/limits in a
-          // single column (a custom order can't be meaningfully forced into
-          // two fixed columns) — matches HomeScreen.kt's `custom` branch.
+          // Empty operator config -> the fixed two-column layout. A configured
+          // layout -> the configured order/limits in a single column (a custom
+          // order can't be meaningfully forced into two fixed columns) —
+          // matches HomeScreen.kt's `custom` branch.
           if (custom) {
             return (
               <>
@@ -338,17 +307,22 @@ export function Home() {
             );
           }
 
+          // Quick Start comes FIRST in the DOM so the phone's single column
+          // (where `.cols` collapses in DOM order) puts it above Up next, above
+          // the fold at 390px. On a wide screen `.cols > .aside { order: 2 }`
+          // (base.css) moves it back to the right-hand column, so main stays
+          // left at 1.6fr and the aside right at 1fr, the same split as
+          // HomeScreen.kt's Row.
           return (
             <>
               {liveVisitSection}
               <div className="cols">
+                <div className="stack aside">
+                  {quickStartSection}
+                </div>
                 <div className="stack">
                   {upNextSection}
                   {talesSection}
-                </div>
-                <div className="stack">
-                  {rosterSection}
-                  {quickStartSection}
                 </div>
               </div>
             </>
