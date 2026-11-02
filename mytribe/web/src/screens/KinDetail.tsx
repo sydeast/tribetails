@@ -1,7 +1,6 @@
-import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { archiveKin, getMyKin } from '../api/portal';
+import { useQuery } from '@tanstack/react-query';
+import { getMyKin } from '../api/portal';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
@@ -10,9 +9,6 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
-import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
-import { usePortalMutation } from '../lib/mutationState';
-import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const FALLBACK = 'Not set';
@@ -24,24 +20,17 @@ const FALLBACK = 'Not set';
  * and finds the row by id. The Vet line is the free-text `vetInfo` the admin
  * also keeps on the pet (#1310), not a clinic-directory link. Edit (O-17) links to the KinEdit form at
  * /kin/$kinId/edit, mirroring Compose's AddEditKinDialog.
+ *
+ * #1311: this page reads only. The mockup's Memorial card (and its SUGGESTION
+ * badge) is gone by ruling; "Mark No Longer With Us" and "Restore as Active"
+ * live at the bottom of KinEdit behind a confirm step. The "In our hearts"
+ * band in the hero stays.
  */
 export function KinDetail() {
   const { kinId } = useParams({ from: '/kin/$kinId' });
-  const queryClient = useQueryClient();
-  const [confirmingArchive, setConfirmingArchive] = useState(false);
 
   const kinfolkId = getActiveKinfolkId();
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
-  // HOLD. `archiveKin` set/merges one fixed status ('active' or
-  // 'noLongerWithUs') onto a known doc id, so a replay writes the same value.
-  const archive = usePortalMutation({
-    mutationFn: (reason: 'noLongerWithUs' | 'restore') => archiveKin(kinId, reason, kinfolkId),
-    // #1281: pending until the kin list shows the change.
-    onSuccess: async () => {
-      await refreshAfterSave(queryClient, ['myKin', kinfolkId]);
-      setConfirmingArchive(false);
-    },
-  }, { policy: 'hold', what: 'this change' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -212,61 +201,6 @@ export function KinDetail() {
               <div className="sectlabel">Emergency Notes</div>
               <h3 className="title">{'⚠'} In case of emergency</h3>
               <p className="note">{found.emergencyNotes ?? 'No emergency notes on file.'}</p>
-            </section>
-
-            <section className="glass card memcard d4">
-              <div className="sectlabel">
-                Memorial <span className="suggestion" style={{ marginLeft: 'auto' }}>Suggestion</span>
-              </div>
-              {memorial ? (
-                <>
-                  <div className="row">
-                    <div className="ico">{'\u{1F494}'}</div>
-                    <div>
-                      <b>In our hearts</b>
-                      <small>This profile is marked no longer with us. You can restore it any time.</small>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginTop: 16 }}>
-                    <button className="btn coralout block" onClick={() => archive.mutate('restore')} disabled={archive.isPending}>
-                      <MutationLabel mutation={archive} busy="Restoring…">
-                        Restore as Active
-                      </MutationLabel>
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="row">
-                    <div className="ico">{'\u{1F49D}'}</div>
-                    <div>
-                      <b>Mark a passing</b>
-                      <small>Moves {found.name ?? 'this profile'} to memorial. The profile stays, labeled &ldquo;In our hearts&rdquo;.</small>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginTop: 16 }}>
-                    {confirmingArchive ? (
-                      <>
-                        <p className="sub">Are you sure? This can be undone from this page.</p>
-                        <button className="btn purple block" onClick={() => archive.mutate('noLongerWithUs')} disabled={archive.isPending}>
-                          <MutationLabel mutation={archive} busy="Saving…">
-                            Yes, mark No Longer With Us
-                          </MutationLabel>
-                        </button>
-                        <button className="btn ghost block" onClick={() => setConfirmingArchive(false)} disabled={archive.isPending}>
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <button className="btn purple block" onClick={() => setConfirmingArchive(true)}>
-                        Mark No Longer With Us
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-              <OfflineMutationNotice phase={archive.phase} what="this change" check="this Kin" />
-              {archive.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Couldn&rsquo;t save. Try again.</p>}
             </section>
           </div>
         </div>

@@ -1,6 +1,7 @@
 package com.kinfolk.portal.screens.kin
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -32,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.SubcomposeAsyncImage
@@ -46,6 +49,7 @@ import com.kinfolk.portal.media.rememberPhotoPicker
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.KinPayload
+import com.kinfolk.portal.portal.KinStatus
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -62,11 +66,23 @@ fun AddEditKinDialog(
     catBreeds: List<String> = emptyList(),
     /** #1291. True while the controller's photo upload runs, for the Save label. */
     photoUploading: Boolean = false,
+    /**
+     * #1311. Edit only: marks the Kin no longer with us (`restore` false) or
+     * restores it (true). Returns null on success, else an inline message.
+     * Null (the Add dialog) hides the action.
+     */
+    onArchive: (suspend (restore: Boolean) -> String?)? = null,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
+    // #1311 memorial action state. `archiving` locks Save and dismiss the way
+    // `saving` locks the action, so only one write is ever in flight.
+    var confirmingArchive by remember { mutableStateOf(false) }
+    var archiving by remember { mutableStateOf(false) }
+    var archiveError by remember { mutableStateOf<String?>(null) }
+    val busy = saving || archiving
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var species by remember { mutableStateOf(initial?.species.orEmpty()) }
     var breed by remember { mutableStateOf(initial?.breed.orEmpty()) }
@@ -121,7 +137,7 @@ fun AddEditKinDialog(
     }
 
     AlertDialog(
-        onDismissRequest = { if (!saving) onClose() },
+        onDismissRequest = { if (!busy) onClose() },
         containerColor = KinfolkBrand.Cream,
         shape = KinfolkShapes.card,
         title = { Text(if (initial == null) "Add Kin" else "Edit ${initial.name ?: "Kin"}", style = type.heritageTitle) },
@@ -268,6 +284,32 @@ fun AddEditKinDialog(
                 submitError?.let { problem ->
                     Text(text = problem, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
                 }
+
+                // #1311: the memorial action, edit only, last in the form behind a
+                // hairline. One row today; #1314 and #1408 add theirs below it.
+                // AlertDialog draws Save / Cancel in its own chrome under this
+                // column, so "last control" here means last in the body.
+                if (initial != null && onArchive != null) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(KinfolkBrand.NavyHairline))
+                    MemorialAction(
+                        kinName = initial.name,
+                        memorial = initial.status == KinStatus.NoLongerWithUs,
+                        busy = archiving,
+                        enabled = !busy,
+                        error = archiveError,
+                        confirming = confirmingArchive,
+                        onConfirmingChange = { confirmingArchive = it },
+                        onArchive = { restore ->
+                            scope.launch {
+                                archiving = true
+                                archiveError = null
+                                val err = onArchive(restore)
+                                archiving = false
+                                if (err == null) onClose() else archiveError = err
+                            }
+                        },
+                    )
+                }
             }
         },
         confirmButton = {
@@ -337,11 +379,100 @@ fun AddEditKinDialog(
                     else -> "Save"
                 },
                 onClick = submit,
-                enabled = name.isNotBlank() && !saving,
+                enabled = name.isNotBlank() && !busy,
             )
         },
-        dismissButton = { TextButton(onClick = { if (!saving) onClose() }) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = { if (!busy) onClose() }) { Text("Cancel") } },
     )
+}
+
+/**
+ * #1311. Mark / restore control at the foot of the edit form. An active Kin
+ * gets "Mark No Longer With Us" behind a confirm step; a memorial Kin gets
+ * "Restore as Active" one tap, in the same slot. Purple solid / coral outline
+ * match the web KinEdit buttons.
+ */
+@Composable
+private fun MemorialAction(
+    kinName: String?,
+    memorial: Boolean,
+    busy: Boolean,
+    enabled: Boolean,
+    error: String?,
+    confirming: Boolean,
+    onConfirmingChange: (Boolean) -> Unit,
+    onArchive: (restore: Boolean) -> Unit,
+) {
+    val type = LocalKinfolkTypography.current
+    Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+        when {
+            memorial -> OutlinePillButton(
+                label = if (busy) "Restoring…" else "Restore as Active",
+                color = KinfolkBrand.SnuggleCoral,
+                onClick = { if (enabled) onArchive(true) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            confirming -> {
+                Text(
+                    "Mark ${kinName ?: "this Kin"} as no longer with us? You can restore the profile from here.",
+                    style = type.sansMeta,
+                )
+                SolidPillButton(
+                    label = if (busy) "Saving…" else "Yes, mark No Longer With Us",
+                    color = KinfolkBrand.FamilyPurple,
+                    onClick = { if (enabled) onArchive(false) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                KinGhostButton(
+                    label = "Never mind",
+                    onClick = { onConfirmingChange(false) },
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            else -> SolidPillButton(
+                label = "Mark No Longer With Us",
+                color = KinfolkBrand.FamilyPurple,
+                onClick = { if (enabled) onConfirmingChange(true) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        error?.let { problem ->
+            Text(text = problem, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
+        }
+    }
+}
+
+// ---- Small brand buttons (purple solid / coral outline, per the kin-detail mockup) ----
+
+@Composable
+private fun SolidPillButton(label: String, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val type = LocalKinfolkTypography.current
+    Box(
+        modifier = modifier
+            .clip(KinfolkShapes.pill)
+            .background(color)
+            .clickable { onClick() }
+            .padding(horizontal = KinfolkSpacing.l, vertical = 13.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = type.sansButton)
+    }
+}
+
+@Composable
+private fun OutlinePillButton(label: String, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val type = LocalKinfolkTypography.current
+    Box(
+        modifier = modifier
+            .clip(KinfolkShapes.pill)
+            .border(1.dp, color.copy(alpha = 0.5f), KinfolkShapes.pill)
+            .clickable { onClick() }
+            .padding(horizontal = KinfolkSpacing.l, vertical = 13.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = type.sansButton.copy(color = color))
+    }
 }
 
 private val SEX_OPTIONS = listOf("Male", "Female", "Unknown")

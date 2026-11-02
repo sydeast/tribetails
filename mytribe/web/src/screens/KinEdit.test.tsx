@@ -10,6 +10,7 @@ import type { GetMyKinResult, KinDto } from '../api/types';
 const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn<() => Promise<GetMyKinResult>>(),
   updateKin: vi.fn<(kinId: string, kin: unknown, kinfolkId?: string) => Promise<{ ok: true }>>(),
+  archiveKin: vi.fn<(kinId: string, reason: string, kinfolkId?: string) => Promise<{ ok: true }>>(),
   navigate: vi.fn(),
   // The seeded breed bank behind the Breed dropdown, stubbed so no test in this
   // file reaches the `getBreeds` callable.
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../api/portal', () => ({
   getMyKin: () => mocks.getMyKin(),
   updateKin: (kinId: string, kin: unknown, kinfolkId?: string) => mocks.updateKin(kinId, kin, kinfolkId),
+  archiveKin: (kinId: string, reason: string, kinfolkId?: string) => mocks.archiveKin(kinId, reason, kinfolkId),
 }));
 vi.mock('../api/breeds', async (orig) => ({
   ...(await orig<typeof import('../api/breeds')>()),
@@ -133,9 +135,11 @@ beforeEach(() => {
   mocks.confirmKinPhotoUpload.mockReset();
   mocks.getMyKin.mockReset();
   mocks.updateKin.mockReset();
+  mocks.archiveKin.mockReset();
   mocks.navigate.mockReset();
   mocks.getMyKin.mockResolvedValue({ kin: [kin()] });
   mocks.updateKin.mockResolvedValue({ ok: true });
+  mocks.archiveKin.mockResolvedValue({ ok: true });
   mocks.getBreeds.mockReset();
   mocks.getBreeds.mockResolvedValue({
     dogBreeds: ['Border Collie', 'Boxer'],
@@ -357,6 +361,74 @@ describe('KinEdit', () => {
 
     expect(await screen.findByText('Missing or insufficient permissions.')).toBeInTheDocument();
     expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+
+  describe('memorial action (#1311)', () => {
+    /** True when `node` comes after `anchor` in document order. */
+    const follows = (anchor: Element, node: Element) => Boolean(anchor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+    it('sits below Save and Cancel in its own row, and leaves the save bar alone', async () => {
+      renderScreen();
+      const mark = await screen.findByRole('button', { name: 'Mark No Longer With Us' });
+      const save = screen.getByRole('button', { name: /Save/i });
+      expect(follows(save, mark)).toBe(true);
+      // Every save-bar control precedes it, so a later row (#1314, #1408)
+      // can land under it without this test pinning "last of all buttons".
+      expect(follows(screen.getByText('No changes yet.'), mark)).toBe(true);
+      expect(screen.getByTestId('kinaction-memorial')).toContainElement(mark);
+      expect(screen.getByText('No changes yet.')).toBeInTheDocument();
+      expect(screen.queryByText('Memorial')).toBeNull();
+      expect(screen.queryByText('Suggestion')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Restore as Active' })).toBeNull();
+    });
+
+    it('asks first, and Cancel steps back without calling archiveKin', async () => {
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByRole('button', { name: 'Mark No Longer With Us' }));
+      expect(screen.getByText(/Mark Buddy as no longer with us\?/)).toBeInTheDocument();
+      const yes = screen.getByRole('button', { name: 'Yes, mark No Longer With Us' });
+      // The confirm pair stays in the same row below Save.
+      expect(follows(screen.getByRole('button', { name: /Save/i }), yes)).toBe(true);
+      expect(screen.getByTestId('kinaction-memorial')).toContainElement(yes);
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('button', { name: 'Yes, mark No Longer With Us' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Mark No Longer With Us' })).toBeInTheDocument();
+      expect(mocks.archiveKin).not.toHaveBeenCalled();
+    });
+
+    it('confirming marks the kin no longer with us and returns to the profile', async () => {
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByRole('button', { name: 'Mark No Longer With Us' }));
+      await user.click(screen.getByRole('button', { name: 'Yes, mark No Longer With Us' }));
+      await waitFor(() => expect(mocks.archiveKin).toHaveBeenCalledWith('k1', 'noLongerWithUs', 'fam1'));
+      await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith({ to: '/kin/$kinId', params: { kinId: 'k1' } }));
+      expect(mocks.updateKin).not.toHaveBeenCalled();
+    });
+
+    it('a memorial kin gets Restore as Active in the same slot, one tap', async () => {
+      mocks.getMyKin.mockResolvedValue({ kin: [kin({ status: 'noLongerWithUs' })] });
+      const user = userEvent.setup();
+      renderScreen();
+      const restore = await screen.findByRole('button', { name: 'Restore as Active' });
+      expect(follows(screen.getByRole('button', { name: /Save/i }), restore)).toBe(true);
+      expect(screen.getByTestId('kinaction-memorial')).toContainElement(restore);
+      expect(screen.queryByRole('button', { name: 'Mark No Longer With Us' })).toBeNull();
+      await user.click(restore);
+      await waitFor(() => expect(mocks.archiveKin).toHaveBeenCalledWith('k1', 'restore', 'fam1'));
+      await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith({ to: '/kin/$kinId', params: { kinId: 'k1' } }));
+    });
+
+    it('a refused archive says so and stays on the page', async () => {
+      mocks.archiveKin.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByRole('button', { name: 'Mark No Longer With Us' }));
+      await user.click(screen.getByRole('button', { name: 'Yes, mark No Longer With Us' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Missing or insufficient permissions.');
+      expect(mocks.navigate).not.toHaveBeenCalled();
+    });
   });
 
   describe('breed dropdown', () => {

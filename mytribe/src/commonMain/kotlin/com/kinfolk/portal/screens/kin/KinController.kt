@@ -13,7 +13,6 @@ import com.kinfolk.portal.portal.KinResult
 import com.kinfolk.portal.portal.KinPayload
 import com.kinfolk.portal.portal.PortalApi
 import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.coroutines.launch
 
 /**
  * Shared Kin state holder. The list screen, the lifted KinDetailRoute, and the
@@ -147,19 +146,23 @@ class KinController internal constructor(
         }
     }
 
-    fun archive(kinId: String, restore: Boolean, onDone: () -> Unit) {
-        scope.launch {
-            try {
-                portalApi.archiveKin(kinfolkId = kinfolkId, kinId = kinId, restore = restore)
-                onDone()
-                reload()
-            } catch (c: CancellationException) {
-                throw c
-            } catch (t: Throwable) {
-                error = t.message
-            }
+    /**
+     * Mark a Kin no longer with us ([restore] false) or bring it back (true),
+     * then reload so the list regroups. Returns null on success, else the
+     * message for the dialog to show inline (#1311). Same shape as
+     * [updateAndReload]: a failure here is the dialog's to report, not the
+     * list's full-screen error state.
+     */
+    suspend fun archiveAndReload(kinId: String, restore: Boolean): String? =
+        try {
+            portalApi.archiveKin(kinfolkId = kinfolkId, kinId = kinId, restore = restore)
+            reload()
+            null
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            t.message ?: "Could not save this change"
         }
-    }
 }
 
 @Composable

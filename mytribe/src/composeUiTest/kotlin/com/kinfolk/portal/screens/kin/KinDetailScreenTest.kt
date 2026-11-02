@@ -28,22 +28,27 @@ class KinDetailScreenTest {
         sitterNotes = null,
     )
 
+    /** #1311: the Memorial card left the profile; the action lives in Edit. */
     @Test
-    fun active_showsMarkAction() = runComposeUiTest {
+    fun active_hasNoMemorialCardOrMarkAction() = runComposeUiTest {
         setThemedContent {
             KinDetailScreen("The Foster", kin(KinStatus.Active), onBack = {})
         }
         waitForIdle()
-        onNodeWithText("Mark No Longer With Us").assertIsDisplayed()
+        onNodeWithText("Biscuit").assertIsDisplayed()
+        onNodeWithText("MEMORIAL").assertDoesNotExist()
+        onNodeWithText("Mark No Longer With Us").assertDoesNotExist()
     }
 
+    /** #1311: the "In our hearts" band stays; Restore moved to Edit. */
     @Test
-    fun archived_showsBandAndRestore() = runComposeUiTest {
+    fun archived_showsBandWithoutRestore() = runComposeUiTest {
         setThemedContent {
             KinDetailScreen("The Foster", kin(KinStatus.NoLongerWithUs), onBack = {})
         }
         waitForIdle()
         onNodeWithText("In our hearts").assertIsDisplayed()
-        onNodeWithText("Restore as Active").assertIsDisplayed()
+        onNodeWithText("Restore as Active").assertDoesNotExist()
+        onNodeWithText("MEMORIAL").assertDoesNotExist()
     }
 }

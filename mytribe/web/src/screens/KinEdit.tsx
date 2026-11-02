@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMyKin, updateKin } from '../api/portal';
+import { archiveKin, getMyKin, updateKin } from '../api/portal';
 import { BREEDS_QUERY, EMPTY_BREED_BANKS } from '../api/breeds';
 import type { KinPayloadPartial } from '../api/types';
 import { useSignOut } from '../lib/auth';
@@ -38,6 +38,12 @@ import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
  * on the kin doc. Remove sends `photoUrl: null` through updateKin. Both take
  * effect immediately, independent of Save, and the text form never carries
  * photoUrl, so Save can not undo either one.
+ *
+ * #1311: the memorial action lives here, not on the profile. It is the last
+ * control on the page, below Save / Cancel and behind a confirm step; a
+ * memorial Kin gets "Restore as Active" in the same slot. The `kinactions`
+ * block is built to take more rows after it (#1314 delete, #1408 request
+ * removal), which are not built here.
  */
 export function KinEdit() {
   const { kinId } = useParams({ from: '/kin/$kinId/edit' });
@@ -101,6 +107,20 @@ export function KinEdit() {
     },
   }, { policy: 'abandon', what: 'this photo change' });
 
+  // HOLD. `archiveKin` set/merges one fixed status ('active' or
+  // 'noLongerWithUs') onto a known doc id, so a replay writes the same value.
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
+  const archive = usePortalMutation({
+    mutationFn: (reason: 'noLongerWithUs' | 'restore') => archiveKin(kinId, reason, kinfolkId),
+    // #1281: pending until the kin list shows the change, then back to the
+    // profile, where the "In our hearts" band (or its absence) confirms it.
+    onSuccess: async () => {
+      await refreshAfterSave(queryClient, ['myKin', kinfolkId]);
+      setConfirmingArchive(false);
+      if (isMounted()) void navigate({ to: '/kin/$kinId', params: { kinId } });
+    },
+  }, { policy: 'hold', what: 'this change' });
+
   const { signOut, signingOut } = useSignOut();
 
   if (kin.isError) {
@@ -158,7 +178,11 @@ export function KinEdit() {
   const errors = validateKinForm(current);
   const changes = buildKinChanges(kinDoc, current);
   const nothingToSave = Object.keys(changes).length === 0;
-  const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending;
+  const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending && !archive.isPending;
+  const memorial = kinDoc.status === 'noLongerWithUs';
+  // One write at a time: the memorial action waits on a Save in flight and
+  // the other way round.
+  const archiveBusy = archive.isPending || save.isPending;
 
   const set = (key: KinTextKey, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
 
@@ -336,6 +360,46 @@ export function KinEdit() {
               <OfflineMutationNotice phase={save.phase} what="this update" check="this Kin" />
               {!save.isError && nothingToSave && !hasErrors(errors) && <span className="sub">No changes yet.</span>}
               {hasErrors(errors) && <span className="sub">Fix the highlighted fields to save.</span>}
+            </div>
+          </section>
+
+          {/* KIN ACTIONS (#1311). Last on the page, after Save / Cancel, behind a
+              hairline. One row today; #1314 and #1408 add theirs below it. */}
+          <hr className="divider" />
+          <section className="kinactions" aria-label="Kin actions">
+            <div className="kinaction" data-testid="kinaction-memorial">
+              {memorial ? (
+                <button className="btn coralout" type="button" onClick={() => archive.mutate('restore')} disabled={archiveBusy}>
+                  <MutationLabel mutation={archive} busy="Restoring…">
+                    Restore as Active
+                  </MutationLabel>
+                </button>
+              ) : confirmingArchive ? (
+                <>
+                  <span className="sub">Mark {kinDoc.name ?? 'this Kin'} as no longer with us? You can restore the profile from here.</span>
+                  <div className="kinaction__choices">
+                    <button className="btn ghost" type="button" onClick={() => setConfirmingArchive(false)} disabled={archiveBusy}>
+                      Cancel
+                    </button>
+                    <button className="btn purple" type="button" onClick={() => archive.mutate('noLongerWithUs')} disabled={archiveBusy}>
+                      <MutationLabel mutation={archive} busy="Saving…">
+                        Yes, mark No Longer With Us
+                      </MutationLabel>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button className="btn purple" type="button" onClick={() => setConfirmingArchive(true)} disabled={archiveBusy}>
+                  Mark No Longer With Us
+                </button>
+              )}
+              {archive.phase === 'failed' && (
+                <span className="status err" role="alert">
+                  <span className="dot" />
+                  {archive.error instanceof Error ? archive.error.message : 'Could not save. Try again.'}
+                </span>
+              )}
+              <OfflineMutationNotice phase={archive.phase} what="this change" check="this Kin" />
             </div>
           </section>
         </div>

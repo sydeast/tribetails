@@ -193,7 +193,8 @@ fun KinScreen(
  * modal over the Kin tab. Edit resolves the Kin by id from the shared
  * controller; a null kinId means add. Dismiss / submit both pop back to the
  * list (via [onClose]); submit routes the write through the same controller so
- * the list refreshes.
+ * the list refreshes. #1311: edit also carries the memorial action (mark /
+ * restore), routed through the same controller; add does not.
  */
 @Composable
 fun KinAddEditScreen(
@@ -216,14 +217,15 @@ fun KinAddEditScreen(
             }
         },
         photoUploading = controller.photoUploading,
+        onArchive = if (kinId != null) { restore -> controller.archiveAndReload(kinId, restore) } else null,
     )
 }
 
 /**
  * Destination composable for KinDetailRoute. Resolves the Kin by id from the
  * shared controller, then renders the existing detail view. Edit navigates to
- * KinAddEditRoute via [onEdit]; archive routes through the controller and pops
- * back on success (via [onBack]).
+ * KinAddEditRoute via [onEdit]. The memorial action moved into that dialog
+ * (#1311), so this host no longer archives.
  */
 @Composable
 fun KinDetailHost(
@@ -252,7 +254,6 @@ fun KinDetailHost(
         kin = kin,
         onBack = onBack,
         onEdit = { onEdit(kin.id) },
-        onArchive = { restore -> controller.archive(kin.id, restore, onDone = onBack) },
     )
 }
 
