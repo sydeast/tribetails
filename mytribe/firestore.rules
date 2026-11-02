@@ -582,7 +582,11 @@ service cloud.firestore {
                   || testOwnsExisting();
       allow create: if isStaff() || testOwnsIncoming();
       allow update: if isStaff() || testOwnsExisting();
-      allow delete: if isOwner() || testOwnsExisting();
+      // #1442: callable-only. `deleteKin` refuses a Kin that has visits,
+      // KinTales, photos or admin records, and removes this doc together with
+      // its family mirror; a client deleteDoc here skips that check. The Admin
+      // SDK bypasses rules, so the callable is unaffected.
+      allow delete: if false;
     }
 
     match /invoices/{invoiceId} {
@@ -921,7 +925,11 @@ service cloud.firestore {
       // the rest stay on the staff-only flat `kin/{docId}`.
       match /kin/{kinId} {
         allow read: if activeMember(fid) || isStaff();
-        allow create, delete: if hasPerm(fid, 'kin_edit');
+        allow create: if hasPerm(fid, 'kin_edit');
+        // #1442: delete is callable-only (`deleteKin` runs the history check
+        // and removes the flat mirror with this doc). No household role and no
+        // staff role deletes from a client.
+        allow delete: if false;
         // #1310: older docs may still carry staff-only fields the flat -> family
         // mirror used to copy in (officeNotes, reactive, routine...) until the
         // #1335 strip runs, and no household write may ever add one back.
