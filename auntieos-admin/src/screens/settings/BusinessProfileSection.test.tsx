@@ -18,8 +18,10 @@ beforeEach(() => {
   onSave.mockReset().mockResolvedValue(undefined);
 });
 
+// A stored name, because the name is required (#1409): a blank one keeps Save
+// off and shows its own refusal line, which the cases below pin separately.
 function settings(over: Partial<BusinessSettings> = {}): BusinessSettings {
-  return { ...DEFAULT_BUSINESS_SETTINGS, timeZone: 'America/New_York', ...over };
+  return { ...DEFAULT_BUSINESS_SETTINGS, businessName: 'Tribe Tails', timeZone: 'America/New_York', ...over };
 }
 
 describe('BusinessProfileSection', () => {
@@ -87,9 +89,59 @@ describe('BusinessProfileSection', () => {
     const user = userEvent.setup();
     render(<BusinessProfileSection data={settings()} onSave={onSave} />);
     const name = screen.getByLabelText('Business name');
+    await user.clear(name);
     await user.type(name, '  Padded  ');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ businessName: 'Padded' }));
+  });
+
+  describe('the business name is required (#1409)', () => {
+    it('is the one required field, marked for assistive tech', () => {
+      render(<BusinessProfileSection data={settings()} onSave={onSave} />);
+      expect(screen.getByLabelText('Business name')).toHaveAttribute('aria-required', 'true');
+      expect(screen.getByLabelText('Email')).not.toHaveAttribute('aria-required');
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('shows the refusal on open when the stored name is blank, and keeps Save off even after another field changes', async () => {
+      const user = userEvent.setup();
+      render(<BusinessProfileSection data={settings({ businessName: '' })} onSave={onSave} />);
+      expect(screen.getByRole('alert')).toHaveTextContent('Enter the business name.');
+      expect(screen.getByLabelText('Business name')).toHaveAttribute('aria-invalid', 'true');
+
+      await user.type(screen.getByLabelText('Phone'), '555-0199');
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSave).not.toHaveBeenCalled();
+
+      // Filling the name in is what lights Save.
+      await user.type(screen.getByLabelText('Business name'), 'Sunny Paws');
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ businessName: 'Sunny Paws', businessPhone: '555-0199' }));
+    });
+
+    it('clearing a saved name, or replacing it with spaces, blocks Save and says why', async () => {
+      const user = userEvent.setup();
+      render(<BusinessProfileSection data={settings({ businessName: 'Old' })} onSave={onSave} />);
+      const name = screen.getByLabelText('Business name');
+
+      await user.clear(name);
+      expect(screen.getByRole('alert')).toHaveTextContent('Enter the business name.');
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+      await user.type(name, '   ');
+      expect(screen.getByRole('alert')).toHaveTextContent('Enter the business name.');
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSave).not.toHaveBeenCalled();
+
+      await user.clear(name);
+      await user.type(name, 'New');
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    });
   });
 
   it('shows a fail-loud error and keeps the field dirty when the save rejects', async () => {

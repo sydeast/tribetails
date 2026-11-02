@@ -108,7 +108,8 @@ class AccountSettingsScreenTest {
         }
         composeRule.waitForIdle()
 
-        for (label in listOf("Business name", "Email", "Phone", "Address", "Privacy policy link", "Weather area")) {
+        // The name is the one required field (#1409), which the field announces.
+        for (label in listOf("Business name, required", "Email", "Phone", "Address", "Privacy policy link", "Weather area")) {
             composeRule.onNodeWithContentDescription(label).assertIsDisplayed()
         }
         // Nothing typed yet, so there is nothing to save.
@@ -162,5 +163,70 @@ class AccountSettingsScreenTest {
         assertEquals("https://example.com/privacy", saved?.privacyPolicyUrl)
         assertEquals("Tribe Tails Pet Care", saved?.businessName)
         assertEquals("555-0199", saved?.businessPhone)
+    }
+
+    /**
+     * #1409: the name is required. A stored blank says "Enter the business name."
+     * the moment the panel opens and keeps Save off even once another field
+     * changes; spaces alone are still blank; a typed name clears the refusal and
+     * saves trimmed.
+     */
+    @Test
+    fun businessProfileShowsTheMissingNameOnOpenAndRefusesSaveUntilOneIsTyped() {
+        var saved: BusinessSettings? = null
+        val settings = BusinessSettings(businessName = "", businessPhone = "555-0199")
+        composeRule.setContent {
+            AuntieOSTheme {
+                BusinessProfilePanel(settings = settings, onSave = { saved = it })
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Enter the business name.").assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+
+        composeRule.onNodeWithContentDescription("Phone").performTextClearance()
+        composeRule.onNodeWithContentDescription("Phone").performTextInput("555-0100")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+        assertNull(saved)
+
+        composeRule.onNodeWithContentDescription("Business name, required").performTextInput("   ")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Enter the business name.").assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+
+        composeRule.onNodeWithContentDescription("Business name, required").performTextClearance()
+        composeRule.onNodeWithContentDescription("Business name, required").performTextInput(" Sunny Paws ")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Enter the business name.").assertDoesNotExist()
+        composeRule.onNodeWithText("Save").assertIsEnabled()
+        composeRule.onNodeWithText("Save").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals("Sunny Paws", saved?.businessName)
+        assertEquals("555-0100", saved?.businessPhone)
+    }
+
+    /** #1409: clearing a saved name is refused the same way, with nothing written. */
+    @Test
+    fun businessProfileRefusesClearingASavedName() {
+        var saved: BusinessSettings? = null
+        val settings = BusinessSettings(businessName = "Tribe Tails Pet Care")
+        composeRule.setContent {
+            AuntieOSTheme {
+                BusinessProfilePanel(settings = settings, onSave = { saved = it })
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Enter the business name.").assertDoesNotExist()
+
+        composeRule.onNodeWithContentDescription("Business name, required").performTextClearance()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Enter the business name.").assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+        composeRule.onNodeWithText("Save").performClick()
+        composeRule.waitForIdle()
+        assertNull(saved)
     }
 }

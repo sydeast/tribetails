@@ -1112,6 +1112,10 @@ private fun BusinessProfilePanel(
     // and says why beside the field.
     var privacyPolicyUrl by remember(settingsData?.privacyPolicyUrl) { mutableStateOf(settingsData?.privacyPolicyUrl.orEmpty()) }
     val privacyPolicyError = privacyPolicyUrlError(privacyPolicyUrl)
+    // #1409: the business name is required. Checked on the live value, so a
+    // stored blank says "Enter the business name." the moment the panel opens,
+    // and Save stays off until one is typed; firestore.rules refuses it anyway.
+    val nameError = businessNameError(businessName)
     DenPanel(title = "Business Profile", subtitle = "The contact details kinfolk and invoices use.") {
         when (uiState.settingsResult) {
             is FirestoreResult.Loading -> EmptyHintLine("Loading settings", c.textDim)
@@ -1121,7 +1125,9 @@ private fun BusinessProfilePanel(
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
                     BottomBorderField(
                         value = businessName, onValueChange = onBusinessName,
-                        label = "Business Name", modifier = Modifier.fillMaxWidth(),
+                        label = "Business Name", required = true,
+                        isError = nameError != null, errorMessage = nameError,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     BottomBorderField(
                         value = businessEmail, onValueChange = onBusinessEmail,
@@ -1145,11 +1151,11 @@ private fun BusinessProfilePanel(
                     Spacer(Modifier.height(dims.space1))
                     PrimaryButton(
                         label   = if (settingsLoaded) "Save" else "Loading settings…",
-                        enabled = settingsLoaded && privacyPolicyError == null,
+                        enabled = settingsLoaded && privacyPolicyError == null && nameError == null,
                         onClick = {
                             scope.launch {
                                 val updated = (settingsData ?: BusinessSettings()).copy(
-                                    businessName        = businessName,
+                                    businessName        = businessName.trim(),
                                     businessEmail       = businessEmail,
                                     businessPhone       = businessPhone,
                                     businessAddress     = businessAddress,
