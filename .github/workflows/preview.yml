@@ -21,6 +21,14 @@ name: PR preview
 # faster than a 7d TTL retires their channels, so the TTL is the backstop and the
 # close-triggered delete below is the actual reclaim.
 #
+# THAT RECLAIM DELETED NOTHING FROM 2026-08-22 TO 2026-11-02 (#1482). It guessed
+# the channel id from the PR number and branch name, guessed one character
+# short, and read the resulting 404 as "no channel here". Every close run was
+# green while `kinfolk-portal` refilled to 50 and PR #1480's portal preview failed
+# with the same 429. The job now lists the site's channels and deletes the ids
+# Firebase reports, and a manual `workflow_dispatch` run sweeps every channel
+# whose pull request has closed, which is how a backlog like that one is cleared.
+#
 # BOTH APPS, since 2026-08-16. Until then this file deployed the admin only, so
 # a portal change could not be clicked before it merged: the one half of the
 # product whose defects get found by walking it was the half with no preview.
@@ -59,10 +67,24 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/preview.yml'
+  # The backlog sweep (`sweep-preview-channels` at the bottom of this file). It
+  # is manual on purpose: the close-time prune keeps up on its own, so the sweep
+  # is for clearing what piled up while that prune was broken or skipped. Every
+  # pull_request job carries `github.event_name == 'pull_request'` in its `if:`
+  # so a dispatch runs the sweep and nothing else. A dispatch ignores `paths`.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List the channels that would be deleted, delete nothing'
+        type: boolean
+        required: false
+        default: false
 
-# Left cancelling, unlike ci.yml's group. This workflow triggers on
-# `pull_request` only, so no run here is ever the one the release gate reads on
-# main, and a superseded preview is a preview of a commit nobody will look at.
+# Left cancelling, unlike ci.yml's group. No run of this workflow is ever the one
+# the release gate reads on main: pull_request runs belong to a PR, and the
+# dispatch sweep deploys nothing. A superseded preview is a preview of a commit
+# nobody will look at. A dispatch run groups under `refs/heads/<branch>`, so a
+# second sweep cancels the first, which is harmless: it lists again.
 concurrency:
   group: preview-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -74,6 +96,9 @@ concurrency:
 jobs:
   changes:
     name: Detect changed paths
+    # Skipped on dispatch: dorny/paths-filter compares against the pull
+    # request's base, and a dispatch run has no pull request.
+    if: github.event_name == 'pull_request'
     # Measured median 0.2 min, max 0.3, over 40 successful runs.
     timeout-minutes: 5
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
@@ -114,7 +139,7 @@ jobs:
   preview:
     name: Deploy preview channel
     needs: changes
-    if: github.event.action != 'closed' && needs.changes.outputs.admin == 'true'
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.changes.outputs.admin == 'true'
     # Sized against what this job costs AFTER the duplicate unit suite came out
     # of it, not before. Measured steps over 27 successful runs: checkout 4s,
     # setup-node 3s, npm ci 12s, typecheck 5s, build 7s, deploy 44s (max 69s),
@@ -277,7 +302,7 @@ jobs:
   preview-portal:
     name: Deploy portal preview channel
     needs: changes
-    if: github.event.action != 'closed' && needs.changes.outputs.portal == 'true'
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && needs.changes.outputs.portal == 'true'
     # Same shape as the admin job above: about 1.2 min once the duplicate unit
     # suite is gone (checkout 4s, npm ci 12s, build 4s, deploy 38s, max 52s).
     timeout-minutes: 10
@@ -392,16 +417,26 @@ jobs:
   # a PR touching one app deploys to one. `--force` is required: there is no TTY
   # here, and without it the command waits on a prompt until the job times out.
   #
-  # IT NEVER FAILS THE RUN. The pull request is already closed and its outcome
-  # was decided by the jobs that ran before it; a housekeeping step that turns a
-  # merged PR red teaches people to ignore red. A channel that was never created
-  # (the PR touched no previewable path) 404s here, which is the ordinary case
-  # rather than a problem, so the step reports what it did and exits 0.
+  # IT LISTS, IT DOES NOT GUESS (#1482). The first version derived the id the
+  # deploy action would choose (`pr<number>-<head ref>`, cut to 26 characters).
+  # The action's real ids are 27 characters with a trailing hyphen trimmed
+  # (`pr1468-fix-1465-account-pru`, `pr1456-fix-1454-tribe-edit`), so every
+  # delete aimed at a channel that did not exist. Now the job asks Firebase for
+  # the site's channels and deletes every id that begins `pr<number>-`. The
+  # prefix match also catches a channel a renamed branch left behind.
+  #
+  # A FAILED DELETE FAILS THE JOB. The first version never failed the run, so as
+  # not to turn a merged PR red, and that is exactly why it deleted nothing for
+  # ten weeks without anyone seeing it. The pull request is already closed and
+  # nothing gates on this job, so a red prune costs nothing and is the only
+  # signal that channels are piling up again. "No channel for this PR on this
+  # site" is not a failure: it is the ordinary case for a PR that touched only
+  # one app, and the job says so in one line.
   prune-preview-channels:
     name: Reclaim preview channels
-    if: github.event.action == 'closed'
-    # Two small delete calls plus npm resolution. 5 is generous, and stops a
-    # hung prompt parking a runner.
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    # One list and a delete or two per site, plus npm resolution. 5 is
+    # generous, and stops a hung prompt parking a runner.
     timeout-minutes: 5
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
@@ -428,53 +463,213 @@ jobs:
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           # RUNNER_TEMP, not /tmp: on a self-hosted runner the disk persists
           # between jobs, and RUNNER_TEMP is the path the runner clears itself.
+          # The trap removes the key on every exit, the failing one included.
           sa="$RUNNER_TEMP/firebase-sa.json"
+          trap 'shred -u "$sa" 2>/dev/null || rm -f "$sa"' EXIT
           printf '%s' "$FIREBASE_SA" > "$sa"
           export GOOGLE_APPLICATION_CREDENTIALS="$sa"
-          # The channel id FirebaseExtended/action-hosting-deploy generates:
-          # `pr<number>-<head ref>`, non-alphanumerics collapsed to `-`, then
-          # truncated to 26 characters. Derived here because the deploy action
-          # does not surface the id it chose.
-          slug="$(printf 'pr%s-%s' "$PR_NUMBER" "$HEAD_REF" | tr -c '[:alnum:]-' '-' | cut -c1-26)"
-          echo "Reclaiming channel: $slug"
           # --config is REQUIRED and its absence is why the first version of
-          # this job was green and did nothing. `hosting:channel:delete` is a
-          # hosting command, so firebase-tools looks for a firebase.json in the
+          # this job was green and did nothing. Channel commands are hosting
+          # commands, so firebase-tools looks for a firebase.json in the
           # working directory; at the repository root there is none, and it
-          # exits 1 with "Not in a Firebase app directory". The old code read
-          # that as "no channel to delete" and reported success. Any
-          # firebase.json in the repo resolves the project; --site is what
-          # actually selects which site to act on.
-          rc_any_error=0
+          # exits 1 with "Not in a Firebase app directory". Any firebase.json
+          # in the repo resolves the project; --site is what actually selects
+          # which site to act on.
+          #
+          # THE LIST OUTPUT, read off firebase-tools 15.18.0's source
+          # (lib/command.js, lib/commands/hosting-channel-list.js): with --json
+          # stdout is `{"status":"success","result":{"channels":[...]}}` and
+          # each channel's `name` is `projects/<n>/sites/<site>/channels/<id>`.
+          # A failure is `{"status":"error","error":"..."}`, ALSO on stdout,
+          # which is the stream the first version never read. stderr is kept
+          # apart for the list because npx writes its install notices there
+          # and they would corrupt the JSON; it is printed when the list fails.
+          failed=0
           for site in auntieos-ttpc kinfolk-portal; do
-            err="$RUNNER_TEMP/delete-$site.err"
-            if npx --yes firebase-tools@15.18.0 hosting:channel:delete "$slug" \
-                 --site "$site" --project auntieos-ttpc \
-                 --config mytribe/firebase.json --force 2>"$err"; then
-              echo "  deleted from $site"
-            elif grep -qiE 'not found|does not exist|404' "$err"; then
-              # The ordinary case: this PR touched no previewable path, so no
-              # channel was ever created on this site.
-              echo "  nothing to delete on $site (no channel)"
-            else
-              # Anything else is a real failure and must not read as success.
-              # It still does not fail the job (the PR is already closed), but
-              # it is surfaced so a silently-broken prune cannot recur.
-              echo "::warning title=Preview channel not reclaimed::Deleting $slug from $site failed for a reason other than the channel being absent. The channel may still be counting against the 50-per-site cap."
-              sed 's/^/    /' "$err" | head -5
-              rc_any_error=1
+            out="$RUNNER_TEMP/list-$site.json"
+            err="$RUNNER_TEMP/list-$site.err"
+            npx --yes firebase-tools@15.18.0 hosting:channel:list \
+              --site "$site" --project auntieos-ttpc \
+              --config mytribe/firebase.json --json >"$out" 2>"$err" || true
+            if [ "$(jq -r '.status' "$out" 2>/dev/null)" != "success" ]; then
+              echo "::error title=Preview channels not listed::Listing channels on $site failed, so this PR's channel there was not reclaimed."
+              sed 's/^/    /' "$out" "$err" | head -20
+              failed=1
+              continue
             fi
+            ids="$(jq -r --arg p "pr${PR_NUMBER}-" \
+                     '.result.channels[].name | sub(".*/"; "")
+                      | select(startswith($p))' "$out")"
+            if [ -z "$ids" ]; then
+              echo "$site: no channel for PR #$PR_NUMBER on this site"
+              continue
+            fi
+            for id in $ids; do
+              # 2>&1: firebase-tools prints its `Error:` line on stdout, so
+              # stderr alone holds only npm's hints (#1482).
+              if res="$(npx --yes firebase-tools@15.18.0 hosting:channel:delete "$id" \
+                   --site "$site" --project auntieos-ttpc \
+                   --config mytribe/firebase.json --force 2>&1)"; then
+                echo "$site: deleted $id"
+              elif printf '%s' "$res" | grep -q 'HTTP Error: 404'; then
+                # The id came from the list a moment ago, so a 404 now means
+                # the channel expired in between. It is gone, which is the goal.
+                echo "$site: $id already gone (expired after it was listed)"
+              else
+                echo "::error title=Preview channel not reclaimed::Deleting $id from $site failed. It still counts against the 50-per-site cap."
+                printf '%s\n' "$res" | sed 's/^/    /' | head -20
+                failed=1
+              fi
+            done
           done
-          if [ "$rc_any_error" = "1" ]; then
-            echo "One or more sites reported an unexpected error above."
+          if [ "$failed" = "1" ]; then
+            echo "One or more lists or deletes failed above."
+            exit 1
           fi
-          shred -u "$sa" 2>/dev/null || true
 
       - name: Report no credential
         if: steps.cred.outputs.present != 'true'
         run: |
           echo "::warning title=Preview channel not reclaimed::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so this PR's preview channel was left in place and still counts against the 50-per-site cap."
+
+  # ---------------------------------------------------------------------------
+  # Sweep every channel whose pull request has closed. Manual only.
+  # ---------------------------------------------------------------------------
+  #
+  # WHY THIS EXISTS. The close-time prune above only sees the PR that just
+  # closed. When it misses (it was broken from 2026-08-22 to 2026-11-02, a run
+  # can be cancelled, a PR touching no previewable path never triggers it),
+  # channels from closed PRs sit until their 7d TTL, and a busy week fills a
+  # site's 50. Run this from the Actions tab (`PR preview` > Run workflow) to
+  # clear them. Tick `dry_run` to see the plan without deleting anything.
+  #
+  # THE RULE. For each `pr<number>-` channel on either site it asks GitHub for
+  # that PR's state. `closed` (merged counts, GitHub reports merged PRs as
+  # closed) is deleted; `open` is kept. A lookup that fails is an error and the
+  # channel is kept, because deleting a live PR's preview on a guess is worse
+  # than leaving one channel for the TTL. Channels that do not start `pr<digits>-`
+  # (`live`, anything made by hand) are never touched.
+  #
+  # It fails the run if any lookup or delete errored, for the same reason the
+  # prune does: a green sweep that left channels behind would be the same
+  # silence #1482 was about.
+  sweep-preview-channels:
+    name: Sweep closed PRs' preview channels
+    if: github.event_name == 'workflow_dispatch'
+    # Up to 100 channels, each a GitHub lookup and maybe a delete through npx.
+    # A delete measures a few seconds once the npx cache is warm.
+    timeout-minutes: 20
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Check for the deploy credential
+        id: cred
+        env:
+          CRED: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+        run: |
+          if [ -n "$CRED" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Delete channels of closed pull requests
+        if: steps.cred.outputs.present == 'true'
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # A boolean input reaches the shell as the string `true` or `false`.
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          sa="$RUNNER_TEMP/firebase-sa.json"
+          trap 'shred -u "$sa" 2>/dev/null || rm -f "$sa"' EXIT
+          printf '%s' "$FIREBASE_SA" > "$sa"
+          export GOOGLE_APPLICATION_CREDENTIALS="$sa"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: nothing will be deleted."
+          fi
+          # Same --config and the same JSON shape as the prune job above.
+          deleted=0; kept=0; errors=0
+          for site in auntieos-ttpc kinfolk-portal; do
+            out="$RUNNER_TEMP/sweep-$site.json"
+            err="$RUNNER_TEMP/sweep-$site.err"
+            npx --yes firebase-tools@15.18.0 hosting:channel:list \
+              --site "$site" --project auntieos-ttpc \
+              --config mytribe/firebase.json --json >"$out" 2>"$err" || true
+            if [ "$(jq -r '.status' "$out" 2>/dev/null)" != "success" ]; then
+              echo "::error title=Preview channels not listed::Listing channels on $site failed; nothing on it was swept."
+              sed 's/^/    /' "$out" "$err" | head -20
+              errors=$((errors + 1))
+              continue
+            fi
+            ids="$(jq -r '.result.channels[].name | sub(".*/"; "")
+                          | select(test("^pr[0-9]+-"))' "$out")"
+            if [ -z "$ids" ]; then
+              echo "$site: no pr channels"
+              continue
+            fi
+            for id in $ids; do
+              n="${id#pr}"; n="${n%%-*}"
+              if ! state="$(gh api "repos/$REPO/pulls/$n" --jq .state 2>&1)"; then
+                echo "$site: $id ERROR looking up PR #$n, kept: $state"
+                errors=$((errors + 1))
+                continue
+              fi
+              case "$state" in
+                open)
+                  echo "$site: $id kept (PR #$n is open)"
+                  kept=$((kept + 1))
+                  ;;
+                closed)
+                  if [ "$DRY_RUN" = "true" ]; then
+                    echo "$site: $id would be deleted (PR #$n is closed)"
+                    deleted=$((deleted + 1))
+                    continue
+                  fi
+                  if res="$(npx --yes firebase-tools@15.18.0 hosting:channel:delete "$id" \
+                       --site "$site" --project auntieos-ttpc \
+                       --config mytribe/firebase.json --force 2>&1)"; then
+                    echo "$site: $id deleted (PR #$n is closed)"
+                    deleted=$((deleted + 1))
+                  elif printf '%s' "$res" | grep -q 'HTTP Error: 404'; then
+                    echo "$site: $id already gone (expired after it was listed)"
+                    deleted=$((deleted + 1))
+                  else
+                    echo "$site: $id ERROR deleting (PR #$n is closed):"
+                    printf '%s\n' "$res" | sed 's/^/    /' | head -20
+                    errors=$((errors + 1))
+                  fi
+                  ;;
+                *)
+                  echo "$site: $id ERROR, PR #$n has unexpected state '$state', kept"
+                  errors=$((errors + 1))
+                  ;;
+              esac
+            done
+          done
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run tally: would delete $deleted, kept $kept, errors $errors"
+          else
+            echo "Tally: deleted $deleted, kept $kept, errors $errors"
+          fi
+          if [ "$errors" -gt 0 ]; then
+            echo "::error title=Sweep incomplete::$errors channel(s) or site(s) errored; see the lines above."
+            exit 1
+          fi
+
+      - name: Report no credential
+        if: steps.cred.outputs.present != 'true'
+        run: |
+          echo "::error title=Nothing swept::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so no channel could be listed or deleted."
+          exit 1
