@@ -117,7 +117,7 @@ export function Schedule() {
           A compact line rather than a second full panel, because the card
           below already carries the offline panel for the same outage.
         */}
-        <div className="tabbar">
+        <div className="sched-tabbar">
           <div className="tabrow" role="tablist" aria-label="Schedule view">
             <button className={tab === 'upcoming' ? 'act' : ''} role="tab" aria-selected={tab === 'upcoming'} onClick={() => setTab('upcoming')}>
               Upcoming{' '}
