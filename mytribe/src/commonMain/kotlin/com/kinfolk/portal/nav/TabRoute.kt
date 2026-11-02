@@ -78,12 +78,13 @@ sealed interface AccountMenuItem {
 }
 
 object ShellNav {
-    /** Wide (>= 880dp) primary link pills. Kin/Account/Notifications live in the avatar menu. */
+    /** Wide (>= 880dp) primary link pills (#1420: Messages after Invoices, as web's desktop nav). Kin/Account/Notifications live in the avatar menu. */
     val wideLinks: List<ShellDestination> = listOf(
         ShellDestination.Home,
         ShellDestination.Tribe,
         ShellDestination.Schedule,
         ShellDestination.Invoices,
+        ShellDestination.Messages,
     )
 
     /**
