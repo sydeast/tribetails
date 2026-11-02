@@ -1,27 +1,42 @@
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { getMyKin, getMyKinTales } from '../api/portal';
+import { getMyKin } from '../api/portal';
+import { getMyKinPhotos, type KinPhotoDto } from '../api/kinTalesApi';
 import { getMyTribeProfile } from '../api/tribeApi';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
-import { FallbackImage } from '../components/FallbackImage';
+import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
-import { auntieName, relativeDay, speciesEmoji } from '../lib/portalFormat';
-import { BusyLabel } from '../components/Loading';
+import { speciesEmoji } from '../lib/portalFormat';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { formatPhone } from '../lib/phone';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
 
 /**
+ * #1463: the Gallery card reads the same first page the Gallery screen reads
+ * (Gallery.tsx PAGE_SIZE). `limit` counts KinTales, not pictures, so a smaller
+ * page could come back with no photos for a household that has plenty, and the
+ * card would wrongly say there are none. The card draws at most
+ * GALLERY_CARD_THUMBS of what comes back. Same numbers as TribeHubScreen.kt.
+ */
+export const GALLERY_CARD_PAGE = 12;
+export const GALLERY_CARD_THUMBS = 8;
+
+type CardThumb =
+  | { kind: 'photo'; key: string; photo: KinPhotoDto }
+  | { kind: 'portrait'; key: string; url: string; name: string };
+
+/**
  * Tribe hub: a read-only "family base" dashboard, distinct from the Tribe
  * Profile editor (TribeProfile.tsx) and from the full Kin roster (Kin.tsx).
  * Ported structurally from TribeHubScreen.kt (src/commonMain/kotlin/com/
  * kinfolk/portal/screens/tribe/TribeHubScreen.kt) — calls getMyKin,
- * getMyKinTales(limit=4), getMyTribeProfile, same three best-effort loads.
+ * getMyKinPhotos (first page), getMyTribeProfile, same three best-effort loads.
  *
  * NOTE ON THE MOCKUP: ui-ideas/mytribe-tribe-2026-05-31.html is entirely the
  * Tribe Profile *editor* (Family/Home Information/Vet Clinic edit cards) —
@@ -30,18 +45,25 @@ const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
  * base.css/kindetail.css (.hero-greet, .glass.card, .sectlabel, .kinrow,
  * .tale, .footnote) using TribeHubScreen.kt as the structural spec, the same
  * way Home.tsx already renders "Your tribe" (.kinrow) and "Recent KinTales"
- * (.tale) cards. Neither "All photos" nor "All tales" has a dedicated view in
- * ui-ideas; both now go somewhere anyway. "All tales" opens the KinTales
- * screen, and "All photos" opens Gallery.tsx (#399 item 1), which is built
+ * (.tale) cards. "All photos" opens Gallery.tsx (#399 item 1), which is built
  * from the same shared primitives as this card for the same reason.
+ *
+ * #1463 (operator, 2026-11-02): "KinTales have media taken for the visit. but
+ * Gallery is the collection of all media over time." The Gallery card is
+ * always drawn and shows the newest KinTale media plus the Kin portraits, not
+ * just the roster's faces. The KinTales section that used to sit here is gone;
+ * it repeated the Tales tab.
  */
 export function TribeHub() {
   const kinfolkId = getActiveKinfolkId();
 
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
-  const tales = useQuery({
-    queryKey: ['myKinTales', 'tribe-hub', kinfolkId],
-    queryFn: () => getMyKinTales(kinfolkId, { limit: 4 }),
+  // Its own cache key: Gallery.tsx keeps an infinite query under
+  // ['myKinPhotos', kinfolkId], and a plain query in that slot would be the
+  // wrong shape for it.
+  const media = useQuery({
+    queryKey: ['myKinPhotos', 'tribe-hub', kinfolkId],
+    queryFn: () => getMyKinPhotos(kinfolkId, { limit: GALLERY_CARD_PAGE }),
   });
   const profile = useQuery({ queryKey: ['tribeProfile', kinfolkId], queryFn: () => getMyTribeProfile(kinfolkId) });
 
@@ -52,11 +74,14 @@ export function TribeHub() {
   }
 
   const kinView = viewOfQuery(kin, { isEmpty: (d) => d.kin.filter((k) => k.status === 'active').length === 0 });
-  const talesView = viewOfQuery(tales, { isEmpty: (d) => d.tales.length === 0 });
+  const mediaView = viewOfQuery(media, { isEmpty: (d) => d.photos.length === 0 && d.portraits.length === 0 });
   const profileView = viewOfQuery(profile);
   const roster = kin.data?.kin.filter((k) => k.status === 'active') ?? [];
-  const gallery = roster.filter((k) => k.photoUrl);
-  const recentTales = (tales.data?.tales ?? []).slice(0, 3);
+  // Newest KinTale media first, then the Kin portraits. Same order on Android.
+  const thumbs: CardThumb[] = [
+    ...(media.data?.photos ?? []).map((photo): CardThumb => ({ kind: 'photo', key: `p-${photo.id}`, photo })),
+    ...(media.data?.portraits ?? []).map((p): CardThumb => ({ kind: 'portrait', key: `k-${p.kinId}`, url: p.url, name: p.kinName })),
+  ].slice(0, GALLERY_CARD_THUMBS);
   const displayName = profile.data?.profile.displayName ?? '';
 
   const homeFacts: string[] = [];
@@ -124,50 +149,34 @@ export function TribeHub() {
             )}
           </section>
 
-          {gallery.length > 0 && (
-            <section className="glass card d2">
-              <div className="sectlabel">
-                Gallery <Link to="/gallery">All photos</Link>
-              </div>
+          <section className="glass card d2" data-testid="tribe-gallery">
+            <div className="sectlabel">
+              Gallery <Link to="/gallery">All photos</Link>
+            </div>
+            {mediaView.kind === 'offline' ? (
+              <OfflineNotice what="your photos" />
+            ) : mediaView.kind === 'error' ? (
+              <p className="sub">Photos unavailable right now.</p>
+            ) : mediaView.kind === 'empty' ? (
+              // The page counts KinTales, so a household whose newest tales
+              // carry no pictures can still have older ones behind it.
+              <p className="sub" data-testid="tribe-gallery-empty">
+                {media.data?.hasMore ? 'No recent photos. Older ones are in All photos.' : 'No photos yet.'}
+              </p>
+            ) : mediaView.kind !== 'data' ? (
+              <LoadingLine what="your photos" retry={() => void media.refetch()}>
+                Loading your photos…
+              </LoadingLine>
+            ) : (
               <div className="gallery-row">
-                {gallery.map((k) => (
-                  <div className="gallery-thumb" key={k.id} title={k.name ?? undefined}>
-                    <FallbackImage src={k.photoUrl} alt="" fallback={speciesEmoji(k.species)} />
-                  </div>
+                {thumbs.map((t) => (
+                  <GalleryCardThumb thumb={t} key={t.key} />
                 ))}
               </div>
-            </section>
-          )}
-
-          <section className="glass card d3">
-            <div className="sectlabel">
-              KinTales <Link to="/kintales">All tales</Link>
-            </div>
-            {talesView.kind === 'offline' ? (
-              <OfflineNotice what="your KinTales" />
-            ) : talesView.kind === 'error' ? (
-              <p className="sub">KinTales unavailable right now.</p>
-            ) : talesView.kind === 'empty' ? (
-              <p className="sub">After each visit, your Auntie&rsquo;s KinTale lands here.</p>
-            ) : talesView.kind !== 'data' ? (
-              <p className="sub">Loading recent KinTales…</p>
-            ) : (
-              recentTales.map((t, i) => (
-                <div className={`tale a${(i % 3) + 1}`} key={t.id}>
-                  <div className="photo">{'\u{1F43E}'}</div>
-                  <div className="tb">
-                    <b>{t.title || t.body.slice(0, 60)}</b>
-                    <p>{t.body}</p>
-                    <div className="meta">
-                      {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
-                    </div>
-                  </div>
-                </div>
-              ))
             )}
           </section>
 
-          <section className="glass card d4">
+          <section className="glass card d3">
             <div className="sectlabel">
               Home Information <Link to="/tribe/edit">Edit</Link>
             </div>
@@ -202,5 +211,31 @@ export function TribeHub() {
         <SettingsBusinessFootnote />
       </div>
     </>
+  );
+}
+
+function GalleryCardThumb({ thumb }: { thumb: CardThumb }) {
+  if (thumb.kind === 'portrait') {
+    return (
+      <div className="gallery-thumb" title={thumb.name}>
+        <FallbackImage src={thumb.url} alt={thumb.name} fallback={<span aria-hidden="true">{'\u{1F43E}'}</span>} />
+      </div>
+    );
+  }
+  const { photo } = thumb;
+  const name = photo.taleTitle || 'A KinTale';
+  const isImage = photo.contentType === null || photo.contentType.startsWith('image/');
+  return (
+    <div className="gallery-thumb" title={name}>
+      {isImage ? (
+        <FallbackImage src={photo.url} alt={name} fallback={<span aria-hidden="true">{PHOTO_UNAVAILABLE_GLYPH}</span>} />
+      ) : (
+        // A video is drawn as a video, the same as the Gallery screen's tiles:
+        // an <img> pointed at an mp4 shows as a broken picture.
+        <span role="img" aria-label={name}>
+          {'\u{25B6}\u{FE0F}'}
+        </span>
+      )}
+    </div>
   );
 }

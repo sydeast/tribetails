@@ -3,9 +3,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { TribeHub } from './TribeHub';
+import { GALLERY_CARD_PAGE, GALLERY_CARD_THUMBS, TribeHub } from './TribeHub';
+import { PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
 
 /**
  * The Tribe hub's Gallery card (#399 item 1).
@@ -17,13 +18,19 @@ import { TribeHub } from './TribeHub';
 const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn(),
   getMyKinTales: vi.fn(),
+  getMyKinPhotos: vi.fn(),
   getMyTribeProfile: vi.fn(),
 }));
 
+// getMyKinTales stays mocked so a test can prove the page never asks for it.
 vi.mock('../api/portal', () => ({
   getMyKin: () => mocks.getMyKin(),
   getMyKinTales: () => mocks.getMyKinTales(),
 }));
+vi.mock('../api/kinTalesApi', async () => {
+  const actual = await vi.importActual<typeof import('../api/kinTalesApi')>('../api/kinTalesApi');
+  return { ...actual, getMyKinPhotos: (...a: unknown[]) => mocks.getMyKinPhotos(...a) };
+});
 vi.mock('../api/tribeApi', () => ({ getMyTribeProfile: () => mocks.getMyTribeProfile() }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'kin-fam-1' }));
 vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
@@ -49,6 +56,12 @@ const KIN_WITH_PHOTO = {
   status: 'active',
 };
 
+const EMPTY_MEDIA = { photos: [], portraits: [], hasMore: false, nextBefore: null };
+
+function photo(id: string, contentType: string | null = 'image/jpeg') {
+  return { id, url: `https://cdn/${id}.jpg`, contentType, taleId: `t-${id}`, taleTitle: `Tale ${id}`, takenAtMs: 1_700_000_000_000 };
+}
+
 function renderScreen() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -61,8 +74,10 @@ function renderScreen() {
 beforeEach(() => {
   mocks.getMyKin.mockReset();
   mocks.getMyKinTales.mockReset();
+  mocks.getMyKinPhotos.mockReset();
   mocks.getMyTribeProfile.mockReset();
   mocks.getMyKinTales.mockResolvedValue({ tales: [], hasMore: false });
+  mocks.getMyKinPhotos.mockResolvedValue(EMPTY_MEDIA);
   mocks.getMyTribeProfile.mockRejectedValue(new Error('not needed here'));
 });
 
@@ -136,6 +151,8 @@ describe('TribeHub Edit Tribe Profile button (#1454)', () => {
 });
 
 describe('TribeHub gallery card', () => {
+  const card = () => screen.getByTestId('tribe-gallery');
+
   it('sends "All photos" to the Gallery screen instead of nowhere', async () => {
     mocks.getMyKin.mockResolvedValue({ kin: [KIN_WITH_PHOTO] });
     renderScreen();
@@ -146,12 +163,80 @@ describe('TribeHub gallery card', () => {
     expect(link.getAttribute('title')).toBeNull();
   });
 
-  it('shows no gallery card at all when no Kin has a photo yet', async () => {
+  // #1463: the card is always drawn, even before the household has any media.
+  it('is drawn with a short empty line and the All photos link when there is no media yet', async () => {
     mocks.getMyKin.mockResolvedValue({ kin: [{ ...KIN_WITH_PHOTO, photoUrl: null }] });
     renderScreen();
 
-    await screen.findByText('Biscuit');
-    expect(screen.queryByText('All photos')).toBeNull();
+    const empty = await screen.findByTestId('tribe-gallery-empty');
+    expect(empty.textContent).toBe('No photos yet.');
+    expect(within(card()).getByText('All photos')).toHaveAttribute('href', '/gallery');
+    expect(card().querySelector('.gallery-thumb')).toBeNull();
+  });
+
+  it('does not claim there are no photos when only the newest tales lack them', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    mocks.getMyKinPhotos.mockResolvedValue({ ...EMPTY_MEDIA, hasMore: true, nextBefore: 1 });
+    renderScreen();
+
+    const empty = await screen.findByTestId('tribe-gallery-empty');
+    expect(empty.textContent).toBe('No recent photos. Older ones are in All photos.');
+  });
+
+  it('shows a loading cue while the photos load, with All photos still there', () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    mocks.getMyKinPhotos.mockReturnValue(new Promise(() => {}));
+    renderScreen();
+
+    expect(within(card()).getByRole('status').textContent).toContain('Loading your photos');
+    expect(within(card()).getByText('All photos')).toHaveAttribute('href', '/gallery');
+  });
+
+  it('draws its thumbnails from getMyKinPhotos, KinTale media first, then portraits, not the roster', async () => {
+    // The roster has a photo the server does not list, which proves the card
+    // no longer reads the roster.
+    mocks.getMyKin.mockResolvedValue({ kin: [{ ...KIN_WITH_PHOTO, photoUrl: 'https://cdn/roster-only.jpg' }] });
+    mocks.getMyKinPhotos.mockResolvedValue({
+      photos: [photo('m1'), photo('m2', 'video/mp4')],
+      portraits: [{ kinId: 'k1', kinName: 'Biscuit', url: 'https://cdn/biscuit-portrait.jpg' }],
+      hasMore: false,
+      nextBefore: null,
+    });
+    renderScreen();
+
+    await waitFor(() => expect(card().querySelectorAll('.gallery-thumb')).toHaveLength(3));
+    const thumbs = Array.from(card().querySelectorAll('.gallery-thumb'));
+    expect(thumbs.map((t) => t.getAttribute('title'))).toEqual(['Tale m1', 'Tale m2', 'Biscuit']);
+    expect(thumbs[0]!.querySelector('img')).toHaveAttribute('src', 'https://cdn/m1.jpg');
+    // A video is a play glyph, never an <img> pointed at an mp4.
+    expect(thumbs[1]!.querySelector('img')).toBeNull();
+    expect(thumbs[1]!.textContent).toContain('\u{25B6}');
+    expect(thumbs[2]!.querySelector('img')).toHaveAttribute('src', 'https://cdn/biscuit-portrait.jpg');
+    expect(card().innerHTML).not.toContain('roster-only.jpg');
+    expect(mocks.getMyKinPhotos).toHaveBeenCalledWith('kin-fam-1', { limit: GALLERY_CARD_PAGE });
+  });
+
+  it(`draws at most ${GALLERY_CARD_THUMBS} thumbnails`, async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    mocks.getMyKinPhotos.mockResolvedValue({
+      ...EMPTY_MEDIA,
+      photos: Array.from({ length: GALLERY_CARD_THUMBS + 3 }, (_, i) => photo(`m${i}`)),
+    });
+    renderScreen();
+
+    await waitFor(() => expect(card().querySelectorAll('.gallery-thumb')).toHaveLength(GALLERY_CARD_THUMBS));
+  });
+
+  // #1463: the KinTales section repeated the Tales tab and is gone.
+  it('has no KinTales section and no "All tales" link, and never asks for KinTales', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [KIN_WITH_PHOTO] });
+    renderScreen();
+
+    await screen.findByTestId('tribe-gallery-empty');
+    expect(screen.queryByText('KinTales')).toBeNull();
+    expect(screen.queryByText('All tales')).toBeNull();
+    expect(document.querySelector('a[href="/kintales"]')).toBeNull();
+    expect(mocks.getMyKinTales).not.toHaveBeenCalled();
   });
 
   it('shows the species emoji, not a dead glyph, when a roster photo fails to load (S9)', async () => {
@@ -168,20 +253,17 @@ describe('TribeHub gallery card', () => {
     expect(row?.textContent).toContain('\u{1F436}');
   });
 
-  it('shows the species emoji, not a dead glyph, when a gallery thumb photo fails to load (S9)', async () => {
-    mocks.getMyKin.mockResolvedValue({ kin: [KIN_WITH_PHOTO] });
+  it('shows the broken-photo glyph, not a dead browser glyph, when a gallery thumb fails to load (S9)', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    mocks.getMyKinPhotos.mockResolvedValue({ ...EMPTY_MEDIA, photos: [photo('m1')] });
     renderScreen();
 
-    const link = await screen.findByText('All photos');
-    const card = link.closest('section');
-    const thumb = card?.querySelector('.gallery-thumb');
-    const img = thumb?.querySelector('img');
-    expect(img).toBeTruthy();
+    await waitFor(() => expect(card().querySelector('.gallery-thumb img')).toBeTruthy());
+    const thumb = card().querySelector('.gallery-thumb')!;
+    fireEvent.error(thumb.querySelector('img')!);
 
-    fireEvent.error(img!);
-
-    expect(thumb?.querySelector('img')).toBeNull();
-    expect(thumb?.textContent).toContain('\u{1F436}');
+    expect(thumb.querySelector('img')).toBeNull();
+    expect(thumb.textContent).toContain(PHOTO_UNAVAILABLE_GLYPH);
   });
 
   // #1325: Home Information listed only "Key location on file" after a clinic was

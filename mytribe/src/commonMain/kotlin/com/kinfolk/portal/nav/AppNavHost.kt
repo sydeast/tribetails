@@ -404,7 +404,6 @@ fun AppNavHost(
                             onEditProfile = { navController.navigate(TribeEditRoute) },
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
                             onManageKin = { navController.navigate(KinRoute) { launchSingleTop = true } },
-                            onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
                             onOpenGallery = { navController.navigate(GalleryRoute) },
                         )
                     }
@@ -418,7 +417,6 @@ fun AppNavHost(
                             portalApi = portalApi,
                             onBack = { navController.popBackStack() },
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
-                            onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
                         )
                     }
                 }
