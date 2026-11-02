@@ -29,12 +29,11 @@ class ShellNavTest {
 
     // ---- destination sets ----
 
+    /** #1435: the same six links, in the same order, as web's desktop NAV_LINKS. */
     @Test
-    fun wideLinks_areHomeTribeScheduleInvoicesMessages_inOrder() {
-        // KinTales was removed from the top nav; it now lives in the avatar menu
-        // and the Tribe hub.
+    fun wideLinks_areHomeTribeScheduleKinTalesInvoicesMessages_inOrder() {
         assertEquals(
-            listOf("Home", "Tribe", "Schedule", "Invoices", "Messages"),
+            listOf("Home", "Tribe", "Schedule", "KinTales", "Invoices", "Messages"),
             ShellNav.wideLinks.map { it.label },
         )
     }
@@ -44,15 +43,20 @@ class ShellNavTest {
     fun wideLinksFor_dropsInvoicesOnlyWithoutBillingAccess() {
         assertEquals(ShellNav.wideLinks, ShellNav.wideLinksFor(billingAccess = true))
         assertEquals(
-            listOf(ShellDestination.Home, ShellDestination.Tribe, ShellDestination.Schedule, ShellDestination.Messages),
+            listOf(
+                ShellDestination.Home,
+                ShellDestination.Tribe,
+                ShellDestination.Schedule,
+                ShellDestination.KinTales,
+                ShellDestination.Messages,
+            ),
             ShellNav.wideLinksFor(billingAccess = false),
         )
         assertFalse(ShellDestination.Invoices in ShellNav.narrowTabs, "Invoices is not a narrow tab to hide")
     }
 
     @Test
-    fun wideLinks_excludeKinTalesKinAccountNotifications() {
-        assertFalse(ShellDestination.KinTales in ShellNav.wideLinks, "KinTales reachable via avatar menu / Tribe hub, not a wide link")
+    fun wideLinks_excludeKinAccountNotifications() {
         assertFalse(ShellDestination.Kin in ShellNav.wideLinks, "Kin reachable via avatar menu, not a wide link")
         assertFalse(ShellDestination.Account in ShellNav.wideLinks)
         assertFalse(ShellDestination.Notifications in ShellNav.wideLinks)
@@ -130,11 +134,19 @@ class ShellNavTest {
         )
     }
 
+    /**
+     * #1435: the tales list and an open tale (KinTalesRoute with a taleId) share
+     * one route class, so both light up the KinTales link, with or without
+     * billing access.
+     */
     @Test
-    fun resolveActive_wide_hasNoActiveLinkOnKinTalesRoute() {
-        // KinTales is no longer a wide link, so it lights up nothing in the top nav.
-        val active = resolveActiveDestination(ShellNav.wideLinks) { it == KinTalesRoute::class }
-        assertNull(active, "KinTales is not a wide link, so nothing is active")
+    fun resolveActive_wide_picksKinTalesOnATaleRoute() {
+        assertTrue(KinTalesRoute::class.isInstance(KinTalesRoute(taleId = "tale-1")))
+        assertEquals(ShellDestination.KinTales, resolveActiveDestination(ShellNav.wideLinks) { it == KinTalesRoute::class })
+        assertEquals(
+            ShellDestination.KinTales,
+            resolveActiveDestination(ShellNav.wideLinksFor(billingAccess = false)) { it == KinTalesRoute::class },
+        )
     }
 
     @Test
