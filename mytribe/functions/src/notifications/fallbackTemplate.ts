@@ -84,7 +84,8 @@ export function fallbackEmail(def: NotificationDef, businessName = ''): Fallback
       '',
       `Sign in to see it: ${OFFICE_URL}`,
       '',
-      "Tribe Tails Pet Care. Your Kin's Favorite Auntie.",
+      // #1441: same sign-off rule as the household branch above.
+      businessName.trim() === '' ? "Your Kin's Favorite Auntie." : "{{businessLabel}}. Your Kin's Favorite Auntie.",
     ].join('\n'),
   };
 }

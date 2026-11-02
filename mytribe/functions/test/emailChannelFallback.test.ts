@@ -110,6 +110,24 @@ describe('sendEmailChannel: generic fallback when copy is not authored', () => {
     expect(sent.bodyTemplate).toContain("Your Kin's Favorite Auntie.");
     expect(sent.bodyTemplate).not.toContain('Tribe Tails');
   });
+  // #1441: the staff sign-off takes the settings name too, never a literal.
+  it('signs the office fallback with the settings name, and drops it when blank', async () => {
+    mocks.loadEmailTemplate.mockResolvedValue(null);
+    const office = def({ audience: 'business', audiences: { business: true }, kinfolkFacing: false });
+    mocks.dbFn.mockReturnValue(dbWith('kin@example.com', 'Test Business'));
+    await sendEmailChannel({ def: office, recipientUid: 'u1', data: {} });
+    const set = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(set.bodyTemplate).toContain("{{businessLabel}}. Your Kin's Favorite Auntie.");
+    expect(set.data.businessLabel).toBe('Test Business');
+    expect(set.bodyTemplate).not.toContain('Tribe Tails');
+    mocks.sendTemplatedEmail.mockClear();
+    mocks.dbFn.mockReturnValue(dbWith('kin@example.com'));
+    await sendEmailChannel({ def: office, recipientUid: 'u1', data: {} });
+    const blank = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(blank.bodyTemplate).not.toContain('{{businessLabel}}. Your Kin');
+    expect(blank.bodyTemplate).toContain("Your Kin's Favorite Auntie.");
+    expect(blank.bodyTemplate).not.toContain('Tribe Tails');
+  });
   it('points an office-facing key at AuntieOS, not the household portal', async () => {
     mocks.loadEmailTemplate.mockResolvedValue(null);
 
