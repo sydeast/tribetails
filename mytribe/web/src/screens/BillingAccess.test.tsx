@@ -125,26 +125,18 @@ describe('Home', () => {
     mocks.getMyKin.mockResolvedValue({ kin: [] });
   }
 
-  it('has no "View invoices" for a member without billing access', async () => {
-    stubHomeReads(false);
-    const { Home } = await import('./Home');
-    wrap(<Home />);
-    await screen.findByRole('link', { name: /Book a visit/ });
-    // Quick start draws before Home has answered; the link goes once it has.
-    await waitFor(() => expect(mocks.getMyBookings).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByRole('link', { name: /View invoices/ })).toBeNull());
-  });
-
-  it('keeps "View invoices" for a member with billing access, and for an older server', async () => {
-    stubHomeReads(true);
-    const { Home } = await import('./Home');
-    const first = wrap(<Home />);
-    expect(await screen.findByRole('link', { name: /View invoices/ })).toBeTruthy();
-    first.unmount();
-
-    stubHomeReads(undefined);
-    wrap(<Home />);
-    expect(await screen.findByRole('link', { name: /View invoices/ })).toBeTruthy();
+  // #1460: Invoices left Home's Quick Start for the avatar menu, so Home draws
+  // no "View invoices" for anyone, with or without billing access.
+  it('draws no "View invoices" whatever the billing access', async () => {
+    for (const access of [false, true, undefined]) {
+      stubHomeReads(access);
+      const { Home } = await import('./Home');
+      const view = wrap(<Home />);
+      await screen.findByRole('link', { name: /Book a visit/ });
+      await waitFor(() => expect(mocks.getMyBookings).toHaveBeenCalled());
+      expect(screen.queryByRole('link', { name: /View invoices/ })).toBeNull();
+      view.unmount();
+    }
   });
 });
 

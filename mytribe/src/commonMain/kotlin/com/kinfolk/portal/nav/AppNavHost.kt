@@ -318,19 +318,12 @@ fun AppNavHost(
                             kinfolkId = kinId,
                             portalApi = portalApi,
                             sections = shellHomeSections,
-                            chatEnabled = shellChat.enabled,
-                            onMessageAuntie = { openMessages() },
                             onOpenSchedule = { navController.navigate(ScheduleRoute) { launchSingleTop = true } },
                             onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
                             onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
                             onBookVisit = { navController.navigate(BookingWizardRoute(startWeekly = false)) },
                             handoff = scheduleHandoff,
                             onHandoffTaken = { scheduleHandoff = null },
-                            onOpenInvoices = if (shellBillingAccess) {
-                                { navController.navigate(InvoicesRoute) { launchSingleTop = true } }
-                            } else {
-                                null
-                            },
                         )
                     }
                 }

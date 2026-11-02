@@ -11,7 +11,6 @@ import { PortalNav } from '../components/PortalNav';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
-import { billingAccessOf } from '../lib/billingAccess';
 import { usePortalIdentity } from '../lib/identity';
 import {
   auntieName,
@@ -257,6 +256,8 @@ export function Home() {
           );
 
           // #1412: first card on the page, so it carries the first stagger step.
+          // #1460 (mobile map, #1295): one button. Messages is on the bar and
+          // Invoices is in the avatar menu, so Home does not repeat them.
           const quickStartSection = (
             <section className="glass card d1">
               <div className="sectlabel">Quick start</div>
@@ -264,14 +265,6 @@ export function Home() {
                 <Link className="btn grad block" to="/schedule/book" search={{ weekly: false }}>
                   {'\u{1F4C5}'} Book a visit
                 </Link>
-                <Link className="btn ghost block" to="/messages">
-                  {'\u{1F4AC}'} Message your Auntie
-                </Link>
-                {billingAccessOf(home.data) && (
-                  <Link className="btn ghost block" to="/invoices">
-                    {'\u{1F4B0}'} View invoices
-                  </Link>
-                )}
               </div>
             </section>
           );

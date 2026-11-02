@@ -218,6 +218,17 @@ describe('Home is the dashboard (#1412)', () => {
     expect(screen.getByText(/Book a visit/)).toBeInTheDocument();
   });
 
+  it('Quick start keeps one button, Book a visit (#1460)', async () => {
+    await renderEmptyHome();
+    const card = screen.getByText('Quick start').closest('section')!;
+    const links = card.querySelectorAll('a');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveTextContent('Book a visit');
+    expect(links[0]).toHaveAttribute('data-to', '/schedule/book');
+    expect(screen.queryByText(/Message your Auntie/)).toBeNull();
+    expect(screen.queryByText(/View invoices/)).toBeNull();
+  });
+
   it('still skips a roster row an operator config carries from before the ruling', async () => {
     mocks.getMyHome.mockResolvedValue({
       displayName: 'Wren',
