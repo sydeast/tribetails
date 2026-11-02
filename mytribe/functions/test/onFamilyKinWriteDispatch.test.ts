@@ -137,3 +137,45 @@ describe('WARNING-27: onFamilyKinWrite pets.updated suppression', () => {
     ).toBe(false);
   });
 });
+
+describe('#1408: the office archiving a Kin at the household request', () => {
+  const base = {
+    name: 'Rex',
+    legacyKinId: 'flat1',
+    familyKinPath: `families/${KINFOLK}/kin/${KIN_ID}`,
+    status: 'active',
+  };
+
+  it('keeps the admin spelling `archived` on the flat mirror instead of downgrading it to inactive', async () => {
+    const ctx = dbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { onFamilyKinWrite } = await import('../src/triggers/onFamilyKinWrite');
+    await (onFamilyKinWrite as any).run(makeEvent(base, { ...base, status: 'archived', removalRequestId: 'kf1_pet1' }));
+    const flat = ctx.writes.find((w) => w.path === 'kin/flat1');
+    expect(flat?.data).toMatchObject({ status: 'archived' });
+  });
+
+  it('sends the office no pet.marked.inactive about its own archive', async () => {
+    const ctx = dbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { onFamilyKinWrite } = await import('../src/triggers/onFamilyKinWrite');
+    await (onFamilyKinWrite as any).run(makeEvent(base, { ...base, status: 'archived', removalRequestId: 'kf1_pet1' }));
+    expect(mocks.enqueue.mock.calls.some((c) => c[0]?.key === 'pet.marked.inactive')).toBe(false);
+  });
+
+  it('a memorial (no removal stamp) still writes inactive on the mirror and still notifies', async () => {
+    const ctx = dbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { onFamilyKinWrite } = await import('../src/triggers/onFamilyKinWrite');
+    await (onFamilyKinWrite as any).run(makeEvent(base, { ...base, status: 'noLongerWithUs' }));
+    expect(ctx.writes.find((w) => w.path === 'kin/flat1')?.data).toMatchObject({ status: 'inactive' });
+    expect(mocks.enqueue.mock.calls.some((c) => c[0]?.key === 'pet.marked.inactive')).toBe(true);
+  });
+
+  it('isRemovalArchiveWrite is true only on the write that adds the stamp', async () => {
+    const { isRemovalArchiveWrite } = await import('../src/triggers/onFamilyKinWrite');
+    expect(isRemovalArchiveWrite({ status: 'active' }, { status: 'archived', removalRequestId: 'r1' })).toBe(true);
+    expect(isRemovalArchiveWrite({ removalRequestId: 'r1' }, { removalRequestId: 'r1' })).toBe(false);
+    expect(isRemovalArchiveWrite(undefined, { status: 'archived' })).toBe(false);
+  });
+});

@@ -9,6 +9,14 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPerm } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
+import { isPortalHiddenKinStatus } from '../lib/kinStatus';
+import { enqueueNotification } from '../notifications/dispatcher';
+import {
+  KIN_REMOVAL_REQUESTS,
+  kinRemovalRequestDto,
+  kinRemovalRequestId,
+  type KinRemovalRequestDto,
+} from '../lib/kinRemovalRequest';
 
 /** Only http(s) URLs allowed, defends against javascript:, data:, file: payloads. */
 const SafeUrl = z
@@ -71,6 +79,12 @@ const DeleteArgs = z.object({
    */
   confirm: z.boolean().optional(),
 });
+const RemovalRequestArgs = z.object({
+  kinfolkId: z.string().optional(),
+  kinId: z.string().min(1).max(120),
+  /** Optional words for the office. Blank is the same as none. */
+  reason: z.string().trim().max(500).optional(),
+});
 
 /** What a Kin's history can consist of, in the order the refusal names it. */
 export type KinHistoryKind = 'visits' | 'tales' | 'photos' | 'records';
@@ -82,6 +96,17 @@ export interface DeleteKinResult {
   /** False when any document anywhere still references this Kin. */
   canDelete: boolean;
   blockedBy: KinHistoryKind[];
+  /**
+   * #1408. The household's latest request to remove this Kin, or null when
+   * there has never been one. A Kin with history shows its state (pending, or
+   * the office's decline and note) where the delete row would be.
+   */
+  removalRequest: KinRemovalRequestDto | null;
+}
+
+export interface RequestKinRemovalResult {
+  ok: true;
+  removalRequest: KinRemovalRequestDto;
 }
 
 /** First row, or none, of a single-field query; the only shape the history check needs. */
@@ -291,18 +316,15 @@ export async function deleteKinHandler(req: CallableRequest<unknown>): Promise<D
 
   // The flat mirror: the stamped link first, else the reverse link the mirror
   // writes onto the flat doc. Never the name fallback (see the docblock).
-  let flatId = typeof family['legacyKinId'] === 'string' && family['legacyKinId'] !== '' ? (family['legacyKinId'] as string) : null;
-  if (!flatId) {
-    const byPath = await firestore.collection('kin').where('familyKinPath', '==', familyKinPath).limit(1).get();
-    if (!byPath.empty) flatId = byPath.docs[0].id;
-  }
+  const flatId = await resolveLinkedFlatKinId(familyKinPath, family);
 
   const blockedBy = await findKinHistory(kinfolkId, flatId ? [args.kinId, flatId] : [args.kinId]);
   const canDelete = blockedBy.length === 0;
 
   if (args.confirm !== true) {
-    logEvent({ severity: 'info', function: 'deleteKin', event: 'portal.kin.delete.checked', uid, extra: { kinfolkId, kinId: args.kinId, canDelete, blockedBy } });
-    return { ok: true, deleted: false, canDelete, blockedBy };
+    const removalRequest = await readKinRemovalRequest(kinfolkId, args.kinId);
+    logEvent({ severity: 'info', function: 'deleteKin', event: 'portal.kin.delete.checked', uid, extra: { kinfolkId, kinId: args.kinId, canDelete, blockedBy, removalRequest: removalRequest?.status ?? null } });
+    return { ok: true, deleted: false, canDelete, blockedBy, removalRequest };
   }
   if (!canDelete) {
     logEvent({ severity: 'info', function: 'deleteKin', event: 'portal.kin.delete.refused', uid, extra: { kinfolkId, kinId: args.kinId, blockedBy } });
@@ -326,7 +348,128 @@ export async function deleteKinHandler(req: CallableRequest<unknown>): Promise<D
   }
   await batch.commit();
   logEvent({ severity: 'info', function: 'deleteKin', event: 'portal.kin.deleted', uid, extra: { kinfolkId, kinId: args.kinId, flatId: flatDeleted } });
-  return { ok: true, deleted: true, canDelete: true, blockedBy: [] };
+  return { ok: true, deleted: true, canDelete: true, blockedBy: [], removalRequest: null };
+}
+
+/**
+ * The flat `kin/{id}` mirror of a family Kin doc: the stamped `legacyKinId`
+ * first, else the reverse `familyKinPath` link the mirror writes onto the flat
+ * doc. Never the name fallback `onFamilyKinWrite` uses to adopt a pet: a flat
+ * pet that merely shares the name is not this Kin.
+ */
+async function resolveLinkedFlatKinId(familyKinPath: string, family: Record<string, unknown>): Promise<string | null> {
+  const stamped = family['legacyKinId'];
+  if (typeof stamped === 'string' && stamped !== '') return stamped;
+  const byPath = await db().collection('kin').where('familyKinPath', '==', familyKinPath).limit(1).get();
+  return byPath.empty ? null : byPath.docs[0].id;
+}
+
+/** #1408. The Kin's removal request, or null when there has never been one. */
+async function readKinRemovalRequest(kinfolkId: string, kinId: string): Promise<KinRemovalRequestDto | null> {
+  const id = kinRemovalRequestId(kinfolkId, kinId);
+  const snap = await db().doc(`${KIN_REMOVAL_REQUESTS}/${id}`).get();
+  if (!snap.exists) return null;
+  return kinRemovalRequestDto(id, (snap.data() ?? {}) as Record<string, unknown>);
+}
+
+/** The sentence a removal request for a Kin with nothing on file is refused with. */
+export function nothingOnFileMessage(kinName: string | null): string {
+  const who = kinName && kinName.trim().length > 0 ? kinName.trim() : 'This Kin';
+  return `${who} has nothing on file, so you can delete this profile from here instead.`;
+}
+
+/**
+ * #1408, the other half of the #1314 ruling. A Kin WITH history is never
+ * deleted by the household; the household asks, and the office archives it
+ * (keeping every visit, invoice and tale) or declines
+ * (`admin/kinRemovalRequests.ts`).
+ *
+ * "Has history" is `findKinHistory`, the exact check `deleteKin` runs, so the
+ * two paths cannot overlap: a Kin with nothing on file is refused here with a
+ * pointer to the delete row, and a Kin with anything on file is refused there.
+ *
+ * Same gate chain as every Kin write (`resolveKinfolkAccess`, `kin_edit`,
+ * operator bypass). One open request per Kin: the request doc id is
+ * deterministic and the duplicate check and the write share one transaction,
+ * so two taps (or two household members) cannot open two. A declined request
+ * may be followed by a new one, which replaces it.
+ *
+ * The office hears through `kin.removal.requested` (business admins). The Kin
+ * stays on the household's roster, unchanged, until the office acts.
+ */
+export async function requestKinRemovalHandler(req: CallableRequest<unknown>): Promise<RequestKinRemovalResult> {
+  initSentry();
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  const args = RemovalRequestArgs.parse(req.data);
+  const hasAdminClaim = householdStaffFlag(req.auth, 'requestKinRemoval');
+  const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'requestKinRemoval');
+  await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'requestKinRemoval');
+
+  const firestore = db();
+  const familyKinPath = `families/${kinfolkId}/kin/${args.kinId}`;
+  const familySnap = await firestore.doc(familyKinPath).get();
+  if (!familySnap.exists) throw new HttpsError('not-found', 'That Kin is no longer on this profile.');
+  const family = (familySnap.data() ?? {}) as Record<string, unknown>;
+  const kinName = typeof family['name'] === 'string' && family['name'].trim() !== '' ? family['name'].trim() : null;
+  if (isPortalHiddenKinStatus(family['status'])) {
+    throw new HttpsError('failed-precondition', `${kinName ?? 'This Kin'} is already archived.`);
+  }
+
+  const flatId = await resolveLinkedFlatKinId(familyKinPath, family);
+  const blockedBy = await findKinHistory(kinfolkId, flatId ? [args.kinId, flatId] : [args.kinId]);
+  if (blockedBy.length === 0) {
+    logEvent({ severity: 'info', function: 'requestKinRemoval', event: 'portal.kin.removal.no-history', uid, extra: { kinfolkId, kinId: args.kinId } });
+    throw new HttpsError('failed-precondition', nothingOnFileMessage(kinName));
+  }
+
+  const requestId = kinRemovalRequestId(kinfolkId, args.kinId);
+  const ref = firestore.doc(`${KIN_REMOVAL_REQUESTS}/${requestId}`);
+  const reason = args.reason && args.reason.length > 0 ? args.reason : null;
+  await firestore.runTransaction(async (tx) => {
+    const existing = await tx.get(ref);
+    if (existing.exists && (existing.data() ?? {})['status'] === 'pending') {
+      throw new HttpsError('already-exists', `Removal of ${kinName ?? 'this Kin'} has already been requested.`);
+    }
+    tx.set(ref, {
+      kinfolkId,
+      kinId: args.kinId,
+      flatKinId: flatId,
+      kinName,
+      reason,
+      status: 'pending',
+      blockedBy,
+      requestedByUid: uid,
+      requestedAt: FieldValue.serverTimestamp(),
+      resolvedByUid: null,
+      resolvedAt: null,
+      resolutionNote: null,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+  logEvent({ severity: 'info', function: 'requestKinRemoval', event: 'portal.kin.removal.requested', uid, extra: { kinfolkId, kinId: args.kinId, flatId, blockedBy } });
+
+  const saved = await ref.get();
+  const removalRequest = kinRemovalRequestDto(requestId, (saved.data() ?? {}) as Record<string, unknown>);
+
+  // After the commit and wrapped: the request is recorded either way, and the
+  // office's queue and the Kin's admin profile both show it without the notice.
+  try {
+    await enqueueNotification({
+      key: 'kin.removal.requested',
+      recipientUid: '',
+      data: { kinfolkId, kinId: args.kinId, flatKinId: flatId, kinName, reason, requestId },
+      actorUid: uid,
+      targetType: 'kinfolk',
+      targetId: kinfolkId,
+      // #832: one notice per request. A request after a decline is a new one.
+      dedupeKey: `kinRemoval:${requestId}:requested:${removalRequest.requestedAtMs ?? 'unstamped'}`,
+    });
+  } catch (err) {
+    logEvent({ severity: 'warn', function: 'requestKinRemoval', event: 'notification.dispatch.failed', uid, extra: { kinfolkId, kinId: args.kinId, err: (err as Error)?.message } });
+  }
+
+  return { ok: true, removalRequest };
 }
 
 export const addKin = onCall(
@@ -344,4 +487,8 @@ export const archiveKin = onCall(
 export const deleteKin = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
   wrapCallable('deleteKin', deleteKinHandler),
+);
+export const requestKinRemoval = onCall(
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
+  wrapCallable('requestKinRemoval', requestKinRemovalHandler),
 );

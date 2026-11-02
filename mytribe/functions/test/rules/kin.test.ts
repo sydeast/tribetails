@@ -312,3 +312,59 @@ describe('rules: kin delete is callable-only (#1442)', () => {
     );
   });
 });
+
+describe('rules: kin removal requests are callable-written, household-readable (#1408)', () => {
+  afterEach(async () => cleanup());
+  afterAll(async () => shutdown());
+  async function seedRequests(): Promise<void> {
+    await seedFamily({
+      fid: 'f1',
+      primaryUid: 'u-prim',
+      secondaries: [{ uid: 'u-sec', perms: { kin_edit: true } }, { uid: 'u-plain', perms: {} }],
+    });
+    await seedFamily({ fid: 'f2', primaryUid: 'u-other' });
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('kin_removal_requests/f1_k1').set({ kinfolkId: 'f1', kinId: 'k1', status: 'pending' });
+      await ctx.firestore().doc('kin_removal_requests/f2_k9').set({ kinfolkId: 'f2', kinId: 'k9', status: 'pending' });
+    });
+  }
+
+  it('any active member of the household reads its own request', async () => {
+    const env = await getEnv();
+    await seedRequests();
+    await assertSucceeds(asUser(env, 'u-prim').firestore().doc('kin_removal_requests/f1_k1').get());
+    await assertSucceeds(asUser(env, 'u-plain').firestore().doc('kin_removal_requests/f1_k1').get());
+    await assertSucceeds(
+      asUser(env, 'u-sec').firestore().collection('kin_removal_requests').where('kinfolkId', '==', 'f1').get(),
+    );
+  });
+
+  it('another household cannot read it, and cannot list across households', async () => {
+    const env = await getEnv();
+    await seedRequests();
+    await assertFails(asUser(env, 'u-other').firestore().doc('kin_removal_requests/f1_k1').get());
+    await assertFails(asUser(env, 'u-other').firestore().collection('kin_removal_requests').get());
+    await assertFails(asUnauth(env).firestore().doc('kin_removal_requests/f1_k1').get());
+  });
+
+  it('the owner and an Auntie read every request', async () => {
+    const env = await getEnv();
+    await seedRequests();
+    await assertSucceeds(
+      asUser(env, 'staff-1', { admin: true }).firestore().collection('kin_removal_requests').where('status', '==', 'pending').get(),
+    );
+    await assertSucceeds(asUser(env, 'auntie-1', { staffRole: 'auntie' }).firestore().doc('kin_removal_requests/f2_k9').get());
+  });
+
+  it('no client writes one: not the household, not the owner, not an Auntie', async () => {
+    const env = await getEnv();
+    await seedRequests();
+    const fresh = { kinfolkId: 'f1', kinId: 'k2', status: 'pending' };
+    await assertFails(asUser(env, 'u-prim').firestore().doc('kin_removal_requests/f1_k2').set(fresh));
+    await assertFails(asUser(env, 'u-sec').firestore().doc('kin_removal_requests/f1_k1').update({ status: 'archived' }));
+    await assertFails(asUser(env, 'u-prim').firestore().doc('kin_removal_requests/f1_k1').delete());
+    await assertFails(asUser(env, 'staff-1', { admin: true }).firestore().doc('kin_removal_requests/f1_k1').update({ status: 'archived' }));
+    await assertFails(asUser(env, 'auntie-1', { staffRole: 'auntie' }).firestore().doc('kin_removal_requests/f1_k2').set(fresh));
+  });
+});

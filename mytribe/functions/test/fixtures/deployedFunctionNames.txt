@@ -124,6 +124,7 @@ listExpirations
 listFormSchemas
 listGoogleCalendars
 listInvites
+listKinRemovalRequests
 listMarketingBlasts
 listMembers
 listMessageSuppressions
@@ -212,12 +213,14 @@ replyToConversation
 requestBooking
 requestBookingCancellation
 requestBookingReschedule
+requestKinRemoval
 requestPasswordReset
 requestPrimaryRecovery
 rescheduleBooking
 resendQuote
 resolveBookingCancellationRequest
 resolveBookingRescheduleRequest
+resolveKinRemovalRequest
 resolveUnappliedPayment
 retryInvoiceCheckoutClose
 reviewAndSendDraftInvoice

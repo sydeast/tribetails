@@ -1,0 +1,1 @@
+{{Business}}: {{kinfolkName}} asked to remove {{kinName}} from their profile. Open AuntieOS to archive or decline.

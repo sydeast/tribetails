@@ -87,6 +87,10 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'submitVetClinic', // propose a clinic; curating the catalog stays with the owner
   'addBookingNote',
   'addInternalBookingNote',
+  // #1408: a household's pending request to remove a Kin, read on the Kin's
+  // admin profile. Answering it (resolveKinRemovalRequest) archives a Kin,
+  // which is destructive (rule 6), so that half stays with the owner.
+  'listKinRemovalRequests',
 
   // ── Household callables the ADMIN clients call (#984, docket Q1) ─────────
   // These live in portal/ and resolve the household through

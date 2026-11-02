@@ -274,6 +274,10 @@ export const AUDIT_EVENTS = {
   // ANSWER to a household that asked, and a decline changes no status at all,
   // so it would otherwise leave no trace of a decision anyone made.
   CANCEL_REQUEST_RESOLVED: 'CANCEL_REQUEST_RESOLVED',
+  // #1408: an operator answered a household's request to remove a Kin with
+  // history (resolveKinRemovalRequest): archived it, or declined. A decline
+  // changes no Kin, so this is the only trace of that decision.
+  KIN_REMOVAL_REQUEST_RESOLVED: 'KIN_REMOVAL_REQUEST_RESOLVED',
   // A3: ONE operator transition on ONE flat `kin_care_sessions` row
   // (transitionBookingStatus callable): APPROVE / REJECT / CANCEL / COMPLETE.
   // These four used to be a bare client `updateDoc` on the session document

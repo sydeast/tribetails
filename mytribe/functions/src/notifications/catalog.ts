@@ -1135,6 +1135,62 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'pet.marked.inactive', push: 'pet.marked.inactive' },
     description: 'Kinfolk marked a pet as inactive.',
   },
+  {
+    // #1408: a household asked the office to remove a Kin that has history
+    // (portal/kinWrites.ts requestKinRemoval). Nothing changes until the office
+    // archives it or declines, so this is how the ask reaches anyone.
+    key: 'kin.removal.requested',
+    label: 'Kinfolk asked to remove a Kin',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'home',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true },
+    alwaysEnabled: false,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: { email: 'kin.removal.requested', sms: 'kin.removal.requested', push: 'kin.removal.requested' },
+    description: 'A household asked to remove a Kin that has visits, KinTales, photos or records on file.',
+  },
+  {
+    // #1408: the office archived the Kin the household asked to remove
+    // (admin/kinRemovalRequests.ts). Every visit, invoice and KinTale is kept.
+    key: 'kin.removal.archived',
+    label: 'Your Kin removal request was done',
+    audience: 'kinfolk',
+    audiences: { kinfolk: true },
+    category: 'home',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true },
+    alwaysEnabled: false,
+    kinfolkFacing: true,
+    deliveryMode: 'trigger',
+    recipientResolver: 'kinfolkAcct',
+    templates: { email: 'kin.removal.archived', sms: 'kin.removal.archived', push: 'kin.removal.archived' },
+    description: 'The office archived a Kin the household asked to remove.',
+    householdTitle: 'A Kin you asked to remove was removed',
+    householdDescription: 'When {business} removes a Kin you asked to have taken off your profile.',
+  },
+  {
+    // #1408: the office kept the Kin the household asked to remove. A decline
+    // changes nothing on the Kin, so this is the only way the answer arrives.
+    key: 'kin.removal.declined',
+    label: 'Your Kin removal request was declined',
+    audience: 'kinfolk',
+    audiences: { kinfolk: true },
+    category: 'home',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true },
+    alwaysEnabled: false,
+    kinfolkFacing: true,
+    deliveryMode: 'trigger',
+    recipientResolver: 'kinfolkAcct',
+    templates: { email: 'kin.removal.declined', sms: 'kin.removal.declined', push: 'kin.removal.declined' },
+    description: 'The office declined to remove a Kin the household asked to remove.',
+    householdTitle: 'Your Kin removal request was declined',
+    householdDescription: 'When {business} keeps a Kin you asked to have removed.',
+  },
 
   // ─────────────────────────────────────────────────────────
   // MARKETING

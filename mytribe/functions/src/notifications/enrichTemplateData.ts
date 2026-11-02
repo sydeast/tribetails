@@ -125,6 +125,12 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // it from. The four below are the ones this enricher fills.
   'kincare.cancel.declined': ['Business', 'bookingDate', 'kinfolkName', 'kinName', 'note', 'serviceType'],
   'kincare.changed': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
+  // #1408. `reason` (the household's words) and `note` (the office's) are
+  // emitter-supplied; kinName rides on the dispatch too, and the enricher
+  // fills kinfolkName from the household.
+  'kin.removal.archived': ['Business', 'kinfolkName', 'kinName', 'note'],
+  'kin.removal.declined': ['Business', 'kinfolkName', 'kinName', 'note'],
+  'kin.removal.requested': ['Business', 'kinfolkName', 'kinName', 'reason'],
   'kincare.note.auntie': ['Business', 'kinName'],
   'kincare.note.kinfolk': ['Business', 'kinName'],
   'kincare.report.sent': ['kinfolkName', 'kinName'],
