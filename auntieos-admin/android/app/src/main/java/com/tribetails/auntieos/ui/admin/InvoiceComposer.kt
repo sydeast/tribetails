@@ -8,6 +8,7 @@ import com.tribetails.auntieos.domain.DueDateResolution
 import com.tribetails.auntieos.domain.InvoiceTermsCode
 import com.tribetails.auntieos.domain.MAX_QTY
 import com.tribetails.auntieos.domain.MAX_UNIT_CENTS
+import com.tribetails.auntieos.domain.normalizeMoneyText
 import com.tribetails.auntieos.domain.formatCents
 import com.tribetails.auntieos.domain.invoiceSubtotalCents
 import com.tribetails.auntieos.domain.lineAmountCents
@@ -359,7 +360,7 @@ fun validateBlankInvoice(
     date: String,
     dueDate: String,
 ): String? {
-    val total = totalText.trim().toDoubleOrNull()
+    val total = normalizeMoneyText(totalText)?.toDoubleOrNull()
     return when {
         kinfolkId.isBlank() -> "Pick a household for this invoice"
         totalText.isBlank() || total == null || total < 0.0 -> "Total must be zero or greater"

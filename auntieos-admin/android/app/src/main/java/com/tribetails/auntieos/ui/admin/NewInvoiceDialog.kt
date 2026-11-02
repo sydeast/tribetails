@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.ReceiptText
 import com.composables.icons.lucide.X
+import com.tribetails.auntieos.domain.normalizeMoneyText
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResultSession
 import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceResult
@@ -217,7 +218,7 @@ fun NewInvoiceDialog(
                 ),
             )
         } else {
-            val typed = totalText.trim().toDoubleOrNull()
+            val typed = normalizeMoneyText(totalText)?.toDoubleOrNull()
             if (typed == null) {
                 validationError = "Total must be zero or greater"
                 return@submit

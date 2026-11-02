@@ -99,7 +99,8 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   linkInvoiceSessions,
 }));
 
-import { InvoiceDetail, paymentSplit } from './InvoiceDetail';
+import { InvoiceDetail, paymentSplit, parseOptionalMoney } from './InvoiceDetail';
+import { formatUsd } from '../lib/invoiceFormat';
 import { formatReminderTime, type ReminderOutcome } from '../lib/invoiceReminder';
 
 /** What `sendInvoiceReminder` resolves to when THIS press sent the reminder (#832). */
@@ -2878,5 +2879,30 @@ describe('Link visits (#1245)', () => {
     await user.click(within(editor).getByRole('button', { name: /Saving…|Save/ }));
     await user.keyboard('{Escape}');
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('record-payment amount boxes read a typed thousands comma (#1495)', () => {
+  it('reads plain, grouped and dollar-prefixed figures to the same dollars', () => {
+    expect(parseOptionalMoney('1234.50')).toBe(1234.5);
+    expect(parseOptionalMoney('1,234.50')).toBe(1234.5);
+    expect(parseOptionalMoney('$1,234.50')).toBe(1234.5);
+  });
+  it('refuses commas that are not thousands grouping, and junk', () => {
+    expect(parseOptionalMoney('1,2,3')).toBeNull();
+    expect(parseOptionalMoney('12,34')).toBeNull();
+    expect(parseOptionalMoney('abc')).toBeNull();
+    expect(parseOptionalMoney('-5')).toBeNull();
+  });
+  it('keeps a blank box as zero, the documented "none entered"', () => {
+    expect(parseOptionalMoney('')).toBe(0);
+    expect(parseOptionalMoney('   ')).toBe(0);
+  });
+  it('reads back the grouped figure the screen displays', () => {
+    expect(parseOptionalMoney(formatUsd(1234.5))).toBe(1234.5);
+  });
+  it('splits a payment typed with commas', () => {
+    const split = paymentSplit({ paymentTotal: '$1,500.00', applied: '1,234.50', tip: '', credit: '', fallbackApplied: 0 });
+    expect(split).toEqual({ ok: true, paidCents: 150000, appliedCents: 123450, tipCents: 26550, creditCents: 0 });
   });
 });

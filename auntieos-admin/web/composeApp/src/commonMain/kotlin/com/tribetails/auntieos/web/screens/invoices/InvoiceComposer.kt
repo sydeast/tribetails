@@ -34,9 +34,24 @@ const val MAX_QTY: Double = 999.0
 
 private val MONEY_RE = Regex("""^\d+(\.\d{1,2})?$""")
 
+private val GROUPED_RE = Regex("""^\d{1,3}(,\d{3})+(\.\d*)?$""")
+/**
+ * Typed money text with a leading `$` and thousands commas removed, or null when
+ * the commas are not real thousands grouping. THE one place the money inputs
+ * (record payment, tip, fee, credit, invoice composer) agree on what a grouped
+ * figure looks like: "1,234.50" and "$1,234.50" read, "1,2,3" and "12,34" do not,
+ * because deleting stray commas would turn a typo into a different amount.
+ * Does not validate the number itself; callers do that.
+ */
+fun normalizeMoneyText(raw: String): String? {
+    val s = raw.trim().removePrefix("$").trim()
+    if (!s.contains(',')) return s
+    if (!GROUPED_RE.matches(s)) return null
+    return s.replace(",", "")
+}
 /** "12.50" to 1250, or null. Accepts a leading `$` and thousands commas; refuses a third decimal. */
 fun parseDollarsToCents(raw: String): Long? {
-    val s = raw.trim().removePrefix("$").replace(",", "")
+    val s = normalizeMoneyText(raw) ?: return null
     if (s.isEmpty() || !MONEY_RE.matches(s)) return null
     val dollars = s.toDoubleOrNull() ?: return null
     if (!dollars.isFinite()) return null

@@ -128,6 +128,11 @@ describe('validateBlankInvoice (pure)', () => {
     expect(validateBlankInvoice(valid)).toBeNull();
   });
 
+  it('reads a typed thousands comma and refuses a misgrouped one (#1495)', () => {
+    expect(validateBlankInvoice({ ...valid, totalText: '1,234.50' })).toBeNull();
+    expect(validateBlankInvoice({ ...valid, totalText: '$1,234.50' })).toBeNull();
+    expect(validateBlankInvoice({ ...valid, totalText: '1,2,3' })).toMatch(/total/i);
+  });
   it('requires a household', () => {
     expect(validateBlankInvoice({ ...valid, kinfolkId: '' })).toMatch(/household/i);
   });

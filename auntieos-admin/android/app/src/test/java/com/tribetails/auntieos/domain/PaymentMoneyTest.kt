@@ -191,4 +191,26 @@ class PaymentMoneyTest {
     fun `a negative is refused, because a negative fee is not a fee`() {
         assertNull(parseOptionalMoney("-2.71"))
     }
+
+    @Test
+    fun `plain, grouped and dollar-prefixed figures read to the same dollars (1495)`() {
+        assertEquals(1234.5, parseOptionalMoney("1234.50")!!, 0.0001)
+        assertEquals(1234.5, parseOptionalMoney("1,234.50")!!, 0.0001)
+        assertEquals(1234.5, parseOptionalMoney("$1,234.50")!!, 0.0001)
+    }
+    @Test
+    fun `commas that are not thousands grouping are refused (1495)`() {
+        assertNull(parseOptionalMoney("1,2,3"))
+        assertNull(parseOptionalMoney("12,34"))
+        assertNull(parseOptionalMoney(",500"))
+    }
+    @Test
+    fun `the grouped figure the screen displays reads back into the field (1495)`() {
+        assertEquals(1234.5, parseOptionalMoney(formatUsdCents(123450L))!!, 0.0001)
+    }
+    @Test
+    fun `a payment split reads figures typed with commas (1495)`() {
+        val split = paymentSplit(applied = 1234.5, tip = "", credit = "", paymentTotal = "$1,500.00")
+        assertEquals(PaymentSplit.Ok(150000L, 123450L, 26550L, 0L), split)
+    }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDollarsToCents, centsToInputDollars, parseQty, qtyToInput } from './invoiceMoneyInput';
+import { normalizeMoneyText, parseDollarsToCents, centsToInputDollars, parseQty, qtyToInput } from './invoiceMoneyInput';
 
 describe('parseDollarsToCents', () => {
   it('reads a plain dollar amount', () => {
@@ -90,5 +90,25 @@ describe('qtyToInput', () => {
   it('round-trips with the parser', () => {
     expect(parseQty(qtyToInput(2.5))).toBe(2.5);
     expect(parseQty(qtyToInput(3))).toBe(3);
+  });
+});
+
+describe('normalizeMoneyText (#1495)', () => {
+  it('strips a leading dollar sign and real thousands commas', () => {
+    expect(normalizeMoneyText('1234.50')).toBe('1234.50');
+    expect(normalizeMoneyText('1,234.50')).toBe('1234.50');
+    expect(normalizeMoneyText('$1,234.50')).toBe('1234.50');
+    expect(normalizeMoneyText('$1,234,567')).toBe('1234567');
+  });
+  it('refuses commas that are not thousands grouping', () => {
+    expect(normalizeMoneyText('1,2,3')).toBeNull();
+    expect(normalizeMoneyText('12,34')).toBeNull();
+    expect(normalizeMoneyText(',500')).toBeNull();
+    expect(normalizeMoneyText('1,234,')).toBeNull();
+  });
+  it('refuses a mis-grouped figure in the composer parser too', () => {
+    expect(parseDollarsToCents('1,2,3')).toBeNull();
+    expect(parseDollarsToCents('')).toBeNull();
+    expect(parseDollarsToCents('$1,234.50')).toBe(123450);
   });
 });

@@ -123,7 +123,7 @@ fun paymentReconciles(tipCents: Long, basis: TipBasis): Boolean =
  * recorded. Negative is refused: a negative fee is not a fee.
  */
 fun parseOptionalMoney(raw: String): Double? {
-    val trimmed = raw.trim().removePrefix("$")
+    val trimmed = normalizeMoneyText(raw) ?: return null
     if (trimmed.isEmpty()) return 0.0
     val parsed = trimmed.toDoubleOrNull() ?: return null
     return if (parsed.isFinite() && parsed >= 0.0) parsed else null

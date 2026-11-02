@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.directory
 
+import com.tribetails.auntieos.web.screens.invoices.normalizeMoneyText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -103,7 +104,7 @@ private val DOLLARS = Regex("""^\d+(\.\d{1,2})?$""")
 
 /** Dollars as typed -> integer cents, or null when it is not a plain amount with at most 2 decimals. */
 fun parseCreditDollarsToCents(raw: String): Long? {
-    val s = raw.trim().removePrefix("$").replace(",", "")
+    val s = normalizeMoneyText(raw) ?: return null
     if (!DOLLARS.matches(s)) return null
     val parts = s.split('.')
     val whole = parts[0].toLongOrNull() ?: return null
