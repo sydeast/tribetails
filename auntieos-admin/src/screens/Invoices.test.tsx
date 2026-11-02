@@ -1116,7 +1116,8 @@ describe('Invoices row, days overdue', () => {
     // localDateIso reads the LOCAL calendar date, so the due date is derived
     // from the same clock the screen uses rather than hardcoded.
     const today = new Date();
-    const past = new Date(today.getTime() - 12 * 86_400_000);
+    const past = new Date(today);
+    past.setDate(past.getDate() - 12);
     const iso = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}-${String(past.getDate()).padStart(2, '0')}`;
     usePagedCollection.mockReturnValue(paged([entry({ status: 'open', dueDate: iso })]));
     render(<Invoices />);
@@ -1125,7 +1126,8 @@ describe('Invoices row, days overdue', () => {
     expect(within(row).getByText('OVERDUE')).toBeInTheDocument();
   });
   it('keeps the plain due date on an invoice that is not yet late', () => {
-    const soon = new Date(Date.now() + 5 * 86_400_000);
+    const soon = new Date();
+    soon.setDate(soon.getDate() + 5);
     const iso = `${soon.getFullYear()}-${String(soon.getMonth() + 1).padStart(2, '0')}-${String(soon.getDate()).padStart(2, '0')}`;
     usePagedCollection.mockReturnValue(paged([entry({ status: 'open', dueDate: iso })]));
     render(<Invoices />);
@@ -1182,7 +1184,8 @@ describe('Invoices row, archived marker', () => {
 /** The Overdue card's subline: who is worst and by how long, matching Android. */
 describe('Invoices Overdue stat subline', () => {
   function daysAgoIso(days: number): string {
-    const d = new Date(Date.now() - days * 86_400_000);
+    const d = new Date();
+    d.setDate(d.getDate() - days);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
   it('names the household furthest past due, and how far', () => {
