@@ -194,7 +194,8 @@ fun KinScreen(
  * controller; a null kinId means add. Dismiss / submit both pop back to the
  * list (via [onClose]); submit routes the write through the same controller so
  * the list refreshes. #1311: edit also carries the memorial action (mark /
- * restore), routed through the same controller; add does not.
+ * restore), routed through the same controller; add does not. #1314: edit also
+ * carries "Delete this Kin" when the server finds nothing on file for it.
  */
 @Composable
 fun KinAddEditScreen(
@@ -202,7 +203,13 @@ fun KinAddEditScreen(
     controller: KinController,
     onClose: () -> Unit,
 ) {
-    val editing = kinId?.let { controller.find(it) }
+    // #1314: a delete reloads the roster before the dialog closes, and the Kin
+    // is no longer in it. Keep the last resolved Kin so `initial` does not flip
+    // to null (Add mode) for the instant before onClose.
+    val found = kinId?.let { controller.find(it) }
+    var pinned by remember(kinId) { mutableStateOf(found) }
+    if (found != null) pinned = found
+    val editing = pinned
     AddEditKinDialog(
         initial = editing,
         schema = controller.schema,
@@ -218,6 +225,8 @@ fun KinAddEditScreen(
         },
         photoUploading = controller.photoUploading,
         onArchive = if (kinId != null) { restore -> controller.archiveAndReload(kinId, restore) } else null,
+        canDelete = if (kinId != null) { { controller.canDeleteKin(kinId) } } else null,
+        onDelete = if (kinId != null) { { controller.deleteAndReload(kinId) } } else null,
     )
 }
 

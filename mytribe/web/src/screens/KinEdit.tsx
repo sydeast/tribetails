@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { archiveKin, getMyKin, updateKin } from '../api/portal';
+import { archiveKin, canDeleteKin, deleteKin, getMyKin, updateKin } from '../api/portal';
 import { BREEDS_QUERY, EMPTY_BREED_BANKS } from '../api/breeds';
 import type { KinPayloadPartial } from '../api/types';
 import { useSignOut } from '../lib/auth';
@@ -42,8 +42,13 @@ import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
  * #1311: the memorial action lives here, not on the profile. It is the last
  * control on the page, below Save / Cancel and behind a confirm step; a
  * memorial Kin gets "Restore as Active" in the same slot. The `kinactions`
- * block is built to take more rows after it (#1314 delete, #1408 request
- * removal), which are not built here.
+ * block takes more rows after it.
+ *
+ * #1314: "Delete this Kin" is the second row, shown only when the server says
+ * the Kin has no history (no visit, KinTale, photo or admin record). The
+ * check is one read of the `deleteKin` callable without `confirm`; the
+ * confirm tap calls the same function with it. A Kin with history gets no
+ * row here; its path is the request for removal (#1408), not built here.
  */
 export function KinEdit() {
   const { kinId } = useParams({ from: '/kin/$kinId/edit' });
@@ -121,6 +126,34 @@ export function KinEdit() {
     },
   }, { policy: 'hold', what: 'this change' });
 
+  // #1314: the delete row exists only when the server says there is nothing
+  // on file for this Kin. Hidden while the check loads, when it fails, and
+  // when it says no; the server re-checks on the confirm tap regardless.
+  const eligibility = useQuery({
+    queryKey: ['kinDelete', kinfolkId, kinId],
+    queryFn: () => canDeleteKin(kinId, kinfolkId),
+    enabled: found !== null,
+  });
+  const canDelete = eligibility.data?.canDelete === true;
+
+  // ABANDON. A hard delete is not replayed from a queue behind the
+  // household's back: they watch it finish, or they tap it again.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Set the moment the server confirms the delete, before the roster refetch
+  // lands: once it does, `found` is null and this screen would otherwise show
+  // "We couldn't find that profile" for the instant before navigation.
+  const [deleted, setDeleted] = useState(false);
+  const del = usePortalMutation({
+    mutationFn: () => deleteKin(kinId, kinfolkId),
+    onSuccess: async () => {
+      setDeleted(true);
+      // The list this navigates to reads the kin roster, so the refresh is
+      // waited for first; otherwise it opens with the deleted Kin still on it.
+      await refreshAfterSave(queryClient, ['myKin', kinfolkId]);
+      if (isMounted()) void navigate({ to: '/kin' });
+    },
+  }, { policy: 'abandon', what: 'this delete' });
+
   const { signOut, signingOut } = useSignOut();
 
   if (kin.isError) {
@@ -153,6 +186,19 @@ export function KinEdit() {
       </>
     );
   }
+  // #1314: deleted, roster refreshing, Kin list next.
+  if (deleted) {
+    return (
+      <>
+        <PortalNav active="tribe" />
+        <div className="wrap">
+          <p className="sub" role="status">
+            <BusyLabel>Deleting…</BusyLabel>
+          </p>
+        </div>
+      </>
+    );
+  }
 
   if (!found || form === null) {
     return (
@@ -178,11 +224,12 @@ export function KinEdit() {
   const errors = validateKinForm(current);
   const changes = buildKinChanges(kinDoc, current);
   const nothingToSave = Object.keys(changes).length === 0;
-  const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending && !archive.isPending;
+  const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending && !archive.isPending && !del.isPending;
   const memorial = kinDoc.status === 'noLongerWithUs';
   // One write at a time: the memorial action waits on a Save in flight and
-  // the other way round.
-  const archiveBusy = archive.isPending || save.isPending;
+  // the other way round, and the delete row waits on both.
+  const archiveBusy = archive.isPending || save.isPending || del.isPending;
+  const deleteBusy = archiveBusy;
 
   const set = (key: KinTextKey, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
 
@@ -364,7 +411,8 @@ export function KinEdit() {
           </section>
 
           {/* KIN ACTIONS (#1311). Last on the page, after Save / Cancel, behind a
-              hairline. One row today; #1314 and #1408 add theirs below it. */}
+              hairline. Memorial first, then delete (#1314, only without history);
+              #1408 adds "Request removal" below for a Kin with history. */}
           <hr className="divider" />
           <section className="kinactions" aria-label="Kin actions">
             <div className="kinaction" data-testid="kinaction-memorial">
@@ -401,6 +449,40 @@ export function KinEdit() {
               )}
               <OfflineMutationNotice phase={archive.phase} what="this change" check="this Kin" />
             </div>
+
+            {/* #1314: delete, only when the server found nothing on file. */}
+            {canDelete && (
+              <div className="kinaction" data-testid="kinaction-delete">
+                {confirmingDelete ? (
+                  <>
+                    <span className="sub">Delete {kinDoc.name ?? 'this Kin'}? The profile is removed for good.</span>
+                    <div className="kinaction__choices">
+                      <button className="btn ghost" type="button" onClick={() => setConfirmingDelete(false)} disabled={deleteBusy}>
+                        Cancel
+                      </button>
+                      <button className="btn coralout" type="button" onClick={() => del.mutate()} disabled={deleteBusy}>
+                        <MutationLabel mutation={del} busy="Deleting…">
+                          Yes, delete this Kin
+                        </MutationLabel>
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button className="btn coralout" type="button" onClick={() => setConfirmingDelete(true)} disabled={deleteBusy}>
+                    Delete this Kin
+                  </button>
+                )}
+                {del.phase === 'failed' && (
+                  <span className="status err" role="alert">
+                    <span className="dot" />
+                    {del.error instanceof Error ? del.error.message : 'Could not delete. Try again.'}
+                  </span>
+                )}
+                <OfflineMutationNotice phase={del.phase} what="this delete" check="this Kin" />
+              </div>
+            )}
+
+            {/* #1408: "Request removal" for a Kin with history lands here. */}
           </section>
         </div>
 

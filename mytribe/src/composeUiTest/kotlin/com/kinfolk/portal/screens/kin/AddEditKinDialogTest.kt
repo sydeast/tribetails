@@ -19,6 +19,9 @@ import kotlin.test.assertTrue
  * #1311: the memorial action lives at the foot of the edit dialog, behind a
  * confirm step, and nowhere on the Add dialog. Restore sits in the same slot
  * for a memorial Kin.
+ *
+ * #1314: "Delete this Kin" sits under it, only when the server says there is
+ * nothing on file, behind its own confirm step, and nowhere on Add.
  */
 class AddEditKinDialogTest {
 
@@ -144,5 +147,138 @@ class AddEditKinDialogTest {
         onNodeWithText("Name").assertExists()
         onNodeWithText("Mark No Longer With Us").assertDoesNotExist()
         onNodeWithText("Restore as Active").assertDoesNotExist()
+    }
+
+    // ---- #1314 delete row ----
+
+    @Test
+    fun add_hasNoDeleteRow_evenWhenTheCheckWouldAllowIt() = runComposeUiTest {
+        var asked = false
+        setThemedContent {
+            AddEditKinDialog(
+                initial = null,
+                onClose = {},
+                onSubmit = { _, _ -> null },
+                canDelete = { asked = true; true },
+                onDelete = { null },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Name").assertExists()
+        onNodeWithText("Delete this Kin").assertDoesNotExist()
+        assertFalse(asked)
+    }
+
+    @Test
+    fun edit_withHistory_hasNoDeleteRow() = runComposeUiTest {
+        setThemedContent {
+            AddEditKinDialog(
+                initial = kin(KinStatus.Active),
+                onClose = {},
+                onSubmit = { _, _ -> null },
+                onArchive = { null },
+                canDelete = { false },
+                onDelete = { null },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Mark No Longer With Us").assertExists()
+        onNodeWithText("Delete this Kin").assertDoesNotExist()
+    }
+
+    @Test
+    fun edit_failedCheck_hidesTheRowAndSaysNothing() = runComposeUiTest {
+        setThemedContent {
+            AddEditKinDialog(
+                initial = kin(KinStatus.Active),
+                onClose = {},
+                onSubmit = { _, _ -> null },
+                onArchive = { null },
+                canDelete = { throw IllegalStateException("network") },
+                onDelete = { null },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Mark No Longer With Us").assertExists()
+        onNodeWithText("Delete this Kin").assertDoesNotExist()
+        onNodeWithText("network").assertDoesNotExist()
+    }
+
+    @Test
+    fun edit_noHistory_deletesAfterConfirm_thenCloses() = runComposeUiTest {
+        var deleted = false
+        var closed = false
+        setThemedContent {
+            AddEditKinDialog(
+                initial = kin(KinStatus.Active),
+                onClose = { closed = true },
+                onSubmit = { _, _ -> null },
+                onArchive = { null },
+                canDelete = { true },
+                onDelete = { deleted = true; null },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Yes, delete this Kin").assertDoesNotExist()
+
+        onNodeWithText("Delete this Kin").performScrollTo().performClick()
+        waitForIdle()
+        // Confirm step: nothing has been sent yet, and the memorial row is still there.
+        onNodeWithText("Yes, delete this Kin").assertExists()
+        onNodeWithText("Never mind").assertExists()
+        onNodeWithText("Mark No Longer With Us").assertExists()
+        assertFalse(deleted)
+        assertFalse(closed)
+
+        onNodeWithText("Yes, delete this Kin").performScrollTo().performClick()
+        waitForIdle()
+        assertTrue(deleted)
+        assertTrue(closed)
+    }
+
+    @Test
+    fun edit_noHistory_neverMind_sendsNothing() = runComposeUiTest {
+        var called = false
+        setThemedContent {
+            AddEditKinDialog(
+                initial = kin(KinStatus.Active),
+                onClose = {},
+                onSubmit = { _, _ -> null },
+                onArchive = { null },
+                canDelete = { true },
+                onDelete = { called = true; null },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Delete this Kin").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Never mind").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Yes, delete this Kin").assertDoesNotExist()
+        onNodeWithText("Delete this Kin").assertExists()
+        assertFalse(called)
+    }
+
+    @Test
+    fun edit_refusedDelete_staysOpenAndShowsTheServerSentence() = runComposeUiTest {
+        var closed = false
+        val refusal = "Biscuit has visits on file, so this profile cannot be deleted from here."
+        setThemedContent {
+            AddEditKinDialog(
+                initial = kin(KinStatus.Active),
+                onClose = { closed = true },
+                onSubmit = { _, _ -> null },
+                onArchive = { null },
+                canDelete = { true },
+                onDelete = { refusal },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Delete this Kin").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Yes, delete this Kin").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText(refusal).assertExists()
+        assertFalse(closed)
     }
 }

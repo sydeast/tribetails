@@ -45,6 +45,7 @@ deleteAudienceSegment
 deleteBlockedTimeSlot
 deleteBusinessNotificationOverride
 deleteFormSchema
+deleteKin
 deleteMediaFile
 deleteTemplate
 deleteTrainingDocument
