@@ -93,7 +93,10 @@ const HOURS_RANGE_RE = /^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/;
 export type DayHours =
   | { kind: 'open'; startHHmm: string; endHHmm: string }
   | { kind: 'closed' }
-  | { kind: 'unreadable'; raw: string };
+  | { kind: 'unreadable'; raw: string }
+  // #1424: the weekday has no key in the map at all. Settings writes "Closed"
+  // as a PRESENT blank key, so an absent one says nothing either way.
+  | { kind: 'unknown' };
 
 /** Why the answer is what it is. Logged and asserted on, never shown to a caller. */
 export type OpenReason =
@@ -103,6 +106,7 @@ export type OpenReason =
   | 'company-holiday'
   | 'special-hours-unknown'
   | 'unreadable-hours'
+  | 'weekday-unknown'
   | 'timezone-unusable'
   | 'settings-unavailable';
 
@@ -195,6 +199,9 @@ function isValidHHmm(value: string): boolean {
  */
 export function businessHoursForDayName(hours: unknown, dayName: string): DayHours {
   const map = hours && typeof hours === 'object' ? (hours as Record<string, unknown>) : {};
+  // #1424: an absent key is "we cannot tell", not "closed". Only a PRESENT
+  // blank key (the way Settings writes "Closed") reads as closed.
+  if (!(dayName in map)) return { kind: 'unknown' };
   const raw = str(map[dayName]).trim();
   if (raw === '') return { kind: 'closed' };
   const match = HOURS_RANGE_RE.exec(raw);
@@ -358,6 +365,9 @@ export function resolveBusinessOpen(settings: BusinessHoursSettings, nowMs: numb
   }
   if (day.kind === 'unreadable') {
     return { ...base, open: true, reason: 'unreadable-hours', uncertain: true };
+  }
+  if (day.kind === 'unknown') {
+    return { ...base, open: true, reason: 'weekday-unknown', uncertain: true };
   }
   // Half-open, matching `isWithinBusinessHours`: a call landing exactly at
   // opening time is inside, one landing exactly at closing time is not.
