@@ -30,11 +30,11 @@ class ShellNavTest {
     // ---- destination sets ----
 
     @Test
-    fun wideLinks_areHomeTribeScheduleInvoices_inOrder() {
+    fun wideLinks_areHomeTribeScheduleInvoicesMessages_inOrder() {
         // KinTales was removed from the top nav; it now lives in the avatar menu
         // and the Tribe hub.
         assertEquals(
-            listOf("Home", "Tribe", "Schedule", "Invoices"),
+            listOf("Home", "Tribe", "Schedule", "Invoices", "Messages"),
             ShellNav.wideLinks.map { it.label },
         )
     }
@@ -44,7 +44,7 @@ class ShellNavTest {
     fun wideLinksFor_dropsInvoicesOnlyWithoutBillingAccess() {
         assertEquals(ShellNav.wideLinks, ShellNav.wideLinksFor(billingAccess = true))
         assertEquals(
-            listOf(ShellDestination.Home, ShellDestination.Tribe, ShellDestination.Schedule),
+            listOf(ShellDestination.Home, ShellDestination.Tribe, ShellDestination.Schedule, ShellDestination.Messages),
             ShellNav.wideLinksFor(billingAccess = false),
         )
         assertFalse(ShellDestination.Invoices in ShellNav.narrowTabs, "Invoices is not a narrow tab to hide")
@@ -114,6 +114,20 @@ class ShellNavTest {
     fun resolveActive_picksTheMatchingDestination() {
         val active = resolveActiveDestination(ShellNav.wideLinks) { it == ScheduleRoute::class }
         assertEquals(ShellDestination.Schedule, active)
+    }
+
+    /** #1420: the Messages route lights up its wide link, and the avatar menu does not repeat it. */
+    @Test
+    fun resolveActive_wide_picksMessagesOnMessageAuntieRoute() {
+        assertEquals(ShellDestination.Messages, resolveActiveDestination(ShellNav.wideLinks) { it == MessageAuntieRoute::class })
+        assertEquals(
+            ShellDestination.Messages,
+            resolveActiveDestination(ShellNav.wideLinksFor(billingAccess = false)) { it == MessageAuntieRoute::class },
+        )
+        assertFalse(
+            ShellNav.accountMenu(isOperator = true).any { it is AccountMenuItem.Open && it.destination == ShellDestination.Messages },
+            "Messages is a wide link, not a menu item",
+        )
     }
 
     @Test
