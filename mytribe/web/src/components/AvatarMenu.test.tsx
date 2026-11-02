@@ -34,9 +34,9 @@ async function openMenu() {
 }
 
 describe('AvatarMenu items (#1454)', () => {
-  it('lists Account, Edit Tribe Profile, Notification settings, Sign out in that order', async () => {
+  it('lists Account, Edit Tribe Profile, Notification settings, About, Sign out in that order', async () => {
     const { items } = await openMenu();
-    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'Sign out']);
+    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About', 'Sign out']);
   });
 
   it('sends Edit Tribe Profile to the Tribe Profile editor as a real link', async () => {
