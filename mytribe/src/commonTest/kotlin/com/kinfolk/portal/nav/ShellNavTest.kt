@@ -58,31 +58,44 @@ class ShellNavTest {
         assertFalse(ShellDestination.Notifications in ShellNav.wideLinks)
     }
 
+    /** #1413 (operator ruling on #1295): Messages takes Account's slot, Tales joins the bar. */
     @Test
-    fun narrowTabs_areHomeTribeScheduleAccount_inOrder() {
+    fun narrowTabs_areHomeTribeScheduleTalesMessages_inOrder() {
         assertEquals(
             listOf(
                 ShellDestination.Home,
                 ShellDestination.Tribe,
                 ShellDestination.Schedule,
-                ShellDestination.Account,
+                ShellDestination.KinTales,
+                ShellDestination.Messages,
             ),
             ShellNav.narrowTabs,
         )
     }
 
     @Test
-    fun narrowTabs_useShortTabLabels() {
-        // KinTales was removed from the narrow tab bar (lives in the avatar menu).
+    fun narrowTabs_useShortTabLabels_matchingTheWebTabBar() {
+        // The same five labels as PortalNav.tsx TAB_ITEMS, so mobile web and
+        // Android read alike.
         assertEquals(
-            listOf("Home", "Tribe", "Schedule", "Account"),
+            listOf("Home", "Tribe", "Schedule", "Tales", "Messages"),
             ShellNav.narrowTabs.map { it.tabLabel },
         )
     }
 
     @Test
-    fun narrowTabs_excludeKinTales() {
-        assertFalse(ShellDestination.KinTales in ShellNav.narrowTabs, "KinTales reachable via avatar menu / Tribe hub, not a narrow tab")
+    fun narrowTabs_excludeAccount_whichLivesInTheAvatarMenu() {
+        assertFalse(ShellDestination.Account in ShellNav.narrowTabs, "Account is reached from the avatar menu, not a narrow tab (#1413)")
+        assertTrue(
+            ShellNav.accountMenu(isOperator = false).any { it is AccountMenuItem.Open && it.destination == ShellDestination.Account },
+            "Account must still be reachable from the avatar menu",
+        )
+    }
+
+    @Test
+    fun messagesDestination_routesToMessageAuntie() {
+        assertEquals(MessageAuntieRoute, ShellDestination.Messages.route)
+        assertEquals(MessageAuntieRoute::class, ShellDestination.Messages.routeClass)
     }
 
     @Test
@@ -116,10 +129,31 @@ class ShellNavTest {
         assertNull(active, "detail routes light up no primary link")
     }
 
+    /** #1413: Account is no longer a tab, so the Account screen lights up no tab. */
     @Test
-    fun resolveActive_narrowAccountTab_lightsUpOnAccountRoute() {
+    fun resolveActive_narrow_hasNoActiveTabOnAccountRoute() {
         val active = resolveActiveDestination(ShellNav.narrowTabs) { it == AccountRoute::class }
-        assertEquals(ShellDestination.Account, active)
+        assertNull(active, "Account is a menu screen now, so nothing is active in the tab bar")
+    }
+
+    @Test
+    fun resolveActive_narrowMessagesTab_lightsUpOnMessageAuntieRoute() {
+        val active = resolveActiveDestination(ShellNav.narrowTabs) { it == MessageAuntieRoute::class }
+        assertEquals(ShellDestination.Messages, active)
+    }
+
+    @Test
+    fun resolveActive_narrowTalesTab_lightsUpOnKinTalesRoute() {
+        val active = resolveActiveDestination(ShellNav.narrowTabs) { it == KinTalesRoute::class }
+        assertEquals(ShellDestination.KinTales, active)
+    }
+
+    @Test
+    fun resolveActive_narrow_isNullOnDetailDestinations() {
+        // The tab bar reads the back-stack hierarchy, so a leaf under no tab
+        // route (KinDetail, the booking wizard) selects nothing.
+        assertNull(resolveActiveDestination(ShellNav.narrowTabs) { it == KinDetailRoute::class })
+        assertNull(resolveActiveDestination(ShellNav.narrowTabs) { it == BookingWizardRoute::class })
     }
 
     @Test
@@ -182,6 +216,10 @@ class ShellNavTest {
         assertTrue(isShellChromeDestination { it == HomeRoute::class })
         assertTrue(isShellChromeDestination { it == ScheduleRoute::class })
         assertTrue(isShellChromeDestination { it == InvoicesRoute::class })
+        // #1413: Messages is a tab, so leaving it saves/restores like any tab.
+        // Every entry point must navigate to it the tab way (AppNavHost
+        // openMessages) for that to be safe.
+        assertTrue(isShellChromeDestination { it == MessageAuntieRoute::class })
     }
 
     @Test
@@ -202,7 +240,7 @@ class ShellNavTest {
         assertFalse(isShellChromeDestination { it == KinCareDetailRoute::class })
         assertFalse(isShellChromeDestination { it == BookingEnvelopeRoute::class })
         assertFalse(isShellChromeDestination { it == BookingWizardRoute::class })
-        assertFalse(isShellChromeDestination { it == MessageAuntieRoute::class })
+        assertFalse(isShellChromeDestination { it == GalleryRoute::class })
     }
 
     @Test

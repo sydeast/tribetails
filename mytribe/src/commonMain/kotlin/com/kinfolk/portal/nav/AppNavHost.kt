@@ -183,6 +183,27 @@ fun AppNavHost(
         }
     }
 
+    // #1413: Messages is a narrow tab, so every entry point reaches it the way
+    // a tab tap does: pop to the HomeRoute LEAF (findStartDestination, never
+    // the ShellGraph node) saving the tab stack it leaves, and restore any
+    // saved Messages stack. A plain navigate from the Schedule CTA would stack
+    // MessageAuntieRoute on top of Schedule; because Messages is now a chrome
+    // destination, the next tab tap would save that stack and a later Schedule
+    // tap would restore it with Messages still on top, the old "Account
+    // Settings locks the page" shape. Back from Messages lands on Home.
+    //
+    // saveState is hardcoded true because both callers (the Home quick-start
+    // and the Schedule CTA) sit on chrome screens. A caller on a detail or
+    // wizard leaf must not use this: saving from a leaf is the corrupt stack
+    // TabShell.navigateTab guards against with isShellChromeDestination.
+    fun openMessages() {
+        navController.navigate(MessageAuntieRoute) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
     // #1281: lives above the NavHost, so it outlasts the wizard's destination
     // and reaches Schedule's. See ScheduleHandoff.
     var scheduleHandoff by remember { mutableStateOf<ScheduleHandoff?>(null) }
@@ -283,7 +304,7 @@ fun AppNavHost(
                             portalApi = portalApi,
                             sections = shellHomeSections,
                             chatEnabled = shellChat.enabled,
-                            onMessageAuntie = { navController.navigate(MessageAuntieRoute) },
+                            onMessageAuntie = { openMessages() },
                             onOpenSchedule = { navController.navigate(ScheduleRoute) { launchSingleTop = true } },
                             onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
                             onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
@@ -314,7 +335,7 @@ fun AppNavHost(
                             onOpenEnvelope = { batchId -> navController.navigate(BookingEnvelopeRoute(batchId)) },
                             onOpenWizard = { navController.navigate(BookingWizardRoute(startWeekly = false)) },
                             onOpenRecurring = { navController.navigate(BookingWizardRoute(startWeekly = true)) },
-                            onOpenMessageAuntie = { navController.navigate(MessageAuntieRoute) },
+                            onOpenMessageAuntie = { openMessages() },
                             reloadSignal = reloadSignal,
                             handoff = scheduleHandoff,
                             onHandoffTaken = { scheduleHandoff = null },
