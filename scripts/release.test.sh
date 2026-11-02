@@ -3652,6 +3652,38 @@ else
   bad "the dry run did not name the version, or tagged (rc=$RCV7)"; origin_tags "$DV7"
 fi
 
+# ---------------------------------------------------------------------------
+# #1401. Step 1's `npm run check` builds the functions BEFORE it tests them.
+#   mytribe/functions/test/functionTargetLoading.test.ts loads the BUILT
+#   lib/index.js and refuses when it is missing or older than src/index.ts.
+#   `check` used to run `npm test` first and `npm run build` last, so after any
+#   pull that touched src/index.ts (and on every fresh clone, which has no lib/)
+#   the release stopped at step 1. CI never saw it because its jobs build first.
+#   The stubbed npm above cannot see the order, so this reads the REAL root
+#   package.json: build:functions runs once and before `npm test`, and `check`
+#   still runs every build:* step that `build` does, so dist/ stays current.
+# ---------------------------------------------------------------------------
+ORDER_OUT="$(node -e '
+  const s = require(process.argv[1]).scripts;
+  const steps = s.check.split("&&").map((x) => x.trim());
+  const at = (c) => steps.indexOf(c);
+  const problems = [];
+  const fn = steps.filter((c) => c === "npm run build:functions").length;
+  if (fn !== 1) problems.push("check runs build:functions " + fn + " times, want 1");
+  if (at("npm test") < 0) problems.push("check does not run npm test");
+  if (at("npm run build:functions") > at("npm test")) problems.push("check tests before it builds the functions");
+  if (steps.includes("npm run build")) problems.push("check runs the full build, which builds the functions twice");
+  for (const b of s.build.split("&&").map((x) => x.trim())) {
+    if (!steps.includes(b)) problems.push("check skips " + b + ", which build runs");
+  }
+  process.stdout.write(problems.join("\n"));
+' "$HERE/../package.json" 2>&1)"
+if [ -z "$ORDER_OUT" ]; then
+  ok "#1401: check builds the functions once, before the tests, and still runs every build step"
+else
+  bad "#1401: check order: $ORDER_OUT"
+fi
+
 echo
 echo "release tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

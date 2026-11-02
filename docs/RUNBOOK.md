@@ -143,7 +143,7 @@ What it does, in order. It stops at the first failure and names the step:
 | 0a | Installed dependencies match every lockfile |
 | 0b | CI is green for this exact commit, e2e included, and so is the real-services suite (`e2e-real.yml`) |
 | 0c | Web build config (`VITE_*`) fetched from Secret Manager |
-| 1 | `npm run check`: typecheck, lint, contracts, seeds, tests, build |
+| 1 | `npm run check`: typecheck, lint, contracts, seeds, functions build, tests, web builds |
 | 1b | Every secret the functions declare exists |
 | 1c | Both Android release APKs build |
 | 2 | Firestore indexes deploy |
