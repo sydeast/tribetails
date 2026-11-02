@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Account } from './Account';
@@ -358,6 +358,24 @@ describe('Account: kin list and Messages link are gone (#1465)', () => {
     expect(queryByText(/message your auntie/i)).toBeNull();
   });
 
+  it('carries no explanatory sentence under Secondary Kinfolk or Cared for by (#1476)', async () => {
+    const { container, getByRole, queryByText } = await renderAccount();
+    const sentence = 'A backup person we can reach if we cannot reach you during a visit.';
+    const sk = Array.from(container.querySelectorAll('.sectlabel'))
+      .find((el) => el.textContent === 'Recovery Contacts')!
+      .closest('section')!;
+    // Not drawn in the card body; the info tip beside the title holds it.
+    expect(queryByText(sentence)).toBeNull();
+    expect(sk.querySelector('p.sub')).toBeNull();
+    const tip = getByRole('button', { name: 'Who is Secondary Kinfolk' });
+    expect(sk.querySelector('.title')!.contains(tip)).toBe(true);
+    expect(tip.getAttribute('title')).toBe(sentence);
+    fireEvent.click(tip);
+    expect(getByRole('tooltip').textContent).toBe(sentence);
+    const cared = Array.from(container.querySelectorAll('.sectlabel')).find((el) => el.textContent === 'Cared for by')!.closest('section')!;
+    expect(cared.querySelector('p')).toBeNull();
+    expect(queryByText(/care team can see your profile name/i)).toBeNull();
+  });
   it('still shows Profile, Secondary Kinfolk, Billing Details and the Sign Out confirm step', async () => {
     const { getByText, getByRole, findByText } = await renderAccountWithBilling();
     expect(getByText('Profile')).toBeTruthy();

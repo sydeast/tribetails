@@ -30,6 +30,7 @@ import { INVITES_UNAVAILABLE_MESSAGE, isConfigGapError } from '../lib/inviteFail
 import { billingAccessOf } from '../lib/billingAccess';
 import { resolveIdentity } from '../lib/identity';
 import { formatPhone, phoneProblem } from '../lib/phone';
+import { InfoTip } from '../components/InfoTip';
 import { BusinessFootnote } from '../components/BusinessFootnote';
 import { businessLabel } from '../lib/businessLabel';
 
@@ -426,8 +427,10 @@ export function Account() {
             {/* RECOVERY CONTACTS */}
             <section className="glass card d2">
               <div className="sectlabel">Recovery Contacts</div>
-              <h3 className="title">Secondary Kinfolk</h3>
-              <p className="sub">A backup person we can reach if we cannot reach you during a visit.</p>
+              <h3 className="title">
+                Secondary Kinfolk{' '}
+                <InfoTip text="A backup person we can reach if we cannot reach you during a visit." label="Who is Secondary Kinfolk" />
+              </h3>
 
               <div style={{ marginTop: 18 }}>
                 <div className="field-row">
@@ -622,7 +625,6 @@ export function Account() {
             <section className="glass card d4">
               <div className="sectlabel">Cared for by</div>
               <h3 className="title">{businessName || 'Your Auntie'}</h3>
-              <p className="sub">Your care team can see your profile name and contact details to reach you about visits.</p>
             </section>
           </div>
         </div>
