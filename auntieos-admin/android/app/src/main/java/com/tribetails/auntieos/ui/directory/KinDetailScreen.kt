@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -32,7 +33,10 @@ import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.domain.UPCOMING_HORIZON_DAYS
 import com.tribetails.auntieos.domain.feedCountMeta
 import com.tribetails.auntieos.ui.components.AuntieAvatar
+import com.tribetails.auntieos.ui.components.AuntieBanner
+import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
+import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.DenCrumb
@@ -182,6 +186,46 @@ fun KinDetailScreen(
                             label = "Reactive: handle with care",
                             tone = AuntieStatusTone.Warning,
                             mono = true,
+                        )
+                    }
+                }
+
+                // #1408: the household asked to remove this pet. Near the top,
+                // because it is waiting on an answer. Same card as the web band.
+                if (state.removalLoading) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            AuntieSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text("Checking for a removal request…", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                        }
+                    }
+                }
+                state.removalError?.let { msg ->
+                    item {
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Error,
+                            title = "Couldn't check for a removal request",
+                            trailing = { GhostButton(label = "Retry", onClick = { viewModel.loadRemovalRequests(kin.id) }) },
+                        ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
+                    }
+                }
+                state.removalMessage?.let { msg ->
+                    item {
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Success,
+                            title = "Removal request",
+                            onDismiss = { viewModel.clearRemovalMessage() },
+                        ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) }
+                    }
+                }
+                state.removalRequests.forEach { request ->
+                    item(key = "removal-${request.id}") {
+                        KinRemovalRequestCard(
+                            request = request,
+                            inFlight = state.removalInFlight == request.id,
+                            locked = state.removalInFlight != null,
+                            error = state.removalActionError.takeIf { state.removalActionErrorFor == request.id },
+                            onResolve = { decision, note -> viewModel.resolveRemoval(kin.id, request.id, decision, note) },
                         )
                     }
                 }

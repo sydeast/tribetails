@@ -311,7 +311,7 @@ describe('deleteKinHandler (#1314)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { deleteKinHandler } = await import('../src/portal/kinWrites');
     const res = await deleteKinHandler({ data: { kinfolkId: '3', kinId: 'k1' }, auth: { uid: 'u1' } } as any);
-    expect(res).toEqual({ ok: true, deleted: false, canDelete: true, blockedBy: [] });
+    expect(res).toEqual({ ok: true, deleted: false, canDelete: true, blockedBy: [], removalRequest: null });
     expect(ctx.deletes).toEqual([]);
     expect(ctx.writes).toEqual([]);
   });
@@ -323,7 +323,7 @@ describe('deleteKinHandler (#1314)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { deleteKinHandler } = await import('../src/portal/kinWrites');
     const res = await deleteKinHandler({ data: { kinfolkId: '3', kinId: 'k1' }, auth: { uid: 'u1' } } as any);
-    expect(res).toEqual({ ok: true, deleted: false, canDelete: false, blockedBy: ['visits'] });
+    expect(res).toEqual({ ok: true, deleted: false, canDelete: false, blockedBy: ['visits'], removalRequest: null });
     expect(ctx.deletes).toEqual([]);
   });
 
@@ -425,7 +425,7 @@ describe('deleteKinHandler (#1314)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { deleteKinHandler } = await import('../src/portal/kinWrites');
     const res = await deleteKinHandler({ data: { kinfolkId: '3', kinId: 'k1', confirm: true }, auth: { uid: 'u1' } } as any);
-    expect(res).toEqual({ ok: true, deleted: true, canDelete: true, blockedBy: [] });
+    expect(res).toEqual({ ok: true, deleted: true, canDelete: true, blockedBy: [], removalRequest: null });
     expect([...ctx.deletes].sort()).toEqual(['families/3/kin/k1', 'kin/flat1']);
     // A hard delete, never a status write.
     expect(ctx.writes).toEqual([]);

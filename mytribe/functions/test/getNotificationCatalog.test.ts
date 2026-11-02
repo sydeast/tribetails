@@ -156,6 +156,7 @@ describe('getNotificationCatalogHandler', () => {
       'rating.submitted.bad', // business
       'rating.submitted.good', // business
       'pet.marked.inactive', // business
+      'kin.removal.requested', // business (#1408)
     ]) {
       expect(allKeys, `${hidden} must stay hidden`).not.toContain(hidden);
     }

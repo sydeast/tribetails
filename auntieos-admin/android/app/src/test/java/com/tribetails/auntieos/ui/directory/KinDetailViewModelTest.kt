@@ -7,6 +7,9 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.KinRemovalRequestRepository
+import com.tribetails.auntieos.data.repository.KinRemovalRequestRow
+import com.tribetails.auntieos.data.repository.KinRemovalResolution
 import io.mockk.CapturingSlot
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -43,6 +46,7 @@ class KinDetailViewModelTest {
     private val testDispatcher = UnconfinedTestDispatcher()
     private val repo = mockk<AuntieRepository>(relaxed = true)
     private val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+    private val removalRepo = mockk<KinRemovalRequestRepository>()
 
     private val biscuit = Kin(
         id = "k1",
@@ -73,6 +77,7 @@ class KinDetailViewModelTest {
         coEvery { repo.updateKinFields(any(), any(), any()) } returns Result.success(Unit)
         coEvery { kinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
+        coEvery { removalRepo.list(any()) } returns Result.success(emptyList())
     }
 
     @After
@@ -80,7 +85,7 @@ class KinDetailViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel() = KinDetailViewModel(repo, kinCareRepo)
+    private fun viewModel() = KinDetailViewModel(repo, kinCareRepo, removalRepo)
 
     private fun captureKinChanges(): CapturingSlot<Map<String, Any>> {
         val changes = slot<Map<String, Any>>()
@@ -321,5 +326,78 @@ class KinDetailViewModelTest {
         advanceUntilIdle()
 
         vm.saveTags("k1", "kf1", listOf("senior"))
+    }
+
+    // ── #1408: the household's removal request ───────────────────────────────
+
+    private val pending = KinRemovalRequestRow(
+        id = "kf1_fk1",
+        kinfolkId = "kf1",
+        kinId = "fk1",
+        flatKinId = "k1",
+        kinName = "Biscuit",
+        reason = "Rehomed",
+        status = "pending",
+        requestedAtMs = 1_793_620_800_000L,
+        resolvedAtMs = null,
+        resolutionNote = null,
+    )
+
+    @Test
+    fun `the pending removal request is read by this pet's flat id`() = runTest(testDispatcher) {
+        coEvery { removalRepo.list("k1") } returns Result.success(listOf(pending, pending.copy(id = "old", status = "declined")))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertEquals(listOf("kf1_fk1"), state.removalRequests.map { it.id })
+        assertNull(state.removalError)
+        assertTrue(!state.removalLoading)
+        coVerify { removalRepo.list("k1") }
+    }
+
+    @Test
+    fun `a failed removal read is its own error, and the page stands`() = runTest(testDispatcher) {
+        coEvery { removalRepo.list(any()) } returns Result.failure(RuntimeException("network"))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        assertEquals("network", vm.uiState.value.removalError)
+        assertEquals("Biscuit", vm.uiState.value.kin?.name)
+    }
+
+    @Test
+    fun `archive clears the request, says so, and re-reads the pet`() = runTest(testDispatcher) {
+        coEvery { removalRepo.list(any()) } returns Result.success(listOf(pending))
+        coEvery { removalRepo.resolve("kf1_fk1", "archive", "Take care.") } returns
+            Result.success(KinRemovalResolution("archive", pending.copy(status = "archived"), householdNotified = true))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        coEvery { repo.getKinByIds(any()) } returns Result.success(mapOf("k1" to biscuit.copy(status = "archived")))
+        vm.resolveRemoval("k1", "kf1_fk1", "archive", "Take care.")
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertTrue(state.removalRequests.isEmpty())
+        assertNull(state.removalInFlight)
+        assertEquals("Biscuit is archived. The household has your answer.", state.removalMessage)
+        assertEquals("archived", state.kin?.status)
+    }
+
+    @Test
+    fun `a refused answer keeps the request and shows the server sentence`() = runTest(testDispatcher) {
+        coEvery { removalRepo.list(any()) } returns Result.success(listOf(pending))
+        coEvery { removalRepo.resolve(any(), any(), any()) } returns
+            Result.failure(RuntimeException("This removal request has already been answered."))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        vm.resolveRemoval("k1", "kf1_fk1", "decline", "")
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertEquals(listOf("kf1_fk1"), state.removalRequests.map { it.id })
+        assertEquals("This removal request has already been answered.", state.removalActionError)
+        assertEquals("kf1_fk1", state.removalActionErrorFor)
+        assertNull(state.removalMessage)
     }
 }

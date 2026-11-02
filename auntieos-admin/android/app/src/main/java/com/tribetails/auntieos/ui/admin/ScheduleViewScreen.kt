@@ -65,6 +65,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
+import com.tribetails.auntieos.ui.directory.KinRemovalRequestsPanel
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlin.math.roundToInt
 
@@ -615,6 +616,10 @@ private fun ScheduleViewScreenContent(
                     DenPanel(title = "Change requests", detail = "No visit requests waiting.") {}
                 }
             }
+
+            // #1408: the other household request waiting on the office, a Kin
+            // the household asked to remove. Its own read; nothing when empty.
+            item { KinRemovalRequestsPanel() }
 
             // ── Stat row: counts mirror the booking sections ──
             item {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { call } from '../lib/fns';
-import { addKin, canDeleteKin, deleteKin, updateKin } from './portal';
+import { addKin, canDeleteKin, deleteKin, requestKinRemoval, updateKin } from './portal';
 
 // Replace the single callables choke point so the test asserts the exact
 // payload the wrapper builds, without touching the network.
@@ -55,6 +55,28 @@ describe('deleteKin wrappers (#1314)', () => {
   it('does not swallow a refusal (fail loud)', async () => {
     vi.mocked(call).mockRejectedValueOnce(new Error('Buddy has visits on file, so this profile cannot be deleted from here.'));
     await expect(deleteKin('k1', 'fam1')).rejects.toThrow('cannot be deleted from here');
+  });
+});
+
+describe('requestKinRemoval wrapper (#1408)', () => {
+  beforeEach(() => {
+    vi.mocked(call).mockReset();
+    vi.mocked(call).mockResolvedValue({ ok: true, removalRequest: { id: 'fam1_k1', status: 'pending' } } as never);
+  });
+
+  it('sends the trimmed reason and the optional kinfolkId', async () => {
+    await requestKinRemoval('k1', '  Rehomed with my sister  ', 'fam1');
+    expect(call).toHaveBeenCalledWith('requestKinRemoval', { kinId: 'k1', reason: 'Rehomed with my sister', kinfolkId: 'fam1' });
+  });
+
+  it('omits a blank reason and an absent kinfolkId', async () => {
+    await requestKinRemoval('k1', '   ');
+    expect(call).toHaveBeenLastCalledWith('requestKinRemoval', { kinId: 'k1' });
+  });
+
+  it('does not swallow a refusal (fail loud)', async () => {
+    vi.mocked(call).mockRejectedValueOnce(new Error('Removal of Buddy has already been requested.'));
+    await expect(requestKinRemoval('k1', '', 'fam1')).rejects.toThrow('already been requested');
   });
 });
 

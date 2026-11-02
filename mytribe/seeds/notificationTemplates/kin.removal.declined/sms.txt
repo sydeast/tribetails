@@ -1,0 +1,1 @@
+{{Business}}: {{kinName}} is staying on your profile. {{note}}

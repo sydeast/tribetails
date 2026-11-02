@@ -3,6 +3,7 @@ import { Link, linkOptions } from '@tanstack/react-router';
 import { getKin, type KinDetail } from '../api/kinView';
 import { getKin411, type Kin411 } from '../api/recipientContext';
 import { updateKinTags } from '../api/directoryWrite';
+import { KinRemovalRequestBand } from '../components/KinRemovalRequests';
 import { initialsOf } from '../api/directory';
 import { type Async } from '../lib/async';
 import {
@@ -348,6 +349,11 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
                   <StatusPill label="Reactive: handle with care" tone="warning" />
                 </div>
               )}
+
+              {/* #1408: the household asked to remove this Kin. Near the top,
+                  because it is waiting on an answer; an answer reloads the
+                  profile so an archive shows as the archived status. */}
+              <KinRemovalRequestBand flatKinId={petId} onResolved={() => load()} />
 
               {tagsOpen && (
                 <ProfileTagsSection

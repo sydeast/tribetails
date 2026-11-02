@@ -5,7 +5,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { KinEdit } from './KinEdit';
-import type { DeleteKinResult, GetMyKinResult, KinDto } from '../api/types';
+import type { DeleteKinResult, GetMyKinResult, KinDto, KinRemovalRequestDto, RequestKinRemovalResult } from '../api/types';
 
 const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn<() => Promise<GetMyKinResult>>(),
@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   // #1314: the eligibility read and the confirmed delete, same callable.
   canDeleteKin: vi.fn<(kinId: string, kinfolkId?: string) => Promise<DeleteKinResult>>(),
   deleteKin: vi.fn<(kinId: string, kinfolkId?: string) => Promise<DeleteKinResult>>(),
+  // #1408: the household's request to remove a Kin with history.
+  requestKinRemoval: vi.fn<(kinId: string, reason: string, kinfolkId?: string) => Promise<RequestKinRemovalResult>>(),
   navigate: vi.fn(),
   // The seeded breed bank behind the Breed dropdown, stubbed so no test in this
   // file reaches the `getBreeds` callable.
@@ -29,6 +31,7 @@ vi.mock('../api/portal', () => ({
   archiveKin: (kinId: string, reason: string, kinfolkId?: string) => mocks.archiveKin(kinId, reason, kinfolkId),
   canDeleteKin: (kinId: string, kinfolkId?: string) => mocks.canDeleteKin(kinId, kinfolkId),
   deleteKin: (kinId: string, kinfolkId?: string) => mocks.deleteKin(kinId, kinfolkId),
+  requestKinRemoval: (kinId: string, reason: string, kinfolkId?: string) => mocks.requestKinRemoval(kinId, reason, kinfolkId),
 }));
 vi.mock('../api/breeds', async (orig) => ({
   ...(await orig<typeof import('../api/breeds')>()),
@@ -148,9 +151,10 @@ beforeEach(() => {
   // Default: history on file, so the delete row is absent and the #1311 tests
   // see the memorial row alone.
   mocks.canDeleteKin.mockReset();
-  mocks.canDeleteKin.mockResolvedValue({ ok: true, deleted: false, canDelete: false, blockedBy: ['visits'] });
+  mocks.canDeleteKin.mockResolvedValue({ ok: true, deleted: false, canDelete: false, blockedBy: ['visits'], removalRequest: null });
   mocks.deleteKin.mockReset();
-  mocks.deleteKin.mockResolvedValue({ ok: true, deleted: true, canDelete: true, blockedBy: [] });
+  mocks.deleteKin.mockResolvedValue({ ok: true, deleted: true, canDelete: true, blockedBy: [], removalRequest: null });
+  mocks.requestKinRemoval.mockReset();
   mocks.getBreeds.mockReset();
   mocks.getBreeds.mockResolvedValue({
     dogBreeds: ['Border Collie', 'Boxer'],
@@ -444,7 +448,7 @@ describe('KinEdit', () => {
 
   describe('delete row (#1314)', () => {
     const follows = (anchor: Element, node: Element) => Boolean(anchor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
-    const noHistory: DeleteKinResult = { ok: true, deleted: false, canDelete: true, blockedBy: [] };
+    const noHistory: DeleteKinResult = { ok: true, deleted: false, canDelete: true, blockedBy: [], removalRequest: null };
 
     it('asks the server once for THIS kin and stays hidden when it reports history', async () => {
       renderScreen();
@@ -512,6 +516,132 @@ describe('KinEdit', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('Buddy has visits on file, so this profile cannot be deleted from here.');
       expect(mocks.navigate).not.toHaveBeenCalled();
       expect(screen.getByRole('button', { name: 'Mark No Longer With Us' })).toBeInTheDocument();
+    });
+  });
+
+  describe('request removal row (#1408)', () => {
+    const follows = (anchor: Element, node: Element) => Boolean(anchor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
+    // Noon UTC, so the rendered date is the same day in every test timezone.
+    const NOV_2 = Date.UTC(2026, 10, 2, 12);
+    const NOV_3 = Date.UTC(2026, 10, 3, 12);
+    function removalRequest(overrides: Partial<KinRemovalRequestDto> = {}): KinRemovalRequestDto {
+      return {
+        id: 'fam1_k1',
+        kinfolkId: 'fam1',
+        kinId: 'k1',
+        flatKinId: 'flat1',
+        kinName: 'Buddy',
+        reason: null,
+        status: 'pending',
+        requestedAtMs: NOV_2,
+        resolvedAtMs: null,
+        resolutionNote: null,
+        ...overrides,
+      };
+    }
+    function withHistory(request: KinRemovalRequestDto | null): DeleteKinResult {
+      return { ok: true, deleted: false, canDelete: false, blockedBy: ['visits'], removalRequest: request };
+    }
+
+    it('a Kin with history shows Request removal below the memorial row, and no delete row', async () => {
+      renderScreen();
+      const ask = await screen.findByRole('button', { name: 'Request removal' });
+      expect(follows(screen.getByRole('button', { name: 'Mark No Longer With Us' }), ask)).toBe(true);
+      expect(screen.getByTestId('kinaction-removal')).toContainElement(ask);
+      expect(screen.queryByRole('button', { name: 'Delete this Kin' })).toBeNull();
+    });
+
+    it('a Kin with nothing on file gets the delete row instead, never Request removal', async () => {
+      mocks.canDeleteKin.mockResolvedValue({ ok: true, deleted: false, canDelete: true, blockedBy: [], removalRequest: null });
+      renderScreen();
+      await screen.findByRole('button', { name: 'Delete this Kin' });
+      expect(screen.queryByRole('button', { name: 'Request removal' })).toBeNull();
+    });
+
+    it('shows a loading cue while the server check runs', async () => {
+      let release: (v: DeleteKinResult) => void = () => {};
+      mocks.canDeleteKin.mockReturnValue(new Promise<DeleteKinResult>((r) => { release = r; }));
+      renderScreen();
+      expect(await screen.findByTestId('kinaction-removal-loading')).toHaveTextContent('Checking removal options…');
+      await act(async () => release(withHistory(null)));
+      expect(await screen.findByRole('button', { name: 'Request removal' })).toBeInTheDocument();
+      expect(screen.queryByTestId('kinaction-removal-loading')).toBeNull();
+    });
+
+    it('a failed check says so and can be retried', async () => {
+      mocks.canDeleteKin.mockRejectedValueOnce(new Error('network'));
+      mocks.canDeleteKin.mockResolvedValue(withHistory(null));
+      const user = userEvent.setup();
+      renderScreen();
+      const row = await screen.findByTestId('kinaction-removal-error');
+      expect(row).toHaveTextContent('Couldn’t check how this Kin can be removed.');
+      await user.click(within(row).getByRole('button', { name: 'Try again' }));
+      expect(await screen.findByRole('button', { name: 'Request removal' })).toBeInTheDocument();
+    });
+
+    it('asks first with an optional reason, and Cancel steps back without sending', async () => {
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByRole('button', { name: 'Request removal' }));
+      const row = within(screen.getByTestId('kinaction-removal'));
+      expect(row.getByText(/Ask to have Buddy removed\? Visits, invoices and KinTales on file are kept\./)).toBeInTheDocument();
+      expect(row.getByLabelText('Reason (optional)')).toBeInTheDocument();
+      await user.click(row.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('button', { name: 'Send request' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Request removal' })).toBeInTheDocument();
+      expect(mocks.requestKinRemoval).not.toHaveBeenCalled();
+    });
+
+    it('sending waits on the server, then shows Removal requested with the date and no button', async () => {
+      let release: (v: RequestKinRemovalResult) => void = () => {};
+      mocks.requestKinRemoval.mockReturnValue(new Promise<RequestKinRemovalResult>((r) => { release = r; }));
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByRole('button', { name: 'Request removal' }));
+      await user.type(screen.getByLabelText('Reason (optional)'), 'Rehomed with my sister');
+      await user.click(screen.getByRole('button', { name: 'Send request' }));
+      expect(mocks.requestKinRemoval).toHaveBeenCalledWith('k1', 'Rehomed with my sister', 'fam1');
+      // Pessimistic: a busy label, the controls locked, no pending state yet.
+      const sending = screen.getByRole('button', { name: /Sending/ });
+      expect(sending).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Mark No Longer With Us' })).toBeDisabled();
+      expect(screen.queryByText(/Removal requested/)).toBeNull();
+      await act(async () => release({ ok: true, removalRequest: removalRequest({ reason: 'Rehomed with my sister' }) }));
+      const row = await screen.findByTestId('kinaction-removal');
+      await waitFor(() => expect(row).toHaveTextContent('Removal requested on Nov 2, 2026.'));
+      expect(row).toHaveTextContent('Your reason: Rehomed with my sister');
+      expect(screen.queryByRole('button', { name: 'Request removal' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Send request' })).toBeNull();
+    });
+
+    it('a pending request from an earlier visit shows its date, and nothing to tap', async () => {
+      mocks.canDeleteKin.mockResolvedValue(withHistory(removalRequest()));
+      renderScreen();
+      const row = await screen.findByTestId('kinaction-removal');
+      expect(row).toHaveTextContent('Removal requested on Nov 2, 2026.');
+      expect(within(row).queryByRole('button')).toBeNull();
+    });
+
+    it('a declined request shows the office note and lets the household ask again', async () => {
+      mocks.canDeleteKin.mockResolvedValue(
+        withHistory(removalRequest({ status: 'declined', resolvedAtMs: NOV_3, resolutionNote: 'Buddy has a visit booked next week.' })),
+      );
+      renderScreen();
+      expect(await screen.findByTestId('kinaction-removal-declined')).toHaveTextContent(
+        'Removal declined on Nov 3, 2026. Buddy has a visit booked next week.',
+      );
+      expect(screen.getByRole('button', { name: 'Request removal' })).toBeInTheDocument();
+    });
+
+    it('a refused request shows the server sentence and keeps the form', async () => {
+      mocks.requestKinRemoval.mockRejectedValue(new Error('Removal of Buddy has already been requested.'));
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByRole('button', { name: 'Request removal' }));
+      await user.click(screen.getByRole('button', { name: 'Send request' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Removal of Buddy has already been requested.');
+      expect(screen.getByRole('button', { name: 'Send request' })).toBeInTheDocument();
+      expect(screen.queryByText(/Removal requested on/)).toBeNull();
     });
   });
 

@@ -33,7 +33,23 @@ type KinDoc = {
   familyKinPath?: string;
   /** which side authored the last mirror write; guards the reverse trigger. */
   _mirrorOrigin?: string;
+  /**
+   * #1408: stamped by `resolveKinRemovalRequest` when the office archives this
+   * Kin at the household's request. Its arrival is the office's own decision.
+   */
+  removalRequestId?: string;
 };
+
+/**
+ * #1408. True on the one write that archives a Kin through the office's answer
+ * to a removal request: the stamp is new on this write. The office made that
+ * decision itself, so it needs no `pet.marked.inactive` notice about it.
+ */
+export function isRemovalArchiveWrite(before: KinDoc | undefined, after: KinDoc): boolean {
+  return typeof after.removalRequestId === 'string'
+    && after.removalRequestId !== ''
+    && after.removalRequestId !== before?.removalRequestId;
+}
 
 /** #1370: flat-doc fields the admin `Kin` models decode as non-null `String`. */
 export const FLAT_NON_NULL_TEXT_FIELDS: readonly string[] = ['name', 'species', 'breed'];
@@ -153,7 +169,11 @@ export async function mirrorFamilyKinToFlat(
   if (afterInactive && !beforeInactive) {
     await flatRef.set(
       {
-        status: 'inactive',
+        // #1408: `archived` is the admin's own spelling (setKinArchived), and
+        // the office's removal-request archive writes it on both copies. Do
+        // not downgrade it to `inactive` here, or the admin profile would stop
+        // saying archived the moment this trigger ran.
+        status: after.status === 'archived' ? 'archived' : 'inactive',
         familyKinPath,
         legacyKinId: flatDocId,
         _mirrorOrigin: MIRROR_ORIGIN_FAMILY,
@@ -306,6 +326,15 @@ export const onFamilyKinWrite = onDocumentWritten(
       !isInactiveKinStatus(beforeStatus);
 
     if (transitionedToInactive) {
+      if (isRemovalArchiveWrite(before, after)) {
+        logEvent({
+          severity: 'debug',
+          function: 'onFamilyKinWrite',
+          event: 'pet.marked.inactive.suppressed.removal-archive',
+          extra: { kinfolkId, kinId, removalRequestId: after.removalRequestId },
+        });
+        return;
+      }
       await dispatch('pet.marked.inactive', { kinName: after.name ?? null, status: afterStatus });
       return;
     }

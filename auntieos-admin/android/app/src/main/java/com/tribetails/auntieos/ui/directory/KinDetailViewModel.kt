@@ -10,6 +10,8 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.KinRemovalRequestRepository
+import com.tribetails.auntieos.data.repository.KinRemovalRequestRow
 import com.tribetails.auntieos.domain.coversKin
 import com.tribetails.auntieos.domain.horizonIso
 import com.tribetails.auntieos.domain.recentTalesFor
@@ -52,6 +54,21 @@ data class KinDetailUiState(
     /** KIN-placed form_schemas, so the structured care checklist renders read-only. */
     val kinSchemas: List<FormSchema> = emptyList(),
     val schemaError: String? = null,
+    /**
+     * #1408: the household's pending request to remove this pet, read by the
+     * flat id. Its own read with its own loading and error, like every panel.
+     */
+    val removalRequests: List<KinRemovalRequestRow> = emptyList(),
+    val removalLoading: Boolean = false,
+    val removalError: String? = null,
+    /** The request an answer is in flight for; every removal control locks meanwhile. */
+    val removalInFlight: String? = null,
+    /** The server's refusal of the last answer, shown on the card. */
+    val removalActionError: String? = null,
+    /** The request [removalActionError] belongs to. */
+    val removalActionErrorFor: String? = null,
+    /** What the last answer did, for the success banner. */
+    val removalMessage: String? = null,
     val isLoading: Boolean = true,
     val error: String? = null,
 )
@@ -73,6 +90,7 @@ data class KinDetailUiState(
 class KinDetailViewModel(
     private val repository: AuntieRepository = AuntieOSApp.instance.repository,
     private val kinCareRepository: KinCareRepository = AuntieOSApp.instance.kinCareRepository,
+    private val removalRepository: KinRemovalRequestRepository = KinRemovalRequestRepository(),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(KinDetailUiState())
@@ -139,6 +157,9 @@ class KinDetailViewModel(
                 isLoading = false,
             )
 
+            // #1408: the household's removal request, after the page is drawable.
+            loadRemovalRequests(kinId)
+
             // The KIN form_schemas behind the structured care checklist. Loaded
             // after the page is already drawable, and fail-loud via schemaError
             // rather than a silently empty section.
@@ -151,6 +172,54 @@ class KinDetailViewModel(
                 schemaError = schemas.exceptionOrNull()?.let { it.message ?: "Couldn't load checklist fields" },
             )
         }
+    }
+
+    /** #1408. This pet's pending removal request (by its flat id), fail-loud via removalError. */
+    fun loadRemovalRequests(kinId: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(removalLoading = true, removalError = null)
+            val result = removalRepository.list(flatKinId = kinId)
+            _uiState.value = _uiState.value.copy(
+                removalLoading = false,
+                removalRequests = result.getOrDefault(emptyList()).filter { it.status == "pending" },
+                removalError = result.exceptionOrNull()?.let { it.message ?: "Couldn't check for a removal request" },
+            )
+        }
+    }
+
+    /**
+     * #1408. Archive the pet or decline. Pessimistic: the card stays, locked,
+     * until the server answers. An archive re-reads the pet so the hero shows
+     * the archived status the server just wrote.
+     */
+    fun resolveRemoval(kinId: String, requestId: String, decision: String, note: String) {
+        if (_uiState.value.removalInFlight != null) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(removalInFlight = requestId, removalActionError = null, removalActionErrorFor = null, removalMessage = null)
+            val result = removalRepository.resolve(requestId, decision, note)
+            result.onSuccess { res ->
+                _uiState.value = _uiState.value.copy(
+                    removalInFlight = null,
+                    removalRequests = _uiState.value.removalRequests.filterNot { it.id == requestId },
+                    removalMessage = kinRemovalResolvedMessage(res),
+                )
+                if (decision == "archive") {
+                    repository.getKinByIds(listOf(kinId)).getOrNull()?.get(kinId)?.let { fresh ->
+                        _uiState.value = _uiState.value.copy(kin = fresh)
+                    }
+                }
+            }.onFailure { err ->
+                _uiState.value = _uiState.value.copy(
+                    removalInFlight = null,
+                    removalActionError = err.message ?: "That did not go through. Try again.",
+                    removalActionErrorFor = requestId,
+                )
+            }
+        }
+    }
+
+    fun clearRemovalMessage() {
+        _uiState.value = _uiState.value.copy(removalMessage = null)
     }
 
     /**

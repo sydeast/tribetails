@@ -24,6 +24,7 @@ import { BookingDetailModal } from '../components/BookingDetailModal';
 import { BookingStatusActions, type BookingActionKind } from './BookingActions';
 import { NewBookingDialog } from '../components/NewBookingDialog';
 import { VisitRequestsSection } from '../components/VisitRequestsSection';
+import { KinRemovalRequestsSection } from '../components/KinRemovalRequests';
 import {
   approveBooking,
   rejectBooking,
@@ -664,6 +665,8 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           mock puts the three status sections directly under the heading and a
           queue that is usually empty was pushing the first one to y=580. */}
       <VisitRequestsSection />
+      {/* #1408: the other household request waiting on the office. */}
+      <KinRemovalRequestsSection />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}
       {rescheduleOutcome !== null && (
         <BulkRescheduleBanner

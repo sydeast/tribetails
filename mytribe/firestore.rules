@@ -602,6 +602,20 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+ // #1408: a household's request to remove a Kin that has history, one doc per
+ // Kin (`{kinfolkId}_{kinId}`). CALLABLE-ONLY WRITES: `requestKinRemoval` runs
+ // the same history check as `deleteKin` and refuses a second open request;
+ // `resolveKinRemovalRequest` archives the Kin or declines. A client write
+ // here would skip both. Staff read every request (the office queue and the
+ // band on the Kin's admin profile); an active member of the household the
+ // request belongs to reads its own, so a list query must constrain
+ // `kinfolkId` to that household. Nothing on the doc is money or a dossier.
+    match /kin_removal_requests/{requestId} {
+      allow read: if isStaff()
+                  || (resource.data.kinfolkId is string && activeMember(resource.data.kinfolkId));
+      allow write: if false;
+    }
+
     match /invoices/{invoiceId} {
  // #1005: the kinfolk branch used to admit ANY holder of the household's claim,
  // and `syncKinfolkClaim` mints that claim for a SECONDARY too, so a member

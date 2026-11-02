@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { archiveKin, canDeleteKin, deleteKin, getMyKin, updateKin } from '../api/portal';
+import { archiveKin, canDeleteKin, deleteKin, getMyKin, requestKinRemoval, updateKin } from '../api/portal';
 import { BREEDS_QUERY, EMPTY_BREED_BANKS } from '../api/breeds';
-import type { KinPayloadPartial } from '../api/types';
+import type { DeleteKinResult, KinPayloadPartial } from '../api/types';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
@@ -22,6 +22,7 @@ import { BusyLabel } from '../components/Loading';
 import { confirmKinPhotoUpload, signKinPhotoUpload, validateKinPhotoFile } from '../api/kinPhotoApi';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
+import { formatRemovalDate, kinRemovalOption } from '../lib/kinRemoval';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -47,8 +48,13 @@ import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
  * #1314: "Delete this Kin" is the second row, shown only when the server says
  * the Kin has no history (no visit, KinTale, photo or admin record). The
  * check is one read of the `deleteKin` callable without `confirm`; the
- * confirm tap calls the same function with it. A Kin with history gets no
- * row here; its path is the request for removal (#1408), not built here.
+ * confirm tap calls the same function with it.
+ *
+ * #1408: a Kin WITH history gets "Request removal" in that slot instead: a
+ * confirm step with an optional reason, then the office archives it or
+ * declines. The same read says whether a request is already waiting (the row
+ * shows "Removal requested" and its date, with nothing to tap) or was
+ * declined (the office's note shows above the button, which asks again).
  */
 export function KinEdit() {
   const { kinId } = useParams({ from: '/kin/$kinId/edit' });
@@ -135,6 +141,23 @@ export function KinEdit() {
     enabled: found !== null,
   });
   const canDelete = eligibility.data?.canDelete === true;
+  const removal = eligibility.data ? kinRemovalOption(eligibility.data) : null;
+
+  // ABANDON, like the delete: a request is a deliberate tap the household
+  // watches finish. Pessimistic: the pending state appears only once the
+  // server has recorded the request, from the request the server returned.
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [removalReason, setRemovalReason] = useState('');
+  const removalRequest = usePortalMutation({
+    mutationFn: () => requestKinRemoval(kinId, removalReason, kinfolkId),
+    onSuccess: (res) => {
+      queryClient.setQueryData<DeleteKinResult>(['kinDelete', kinfolkId, kinId], (prev) =>
+        prev ? { ...prev, removalRequest: res.removalRequest } : prev,
+      );
+      setConfirmingRemoval(false);
+      setRemovalReason('');
+    },
+  }, { policy: 'abandon', what: 'this request' });
 
   // ABANDON. A hard delete is not replayed from a queue behind the
   // household's back: they watch it finish, or they tap it again.
@@ -224,12 +247,13 @@ export function KinEdit() {
   const errors = validateKinForm(current);
   const changes = buildKinChanges(kinDoc, current);
   const nothingToSave = Object.keys(changes).length === 0;
-  const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending && !archive.isPending && !del.isPending;
+  const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending && !archive.isPending && !del.isPending && !removalRequest.isPending;
   const memorial = kinDoc.status === 'noLongerWithUs';
   // One write at a time: the memorial action waits on a Save in flight and
   // the other way round, and the delete row waits on both.
-  const archiveBusy = archive.isPending || save.isPending || del.isPending;
+  const archiveBusy = archive.isPending || save.isPending || del.isPending || removalRequest.isPending;
   const deleteBusy = archiveBusy;
+  const removalBusy = archiveBusy || removalRequest.isPending;
 
   const set = (key: KinTextKey, value: string) => setForm((f) => (f ? { ...f, [key]: value } : f));
 
@@ -411,8 +435,8 @@ export function KinEdit() {
           </section>
 
           {/* KIN ACTIONS (#1311). Last on the page, after Save / Cancel, behind a
-              hairline. Memorial first, then delete (#1314, only without history);
-              #1408 adds "Request removal" below for a Kin with history. */}
+              hairline. Memorial first, then delete (#1314, only without history)
+              or "Request removal" (#1408, only with history). */}
           <hr className="divider" />
           <section className="kinactions" aria-label="Kin actions">
             <div className="kinaction" data-testid="kinaction-memorial">
@@ -482,7 +506,83 @@ export function KinEdit() {
               </div>
             )}
 
-            {/* #1408: "Request removal" for a Kin with history lands here. */}
+            {/* #1408: the removal options are the server's answer; say so while it loads. */}
+            {eligibility.isPending && (
+              <div className="kinaction" data-testid="kinaction-removal-loading">
+                <span className="sub" role="status">
+                  <BusyLabel>Checking removal options…</BusyLabel>
+                </span>
+              </div>
+            )}
+            {eligibility.isError && (
+              <div className="kinaction" data-testid="kinaction-removal-error">
+                <span className="sub">Couldn&rsquo;t check how this Kin can be removed.</span>
+                <button className="btn ghost" type="button" onClick={() => void eligibility.refetch()} disabled={eligibility.isFetching}>
+                  {eligibility.isFetching ? <BusyLabel>Checking…</BusyLabel> : 'Try again'}
+                </button>
+              </div>
+            )}
+
+            {/* #1408: a Kin with history is removed by the office, on request. */}
+            {removal?.kind === 'pending' && (
+              <div className="kinaction" data-testid="kinaction-removal">
+                <span className="sub" role="status">
+                  Removal requested
+                  {formatRemovalDate(removal.request.requestedAtMs) ? ` on ${formatRemovalDate(removal.request.requestedAtMs)}` : ''}.
+                </span>
+                {removal.request.reason && <span className="sub">Your reason: {removal.request.reason}</span>}
+              </div>
+            )}
+            {removal?.kind === 'request' && (
+              <div className="kinaction" data-testid="kinaction-removal">
+                {removal.declined && (
+                  <span className="sub" data-testid="kinaction-removal-declined">
+                    Removal declined
+                    {formatRemovalDate(removal.declined.resolvedAtMs) ? ` on ${formatRemovalDate(removal.declined.resolvedAtMs)}` : ''}.
+                    {removal.declined.resolutionNote ? ` ${removal.declined.resolutionNote}` : ''}
+                  </span>
+                )}
+                {confirmingRemoval ? (
+                  <>
+                    <span className="sub">
+                      Ask to have {kinDoc.name ?? 'this Kin'} removed? Visits, invoices and KinTales on file are kept.
+                    </span>
+                    <div className="field full">
+                      <label htmlFor="kin-removal-reason">Reason (optional)</label>
+                      <textarea
+                        id="kin-removal-reason"
+                        className="inp"
+                        maxLength={500}
+                        value={removalReason}
+                        onChange={(e) => setRemovalReason(e.target.value)}
+                        disabled={removalBusy}
+                      />
+                    </div>
+                    <div className="kinaction__choices">
+                      <button className="btn ghost" type="button" onClick={() => setConfirmingRemoval(false)} disabled={removalBusy}>
+                        Cancel
+                      </button>
+                      <button className="btn coralout" type="button" onClick={() => removalRequest.mutate()} disabled={removalBusy}>
+                        <MutationLabel mutation={removalRequest} busy="Sending…">
+                          Send request
+                        </MutationLabel>
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button className="btn coralout" type="button" onClick={() => setConfirmingRemoval(true)} disabled={removalBusy}>
+                    Request removal
+                  </button>
+                )}
+                {removalRequest.phase === 'failed' && (
+                  <span className="status err" role="alert">
+                    <span className="dot" />
+                    {removalRequest.error instanceof Error ? removalRequest.error.message : 'Could not send the request. Try again.'}
+                  </span>
+                )}
+                <OfflineMutationNotice phase={removalRequest.phase} what="this request" check="this Kin" />
+              </div>
+            )}
           </section>
         </div>
 

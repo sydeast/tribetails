@@ -313,6 +313,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   archiveKin: () => require('./portal/kinWrites'),
   // #1314: household self-delete of a Kin with no history (check + confirm).
   deleteKin: () => require('./portal/kinWrites'),
+  // #1408: household asks the office to remove a Kin with history.
+  requestKinRemoval: () => require('./portal/kinWrites'),
   setActiveTribe: () => require('./portal/setActiveTribe'),
   signKinPhotoUpload: () => require('./portal/signKinPhotoUpload'),
   confirmKinPhotoUpload: () => require('./portal/signKinPhotoUpload'),
@@ -509,6 +511,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // reschedule pair above writes both.
   listCancelRequests: () => require('./admin/cancelRequests'),
   resolveBookingCancellationRequest: () => require('./admin/cancelRequests'),
+  // #1408: the office's queue of Kin removal requests, and its archive / decline.
+  listKinRemovalRequests: () => require('./admin/kinRemovalRequests'),
+  resolveKinRemovalRequest: () => require('./admin/kinRemovalRequests'),
   listPendingBookingRequests: () => require('./admin/pendingBookingRequests'),
   // A3: the four operator status transitions on a flat kin_care_sessions row.
   // Sits beside rescheduleBooking because it owns the other half of the writes to

@@ -96,6 +96,9 @@ const TEST_SETTINGS = {
 vi.mock('../components/VisitRequestsSection', () => ({
   VisitRequestsSection: () => null,
 }));
+vi.mock('../components/KinRemovalRequests', () => ({
+  KinRemovalRequestsSection: () => null,
+}));
 vi.mock('../components/BookingDetailModal', () => ({
   BookingDetailModal: (props: {
     entry: { _id: string; kinfolkId?: string | undefined };

@@ -247,6 +247,27 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       ],
     },
   ],
+  'kin.removal.requested': [
+    {
+      trigger: 'A household asks the office to remove a Kin that has visits, KinTales, photos or records on file (#1408).',
+      source: 'src/portal/kinWrites.ts',
+      dataKeys: ['kinfolkId', 'kinId', 'flatKinId', 'kinName', 'reason', 'requestId'],
+    },
+  ],
+  'kin.removal.archived': [
+    {
+      trigger: 'An operator archives a Kin the household asked to remove (#1408). Visits, invoices and KinTales are kept.',
+      source: 'src/admin/kinRemovalRequests.ts',
+      dataKeys: ['kinfolkId', 'kinId', 'kinName', 'note', 'requestId'],
+    },
+  ],
+  'kin.removal.declined': [
+    {
+      trigger: 'An operator declines a household request to remove a Kin (#1408). The Kin stays on the profile.',
+      source: 'src/admin/kinRemovalRequests.ts',
+      dataKeys: ['kinfolkId', 'kinId', 'kinName', 'note', 'requestId'],
+    },
+  ],
   'kincare.cancel.declined': [
     {
       trigger:
