@@ -57,7 +57,7 @@ class ShellNavTest {
 
     @Test
     fun wideLinks_excludeKinAccountNotifications() {
-        assertFalse(ShellDestination.Kin in ShellNav.wideLinks, "Kin reachable via avatar menu, not a wide link")
+        assertFalse(ShellDestination.Kin in ShellNav.wideLinks, "Kin is reached from Tribe, not a wide link")
         assertFalse(ShellDestination.Account in ShellNav.wideLinks)
         assertFalse(ShellDestination.Notifications in ShellNav.wideLinks)
     }
@@ -190,13 +190,12 @@ class ShellNavTest {
 
     // ---- account menu ----
 
+    /** #1458: KinTales and The Kin left the menu. #1411 added About. */
     @Test
-    fun accountMenu_nonOperator_hasAccountTribeEditKinTalesNotificationsKinAboutSignOut() {
-        // TribeEdit and KinTales now live in the avatar menu (KinTales was pulled
-        // out of the top nav into here + the Tribe hub). #1411 adds About.
+    fun accountMenu_nonOperator_hasAccountTribeEditNotificationsAboutSignOut() {
         val menu = ShellNav.accountMenu(isOperator = false)
         assertEquals(
-            listOf("Account", "Edit Tribe Profile", "KinTales", "Notifications", "The Kin", "About", "Sign Out"),
+            listOf("Account", "Edit Tribe Profile", "Notifications", "About", "Sign Out"),
             menu.map { it.label },
         )
         assertFalse(menu.any { it is AccountMenuItem.BackToDirectory })
@@ -212,20 +211,32 @@ class ShellNavTest {
         assertEquals(AboutRoute, ShellDestination.About.route)
     }
 
+    /**
+     * #1458 (#1295 mobile map): Tales is a bar tab and a wide link, the kin
+     * roster lives on Tribe, so neither repeats in the menu. Both destinations
+     * still exist and still count as chrome.
+     */
     @Test
-    fun accountMenu_includesKinTales() {
-        val menu = ShellNav.accountMenu(isOperator = false)
-        assertTrue(
-            menu.any { it is AccountMenuItem.Open && it.destination == ShellDestination.KinTales },
-            "KinTales now lives in the avatar menu",
-        )
+    fun accountMenu_dropsKinTalesAndTheKin_butTheDestinationsStay() {
+        listOf(false, true).forEach { operator ->
+            val opens = ShellNav.accountMenu(isOperator = operator)
+                .filterIsInstance<AccountMenuItem.Open>()
+                .map { it.destination }
+            assertFalse(ShellDestination.KinTales in opens, "KinTales is a tab, not a menu item (operator=$operator)")
+            assertFalse(ShellDestination.Kin in opens, "The Kin is reached from Tribe, not the menu (operator=$operator)")
+        }
+        assertTrue(ShellDestination.KinTales in ShellNav.narrowTabs)
+        assertTrue(ShellDestination.KinTales in ShellNav.wideLinks)
+        assertEquals(KinRoute, ShellDestination.Kin.route)
+        assertTrue(isShellChromeDestination { it == KinRoute::class })
+        assertTrue(isShellChromeDestination { it == KinTalesRoute::class })
     }
 
     @Test
     fun accountMenu_operator_includesBackToDirectoryBeforeSignOut() {
         val menu = ShellNav.accountMenu(isOperator = true)
         assertEquals(
-            listOf("Account", "Edit Tribe Profile", "KinTales", "Notifications", "The Kin", "About", "Back to Directory", "Sign Out"),
+            listOf("Account", "Edit Tribe Profile", "Notifications", "About", "Back to Directory", "Sign Out"),
             menu.map { it.label },
         )
     }
@@ -237,9 +248,7 @@ class ShellNavTest {
             listOf(
                 ShellDestination.Account,
                 ShellDestination.TribeEdit,
-                ShellDestination.KinTales,
                 ShellDestination.Notifications,
-                ShellDestination.Kin,
                 ShellDestination.About,
             ),
             opens.map { it.destination },
