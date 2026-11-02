@@ -360,7 +360,7 @@ fun ServiceCard(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         ServiceDetailChip(icon = Lucide.Clock, text = service.displayDuration)
-                        ServiceDetailChip(icon = Lucide.DollarSign, text = "$${String.format("%.2f", service.basePrice)}")
+                        ServiceDetailChip(icon = Lucide.DollarSign, text = com.tribetails.auntieos.domain.formatUsd(service.basePrice))
                         if (service.category.isNotBlank()) {
                             ServiceDetailChip(icon = Lucide.Tag, text = service.category)
                         }
@@ -469,7 +469,7 @@ fun SupplementalServiceCard(
                     Spacer(Modifier.height(8.dp))
 
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        ServiceDetailChip(icon = Lucide.DollarSign, text = "$${String.format("%.2f", service.price)}")
+                        ServiceDetailChip(icon = Lucide.DollarSign, text = com.tribetails.auntieos.domain.formatUsd(service.price))
                         if (service.isStandaloneService) {
                             ServiceDetailChip(icon = Lucide.Star, text = "Standalone")
                         }
@@ -603,7 +603,7 @@ fun PricingRuleCard(
 
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = if (type.contains("PERCENTAGE")) "${amount.toInt()}%" else "$${String.format("%.2f", amount)}",
+                    text = if (type.contains("PERCENTAGE")) "${amount.toInt()}%" else com.tribetails.auntieos.domain.formatUsd(amount),
                     style = AuntieTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = AuntieTheme.colors.kinfolkOrange
@@ -666,7 +666,7 @@ fun PromoCodeCard(promoCode: PromoCode, onEdit: () -> Unit = {}) {
                 text = if (promoCode.discountType == DiscountType.PERCENTAGE) {
                     "${promoCode.discountAmount.toInt()}% off"
                 } else {
-                    "$${String.format("%.2f", promoCode.discountAmount)} off"
+                    com.tribetails.auntieos.domain.formatUsd(promoCode.discountAmount) + " off"
                 },
                 style = AuntieTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,

@@ -608,7 +608,7 @@ fun pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
 
 /** A clean plain-text quote for the clipboard / share sheet. Byte-matched to web. */
 fun quoteText(input: QuoteInput): String {
-    fun money(n: Double): String = "$" + String.format(Locale.US, "%.2f", n)
+    fun money(n: Double): String = formatUsd(n)
     val pkg = input.pkg
     val days = input.days
     val lines = mutableListOf("TribeTails — Coverage Package", "")

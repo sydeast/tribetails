@@ -156,7 +156,7 @@ class InvoiceDetailPaymentUnitsTest {
         // The server now resolves it and answers in cents.
         mount(Result.success(ledger(ledgerPayments = listOf(ledgerRow(amountCents = 13750L)))))
         rule.onNodeWithText("$137.50").assertExists()
-        rule.onNodeWithText("$13750.00").assertDoesNotExist()
+        rule.onNodeWithText("$13,750.00").assertDoesNotExist()
     }
     @Test
     fun `the gross tip is inside the amount, not added to it`() {
@@ -181,7 +181,7 @@ class InvoiceDetailPaymentUnitsTest {
         mount(Result.success(ledger(unlinked = listOf(ledgerRow(amountCents = 13750L)))))
         rule.onNodeWithText("NOT INVOICE-LINKED").assertExists()
         rule.onNodeWithText("$137.50").assertExists()
-        rule.onNodeWithText("$13750.00").assertDoesNotExist()
+        rule.onNodeWithText("$13,750.00").assertDoesNotExist()
     }
     /**
      * THE UNREADABLE ROW, which is a different fact from a payment of nothing.
@@ -242,7 +242,7 @@ class InvoiceDetailPaymentUnitsTest {
         // the callable is unhealthy.
         mount(Result.failure(RuntimeException("getInvoiceLedger failed: unavailable")))
         rule.onNodeWithText("$137.50").assertDoesNotExist()
-        rule.onNodeWithText("$13750.00").assertDoesNotExist()
+        rule.onNodeWithText("$13,750.00").assertDoesNotExist()
         rule.onNodeWithText("NOT INVOICE-LINKED").assertDoesNotExist()
     }
 

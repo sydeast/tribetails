@@ -646,7 +646,8 @@ private fun hhmm(h: Int, m: Int): String = "%02d:%02d".format(h, m)
 
 /** Drop a trailing ".0" so "30.0" shows as "30" while "22.5" stays "22.5". */
 private fun numText(d: Double): String = if (d == floor(d)) d.toLong().toString() else d.toString()
-private fun money(d: Double): String = String.format(Locale.US, "%.2f", d)
+/** "1,234.50": the digits of a dollar amount, thousands grouped (#1488). Call sites add the "$". */
+private fun money(d: Double): String = com.tribetails.auntieos.domain.usdDigits(d)
 private fun pinnedTimeLabel(p: PinnedTime): String {
     val mins = timeToMinutes(p.time) ?: return ""
     return minutesToTime(mins.toDouble())

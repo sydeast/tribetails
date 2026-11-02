@@ -916,7 +916,7 @@ private fun InvoiceLine(inv: Invoice, last: Boolean) {
                 color = c.textDim,
                 modifier = Modifier.weight(1f),
             )
-            Text("$" + "%.2f".format(amount), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            Text(com.tribetails.auntieos.domain.formatUsd(amount), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
             AuntieStatusPill(label = label, tone = tone, mono = true)
         }
         if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSoft))

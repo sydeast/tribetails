@@ -280,7 +280,7 @@ fun AddSupplementalServiceDialog(
                             Spacer(Modifier.width(8.dp))
                             Column {
                                 Text(service.title, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
-                                Text("$${String.format("%.2f", service.basePrice)} • ${service.displayDuration}", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f))
+                                Text(com.tribetails.auntieos.domain.formatUsd(service.basePrice) + " • ${service.displayDuration}", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f))
                             }
                         }
                     }

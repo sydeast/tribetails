@@ -1923,12 +1923,4 @@ private fun statusTriple(
 }
 
 /** Two-decimal currency formatting, mirrored from the web InvoiceFilters helper. */
-private fun formatMoney(amount: Double): String {
-    val abs     = if (amount < 0) -amount else amount
-    val cents   = ((abs * 100) + 0.5).toLong()
-    val whole   = cents / 100
-    val frac    = cents % 100
-    val fracStr = if (frac < 10) "0$frac" else "$frac"
-    val sign    = if (amount < 0) "-" else ""
-    return "$sign\$$whole.$fracStr"
-}
+private fun formatMoney(amount: Double): String = com.tribetails.auntieos.domain.formatUsd(amount)

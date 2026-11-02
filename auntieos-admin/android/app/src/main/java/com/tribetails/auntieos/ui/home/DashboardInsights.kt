@@ -314,12 +314,8 @@ fun upcomingExpirations(
 /** The most recent [limit] (default 5) expenses, newest-first by occurredAt. Mirrors web. */
 fun recentExpenses(list: List<Expense>, limit: Int = 5): List<Expense> =
     list.sortedByDescending { it.occurredAt }.take(limit.coerceAtLeast(0))
-/** Cents to a "$12.34" USD label (negatives keep a leading minus). Mirrors web formatCents. */
-fun formatCents(cents: Int): String {
-    val sign = if (cents < 0) "-" else ""
-    val abs = kotlin.math.abs(cents)
-    return "$sign\$${abs / 100}.${(abs % 100).toString().padStart(2, '0')}"
-}
+/** Cents to a "$12.34" / "$1,234.50" USD label (negatives keep a leading minus). Mirrors web formatCents. */
+fun formatCents(cents: Int): String = com.tribetails.auntieos.domain.formatUsdCents(cents.toLong())
 // ── AO-41 supplies tracker ──────────────────────────────────────────────────
 /**
  * Supplies at or below their reorder par (onHand <= par), most-depleted first

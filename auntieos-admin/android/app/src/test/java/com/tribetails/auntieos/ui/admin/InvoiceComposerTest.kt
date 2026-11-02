@@ -88,7 +88,7 @@ class InvoiceComposerTest {
             mapOf("s1" to "100000.01"),
         )
         assertNotNull(out.error)
-        assertTrue(out.error!!.contains("cannot be more than $100000.00"))
+        assertTrue(out.error!!.contains("cannot be more than $100,000.00"))
     }
 
     @Test
