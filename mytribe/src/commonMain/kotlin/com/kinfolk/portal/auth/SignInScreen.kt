@@ -58,7 +58,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * Tribe Tails sign-in. Foundation + Kin* primitives only — no M3 visual
+ * MyTribe sign-in. Foundation + Kin* primitives only — no M3 visual
  * components. Per `feedback_no_m3.md`: M3 kept ONLY for Text/Icon/DropdownMenu.
  *
  * `socialLinks` is caller-supplied so the screen doesn't fabricate URLs.

@@ -30,6 +30,11 @@
  * rather than mirrored as blanks: an all-blank card is what a deleted settings
  * document earns, and that is the trigger's call, not a backfill's.
  *
+ * Only the canonical `business_settings/business_settings` is read. The legacy
+ * `business_settings/singleton` that `repairBusinessTimeZone.ts` falls back to
+ * is NOT: the trigger watches the canonical document alone, so a card built
+ * from the legacy one would go stale the moment either document changed.
+ *
  * Modes:
  *   default        DRY RUN. Prints the plan and writes nothing.
  *   --allow-prod   applies.

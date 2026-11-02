@@ -110,7 +110,7 @@ export function SignIn() {
             My<span className="grad">Tribe</span>
           </div>
           {businessName !== '' && (
-            <div className="kick" data-testid="business-byline">
+            <div className="kick byline" data-testid="business-byline">
               by {businessName}
             </div>
           )}
