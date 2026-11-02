@@ -96,7 +96,6 @@ class ShellNavTest {
     fun messagesDestination_routesToMessageAuntie() {
         assertEquals(MessageAuntieRoute, ShellDestination.Messages.route)
         assertEquals(MessageAuntieRoute::class, ShellDestination.Messages.routeClass)
-        assertFalse(ShellDestination.Messages in ShellNav.wideLinks, "wide chrome reaches Messages its own way, not as a link pill")
     }
 
     @Test

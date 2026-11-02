@@ -191,6 +191,11 @@ fun AppNavHost(
     // destination, the next tab tap would save that stack and a later Schedule
     // tap would restore it with Messages still on top, the old "Account
     // Settings locks the page" shape. Back from Messages lands on Home.
+    //
+    // saveState is hardcoded true because both callers (the Home quick-start
+    // and the Schedule CTA) sit on chrome screens. A caller on a detail or
+    // wizard leaf must not use this: saving from a leaf is the corrupt stack
+    // TabShell.navigateTab guards against with isShellChromeDestination.
     fun openMessages() {
         navController.navigate(MessageAuntieRoute) {
             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
