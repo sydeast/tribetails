@@ -1,6 +1,30 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+const state = vi.hoisted(() => ({
+  comments: [] as Array<Record<string, unknown>>,
+  docs: {} as Record<string, Record<string, unknown> | undefined>,
+}));
+vi.mock('../src/lib/firestoreAdmin', () => {
+  const ref = (path: string) => ({
+    path,
+    get: async () => ({ data: () => state.docs[path] }),
+  });
+  return {
+    db: () => ({
+      collection: () => ({
+        orderBy: () => ({
+          limit: () => ({ get: async () => ({ docs: state.comments.map((c) => ({ data: () => c })) }) }),
+        }),
+      }),
+      doc: ref,
+      getAll: async (...refs: Array<{ path: string }>) =>
+        refs.map((r) => ({ data: () => state.docs[r.path] })),
+    }),
+  };
+});
 import {
   toPublicComment,
+  householdSignature,
+  listPublicComments,
   ANONYMOUS_GUEST_NAME,
   FAMILY_NAME,
 } from '../src/share/sharedKinTaleComments';
@@ -84,5 +108,45 @@ describe('toPublicComment', () => {
       toPublicComment({ authorRole: 'guest', guestName: 'M', body: 'hi', createdAtMs: 12 })
         ?.createdAtMs,
     ).toBe(12);
+  });
+});
+
+describe('household signature (#1407)', () => {
+  it('signs a two-part name with first name and last initial', () => {
+    expect(householdSignature('Pat Rivera')).toBe('Pat R.');
+    expect(householdSignature('  pat   rivera  ')).toBe('pat R.');
+    expect(householdSignature('Mary Ann van der Berg')).toBe('Mary B.');
+  });
+  it('shows a single-token name alone', () => {
+    expect(householdSignature('Pat')).toBe('Pat');
+  });
+  it('returns null for an empty or non-string name', () => {
+    expect(householdSignature('   ')).toBeNull();
+    expect(householdSignature(undefined)).toBeNull();
+  });
+  it('uses the resolved signature for a kinfolk comment and falls back to the family', () => {
+    expect(toPublicComment({ authorRole: 'kinfolk', body: 'x' }, 'Pat R.')?.name).toBe('Pat R.');
+    expect(toPublicComment({ authorRole: 'kinfolk', body: 'x' }, null)?.name).toBe(FAMILY_NAME);
+  });
+  it('never applies a household signature to staff or to a guest', () => {
+    expect(toPublicComment({ authorRole: 'admin', body: 'x' }, 'Pat R.')?.name).toBe(FAMILY_NAME);
+    expect(toPublicComment({ authorRole: 'guest', guestName: 'Marta', body: 'x' }, 'Pat R.')?.name).toBe('Marta');
+  });
+  it('resolves the three name shapes end to end from the member record', async () => {
+    state.docs = {
+      'kin_care_reports/t1': { kinfolkId: 'k1' },
+      'families/k1/members/u-two': { displayName: 'Pat Rivera' },
+      'families/k1/members/u-one': { displayName: 'Sam' },
+      'families/k1/members/u-empty': { displayName: '  ' },
+    };
+    state.comments = [
+      { authorRole: 'kinfolk', authorUid: 'u-two', body: 'a', createdAtMs: 1 },
+      { authorRole: 'kinfolk', authorUid: 'u-one', body: 'b', createdAtMs: 2 },
+      { authorRole: 'kinfolk', authorUid: 'u-empty', body: 'c', createdAtMs: 3 },
+    ];
+    const out = await listPublicComments('t1');
+    expect(out.map((c) => c.name)).toEqual(['Pat R.', 'Sam', FAMILY_NAME]);
+    expect(JSON.stringify(out)).not.toContain('u-two');
+    expect(JSON.stringify(out)).not.toContain('Rivera');
   });
 });
