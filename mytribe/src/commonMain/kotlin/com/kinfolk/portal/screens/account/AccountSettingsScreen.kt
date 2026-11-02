@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -35,6 +36,8 @@ import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
+import com.kinfolk.portal.components.KinInfoTip
+import com.kinfolk.portal.components.LocalBusinessName
 import com.kinfolk.portal.components.KinfolkAvatar
 import com.kinfolk.portal.components.SchemaFormRenderer
 import com.kinfolk.portal.components.ScreenHeader
@@ -54,6 +57,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
+/** #1476: the sentence that sat under the Secondary Kinfolk title, now behind its info tip. */
+const val SECONDARY_KINFOLK_TIP = "A backup person we can reach if we cannot reach you during a visit."
 @Composable
 fun AccountSettingsScreen(
     familyName: String,
@@ -318,7 +323,12 @@ fun AccountSettingsScreen(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                     // #1469: web's card title under the "Recovery Contacts" section label.
-                    Text("Secondary Kinfolk", style = type.heritageTitle)
+                    // #1476: the explanation sits behind an info tip, not a subtitle.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Secondary Kinfolk", style = type.heritageTitle)
+                        Spacer(Modifier.width(KinfolkSpacing.xs))
+                        KinInfoTip(SECONDARY_KINFOLK_TIP)
+                    }
                     KinField(
                         value = backupEmail,
                         onValueChange = { backupEmail = it },
@@ -499,6 +509,15 @@ fun AccountSettingsScreen(
             }
         }
 
+        // #1476: web's title-only "Cared for by" card. The business name is the
+        // one the shell footer reads; unset reads "Your Auntie", as on web.
+        Text("Cared for by", style = type.heritageSection, modifier = Modifier.padding(start = KinfolkSpacing.l, end = KinfolkSpacing.l, top = KinfolkSpacing.m))
+        GlassCard(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
+            contentPadding = PaddingValues(KinfolkSpacing.l),
+        ) {
+            Text(LocalBusinessName.current.trim().ifEmpty { "Your Auntie" }, style = type.heritageTitle)
+        }
         if (accountSchema != null) {
             (phoneError ?: backupPhoneError)?.let {
                 Text(it, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral), modifier = Modifier.padding(horizontal = KinfolkSpacing.l))

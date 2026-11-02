@@ -6,12 +6,15 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.runtime.CompositionLocalProvider
+import com.kinfolk.portal.components.LocalBusinessName
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
@@ -40,6 +43,37 @@ class AccountSettingsScreenTest {
         })
     }
 
+    /**
+     * #1476: no explanatory sentence under a card title. The backup-person note
+     * sits behind the info tip beside "Secondary Kinfolk" (reachable by its
+     * description), and the title-only "Cared for by" card names the business.
+     */
+    @Test
+    fun cardTitles_carryNoSentence_secondaryKinfolkHasTip_andCaredForByNamesBusiness() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubAccount(fake)
+        setThemedContent {
+            CompositionLocalProvider(LocalBusinessName provides "Tribe Tails Pet Care") {
+                AccountSettingsScreen("The Foster", PortalApi(fake))
+            }
+        }
+        waitForIdle()
+        onNodeWithText("Secondary Kinfolk").assertExists()
+        onNodeWithContentDescription(SECONDARY_KINFOLK_TIP).assertExists()
+        onNodeWithText(SECONDARY_KINFOLK_TIP).assertDoesNotExist()
+        onNodeWithText("Cared for by").assertExists()
+        onNodeWithText("Tribe Tails Pet Care").assertExists()
+        onNodeWithText("Your care team can see your profile name", substring = true).assertDoesNotExist()
+    }
+    @Test
+    fun caredForBy_unsetBusinessName_readsYourAuntie() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubAccount(fake)
+        setThemedContent { AccountSettingsScreen("The Foster", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Cared for by").assertExists()
+        onNodeWithText("Your Auntie").assertExists()
+    }
     @Test
     fun load_rendersAllSections() = runComposeUiTest {
         val fake = FakeFunctionsClient()
