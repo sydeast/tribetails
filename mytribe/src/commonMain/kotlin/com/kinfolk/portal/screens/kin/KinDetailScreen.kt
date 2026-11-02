@@ -2,7 +2,6 @@ package com.kinfolk.portal.screens.kin
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -48,8 +47,13 @@ import com.kinfolk.portal.theme.LocalKinfolkTypography
  * Kin profile, per ui-ideas/mytribe-kin-detail-2026-05-31.html: crumb row
  * (back + "Profile" + Edit), a hero card with the big round photo, then a
  * 1.6fr/1fr two-column body at the 880dp shell breakpoint (About + Care on the
- * left; Sitter Notes, Emergency Notes, Memorial on the right). Narrow widths
- * stack the same cards in one column.
+ * left; Sitter Notes and Emergency Notes on the right). Narrow widths stack the
+ * same cards in one column.
+ *
+ * #1311: this screen reads only. The mockup's Memorial card is gone by ruling;
+ * "Mark No Longer With Us" / "Restore as Active" sit at the bottom of
+ * [AddEditKinDialog] behind a confirm step. The "In our hearts" pill in the
+ * hero stays.
  */
 @Composable
 fun KinDetailScreen(
@@ -57,7 +61,6 @@ fun KinDetailScreen(
     kin: Kin,
     onBack: () -> Unit,
     onEdit: () -> Unit = {},
-    onArchive: (restore: Boolean) -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val memorial = kin.status == KinStatus.NoLongerWithUs
@@ -120,7 +123,6 @@ fun KinDetailScreen(
                     body = kin.sitterNotes,
                 )
                 EmergencyCard(kin.emergencyNotes)
-                MemorialCard(active = kin.status == KinStatus.Active, onArchive = onArchive)
             }
             if (wide) {
                 Row(
@@ -298,71 +300,5 @@ private fun EmergencyCard(notes: String?) {
             style = LocalKinfolkTypography.current.heritageSection.copy(color = KinfolkBrand.SnuggleCoral),
         )
         Text(notes, style = type.sansBody)
-    }
-}
-
-@Composable
-private fun MemorialCard(active: Boolean, onArchive: (restore: Boolean) -> Unit) {
-    val type = LocalKinfolkTypography.current
-    GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.l)) {
-        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-            SectLabel("MEMORIAL", color = KinfolkBrand.FamilyPurple)
-            if (active) {
-                Text("Mark a passing", style = type.heritageSection)
-                Text(
-                    "The profile stays in your Kin list with a memorial label.",
-                    style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
-                )
-                SolidPillButton(
-                    label = "Mark No Longer With Us",
-                    color = KinfolkBrand.FamilyPurple,
-                    onClick = { onArchive(false) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                Text(
-                    "Bring this profile back to the active Kin list.",
-                    style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
-                )
-                OutlinePillButton(
-                    label = "Restore as Active",
-                    color = KinfolkBrand.SnuggleCoral,
-                    onClick = { onArchive(true) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-    }
-}
-
-// ---- Small brand buttons (purple solid / coral outline, per mockup) ----
-
-@Composable
-private fun SolidPillButton(label: String, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val type = LocalKinfolkTypography.current
-    Box(
-        modifier = modifier
-            .clip(KinfolkShapes.pill)
-            .background(color)
-            .clickable { onClick() }
-            .padding(horizontal = KinfolkSpacing.l, vertical = 13.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, style = type.sansButton)
-    }
-}
-
-@Composable
-private fun OutlinePillButton(label: String, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val type = LocalKinfolkTypography.current
-    Box(
-        modifier = modifier
-            .clip(KinfolkShapes.pill)
-            .border(1.dp, color.copy(alpha = 0.5f), KinfolkShapes.pill)
-            .clickable { onClick() }
-            .padding(horizontal = KinfolkSpacing.l, vertical = 13.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, style = type.sansButton.copy(color = color))
     }
 }

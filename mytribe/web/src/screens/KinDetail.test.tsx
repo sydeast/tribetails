@@ -8,7 +8,7 @@ import type { GetMyKinResult, KinDto } from '../api/types';
 const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn<() => Promise<GetMyKinResult>>(),
 }));
-vi.mock('../api/portal', () => ({ getMyKin: () => mocks.getMyKin(), archiveKin: vi.fn() }));
+vi.mock('../api/portal', () => ({ getMyKin: () => mocks.getMyKin() }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
 vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
@@ -62,5 +62,24 @@ describe('KinDetail shared facts (#1310)', () => {
     await screen.findByText('Spayed / neutered');
     expect(screen.getByText('No')).toBeInTheDocument();
     expect(screen.getAllByText('Not set').length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('KinDetail memorial (#1311)', () => {
+  it('has no Memorial card, Suggestion badge or mark action for an active kin', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin()] });
+    renderScreen();
+    await screen.findByText('Buddy');
+    expect(screen.queryByText('Memorial')).toBeNull();
+    expect(screen.queryByText('Suggestion')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Mark No Longer With Us/ })).toBeNull();
+    expect(screen.queryByText('In our hearts')).toBeNull();
+  });
+  it('keeps the "In our hearts" band for a memorial kin but offers no Restore here', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ status: 'noLongerWithUs' })] });
+    renderScreen();
+    expect(await screen.findByText(/In our hearts/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Restore as Active/ })).toBeNull();
+    expect(screen.queryByText('Memorial')).toBeNull();
   });
 });

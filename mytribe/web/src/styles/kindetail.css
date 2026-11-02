@@ -47,6 +47,10 @@
   background: rgba(116, 83, 138, .12); }
 .memcard .row b { font-size: 14.5px; font-weight: 700; }
 .memcard .row small { display: block; font-size: 12.5px; color: var(--navy-muted); margin-top: 3px; line-height: 1.45; }
+/* #1311: Kin actions at the foot of the edit form, one row per action */
+.kinactions { display: flex; flex-direction: column; gap: 14px; }
+.kinaction { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.kinaction__choices { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .btn.purple { background: var(--purple); box-shadow: var(--shadow-card); }
 .btn.coralout { background: transparent; color: var(--coral); border: 1px solid rgba(213, 83, 90, .4); box-shadow: none; }
 .btn.coralout:hover { background: rgba(213, 83, 90, .08); }
