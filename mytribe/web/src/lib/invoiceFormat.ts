@@ -29,10 +29,17 @@ type InvoiceStatus = InvoiceDto['status'];
 export function offersPayment(inv: Pick<InvoiceDto, 'status' | 'amountDue' | 'isPaid'>): boolean {
   return inv.status === 'open' && inv.amountDue > 0 && !inv.isPaid;
 }
-/** "$36.00" / "-$12.50" from a dollars-denominated amount. */
+const USD_DIGITS = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+/**
+ * "$36.00" / "-$12.50" / "$1,234.50" from a dollars-denominated amount.
+ * Groups thousands, matching the Android portal's `formatUsd` (#1484).
+ */
 export function formatUsd(dollars: number): string {
   const sign = dollars < 0 ? '-' : '';
-  return `${sign}$${Math.abs(dollars).toFixed(2)}`;
+  return `${sign}$${USD_DIGITS.format(Math.abs(dollars))}`;
 }
 
 /** "$36.00" from a cents-denominated amount (creditAmountCents, accountBalanceCents). */

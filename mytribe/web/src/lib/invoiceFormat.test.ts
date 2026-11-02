@@ -30,12 +30,23 @@ describe('formatUsd', () => {
   it('formats zero', () => {
     expect(formatUsd(0)).toBe('$0.00');
   });
+  it('leaves three-digit dollars ungrouped', () => {
+    expect(formatUsd(999.99)).toBe('$999.99');
+  });
+  it('groups thousands, matching the Android portal', () => {
+    expect(formatUsd(1000)).toBe('$1,000.00');
+    expect(formatUsd(1234.5)).toBe('$1,234.50');
+    expect(formatUsd(-1234.5)).toBe('-$1,234.50');
+    expect(formatUsd(1234567.89)).toBe('$1,234,567.89');
+    expect(formatUsd(1_000_000)).toBe('$1,000,000.00');
+  });
 });
 
 describe('formatCentsUsd', () => {
   it('converts cents to dollars', () => {
     expect(formatCentsUsd(3600)).toBe('$36.00');
     expect(formatCentsUsd(150)).toBe('$1.50');
+    expect(formatCentsUsd(123450)).toBe('$1,234.50');
   });
 });
 
