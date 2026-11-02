@@ -5,6 +5,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PortalNav } from './PortalNav';
+import { getMyHome } from '../api/portal';
 
 /**
  * #538, "the upper right icon cannot be the signout. how else will they get
@@ -77,20 +78,44 @@ describe('PortalNav avatar menu (#1309, was #538)', () => {
     expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Sign out' })).toBeNull();
   });
-  it('offers Account, Edit Tribe Profile, Notification settings, About and Sign out when opened', async () => {
+  it('offers Account, Invoices, Edit Tribe Profile, Notification settings, About and Sign out when opened', async () => {
     renderNav();
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
     expect(screen.getByRole('button', { name: 'Account menu', expanded: true })).toBeTruthy();
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
     // #1454: Edit Tribe Profile joins the menu between Account and Notification
-    // settings. #1411: About sits between the settings links and Sign out, the
-    // same order as Android's ShellNav.accountMenu.
-    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About', 'Sign out']);
+    // settings. #1411: About sits between the settings links and Sign out.
+    // #1457: Invoices follows Account for billing access, which this mock's
+    // getMyHome answer (no billingAccess field) counts as granted. The same
+    // order as Android's ShellNav.accountMenu.
+    expect(items.map((el) => el.textContent)).toEqual([
+      'Account',
+      'Invoices',
+      'Edit Tribe Profile',
+      'Notification settings',
+      'About',
+      'Sign out',
+    ]);
     expect(items[0]).toHaveAttribute('href', '/account');
-    expect(items[1]).toHaveAttribute('href', '/tribe/edit');
-    expect(items[2]).toHaveAttribute('href', '/account/notifications');
-    expect(items[3]).toHaveAttribute('href', '/about');
-    expect(items[4]?.tagName).toBe('BUTTON');
+    expect(items[1]).toHaveAttribute('href', '/invoices');
+    expect(items[2]).toHaveAttribute('href', '/tribe/edit');
+    expect(items[3]).toHaveAttribute('href', '/account/notifications');
+    expect(items[4]).toHaveAttribute('href', '/about');
+    expect(items[5]?.tagName).toBe('BUTTON');
+  });
+
+  /** #1457: the menu's Invoices item follows getMyHome.billingAccess, the same answer as the desktop link. */
+  it('leaves Invoices out of the menu and the desktop nav without billing access', async () => {
+    vi.mocked(getMyHome).mockResolvedValueOnce({
+      businessLogoUrl: undefined,
+      businessName: 'Tribe Tails Pet Care',
+      billingAccess: false,
+    } as unknown as Awaited<ReturnType<typeof getMyHome>>);
+    renderNav();
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Invoices' })).toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
+    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About', 'Sign out']);
   });
   it('signs out only from the Sign out item', async () => {
     renderNav();

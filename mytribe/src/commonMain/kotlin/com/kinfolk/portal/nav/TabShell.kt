@@ -84,7 +84,10 @@ fun TabShell(
     banner: PortalBanner = PortalBanner(),
     bannerDismissedByUser: Boolean = false,
     onDismissBannerPerUser: ((bannerId: String) -> Unit)? = null,
-    /** #1005: false hides the Invoices link. See [ShellNav.wideLinksFor]. */
+    /**
+     * #1005: false hides the Invoices link. See [ShellNav.wideLinksFor].
+     * #1457: and the avatar menu's Invoices item, see [ShellNav.accountMenu].
+     */
     billingAccess: Boolean = true,
     content: @Composable (Modifier) -> Unit,
 ) {
@@ -180,6 +183,7 @@ fun TabShell(
                     links = wideLinks,
                     active = active,
                     isOperator = onBackToDirectory != null,
+                    billingAccess = billingAccess,
                     onLink = { onTabLink(it) },
                     onBell = { navigateMenu(NotificationsRoute) },
                     onMenuItem = ::onMenuItem,
@@ -203,6 +207,7 @@ fun TabShell(
                         familyName = familyName,
                         logoUrl = logoUrl,
                         isOperator = onBackToDirectory != null,
+                        billingAccess = billingAccess,
                         onBell = { navigateMenu(NotificationsRoute) },
                         onMenuItem = ::onMenuItem,
                     )
@@ -234,6 +239,7 @@ private fun WideTopNav(
     links: List<ShellDestination>,
     active: ShellDestination?,
     isOperator: Boolean,
+    billingAccess: Boolean,
     onLink: (ShellDestination) -> Unit,
     onBell: () -> Unit,
     onMenuItem: (AccountMenuItem) -> Unit,
@@ -265,6 +271,7 @@ private fun WideTopNav(
                 AvatarMenuButton(
                     familyName = familyName,
                     isOperator = isOperator,
+                    billingAccess = billingAccess,
                     onMenuItem = onMenuItem,
                 )
             }
@@ -315,6 +322,7 @@ private fun NarrowTopBar(
     familyName: String,
     logoUrl: String?,
     isOperator: Boolean,
+    billingAccess: Boolean,
     onBell: () -> Unit,
     onMenuItem: (AccountMenuItem) -> Unit,
 ) {
@@ -333,6 +341,7 @@ private fun NarrowTopBar(
             AvatarMenuButton(
                 familyName = familyName,
                 isOperator = isOperator,
+                billingAccess = billingAccess,
                 onMenuItem = onMenuItem,
             )
         }
@@ -447,6 +456,7 @@ private fun BellButton(onClick: () -> Unit) {
 private fun AvatarMenuButton(
     familyName: String,
     isOperator: Boolean,
+    billingAccess: Boolean,
     onMenuItem: (AccountMenuItem) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
@@ -469,7 +479,7 @@ private fun AvatarMenuButton(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
         ) {
-            ShellNav.accountMenu(isOperator).forEach { item ->
+            ShellNav.accountMenu(isOperator, billingAccess).forEach { item ->
                 DropdownMenuItem(
                     text = { Text(item.label, style = type.sansBody) },
                     onClick = {

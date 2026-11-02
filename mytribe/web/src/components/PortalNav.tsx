@@ -82,7 +82,9 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
   });
   // #1005: the same cached answer says whether this member has billing
   // access. Without it the Invoices link is not drawn at all.
-  const navLinks = billingAccessOf(branding.data) ? NAV_LINKS : NAV_LINKS.filter((l) => l.id !== 'invoices');
+  // #1457: the avatar menu's Invoices item follows the same answer.
+  const billingAccess = billingAccessOf(branding.data);
+  const navLinks = billingAccess ? NAV_LINKS : NAV_LINKS.filter((l) => l.id !== 'invoices');
   // #1290: one source for the avatar on every screen (see lib/identity.ts).
   const { initial } = usePortalIdentity();
   const { signOut, signingOut } = useSignOut();
@@ -123,7 +125,7 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
                 (Account, Notification settings, Sign out). Sign out is its own
                 item the person has to open the menu to reach, which is the
                 difference from the bare sign-out div #538 removed. */}
-            <AvatarMenu initial={initial} onSignOut={signOut} signingOut={signingOut} />
+            <AvatarMenu initial={initial} onSignOut={signOut} signingOut={signingOut} billingAccess={billingAccess} />
           </div>
         </div>
       </nav>

@@ -175,7 +175,7 @@ describe('About (#1411)', () => {
 
 describe('About in the avatar menu (#1411)', () => {
   it('is an item between Notification settings and Sign out, linking to /about', async () => {
-    render(<AvatarMenu initial="J" onSignOut={() => {}} signingOut={false} />);
+    render(<AvatarMenu initial="J" onSignOut={() => {}} signingOut={false} billingAccess={false} />);
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
     expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About', 'Sign out']);

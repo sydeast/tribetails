@@ -15,8 +15,19 @@ import { BusyLabel } from './Loading';
  * every width. At phone width it is the only way into the editor, since the
  * Tribe page's own button is hidden there; the same entry the Android account
  * menu has had (TabRoute.kt accountMenu).
+ *
+ * #1457 (#1295 mobile map): Invoices sits between Account and Edit Tribe
+ * Profile for a member with billing access (`billingAccessOf(home)`), at every
+ * width. On a phone it is the one door to the bills; the desktop nav keeps its
+ * own Invoices link as well. Android's accountMenu takes the same flag.
  */
-export function AvatarMenu(props: { initial: string; onSignOut: () => void; signingOut: boolean }) {
+export function AvatarMenu(props: {
+  initial: string;
+  onSignOut: () => void;
+  signingOut: boolean;
+  /** `billingAccessOf(home)`: false leaves Invoices out of the menu. */
+  billingAccess: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -55,6 +66,11 @@ export function AvatarMenu(props: { initial: string; onSignOut: () => void; sign
           <Link role="menuitem" to="/account" onClick={() => setOpen(false)}>
             Account
           </Link>
+          {props.billingAccess && (
+            <Link role="menuitem" to="/invoices" onClick={() => setOpen(false)}>
+              Invoices
+            </Link>
+          )}
           <Link role="menuitem" to="/tribe/edit" onClick={() => setOpen(false)}>
             Edit Tribe Profile
           </Link>

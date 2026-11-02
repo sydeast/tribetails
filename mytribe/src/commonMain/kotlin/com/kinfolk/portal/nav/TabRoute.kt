@@ -130,9 +130,15 @@ object ShellNav {
      * and a wide link, and the kin roster lives on Tribe, so both were duplicate
      * doors. The destinations stay: the bar, the wide links and Tribe's
      * "Manage" still route to them.
+     *
+     * #1457 (#1295 mobile map): Invoices sits between Account and Edit Tribe
+     * Profile for a member with billing access, at every width, the same as
+     * web's AvatarMenu. Without billing access it is not drawn, the way
+     * [wideLinksFor] drops the wide link.
      */
-    fun accountMenu(isOperator: Boolean): List<AccountMenuItem> = buildList {
+    fun accountMenu(isOperator: Boolean, billingAccess: Boolean): List<AccountMenuItem> = buildList {
         add(AccountMenuItem.Open(ShellDestination.Account))
+        if (billingAccess) add(AccountMenuItem.Open(ShellDestination.Invoices))
         add(AccountMenuItem.Open(ShellDestination.TribeEdit))
         add(AccountMenuItem.Open(ShellDestination.Notifications))
         // #1411: the business's hours, number and privacy policy, before the
