@@ -79,7 +79,7 @@ function weeklyHoursOf(hours: unknown): BusinessWeekdayHoursDto[] {
   const out: BusinessWeekdayHoursDto[] = [];
   for (const [weekday, name] of WEEKDAY_NAMES.entries()) {
     const day = businessHoursForDayName(hours, name);
-    if (day.kind === 'unreadable') return [];
+    if (day.kind === 'unreadable' || day.kind === 'unknown') return [];
     out.push(
       day.kind === 'open'
         ? { weekday, open: true, startTime: day.startHHmm, endTime: day.endHHmm }

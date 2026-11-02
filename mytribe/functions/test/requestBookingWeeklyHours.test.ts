@@ -127,6 +127,12 @@ describe('requestBooking: business hours (#1382)', () => {
     expect(kinCareWrites(ctx).length).toBeGreaterThan(0);
   });
 
+  it('fails open when the weekday has no key in the hours map (#1424)', async () => {
+    const { Sunday: _omitted, ...noSunday } = HOURS;
+    const ctx = ctxWith({ businessHours: noSunday, timeZone: ZONE });
+    await book([{ startTimeMs: chicago('Sunday', '10:00') }]);
+    expect(kinCareWrites(ctx).length).toBeGreaterThan(0);
+  });
   it('fails open when a day hours string is unreadable', async () => {
     const ctx = ctxWith({ businessHours: { ...HOURS, Monday: 'whenever' }, timeZone: ZONE });
     await book([{ startTimeMs: chicago('Monday', '02:00') }]);
