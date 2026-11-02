@@ -195,7 +195,7 @@ class ShellNavTest {
     fun accountMenu_nonOperator_withoutBillingAccess_hasAccountTribeEditNotificationsAboutSignOut() {
         val menu = ShellNav.accountMenu(isOperator = false, billingAccess = false)
         assertEquals(
-            listOf("Account", "Edit Tribe Profile", "Notifications", "About", "Sign Out"),
+            listOf("Account", "Edit Tribe Profile", "Notification settings", "About your Auntie", "Sign out"),
             menu.map { it.label },
         )
         assertFalse(menu.any { it is AccountMenuItem.BackToDirectory })
@@ -207,7 +207,7 @@ class ShellNavTest {
     fun accountMenu_nonOperator_withBillingAccess_putsInvoicesAfterAccount() {
         val menu = ShellNav.accountMenu(isOperator = false, billingAccess = true)
         assertEquals(
-            listOf("Account", "Invoices", "Edit Tribe Profile", "Notifications", "About", "Sign Out"),
+            listOf("Account", "Invoices", "Edit Tribe Profile", "Notification settings", "About your Auntie", "Sign out"),
             menu.map { it.label },
         )
         val invoices = menu[1]
@@ -228,6 +228,22 @@ class ShellNavTest {
         }
     }
 
+    /** #1490: About reads "About {business name}", and "About your Auntie" when none is cached, as web does. */
+    @Test
+    fun accountMenu_aboutLabel_carriesTheBusinessNameOrFallsBack() {
+        fun aboutLabel(name: String) = ShellNav.accountMenu(isOperator = false, billingAccess = true, businessName = name)
+            .first { it is AccountMenuItem.Open && it.destination == ShellDestination.About }.label
+        assertEquals("About Sunny Paws", aboutLabel("Sunny Paws"))
+        assertEquals("About Sunny Paws", aboutLabel("  Sunny Paws  "))
+        assertEquals("About your Auntie", aboutLabel(""))
+        assertEquals("About your Auntie", aboutLabel("   "))
+    }
+    /** #1490: the narrow bar keeps its short word; only the menu and wide label say "Notification settings". */
+    @Test
+    fun notifications_menuLabelIsLong_barTabLabelStaysShort() {
+        assertEquals("Notification settings", ShellDestination.Notifications.label)
+        assertEquals("Notifications", ShellDestination.Notifications.tabLabel)
+    }
     /** #1411: About is reached from the avatar menu on both platforms, and nowhere in the bars. */
     @Test
     fun accountMenu_includesAbout_whichIsNeitherATabNorAWideLink() {
@@ -264,11 +280,11 @@ class ShellNavTest {
     @Test
     fun accountMenu_operator_includesBackToDirectoryBeforeSignOut() {
         assertEquals(
-            listOf("Account", "Invoices", "Edit Tribe Profile", "Notifications", "About", "Back to Directory", "Sign Out"),
+            listOf("Account", "Invoices", "Edit Tribe Profile", "Notification settings", "About your Auntie", "Back to Directory", "Sign out"),
             ShellNav.accountMenu(isOperator = true, billingAccess = true).map { it.label },
         )
         assertEquals(
-            listOf("Account", "Edit Tribe Profile", "Notifications", "About", "Back to Directory", "Sign Out"),
+            listOf("Account", "Edit Tribe Profile", "Notification settings", "About your Auntie", "Back to Directory", "Sign out"),
             ShellNav.accountMenu(isOperator = true, billingAccess = false).map { it.label },
         )
     }
@@ -287,7 +303,7 @@ class ShellNavTest {
                 AccountMenuItem.Open(ShellDestination.Invoices),
                 AccountMenuItem.Open(ShellDestination.TribeEdit),
                 AccountMenuItem.Open(ShellDestination.Notifications),
-                AccountMenuItem.Open(ShellDestination.About),
+                AccountMenuItem.Open(ShellDestination.About, labelOverride = "About your Auntie"),
                 AccountMenuItem.BackToDirectory,
                 AccountMenuItem.SignOut,
             ),

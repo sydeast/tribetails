@@ -128,6 +128,7 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
               signingOut={signingOut}
               billingAccess={billingAccess}
               isOperator={access?.isOperator === true}
+              businessName={branding.data?.businessName}
             />
           </div>
         </div>

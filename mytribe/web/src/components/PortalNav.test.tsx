@@ -84,6 +84,7 @@ describe('PortalNav avatar menu (#1309, was #538)', () => {
     renderNav();
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
     expect(screen.getByRole('button', { name: 'Account menu', expanded: true })).toBeTruthy();
+    await screen.findByRole('menuitem', { name: 'About Tribe Tails Pet Care' });
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
     // #1454: Edit Tribe Profile joins the menu between Account and Notification
     // settings. #1411: About sits between the settings links and Sign out.
@@ -95,7 +96,7 @@ describe('PortalNav avatar menu (#1309, was #538)', () => {
       'Invoices',
       'Edit Tribe Profile',
       'Notification settings',
-      'About',
+      'About Tribe Tails Pet Care',
       'Sign out',
     ]);
     expect(items[0]).toHaveAttribute('href', '/account');
@@ -116,8 +117,20 @@ describe('PortalNav avatar menu (#1309, was #538)', () => {
     renderNav();
     await waitFor(() => expect(screen.queryByRole('link', { name: 'Invoices' })).toBeNull());
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    await screen.findByRole('menuitem', { name: 'About Tribe Tails Pet Care' });
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
-    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About', 'Sign out']);
+    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About Tribe Tails Pet Care', 'Sign out']);
+  });
+  /** #1490: with no business name cached the item falls back to the About screen's own title words. */
+  it('reads About your Auntie in the menu when getMyHome has no business name', async () => {
+    vi.mocked(getMyHome).mockResolvedValueOnce({
+      businessLogoUrl: undefined,
+      businessName: '',
+    } as unknown as Awaited<ReturnType<typeof getMyHome>>);
+    renderNav();
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    expect(await screen.findByRole('menuitem', { name: 'About your Auntie' })).toHaveAttribute('href', '/about');
+    expect(screen.queryByRole('menuitem', { name: 'About Tribe Tails Pet Care' })).toBeNull();
   });
   it('signs out only from the Sign out item', async () => {
     renderNav();
@@ -214,13 +227,14 @@ describe('PortalNav Back to Directory (#1459)', () => {
     accessMock.isOperator = true;
     renderNav();
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    await screen.findByRole('menuitem', { name: 'About Tribe Tails Pet Care' });
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
     expect(items.map((el) => el.textContent)).toEqual([
       'Account',
       'Invoices',
       'Edit Tribe Profile',
       'Notification settings',
-      'About',
+      'About Tribe Tails Pet Care',
       'Back to Directory',
       'Sign out',
     ]);

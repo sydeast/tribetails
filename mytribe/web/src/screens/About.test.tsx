@@ -175,10 +175,10 @@ describe('About (#1411)', () => {
 
 describe('About in the avatar menu (#1411)', () => {
   it('is an item between Notification settings and Sign out, linking to /about', async () => {
-    render(<AvatarMenu initial="J" onSignOut={() => {}} signingOut={false} billingAccess={false} isOperator={false} />);
+    render(<AvatarMenu initial="J" onSignOut={() => {}} signingOut={false} billingAccess={false} isOperator={false} businessName="Sunny Paws" />);
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
-    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About', 'Sign out']);
-    expect(screen.getByRole('menuitem', { name: 'About' })).toHaveAttribute('href', '/about');
+    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Edit Tribe Profile', 'Notification settings', 'About Sunny Paws', 'Sign out']);
+    expect(screen.getByRole('menuitem', { name: 'About Sunny Paws' })).toHaveAttribute('href', '/about');
   });
 });
