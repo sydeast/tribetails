@@ -69,6 +69,14 @@ vi.mock('../api/directoryWrite', async (orig) => ({
   updateKinTags,
 }));
 
+// #1408: the household's removal request, read by this Kin's flat id.
+const { listKinRemovalRequests } = vi.hoisted(() => ({ listKinRemovalRequests: vi.fn() }));
+vi.mock('../api/kinRemovalRequests', () => ({
+  listKinRemovalRequests: (flatKinId?: string) => listKinRemovalRequests(flatKinId),
+  resolveKinRemovalRequest: vi.fn(),
+}));
+vi.mock('../lib/access', () => ({ useAdminAccess: () => ({ status: 'admin' }) }));
+
 import { KinView, kinHeroLine } from './KinView';
 import { mergeKinDetail } from '../api/kinView';
 
@@ -105,6 +113,43 @@ beforeEach(() => {
   saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
   updateKinTags.mockReset();
   updateKinTags.mockResolvedValue(undefined);
+  listKinRemovalRequests.mockReset();
+  listKinRemovalRequests.mockResolvedValue({ requests: [] });
+});
+
+describe('KinView: the household removal request band (#1408)', () => {
+  it('shows a pending request near the top, with Archive and Decline', async () => {
+    listKinRemovalRequests.mockResolvedValue({
+      requests: [
+        {
+          id: 'kf-1_k1',
+          kinfolkId: 'kf-1',
+          kinId: 'k1',
+          flatKinId: 'p1',
+          kinName: 'Willow',
+          reason: 'Moved away',
+          status: 'pending',
+          requestedAtMs: Date.UTC(2026, 10, 2, 12),
+          resolvedAtMs: null,
+          resolutionNote: null,
+        },
+      ],
+    });
+    mount();
+    const band = await screen.findByTestId('kin-removal-band');
+    expect(listKinRemovalRequests).toHaveBeenCalledWith('p1');
+    expect(band).toHaveTextContent('Removal requested');
+    expect(band).toHaveTextContent('Reason: Moved away');
+    expect(within(band).getByRole('button', { name: 'Archive' })).toBeInTheDocument();
+    expect(within(band).getByRole('button', { name: 'Decline' })).toBeInTheDocument();
+  });
+
+  it('shows nothing when no request is waiting', async () => {
+    mount();
+    await waitFor(() => expect(listKinRemovalRequests).toHaveBeenCalledWith('p1'));
+    await waitFor(() => expect(screen.queryByText('Checking for a removal request…')).toBeNull());
+    expect(screen.queryByTestId('kin-removal-band')).toBeNull();
+  });
 });
 
 describe('mergeKinDetail (pure)', () => {

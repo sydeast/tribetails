@@ -14,6 +14,10 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.KinRemovalRequestRepository
+import com.tribetails.auntieos.data.repository.KinRemovalRequestRow
+import com.tribetails.auntieos.data.repository.KinRemovalResolution
+import io.mockk.coVerify
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -59,6 +63,7 @@ class KinDetailScreenTest {
 
     private val repo = mockk<AuntieRepository>(relaxed = true)
     private val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+    private val removalRepo = mockk<KinRemovalRequestRepository>()
 
     private val soon: String = Instant.now().plus(2, ChronoUnit.DAYS).toString()
 
@@ -97,6 +102,7 @@ class KinDetailScreenTest {
         coEvery { repo.listFormSchemas() } returns Result.success(emptyList())
         coEvery { kinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
+        coEvery { removalRepo.list(any()) } returns Result.success(emptyList())
     }
 
     @After
@@ -109,7 +115,7 @@ class KinDetailScreenTest {
         onOpenReport: (String) -> Unit = {},
         onOpenVisit: (String) -> Unit = {},
     ) {
-        val vm = KinDetailViewModel(repo, kinCareRepo)
+        val vm = KinDetailViewModel(repo, kinCareRepo, removalRepo)
         vm.load("k1")
         rule.setContent {
             AuntieOSTheme {
@@ -373,5 +379,62 @@ class KinDetailScreenTest {
 
         rule.onNodeWithText("Couldn't load Biscuit's 411. permission-denied").assertIsDisplayed()
         rule.onNodeWithText("Medical").assertIsDisplayed()
+    }
+
+    // ── #1408: the household's removal request ───────────────────────────────
+
+    private val pendingRemoval = KinRemovalRequestRow(
+        id = "kf1_fk1",
+        kinfolkId = "kf1",
+        kinId = "fk1",
+        flatKinId = "k1",
+        kinName = "Biscuit",
+        reason = "Rehomed with family",
+        status = "pending",
+        requestedAtMs = 1_793_620_800_000L,
+        resolvedAtMs = null,
+        resolutionNote = null,
+    )
+
+    @Test
+    fun `no removal request, no band`() {
+        show()
+        rule.onAllNodesWithText("Removal requested").assertCountEquals(0)
+    }
+
+    @Test
+    fun `a pending removal request shows its reason with Archive and Decline`() {
+        coEvery { removalRepo.list("k1") } returns Result.success(listOf(pendingRemoval))
+        show()
+        rule.onNodeWithText("Removal requested").assertIsDisplayed()
+        rule.onNodeWithText(kinRemovalRequestedLine(pendingRemoval)).assertIsDisplayed()
+        rule.onNodeWithText("Reason: Rehomed with family").assertIsDisplayed()
+        rule.onNodeWithText("Archive").assertIsDisplayed()
+        rule.onNodeWithText("Decline").assertIsDisplayed()
+    }
+
+    @Test
+    fun `Archive asks first, then sends, and the band gives way to the answer`() {
+        coEvery { removalRepo.list("k1") } returns Result.success(listOf(pendingRemoval))
+        coEvery { removalRepo.resolve("kf1_fk1", "archive", "") } returns
+            Result.success(KinRemovalResolution("archive", pendingRemoval.copy(status = "archived"), householdNotified = true))
+        show()
+        rule.onNodeWithText("Archive").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText(kinRemovalConfirmLine(pendingRemoval, "archive")).assertIsDisplayed()
+        coVerify(exactly = 0) { removalRepo.resolve(any(), any(), any()) }
+        rule.onNodeWithText("Archive it").performClick()
+        rule.waitForIdle()
+        coVerify(exactly = 1) { removalRepo.resolve("kf1_fk1", "archive", "") }
+        rule.onAllNodesWithText("Removal requested").assertCountEquals(0)
+        rule.onNodeWithText("Biscuit is archived. The household has your answer.").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a failed removal read says so with a retry`() {
+        coEvery { removalRepo.list(any()) } returns Result.failure(RuntimeException("network"))
+        show()
+        rule.onNodeWithText("Couldn't check for a removal request").assertIsDisplayed()
+        rule.onNodeWithText("Retry").assertIsDisplayed()
     }
 }

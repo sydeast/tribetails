@@ -13,8 +13,8 @@ const seedKeys = readdirSync(seedsDir, { withFileTypes: true })
 const seed = (key: string) => readFileSync(join(seedsDir, key, 'content.html'), 'utf8').trimEnd();
 
 describe('editorCanRoundTrip (#953 C5a), through a real headless editor', () => {
-  it('finds all 53 seeds', () => {
-    expect(seedKeys).toHaveLength(53);
+  it('finds all 56 seeds', () => {
+    expect(seedKeys).toHaveLength(56);
   });
 
   it.each(seedKeys)('%s opens editable (not locked)', (key) => {
