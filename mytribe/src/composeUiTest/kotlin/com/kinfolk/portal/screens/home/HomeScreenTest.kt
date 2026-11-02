@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isHeading
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -190,6 +192,79 @@ class HomeScreenTest {
         waitForIdle()
         onNodeWithText("Couldn't load Home").assertIsDisplayed()
         onNodeWithText("network down").assertIsDisplayed()
+    }
+
+    /** #1461: each Up next row opens its booking, carrying the visit and batch ids. */
+    @Test
+    fun upNextRow_opensThatBooking() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", kotlinx.serialization.json.JsonNull)
+            put("upcoming", buildJsonArray {
+                add(upcomingVisit("v-1", "batch-1", "Morning walk"))
+                add(upcomingVisit("v-2", "batch-2", "Evening drop-in"))
+            })
+            put("recent", buildJsonArray {})
+        })
+        val opened = mutableListOf<Pair<String, String?>>()
+        setThemedContent {
+            HomeScreen(
+                "The Foster", "demo-1", PortalApi(fake),
+                onOpenBooking = { visitId, batchId -> opened += visitId to batchId },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Evening drop-in").performClick()
+        waitForIdle()
+        kotlin.test.assertEquals(listOf<Pair<String, String?>>("v-2" to "batch-2"), opened)
+    }
+
+    /**
+     * #1461: the Up next and Recent KinTales headings open their lists, and the
+     * separate "Full schedule" / "All tales" links are gone. Each stays a heading.
+     */
+    @Test
+    fun sectionHeadings_openTheirLists() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", kotlinx.serialization.json.JsonNull)
+            put("upcoming", buildJsonArray {})
+            put("recent", buildJsonArray {})
+        })
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {})
+        })
+        var schedule = 0
+        var tales = 0
+        setThemedContent {
+            HomeScreen(
+                "The Foster", "demo-1", PortalApi(fake),
+                onOpenSchedule = { schedule += 1 },
+                onOpenKinTales = { tales += 1 },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Full schedule").assertDoesNotExist()
+        onNodeWithText("All tales").assertDoesNotExist()
+        onNode(hasText("UP NEXT") and isHeading()).assertIsDisplayed()
+        onNode(hasText("RECENT KINTALES") and isHeading()).assertIsDisplayed()
+        onNodeWithText("UP NEXT").performClick()
+        onNodeWithText("RECENT KINTALES").performClick()
+        waitForIdle()
+        kotlin.test.assertEquals(1, schedule)
+        kotlin.test.assertEquals(1, tales)
+    }
+
+    private fun upcomingVisit(id: String, batchId: String, title: String) = buildJsonObject {
+        put("id", id)
+        put("kinfolkId", "demo-1")
+        put("status", "confirmed")
+        put("serviceType", "Walk")
+        put("title", title)
+        put("batchId", batchId)
+        put("startTimeMs", 1_900_000_000_000L)
+        put("kinNames", buildJsonArray { add("Buddy") })
     }
 
     @Test

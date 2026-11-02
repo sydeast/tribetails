@@ -319,6 +319,7 @@ fun AppNavHost(
                             portalApi = portalApi,
                             sections = shellHomeSections,
                             onOpenSchedule = { navController.navigate(ScheduleRoute) { launchSingleTop = true } },
+                            onOpenBooking = { visitId, batchId -> navController.navigate(KinCareDetailRoute(batchId, visitId)) },
                             onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
                             onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
                             onBookVisit = { navController.navigate(BookingWizardRoute(startWeekly = false)) },

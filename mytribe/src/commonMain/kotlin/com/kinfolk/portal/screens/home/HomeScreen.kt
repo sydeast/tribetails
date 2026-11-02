@@ -30,6 +30,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -81,6 +84,8 @@ fun HomeScreen(
     portalApi: PortalApi,
     sections: List<PortalHomeSection> = emptyList(),
     onOpenSchedule: () -> Unit = {},
+    /** #1461: an Up next row opens that booking, the way a Schedule row does. */
+    onOpenBooking: (visitId: String, batchId: String?) -> Unit = { _, _ -> },
     onOpenKinTales: () -> Unit = {},
     /** #1329: a Recent KinTales card opens that tale. */
     onOpenKinTale: (String) -> Unit = {},
@@ -171,6 +176,7 @@ fun HomeScreen(
             data = data,
             limit = cfg("upNext")?.limit?.takeIf { it > 0 } ?: 5,
             onOpenSchedule = onOpenSchedule,
+            onOpenBooking = onOpenBooking,
             onReloadBookings = { data = null; bookingsReloadKey += 1 },
         )
     }
@@ -296,21 +302,32 @@ private fun resolveHomeLayout(sections: List<PortalHomeSection>): List<HomeSecti
 
 // ---- Sections ----
 
+/**
+ * A section heading. #1461: with [onOpen] the heading itself opens the full
+ * list (the separate trailing link is gone); it keeps the heading semantics so
+ * TalkBack still announces it as one, and a chevron shows it can be tapped.
+ */
 @Composable
-private fun SectLabel(text: String, linkText: String? = null, onLink: () -> Unit = {}) {
+private fun SectLabel(text: String, onOpen: (() -> Unit)? = null, openLabel: String? = null) {
     val type = LocalKinfolkTypography.current
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = Modifier
+            .let { m ->
+                if (onOpen == null) {
+                    m
+                } else {
+                    m.clip(KinfolkShapes.pill)
+                        .clickable(role = Role.Button, onClickLabel = openLabel, onClick = onOpen)
+                        .padding(vertical = 2.dp)
+                }
+            }
+            .semantics { heading() },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         Text(text.uppercase(), style = type.sansMeta)
-        Spacer(Modifier.weight(1f))
-        if (linkText != null) {
-            Text(
-                text = linkText,
-                style = type.sansMeta.copy(color = KinfolkBrand.KinTeal),
-                modifier = Modifier
-                    .clip(KinfolkShapes.pill)
-                    .clickable { onLink() }
-                    .padding(horizontal = KinfolkSpacing.xs, vertical = 2.dp),
-            )
+        if (onOpen != null) {
+            Text("\u203A", style = type.sansMeta, modifier = Modifier.clearAndSetSemantics {})
         }
     }
 }
@@ -330,11 +347,12 @@ private fun UpNextSection(
     data: BookingsResult?,
     limit: Int = 5,
     onOpenSchedule: () -> Unit,
+    onOpenBooking: (visitId: String, batchId: String?) -> Unit,
     onReloadBookings: () -> Unit,
 ) {
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-            SectLabel("Up next", linkText = "Full schedule", onLink = onOpenSchedule)
+            SectLabel("Up next", onOpen = onOpenSchedule, openLabel = "Open schedule")
             when {
                 data == null -> KinLoading(
                     text = "Loading your schedule\u2026",
@@ -347,17 +365,21 @@ private fun UpNextSection(
                 else -> KinStaggerReveal(
                     items = data.upcoming.take(limit),
                     verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
-                ) { b -> UpcomingRow(b) }
+                ) { b -> UpcomingRow(b, onOpen = { onOpenBooking(b.id, b.batchId) }) }
             }
         }
     }
 }
 
 @Composable
-private fun UpcomingRow(b: Booking) {
+private fun UpcomingRow(b: Booking, onOpen: () -> Unit) {
     val type = LocalKinfolkTypography.current
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = KinfolkSpacing.xs),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KinfolkShapes.card)
+            .clickable(role = Role.Button, onClickLabel = "Open this booking", onClick = onOpen)
+            .padding(vertical = KinfolkSpacing.xs),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -385,7 +407,7 @@ private fun TalesSection(
     val type = LocalKinfolkTypography.current
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-            SectLabel("Recent KinTales", linkText = "All tales", onLink = onOpenKinTales)
+            SectLabel("Recent KinTales", onOpen = onOpenKinTales, openLabel = "Open KinTales")
             when {
                 failed -> Column {
                     SectionNote(

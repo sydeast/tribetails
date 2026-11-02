@@ -45,8 +45,25 @@ vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('../components/PushPrompt', () => ({ PushPrompt: () => null }));
 vi.mock('../components/AddToHomeScreen', () => ({ AddToHomeScreen: () => null }));
 vi.mock('@tanstack/react-router', () => ({
-  Link: ({ children, to, search, className }: { children?: ReactNode; to?: string; search?: Record<string, string>; className?: string }) => (
-    <a className={className} data-to={to} data-search={search ? JSON.stringify(search) : undefined}>
+  Link: ({
+    children,
+    to,
+    search,
+    params,
+    className,
+  }: {
+    children?: ReactNode;
+    to?: string;
+    search?: Record<string, string>;
+    params?: Record<string, string>;
+    className?: string;
+  }) => (
+    <a
+      className={className}
+      data-to={to}
+      data-search={search ? JSON.stringify(search) : undefined}
+      data-params={params ? JSON.stringify(params) : undefined}
+    >
       {children}
     </a>
   ),
@@ -280,6 +297,49 @@ describe('Home, Recent KinTales cards open the tale (#1329)', () => {
     expect(screen.getByText('Nap day').closest('a')).toHaveAttribute('data-search', JSON.stringify({ tale: 't-b' }));
   });
 });
+describe('Home, rows open the booking and headings open the lists (#1461)', () => {
+  const visitA = {
+    ...pendingOvernight(),
+    id: 'v-a',
+    title: 'Morning walk',
+    startTimePending: false,
+    requestedDate: null,
+    startTimeMs: new Date(2030, 5, 2, 8, 0).getTime(),
+  };
+  const visitB = { ...visitA, id: 'v-b', title: 'Evening drop-in' };
+
+  async function renderRows() {
+    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [visitA, visitB], recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({ tales: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Morning walk');
+  }
+
+  it('each Up next row is a link to that booking on Schedule', async () => {
+    await renderRows();
+    const a = screen.getByText('Morning walk').closest('a');
+    expect(a).toHaveAttribute('data-to', '/schedule/$visitId');
+    expect(a).toHaveAttribute('data-params', JSON.stringify({ visitId: 'v-a' }));
+    expect(screen.getByText('Evening drop-in').closest('a')).toHaveAttribute('data-params', JSON.stringify({ visitId: 'v-b' }));
+  });
+
+  it('the Up next and Recent KinTales headings are headings that open their lists', async () => {
+    await renderRows();
+    const upNext = screen.getByRole('heading', { level: 2, name: 'Up next' });
+    expect(upNext.querySelector('a')).toHaveAttribute('data-to', '/schedule');
+    const tales = screen.getByRole('heading', { level: 2, name: 'Recent KinTales' });
+    expect(tales.querySelector('a')).toHaveAttribute('data-to', '/kintales');
+    expect(screen.queryByText('Full schedule')).toBeNull();
+    expect(screen.queryByText('All tales')).toBeNull();
+  });
+});
+
 describe('Home, status words and the pending change (#1298, #1299)', () => {
   async function renderWith(upcoming: unknown[]) {
     mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
