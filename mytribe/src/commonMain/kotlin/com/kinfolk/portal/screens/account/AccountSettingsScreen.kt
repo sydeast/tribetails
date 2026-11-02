@@ -317,6 +317,8 @@ fun AccountSettingsScreen(
                 contentPadding = PaddingValues(KinfolkSpacing.l),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                    // #1469: web's card title under the "Recovery Contacts" section label.
+                    Text("Secondary Kinfolk", style = type.heritageTitle)
                     KinField(
                         value = backupEmail,
                         onValueChange = { backupEmail = it },
