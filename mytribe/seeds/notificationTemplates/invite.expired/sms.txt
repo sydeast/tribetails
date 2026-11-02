@@ -1,1 +1,1 @@
-Tribe Tails: your invite to {{invitedEmail}} expired before it was accepted.
+{{Business}}: your invite to {{invitedEmail}} expired before it was accepted.

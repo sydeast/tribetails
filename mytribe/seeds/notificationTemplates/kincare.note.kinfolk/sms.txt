@@ -1,1 +1,1 @@
-Tribe Tails: a Kinfolk added a note on {{kinName}}'s booking.
+{{Business}}: a Kinfolk added a note on {{kinName}}'s booking.

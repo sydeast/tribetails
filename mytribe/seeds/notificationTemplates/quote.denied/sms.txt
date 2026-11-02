@@ -1,1 +1,1 @@
-Tribe Tails: {{actorName}} declined a quote.
+{{Business}}: {{actorName}} declined a quote.

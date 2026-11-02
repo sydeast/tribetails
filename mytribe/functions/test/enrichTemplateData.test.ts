@@ -437,11 +437,11 @@ describe('enrichTemplateData: pets + invoice variants', () => {
 });
 
 describe('enrichTemplateData: no-op cases', () => {
-  it('returns data unchanged for a key with no enrichable fields (rating.submitted.bad)', async () => {
+  it('returns data unchanged for a key with no enrichable fields (profile.updated)', async () => {
     const ctx = buildDbMock();
     mocks.dbFn.mockReturnValue(ctx.db);
     const input = { kinfolkId: 'fam1', score: 2 };
-    const out = await enrichTemplateData('rating.submitted.bad', 'admin1', input);
+    const out = await enrichTemplateData('profile.updated', 'admin1', input);
     expect(out).toEqual(input);
   });
 

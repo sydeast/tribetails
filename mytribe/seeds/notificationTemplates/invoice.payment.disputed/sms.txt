@@ -1,1 +1,1 @@
-Tribe Tails: {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Reason: {{disputeReason}}.
+{{Business}}: {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Reason: {{disputeReason}}.

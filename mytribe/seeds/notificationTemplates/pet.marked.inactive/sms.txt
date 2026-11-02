@@ -1,1 +1,1 @@
-Tribe Tails: {{kinName}} was marked inactive and the file is updated.
+{{Business}}: {{kinName}} was marked inactive and the file is updated.

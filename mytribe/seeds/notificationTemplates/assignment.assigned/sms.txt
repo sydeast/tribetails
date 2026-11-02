@@ -1,1 +1,1 @@
-Tribe Tails: {{kinName}}'s {{serviceType}} is yours, {{visitCount}} in all. First up {{nextVisit.weekday}} {{nextVisit.date}} at {{nextVisit.time}}. Every date: {{portalUrl}}
+{{Business}}: {{kinName}}'s {{serviceType}} is yours, {{visitCount}} in all. First up {{nextVisit.weekday}} {{nextVisit.date}} at {{nextVisit.time}}. Every date: {{portalUrl}}

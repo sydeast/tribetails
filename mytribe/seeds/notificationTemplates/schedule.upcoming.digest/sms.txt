@@ -1,1 +1,1 @@
-Tribe Tails: you've got {{count}} visits coming up.
+{{Business}}: you've got {{count}} visits coming up.

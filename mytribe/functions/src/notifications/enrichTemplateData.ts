@@ -63,6 +63,7 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // seed with the single-visit wording; both emitters still SEND them so the
   // already-imported Firestore template renders until the operator re-imports.
   'assignment.assigned': [
+    'Business',
     'kinName',
     'nextVisit.date',
     'nextVisit.time',
@@ -74,12 +75,12 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   ],
   // Stays per visit, and stays on `{{bookingDate}}`: reassigned, unassigned,
   // cancelled and edited are all genuinely news about ONE visit.
-  'assignment.changed': ['bookingDate', 'kinName', 'serviceType'],
+  'assignment.changed': ['Business', 'bookingDate', 'kinName', 'serviceType'],
   'account.welcome.kinfolk': ['kinfolkName'],
   'auth.account.locked': ['business', 'email'],
   'auth.failedLogin.attempts': ['attemptsInWindow', 'business', 'email'],
   'auth.password.reset': ['Business', 'displayName', 'link'],
-  'invite.expired': ['invitedEmail'],
+  'invite.expired': ['Business', 'invitedEmail'],
   'invoice.charge.failed': ['invoiceNumber', 'kinfolkName'],
   'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'kinfolkName', 'kinName'],
   'invoice.overdue': ['bookingDate', 'kinfolkName', 'kinName'],
@@ -89,10 +90,10 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // off the Stripe Dispute object and there is no local entity to hydrate them
   // from. `invoiceNumber` is the one the enricher fills, and it renders blank
   // on an unattributed dispute — which is the honest output, not a defect.
-  'invoice.payment.disputed': ['disputeAmount', 'disputeReason', 'disputeStatus', 'invoiceNumber'],
+  'invoice.payment.disputed': ['Business', 'disputeAmount', 'disputeReason', 'disputeStatus', 'invoiceNumber'],
   // `unappliedAmount` / `unappliedReason` are emitter-supplied by
   // `billing/stripeWebhook.ts` (docket Q5), off the Stripe event.
-  'invoice.payment.unapplied': ['invoiceNumber', 'unappliedAmount', 'unappliedReason'],
+  'invoice.payment.unapplied': ['Business', 'invoiceNumber', 'unappliedAmount', 'unappliedReason'],
   'invoice.receipt': ['amount', 'invoiceNumber', 'kinfolkName'],
   'invoice.reminder': ['amount', 'invoiceNumber', 'kinName'],
   'invoice.updated': ['invoiceNumber', 'kinName'],
@@ -118,27 +119,27 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
     'visitCount',
     'visits',
   ],
-  'kincare.cancel.requested': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
+  'kincare.cancel.requested': ['Business', 'bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
   // `note` is emitter-supplied, like the dispute fields above: it is the
   // operator's own words, carried on the dispatch, with no entity to hydrate
   // it from. The four below are the ones this enricher fills.
   'kincare.cancel.declined': ['Business', 'bookingDate', 'kinfolkName', 'kinName', 'note', 'serviceType'],
   'kincare.changed': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
-  'kincare.note.auntie': ['kinName'],
-  'kincare.note.kinfolk': ['kinName'],
+  'kincare.note.auntie': ['Business', 'kinName'],
+  'kincare.note.kinfolk': ['Business', 'kinName'],
   'kincare.report.sent': ['kinfolkName', 'kinName'],
-  'kincare.requested': ['bookingDates', 'kinfolkName', 'kinName', 'serviceType'],
+  'kincare.requested': ['Business', 'bookingDates', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.request.declined': ['Business', 'bookingDates', 'kinfolkName', 'kinName', 'note', 'serviceType'],
-  'kincare.reschedule.requested': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
+  'kincare.reschedule.requested': ['Business', 'bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.unavailable': ['bookingDate', 'kinfolkName', 'serviceType'],
   'kincare.upcoming.reminder': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
   'kintale.comment.added': ['kinName'],
   'kintale.note.added': ['kinName'],
   'kintale.published': ['kinfolkName', 'kinName'],
   'marketing.optin': ['business'],
-  'message.received': ['kinfolkName', 'preview'],
+  'message.received': ['Business', 'kinfolkName', 'preview'],
   'newsletter.announcement': ['business'],
-  'pet.marked.inactive': ['kinName'],
+  'pet.marked.inactive': ['Business', 'kinName'],
   'pets.updated': ['kinName'],
   'profile.updated': [],
   // #1039: {{actorName}} is emitter-supplied (portal/quoteDecision.ts passes
@@ -148,16 +149,16 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // a seed uses regardless of who fills it in, does not flag the seed as
   // carrying a token this map never heard of.
   'quote.accepted': ['actorName', 'kinName'],
-  'quote.denied': ['actorName'],
-  'rating.submitted.bad': ['score'],
-  'rating.submitted.good': ['score'],
-  'schedule.upcoming.digest': ['count'],
-  'security.account.locked.operator': ['kinfolkEmail', 'kinfolkName'],
-  'security.failedLogin.attempts.operator': ['attemptsInWindow', 'kinfolkEmail', 'kinfolkName'],
-  'security.failedLogin.budgetExhausted.operator': ['kinfolkEmail', 'kinfolkName', 'reportLimit'],
-  'security.account.locked.spike.operator': ['lockedAccounts', 'windowMinutes'],
-  'security.breach_attempt.kinfolk': ['incidentId', 'ip', 'kinfolkEmail', 'timestampIso', 'userAgent'],
-  'security.breach_attempt.staff': ['incidentId', 'ip', 'staffEmail', 'timestampIso', 'userAgent'],
+  'quote.denied': ['Business', 'actorName'],
+  'rating.submitted.bad': ['Business', 'score'],
+  'rating.submitted.good': ['Business', 'score'],
+  'schedule.upcoming.digest': ['Business', 'count'],
+  'security.account.locked.operator': ['Business', 'kinfolkEmail', 'kinfolkName'],
+  'security.failedLogin.attempts.operator': ['Business', 'attemptsInWindow', 'kinfolkEmail', 'kinfolkName'],
+  'security.failedLogin.budgetExhausted.operator': ['Business', 'kinfolkEmail', 'kinfolkName', 'reportLimit'],
+  'security.account.locked.spike.operator': ['Business', 'lockedAccounts', 'windowMinutes'],
+  'security.breach_attempt.kinfolk': ['Business', 'incidentId', 'ip', 'kinfolkEmail', 'timestampIso', 'userAgent'],
+  'security.breach_attempt.staff': ['Business', 'incidentId', 'ip', 'staffEmail', 'timestampIso', 'userAgent'],
   'survey.event': [],
 };
 
