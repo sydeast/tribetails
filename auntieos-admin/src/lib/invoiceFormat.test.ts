@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  formatCentsUsd,
   formatUsd,
   humanizeDate,
   invoiceStateInfo,
@@ -74,6 +75,26 @@ describe('formatUsd', () => {
 
   it('never throws on non-finite input', () => {
     expect(formatUsd(NaN)).toBe('$0.00');
+  });
+  it('leaves three-digit dollars ungrouped', () => {
+    expect(formatUsd(999.99)).toBe('$999.99');
+  });
+  it('groups thousands, matching the kinfolk portal (#1488)', () => {
+    expect(formatUsd(1000)).toBe('$1,000.00');
+    expect(formatUsd(1234.5)).toBe('$1,234.50');
+    expect(formatUsd(-1234.5)).toBe('-$1,234.50');
+    expect(formatUsd(1_000_000)).toBe('$1,000,000.00');
+  });
+});
+describe('formatCentsUsd', () => {
+  it('formats integer cents the same way as formatUsd', () => {
+    expect(formatCentsUsd(0)).toBe('$0.00');
+    expect(formatCentsUsd(99999)).toBe('$999.99');
+    expect(formatCentsUsd(100000)).toBe('$1,000.00');
+    expect(formatCentsUsd(123450)).toBe('$1,234.50');
+    expect(formatCentsUsd(-123450)).toBe('-$1,234.50');
+    expect(formatCentsUsd(100_000_000)).toBe('$1,000,000.00');
+    expect(formatCentsUsd(Number.NaN)).toBe('$0.00');
   });
 });
 

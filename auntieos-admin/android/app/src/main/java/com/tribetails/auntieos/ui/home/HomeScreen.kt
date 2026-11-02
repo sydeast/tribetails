@@ -828,13 +828,8 @@ private fun GatekeeperRow(gap: com.tribetails.auntieos.domain.HouseholdGap) {
     }
 }
 
-/** Compact USD label with cents for the Cash Flow rows, e.g. 1280.5 -> "$1280.50". Pure. */
-internal fun formatMoney(amount: Double): String {
-    val rounded = kotlin.math.round(amount * 100.0) / 100.0
-    val whole = rounded.toLong()
-    val cents = kotlin.math.round((rounded - whole) * 100.0).toInt()
-    return if (cents == 0) "$$whole" else "$$whole.${cents.toString().padStart(2, '0')}"
-}
+/** Compact USD label with cents for the Cash Flow rows, e.g. 1280.5 -> "$1,280.50", 1280.0 -> "$1,280". Pure. */
+internal fun formatMoney(amount: Double): String = com.tribetails.auntieos.domain.formatUsdCompact(amount)
 
 /** Compact USD label for the weekly-revenue tile, e.g. 1280.0 -> "$1,280". Pure. */
 internal fun formatRevenue(amount: Double): String {

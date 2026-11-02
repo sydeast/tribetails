@@ -3,6 +3,7 @@ import { businessTokens, loadBusinessName } from '../lib/businessName';
 import { logEvent } from '../lib/logger';
 import { businessTimeZone } from '../lib/bookingTimeBlocks';
 import { isInactiveKinStatus } from '../lib/kinStatus';
+import { formatUsd } from '../lib/invoiceMath';
 import { getNotificationDef } from './catalog';
 import {
   DEFAULT_TIME_ZONE,
@@ -221,7 +222,7 @@ function num(v: unknown): number | null {
   return null;
 }
 function usd(n: number): string {
-  return `$${Math.abs(n).toFixed(2)}`;
+  return formatUsd(Math.abs(n));
 }
 function joinNames(v: unknown): string {
   if (!Array.isArray(v)) return '';

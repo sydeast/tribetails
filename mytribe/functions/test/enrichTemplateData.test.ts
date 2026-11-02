@@ -347,6 +347,21 @@ describe('enrichTemplateData: pets + invoice variants', () => {
     expect(out.kinName).toBe('Rex');
   });
 
+  it('invoice.reminder: the amount token groups thousands (#1488)', async () => {
+    const ctx = buildDbMock({
+      docs: { 'invoices/inv9': { invoiceNumber: 'TT-9', amountDue: 999 } },
+      queryDocs: { kin: [{ id: 'k1', data: { kinfolkId: 'fam1', name: 'Rex', status: 'active' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const out = await enrichTemplateData('invoice.reminder', 'cli1', {
+      invoiceId: 'inv9',
+      kinfolkId: 'fam1',
+      amountMinor: 123450,
+      currency: 'usd',
+    });
+    expect(out.amount).toBe('$1,234.50');
+  });
+
   // #932: this used to be "invoice in family subcollection is found when flat
   // doc is absent", the fallback read of the RETIRED `families/{id}/invoices`
   // path. It hid a failed backfill: the merge fields hydrated from a copy the

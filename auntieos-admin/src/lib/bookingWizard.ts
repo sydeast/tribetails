@@ -2,6 +2,7 @@ import { expandWeekly, sortedDays, visitMsFromDays, type BookingMode, type Servi
 import { businessWallClock } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { shortDayLabel } from './bookingAvailability';
+import { formatCentsUsd } from './invoiceFormat';
 import type {
   CreateMultiDateBookingRequestArgs,
   CreateMultiDateBookingRequestArgsVisit,
@@ -550,7 +551,7 @@ export function wizardTotal(state: WizardState, options: readonly ServiceOption[
 
 /** "$30.00". Cents in, dollars out, no locale guessing. */
 export function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  return formatCentsUsd(cents);
 }
 
 // ── step gating ──────────────────────────────────────────────────────────────

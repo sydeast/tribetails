@@ -28,6 +28,7 @@
  */
 
 import { serviceOptionsFromRates } from './newBooking';
+import { formatUsd } from './invoiceFormat';
 
 // ── model ───────────────────────────────────────────────────────────────────
 
@@ -704,7 +705,7 @@ export interface QuoteInput {
 /** A clean plain-text quote for the clipboard — pastes into an email, text, or agreement. */
 export function quoteText({ clientName, startDate, days, priced }: QuoteInput): string {
   const { pkg, rows, subtotal, discountPct, discount, total } = priced;
-  const money = (n: number): string => `$${n.toFixed(2)}`;
+  const money = formatUsd;
   const lines: string[] = ['TribeTails — Coverage Package', ''];
   if (clientName.trim() !== '') lines.push(`Prepared for: ${clientName.trim()}`);
   lines.push(`${pkg.name} · ${days} day${days !== 1 ? 's' : ''}`);

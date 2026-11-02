@@ -316,6 +316,21 @@ class RecordPaymentCallableClientTest {
         )
         assertTrue(recordPaymentSplitLine(recordPaymentSplit("abc", "127.50", "", ""), "").contains("cannot be read"))
     }
+    /**
+     * #1488: the record-payment dialog seeds its amount fields from the amount
+     * due. `formatMoney` now prints "$1,234.50", and `recordPaymentSplit` reads
+     * no comma, so the seed is the ungrouped input form and a four-figure
+     * invoice still opens with a readable split.
+     */
+    @Test
+    fun aFourFigureAmountDueSeedsAReadableSplit() {
+        val seed = centsToInputDollars(com.tribetails.auntieos.web.util.dollarsToRoundedCents(1234.5))
+        assertEquals("1234.50", seed)
+        assertEquals(
+            "$1,234.50 paid: $1,234.50 to this invoice, $0.00 tip, $0.00 account credit.",
+            recordPaymentSplitLine(recordPaymentSplit(seed, seed, "", ""), ""),
+        )
+    }
 
     @Test
     fun anApplyPlusTipLargerThanThePaymentIsRefusedBeforeTheCall() {

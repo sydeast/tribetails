@@ -1,6 +1,6 @@
 import { threadHouseholdName, threadPreviewText } from './inboxFormat';
 import { sessionState, sessionDayKey, sessionHousehold, shiftDayIso } from './sessionFormat';
-import { isoDatePrefixOrNull } from './invoiceFormat';
+import { formatCentsUsd, isoDatePrefixOrNull } from './invoiceFormat';
 import { str, arr } from './coerce';
 import { isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import type { GeneratedDraftRow } from '../api/drafts';
@@ -298,9 +298,7 @@ export function recentExpenses(list: readonly ExpenseRow[], limit = 5): ExpenseR
  * / correction), and a non-finite input reads as $0.00 rather than "$NaN".
  */
 export function formatCents(cents: number): string {
-  const n = Number.isFinite(cents) ? cents : 0;
-  const sign = n < 0 ? '-' : '';
-  return `${sign}$${(Math.abs(n) / 100).toFixed(2)}`;
+  return formatCentsUsd(cents);
 }
 
 // ── AO-41 Supplies Tracker ───────────────────────────────────────────────────────

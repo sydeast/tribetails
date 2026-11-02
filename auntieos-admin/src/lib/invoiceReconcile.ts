@@ -36,6 +36,7 @@
  */
 
 import { computeInvoiceTotals, type InvoiceLineItemInput } from './invoiceMath';
+import { formatCentsUsd } from './invoiceFormat';
 
 /** The subset of an invoice doc this comparison reads. All optional: real docs miss keys. */
 export interface ReconcilableInvoice {
@@ -163,12 +164,8 @@ export function checkInvoiceTotal(doc: ReconcilableInvoice): InvoiceTotalCheck {
   };
 }
 
-/** "$36.00" / "-$12.50" from an integer count of cents. */
-export function formatCentsUsd(cents: number): string {
-  const n = Number.isFinite(cents) ? cents : 0;
-  const sign = n < 0 ? '-' : '';
-  return `${sign}$${(Math.abs(n) / 100).toFixed(2)}`;
-}
+/** "$36.00" / "-$12.50" / "$1,234.50" from an integer count of cents. */
+export { formatCentsUsd };
 
 /** Which doc field a stored total came from, in words the operator can act on. */
 export function storedTotalSourceLabel(from: 'totalCents' | 'total'): string {

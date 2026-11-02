@@ -233,13 +233,8 @@ internal fun invoiceRowDateLine(invoice: Invoice, todayIso: String): String {
         else -> "no date"
     }
 }
-/** Compact USD formatting from a Double total. */
-private fun formatMoney(amount: Double): String {
-    val rounded = (amount * 100.0).let { kotlin.math.round(it) } / 100.0
-    val whole = rounded.toLong()
-    val cents = kotlin.math.round((rounded - whole) * 100.0).toInt()
-    return if (cents == 0) "$$whole" else "$$whole.${cents.toString().padStart(2, '0')}"
-}
+/** Compact USD formatting from a Double total: "$1,280" / "$1,280.50". */
+private fun formatMoney(amount: Double): String = com.tribetails.auntieos.domain.formatUsdCompact(amount)
 
 /** A human-ish "MMM d" style label from a YYYY-MM-DD prefix, or echoes input. */
 private fun humanizeDate(date: String): String {
@@ -270,7 +265,7 @@ private fun matchesQuery(i: Invoice, query: String): Boolean {
     return i.invoiceNumber.lowercase().contains(q) ||
         i.kinfolkName.lowercase().contains(q) ||
         i.client.lowercase().contains(q) ||
-        formatMoney(i.total).lowercase().contains(q)
+        com.tribetails.auntieos.domain.moneyTextMatches(formatMoney(i.total), q)
 }
 
 /** A household facet option (spec 16.2). Empty [id] = "All households" sentinel. */

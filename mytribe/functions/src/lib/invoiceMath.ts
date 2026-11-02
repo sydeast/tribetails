@@ -262,12 +262,30 @@ export function centsToDollars(cents: number): number {
   return Number((finite(cents) / 100).toFixed(2));
 }
 
-/** "$36.00" / "-$12.50" from an integer count of cents. */
-function usd(cents: number): string {
-  const n = finite(cents);
+const USD_DIGITS = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+/**
+ * "$36.00" / "-$12.50" / "$1,234.50" from a dollars-denominated amount.
+ *
+ * THE one server-side money formatter (#1488). Every human-facing dollar string
+ * the functions emit (emails, PDFs, notifications, refusal messages, archive
+ * text) goes through this or `formatUsdCents`, so they group thousands the same
+ * way the kinfolk portal does on web and Android. Display only: nothing parses
+ * these strings back, and stored figures and Stripe amounts stay numbers.
+ * A non-finite input reads as $0.00 rather than "$NaN".
+ */
+export function formatUsd(dollars: number): string {
+  const n = Number.isFinite(dollars) ? dollars : 0;
   const sign = n < 0 ? '-' : '';
-  return `${sign}$${(Math.abs(n) / 100).toFixed(2)}`;
+  return `${sign}$${USD_DIGITS.format(Math.abs(n))}`;
 }
+/** "$36.00" / "-$12.50" / "$1,234.50" from an integer count of cents. See `formatUsd`. */
+export function formatUsdCents(cents: number): string {
+  return formatUsd(finite(cents) / 100);
+}
+const usd = formatUsdCents;
 
 /**
  * Refuses money that would be a lie if stored. Returns the first problem as

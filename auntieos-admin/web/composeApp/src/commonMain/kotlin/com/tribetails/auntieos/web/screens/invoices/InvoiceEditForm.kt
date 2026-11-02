@@ -100,8 +100,7 @@ fun centsToInputDollars(cents: Long): String {
 }
 
 /** "$36.00" / "-$12.50". */
-fun formatEditCents(cents: Long): String =
-    if (cents < 0) "-\$${centsToInputDollars(-cents)}" else "\$${centsToInputDollars(cents)}"
+fun formatEditCents(cents: Long): String = com.tribetails.auntieos.web.util.formatUsdCents(cents)
 
 /** "3" for a whole quantity, "2.5" for a fractional one. */
 fun formatEditQty(qty: Double): String {

@@ -210,6 +210,7 @@ class InvoiceLineItemsTest {
         assertEquals("$0.00", formatCents(0L))
         assertEquals("$75.00", formatCents(7500L))
         assertEquals("-$12.50", formatCents(-1250L))
+        assertEquals("$1,234.50", formatCents(123450L))
     }
 
     @Test

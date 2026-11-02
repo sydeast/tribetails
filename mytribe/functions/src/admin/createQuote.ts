@@ -10,7 +10,13 @@ import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
+import {
+  computeInvoiceTotals,
+  validateInvoiceMoney,
+  centsToDollars,
+  formatUsd,
+  formatUsdCents,
+} from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
@@ -163,14 +169,14 @@ export async function createQuoteHandler(
     if (args.total !== derivedTotal) {
       throw new HttpsError(
         'failed-precondition',
-        `The total sent ($${args.total.toFixed(2)}) is not the sum of the line items ($${(totals.totalCents / 100).toFixed(2)}). The line items decide the total, so send that figure or correct the items.`,
+        `The total sent (${formatUsd(args.total)}) is not the sum of the line items (${formatUsdCents(totals.totalCents)}). The line items decide the total, so send that figure or correct the items.`,
         { code: 'invoice_total_mismatch' },
       );
     }
     if (args.amountDue !== derivedAmountDue) {
       throw new HttpsError(
         'failed-precondition',
-        `The amount due sent ($${args.amountDue.toFixed(2)}) is not the line-item total ($${(totals.amountDueCents / 100).toFixed(2)}). A new quote has no payments recorded against it, so the two are the same figure.`,
+        `The amount due sent (${formatUsd(args.amountDue)}) is not the line-item total (${formatUsdCents(totals.amountDueCents)}). A new quote has no payments recorded against it, so the two are the same figure.`,
         { code: 'invoice_amount_due_mismatch' },
       );
     }

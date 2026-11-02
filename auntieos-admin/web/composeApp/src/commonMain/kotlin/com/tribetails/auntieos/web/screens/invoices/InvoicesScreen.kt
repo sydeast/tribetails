@@ -87,7 +87,7 @@ private fun matchesQuery(i: Invoice, query: String): Boolean {
     return i.invoiceNumber.lowercase().contains(q) ||
         i.kinfolkName.lowercase().contains(q) ||
         i.client.lowercase().contains(q) ||
-        formatMoney(i.total).lowercase().contains(q)
+        com.tribetails.auntieos.web.util.moneyTextMatches(formatMoney(i.total), q)
 }
 
 /** A household facet option (spec 16.2). Empty [id] = "All households" sentinel. */

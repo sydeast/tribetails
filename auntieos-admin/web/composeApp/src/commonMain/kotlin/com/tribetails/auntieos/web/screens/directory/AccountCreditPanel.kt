@@ -33,7 +33,6 @@ import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import kotlin.math.abs
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -46,12 +45,8 @@ import kotlin.time.Instant
 
 // ---- Pure text helpers (commonTest covers every one) ----
 
-/** "$12.00", "-$5.00". Integer cents, so no float rounding. */
-fun creditUsd(cents: Long): String {
-    val sign = if (cents < 0) "-" else ""
-    val a = abs(cents)
-    return sign + "$" + (a / 100).toString() + "." + (a % 100).toString().padStart(2, '0')
-}
+/** "$12.00", "-$5.00", "$1,234.50". Integer cents, so no float rounding. */
+fun creditUsd(cents: Long): String = com.tribetails.auntieos.web.util.formatUsdCents(cents)
 
 private val CREDIT_MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 

@@ -59,6 +59,7 @@ import {
   invoiceTotalCentsOf,
   settleInvoice,
   centsToDollars,
+  formatUsdCents,
   type PaymentAmount,
   type InvoiceSettlementState,
 } from './invoiceMath';
@@ -112,11 +113,8 @@ function invoiceNumberOf(doc: InvoiceDoc): string {
   return typeof doc.invoiceNumber === 'string' ? doc.invoiceNumber : '';
 }
 
-/** "$36.00" from integer cents. Local copy; `invoiceMath`'s is not exported. */
-function usd(cents: number): string {
-  const sign = cents < 0 ? '-' : '';
-  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
+/** "$36.00" / "$1,234.50" from integer cents. */
+const usd = formatUsdCents;
 
 /**
  * THE WHOLE DECISION, as a pure function. No Firestore, so every refusal below

@@ -246,8 +246,4 @@ fun invoicePartPaid(invoice: Invoice): InvoicePartPayment? {
     return InvoicePartPayment(paidCents = invoice.paidCents, remainingCents = remainingCents)
 }
 /** "$20.00" from an integer count of cents. */
-fun formatCentsUsd(cents: Long): String {
-    val sign = if (cents < 0) "-" else ""
-    val abs = kotlin.math.abs(cents)
-    return "$sign$${abs / 100}.${(abs % 100).toString().padStart(2, '0')}"
-}
+fun formatCentsUsd(cents: Long): String = formatUsdCents(cents)

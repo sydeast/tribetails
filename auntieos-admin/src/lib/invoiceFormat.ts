@@ -137,11 +137,26 @@ export function invoiceActionsFor(state: InvoiceState): readonly InvoiceAction[]
   }
 }
 
-/** "$36.00" / "-$12.50" from a dollars-denominated amount. Ported verbatim from MyTribe's invoiceFormat.ts. */
+const USD_DIGITS = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+/**
+ * "$36.00" / "-$12.50" / "$1,234.50" from a dollars-denominated amount.
+ *
+ * The admin console's one money formatter (#1488): it groups thousands the way
+ * the kinfolk portal does on web and Android (#1484), and every other admin
+ * money label routes through it or `formatCentsUsd`. Display only, never seed an
+ * input with it (inputs use `invoiceMoneyInput.centsToInputDollars`).
+ */
 export function formatUsd(dollars: number): string {
   const n = financeNumber(dollars);
   const sign = n < 0 ? '-' : '';
-  return `${sign}$${Math.abs(n).toFixed(2)}`;
+  return `${sign}$${USD_DIGITS.format(Math.abs(n))}`;
+}
+/** "$36.00" / "-$12.50" / "$1,234.50" from an integer count of cents. See `formatUsd`. */
+export function formatCentsUsd(cents: number): string {
+  return formatUsd(financeNumber(cents) / 100);
 }
 
 /**

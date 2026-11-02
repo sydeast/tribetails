@@ -27,6 +27,7 @@ import {
   type PricedDayRow,
   type Visit,
 } from '../lib/coveragePackage';
+import { formatUsd } from '../lib/invoiceFormat';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
@@ -634,17 +635,17 @@ function Builder({ settings }: BuilderProps) {
                     <>
                       <div className="cpb__totalLine">
                         <span>Subtotal</span>
-                        <span>${subtotal.toFixed(2)}</span>
+                        <span>{formatUsd(subtotal)}</span>
                       </div>
                       {discountPct > 0 ? (
                         <div className="cpb__totalLine cpb__totalLine--discount">
                           <span>{pkg.discountLabel || 'Discount'} ({discountPct}%)</span>
-                          <span>−${discount.toFixed(2)}</span>
+                          <span>−{formatUsd(discount)}</span>
                         </div>
                       ) : null}
                       <div className="cpb__totalLine cpb__totalLine--final">
                         <span>Total</span>
-                        <span>${total.toFixed(2)}</span>
+                        <span>{formatUsd(total)}</span>
                       </div>
                       <GhostButton
                         label={detailId === pkg.id ? 'Hide day-by-day' : 'View day-by-day'}
@@ -691,10 +692,10 @@ function Builder({ settings }: BuilderProps) {
               <div className="cpb__finalPriceLabel">{clientName ? `${clientName}'s package` : 'Package total'}</div>
               <div className="cpb__finalPriceSub">
                 {detail.pkg.name} · {days} day{days !== 1 ? 's' : ''}
-                {detail.discountPct > 0 ? ` · ${detail.pkg.discountLabel || 'Discount'} ${detail.discountPct}% off $${detail.subtotal.toFixed(2)}` : ''}
+                {detail.discountPct > 0 ? ` · ${detail.pkg.discountLabel || 'Discount'} ${detail.discountPct}% off ${formatUsd(detail.subtotal)}` : ''}
               </div>
             </div>
-            <div className="cpb__finalPriceValue">${detail.total.toFixed(2)}</div>
+            <div className="cpb__finalPriceValue">{formatUsd(detail.total)}</div>
           </div>
         </DenPanel>
       ) : null}
@@ -751,7 +752,7 @@ function DayItemsReadonly({ row }: { row: PricedDayRow }) {
             {it.label} ({it.durationLabel})
             {it.freeReason ? <span className="cpb__coverTag"> — {it.freeReason}</span> : null}
           </span>
-          <span className={it.free ? 'cpb__dayItemFree' : 'cpb__dayItemPrice'}>{it.free ? '—' : `$${it.price.toFixed(2)}`}</span>
+          <span className={it.free ? 'cpb__dayItemFree' : 'cpb__dayItemPrice'}>{it.free ? '—' : formatUsd(it.price)}</span>
         </li>
       ))}
       {row.items.length === 0 ? (
@@ -763,7 +764,7 @@ function DayItemsReadonly({ row }: { row: PricedDayRow }) {
         <li className="cpb__dayItem">
           <span className="cpb__dayItemTime">{minutesToTime(row.overnightStartMin)}</span>
           <span className="cpb__dayItemLabel">{row.overnightLabel}</span>
-          <span className="cpb__dayItemPrice">${row.overnightCost.toFixed(2)}</span>
+          <span className="cpb__dayItemPrice">{formatUsd(row.overnightCost)}</span>
         </li>
       ) : null}
     </ul>
@@ -806,7 +807,7 @@ function DayDetailRow({
               ? 'No overnight'
               : 'Client returns — no overnight'}
         </span>
-        <span className="cpb__nightRowPrice">${row.dayCost.toFixed(2)}</span>
+        <span className="cpb__nightRowPrice">{formatUsd(row.dayCost)}</span>
       </div>
 
       {row.customized ? (
@@ -836,7 +837,7 @@ function DayDetailRow({
                   </select>
                   <input className="cpb__input cpb__visitLabel" placeholder="Label" value={v.label} onChange={(e) => onPatchVisit(v.id, { label: e.target.value })} />
                   <span className={it && it.free ? 'cpb__dayEditTag cpb__dayEditTag--free' : 'cpb__dayEditTag'}>
-                    {it ? (it.free ? it.freeReason || 'free' : `$${it.price.toFixed(2)}`) : ''}
+                    {it ? (it.free ? it.freeReason || 'free' : formatUsd(it.price)) : ''}
                   </span>
                   <IconButton icon={<TrashGlyph />} label="Remove visit" destructive size={28} onClick={() => onRemoveVisit(v.id)} />
                 </div>
@@ -848,7 +849,7 @@ function DayDetailRow({
             </button>
             {row.isOvernight && row.overnightStartMin !== null ? (
               <p className="cpb__dayEditOvernight">
-                + {row.overnightLabel} from {minutesToTime(row.overnightStartMin)} — ${row.overnightCost.toFixed(2)}
+                + {row.overnightLabel} from {minutesToTime(row.overnightStartMin)} — {formatUsd(row.overnightCost)}
               </p>
             ) : null}
           </div>

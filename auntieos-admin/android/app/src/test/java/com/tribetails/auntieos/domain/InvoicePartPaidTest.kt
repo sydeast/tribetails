@@ -71,7 +71,7 @@ class InvoicePartPaidTest {
         assertEquals("$20.00", formatCentsUsd(2000L))
         assertEquals("$0.50", formatCentsUsd(50L))
         assertEquals("$0.05", formatCentsUsd(5L))
-        assertEquals("$1234.56", formatCentsUsd(123456L))
+        assertEquals("$1,234.56", formatCentsUsd(123456L))
         assertEquals("$0.00", formatCentsUsd(0L))
     }
 }

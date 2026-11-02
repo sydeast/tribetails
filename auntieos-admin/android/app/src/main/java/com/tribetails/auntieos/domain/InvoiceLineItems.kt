@@ -2,7 +2,6 @@ package com.tribetails.auntieos.domain
 
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.InvoiceLineItem
-import kotlin.math.abs
 import kotlin.math.roundToLong
 
 /**
@@ -150,10 +149,7 @@ fun invoiceTotalDisagreement(invoice: Invoice): InvoiceTotalDisagreement? {
 }
 
 /** "$36.00" / "-$12.50" from an integer count of cents. */
-fun formatCents(cents: Long): String {
-    val sign = if (cents < 0) "-" else ""
-    return "$sign$%.2f".format(abs(cents) / 100.0)
-}
+fun formatCents(cents: Long): String = formatUsdCents(cents)
 
 /** "3" for a whole quantity, "2.5" for a fractional one. Never money-style decimals. */
 fun formatQty(qty: Double): String {

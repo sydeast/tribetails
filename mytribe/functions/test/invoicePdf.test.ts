@@ -205,6 +205,10 @@ describe('usdCents / formatQty', () => {
     expect(usdCents(8333)).toBe('$83.33');
     expect(usdCents(-1250)).toBe('-$12.50');
   });
+  it('groups thousands on the printed invoice (#1488)', () => {
+    expect(usdCents(123450)).toBe('$1,234.50');
+    expect(usdCents(100_000_000)).toBe('$1,000,000.00');
+  });
   it('reads a non-finite figure as zero rather than printing $NaN on an invoice', () => {
     expect(usdCents(Number.NaN)).toBe('$0.00');
   });

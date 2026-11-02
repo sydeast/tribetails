@@ -869,7 +869,13 @@ private fun RecordPaymentDialog(
     onInvalid: (String) -> Unit,
     onSubmit: (InvoicePaymentEntry) -> Unit,
 ) {
-    val due = if (invoice.amountDue > 0.0) formatMoney(invoice.amountDue).removePrefix("$") else ""
+    // Seeded ungrouped ("1234.50"): `recordPaymentSplit` parses this field back,
+    // and the grouped `formatMoney` text would not parse (#1488).
+    val due = if (invoice.amountDue > 0.0) {
+        centsToInputDollars(com.tribetails.auntieos.web.util.dollarsToRoundedCents(invoice.amountDue))
+    } else {
+        ""
+    }
     var amount    by remember(invoice._id, visible) { mutableStateOf(due) }
     var apply     by remember(invoice._id, visible) { mutableStateOf(due) }
     var tip       by remember(invoice._id, visible) { mutableStateOf("") }
