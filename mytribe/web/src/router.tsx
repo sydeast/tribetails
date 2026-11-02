@@ -422,6 +422,18 @@ const notificationSettingsRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/NotificationSettings'), 'NotificationSettings'),
 });
 
+/**
+ * #1411: "About {business}". `requireSignedIn`, not `requireActiveTribe`: the
+ * screen reads only `business_public/card` (the sign-in read, #1321), so it has
+ * no household to need and opens before a tribe is picked.
+ */
+const aboutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/about',
+  beforeLoad: requireSignedIn,
+  component: lazyRouteComponent(() => import('./screens/About'), 'About'),
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
@@ -449,6 +461,7 @@ const routeTree = rootRoute.addChildren([
   tribeEditRoute,
   accountRoute,
   notificationSettingsRoute,
+  aboutRoute,
 ]);
 
 export const router = createRouter({

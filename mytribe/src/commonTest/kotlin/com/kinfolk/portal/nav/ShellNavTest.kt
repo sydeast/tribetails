@@ -165,15 +165,25 @@ class ShellNavTest {
     // ---- account menu ----
 
     @Test
-    fun accountMenu_nonOperator_hasAccountTribeEditKinTalesNotificationsKinSignOut() {
+    fun accountMenu_nonOperator_hasAccountTribeEditKinTalesNotificationsKinAboutSignOut() {
         // TribeEdit and KinTales now live in the avatar menu (KinTales was pulled
-        // out of the top nav into here + the Tribe hub).
+        // out of the top nav into here + the Tribe hub). #1411 adds About.
         val menu = ShellNav.accountMenu(isOperator = false)
         assertEquals(
-            listOf("Account", "Edit Tribe Profile", "KinTales", "Notifications", "The Kin", "Sign Out"),
+            listOf("Account", "Edit Tribe Profile", "KinTales", "Notifications", "The Kin", "About", "Sign Out"),
             menu.map { it.label },
         )
         assertFalse(menu.any { it is AccountMenuItem.BackToDirectory })
+    }
+
+    /** #1411: About is reached from the avatar menu on both platforms, and nowhere in the bars. */
+    @Test
+    fun accountMenu_includesAbout_whichIsNeitherATabNorAWideLink() {
+        val menu = ShellNav.accountMenu(isOperator = false)
+        assertTrue(menu.any { it is AccountMenuItem.Open && it.destination == ShellDestination.About })
+        assertFalse(ShellDestination.About in ShellNav.narrowTabs)
+        assertFalse(ShellDestination.About in ShellNav.wideLinks)
+        assertEquals(AboutRoute, ShellDestination.About.route)
     }
 
     @Test
@@ -189,7 +199,7 @@ class ShellNavTest {
     fun accountMenu_operator_includesBackToDirectoryBeforeSignOut() {
         val menu = ShellNav.accountMenu(isOperator = true)
         assertEquals(
-            listOf("Account", "Edit Tribe Profile", "KinTales", "Notifications", "The Kin", "Back to Directory", "Sign Out"),
+            listOf("Account", "Edit Tribe Profile", "KinTales", "Notifications", "The Kin", "About", "Back to Directory", "Sign Out"),
             menu.map { it.label },
         )
     }
@@ -204,6 +214,7 @@ class ShellNavTest {
                 ShellDestination.KinTales,
                 ShellDestination.Notifications,
                 ShellDestination.Kin,
+                ShellDestination.About,
             ),
             opens.map { it.destination },
         )
@@ -228,6 +239,9 @@ class ShellNavTest {
         assertTrue(isShellChromeDestination { it == NotificationsRoute::class })
         assertTrue(isShellChromeDestination { it == TribeEditRoute::class })
         assertTrue(isShellChromeDestination { it == KinTalesRoute::class })
+        // #1411: About is opened by the menu's save/restore navigation, so it
+        // must count as chrome or leaving it would save a corrupt stack.
+        assertTrue(isShellChromeDestination { it == AboutRoute::class })
     }
 
     @Test

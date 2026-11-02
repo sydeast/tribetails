@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Pets
@@ -56,6 +57,13 @@ enum class ShellDestination(
      * (pop to Home, save/restore), see AppNavHost's openMessages.
      */
     Messages("Messages", "Messages", Icons.Filled.ChatBubble, MessageAuntieRoute, MessageAuntieRoute::class),
+
+    /**
+     * #1411: "About {business}", from the avatar menu. A chrome destination so
+     * [isShellChromeDestination] is true on it and the menu's save/restore
+     * navigation is safe, the same as Account and Notifications.
+     */
+    About("About", "About", Icons.Filled.Info, AboutRoute, AboutRoute::class),
 }
 
 /** One entry in the avatar dropdown. */
@@ -115,6 +123,9 @@ object ShellNav {
         add(AccountMenuItem.Open(ShellDestination.KinTales))
         add(AccountMenuItem.Open(ShellDestination.Notifications))
         add(AccountMenuItem.Open(ShellDestination.Kin))
+        // #1411: the business's hours, number and privacy policy, before the
+        // items that leave the shell, the same slot as the web AvatarMenu.
+        add(AccountMenuItem.Open(ShellDestination.About))
         if (isOperator) add(AccountMenuItem.BackToDirectory)
         add(AccountMenuItem.SignOut)
     }

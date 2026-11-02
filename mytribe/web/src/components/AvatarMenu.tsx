@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { BusyLabel } from './Loading';
 /**
  * The header avatar and its small menu (#1309): Account, Notification settings,
- * Sign out. Before this the avatar was a bare link that went straight to
+ * About (#1411), Sign out. Before this the avatar was a bare link that went straight to
  * Account after a blank "Loading your account…" line, with no quick way out.
  *
  * A disclosure menu, not an ARIA application widget: the button announces
@@ -52,6 +52,10 @@ export function AvatarMenu(props: { initial: string; onSignOut: () => void; sign
           </Link>
           <Link role="menuitem" to="/account/notifications" onClick={() => setOpen(false)}>
             Notification settings
+          </Link>
+          {/* #1411: the business's hours, number and privacy policy. */}
+          <Link role="menuitem" to="/about" onClick={() => setOpen(false)}>
+            About
           </Link>
           <button
             type="button"
