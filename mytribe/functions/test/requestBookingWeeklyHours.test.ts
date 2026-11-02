@@ -226,3 +226,111 @@ describe('requestBooking: business hours with time blocks (#1382)', () => {
     expect(kinCareWrites(ctx).length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * #1406 (ruling on #1301: block every type): a night awaiting its start (#1098)
+ * has a date and no clock, so it is judged by its date. A weekday with no hours
+ * at all refuses it with the closed-day sentence; an open day asks nothing of
+ * the clock. The fail-open cases are the ones the timed path has.
+ */
+describe('requestBooking: a night on a closed weekday (#1406)', () => {
+  const nightSettings = { businessHours: HOURS, timeZone: ZONE, serviceStartTimeBooking: { overnight: true } };
+  /** The business-local date of the next Sunday at least three days out. */
+  const sunday = () => zonedNow(chicago('Sunday', '10:00'), ZONE)!.dateIso;
+  const monday = () => zonedNow(chicago('Monday', '10:00'), ZONE)!.dateIso;
+  const night = (date: string) => ({ serviceId: 'overnight', serviceName: 'Overnight', date, startTimeMs: undefined });
+
+  /** Fails only the booking-policy read (the first read of the settings doc), as the timed test does. */
+  function failFirstSettingsRead(ctx: ReturnType<typeof ctxWith>) {
+    const realCollection = ctx.db.collection.bind(ctx.db);
+    let failed = false;
+    ctx.db.collection = ((name: string) => {
+      const c = realCollection(name);
+      if (name !== 'business_settings') return c;
+      return {
+        ...c,
+        doc: (id: string) => {
+          const d = c.doc(id);
+          return {
+            ...d,
+            get: () => {
+              if (failed) return d.get();
+              failed = true;
+              return Promise.reject(new Error('unavailable'));
+            },
+          };
+        },
+      };
+    }) as typeof ctx.db.collection;
+  }
+
+  it('refuses a night on a weekday with no hours, with the closed-day sentence', async () => {
+    const ctx = ctxWith(nightSettings);
+    await expect(book([night(sunday())])).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'We are closed on Sundays. Pick another day for this visit.',
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('accepts a night on an open day with no clock check', async () => {
+    const ctx = ctxWith(nightSettings);
+    await book([night(monday())]);
+    expect(kinCareWrites(ctx).length).toBeGreaterThan(0);
+  });
+
+  it('refuses the whole series and names the night when it is the first bad date', async () => {
+    const ctx = ctxWith(nightSettings);
+    const badNight = sunday();
+    // A timed visit on a strictly later Sunday (the night is at most 9 days
+    // out), so the night is the earliest bad date whatever today is.
+    const laterSunday = chicago('Sunday', '10:00', 10);
+    const goodTimed = chicago('Monday', '10:00');
+    await expect(
+      book([{ startTimeMs: laterSunday }, { startTimeMs: goodTimed }, night(badNight)]),
+    ).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: `${badNight}: We are closed on Sundays. Pick another day for this visit.`,
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('fails open when no weekly hours are configured', async () => {
+    const ctx = ctxWith({ timeZone: ZONE, serviceStartTimeBooking: { overnight: true } });
+    await book([night(sunday())]);
+    expect(kinCareWrites(ctx).length).toBeGreaterThan(0);
+  });
+
+  it('fails open when the weekday has no key in the hours map (nothing is invented)', async () => {
+    const { Sunday: _omitted, ...noSunday } = HOURS;
+    const ctx = ctxWith({ ...nightSettings, businessHours: noSunday });
+    await book([night(sunday())]);
+    expect(kinCareWrites(ctx).length).toBeGreaterThan(0);
+  });
+
+  it('fails open when the day hours string is unreadable', async () => {
+    const ctx = ctxWith({ ...nightSettings, businessHours: { ...HOURS, Sunday: 'whenever' } });
+    await book([night(sunday())]);
+    expect(kinCareWrites(ctx).length).toBeGreaterThan(0);
+  });
+
+  it('fails open when the date carries a specialHours entry', async () => {
+    const date = sunday();
+    const ctx = ctxWith({ ...nightSettings, specialHours: [`${date}|by appointment`] });
+    await book([night(date)]);
+    expect(kinCareWrites(ctx).length).toBeGreaterThan(0);
+  });
+
+  it('keeps the pre-#1406 answer when the settings read throws: no policy, so no night to judge', async () => {
+    // With the settings unreadable, `loadBookingPolicy` falls back to clock-only
+    // booking and no start-time KinCares, so `planVisit` asks for a time exactly
+    // as it did before this change. The weekly-hours rule never sees the visit.
+    const ctx = ctxWith(nightSettings);
+    failFirstSettingsRead(ctx);
+    await expect(book([night(sunday())])).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'Choose a time for the Overnight.',
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+});

@@ -8,11 +8,15 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasStateDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import kotlinx.datetime.toInstant
 import com.kinfolk.portal.firebase.FakeFunctionsClient
@@ -229,6 +233,54 @@ class BookingWizardTest {
         // Day numbers 1-5 collide with the step indicator, hence the 10th/11th.
         onNodeWithText("10").assertHasNoClickAction()
         onNodeWithText("11").assertHasClickAction()
+    }
+
+    /**
+     * #1406 (ruling on #1301: block every type): a weekday the operator has
+     * left with no hours arrives from `getBusinessClosures` as a closure named
+     * for the day ("Sundays"), and the picker greys it for an overnight exactly
+     * as for a timed KinCare. The web mirror is BookingWizard.test.tsx's
+     * closed-date cases; the server refuses the night too (#1406 functions tests).
+     */
+    @Test
+    fun step3_greysAClosedWeekdayForAnOvernight() = runComposeUiTest {
+        val today = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
+        val twoMonthsOut = shiftMonth(today, 2)
+        val closed = LocalDate(twoMonthsOut.year, twoMonthsOut.month, 10)
+
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        // Overnight Stays (s2) is a night-only KinCare (#1098).
+        fake.stub("getBookingPolicy", buildJsonObject {
+            put("startTimeServiceIds", buildJsonArray { add("s2") })
+            put("allowTimeBlockBooking", false)
+            put("allowSpecificTimeBooking", true)
+            put("defaultBookingMode", "SPECIFIC_TIME")
+            put("timeBlocks", buildJsonArray {})
+        })
+        fake.stub("getBusinessClosures", buildJsonObject {
+            put("closures", buildJsonArray {
+                add(buildJsonObject { put("date", bookingDateKey(closed)); put("name", "Sundays") })
+            })
+        })
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = {})
+        }
+        waitForIdle()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        onNodeWithText("Overnight Stays").performScrollTo().performClick()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+
+        onNodeWithContentDescription("Next month").performClick()
+        waitForIdle()
+        onNodeWithContentDescription("Next month").performClick()
+        waitForIdle()
+        onNodeWithText(monthHeading(closed)).assertIsDisplayed()
+        onNodeWithText("10").assertHasNoClickAction()
+        onNodeWithText("11").assertHasClickAction()
+        onNode(hasStateDescription("Closed: Sundays") and hasAnyDescendant(hasText("10"))).assertExists()
     }
 
     @Test

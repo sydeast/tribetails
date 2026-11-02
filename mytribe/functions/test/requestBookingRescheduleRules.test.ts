@@ -117,6 +117,19 @@ describe('requestBookingReschedule: business hours (#1284)', () => {
     await ask({ proposedStartTimeMs: chicago('Monday', '20:00') });
     expect(ctx.writes.some((w) => w.path === VISIT)).toBe(true);
   });
+  // #1406 (ruling on #1301: block every type): the clock is not checked for an
+  // overnight, but a weekday with no hours at all still refuses it.
+  it('refuses an overnight-style start-time service on a closed weekday', async () => {
+    const ctx = ctxWith(
+      { businessHours: HOURS, timeZone: ZONE, serviceStartTimeBooking: { overnight: true } },
+      { serviceId: 'overnight' },
+    );
+    await expect(ask({ proposedStartTimeMs: chicago('Sunday', '20:00') })).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'We are closed on Sundays. Pick another day for this visit.',
+    });
+    expect(ctx.writes.some((w) => w.path === VISIT)).toBe(false);
+  });
 });
 describe('requestBookingReschedule: closures (#1284)', () => {
   it('refuses a company closure and names the date', async () => {

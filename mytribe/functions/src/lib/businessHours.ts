@@ -287,6 +287,23 @@ export function hasSpecialHours(raw: unknown, dateIso: string): boolean {
 }
 
 /**
+ * The `businessHours` key ("Monday" etc.) a calendar `YYYY-MM-DD` falls on, or
+ * null when the string is not a real date. A calendar date's weekday does not
+ * depend on a timezone, so it is read off the string in UTC, the way
+ * `getBusinessClosures` marks the day picker (#1301). This is for a visit that
+ * has a DATE and no instant yet (a night awaiting its start, #1098);
+ * `resolveBusinessOpen` is the resolver for an instant.
+ */
+export function weekdayNameOfDate(dateIso: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateIso);
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (new Date(ms).toISOString().slice(0, 10) !== dateIso) return null;
+  // DAY_NAMES is Monday-first; getUTCDay is Sunday-first.
+  return DAY_NAMES[(new Date(ms).getUTCDay() + 6) % 7] ?? null;
+}
+
+/**
  * PURE. The whole decision, given settings and an instant.
  *
  * Order is deliberate:
