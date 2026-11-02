@@ -429,17 +429,6 @@ fun AppNavHost(
                             onSignOut = onSignOut,
                             billingAccess = shellBillingAccess,
                             onAccountSaved = { onPersonNameChanged(resolveShellPersonName(it.displayName, it.email, shellFamilyName)) },
-                            onOpenTribeProfile = {
-                                // Account is a chrome-level destination, so
-                                // save/restore is safe here; pop to the
-                                // HomeRoute LEAF (findStartDestination), never
-                                // the nested ShellGraph node id.
-                                navController.navigate(TribeRoute) {
-                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
                             repo = repo,
                         )
                     }

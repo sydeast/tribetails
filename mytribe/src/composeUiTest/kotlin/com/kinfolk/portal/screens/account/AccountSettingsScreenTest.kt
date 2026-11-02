@@ -52,8 +52,9 @@ class AccountSettingsScreenTest {
         onNodeWithText("Profile").assertExists()
         onNodeWithText("First & Last Name *").assertExists()
         onNodeWithText("Profile Photo").assertExists()
-        // Quick link over to the household/tribe profile.
-        onNodeWithText("Manage your family, home & vet → Tribe profile").assertExists()
+        // #1465: the "Tribe profile" quick link is gone; Tribe is a bar tab.
+        onNodeWithText("Manage your family, home & vet → Tribe profile").assertDoesNotExist()
+        onNodeWithText("Tribe profile", substring = true).assertDoesNotExist()
         onNodeWithText("Recovery Contacts").assertExists()
         onNodeWithText("Billing Details").assertExists()
         onNodeWithText("Sign Out").assertExists()

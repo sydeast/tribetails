@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -61,7 +60,6 @@ fun AccountSettingsScreen(
     portalApi: PortalApi,
     kinfolkId: String? = null,
     onSignOut: () -> Unit = {},
-    onOpenTribeProfile: () -> Unit = {},
     repo: AuthRepository? = null,
     /**
      * The Stripe card-setup hand-off, injectable so a test can drive "Add a
@@ -189,15 +187,7 @@ fun AccountSettingsScreen(
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
     ) {
         ScreenHeader(title = "Account Settings", kicker = "Account")
-        // "First & Last Name" below is the user's OWN name, not the household/tribe
-        // name (that lives on the Tribe profile) — quick link so they don't conflate them.
-        Text(
-            "Manage your family, home & vet → Tribe profile",
-            style = type.sansLabel.copy(color = KinfolkBrand.KinTeal),
-            modifier = Modifier
-                .clickable { onOpenTribeProfile() }
-                .padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.xs),
-        )
+        // #1465: the "Tribe profile" quick link is gone; Tribe is a bar tab.
         if (loaded == null && error == null) {
             Box(modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.l), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = KinfolkBrand.KinfolkOrange)
