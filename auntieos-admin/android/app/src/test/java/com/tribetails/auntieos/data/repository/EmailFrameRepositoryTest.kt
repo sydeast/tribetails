@@ -28,7 +28,7 @@ class EmailFrameRepositoryTest {
 
     private val answer = mapOf(
         "stored" to mapOf("accentColor" to "#123456"),
-        "defaults" to mapOf("accentColor" to "#df8431", "footerText" to "Tribe Tails Pet Care. Your Kin's Favorite Auntie."),
+        "defaults" to mapOf("accentColor" to "#df8431", "footerText" to ""),
         "updatedAt" to "2026-09-28T01:00:00.000Z",
         "updatedBy" to "owner-1",
     )

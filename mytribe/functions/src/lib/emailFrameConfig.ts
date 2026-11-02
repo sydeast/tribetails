@@ -9,8 +9,9 @@ import { z } from 'zod';
  * for every send route, so anything heavier here would land on every cold start
  * (`coldStartImportGraph.test.ts`). `zod` is already on that list.
  *
- * The defaults are the values the frame used before it was editable, so a
- * business that never saves a frame sends byte-identical email.
+ * The color defaults are the values the frame used before it was editable.
+ * The footer is no longer a default text (#1399): it is composed from settings
+ * by `emailFooter.ts`, and `footerText` is the operator's optional extra line.
  */
 
 export const EMAIL_FRAME_COLOR_FIELDS = [
@@ -31,12 +32,17 @@ export const EMAIL_FRAME_FIELDS = [...EMAIL_FRAME_COLOR_FIELDS, ...EMAIL_FRAME_T
 
 export type EmailFrameField = (typeof EMAIL_FRAME_FIELDS)[number];
 
-/** A complete frame: every field resolved. `headerText` and `logoUrl` are '' when unset. */
+/** A complete frame: every field resolved. `headerText`, `footerText` and `logoUrl` are '' when unset. */
 export type EmailFrame = Record<EmailFrameField, string>;
 
 /** Only the fields the operator set. What `business_settings/email_frame` holds. */
 export type StoredEmailFrame = Partial<Record<EmailFrameField, string>>;
 
+/**
+ * The footer line the frame carried before #1399. RETAINED, NOT USED: the
+ * footer is now composed from settings (`emailFooter.ts`), and a hardcoded
+ * business name would be an invented value for any business but one.
+ */
 export const DEFAULT_FOOTER_TEXT = "Tribe Tails Pet Care. Your Kin's Favorite Auntie.";
 
 export const DEFAULT_EMAIL_FRAME: Readonly<EmailFrame> = Object.freeze({
@@ -50,7 +56,7 @@ export const DEFAULT_EMAIL_FRAME: Readonly<EmailFrame> = Object.freeze({
   footerBackground: '#11131f',
   footerTextColor: '#fbfbf9',
   headerText: '',
-  footerText: DEFAULT_FOOTER_TEXT,
+  footerText: '',
   logoUrl: '',
 });
 

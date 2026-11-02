@@ -299,13 +299,16 @@ export function EmailFrameEditor({ loaded, onSaved }: EditorProps) {
 
           <div className="settingsEdit__subsection">
             <span className="settingsEdit__groupHeading">Footer</span>
-            <label className="settingsEdit__field">
+            {/* #1399: the footer itself is composed from Business settings (name,
+                hours, phone, privacy policy) and shows in the preview; this is
+                the optional extra line under it, blank by default. */}
+            <label className="settingsEdit__field" title="An extra line under the business name, hours, phone and privacy policy">
               <span className="settingsEdit__fieldLabel">Footer line</span>
               <input
                 type="text"
                 className="settingsEdit__input"
                 value={draft.footerText}
-                placeholder={loaded.defaults.footerText}
+                placeholder={loaded.defaults.footerText || 'None'}
                 maxLength={FOOTER_TEXT_MAX}
                 aria-invalid={problems.footerText ? true : undefined}
                 disabled={disabled}

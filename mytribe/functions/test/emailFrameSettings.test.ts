@@ -31,7 +31,8 @@ import { AUNTIE_ALLOWED_CALLABLES } from '../src/lib/auntieAccess';
 import { AUDIT_EVENTS } from '../src/lib/auditEvents';
 
 const PATH = 'business_settings/email_frame';
-const LOGO = 'https://res.cloudinary.com/tribetails/image/upload/v1/tribetails/business/business_settings/logo.png';
+const SETTINGS_PATH = 'business_settings/business_settings';
+const LOGO ='https://res.cloudinary.com/tribetails/image/upload/v1/tribetails/business/business_settings/logo.png';
 
 let ctx: ReturnType<typeof buildDbMock>;
 function setup(docs: Record<string, Record<string, unknown>> = {}) {
@@ -57,9 +58,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('the default frame', () => {
-  // The frame exactly as it was before it was editable (pre-#957
-  // `FRAME_STYLE` and `FOOTER`). With nothing stored, every email must be
-  // byte-identical to what it was.
+  // The frame's colors and markup exactly as they were before it was editable
+  // (pre-#957 `FRAME_STYLE`). #1399 superseded the one promise this used to
+  // make about the footer: it is no longer the hardcoded "Tribe Tails Pet
+  // Care" line but a block composed from settings, and with no settings
+  // passed (a bare default frame) that block is empty. Everything else about
+  // the default render is still pinned here byte for byte.
   const OLD_STYLE = `
         body { background-color: #fbfbf9; color: #11131f; font-family: 'Segoe UI', Tahoma, sans-serif; line-height: 1.6; margin: 0; padding: 0; }
         .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-top: 8px solid #df8431; border-bottom: 4px solid #11131f; }
@@ -80,15 +84,20 @@ describe('the default frame', () => {
     '    <div class="container">',
     '        <div class="header"><h2>Hello</h2></div>',
     '        <div class="content"><p>Body</p></div>',
-    `        <div class="footer">Tribe Tails Pet Care. Your Kin's Favorite Auntie.</div>`,
+    `        <div class="footer"></div>`,
     '    </div>',
     '</body>',
     '</html>',
   ].join('\n');
 
-  it('renders byte-identical to the frame before it was editable', () => {
+  it('renders the pre-editable colors and markup, with an empty footer block when no settings are passed', () => {
     expect(frameHtml('Hello', '<p>Body</p>')).toBe(OLD);
     expect(frameHtml('Hello', '<p>Body</p>', resolveEmailFrame({}))).toBe(OLD);
+  });
+
+  it('never carries a hardcoded business name', () => {
+    expect(DEFAULT_EMAIL_FRAME.footerText).toBe('');
+    expect(frameHtml('Hello', '<p>Body</p>')).not.toContain('Tribe Tails');
   });
 });
 
@@ -117,7 +126,7 @@ describe('a stored frame renders', () => {
     expect(html).toContain('.footer { padding: 20px 40px; background-color: #000008; color: #000009;');
     expect(html).toContain(`<img src="${LOGO}" alt="Tribe Tails" width="160"`);
     expect(html).toContain('>Tribe Tails</p><h2>H</h2>');
-    expect(html).toContain('<div class="footer">Thanks for trusting us</div>');
+    expect(html).toContain('<div class="footer"><div style="margin: 0 0 4px 0;">Thanks for trusting us</div></div>');
   });
 
   it('escapes markup and braces in the text fields, so neither can become HTML or a merge field', () => {
@@ -125,7 +134,7 @@ describe('a stored frame renders', () => {
     // the render itself is safe (defense in depth for a hand-edited document).
     const f = { ...DEFAULT_EMAIL_FRAME, footerText: '<script>x</script> {{link}}', headerText: 'A & B' };
     const html = frameHtml('H', '<p>c</p>', f);
-    expect(html).toContain('<div class="footer">&lt;script&gt;x&lt;/script&gt; &#123;&#123;link&#125;&#125;</div>');
+    expect(html).toContain('<div class="footer"><div style="margin: 0 0 4px 0;">&lt;script&gt;x&lt;/script&gt; &#123;&#123;link&#125;&#125;</div></div>');
     expect(html).toContain('>A &amp; B</p>');
   });
 
@@ -177,23 +186,71 @@ describe('the schema', () => {
 });
 
 describe('loadEmailFrame (the send-time read)', () => {
-  it('returns the default frame when nothing is stored', async () => {
-    await expect(loadEmailFrame('test')).resolves.toEqual(DEFAULT_EMAIL_FRAME);
+  // #1399: the frame now carries `business`, the footer facts projected from
+  // the settings document. With no settings document, every fact is blank.
+  const NO_BUSINESS = {
+    name: '',
+    phone: '',
+    hours: { Monday: '', Tuesday: '', Wednesday: '', Thursday: '', Friday: '', Saturday: '', Sunday: '' },
+    privacyPolicyUrl: '',
+  };
+
+  it('returns the default frame, with blank business facts, when nothing is stored', async () => {
+    await expect(loadEmailFrame('test')).resolves.toEqual({ ...DEFAULT_EMAIL_FRAME, business: NO_BUSINESS });
   });
 
   it('returns the stored fields over the defaults', async () => {
     setup({ [PATH]: { accentColor: '#123456', footerText: 'Bye' } });
-    await expect(loadEmailFrame('test')).resolves.toEqual({ ...DEFAULT_EMAIL_FRAME, accentColor: '#123456', footerText: 'Bye' });
+    await expect(loadEmailFrame('test')).resolves.toEqual({
+      ...DEFAULT_EMAIL_FRAME,
+      accentColor: '#123456',
+      footerText: 'Bye',
+      business: NO_BUSINESS,
+    });
+  });
+
+  it('projects the settings document onto the footer facts, the way the public card does', async () => {
+    setup({
+      [SETTINGS_PATH]: {
+        businessName: ' Test Business ',
+        businessPhone: '+15125550142',
+        businessHours: { Monday: '8:00-18:00', Sunday: '' },
+        privacyPolicyUrl: 'https://tribetails.com/privacy',
+        hourlyRate: 45, // an operational field: never reaches the footer
+      },
+    });
+    const frame = await loadEmailFrame('test');
+    expect(frame.business).toEqual({
+      name: 'Test Business',
+      phone: '+15125550142',
+      hours: { ...NO_BUSINESS.hours, Monday: '08:00-18:00' },
+      privacyPolicyUrl: 'https://tribetails.com/privacy',
+    });
+    expect(JSON.stringify(frame)).not.toContain('45');
   });
 
   it('falls back to the default frame, with a log line, when the read fails', async () => {
     mocks.dbFn.mockReturnValue({
       doc: () => ({ get: async () => { throw new Error('UNAVAILABLE'); } }),
     });
-    await expect(loadEmailFrame('emailChannel')).resolves.toEqual(DEFAULT_EMAIL_FRAME);
+    await expect(loadEmailFrame('emailChannel')).resolves.toEqual({ ...DEFAULT_EMAIL_FRAME, business: NO_BUSINESS });
     expect(mocks.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ severity: 'warn', function: 'emailChannel', event: 'email.frame.read_failed', errorMessage: 'UNAVAILABLE' }),
     );
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: 'warn', function: 'emailChannel', event: 'email.footer.settings_read_failed' }),
+    );
+  });
+
+  it('keeps the stored frame when only the settings read fails', async () => {
+    const base = buildDbMock({ writeThrough: true, docs: { [PATH]: { accentColor: '#123456' } } }).db;
+    mocks.dbFn.mockReturnValue({
+      ...base,
+      doc: (path: string) => (path === SETTINGS_PATH ? { get: async () => { throw new Error('UNAVAILABLE'); } } : base.doc(path)),
+    });
+    const frame = await loadEmailFrame('test');
+    expect(frame.accentColor).toBe('#123456');
+    expect(frame.business).toEqual(NO_BUSINESS);
   });
 
   it('falls back field by field, with a log line, when a stored value is bad', async () => {
@@ -290,7 +347,7 @@ describe('previewEmailFrame', () => {
   it('renders the sample through the real frame with the draft values', async () => {
     const res = await previewEmailFrameHandler(owner({ frame: { accentColor: '#123456', footerText: 'Draft footer' } }));
     expect(res.html).toContain('border-top: 8px solid #123456');
-    expect(res.html).toContain('<div class="footer">Draft footer</div>');
+    expect(res.html).toContain('<div class="footer"><div style="margin: 0 0 4px 0;">Draft footer</div></div>');
     expect(res.html).toContain('class="button"');
     expect(res.html).toContain('<blockquote>');
     expect(res.subject).toBeTruthy();
@@ -299,7 +356,25 @@ describe('previewEmailFrame', () => {
 
   it('renders the default frame for an empty draft, and writes nothing', async () => {
     const res = await previewEmailFrameHandler(owner({ frame: {} }));
-    expect(res.html).toContain(`<div class="footer">${DEFAULT_EMAIL_FRAME.footerText}</div>`);
+    expect(res.html).toContain('<div class="footer"></div>');
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('#1399: shows the footer composed from settings, so the editor preview is honest', async () => {
+    setup({
+      [SETTINGS_PATH]: {
+        businessName: 'Test Business',
+        businessPhone: '+15125550142',
+        businessHours: { Monday: '08:00-18:00' },
+        privacyPolicyUrl: 'https://tribetails.com/privacy',
+      },
+    });
+    const res = await previewEmailFrameHandler(owner({ frame: { footerText: 'Draft footer' } }));
+    expect(res.html).toContain('<strong>Test Business</strong>');
+    expect(res.html).toContain('Hours: Monday 8:00 AM to 6:00 PM · Tuesday Closed');
+    expect(res.html).toContain('Phone: (512) 555-0142');
+    expect(res.html).toContain('href="https://tribetails.com/privacy"');
+    expect(res.html).toContain('<div style="margin: 0 0 4px 0;">Draft footer</div></div>');
     expect(ctx.writes).toHaveLength(0);
   });
 

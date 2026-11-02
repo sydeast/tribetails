@@ -36,7 +36,8 @@ const DEFAULTS = {
   footerBackground: '#11131f',
   footerTextColor: '#fbfbf9',
   headerText: '',
-  footerText: "Tribe Tails Pet Care. Your Kin's Favorite Auntie.",
+  // #1399: the footer is composed from settings on the server; the extra line defaults to blank.
+  footerText: '',
   logoUrl: '',
 };
 
@@ -60,7 +61,8 @@ describe('Email frame section', () => {
     expect(text).toHaveAttribute('placeholder', '#11131f');
     const footer = screen.getByRole('textbox', { name: 'Footer line' });
     expect(footer).toHaveValue('');
-    expect(footer).toHaveAttribute('placeholder', DEFAULTS.footerText);
+    // A blank default reads "None", like the header line; never a business name.
+    expect(footer).toHaveAttribute('placeholder', 'None');
     expect(screen.getByText('Using the default frame')).toBeInTheDocument();
   });
 

@@ -199,7 +199,7 @@ describe('sending', () => {
     await processPasswordResetRequest({ email: KIN_EMAIL, networkKey: NET });
     const args = mocks.sendTemplatedEmail.mock.calls[0]![0];
     expect(args.htmlTemplate).toContain('border-top: 8px solid #123456');
-    expect(args.htmlTemplate).toContain('<div class="footer">Stored footer line</div>');
+    expect(args.htmlTemplate).toContain('<div style="margin: 0 0 4px 0;">Stored footer line</div></div>');
   });
 
   it('#1381: carries the business name from settings into the merge fields', async () => {
