@@ -27,6 +27,8 @@ import {
   listPublicComments,
   ANONYMOUS_GUEST_NAME,
   FAMILY_NAME,
+  AUNTIE_FALLBACK_NAME,
+  staffSignature,
 } from '../src/share/sharedKinTaleComments';
 
 /**
@@ -74,7 +76,7 @@ describe('toPublicComment', () => {
   it('never names a household member, whatever role or name the row carries', () => {
     // The household chose to send a recap, not to introduce their members to
     // whoever the link reached. A kinfolk comment is attributed to the family.
-    for (const role of ['kinfolk', 'auntie', 'admin', undefined]) {
+    for (const role of ['kinfolk', 'auntie', undefined]) {
       const scrubbed = toPublicComment({
         authorRole: role,
         guestName: 'Should Not Be Used',
@@ -128,8 +130,7 @@ describe('household signature (#1407)', () => {
     expect(toPublicComment({ authorRole: 'kinfolk', body: 'x' }, 'Pat R.')?.name).toBe('Pat R.');
     expect(toPublicComment({ authorRole: 'kinfolk', body: 'x' }, null)?.name).toBe(FAMILY_NAME);
   });
-  it('never applies a household signature to staff or to a guest', () => {
-    expect(toPublicComment({ authorRole: 'admin', body: 'x' }, 'Pat R.')?.name).toBe(FAMILY_NAME);
+  it('never applies a household signature to a guest', () => {
     expect(toPublicComment({ authorRole: 'guest', guestName: 'Marta', body: 'x' }, 'Pat R.')?.name).toBe('Marta');
   });
   it('resolves the three name shapes end to end from the member record', async () => {
@@ -148,5 +149,46 @@ describe('household signature (#1407)', () => {
     expect(out.map((c) => c.name)).toEqual(['Pat R.', 'Sam', FAMILY_NAME]);
     expect(JSON.stringify(out)).not.toContain('u-two');
     expect(JSON.stringify(out)).not.toContain('Rivera');
+  });
+});
+
+describe('staff signature (#1416)', () => {
+  it('prefixes the role word once, like the in-app thread', () => {
+    expect(staffSignature('Maya')).toBe('Auntie Maya');
+    expect(staffSignature('Auntie Maya')).toBe('Auntie Maya');
+    expect(staffSignature('   ')).toBeNull();
+    expect(staffSignature(undefined)).toBeNull();
+  });
+  it('falls back to a bare Auntie, never the family', () => {
+    expect(toPublicComment({ authorRole: 'admin', body: 'x' }, null)?.name).toBe(AUNTIE_FALLBACK_NAME);
+    expect(toPublicComment({ authorRole: 'admin', body: 'x' }, 'Auntie Maya')?.name).toBe('Auntie Maya');
+  });
+  it('signs named staff, unnamed staff, household and guest in one thread, with one batched read', async () => {
+    state.docs = {
+      'kin_care_reports/t2': { kinfolkId: 'k1' },
+      'staff/s-named': { displayName: 'Maya', email: 'maya@example.invalid' },
+      'staff/s-blank': { displayName: ' ' },
+      'families/k1/members/u-two': { displayName: 'Pat Rivera' },
+    };
+    state.comments = [
+      { authorRole: 'admin', authorUid: 's-named', body: 'a', createdAtMs: 1 },
+      { authorRole: 'admin', authorUid: 's-blank', body: 'b', createdAtMs: 2 },
+      { authorRole: 'admin', authorUid: 's-missing', body: 'c', createdAtMs: 3 },
+      { authorRole: 'kinfolk', authorUid: 'u-two', body: 'd', createdAtMs: 4 },
+      { authorRole: 'guest', guestName: 'Marta', body: 'e', createdAtMs: 5 },
+      { authorRole: 'kinfolk', authorUid: 'u-none', body: 'f', createdAtMs: 6 },
+    ];
+    const out = await listPublicComments('t2');
+    expect(out.map((c) => c.name)).toEqual([
+      'Auntie Maya', 'Auntie', 'Auntie', 'Pat R.', 'Marta', FAMILY_NAME,
+    ]);
+    expect(out.map((c) => c.fromGuest)).toEqual([false, false, false, false, true, false]);
+    for (const c of out) {
+      expect(Object.keys(c).sort()).toEqual(['body', 'createdAtMs', 'fromGuest', 'name']);
+    }
+    const json = JSON.stringify(out);
+    for (const secret of ['s-named', 'u-two', 'maya@example.invalid', 'Rivera']) {
+      expect(json).not.toContain(secret);
+    }
   });
 });
