@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
@@ -50,6 +51,11 @@ import com.kinfolk.portal.media.rememberPhotoPicker
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.KinPayload
+import com.kinfolk.portal.portal.KinRemovalOption
+import com.kinfolk.portal.portal.KinRemovalOptions
+import com.kinfolk.portal.portal.KinRemovalRequest
+import com.kinfolk.portal.portal.kinRemovalOption
+import com.kinfolk.portal.portal.removalDateLabel
 import com.kinfolk.portal.portal.KinStatus
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
@@ -75,16 +81,23 @@ fun AddEditKinDialog(
      */
     onArchive: (suspend (restore: Boolean) -> String?)? = null,
     /**
-     * #1314. Edit only: asks the server whether this Kin may be deleted (true
-     * only with no visits, KinTales, photos or records on file). Null, false,
-     * or a failed check hides the row.
+     * #1314 / #1408. Edit only: asks the server how this Kin may be removed.
+     * `canDelete` (nothing on file) shows the delete row; otherwise the
+     * "Request removal" row, or the pending / declined state of a request
+     * already made. A failed check says so and offers a retry. Null hides both.
      */
-    canDelete: (suspend () -> Boolean)? = null,
+    removalOptions: (suspend () -> KinRemovalOptions)? = null,
     /**
      * #1314. Edit only: hard-deletes the Kin. Returns null on success, else an
      * inline message (the server's refusal sentence when history exists).
      */
     onDelete: (suspend () -> String?)? = null,
+    /**
+     * #1408. Edit only: asks the office to remove a Kin with history, with an
+     * optional reason. Success carries the recorded request (the dialog stays
+     * open on its pending state); failure carries the sentence to show inline.
+     */
+    onRequestRemoval: (suspend (reason: String) -> Result<KinRemovalRequest>)? = null,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -95,26 +108,41 @@ fun AddEditKinDialog(
     var confirmingArchive by remember { mutableStateOf(false) }
     var archiving by remember { mutableStateOf(false) }
     var archiveError by remember { mutableStateOf<String?>(null) }
-    // #1314 delete state, same shape. `deleteAllowed` is the server's answer,
-    // false until it arrives, so the row never shows before the check.
-    var deleteAllowed by remember { mutableStateOf(false) }
+    // #1314 delete state, same shape. The row shows only once the server
+    // answered `canDelete`, so it never shows before the check.
     var confirmingDelete by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var deleteError by remember { mutableStateOf<String?>(null) }
-    val busy = saving || archiving || deleting
-    LaunchedEffect(initial?.id) {
-        deleteAllowed = if (initial != null && canDelete != null && onDelete != null) {
-            try {
-                canDelete()
-            } catch (c: CancellationException) {
-                throw c
-            } catch (_: Throwable) {
-                false
-            }
-        } else {
-            false
+    // #1408 removal options: the server's answer, whether it is loading or
+    // failed (with a retry), and the request row's own confirm/busy/error.
+    var removal by remember { mutableStateOf<KinRemovalOptions?>(null) }
+    var removalLoading by remember { mutableStateOf(false) }
+    var removalCheckFailed by remember { mutableStateOf(false) }
+    var removalAttempt by remember { mutableStateOf(0) }
+    var confirmingRemoval by remember { mutableStateOf(false) }
+    var removalReason by remember { mutableStateOf("") }
+    var requestingRemoval by remember { mutableStateOf(false) }
+    var removalError by remember { mutableStateOf<String?>(null) }
+    val busy = saving || archiving || deleting || requestingRemoval
+    LaunchedEffect(initial?.id, removalAttempt) {
+        if (initial == null || removalOptions == null) {
+            removal = null
+            return@LaunchedEffect
         }
+        removalLoading = true
+        removalCheckFailed = false
+        removal = try {
+            removalOptions()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            removalCheckFailed = true
+            null
+        }
+        removalLoading = false
     }
+    val removalOption = removal?.let { kinRemovalOption(it) }
+    val deleteAllowed = removalOption == KinRemovalOption.Delete
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var species by remember { mutableStateOf(initial?.species.orEmpty()) }
     var breed by remember { mutableStateOf(initial?.breed.orEmpty()) }
@@ -367,7 +395,56 @@ fun AddEditKinDialog(
                         },
                     )
                 }
-                // #1408: "Request removal" for a Kin with history lands here.
+                // #1408: removal options load from the server; say so, and say
+                // so when the check fails, with a retry.
+                if (initial != null && removalOptions != null && removalLoading) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(color = KinfolkBrand.KinfolkOrange, modifier = Modifier.size(16.dp))
+                        Text("Checking removal options…", style = type.sansMeta)
+                    }
+                }
+                if (initial != null && removalOptions != null && removalCheckFailed && !removalLoading) {
+                    Text("Couldn't check how this Kin can be removed.", style = type.sansMeta)
+                    KinGhostButton(
+                        label = "Try again",
+                        onClick = { removalAttempt += 1 },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                // #1408: a Kin with history is removed by the office, on request.
+                if (initial != null && onRequestRemoval != null && removalOption != null && removalOption != KinRemovalOption.Delete) {
+                    RemovalRequestAction(
+                        kinName = initial.name,
+                        option = removalOption,
+                        busy = requestingRemoval,
+                        enabled = !busy,
+                        error = removalError,
+                        confirming = confirmingRemoval,
+                        onConfirmingChange = { confirmingRemoval = it },
+                        reason = removalReason,
+                        onReasonChange = { removalReason = it.take(500) },
+                        onSend = {
+                            scope.launch {
+                                requestingRemoval = true
+                                removalError = null
+                                val result = onRequestRemoval(removalReason)
+                                requestingRemoval = false
+                                result.fold(
+                                    onSuccess = { request ->
+                                        removal = removal?.copy(request = request) ?: KinRemovalOptions(canDelete = false, request = request)
+                                        confirmingRemoval = false
+                                        removalReason = ""
+                                    },
+                                    onFailure = { removalError = it.message ?: "Could not send the request" },
+                                )
+                            }
+                        },
+                    )
+                }
             }
         },
         confirmButton = {
@@ -542,6 +619,87 @@ private fun DeleteAction(
                 onClick = { if (enabled) onConfirmingChange(true) },
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+        error?.let { problem ->
+            Text(text = problem, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
+        }
+    }
+}
+
+/**
+ * #1408. "Request removal" in the delete row's slot, for a Kin with history.
+ * Coral outline behind a confirm step with an optional reason, matching the
+ * web KinEdit row. A pending request shows its date and nothing to tap; a
+ * declined one shows the office's note above the button, which asks again.
+ */
+@Composable
+private fun RemovalRequestAction(
+    kinName: String?,
+    option: KinRemovalOption,
+    busy: Boolean,
+    enabled: Boolean,
+    error: String?,
+    confirming: Boolean,
+    onConfirmingChange: (Boolean) -> Unit,
+    reason: String,
+    onReasonChange: (String) -> Unit,
+    onSend: () -> Unit,
+) {
+    val type = LocalKinfolkTypography.current
+    Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+        when (option) {
+            is KinRemovalOption.Pending -> {
+                val date = removalDateLabel(option.request.requestedAtMs)
+                Text(if (date != null) "Removal requested on $date." else "Removal requested.", style = type.sansMeta)
+                option.request.reason?.let { Text("Your reason: $it", style = type.sansMeta) }
+            }
+            is KinRemovalOption.Request -> {
+                option.declined?.let { declined ->
+                    val date = removalDateLabel(declined.resolvedAtMs)
+                    val head = if (date != null) "Removal declined on $date." else "Removal declined."
+                    Text(listOfNotNull(head, declined.resolutionNote).joinToString(" "), style = type.sansMeta)
+                }
+                if (confirming) {
+                    Text(
+                        "Ask to have ${kinName ?: "this Kin"} removed? Visits, invoices and KinTales on file are kept.",
+                        style = type.sansMeta,
+                    )
+                    KinField(
+                        value = reason,
+                        onValueChange = onReasonChange,
+                        label = "Reason (optional)",
+                        singleLine = false,
+                        enabled = enabled,
+                        fieldTestTag = "kin-removal-reason",
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (busy) CircularProgressIndicator(color = KinfolkBrand.SnuggleCoral, modifier = Modifier.size(16.dp))
+                        OutlinePillButton(
+                            label = if (busy) "Sending…" else "Send request",
+                            color = KinfolkBrand.SnuggleCoral,
+                            onClick = { if (enabled) onSend() },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    KinGhostButton(
+                        label = "Never mind",
+                        onClick = { onConfirmingChange(false) },
+                        enabled = enabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    OutlinePillButton(
+                        label = "Request removal",
+                        color = KinfolkBrand.SnuggleCoral,
+                        onClick = { if (enabled) onConfirmingChange(true) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            KinRemovalOption.Delete -> Unit
         }
         error?.let { problem ->
             Text(text = problem, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))

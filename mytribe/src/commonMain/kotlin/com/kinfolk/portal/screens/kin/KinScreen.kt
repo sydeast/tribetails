@@ -225,8 +225,9 @@ fun KinAddEditScreen(
         },
         photoUploading = controller.photoUploading,
         onArchive = if (kinId != null) { restore -> controller.archiveAndReload(kinId, restore) } else null,
-        canDelete = if (kinId != null) { { controller.canDeleteKin(kinId) } } else null,
+        removalOptions = if (kinId != null) { { controller.kinRemovalOptions(kinId) } } else null,
         onDelete = if (kinId != null) { { controller.deleteAndReload(kinId) } } else null,
+        onRequestRemoval = if (kinId != null) { { reason -> controller.requestRemoval(kinId, reason) } } else null,
     )
 }
 

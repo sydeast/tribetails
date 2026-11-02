@@ -15,6 +15,8 @@ import type {
   ConfirmSecureResetResult,
   DeleteKinRequest,
   DeleteKinResult,
+  RequestKinRemovalRequest,
+  RequestKinRemovalResult,
   GetInvitePreviewRequest,
   GetMyAccessResult,
   GetMyHomeRequest,
@@ -171,6 +173,23 @@ export function canDeleteKin(kinId: string, kinfolkId?: string): Promise<DeleteK
 export function deleteKin(kinId: string, kinfolkId?: string): Promise<DeleteKinResult> {
   const payload: DeleteKinRequest = { kinId, confirm: true, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
   return call<DeleteKinRequest, DeleteKinResult>('deleteKin', payload);
+}
+
+/**
+ * #1408. Asks the office to remove a kin that has history (visits, KinTales,
+ * photos or records), which the household cannot delete itself. The server
+ * re-runs the #1314 history check, refuses a kin with nothing on file (the
+ * delete row is the path for that) and refuses a second open request. A blank
+ * reason is sent as none.
+ */
+export function requestKinRemoval(kinId: string, reason: string, kinfolkId?: string): Promise<RequestKinRemovalResult> {
+  const trimmed = reason.trim();
+  const payload: RequestKinRemovalRequest = {
+    kinId,
+    ...(trimmed !== '' ? { reason: trimmed } : {}),
+    ...(kinfolkId !== undefined ? { kinfolkId } : {}),
+  };
+  return call<RequestKinRemovalRequest, RequestKinRemovalResult>('requestKinRemoval', payload);
 }
 
 /**

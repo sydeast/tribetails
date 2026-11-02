@@ -1223,17 +1223,35 @@ class PortalApi(
     }
 
     /**
-     * #1314. Whether the household may delete this Kin itself: true only when
-     * no visit, KinTale, photo or admin record references it. The same
-     * callable as [deleteKin] without `confirm`, so it writes nothing and the
-     * one function instance the confirm tap will hit is already warm.
+     * #1314. Whether the household may delete this Kin itself: `canDelete` is
+     * true only when no visit, KinTale, photo or admin record references it.
+     * #1408: the same read carries the household's latest removal request, so
+     * a Kin with history can show "Request removal" or its pending/declined
+     * state. The same callable as [deleteKin] without `confirm`, so it writes
+     * nothing and the one function instance the confirm tap will hit is warm.
      */
-    suspend fun canDeleteKin(kinfolkId: String? = null, kinId: String): Boolean {
+    suspend fun kinRemovalOptions(kinfolkId: String? = null, kinId: String): KinRemovalOptions {
         val raw = fns.call("deleteKin", buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
             put("kinId", kinId)
         })
-        return raw["canDelete"]?.jsonPrimitive?.booleanOrNull == true
+        return decodeKinRemovalOptions(raw)
+    }
+
+    /**
+     * #1408. Asks the office to remove a Kin with history. The server re-runs
+     * the #1314 history check, refuses a Kin with nothing on file and refuses a
+     * second open request; that sentence is what the caller shows. A blank
+     * reason is sent as none.
+     */
+    suspend fun requestKinRemoval(kinfolkId: String? = null, kinId: String, reason: String): KinRemovalRequest {
+        val raw = fns.call("requestKinRemoval", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("kinId", kinId)
+            reason.trim().takeIf { it.isNotEmpty() }?.let { put("reason", it) }
+        })
+        return decodeKinRemovalRequest(raw["removalRequest"] as? JsonObject)
+            ?: error("The request was sent, but the answer could not be read. Reopen this Kin to see it.")
     }
 
     /**

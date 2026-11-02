@@ -11,6 +11,8 @@ import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.KinResult
 import com.kinfolk.portal.portal.KinPayload
+import com.kinfolk.portal.portal.KinRemovalOptions
+import com.kinfolk.portal.portal.KinRemovalRequest
 import com.kinfolk.portal.portal.PortalApi
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -165,17 +167,26 @@ class KinController internal constructor(
         }
 
     /**
-     * #1314. True when the server finds nothing on file for this Kin, so the
-     * edit dialog may show "Delete this Kin". A failed check reads as false:
-     * the row stays hidden rather than offering a delete the server will refuse.
+     * #1314 / #1408. What the edit dialog may offer for removing this Kin: the
+     * delete row (nothing on file) or the removal request (history), with any
+     * request already made. Throws on failure so the dialog can say the check
+     * failed and offer a retry rather than guessing.
      */
-    suspend fun canDeleteKin(kinId: String): Boolean =
+    suspend fun kinRemovalOptions(kinId: String): KinRemovalOptions =
+        portalApi.kinRemovalOptions(kinfolkId = kinfolkId, kinId = kinId)
+
+    /**
+     * #1408. Ask the office to remove a Kin with history. Success carries the
+     * recorded request for the dialog's pending state; failure carries the
+     * server's sentence to show inline. The roster does not change.
+     */
+    suspend fun requestRemoval(kinId: String, reason: String): Result<KinRemovalRequest> =
         try {
-            portalApi.canDeleteKin(kinfolkId = kinfolkId, kinId = kinId)
+            Result.success(portalApi.requestKinRemoval(kinfolkId = kinfolkId, kinId = kinId, reason = reason))
         } catch (c: CancellationException) {
             throw c
-        } catch (_: Throwable) {
-            false
+        } catch (t: Throwable) {
+            Result.failure(IllegalStateException(t.message ?: "Could not send the request", t))
         }
 
     /**

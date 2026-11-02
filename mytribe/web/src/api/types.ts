@@ -225,6 +225,37 @@ export interface DeleteKinResult {
   deleted: boolean;
   canDelete: boolean;
   blockedBy: KinHistoryKind[];
+  /** #1408: the household's latest request to remove this Kin, or null. */
+  removalRequest: KinRemovalRequestDto | null;
+}
+
+// ── requestKinRemoval (functions/src/portal/kinWrites.ts, authed, #1408) ────
+
+export type KinRemovalStatus = 'pending' | 'archived' | 'declined';
+
+export interface KinRemovalRequestDto {
+  id: string;
+  kinfolkId: string;
+  kinId: string;
+  flatKinId: string | null;
+  kinName: string | null;
+  reason: string | null;
+  status: KinRemovalStatus;
+  requestedAtMs: number | null;
+  resolvedAtMs: number | null;
+  /** The office's optional note on its answer. */
+  resolutionNote: string | null;
+}
+
+export interface RequestKinRemovalRequest {
+  kinfolkId?: string;
+  kinId: string;
+  reason?: string;
+}
+
+export interface RequestKinRemovalResult {
+  ok: true;
+  removalRequest: KinRemovalRequestDto;
 }
 
 // ── updateKin (functions/src/portal/kinWrites.ts, authed) ───────────────────
