@@ -10,7 +10,13 @@ import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
+import {
+  computeInvoiceTotals,
+  validateInvoiceMoney,
+  centsToDollars,
+  formatUsd,
+  formatUsdCents,
+} from '../lib/invoiceMath';
 import { InvoiceDayArg } from '../lib/invoiceDay';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
@@ -144,16 +150,10 @@ export const Result = z
   .strict();
 
 /** "$36.00" / "-$12.50" from an integer count of cents, for the refusal message. */
-function usd(cents: number): string {
-  const sign = cents < 0 ? '-' : '';
-  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
+const usd = formatUsdCents;
 
 /** Dollars as sent by the caller, for a refusal that has to name their figure too. */
-function usdFromDollars(dollars: number): string {
-  const sign = dollars < 0 ? '-' : '';
-  return `${sign}$${Math.abs(dollars).toFixed(2)}`;
-}
+const usdFromDollars = formatUsd;
 
 export async function createInvoiceHandler(
   req: CallableRequest<unknown>,

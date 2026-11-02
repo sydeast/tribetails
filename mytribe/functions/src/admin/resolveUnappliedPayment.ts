@@ -19,7 +19,7 @@ import { ACCOUNT_BALANCE_FIELD, readAccountBalanceCents } from '../lib/accountCr
 import { MAX_CREDIT_REASON_LENGTH, stageGivenCredit } from '../lib/creditLedger';
 import { planApply, stageApply, type ApplyOutcome } from '../lib/paymentApply';
 import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
-import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import type { InvoiceDoc } from './markInvoicePaid';
 
 /**
@@ -157,9 +157,7 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-function usd(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+const usd = formatUsdCents;
 
 function replayOf(stored: Record<string, unknown>): ResolveUnappliedPaymentResult {
   const d = (stored['adminDecision'] ?? {}) as Record<string, unknown>;

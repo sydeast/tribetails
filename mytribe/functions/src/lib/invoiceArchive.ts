@@ -23,6 +23,8 @@
  * would give it, and the admin's reader already treats null as "not archived".
  */
 
+import { formatUsd } from './invoiceMath';
+
 export interface ArchivableInvoice {
   kinfolkId?: string;
   invoiceNumber?: string;
@@ -60,5 +62,5 @@ export function amountStillOwed(doc: ArchivableInvoice): number {
 
 /** "$40.00" from a dollar amount, for the refusal message. */
 export function formatOwed(dollars: number): string {
-  return `$${Math.abs(dollars).toFixed(2)}`;
+  return formatUsd(Math.abs(dollars));
 }

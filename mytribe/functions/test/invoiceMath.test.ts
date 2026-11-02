@@ -8,6 +8,8 @@ import {
   invoiceTotalCentsOf,
   settleInvoice,
   isPartiallyPaid,
+  formatUsd,
+  formatUsdCents,
   type InvoiceLineItemInput,
 } from '../src/lib/invoiceMath';
 
@@ -253,5 +255,36 @@ describe('settleInvoice', () => {
     const s = settleInvoice(Number.NaN, Number.NaN);
     expect(Number.isNaN(s.amountDueCents)).toBe(false);
     expect(s.state).toBe('unpaid');
+  });
+});
+
+// #1488: every server money string groups thousands, matching the portal.
+describe('formatUsd', () => {
+  it('formats zero', () => {
+    expect(formatUsd(0)).toBe('$0.00');
+  });
+  it('leaves three-digit dollars ungrouped', () => {
+    expect(formatUsd(999.99)).toBe('$999.99');
+  });
+  it('groups thousands', () => {
+    expect(formatUsd(1000)).toBe('$1,000.00');
+    expect(formatUsd(1234.5)).toBe('$1,234.50');
+    expect(formatUsd(1_000_000)).toBe('$1,000,000.00');
+  });
+  it('puts the sign in front of the dollar sign', () => {
+    expect(formatUsd(-1234.5)).toBe('-$1,234.50');
+  });
+  it('reads a non-finite amount as $0.00, never "$NaN"', () => {
+    expect(formatUsd(Number.NaN)).toBe('$0.00');
+  });
+});
+describe('formatUsdCents', () => {
+  it('formats integer cents the same way', () => {
+    expect(formatUsdCents(0)).toBe('$0.00');
+    expect(formatUsdCents(99999)).toBe('$999.99');
+    expect(formatUsdCents(100000)).toBe('$1,000.00');
+    expect(formatUsdCents(123450)).toBe('$1,234.50');
+    expect(formatUsdCents(-123450)).toBe('-$1,234.50');
+    expect(formatUsdCents(100_000_000)).toBe('$1,000,000.00');
   });
 });

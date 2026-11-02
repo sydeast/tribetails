@@ -25,7 +25,7 @@ import {
   type ApplyStep,
 } from '../lib/paymentApply';
 import { creditAccount } from '../lib/accountCredit';
-import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
@@ -934,7 +934,7 @@ async function twoStepAppliedCents(args: {
 
 /** "$36.00" from integer cents, for a refusal an operator has to read. */
 function dollars(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  return formatUsdCents(cents);
 }
 
 /** A stored number, or 0. Absent reads as zero, never as a guess. */

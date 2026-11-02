@@ -6,6 +6,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
 import { enqueueNotification } from '../notifications/dispatcher';
 import type { Severity } from '../lib/schema';
+import { formatUsdCents } from '../lib/invoiceMath';
 
 /**
  * Chargebacks: the `charge.dispute.` family.
@@ -828,7 +829,7 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
         disputeId,
         disputeStatus: disputeStatus ?? 'unknown',
         disputeReason: reason ?? 'not stated',
-        disputeAmount: amountCents !== null ? `$${(amountCents / 100).toFixed(2)}` : 'an unknown amount',
+        disputeAmount: amountCents !== null ? formatUsdCents(amountCents) : 'an unknown amount',
         stripeEventId: event.id,
       },
     });

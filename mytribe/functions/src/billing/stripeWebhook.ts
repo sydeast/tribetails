@@ -12,7 +12,7 @@ import { wrapHttp } from '../lib/wrapHttp';
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed, type UnresolvedResolver } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
-import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
 import { FULL_CPU } from '../lib/runtimeOptions';
@@ -202,7 +202,7 @@ async function finishEventFollowup(input: {
               kinfolkId: input.familyId,
               invoiceId: input.invoiceId,
               stripeEventId: input.eventId,
-              unappliedAmount: `$${(detail.unappliedCents / 100).toFixed(2)}`,
+              unappliedAmount: formatUsdCents(detail.unappliedCents),
               unappliedReason: unappliedReasonLabel(detail.duplicateReason),
             }
           : { kinfolkId: input.familyId, invoiceId: input.invoiceId, stripeEventId: input.eventId },

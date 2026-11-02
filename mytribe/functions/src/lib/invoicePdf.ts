@@ -8,7 +8,7 @@ import {
   type OperatorSettings,
 } from './paymentMethods';
 import { getAdmin } from './firestoreAdmin';
-import { lineAmountCents } from './invoiceMath';
+import { formatUsd, formatUsdCents, lineAmountCents } from './invoiceMath';
 import { invoiceIsPaid } from './invoicePaidGate';
 
 /**
@@ -158,16 +158,12 @@ export function invoiceForPdf(id: string, data: Record<string, unknown>): Invoic
 }
 
 function usd(n: number): string {
-  const sign = n < 0 ? '-' : '';
-  const abs = Math.abs(n);
-  return `${sign}$${abs.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 /** "$36.00" from an INTEGER count of cents. The line-item money is cents, not dollars. */
 export function usdCents(cents: number): string {
-  const n = Number.isFinite(cents) ? cents : 0;
-  const sign = n < 0 ? '-' : '';
-  return `${sign}$${(Math.abs(n) / 100).toFixed(2)}`;
+  return formatUsdCents(cents);
 }
 
 /**
