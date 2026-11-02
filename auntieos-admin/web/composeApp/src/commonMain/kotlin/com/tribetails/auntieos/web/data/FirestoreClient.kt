@@ -3969,6 +3969,10 @@ data class BusinessSettings(
     val businessEmail: String = "",
     val businessPhone: String = "",
     val businessAddress: String = "",
+    // #1410: the operator's privacy policy link, blank until one is set. Blank
+    // or a plain https URL within PRIVACY_POLICY_URL_MAX_LENGTH
+    // (screens/settings/PrivacyPolicyUrl.kt); firestore.rules refuses anything else.
+    val privacyPolicyUrl: String = "",
     // Blank means "never set" (#1109). Readers resolve it through
     // `resolveBusinessTimeZone`, the same America/Chicago the server uses.
     val timeZone: String = "",

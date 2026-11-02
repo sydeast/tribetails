@@ -252,6 +252,7 @@ describe('rules: flat top-level collections', () => {
         defaultEtaMinutes: 15,
         draftRetentionDays: 30,
         arrivalRadiusMeters: 150,
+        privacyPolicyUrl: 'https://example.com/privacy',
         timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
         etaMinuteOptions: [5, 10, 15],
         draftRetentionOptions: [30, 60, 90],
@@ -395,6 +396,48 @@ describe('rules: flat top-level collections', () => {
       asAuntie(env).firestore().doc('business_settings/business_settings')
         .set({ etaMinuteOptions: Array.from({ length: 13 }, (_, i) => i + 1) }, { merge: true }),
     );
+  });
+
+  /**
+   * #1410: the privacy policy link goes straight into an href on the email
+   * footer and the portal About screen, and these rules are its only write gate.
+   * Blank is the "none yet" state and has to pass; everything else must be a
+   * plain https URL within the cap. Mirrors `isValidPrivacyPolicyUrl` in
+   * `functions/src/lib/privacyPolicyUrl.ts`.
+   */
+  it('business_settings: the privacy policy link may be blank or a plain https URL', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
+    await assertSucceeds(doc().set({ privacyPolicyUrl: 'https://example.com/privacy' }, { merge: true }));
+    await assertSucceeds(doc().set({ privacyPolicyUrl: 'https://www.example.com/legal/privacy?lang=en#top' }, { merge: true }));
+    // Clearing it is a real edit, written as blank (the three clients never drop the key).
+    await assertSucceeds(doc().set({ privacyPolicyUrl: '' }, { merge: true }));
+    // Exactly at the cap still passes.
+    const prefix = 'https://example.com/';
+    await assertSucceeds(doc().set({ privacyPolicyUrl: prefix + 'a'.repeat(2048 - prefix.length) }, { merge: true }));
+  });
+
+  it('business_settings: a privacy policy link that is not a plain https URL is refused', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
+    const prefix = 'https://example.com/';
+    for (const bad of [
+      'http://example.com/privacy',
+      'javascript:alert(1)',
+      'example.com/privacy',
+      'https://',
+      'https:///privacy',
+      'https://example.com/privacy policy',
+      'https://example.com/"onmouseover="x',
+      prefix + 'a'.repeat(2049 - prefix.length),
+      42,
+      null,
+      ['https://example.com/privacy'],
+    ]) {
+      await assertFails(doc().set({ privacyPolicyUrl: bad }, { merge: true }));
+    }
   });
 
   // ── operators: collection + isOperator() helper both removed ──────────────

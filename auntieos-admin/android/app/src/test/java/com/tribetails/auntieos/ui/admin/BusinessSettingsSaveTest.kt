@@ -106,6 +106,25 @@ class AdminSettingsBusinessSettingsSaveTest {
     }
 
     /**
+     * #1410: the privacy policy link, through the exact call the Business
+     * profile panel makes. Only that field reaches the write; the loaded name,
+     * calendar id, handle, weather area and wordmark do not go back.
+     */
+    @Test
+    fun `setting the privacy policy link writes that field and nothing else`() = runTest(testDispatcher) {
+        val changes = captureChanges()
+        val vm = loadedViewModel()
+
+        vm.updateBusinessSettings(
+            vm.uiState.value.businessSettings.copy(privacyPolicyUrl = "https://example.com/privacy"),
+        )
+        advanceUntilIdle()
+
+        assertEquals(mapOf<String, Any?>("privacyPolicyUrl" to "https://example.com/privacy"), changes.captured)
+        assertTrue(vm.uiState.value.saveSuccess)
+    }
+
+    /**
      * #517: the three Booking behavior toggles, through the exact call the panel
      * makes (`viewModel.updateBusinessSettings(settings.copy(field = next))`).
      *

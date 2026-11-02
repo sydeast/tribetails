@@ -69,6 +69,7 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     "businessEmail" to SettingsDiffField({ it.businessEmail }),
     "businessPhone" to SettingsDiffField({ it.businessPhone }),
     "businessAddress" to SettingsDiffField({ it.businessAddress }),
+    "privacyPolicyUrl" to SettingsDiffField({ it.privacyPolicyUrl }),
     "timeZone" to SettingsDiffField({ it.timeZone }),
     "serviceRates" to SettingsDiffField({ it.serviceRates }),
     "serviceDurations" to SettingsDiffField({ it.serviceDurations }),

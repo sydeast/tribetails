@@ -1106,6 +1106,12 @@ private fun BusinessProfilePanel(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
+    // #1410: a local draft like WeatherAreaPanel's, reset when the loaded copy
+    // changes, rather than one more state pair threaded through SectionPanel.
+    // Checked as it is typed: a link firestore.rules would refuse keeps Save off
+    // and says why beside the field.
+    var privacyPolicyUrl by remember(settingsData?.privacyPolicyUrl) { mutableStateOf(settingsData?.privacyPolicyUrl.orEmpty()) }
+    val privacyPolicyError = privacyPolicyUrlError(privacyPolicyUrl)
     DenPanel(title = "Business Profile", subtitle = "The contact details kinfolk and invoices use.") {
         when (uiState.settingsResult) {
             is FirestoreResult.Loading -> EmptyHintLine("Loading settings", c.textDim)
@@ -1129,10 +1135,17 @@ private fun BusinessProfilePanel(
                         value = businessAddress, onValueChange = onBusinessAddress,
                         label = "Business Address", modifier = Modifier.fillMaxWidth(),
                     )
+                    BottomBorderField(
+                        value = privacyPolicyUrl, onValueChange = { privacyPolicyUrl = it },
+                        label = "Privacy policy link", placeholder = "https://",
+                        isError = privacyPolicyError != null, errorMessage = privacyPolicyError,
+                        keyboardType = KeyboardType.Uri,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Spacer(Modifier.height(dims.space1))
                     PrimaryButton(
                         label   = if (settingsLoaded) "Save" else "Loading settings…",
-                        enabled = settingsLoaded,
+                        enabled = settingsLoaded && privacyPolicyError == null,
                         onClick = {
                             scope.launch {
                                 val updated = (settingsData ?: BusinessSettings()).copy(
@@ -1140,6 +1153,7 @@ private fun BusinessProfilePanel(
                                     businessEmail       = businessEmail,
                                     businessPhone       = businessPhone,
                                     businessAddress     = businessAddress,
+                                    privacyPolicyUrl    = privacyPolicyUrl.trim(),
                                     businessHours       = businessHours,
                                 )
                                 vm.saveSettings(updated)

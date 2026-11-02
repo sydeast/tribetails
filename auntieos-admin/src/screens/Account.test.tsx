@@ -406,6 +406,26 @@ describe('Account business profile', () => {
     expect(saveUserProfile).not.toHaveBeenCalled();
   });
 
+  it('carries the privacy policy link (#1410) and refuses to save one that is not https', async () => {
+    const user = userEvent.setup();
+    render(<Account />);
+    await heroName();
+    const panel = (await screen.findByText('Business profile')).closest('section') as HTMLElement;
+    const g = within(panel);
+    const link = g.getByLabelText('Privacy policy link');
+    expect(link).toHaveValue('');
+    await user.type(link, 'http://example.com/privacy');
+    expect(g.getByRole('alert')).toHaveTextContent('Enter a full https:// link.');
+    expect(g.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.clear(link);
+    await user.type(link, 'https://example.com/privacy');
+    expect(g.queryByRole('alert')).toBeNull();
+    await user.click(g.getByRole('button', { name: 'Save' }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ privacyPolicyUrl: 'https://example.com/privacy' }),
+    );
+  });
+
   it('keeps an in-progress business edit through a hero profile save', async () => {
     const user = userEvent.setup();
     render(<Account />);

@@ -164,6 +164,10 @@ data class BusinessSettings(
     var businessEmail: String = "",
     var businessPhone: String = "",
     var businessAddress: String = "",
+    // #1410: the operator's privacy policy link, blank until one is set. Blank
+    // or a plain https URL within PRIVACY_POLICY_URL_MAX_LENGTH
+    // (PrivacyPolicyUrl.kt); firestore.rules refuses anything else.
+    var privacyPolicyUrl: String = "",
     // Blank means "never set" (#1109). Readers resolve it through
     // [resolveBusinessTimeZone], the same America/Chicago the server uses, and the
     // Booking rules panel flags it as something to fix.

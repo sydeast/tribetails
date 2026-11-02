@@ -120,7 +120,7 @@ async function renderTribeProfile(opts: {
   vi.mocked(tribeApi.listSecondaryKinfolk).mockResolvedValue(opts.secondaryKinfolk ?? []);
   vi.mocked(tribeApi.saveTribeProfile).mockResolvedValue({ ok: true });
   vi.mocked(tribeApi.saveHomeAccess).mockResolvedValue({ ok: true });
-  vi.mocked(portal.getBusinessContact).mockResolvedValue({ name: 'Tribe Tails Pet Care', email: '', phone: '', address: '' });
+  vi.mocked(portal.getBusinessContact).mockResolvedValue({ name: 'Tribe Tails Pet Care', email: '', phone: '', address: '', privacyPolicyUrl: '' });
   // getFormSchema throws 'not-found' when no admin has authored that schema.
   // That throw is the fork this bug lives on.
   vi.mocked(tribeApi.getFormSchema).mockImplementation((schemaId) => {

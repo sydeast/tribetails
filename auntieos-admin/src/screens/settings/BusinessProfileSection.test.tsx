@@ -102,6 +102,44 @@ describe('BusinessProfileSection', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 
+  describe('the privacy policy link (#1410)', () => {
+    it('is one of the profile fields, blank until set, and saves a full https link trimmed', async () => {
+      const user = userEvent.setup();
+      render(<BusinessProfileSection data={settings()} onSave={onSave} />);
+      const link = screen.getByLabelText('Privacy policy link');
+      expect(link).toHaveValue('');
+      await user.type(link, '  https://example.com/privacy  ');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ privacyPolicyUrl: 'https://example.com/privacy' }));
+    });
+
+    it('blocks Save and says why while the link is not a full https link', async () => {
+      const user = userEvent.setup();
+      render(<BusinessProfileSection data={settings()} onSave={onSave} />);
+      const link = screen.getByLabelText('Privacy policy link');
+      await user.type(link, 'http://example.com/privacy');
+      expect(screen.getByRole('alert')).toHaveTextContent('Enter a full https:// link.');
+      expect(link).toHaveAttribute('aria-invalid', 'true');
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSave).not.toHaveBeenCalled();
+
+      // Fixing the scheme clears the refusal and lights Save again.
+      await user.clear(link);
+      await user.type(link, 'https://example.com/privacy');
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    });
+
+    it('clearing a saved link is a real edit, written as blank', async () => {
+      const user = userEvent.setup();
+      render(<BusinessProfileSection data={settings({ privacyPolicyUrl: 'https://example.com/privacy' })} onSave={onSave} />);
+      await user.clear(screen.getByLabelText('Privacy policy link'));
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ privacyPolicyUrl: '' }));
+    });
+  });
+
   describe('a business with no time zone saved (#1109)', () => {
     const unset = () => settings({ timeZone: '' });
     it('says so as something to fix, naming the zone everything reads meanwhile', () => {
