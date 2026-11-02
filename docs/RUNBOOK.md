@@ -139,7 +139,7 @@ What it does, in order. It stops at the first failure and names the step:
 
 | # | Step |
 |---|---|
-| 0 | Clean tree, on `main`, in sync with origin |
+| 0 | Clean tree, on `main`, in sync with origin; a JDK each Android build can run Gradle on (21 for the operator app, 17 for the portal) |
 | 0a | Installed dependencies match every lockfile |
 | 0b | CI is green for this exact commit, e2e included, and so is the real-services suite (`e2e-real.yml`) |
 | 0c | Web build config (`VITE_*`) fetched from Secret Manager |
@@ -350,6 +350,7 @@ Knobs. Most are off by default; the ones with a default say so:
 | `RELEASE_SKIP_ANDROID=1` | Ship the web without **either** Android client. Off by default; shipping them together is the point of steps 1c and 6b |
 | `RELEASE_SKIP_ANDROID_AUNTIEOS=1` | Drop just the operator app. The portal app still builds and ships |
 | `RELEASE_SKIP_ANDROID_MYTRIBE=1` | Drop just the portal app. The operator app still builds and ships |
+| `RELEASE_JAVA_HOME_FINDER=PATH` | The JDK finder step 0 asks when `JAVA_HOME` is too old for an Android build. Default `/usr/libexec/java_home` |
 | `RELEASE_ANDROID_APP_ID=…` | Override the operator app's App Distribution app id. Predates the second app, so it means that one and only that one |
 | `RELEASE_ANDROID_APP_ID_AUNTIEOS=…` | Same thing, said explicitly. Wins over `RELEASE_ANDROID_APP_ID` |
 | `RELEASE_ANDROID_APP_ID_MYTRIBE=…` | Override the portal app's App Distribution app id |

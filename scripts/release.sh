@@ -15,6 +15,9 @@
 # WHAT IT DOES, in this order and for these reasons:
 #   0. preconditions  - clean tree, on main, synced with origin. Shipping
 #                       uncommitted or stale code is the classic incident.
+#                       Also a JDK each Android build can run Gradle on, so a
+#                       JAVA_HOME too old for one is swapped or refused here,
+#                       not minutes into step 1c.
 #  0a. dependency     - is node_modules what each package-lock.json says it
 #      drift            should be, for every root this run builds, tests, or
 #                       deploys? A checkout whose install predates a
@@ -118,6 +121,9 @@
 #   RELEASE_SKIP_ANDROID=1              ship the web without the Android client.
 #                                       Off by default: shipping them together
 #                                       is the point of steps 1c and 6b.
+#   RELEASE_JAVA_HOME_FINDER=PATH       the JDK finder step 0 asks when
+#                                       JAVA_HOME is too old for an Android
+#                                       build (/usr/libexec/java_home).
 #   RELEASE_FUNCTIONS_ALL=1             deploy every function, not only the ones
 #                                       this release can reach. Use it when you
 #                                       do not trust the narrowing.
@@ -1240,6 +1246,102 @@ if [ "$PREFLIGHT_ONLY" != "1" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# The JDK each Android build runs Gradle on (#1402). Still step 0.
+# ---------------------------------------------------------------------------
+# WHY HERE AND NOT IN STEP 1C. auntieos-admin/android compiles for Java 21
+# (jvmToolchain(21), JavaVersion.VERSION_21) with no toolchain resolver, so the
+# Gradle daemon itself has to run on 21. mytribe asks for a 17 toolchain. On
+# 2026-11-01 the operator's shell had JAVA_HOME on Homebrew openjdk@17 with JDK
+# 21 installed beside it, and the release found out at step 1c, after step 1
+# had run for minutes, with a refusal that blamed the signing keys and the
+# Mapbox token:
+#
+#   The Gradle daemon is running on Java 17, but the project is compiled for Java 21.
+#
+# So the JDK is read here, where refusing costs nothing. A JAVA_HOME older than
+# an app needs, with a new enough JDK installed, is not a reason to stop: that
+# app's Gradle step gets the installed one and the run says so. The shell's own
+# JAVA_HOME is never changed, and an app the shell's JDK already satisfies
+# builds on it as before. No suitable JDK anywhere refuses now, naming the JDK
+# it found.
+#
+# RELEASE_JAVA_HOME_FINDER is the macOS JDK finder, /usr/libexec/java_home by
+# default. It is a path, like RELEASE_ANDROID_APP_ID is an id, not a switch
+# that turns this check off: release.test.sh points it at a stub so its cases
+# do not depend on the JDKs of the machine running them. Where it does not
+# exist (the Linux nightly runner, which gets 17 and 21 from setup-java) it
+# finds nothing, and the shell's JDK has to be enough on its own.
+#
+# Index-aligned with ANDROID_NAMES in step 1c (auntieos, mytribe).
+ANDROID_JDK_APPS=(auntieos mytribe)
+ANDROID_JDK_MINS=(21 17)
+ANDROID_GRADLE_JAVA_HOMES=("" "")
+
+# jdk_major <java binary>: the major version it reports, or nothing.
+# `java -version` writes to stderr: `openjdk version "17.0.12" 2024-07-16`, or
+# `java version "1.8.0_202"` on a JDK 8, whose major is the second field.
+jdk_major() {
+  local v
+  v="$("$1" -version 2>&1 | sed -n 's/.*version "\([^"]*\)".*/\1/p' | head -1)" || v=''
+  case "$v" in
+    1.*) v="${v#1.}" ;;
+  esac
+  printf '%s' "${v%%[!0-9]*}"
+}
+
+STEP="checking the JDK for the Android builds"
+if [ -n "${JAVA_HOME:-}" ]; then
+  SHELL_JAVA="$JAVA_HOME/bin/java"
+  SHELL_JDK_DESC="JAVA_HOME=$JAVA_HOME"
+else
+  SHELL_JAVA="$(command -v java 2>/dev/null || true)"
+  SHELL_JDK_DESC="JAVA_HOME is unset, java on PATH is ${SHELL_JAVA:-missing}"
+fi
+SHELL_JDK=""
+if [ -n "$SHELL_JAVA" ] && [ -x "$SHELL_JAVA" ]; then
+  SHELL_JDK="$(jdk_major "$SHELL_JAVA")"
+fi
+JAVA_HOME_FINDER="${RELEASE_JAVA_HOME_FINDER:-/usr/libexec/java_home}"
+
+for JDK_IDX in 0 1; do
+  JDK_APP="${ANDROID_JDK_APPS[$JDK_IDX]}"
+  JDK_MIN="${ANDROID_JDK_MINS[$JDK_IDX]}"
+  JDK_SKIP_VAR="RELEASE_SKIP_ANDROID_$(printf '%s' "$JDK_APP" | tr '[:lower:]' '[:upper:]')"
+  if [ "${RELEASE_SKIP_ANDROID:-0}" = "1" ] || [ "${!JDK_SKIP_VAR:-0}" = "1" ] || [ "$PREFLIGHT_ONLY" = "1" ]; then
+    ylw "jdk/$JDK_APP: not checked, step 1c does not build it in this run."
+    continue
+  fi
+  if [ -n "$SHELL_JDK" ] && [ "$SHELL_JDK" -ge "$JDK_MIN" ]; then
+    grn "jdk/$JDK_APP: Java $SHELL_JDK ($SHELL_JDK_DESC), needs $JDK_MIN"
+    continue
+  fi
+  JDK_FOUND=""
+  if [ -x "$JAVA_HOME_FINDER" ]; then
+    JDK_FOUND="$("$JAVA_HOME_FINDER" -v "$JDK_MIN" 2>/dev/null || true)"
+  fi
+  JDK_FOUND_MAJOR=""
+  if [ -n "$JDK_FOUND" ] && [ -x "$JDK_FOUND/bin/java" ]; then
+    JDK_FOUND_MAJOR="$(jdk_major "$JDK_FOUND/bin/java")"
+  fi
+  if [ -n "$JDK_FOUND_MAJOR" ] && [ "$JDK_FOUND_MAJOR" -ge "$JDK_MIN" ]; then
+    ANDROID_GRADLE_JAVA_HOMES[$JDK_IDX]="$JDK_FOUND"
+    ylw "jdk/$JDK_APP: $SHELL_JDK_DESC is Java ${SHELL_JDK:-unknown}, and this build needs $JDK_MIN."
+    ylw "  Step 1c runs its Gradle on $JDK_FOUND (Java $JDK_FOUND_MAJOR) instead."
+    ylw "  Your shell's JAVA_HOME is not changed."
+    continue
+  fi
+  red "REFUSED: no JDK $JDK_MIN for the $JDK_APP Android build."
+  red "  $SHELL_JDK_DESC is Java ${SHELL_JDK:-unknown}, and"
+  red "  $JAVA_HOME_FINDER -v $JDK_MIN found no JDK $JDK_MIN either."
+  red "  Gradle has to run on Java $JDK_MIN or later for this app, and step 1c"
+  red "  would fail on it only after step 1 had run. Install a JDK $JDK_MIN, or"
+  red "  point JAVA_HOME at one, and run again."
+  red "  To ship without this app: $JDK_SKIP_VAR=1."
+  red "  To ship the web with no Android at all: RELEASE_SKIP_ANDROID=1."
+  exit 1
+done
+
+# ---------------------------------------------------------------------------
 # 0a. Dependency drift: is node_modules what each lockfile says it should be?
 # ---------------------------------------------------------------------------
 # BEFORE the "release this commit?" confirm, deliberately: an operator who
@@ -2278,6 +2380,9 @@ while [ "$ANDROID_IDX" -lt "$ANDROID_COUNT" ]; do
   elif [ "$DRY_RUN" = "1" ]; then
     ylw "DRY_RUN=1: would delete any stale APK and run ./gradlew $ANDROID_TASK"
     ylw "  in $ANDROID_DIR"
+    if [ -n "${ANDROID_GRADLE_JAVA_HOMES[$ANDROID_IDX]}" ]; then
+      ylw "  with JAVA_HOME=${ANDROID_GRADLE_JAVA_HOMES[$ANDROID_IDX]} (step 0 picked it)"
+    fi
   else
     # The rm lives INSIDE this branch, not above the if. A rehearsal that
     # assembles nothing but deletes the signed APK a real run left on disk has
@@ -2288,14 +2393,34 @@ while [ "$ANDROID_IDX" -lt "$ANDROID_COUNT" ]; do
     # Mapbox token or the SDK is absent. Refuse the release rather than ship a
     # web half: a partial release is how the clients diverged in the first
     # place.
-    ( cd "$ANDROID_DIR" && ./gradlew "$ANDROID_TASK" --no-daemon ) || {
+    #
+    # The output is kept as well as shown (#1402), so the refusal can tell a
+    # wrong JDK from a missing keystore. "The Gradle daemon is running on Java
+    # 17, but the project is compiled for Java 21" used to be followed by the
+    # signing and Mapbox hint, which sends you to the wrong place. With
+    # pipefail on, the pipeline fails when gradlew does, tee or not.
+    ANDROID_GRADLE_JAVA="${ANDROID_GRADLE_JAVA_HOMES[$ANDROID_IDX]}"
+    ANDROID_LOG="$(mktemp)"
+    if ! ( cd "$ANDROID_DIR" || exit 1
+           if [ -n "$ANDROID_GRADLE_JAVA" ]; then export JAVA_HOME="$ANDROID_GRADLE_JAVA"; fi
+           ./gradlew "$ANDROID_TASK" --no-daemon ) 2>&1 | tee "$ANDROID_LOG"; then
       red "REFUSED: the $ANDROID_NAME Android release APK did not build."
       red "  Nothing has been deployed yet, which is why this step runs here."
-      red "${ANDROID_BUILD_HINTS[$ANDROID_IDX]}"
+      if grep -q "running on Java" "$ANDROID_LOG"; then
+        red "  Gradle ran on the wrong JDK, not a signing or Mapbox problem:"
+        red "    $(grep -m1 "running on Java" "$ANDROID_LOG" | sed 's/^[> ]*//')"
+        red "  It ran with ${ANDROID_GRADLE_JAVA:+JAVA_HOME=}${ANDROID_GRADLE_JAVA:-$SHELL_JDK_DESC}."
+        red "  Point JAVA_HOME at the JDK that line asks for (on a Mac:"
+        red "  /usr/libexec/java_home -v <version>) and run again."
+      else
+        red "${ANDROID_BUILD_HINTS[$ANDROID_IDX]}"
+      fi
       red "  To ship without this app: $ANDROID_SKIP_VAR=1."
       red "  To ship the web with no Android at all: RELEASE_SKIP_ANDROID=1."
+      rm -f "$ANDROID_LOG"
       exit 1
-    }
+    fi
+    rm -f "$ANDROID_LOG"
     [ -f "$ANDROID_APK" ] || {
       red "REFUSED: gradle succeeded but $ANDROID_APK is not there."
       red "  The task ran but wrote its APK somewhere else, so the path in this"
