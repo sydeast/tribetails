@@ -1223,6 +1223,33 @@ class PortalApi(
     }
 
     /**
+     * #1314. Whether the household may delete this Kin itself: true only when
+     * no visit, KinTale, photo or admin record references it. The same
+     * callable as [deleteKin] without `confirm`, so it writes nothing and the
+     * one function instance the confirm tap will hit is already warm.
+     */
+    suspend fun canDeleteKin(kinfolkId: String? = null, kinId: String): Boolean {
+        val raw = fns.call("deleteKin", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("kinId", kinId)
+        })
+        return raw["canDelete"]?.jsonPrimitive?.booleanOrNull == true
+    }
+
+    /**
+     * #1314. Hard-deletes a Kin with no history (family doc and AuntieOS
+     * mirror). The server re-checks and refuses with one plain sentence when
+     * anything is on file; that message is what the caller shows.
+     */
+    suspend fun deleteKin(kinfolkId: String? = null, kinId: String) {
+        fns.call("deleteKin", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("kinId", kinId)
+            put("confirm", true)
+        })
+    }
+
+    /**
      * Uploads a kin photo direct-to-Cloudinary: validate ([KinPhotoPolicy]) →
      * sign ([signKinPhotoUpload], kin_edit-gated server-side) → upload
      * (client POSTs straight to Cloudinary, server never sees the bytes) →

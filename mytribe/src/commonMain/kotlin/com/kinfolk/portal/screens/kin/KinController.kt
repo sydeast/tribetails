@@ -163,6 +163,36 @@ class KinController internal constructor(
         } catch (t: Throwable) {
             t.message ?: "Could not save this change"
         }
+
+    /**
+     * #1314. True when the server finds nothing on file for this Kin, so the
+     * edit dialog may show "Delete this Kin". A failed check reads as false:
+     * the row stays hidden rather than offering a delete the server will refuse.
+     */
+    suspend fun canDeleteKin(kinId: String): Boolean =
+        try {
+            portalApi.canDeleteKin(kinfolkId = kinfolkId, kinId = kinId)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            false
+        }
+
+    /**
+     * #1314. Delete a Kin with no history, then reload so the list drops it.
+     * Returns null on success, else the message for the dialog to show inline
+     * (the server's refusal sentence when history appeared in the meantime).
+     */
+    suspend fun deleteAndReload(kinId: String): String? =
+        try {
+            portalApi.deleteKin(kinfolkId = kinfolkId, kinId = kinId)
+            reload()
+            null
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            t.message ?: "Could not delete this Kin"
+        }
 }
 
 @Composable

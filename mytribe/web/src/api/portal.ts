@@ -13,6 +13,8 @@ import type {
   ClaimInviteSignupResult,
   ConfirmSecureResetRequest,
   ConfirmSecureResetResult,
+  DeleteKinRequest,
+  DeleteKinResult,
   GetInvitePreviewRequest,
   GetMyAccessResult,
   GetMyHomeRequest,
@@ -148,6 +150,27 @@ export function addKin(kin: AddKinRequest['kin'], kinfolkId?: string): Promise<A
 export function archiveKin(kinId: string, reason: 'noLongerWithUs' | 'restore', kinfolkId?: string): Promise<ArchiveKinResult> {
   const payload: ArchiveKinRequest = { kinId, reason, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
   return call<ArchiveKinRequest, ArchiveKinResult>('archiveKin', payload);
+}
+
+/**
+ * #1314. Asks whether a kin may be deleted by the household: `canDelete` is
+ * true only when no visit, KinTale, photo or admin record references it. The
+ * same callable as `deleteKin`, without `confirm`, so it writes nothing and
+ * the one function instance the confirm tap will hit is already warm.
+ */
+export function canDeleteKin(kinId: string, kinfolkId?: string): Promise<DeleteKinResult> {
+  const payload: DeleteKinRequest = { kinId, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
+  return call<DeleteKinRequest, DeleteKinResult>('deleteKin', payload);
+}
+
+/**
+ * #1314. Hard-deletes a kin with no history (both the family doc and its
+ * AuntieOS mirror). The server re-checks history and refuses with one plain
+ * sentence when any exists; `kin_edit` is enforced there too (fail loud).
+ */
+export function deleteKin(kinId: string, kinfolkId?: string): Promise<DeleteKinResult> {
+  const payload: DeleteKinRequest = { kinId, confirm: true, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
+  return call<DeleteKinRequest, DeleteKinResult>('deleteKin', payload);
 }
 
 /**
