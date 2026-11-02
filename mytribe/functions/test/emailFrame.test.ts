@@ -8,7 +8,10 @@ describe('frameHtml', () => {
     const html = frameHtml('Reset your password', '<p>Hi</p>');
     expect(html).toContain('<div class="header"><h2>Reset your password</h2></div>');
     expect(html).toContain('<div class="content"><p>Hi</p></div>');
-    expect(html).toContain("Tribe Tails Pet Care. Your Kin's Favorite Auntie.");
+    // #1399: the footer is composed from settings; with none passed, it is the
+    // footer of a business that has set nothing, and never a hardcoded name.
+    expect(html).toContain('<div class="footer"></div>');
+    expect(html).not.toContain('Tribe Tails');
     expect(html).toContain('border-top: 8px solid #df8431');
     expect(html).toContain('blockquote {');
   });

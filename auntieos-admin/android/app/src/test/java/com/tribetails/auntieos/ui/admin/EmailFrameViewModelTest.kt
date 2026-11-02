@@ -37,7 +37,7 @@ class EmailFrameViewModelTest {
         "accentColor" to "#df8431", "headlineColor" to "#11131f", "textColor" to "#11131f",
         "buttonTextColor" to "#ffffff", "pageBackground" to "#fbfbf9", "cardBackground" to "#ffffff",
         "calloutBackground" to "#fff5f5", "footerBackground" to "#11131f", "footerTextColor" to "#fbfbf9",
-        "headerText" to "", "footerText" to "Tribe Tails Pet Care. Your Kin's Favorite Auntie.", "logoUrl" to "",
+        "headerText" to "", "footerText" to "", "logoUrl" to "",
     )
 
     private fun state(stored: Map<String, String>) =

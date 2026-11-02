@@ -14,6 +14,7 @@ import {
 import { sendCallInvitePush } from './voicePush';
 import { getTwilio, getTwilioFromNumber } from '../lib/twilio';
 import { sanitizePlainText } from '../lib/richText';
+import { businessLabel } from '../lib/businessName';
 
 /**
  * The business phone line, as TwiML served from this repo.
@@ -153,11 +154,22 @@ const VOICEMAIL_CALLBACK_ENV = 'TWILIO_INBOUND_VOICEMAIL_URL';
  * file's creation and that commit, press 3 only took a message, and this
  * greeting's wording briefly did not promise a live connect for exactly that
  * reason. It reverted along with the fix.
+ *
+ * #1399: the three greetings name the business from settings
+ * (`business_settings.businessName`, read off the same document as the hours)
+ * instead of a hardcoded name. With no name set, the greeting opens "Hey,
+ * this is Auntie's line": `businessName.ts` rules that a name is never invented.
  */
+/** "Hey, you've reached Test Business, this is Auntie's line. " / "Hey, this is Auntie's line. " */
+function openingLine(businessName: string): string {
+  return businessName.trim() === ''
+    ? "Hey, this is Auntie's line. "
+    : `Hey, you've reached ${businessLabel(businessName)}, this is Auntie's line. `;
+}
+
 const SPEECH = {
-  OPEN_GREETING:
-    "Hey, you've reached Tribe Tails Pet Care, this is Auntie's line. " +
-    'Press 3 to talk to me right now, or press 4 to leave me a voicemail.',
+  OPEN_GREETING: (businessName: string): string =>
+    openingLine(businessName) + 'Press 3 to talk to me right now, or press 4 to leave me a voicemail.',
   /**
    * The same greeting with the live connect turned off (issue #397).
    *
@@ -166,9 +178,8 @@ const SPEECH = {
    * right now" invites them to wonder when she will be; the voicemail is the
    * whole offer, so the line makes it the whole sentence.
    */
-  OPEN_GREETING_VOICEMAIL_ONLY:
-    "Hey, you've reached Tribe Tails Pet Care, this is Auntie's line. " +
-    "Press 4 to leave me a voicemail and I'll get back to you.",
+  OPEN_GREETING_VOICEMAIL_ONLY: (businessName: string): string =>
+    openingLine(businessName) + "Press 4 to leave me a voicemail and I'll get back to you.",
   /** Asked before ringing the operator, so she sees who it is before answering. */
   SCREEN_PROMPT:
     "Alright, after the tone, tell me your name and what you're calling about, " +
@@ -177,8 +188,11 @@ const SPEECH = {
   MISSED:
     "I'm sorry I missed your call. To leave a voicemail, press 4. " +
     'Otherwise, have a wonderful day.',
-  CLOSED_GREETING:
-    "Hey, you've reached Tribe Tails Pet Care. We're closed right now. " +
+  CLOSED_GREETING: (businessName: string): string =>
+    (businessName.trim() === ''
+      ? "Hey, this is Auntie's line. "
+      : `Hey, you've reached ${businessLabel(businessName)}. `) +
+    "We're closed right now. " +
     "If you'd like to leave me a voicemail, press 4. Or send a text to this " +
     "same number and I'll get back to you first thing.",
   RETRY: "Sorry, I didn't catch that. Press 4 to leave me a voicemail.",
@@ -329,22 +343,25 @@ async function recordInboundCall(body: Record<string, string>, state: BusinessOp
 // ---------------------------------------------------------------------------
 
 /**
- * The two questions this file asks `business_settings`, from ONE read.
+ * The three questions this file asks `business_settings`, from ONE read.
  *
  * The greeting and every keypress both need the hours and the live-transfer
  * toggle, and loading the same document twice inside one phone call would spend
  * a second round trip out of Twilio's 15-second webhook budget to learn nothing
  * new. Both answers fail OPEN on an unreadable document, for the reasons each
- * of the two resolvers gives.
+ * of the two resolvers gives. The business name (#1399) rides along: blank
+ * when unset or unreadable, and the greeting then names no business.
  */
 async function resolveVoiceState(nowMs: number): Promise<{
   hours: BusinessOpenState;
   liveTransfer: boolean;
+  businessName: string;
 }> {
   const settings = await loadBusinessHoursSettings(db());
   return {
     hours: resolveBusinessOpenFromSettings(settings, nowMs),
     liveTransfer: resolveLiveTransferEnabled(settings),
+    businessName: typeof settings?.businessName === 'string' ? settings.businessName.trim() : '',
   };
 }
 
@@ -360,7 +377,7 @@ function liveConnectOffered(hours: BusinessOpenState, liveTransfer: boolean): bo
 }
 
 async function handleEntry(req: Request, res: Response, body: Record<string, string>): Promise<void> {
-  const { hours: state, liveTransfer } = await resolveVoiceState(Date.now());
+  const { hours: state, liveTransfer, businessName } = await resolveVoiceState(Date.now());
 
   // Every uncertain answer is logged at a severity that will actually be
   // noticed. The failure this file replaces was silent for months precisely
@@ -382,7 +399,7 @@ async function handleEntry(req: Request, res: Response, body: Record<string, str
   await recordInboundCall(body, state);
 
   if (!state.open) {
-    sendTwiml(res, gatherOneDigit(req, SPEECH.CLOSED_GREETING, '/goodbye'));
+    sendTwiml(res, gatherOneDigit(req, SPEECH.CLOSED_GREETING(businessName), '/goodbye'));
     return;
   }
   // Open, so the only remaining question is whether she is taking live calls.
@@ -393,8 +410,8 @@ async function handleEntry(req: Request, res: Response, body: Record<string, str
     gatherOneDigit(
       req,
       liveConnectOffered(state, liveTransfer)
-        ? SPEECH.OPEN_GREETING
-        : SPEECH.OPEN_GREETING_VOICEMAIL_ONLY,
+        ? SPEECH.OPEN_GREETING(businessName)
+        : SPEECH.OPEN_GREETING_VOICEMAIL_ONLY(businessName),
       '/retry',
     ),
   );

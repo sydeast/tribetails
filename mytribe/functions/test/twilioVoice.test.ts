@@ -106,8 +106,9 @@ const LEGACY_SETTINGS_PATH = 'business_settings/singleton';
 const BASE = 'https://us-central1-test.cloudfunctions.net/twilioVoice';
 const VOICEMAIL_CB = 'https://us-central1-test.cloudfunctions.net/twilioInboundVoicemail';
 
-/** The live hours document, verbatim. */
+/** The live hours document, verbatim, plus the business name the greeting speaks (#1399). */
 const LIVE_SETTINGS = {
+  businessName: 'Test Business',
   businessHours: {
     Monday: '08:00-18:00',
     Tuesday: '08:00-18:00',
@@ -905,5 +906,47 @@ describe('twilioVoice — TwiML shape', () => {
     delete process.env.TWILIO_VOICE_BASE_URL;
     const captured = await call('/', {}, OPEN_INSTANT);
     expect(captured.text).toContain('action="https://us-central1-test.cloudfunctions.net/route"');
+  });
+});
+
+describe('twilioVoice — the greeting names the business from settings (#1399)', () => {
+  it('speaks the settings name while open, with and without the live connect', async () => {
+    configureAuthentic();
+    const live = await call('/', {}, OPEN_INSTANT);
+    expect(live.text).toContain(spoken("Hey, you've reached Test Business, this is Auntie's line. Press 3"));
+    mocks.pathDocs.set(SETTINGS_PATH, { ...LIVE_SETTINGS, voiceLiveTransferEnabled: false });
+    const voicemailOnly = await call('/', {}, OPEN_INSTANT);
+    expect(voicemailOnly.text).toContain(spoken("Hey, you've reached Test Business, this is Auntie's line. Press 4"));
+  });
+
+  it('speaks the settings name while closed', async () => {
+    configureAuthentic();
+    const captured = await call('/', {}, CLOSED_INSTANT);
+    expect(captured.text).toContain(spoken("Hey, you've reached Test Business. We're closed right now."));
+  });
+
+  it('names no business when the name is unset or blank, and never a hardcoded one', async () => {
+    configureAuthentic();
+    const { businessName: _dropped, ...unnamed } = LIVE_SETTINGS;
+    mocks.pathDocs.set(SETTINGS_PATH, unnamed);
+    const open = await call('/', {}, OPEN_INSTANT);
+    expect(open.text).toContain(spoken("Hey, this is Auntie's line. Press 3"));
+    expect(open.text).not.toContain("you've reached");
+    expect(open.text).not.toContain('Tribe Tails');
+    mocks.pathDocs.set(SETTINGS_PATH, { ...LIVE_SETTINGS, businessName: '   ' });
+    const closed = await call('/', {}, CLOSED_INSTANT);
+    expect(closed.text).toContain(spoken("Hey, this is Auntie's line. We're closed right now."));
+    expect(closed.text).not.toContain('Tribe Tails');
+  });
+
+  it('names no business when the settings document is missing or unreadable', async () => {
+    configureAuthentic();
+    mocks.pathDocs.clear();
+    const missing = await call('/', {}, OPEN_INSTANT);
+    expect(missing.text).toContain(spoken("Hey, this is Auntie's line."));
+    expect(missing.text).not.toContain('Tribe Tails');
+    mocks.settingsReadThrows = true;
+    const thrown = await call('/', {}, OPEN_INSTANT);
+    expect(thrown.text).toContain(spoken("Hey, this is Auntie's line."));
   });
 });
