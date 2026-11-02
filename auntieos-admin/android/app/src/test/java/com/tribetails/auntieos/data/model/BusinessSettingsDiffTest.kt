@@ -264,14 +264,14 @@ class BusinessSettingsDiffTest {
     @Test
     fun `reordering two already-configured sections is a real, writable change`() {
         val stored = loaded.withHomeSections(
-            listOf(PortalHomeSection("upNext", true, 0), PortalHomeSection("roster", true, 0))
+            listOf(PortalHomeSection("upNext", true, 0), PortalHomeSection("quickStart", true, 0))
         )
         val reordered = stored.withHomeSections(
-            listOf(PortalHomeSection("roster", true, 0), PortalHomeSection("upNext", true, 0))
+            listOf(PortalHomeSection("quickStart", true, 0), PortalHomeSection("upNext", true, 0))
         )
         val changes = businessSettingsFieldChanges(stored, reordered)
         assertEquals(setOf("mytribePortal"), changes.keys)
-        assertEquals(listOf("roster", "upNext"), reordered.homeSections().map { it.id })
+        assertEquals(listOf("quickStart", "upNext"), reordered.homeSections().map { it.id })
     }
 
     // ── One-way-door guard (issue #397 M10 follow-up) ──────────────────────────
@@ -298,7 +298,6 @@ class BusinessSettingsDiffTest {
                 PortalHomeSection("liveVisit", true, 0),
                 PortalHomeSection("upNext", false, 0),
                 PortalHomeSection("tales", true, 0),
-                PortalHomeSection("roster", true, 0),
                 PortalHomeSection("quickStart", true, 0),
             )
         )
@@ -352,15 +351,15 @@ class BusinessSettingsDiffTest {
         // does not depend on `ui.admin.HOME_SECTION_CATALOG` (a different
         // package/layer), only on the shape a materialized-then-edited row
         // list takes.
-        val canonicalIds = listOf("liveVisit", "upNext", "tales", "roster", "quickStart")
+        val canonicalIds = listOf("liveVisit", "upNext", "tales", "quickStart")
         val materializedThenToggled = canonicalIds.map { id ->
-            PortalHomeSection(id, enabled = id != "roster", limit = 0)
+            PortalHomeSection(id, enabled = id != "quickStart", limit = 0)
         }
         val edited = loaded.withHomeSections(materializedThenToggled)
         val changes = businessSettingsFieldChanges(loaded, edited)
         assertEquals(setOf("mytribePortal"), changes.keys)
-        val roster = edited.homeSections().first { it.id == "roster" }
-        assertEquals(false, roster.enabled)
+        val toggled = edited.homeSections().first { it.id == "quickStart" }
+        assertEquals(false, toggled.enabled)
     }
 
     // ── Drift guard ──────────────────────────────────────────────────────────

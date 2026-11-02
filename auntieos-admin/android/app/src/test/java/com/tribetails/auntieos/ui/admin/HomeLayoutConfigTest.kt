@@ -16,7 +16,7 @@ class HomeLayoutConfigTest {
     @Test
     fun `catalogue ids and labels`() {
         assertEquals(
-            listOf("liveVisit", "upNext", "tales", "roster", "quickStart"),
+            listOf("liveVisit", "upNext", "tales", "quickStart"),
             HOME_SECTION_CATALOG.map { it.id },
         )
         assertEquals("Live visit", homeSectionLabel("liveVisit"))

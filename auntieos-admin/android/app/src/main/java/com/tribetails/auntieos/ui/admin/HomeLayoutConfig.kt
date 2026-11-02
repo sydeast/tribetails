@@ -23,7 +23,6 @@ val HOME_SECTION_CATALOG: List<HomeSectionOption> = listOf(
     HomeSectionOption("liveVisit", "Live visit"),
     HomeSectionOption("upNext", "Up next"),
     HomeSectionOption("tales", "Recent KinTales"),
-    HomeSectionOption("roster", "Tribe roster"),
     HomeSectionOption("quickStart", "Quick start"),
 )
 

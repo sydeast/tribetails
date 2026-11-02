@@ -192,7 +192,6 @@ export const HOME_SECTION_CATALOG: readonly { id: string; label: string }[] = [
   { id: 'liveVisit', label: 'Live visit' },
   { id: 'upNext', label: 'Up next' },
   { id: 'tales', label: 'Recent KinTales' },
-  { id: 'roster', label: 'Tribe roster' },
   { id: 'quickStart', label: 'Quick start' },
 ];
 

@@ -383,19 +383,18 @@ private fun bumpBannerId(current: String): String {
 
 // The canonical Home sections in their default order. A doc with no `home.sections`
 // renders this default; the operator can reorder, disable, and limit them.
-private val DEFAULT_HOME_SECTIONS = listOf("liveVisit", "upNext", "tales", "roster", "quickStart")
+private val DEFAULT_HOME_SECTIONS = listOf("liveVisit", "upNext", "tales", "quickStart")
 
 private fun homeSectionLabel(id: String): String = when (id) {
     "liveVisit" -> "Live visit"
     "upNext" -> "Up next"
     "tales" -> "Tales"
-    "roster" -> "Roster"
     "quickStart" -> "Quick start"
     else -> id
 }
 
 /** Sections that support a per-section item limit (count). */
-private val LIMITED_SECTIONS = setOf("upNext", "tales", "roster")
+private val LIMITED_SECTIONS = setOf("upNext", "tales")
 
 /** The effective ordered section list: the saved config, or the default order when
  *  empty (back-compat). Any missing canonical section is appended enabled. */
