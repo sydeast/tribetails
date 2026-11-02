@@ -531,6 +531,33 @@ describe('Settings — Business profile editor', () => {
     expect(within(fields).getByRole('button', { name: /^save$/i })).toBeDisabled();
   });
 
+  /**
+   * #1409: the name is required. A document with no name shows the refusal the
+   * moment the panel opens, and Save stays off until one is typed, so the
+   * operator sees it where she is typing instead of as a rules error.
+   */
+  it('shows "Enter the business name." on open when the stored name is blank, and gates Save on it', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    const nameInput = await within(panel).findByLabelText('Business name');
+    const fields = panelOwning(nameInput);
+    expect(nameInput).toHaveAttribute('aria-required', 'true');
+    expect(within(fields).getByRole('alert')).toHaveTextContent('Enter the business name.');
+
+    await userEvent.type(within(fields).getByLabelText('Phone'), '555-0199');
+    expect(within(fields).getByRole('button', { name: /^save$/i })).toBeDisabled();
+
+    await userEvent.type(nameInput, 'Sunny Paws');
+    expect(within(fields).queryByRole('alert')).toBeNull();
+    expect(within(fields).getByRole('button', { name: /^save$/i })).toBeEnabled();
+    await userEvent.click(within(fields).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ businessName: 'Sunny Paws', businessPhone: '555-0199' }),
+    );
+  });
+
   it('shows a fail-loud error and keeps the field dirty when the save rejects', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     saveBusinessSettings.mockRejectedValue(new Error('permission-denied'));

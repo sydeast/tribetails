@@ -426,6 +426,28 @@ describe('Account business profile', () => {
     );
   });
 
+  it('refuses to save a blank business name (#1409) and says why beside the field', async () => {
+    const user = userEvent.setup();
+    render(<Account />);
+    await heroName();
+    const panel = (await screen.findByText('Business profile')).closest('section') as HTMLElement;
+    const g = within(panel);
+    const name = g.getByLabelText('Business name');
+    expect(name).toHaveAttribute('aria-required', 'true');
+    expect(g.queryByRole('alert')).toBeNull();
+
+    await user.clear(name);
+    expect(g.getByRole('alert')).toHaveTextContent('Enter the business name.');
+    expect(g.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.click(g.getByRole('button', { name: 'Save' }));
+    expect(saveBusinessSettings).not.toHaveBeenCalled();
+
+    await user.type(name, 'Sunny Paws');
+    expect(g.queryByRole('alert')).toBeNull();
+    await user.click(g.getByRole('button', { name: 'Save' }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith(expect.objectContaining({ businessName: 'Sunny Paws' }));
+  });
+
   it('keeps an in-progress business edit through a hero profile save', async () => {
     const user = userEvent.setup();
     render(<Account />);

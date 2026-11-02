@@ -53,6 +53,7 @@ import com.tribetails.auntieos.data.model.NotificationMatrix
 import com.tribetails.auntieos.data.model.UserProfile
 import com.tribetails.auntieos.data.model.accountChannelScopes
 import com.tribetails.auntieos.data.model.applyChannelToggle
+import com.tribetails.auntieos.data.model.businessNameError
 import com.tribetails.auntieos.data.model.channelMasterCount
 import com.tribetails.auntieos.data.model.channelMasterOn
 import com.tribetails.auntieos.data.model.privacyPolicyUrlError
@@ -436,7 +437,9 @@ internal fun ProfilePanel(
  * The privacy policy link is checked as it is typed ([privacyPolicyUrlError]):
  * a value `firestore.rules` would refuse keeps Save off and says why beside the
  * field, so the refusal is seen where the operator is typing, not as a rules
- * error after the click.
+ * error after the click. The business name is required (#1409,
+ * [businessNameError]) and goes through the same gate: a stored blank shows
+ * "Enter the business name." the moment the panel opens.
  */
 @Composable
 internal fun BusinessProfilePanel(
@@ -457,10 +460,19 @@ internal fun BusinessProfilePanel(
         privacyPolicyUrl != settings.privacyPolicyUrl ||
         weather != settings.weatherLocation
     val privacyPolicyError = privacyPolicyUrlError(privacyPolicyUrl)
+    val nameError = businessNameError(name)
 
     DenPanel(title = "Business profile", subtitle = "Identity used on invoices, emails, and KinTales.") {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
-            BottomBorderField(value = name, onValueChange = { name = it }, label = "Business name", modifier = Modifier.fillMaxWidth())
+            BottomBorderField(
+                value = name,
+                onValueChange = { name = it },
+                label = "Business name",
+                required = true,
+                isError = nameError != null,
+                errorMessage = nameError,
+                modifier = Modifier.fillMaxWidth(),
+            )
             BottomBorderField(value = email, onValueChange = { email = it }, label = "Email", modifier = Modifier.fillMaxWidth())
             BottomBorderField(value = phone, onValueChange = { phone = it }, label = "Phone", modifier = Modifier.fillMaxWidth())
             BottomBorderField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.fillMaxWidth())
@@ -484,7 +496,7 @@ internal fun BusinessProfilePanel(
             Spacer(Modifier.height(dims.space1))
             PrimaryButton(
                 label = "Save",
-                enabled = dirty && privacyPolicyError == null,
+                enabled = dirty && privacyPolicyError == null && nameError == null,
                 onClick = {
                     onSave(
                         settings.copy(

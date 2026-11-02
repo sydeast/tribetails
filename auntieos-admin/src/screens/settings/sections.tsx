@@ -27,6 +27,7 @@ import {
 } from '../../lib/settingsFormat';
 import { type ImageDecoder } from '../../lib/brandAssetFile';
 import { privacyPolicyUrlError } from '../../lib/privacyPolicyUrl';
+import { businessNameError } from '../../lib/businessName';
 import { LogoUploadField } from './LogoUploadField';
 // The `settingsEdit__*` class vocabulary these sections use lives here. It is
 // also depended on by the sibling editors (BusinessHoursEditor, TimeOffEditor,
@@ -79,6 +80,12 @@ export interface TextFieldSpec {
   /** Small caption under the input. PR30: the Payments fields use it for the processor's fee schedule. */
   hint?: string;
   /**
+   * #1409: the field may not be saved blank. Marks the label (a stylesheet
+   * asterisk, so the control's accessible name stays the label's own words)
+   * and sets `aria-required`. The refusal itself comes from `validate`.
+   */
+  required?: boolean;
+  /**
    * #1410: what to say beside the field for a value that must not be saved, or
    * null when it may be. Run on the live value; a field with a message keeps
    * the panel's Save disabled, so the operator sees the refusal where she is
@@ -125,7 +132,10 @@ export function FieldErrorNote({ fieldKey, message }: { fieldKey: StringFieldKey
  * two fields above) matters more now that both live in one panel.
  */
 export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
-  { key: 'businessName', label: 'Business name' },
+  // #1409: required (ruling 2026-11-01 on #1369). A blank name keeps Save off
+  // and says "Enter the business name." beside the field, on open too when the
+  // stored value is blank; `firestore.rules` refuses the write regardless.
+  { key: 'businessName', label: 'Business name', required: true, validate: businessNameError },
   { key: 'businessEmail', label: 'Email', type: 'email' },
   { key: 'businessPhone', label: 'Phone', type: 'tel' },
   { key: 'businessAddress', label: 'Address' },
@@ -244,7 +254,9 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
         {fields.map((f) => (
           <div key={f.key} className="settingsEdit__fieldGroup">
             <label className="settingsEdit__field">
-              <span className="settingsEdit__fieldLabel">{f.label}</span>
+              <span className={f.required ? 'settingsEdit__fieldLabel settingsEdit__fieldLabel--required' : 'settingsEdit__fieldLabel'}>
+                {f.label}
+              </span>
               <input
                 type={f.type ?? 'text'}
                 className="settingsEdit__input"
@@ -252,6 +264,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
                 {...(f.placeholder !== undefined ? { placeholder: f.placeholder } : {})}
                 disabled={busy}
                 onChange={(e) => update(f.key, e.target.value)}
+                {...(f.required ? { 'aria-required': true } : {})}
                 {...(f.hint ? { 'aria-describedby': `${f.key}-hint` } : {})}
                 {...(fieldErrors[f.key] !== undefined
                   ? { 'aria-invalid': true, 'aria-errormessage': `${f.key}-error` }

@@ -440,6 +440,54 @@ describe('rules: flat top-level collections', () => {
     }
   });
 
+  /**
+   * #1409: the business name is required (ruling 2026-11-01 on #1369). These
+   * rules are the only server-side gate on the document, since every admin
+   * client writes it directly; the three editors refuse Save with "Enter the
+   * business name." before this is reached.
+   */
+  it('business_settings: a non-blank business name saves, trimmed or not', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
+    await assertSucceeds(doc().set({ businessName: 'Sunny Paws' }, { merge: true }));
+    await assertSucceeds(doc().set({ businessName: '  Sunny Paws  ' }, { merge: true }));
+    await assertSucceeds(doc().set({ businessName: 'S' }, { merge: true }));
+  });
+
+  it('business_settings: a blank, whitespace or non-string business name is refused', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
+    for (const bad of ['', ' ', '   ', '\t\n', 42, null, true, ['Sunny Paws'], { name: 'Sunny Paws' }]) {
+      await assertFails(doc().set({ businessName: bad }, { merge: true }));
+    }
+  });
+
+  /**
+   * `request.resource.data` is the merged document, so a stored blank refuses
+   * any patch to the document until the patch that sets the name. That is the
+   * one-line docket note on #1409: the first admin save after this ships is
+   * refused until the operator fills the name in.
+   */
+  it('business_settings: a stored blank name refuses every patch until one sets the name', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('business_settings/business_settings').set({ businessName: '', businessPhone: '555-0100' });
+    });
+    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
+    await assertFails(doc().set({ businessPhone: '555-0199' }, { merge: true }));
+    await assertSucceeds(doc().set({ businessName: 'Sunny Paws', businessPhone: '555-0199' }, { merge: true }));
+    // With the name in place, the same phone-only patch goes through.
+    await assertSucceeds(doc().set({ businessPhone: '555-0100' }, { merge: true }));
+  });
+
+  it('business_settings: sibling documents without a business name are untouched by the rule', async () => {
+    const env = await getEnv();
+    const doc = () => asAuntie(env).firestore().doc('business_settings/security');
+    await assertSucceeds(doc().set({ appCheckEnforced: false }, { merge: true }));
+  });
+
   // ── operators: collection + isOperator() helper both removed ──────────────
   // Nothing in the tree reads, writes or seeds `operators`. The rule granted
   // self-read, so this pins the default-deny that replaced it - including for

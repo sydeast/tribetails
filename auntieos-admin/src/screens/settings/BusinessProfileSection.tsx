@@ -66,7 +66,8 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
   const dirty = fieldsDirty || zoneDirty;
   // #1410: a field whose value the rules would refuse (the privacy policy link)
   // blocks the whole panel's Save the way an unusable zone does, with the
-  // reason beside the field.
+  // reason beside the field. #1409: the same gate carries the required business
+  // name, so a stored blank shows its message the moment the panel opens.
   const fieldErrors = textFieldErrors(BUSINESS_PROFILE_FIELDS, draft.values);
   const fieldsValid = Object.keys(fieldErrors).length === 0;
 
@@ -118,7 +119,9 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
         {BUSINESS_PROFILE_FIELDS.map((f) => (
           <div key={f.key} className="settingsEdit__fieldGroup">
             <label className="settingsEdit__field">
-              <span className="settingsEdit__fieldLabel">{f.label}</span>
+              <span className={f.required ? 'settingsEdit__fieldLabel settingsEdit__fieldLabel--required' : 'settingsEdit__fieldLabel'}>
+                {f.label}
+              </span>
               <input
                 type={f.type ?? 'text'}
                 className="settingsEdit__input"
@@ -126,6 +129,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
                 {...(f.placeholder !== undefined ? { placeholder: f.placeholder } : {})}
                 disabled={busy}
                 onChange={(e) => updateField(f.key, e.target.value)}
+                {...(f.required ? { 'aria-required': true } : {})}
                 {...(f.hint ? { 'aria-describedby': `${f.key}-hint` } : {})}
                 {...(fieldErrors[f.key] !== undefined
                   ? { 'aria-invalid': true, 'aria-errormessage': `${f.key}-error` }

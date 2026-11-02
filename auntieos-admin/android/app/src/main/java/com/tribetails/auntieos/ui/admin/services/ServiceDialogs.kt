@@ -707,6 +707,10 @@ fun AdminSettingsCard(
     var businessName by remember { mutableStateOf(settings.businessName) }
     var allowTimeBlock by remember { mutableStateOf(settings.allowTimeBlockBooking) }
     var allowSpecificTime by remember { mutableStateOf(settings.allowSpecificTimeBooking) }
+    // #1409: the business name is required. The same check the Account screen's
+    // Business profile panel runs; Save stays off and the reason sits under the
+    // field while the typed name is blank, trimmed.
+    val nameError = businessNameError(businessName)
 
     AuntieCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -716,23 +720,35 @@ fun AdminSettingsCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Business Settings", style = AuntieTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
-                AuntieTextBtn(onClick = {
-                    if (editMode) {
-                        onUpdate(settings.copy(
-                            businessName = businessName,
-                            allowTimeBlockBooking = allowTimeBlock,
-                            allowSpecificTimeBooking = allowSpecificTime
-                        ))
-                    }
-                    editMode = !editMode
-                }) {
+                AuntieTextBtn(
+                    enabled = !editMode || nameError == null,
+                    onClick = {
+                        if (editMode) {
+                            onUpdate(settings.copy(
+                                businessName = businessName.trim(),
+                                allowTimeBlockBooking = allowTimeBlock,
+                                allowSpecificTimeBooking = allowSpecificTime
+                            ))
+                        }
+                        editMode = !editMode
+                    },
+                ) {
                     Text(if (editMode) "Save" else "Edit")
                 }
             }
 
             if (editMode) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AuntieField(value = businessName, onValueChange = { businessName = it }, label = "Business Name", modifier = Modifier.fillMaxWidth())
+                    AuntieField(
+                        value = businessName,
+                        onValueChange = { businessName = it },
+                        label = "Business Name",
+                        isError = nameError != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (nameError != null) {
+                        Text(nameError, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.error)
+                    }
 
                     Text("Booking Modes", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.Medium, color = AuntieTheme.colors.textPrimary)
 

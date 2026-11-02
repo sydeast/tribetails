@@ -388,8 +388,21 @@ service cloud.firestore {
                  && (request.resource.data[field] == ''
                      || request.resource.data[field].matches('https://[^\\s/?#"\'<>`\\\\]+[^\\s"\'<>`\\\\]*')));
     }
+ // #1409: a string that may not be blank (ruling 2026-11-01 on #1369: the
+ // business name is required). Same if-present shape as the others, because
+ // this wildcard also covers `feature_flags` and `security`, which never carry
+ // the field. `request.resource.data` is the document AS IT WOULD BE after the
+ // merge, so a stored blank refuses every patch to the document until one of
+ // them sets the name. The three admin editors refuse Save with "Enter the
+ // business name." before the write is attempted; this is the floor under them.
+    function bsNonBlankString(field) {
+      return !bsHas(field)
+             || (request.resource.data[field] is string
+                 && request.resource.data[field].trim().size() > 0);
+    }
     function validBusinessSettings() {
-      return bsString('timeZone')
+      return bsNonBlankString('businessName')
+             && bsString('timeZone')
              && bsString('defaultBookingMode')
              && bsString('defaultCalendarView')
              && bsString('trackingAccuracy')
