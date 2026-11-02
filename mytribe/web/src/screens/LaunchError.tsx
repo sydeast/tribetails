@@ -4,8 +4,10 @@
  * payload cannot be loaded (network down, backend error).
  */
 import { BusyLabel } from '../components/Loading';
+import { readCachedBusinessName } from '../lib/businessPublicCard';
 
 export function LaunchError(props: { onRetry: () => void; onSignOut: () => void; retrying?: boolean; signingOut?: boolean }) {
+  const name = readCachedBusinessName();
   return (
     <main className="errshell">
       <div className="errbrand">
@@ -39,9 +41,11 @@ export function LaunchError(props: { onRetry: () => void; onSignOut: () => void;
         </div>
       </section>
 
-      <p className="errfoot">
-        Cared for by <b>Tribe Tails Pet Care</b>
-      </p>
+      {name !== '' && (
+        <p className="errfoot">
+          Cared for by <b>{name}</b>
+        </p>
+      )}
     </main>
   );
 }
