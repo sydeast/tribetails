@@ -18,7 +18,8 @@ import kotlin.test.assertTrue
 
 /**
  * Message Auntie (16.4) - Home entry point. The header is now a hero (no chip);
- * Message Auntie lives as the Quick Start "Message your Auntie" button in the aside.
+ * Message Auntie lives as the Quick Start "Message your Auntie" button, which
+ * #1412 moved to the top of Home.
  */
 class HomeScreenMessageAuntieTest {
 

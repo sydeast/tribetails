@@ -9,14 +9,16 @@ import { Home } from './Home';
  * Home's version of the false-empty defect, plus the gated-query half that is
  * unique to this screen.
  *
- * `bookings`, `kinTales` and `kin` are all `enabled: home.isSuccess`. When the
- * signal drops, `home` pauses, so those three never even reach 'paused': they
- * sit at pending/idle, which is just as invisible. The household was greeted
- * "Hi , your tribe is in good hands." above three sections each claiming there
- * was nothing there.
+ * `bookings` and `kinTales` are gated on `home`. When the signal drops, `home`
+ * pauses, so those never even reach 'paused': they sit at pending/idle, which
+ * is just as invisible. The household was greeted "Hi , your tribe is in good
+ * hands." above sections each claiming there was nothing there.
  *
  * The pause is the real one, driven through `onlineManager`; the query
  * functions are asserted never to run.
+ *
+ * #1412: the kin roster left Home for Tribe, so `getMyKin` is asserted never
+ * to run at all, online or off, and Quick Start is asserted to come first.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -73,7 +75,7 @@ function renderOffline() {
 }
 
 describe('Home, signal lost with the tab open', () => {
-  it('the identity query really is paused, and the three gated ones never start', () => {
+  it('the identity query really is paused, and the gated ones never start', () => {
     renderOffline();
     expect(mocks.getMyHome).not.toHaveBeenCalled();
     expect(mocks.getMyBookings).not.toHaveBeenCalled();
@@ -92,7 +94,6 @@ describe('Home, signal lost with the tab open', () => {
 
     expect(screen.getByText(/your schedule has not loaded/)).toBeInTheDocument();
     expect(screen.getByText(/your KinTales has not loaded/)).toBeInTheDocument();
-    expect(screen.getByText(/your kin has not loaded/)).toBeInTheDocument();
 
     expect(screen.queryByText('Nothing on the calendar yet.')).not.toBeInTheDocument();
     expect(screen.queryByText(/Your first KinTale will show up here after a visit/)).not.toBeInTheDocument();
@@ -166,21 +167,82 @@ describe('Home, a visit whose start time the Auntie sets (#1098)', () => {
   });
 });
 describe('Home, first paint is one round trip deep (#1282)', () => {
-  it('starts bookings, KinTales and kin while getMyHome is still in flight', async () => {
+  it('starts bookings and KinTales while getMyHome is still in flight', async () => {
     mocks.getMyHome.mockReturnValue(new Promise(() => {}));
     mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
     mocks.getMyKinTales.mockResolvedValue({ tales: [] });
-    mocks.getMyKin.mockResolvedValue({ kin: [] });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
         <Home />
       </QueryClientProvider>,
     );
-    await vi.waitFor(() => expect(mocks.getMyKin).toHaveBeenCalledWith('fam1'));
+    await vi.waitFor(() => expect(mocks.getMyKinTales).toHaveBeenCalledWith('fam1', { limit: 3 }));
     expect(mocks.getMyHome).toHaveBeenCalledTimes(1);
     expect(mocks.getMyBookings).toHaveBeenCalledWith('fam1');
-    expect(mocks.getMyKinTales).toHaveBeenCalledWith('fam1', { limit: 3 });
+    // #1412: the roster is Tribe's read now, not Home's.
+    expect(mocks.getMyKin).not.toHaveBeenCalled();
+  });
+});
+
+describe('Home is the dashboard (#1412)', () => {
+  async function renderEmptyHome() {
+    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyAccount.mockResolvedValue({ displayName: 'Casey QA', email: 'casey.qa@example.com', impersonated: false });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({ tales: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Nothing on the calendar yet.');
+  }
+
+  it('never loads or draws the kin roster; that is the Tribe screen', async () => {
+    await renderEmptyHome();
+    expect(mocks.getMyKin).not.toHaveBeenCalled();
+    expect(screen.queryByText('Your tribe')).toBeNull();
+    expect(screen.queryByText('Add Kin')).toBeNull();
+    expect(screen.queryByText('The Kin')).toBeNull();
+  });
+
+  it('puts Quick start before Up next in the document, so the phone column leads with it', async () => {
+    await renderEmptyHome();
+    const quick = screen.getByText('Quick start');
+    const upNext = screen.getByText(/^Up next/);
+    // jsdom cannot lay out CSS grid `order`, so the DOM order is the state
+    // carrier: the single phone column follows it.
+    expect(quick.compareDocumentPosition(upNext) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(/Book a visit/)).toBeInTheDocument();
+  });
+
+  it('still skips a roster row an operator config carries from before the ruling', async () => {
+    mocks.getMyHome.mockResolvedValue({
+      displayName: 'Wren',
+      businessName: 'Tribe Tails Pet Care',
+      portal: {
+        home: [
+          { id: 'roster', enabled: true, limit: 4 },
+          { id: 'quickStart', enabled: true, limit: 0 },
+          { id: 'upNext', enabled: true, limit: 5 },
+        ],
+      },
+    });
+    mocks.getMyAccount.mockResolvedValue({ displayName: 'Casey QA', email: 'casey.qa@example.com', impersonated: false });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({ tales: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Nothing on the calendar yet.')).toBeInTheDocument();
+    expect(screen.getByText('Quick start')).toBeInTheDocument();
+    expect(screen.queryByText('Your tribe')).toBeNull();
+    expect(mocks.getMyKin).not.toHaveBeenCalled();
   });
 });
 

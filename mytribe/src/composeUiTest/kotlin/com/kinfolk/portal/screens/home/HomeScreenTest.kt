@@ -2,10 +2,15 @@
 
 package com.kinfolk.portal.screens.home
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
@@ -14,8 +19,58 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
+import kotlin.test.assertTrue
 
 class HomeScreenTest {
+
+    /**
+     * #1412: Home is the dashboard. The kin roster is Tribe's, so Home never
+     * calls getMyKin and never draws "Your tribe" or "Add Kin". No getMyKin
+     * stub here on purpose: a call would be recorded and fail the assertion.
+     */
+    @Test
+    fun home_neverLoadsOrDrawsTheKinRoster() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", kotlinx.serialization.json.JsonNull)
+            put("upcoming", buildJsonArray {})
+            put("recent", buildJsonArray {})
+        })
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {})
+        })
+        setThemedContent {
+            HomeScreen("The Foster", "demo-1", PortalApi(fake))
+        }
+        waitForIdle()
+        assertTrue(fake.calls.none { it.first == "getMyKin" }, "Home must not call getMyKin: ${fake.calls.map { it.first }}")
+        onNodeWithText("YOUR TRIBE").assertDoesNotExist()
+        onNodeWithText("Add Kin").assertDoesNotExist()
+        onNodeWithText("Tribe unavailable").assertDoesNotExist()
+        onNodeWithText("QUICK START").assertExists()
+    }
+
+    /** #1412: on a phone, Quick Start sits above Up next, above the fold. */
+    @Test
+    fun narrow_quickStartIsAboveUpNext() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", kotlinx.serialization.json.JsonNull)
+            put("upcoming", buildJsonArray {})
+            put("recent", buildJsonArray {})
+        })
+        setThemedContent {
+            // 390dp: a phone, well under the 880dp wide-shell breakpoint.
+            Box(Modifier.width(390.dp)) {
+                HomeScreen("The Foster", "demo-1", PortalApi(fake))
+            }
+        }
+        waitForIdle()
+        val quickTop = onNodeWithText("QUICK START").getBoundsInRoot().top
+        val upNextTop = onNodeWithText("UP NEXT").getBoundsInRoot().top
+        assertTrue(quickTop < upNextTop, "Quick Start ($quickTop) should sit above Up next ($upNextTop)")
+    }
 
     @Test
     fun emptyState_rendersBothEmptySections() = runComposeUiTest {

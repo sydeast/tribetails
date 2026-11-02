@@ -2,7 +2,6 @@ package com.kinfolk.portal.screens.home
 
 import com.kinfolk.portal.util.auntieName
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,13 +41,10 @@ import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.KinLoading
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinStaggerReveal
-import com.kinfolk.portal.components.KinfolkAvatar
 import com.kinfolk.portal.components.ScreenHeader
-import com.kinfolk.portal.nav.avatarInitial
 import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingsResult
-import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.KinTale
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.PortalHomeSection
@@ -69,10 +65,15 @@ import kotlinx.coroutines.delay
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
- * Home. Wide (>= 880dp, same breakpoint as the shell chrome): two columns
- * 1.6fr / 1fr — main = Up Next + Recent KinTales, aside = Tribe roster +
- * Quick Start. Narrow: one column in the same order. The Live Visit hero
- * always spans full width above the columns.
+ * Home, the dashboard (#1412, operator ruling on #1295). Wide (>= 880dp, same
+ * breakpoint as the shell chrome): two columns 1.6fr / 1fr — main = Up Next +
+ * Recent KinTales, aside = Quick Start. Narrow: one column, Quick Start FIRST
+ * so it sits above the fold on a phone, then Up Next, then Recent KinTales.
+ * The Live Visit hero always spans full width above the columns.
+ *
+ * The kin roster is not here: it lives on the Tribe screen only
+ * (TribeHubScreen.kt), so this screen never calls getMyKin. The hero's kin
+ * names come from the booking itself ([Booking.kinNames]).
  */
 @Composable
 fun HomeScreen(
@@ -86,9 +87,6 @@ fun HomeScreen(
     onOpenKinTales: () -> Unit = {},
     /** #1329: a Recent KinTales card opens that tale. */
     onOpenKinTale: (String) -> Unit = {},
-    onOpenKin: () -> Unit = {},
-    onOpenKinDetail: (String) -> Unit = {},
-    onAddKin: () -> Unit = {},
     onBookVisit: () -> Unit = {},
     /** #1005: null for a member without billing access, and "View invoices" is not drawn. */
     onOpenInvoices: (() -> Unit)? = {},
@@ -102,19 +100,16 @@ fun HomeScreen(
     var data by remember { mutableStateOf(handoff?.bookings) }
     var notice by remember { mutableStateOf(handoff?.notice) }
     var error by remember { mutableStateOf<String?>(null) }
-    var roster by remember { mutableStateOf<List<Kin>?>(null) }
-    var rosterFailed by remember { mutableStateOf(false) }
     var tales by remember { mutableStateOf<List<KinTale>?>(null) }
     var talesFailed by remember { mutableStateOf(false) }
     // Bumped by the widget's Retry action to re-run the tales fetch.
     var talesReloadKey by remember { mutableStateOf(0) }
-    // Same idiom for the other two reads, so the 10s "Tap to sync" on each
+    // Same idiom for the bookings read, so the 10s "Tap to sync" on each
     // section has a real re-attempt behind it rather than a dead button
     // (operator ruling, 2026-09-12). Bumping the key re-runs the
     // LaunchedEffect below; nulling the data puts the section back into its
     // waiting state so the cue is visible while the retry runs.
     var bookingsReloadKey by remember { mutableStateOf(0) }
-    var rosterReloadKey by remember { mutableStateOf(0) }
 
     // Resolve the section layout from the operator config. Empty/absent config →
     // the canonical hardcoded order, every section enabled (today's behavior).
@@ -147,18 +142,8 @@ fun HomeScreen(
             notice = null
         }
     }
-    // Roster + tales load independently and fail soft: a broken aside never
-    // takes down the schedule column.
-    LaunchedEffect(kinfolkId, rosterReloadKey) {
-        try {
-            roster = portalApi.getMyKin(kinfolkId).kin
-            rosterFailed = false
-        } catch (c: CancellationException) {
-            throw c
-        } catch (t: Throwable) {
-            rosterFailed = true
-        }
-    }
+    // Tales load independently and fail soft: a broken tales card never takes
+    // down the schedule column.
     LaunchedEffect(kinfolkId, talesLimit, talesReloadKey) {
         try {
             tales = portalApi.getMyKinTales(kinfolkId, limit = talesLimit).tales
@@ -171,7 +156,7 @@ fun HomeScreen(
     }
 
     // Reusable section renderers, keyed by id so the layout can place them in any
-    // operator-chosen order. limit 0 = unlimited; the canonical caps (5/3/4)
+    // operator-chosen order. limit 0 = unlimited; the canonical caps (5/3)
     // apply only when the operator hasn't set one.
     val liveVisitSection: @Composable () -> Unit = {
         Text("Live Visit", style = type.heritageSection, modifier = Modifier.padding(horizontal = KinfolkSpacing.l))
@@ -211,17 +196,6 @@ fun HomeScreen(
             },
         )
     }
-    val rosterSection: @Composable () -> Unit = {
-        RosterSection(
-            roster = roster,
-            failed = rosterFailed,
-            limit = cfg("roster")?.limit?.takeIf { it > 0 } ?: 4,
-            onOpenKin = onOpenKin,
-            onOpenKinDetail = onOpenKinDetail,
-            onAddKin = onAddKin,
-            onReloadRoster = { roster = null; rosterReloadKey += 1 },
-        )
-    }
     val quickStartSection: @Composable () -> Unit = {
         QuickStartSection(
             showMessageAuntie = chatEnabled,
@@ -235,16 +209,18 @@ fun HomeScreen(
         "liveVisit" -> liveVisitSection
         "upNext" -> upNextSection
         "tales" -> talesSection
-        "roster" -> rosterSection
         "quickStart" -> quickStartSection
+        // "roster" has no renderer since #1412: the kin list is Tribe's. A
+        // config row that still names it is skipped, like any unknown id.
         else -> null
     }
 
     // The canonical layout (empty config) keeps the two-column wide split:
-    // main = liveVisit + upNext + tales, aside = roster + quickStart. When the
-    // operator supplies an explicit order, we honor that order in a single
-    // column (a custom order can't be meaningfully forced into two fixed
-    // columns), still skipping disabled sections and applying limits.
+    // main = liveVisit + upNext + tales, aside = quickStart; narrow puts
+    // quickStart first. When the operator supplies an explicit order, we honor
+    // that order in a single column (a custom order can't be meaningfully
+    // forced into two fixed columns), still skipping disabled sections and
+    // applying limits.
     val custom = sections.isNotEmpty()
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -279,7 +255,6 @@ fun HomeScreen(
                     talesSection()
                 }
                 val asideColumn: @Composable () -> Unit = {
-                    rosterSection()
                     quickStartSection()
                 }
                 if (wide) {
@@ -296,12 +271,14 @@ fun HomeScreen(
                         }
                     }
                 } else {
+                    // #1412: Quick Start leads the phone column so it is above
+                    // the fold; the schedule and tales follow.
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
                         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
                     ) {
-                        mainColumn()
                         asideColumn()
+                        mainColumn()
                     }
                 }
             }
@@ -479,109 +456,6 @@ private fun TaleRow(tale: KinTale, onOpen: () -> Unit) {
             }
         }
         Text(meta, style = type.sansMeta)
-    }
-}
-
-@Composable
-private fun RosterSection(
-    roster: List<Kin>?,
-    failed: Boolean,
-    limit: Int = 4,
-    onOpenKin: () -> Unit,
-    onOpenKinDetail: (String) -> Unit,
-    onAddKin: () -> Unit,
-    onReloadRoster: () -> Unit,
-) {
-    val type = LocalKinfolkTypography.current
-    GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
-        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-            SectLabel("Your tribe", linkText = "The Kin", onLink = onOpenKin)
-            when {
-                failed -> SectionNote(
-                    title = "Tribe unavailable",
-                    message = "We couldn't load your Kin right now. Try The Kin from the account menu.",
-                )
-                roster == null -> KinLoading(
-                    text = "Loading your kin\u2026",
-                    onSync = onReloadRoster,
-                )
-                else -> {
-                    roster.take(limit).forEachIndexed { index, kin -> KinRosterRow(kin, index, onOpenKinDetail) }
-                }
-            }
-            // Add Kin is always available, even while the roster loads or fails.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(KinfolkShapes.cardSmall)
-                    .clickable { onAddKin() }
-                    .padding(KinfolkSpacing.s),
-                horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .background(KinfolkBrand.GlassSurfaceDim)
-                        .border(2.dp, KinfolkBrand.NavyHairline, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("+", style = type.heritageTitle.copy(color = KinfolkBrand.NavyMuted))
-                }
-                Column {
-                    Text("Add Kin", style = type.sansBody)
-                    Text("NEW PROFILE", style = type.sansMeta)
-                }
-            }
-        }
-    }
-}
-
-/** Roster ring colors cycle orange → teal → pink → purple like the design. */
-private val RosterRingColors = listOf(
-    KinfolkBrand.KinfolkOrange,
-    KinfolkBrand.KinTeal,
-    KinfolkBrand.PackPink,
-    KinfolkBrand.FamilyPurple,
-)
-
-@Composable
-private fun KinRosterRow(kin: Kin, index: Int, onOpenKinDetail: (String) -> Unit) {
-    val type = LocalKinfolkTypography.current
-    val ring = RosterRingColors[index % RosterRingColors.size]
-    val name = kin.name?.takeIf { it.isNotBlank() } ?: "Kin"
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(KinfolkShapes.cardSmall)
-            .clickable { onOpenKinDetail(kin.id) }
-            .padding(KinfolkSpacing.s),
-        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier.size(50.dp).clip(CircleShape).border(2.dp, ring, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            val photo = kin.photoUrl
-            if (!photo.isNullOrBlank()) {
-                KinfolkAvatar(url = photo, contentDescription = name, size = 46.dp)
-            } else {
-                Text(avatarInitial(name), style = type.heritageTitle.copy(color = ring))
-            }
-        }
-        Column {
-            Text(name, style = type.sansBody)
-            val meta = listOfNotNull(
-                (kin.breed ?: kin.species)?.takeIf { it.isNotBlank() }?.uppercase(),
-                kin.ageYears?.let { yrs ->
-                    val rounded = if (yrs % 1.0 == 0.0) yrs.toInt().toString() else yrs.toString()
-                    "$rounded YRS"
-                },
-            ).joinToString(", ")
-            if (meta.isNotBlank()) Text(meta, style = type.sansMeta)
-        }
     }
 }
 
