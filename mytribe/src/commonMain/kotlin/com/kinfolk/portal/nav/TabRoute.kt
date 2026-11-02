@@ -89,8 +89,8 @@ object ShellNav {
     /**
      * Wide (>= 880dp) primary link pills, the same order as web's desktop
      * NAV_LINKS (PortalNav.tsx): #1435 puts KinTales back after Schedule, and
-     * #1420 put Messages after Invoices. Kin/Account/Notifications live in the
-     * avatar menu.
+     * #1420 put Messages after Invoices. Account/Notifications live in the
+     * avatar menu; the kin roster is reached from Tribe.
      */
     val wideLinks: List<ShellDestination> = listOf(
         ShellDestination.Home,
@@ -123,13 +123,18 @@ object ShellNav {
         ShellDestination.Messages,
     )
 
-    /** Avatar dropdown entries; "Back to Directory" only for operators. */
+    /**
+     * Avatar dropdown entries; "Back to Directory" only for operators.
+     *
+     * #1458 (#1295 mobile map): no KinTales and no The Kin. Tales is a bar tab
+     * and a wide link, and the kin roster lives on Tribe, so both were duplicate
+     * doors. The destinations stay: the bar, the wide links and Tribe's
+     * "Manage" still route to them.
+     */
     fun accountMenu(isOperator: Boolean): List<AccountMenuItem> = buildList {
         add(AccountMenuItem.Open(ShellDestination.Account))
         add(AccountMenuItem.Open(ShellDestination.TribeEdit))
-        add(AccountMenuItem.Open(ShellDestination.KinTales))
         add(AccountMenuItem.Open(ShellDestination.Notifications))
-        add(AccountMenuItem.Open(ShellDestination.Kin))
         // #1411: the business's hours, number and privacy policy, before the
         // items that leave the shell, the same slot as the web AvatarMenu.
         add(AccountMenuItem.Open(ShellDestination.About))
