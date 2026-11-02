@@ -55,6 +55,8 @@ import kotlinx.serialization.Serializable
 @Serializable data object TribeEditRoute
 @Serializable data object AccountRoute
 @Serializable data object NotificationsRoute
+/** "About {business}" (#1411): hours, number, privacy policy, app version, off the public card. */
+@Serializable data object AboutRoute
 
 // ---- Detail destinations (lifted out of per-screen state) ----
 // The household's whole photo archive (#469), reached from the Tribe hub's

@@ -27,8 +27,6 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocalHospital
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,10 +46,12 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.kinfolk.portal.components.GhostPillButton
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinSpinner
+import com.kinfolk.portal.components.PhoneActionPills
 import com.kinfolk.portal.components.SchemaFormRenderer
 import com.kinfolk.portal.config.BusinessContact
 import com.kinfolk.portal.nav.isWideShell
@@ -692,34 +692,8 @@ private fun FieldPair(
     }
 }
 
-/** Outline pill action — replaces raw OutlinedButton across this screen. */
-@Composable
-private fun GhostPillButton(
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    icon: ImageVector? = null,
-    color: Color = KinfolkBrand.Navy,
-) {
-    val type = LocalKinfolkTypography.current
-    val contentColor = if (enabled) color else KinfolkBrand.NavyMuted
-    Row(
-        modifier = modifier
-            .clip(KinfolkShapes.pill)
-            .border(1.dp, contentColor.copy(alpha = 0.45f), KinfolkShapes.pill)
-            .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = KinfolkSpacing.m, vertical = 11.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (icon != null) {
-            Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(KinfolkSpacing.xs))
-        }
-        Text(label, style = type.sansLabel.copy(color = contentColor))
-    }
-}
+// GhostPillButton (the outline pill action every card here uses) moved to
+// components/GhostPillButton.kt for #1411, so the About screen shares it.
 
 /**
  * #872: [fields] with every key in [SCREEN_OWNED_CUSTOM_FIELD_KEYS] removed —
@@ -1653,20 +1627,8 @@ private fun ContactAuntieCard(portalApi: PortalApi, openUrl: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
             ) {
-                if (phone.isNotBlank()) {
-                    GhostPillButton(
-                        label = "Call",
-                        onClick = { openUrl("tel:$phone") },
-                        icon = Icons.Filled.Phone,
-                        modifier = Modifier.weight(1f),
-                    )
-                    GhostPillButton(
-                        label = "Text",
-                        onClick = { openUrl("sms:$phone") },
-                        icon = Icons.Filled.Sms,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                // Shared with the About screen (#1411): the same Call / Text pair.
+                PhoneActionPills(phone = phone, openUrl = openUrl)
                 if (email.isNotBlank()) {
                     GhostPillButton(
                         label = "Email",

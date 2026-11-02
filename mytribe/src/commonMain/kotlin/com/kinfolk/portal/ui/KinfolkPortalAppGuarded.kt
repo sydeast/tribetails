@@ -187,6 +187,7 @@ fun KinfolkPortalAppGuarded() {
                             shellLogoUrl = home?.businessLogoUrl ?: "",
                             shellBusinessName = home?.businessName ?: "",
                             publicBusinessName = publicCard.name,
+                            publicCard = publicCard,
                             shellBanner = home?.portal?.banner ?: com.kinfolk.portal.portal.PortalBanner(),
                             shellBannerDismissedByUser = home?.bannerDismissedByUser ?: false,
                             shellHomeSections = home?.portal?.home ?: emptyList(),

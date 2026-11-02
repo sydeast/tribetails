@@ -26,6 +26,7 @@ import androidx.navigation.toRoute
 import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.SecureResetScreen
 import com.kinfolk.portal.auth.SignInScreen
+import com.kinfolk.portal.config.BusinessPublicCard
 import com.kinfolk.portal.firebase.FirestoreClient
 import com.kinfolk.portal.firebase.FunctionsClient
 import com.kinfolk.portal.launch.LaunchSignOutButton
@@ -33,6 +34,7 @@ import com.kinfolk.portal.launch.TribePickerScreen
 import com.kinfolk.portal.notifications.NotificationCatalogRepository
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeSummary
+import com.kinfolk.portal.screens.about.AboutScreen
 import com.kinfolk.portal.screens.account.AccountSettingsScreen
 import com.kinfolk.portal.screens.claim.ClaimInviteScreen
 import com.kinfolk.portal.screens.gallery.GalleryScreen
@@ -99,6 +101,12 @@ fun AppNavHost(
      * Cached copy first, then live; blank omits the "by ..." line.
      */
     publicBusinessName: String = "",
+    /**
+     * #1411: the whole public card (name, phone, hours, privacy policy) for the
+     * About screen. The same read as [publicBusinessName], cached first then
+     * live, so About draws before any tribe is picked and when offline.
+     */
+    publicCard: BusinessPublicCard = BusinessPublicCard(),
     shellBanner: com.kinfolk.portal.portal.PortalBanner = com.kinfolk.portal.portal.PortalBanner(),
     shellBannerDismissedByUser: Boolean = false,
     onDismissBannerPerUser: ((bannerId: String) -> Unit)? = null,
@@ -447,6 +455,11 @@ fun AppNavHost(
             }
             composable<NotificationsRoute> {
                 Shell { mod -> Box(mod) { NotificationSettingsScreen(shellFamilyName, portalApi, notificationCatalog) } }
+            }
+            // #1411: "About {business}", from the avatar menu. Takes only the
+            // public card and the version, no PortalApi and no kinfolkId.
+            composable<AboutRoute> {
+                Shell { mod -> Box(mod) { AboutScreen(card = publicCard, openUrl = openUrl) } }
             }
 
             // Message Auntie (16.4): two-way conversation, reached via the Schedule

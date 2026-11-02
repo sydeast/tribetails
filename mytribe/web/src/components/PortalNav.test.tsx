@@ -77,15 +77,18 @@ describe('PortalNav avatar menu (#1309, was #538)', () => {
     expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Sign out' })).toBeNull();
   });
-  it('offers Account, Notification settings and Sign out when opened', async () => {
+  it('offers Account, Notification settings, About and Sign out when opened', async () => {
     renderNav();
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
     expect(screen.getByRole('button', { name: 'Account menu', expanded: true })).toBeTruthy();
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
-    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Notification settings', 'Sign out']);
+    // #1411: About sits between the settings links and Sign out, the same
+    // order as Android's ShellNav.accountMenu.
+    expect(items.map((el) => el.textContent)).toEqual(['Account', 'Notification settings', 'About', 'Sign out']);
     expect(items[0]).toHaveAttribute('href', '/account');
     expect(items[1]).toHaveAttribute('href', '/account/notifications');
-    expect(items[2]?.tagName).toBe('BUTTON');
+    expect(items[2]).toHaveAttribute('href', '/about');
+    expect(items[3]?.tagName).toBe('BUTTON');
   });
   it('signs out only from the Sign out item', async () => {
     renderNav();
