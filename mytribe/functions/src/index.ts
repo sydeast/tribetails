@@ -514,6 +514,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // #1408: the office's queue of Kin removal requests, and its archive / decline.
   listKinRemovalRequests: () => require('./admin/kinRemovalRequests'),
   resolveKinRemovalRequest: () => require('./admin/kinRemovalRequests'),
+  // #1492: the admin's Kin Archive / Restore, writing both copies of the Kin.
+  setKinArchived: () => require('./admin/kinArchive'),
   listPendingBookingRequests: () => require('./admin/pendingBookingRequests'),
   // A3: the four operator status transitions on a flat kin_care_sessions row.
   // Sits beside rescheduleBooking because it owns the other half of the writes to

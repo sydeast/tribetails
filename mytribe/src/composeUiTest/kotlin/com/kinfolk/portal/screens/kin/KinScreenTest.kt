@@ -2,14 +2,20 @@
 
 package com.kinfolk.portal.screens.kin
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
+import com.kinfolk.portal.components.RoutePoint
 import com.kinfolk.portal.firebase.FakeFunctionsClient
+import com.kinfolk.portal.firebase.FirestoreClient
+import com.kinfolk.portal.firebase.FirestoreDoc
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -141,5 +147,42 @@ class KinScreenTest {
         setThemedContent { KinScreen("The Foster", "3", PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("Couldn't load Kin").assertIsDisplayed()
+    }
+
+    /** The household's own copies, read straight from `families/{id}/kin` (#1282). */
+    private class HouseholdKin(private val docs: List<FirestoreDoc>) : FirestoreClient {
+        override suspend fun getDocument(collection: String, documentId: String): Map<String, Any?>? = null
+        override suspend fun listDocuments(collection: String): List<FirestoreDoc> = docs
+        override fun breadcrumbsStream(sessionId: String): Flow<List<RoutePoint>> = flowOf(emptyList())
+    }
+    /**
+     * #1492: a Kin the office archived (both copies now carry `archived`) is not
+     * drawn on the household's roster; restored, it is drawn again.
+     */
+    @Test
+    fun officeArchivedKin_isNotDrawn() = runComposeUiTest {
+        val fs = HouseholdKin(
+            listOf(
+                FirestoreDoc("k1", mapOf("name" to "Buddy", "status" to "active")),
+                FirestoreDoc("k2", mapOf("name" to "Pepper", "status" to "archived", "removalRequestId" to "3_k2")),
+            ),
+        )
+        setThemedContent { KinScreen("The Foster", "3", PortalApi(FakeFunctionsClient(), fs)) }
+        waitForIdle()
+        onNodeWithText("Buddy").assertIsDisplayed()
+        onAllNodesWithText("Pepper").assertCountEquals(0)
+    }
+    @Test
+    fun officeRestoredKin_isDrawnAgain() = runComposeUiTest {
+        val fs = HouseholdKin(
+            listOf(
+                FirestoreDoc("k1", mapOf("name" to "Buddy", "status" to "active")),
+                FirestoreDoc("k2", mapOf("name" to "Pepper", "status" to "active")),
+            ),
+        )
+        setThemedContent { KinScreen("The Foster", "3", PortalApi(FakeFunctionsClient(), fs)) }
+        waitForIdle()
+        onNodeWithText("Buddy").assertIsDisplayed()
+        onNodeWithText("Pepper").assertIsDisplayed()
     }
 }

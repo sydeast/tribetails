@@ -17,6 +17,7 @@ import {
   createKin,
   updateKinTags,
   updateKinfolkTags,
+  setKinArchived,
   PRIMARY_CONTACT_REQUIRED,
   type NewKinfolkInput,
   type NewKinInput,
@@ -176,6 +177,28 @@ describe('createKin', () => {
   });
 });
 
+describe('setKinArchived (#1492)', () => {
+  it('archives through the setKinArchived callable, never a direct write of the flat doc', async () => {
+    const result = { ok: true, archived: true, flatStatus: 'archived', familyStatus: 'archived', familyUpdated: true };
+    call.mockResolvedValue(result);
+    await expect(setKinArchived(' p1 ', true)).resolves.toEqual(result);
+    expect(call).toHaveBeenCalledWith('setKinArchived', { kinId: 'p1', archived: true });
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+  it('restores through the same callable', async () => {
+    call.mockResolvedValue({ ok: true, archived: false, flatStatus: 'active', familyStatus: 'active', familyUpdated: true });
+    await setKinArchived('p1', false);
+    expect(call).toHaveBeenCalledWith('setKinArchived', { kinId: 'p1', archived: false });
+  });
+  it('rejects a blank kin id without calling the server', async () => {
+    await expect(setKinArchived('  ', true)).rejects.toThrow(/kin id/i);
+    expect(call).not.toHaveBeenCalled();
+  });
+  it('propagates a refusal for the caller to surface fail-loud', async () => {
+    call.mockRejectedValue(new Error('permission-denied'));
+    await expect(setKinArchived('p1', true)).rejects.toThrow('permission-denied');
+  });
+});
 describe('updateKinTags', () => {
   it('merges the tag name list plus a stamped updatedAt onto the flat kin doc', async () => {
     updateDoc.mockResolvedValue(undefined);

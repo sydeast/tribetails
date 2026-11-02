@@ -2003,9 +2003,12 @@ class DirectoryViewModel(
         }
         viewModelScope.launch {
             _editKinState.value = state.copy(isSaving = true, error = null)
-            repository.updateKinFields(state.kinId, baseline.kinfolkId, mapOf("status" to next))
-                .onSuccess {
-                    loadedKin = baseline.copy(status = next)
+            // #1492: the callable writes both copies, so the household's portal
+            // follows. It answers with the flat status it wrote, which is
+            // `inactive` when a restore puts a household's memorial back.
+            repository.setKinArchived(state.kinId, archived)
+                .onSuccess { written ->
+                    loadedKin = baseline.copy(status = written)
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
                         repository       = repository,

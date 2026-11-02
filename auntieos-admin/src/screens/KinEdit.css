@@ -63,5 +63,7 @@
 
 .kedit__actions-right {
   display: flex;
+  /* #1492: stays on the right when an Auntie has no Archive control beside it. */
+  margin-left: auto;
   gap: var(--space-2);
 }

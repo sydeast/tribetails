@@ -259,18 +259,31 @@ export async function updateKin(kinId: string, patch: KinEditPatch): Promise<voi
   await updateDoc(doc(db, 'kin', id), { ...patch, updatedAt: serverTimestamp() });
 }
 
+/** What the `setKinArchived` callable answers (`mytribe/functions/src/admin/kinArchive.ts`). */
+export interface SetKinArchivedResult {
+  ok: true;
+  archived: boolean;
+  /** The status now on the flat `kin/{id}` doc. */
+  flatStatus: string;
+  /** The status now on the household's copy, or null when the Kin has none. */
+  familyStatus: string | null;
+  familyUpdated: boolean;
+}
 /**
  * Archive / restore a pet: the ONLY status control (createKin's doc notes status
- * is never edited on the main form). Ports the wasm's archive action. Direct
- * status write to the flat doc, same transport as `updateKin`.
+ * is never edited on the main form). Ports the wasm's archive action.
+ *
+ * #1492: through the `setKinArchived` callable, not a direct write of the flat
+ * doc. `status` never travels flat to family, so the direct write left an
+ * archived Kin on the household's portal roster, and left a Kin restored after
+ * a removal request hidden from them. The callable writes both copies in one
+ * transaction. Owner-only on the server (archiving is destructive); `KinEdit`
+ * hides the control from an Auntie.
  */
-export async function setKinArchived(kinId: string, archived: boolean): Promise<void> {
+export async function setKinArchived(kinId: string, archived: boolean): Promise<SetKinArchivedResult> {
   const id = kinId.trim();
   if (id === '') throw new Error('setKinArchived requires a kin id');
-  await updateDoc(doc(db, 'kin', id), {
-    status: archived ? 'archived' : 'active',
-    updatedAt: serverTimestamp(),
-  });
+  return call<{ kinId: string; archived: boolean }, SetKinArchivedResult>('setKinArchived', { kinId: id, archived });
 }
 
 // ── Tags (kin + kinfolk) ─────────────────────────────────────────────────────

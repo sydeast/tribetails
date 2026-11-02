@@ -255,6 +255,7 @@ setBrandTokens
 setBusinessAdmins
 setFeatureFlags
 setGoogleCalendarTargets
+setKinArchived
 setKinfolkClaim
 setKinfolkOverrides
 setMediaProfilePhoto

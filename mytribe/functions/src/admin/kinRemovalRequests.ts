@@ -16,16 +16,16 @@ import {
   kinRemovalRequestDto,
   type KinRemovalRequestDto,
 } from '../lib/kinRemovalRequest';
+import { archiveStash } from '../lib/kinArchive';
 
 /**
  * #1408. The office's half of a household's request to remove a Kin with
  * history (`portal/kinWrites.ts#requestKinRemovalHandler`).
  *
  * ARCHIVE IS THE EXISTING ARCHIVE. The admin's Archive control on a Kin
- * (web `api/directoryWrite.ts#setKinArchived`, Android
- * `DirectoryViewModel.setKinArchived`) writes `status: 'archived'` on the flat
- * `kin/{id}` doc and nothing else. That spelling is already what the portal
- * hides (`lib/kinStatus.ts#isPortalHiddenKinStatus`), but the flat status never
+ * (`admin/kinArchive.ts#setKinArchived`, #1492) writes `status: 'archived'`
+ * on both copies. That spelling is what the portal hides
+ * (`lib/kinStatus.ts#isPortalHiddenKinStatus`), but the flat status never
  * travels to the family doc (`kinMirror.ts`, status is parent-owned), so the
  * Kin would stay on the household's roster after the office said yes. So this
  * writes the same `archived` on BOTH copies, in the same transaction that
@@ -137,6 +137,8 @@ export async function resolveKinRemovalRequestHandler(
           familyRef,
           {
             status: 'archived',
+            // #1492: a memorial is remembered, so the admin's Restore can put it back.
+            ...archiveStash(family),
             removalRequestId: args.requestId,
             updatedAt: FieldValue.serverTimestamp(),
             updatedByUid: uid,

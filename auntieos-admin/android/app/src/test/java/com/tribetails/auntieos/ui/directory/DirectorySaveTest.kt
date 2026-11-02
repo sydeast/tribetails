@@ -382,67 +382,63 @@ class DirectorySaveTest {
     }
 
     // ── archive / restore ────────────────────────────────────────────────────
-
     /**
      * `kin.status` is editable on the React admin and, until the Kin detail
-     * build gave the editor this control, on no Android surface at all. It
-     * writes ONE field: an archive must not carry a stale medication note out
-     * with it, and a later Save must not be able to un-archive the pet.
+     * build gave the editor this control, on no Android surface at all.
+     *
+     * #1492: it goes through the `setKinArchived` callable, which writes both
+     * copies of the Kin so the household's portal follows, and never through
+     * [AuntieRepository.updateKinFields]: an archive must not carry a stale
+     * medication note out with it, and a status written on the flat doc alone
+     * never reached the household.
      */
     @Test
-    fun `restoring a pet writes only its status`() = runTest(testDispatcher) {
-        val changes = captureKinChanges()
+    fun `restoring a pet goes through the callable and writes no field directly`() = runTest(testDispatcher) {
+        coEvery { repo.setKinArchived(any(), any()) } returns Result.success("active")
         val vm = kinEditor()
-
         vm.setKinArchived(false)
         advanceUntilIdle()
-
-        assertEquals(mapOf<String, Any>("status" to "active"), changes.captured)
+        coVerify(exactly = 1) { repo.setKinArchived("k1", false) }
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
+        assertTrue(vm.editKinState.value.isSuccess)
     }
-
     @Test
-    fun `archiving a pet writes only its status`() = runTest(testDispatcher) {
+    fun `archiving a pet goes through the callable and writes no field directly`() = runTest(testDispatcher) {
         coEvery { repo.getKin(any()) } returns Result.success(listOf(storedKin.copy(status = "active")))
-        val changes = captureKinChanges()
+        coEvery { repo.setKinArchived(any(), any()) } returns Result.success("archived")
         val vm = kinEditor()
-
         vm.setKinArchived(true)
         advanceUntilIdle()
-
-        assertEquals(mapOf<String, Any>("status" to "archived"), changes.captured)
+        coVerify(exactly = 1) { repo.setKinArchived("k1", true) }
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
     }
-
     /** Already in the state being asked for: nothing written, no stamp moved. */
     @Test
     fun `archiving an already archived pet writes nothing`() = runTest(testDispatcher) {
         val vm = kinEditor()
-
         vm.setKinArchived(true)
         advanceUntilIdle()
-
+        coVerify(exactly = 0) { repo.setKinArchived(any(), any()) }
         coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
     }
-
     /**
      * A rejected status write keeps the operator's pending edit and SAYS SO,
-     * rather than closing the screen on a change that never landed.
+     * rather than closing the screen on a change that never landed. An Auntie
+     * gets the server's owner-only refusal here.
      */
     @Test
     fun `a failed archive keeps the form open and reports the failure`() = runTest(testDispatcher) {
-        coEvery { repo.updateKinFields(any(), any(), any()) } returns Result.failure(RuntimeException("offline"))
+        coEvery { repo.setKinArchived(any(), any()) } returns Result.failure(RuntimeException("offline"))
         val vm = kinEditor()
-
         vm.updateEditKinBreed("Pembroke Corgi")
         vm.setKinArchived(false)
         advanceUntilIdle()
-
         val state = vm.editKinState.value
         assertFalse("a rejected write must not report success", state.isSuccess)
         assertEquals("offline", state.error)
         assertEquals("Pembroke Corgi", state.breed)
     }
 }
-
 /** The differs themselves, away from the ViewModel. */
 class DirectoryFieldChangesTest {
 
