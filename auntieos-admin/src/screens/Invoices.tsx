@@ -745,10 +745,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           onCreated={(invoiceId, sent) => {
             setCreatedId(invoiceId);
             setSelectedId(invoiceId);
-            // #1511: only a QUOTE is sent by its create; the composer's invoice
-            // is a draft and claims no send. (The server does enqueue
-            // `invoice.new` for that draft today, which is #1513, and until
-            // that is ruled there is no sentence here to hang its flag on.)
+            // #1511: only a QUOTE is sent by its create. The composer's invoice
+            // is a draft and sends nothing (#1513): `invoice.new` goes out from
+            // reviewAndSendDraftInvoice, so `appOnly` is never set for a draft.
             setCreatedNotice(
               sent.quote && sent.appOnly ? `Quote created and sent in the app only. ${APP_ONLY_NOTE}` : null,
             );
