@@ -37,9 +37,9 @@ import kotlinx.datetime.LocalDate
  * ([FunctionsClient.withoutSessionReaction]), so a refusal here can never be
  * the thing that signs the household out; the screen's own read is.
  *
- * NOT HERE: saves (#1504) and `getVetClinics` as a direct Firestore read
- * (#1503) are separate issues. `getMyKin` is not warmed: it is a direct
- * Firestore read on this platform (#1282, earlier PR).
+ * NOT HERE: saves (#1504) are a separate issue. `getMyKin` (#1282) and
+ * `getVetClinics` (#1503) are not warmed: both are direct Firestore reads on
+ * this platform, so there is no instance to wake.
  */
 class PortalWarmup(
     private val fns: FunctionsClient,
@@ -68,7 +68,6 @@ class PortalWarmup(
             "getMyTribeProfile" to { api.getMyTribeProfile(k) },
             "getFormSchema:tribeProfile" to { api.getFormSchema("tribeProfile") },
             "getFormSchema:homeAccess" to { api.getFormSchema("homeAccess") },
-            "getVetClinics" to { api.getVetClinics() },
             "getBusinessContact" to { api.getBusinessContact() },
             "listMembers" to { api.listMembers(k) },
             // Booking wizard

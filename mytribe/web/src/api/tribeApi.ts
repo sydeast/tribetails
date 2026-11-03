@@ -6,6 +6,7 @@
  */
 import { FirebaseError } from 'firebase/app';
 import { call, type CallOptions } from '../lib/fns';
+import { readVetClinicsDirect } from '../lib/vetClinicsDirectRead';
 
 // ── shared custom-field shape (functions/src/portal/getMyTribeProfile.ts,
 //    saveTribeProfile.ts, saveHomeAccess.ts all use the same {key,label,value}) ──
@@ -197,8 +198,20 @@ export interface GetVetClinicsResult {
   clinics: VetClinicDto[];
 }
 
-/** The shared, operator-curated vet clinic catalog (approved entries only). */
-export function getVetClinics(options?: CallOptions): Promise<GetVetClinicsResult> {
+/**
+ * The shared, operator-curated vet clinic catalog (approved entries only).
+ *
+ * #1503: read directly from Firestore (see lib/vetClinicsDirectRead.ts for why
+ * the rules allow it and which filter the client applies), so Tribe Profile no
+ * longer waits on a `getVetClinics` cold start. ANY failure of the direct read
+ * falls back to the callable, the old path unchanged.
+ */
+export async function getVetClinics(options?: CallOptions): Promise<GetVetClinicsResult> {
+  try {
+    return await readVetClinicsDirect();
+  } catch {
+    // Fall through to the callable; see above.
+  }
   return call<Record<string, never>, GetVetClinicsResult>('getVetClinics', {}, options);
 }
 

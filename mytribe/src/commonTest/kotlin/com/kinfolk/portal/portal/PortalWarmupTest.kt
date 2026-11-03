@@ -30,7 +30,7 @@ class PortalWarmupTest {
     private val screenReads = listOf(
         "getMyAccount", "getFormSchema",
         "getNotificationCatalog", "getMyNotificationPrefs",
-        "getMyTribeProfile", "getFormSchema", "getFormSchema", "getVetClinics", "getBusinessContact", "listMembers",
+        "getMyTribeProfile", "getFormSchema", "getFormSchema", "getBusinessContact", "listMembers",
         "getServiceCatalog", "getBusinessClosures", "getBookingPolicy",
         "getMyVisits",
         "getMyKinPhotos",

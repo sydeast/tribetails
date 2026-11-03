@@ -87,7 +87,6 @@ const SCREEN_KEYS = [
   ['tribeProfile', 'k1'],
   ['formSchema', 'tribeProfile'],
   ['formSchema', 'homeAccess'],
-  ['vetClinics'],
   ['businessContact'],
   ['members', 'k1'],
   ['serviceCatalog', 'k1'],
@@ -262,11 +261,11 @@ describe('silence', () => {
 
   it('does not retry a failed read on its own', async () => {
     server.respond.mockImplementation((name) =>
-      name === 'getVetClinics' ? Promise.reject(new FirebaseError('functions/internal', 'cold')) : Promise.resolve(ANSWERS[name] ?? {}),
+      name === 'getBusinessContact' ? Promise.reject(new FirebaseError('functions/internal', 'cold')) : Promise.resolve(ANSWERS[name] ?? {}),
     );
     publish(access({}));
     await settle();
-    expect(calledNames().filter((n) => n === 'getVetClinics')).toHaveLength(1);
+    expect(calledNames().filter((n) => n === 'getBusinessContact')).toHaveLength(1);
   });
 
   it('the listener never throws into the access store', () => {

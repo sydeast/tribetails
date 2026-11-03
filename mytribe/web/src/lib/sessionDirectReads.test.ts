@@ -43,6 +43,8 @@ const COLLECTION = 'kin_care_sessions';
  */
 // #1282: `kinDirectRead.ts` reads `families/{fid}/kin`, which the rules grant
 // to any active member of the household (`activeMember(fid) || isStaff()`).
+// #1503: `vetClinicsDirectRead.ts` reads `vet_clinics`, open to any signed-in
+// user (`allow read: if signedIn()`); the client applies the callable's filter.
 // #1321: `businessPublicCard.ts` reads `business_public/card`, the mirror the
 // rules open to everyone (`allow read: if true`) and no client may write.
 const FIRESTORE_IMPORTERS = [
@@ -51,6 +53,7 @@ const FIRESTORE_IMPORTERS = [
   'lib/firebase.ts',
   'lib/kinDirectRead.ts',
   'lib/messagesListener.ts',
+  'lib/vetClinicsDirectRead.ts',
 ];
 
 function sourceFiles(dir: string): string[] {
