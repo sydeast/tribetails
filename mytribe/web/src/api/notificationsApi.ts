@@ -1,4 +1,4 @@
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 
 /**
  * Wire types + wrapper functions for the Notification Settings screen's
@@ -66,8 +66,8 @@ export interface GetNotificationCatalogResult {
 }
 
 /** Auth: any signed-in caller; no payload (functions/src/notifications/getNotificationCatalog.ts). */
-export function getNotificationCatalog(): Promise<GetNotificationCatalogResult> {
-  return call<Record<string, never>, GetNotificationCatalogResult>('getNotificationCatalog', {});
+export function getNotificationCatalog(options?: CallOptions): Promise<GetNotificationCatalogResult> {
+  return call<Record<string, never>, GetNotificationCatalogResult>('getNotificationCatalog', {}, options);
 }
 
 // ── getMyNotificationPrefs / saveMyNotificationPrefs (functions/src/portal/notificationPrefs.ts) ──
@@ -90,8 +90,8 @@ export interface GetMyNotificationPrefsResult {
   updatedAtMs: number | null;
 }
 
-export function getMyNotificationPrefs(): Promise<GetMyNotificationPrefsResult> {
-  return call<Record<string, never>, GetMyNotificationPrefsResult>('getMyNotificationPrefs', {});
+export function getMyNotificationPrefs(options?: CallOptions): Promise<GetMyNotificationPrefsResult> {
+  return call<Record<string, never>, GetMyNotificationPrefsResult>('getMyNotificationPrefs', {}, options);
 }
 
 /**

@@ -277,9 +277,12 @@ export const invoiceRemindersCron = onSchedule(
  * email, and `resolveChannels` puts a required channel above the recipient's
  * own prefs. Two things can:
  *
- *   - the OPERATOR, by disabling the notification (or its email channel along
- *     with the others) in the business notification override. (`alwaysEnabled`
- *     on the row is advisory and enforces nothing.) Reported as `reason: 'prefs'`.
+ *   - the OPERATOR, by disabling the notification in the business notification
+ *     override. (`alwaysEnabled` on the row is advisory and enforces nothing.)
+ *     Reported as `reason: 'prefs'`. Switching off every CHANNEL while leaving
+ *     the notification on is not a suppression since #1505: the household's
+ *     notifications record is still written, counts as written here, and
+ *     stamps `overdueNotifiedAtMs`, because the list behind the bell shows it.
  *   - the PRE-LAUNCH HOUSEHOLD GATE (notifications/householdSendGate.ts), which
  *     holds back every household-bound copy until the operator opens the
  *     product. Reported as `reason: 'gate'`.

@@ -74,7 +74,8 @@ function s(v: unknown): string {
 }
 
 /**
- * Writes both documents inside `tx` and returns the shared id.
+ * Writes both documents inside `tx` and returns the shared id. When the queued
+ * row carries no channels, only the notification is written (#1505).
  *
  * The notification is written FIRST in the transaction body for readability
  * only; a transaction commits atomically, so unlike the trigger path there is no
@@ -112,6 +113,15 @@ export function promoteQueuedNotification(
     targetId: s(pick('targetId')),
     createdAt: FieldValue.serverTimestamp(),
   });
+
+  // NO WORK ORDER WHEN THERE IS NOTHING TO DELIVER (#1505), the same rule the
+  // dispatcher's trigger branch applies. A queue row with `channels: []` is a
+  // recipient who left the notification on and turned every delivery channel
+  // off; the dispatcher queued it anyway so their notifications list gets the
+  // record. The record is written above; a work order would only be stamped
+  // `no-channels` by the fan-out and would show up in the delivery evidence as
+  // an attempt that was never one.
+  if (channels.length === 0) return notificationRef.id;
 
   tx.set(db().collection(DISPATCH_COLLECTION).doc(notificationRef.id), {
     notificationId: notificationRef.id,

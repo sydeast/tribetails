@@ -1,4 +1,4 @@
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 
 /**
  * Wire types + wrapper functions for the Account Settings screen's
@@ -36,8 +36,8 @@ export interface AccountDto {
   impersonated: boolean;
 }
 
-export function getMyAccount(kinfolkId?: string): Promise<AccountDto> {
-  return call<{ kinfolkId?: string }, AccountDto>('getMyAccount', kinfolkId !== undefined ? { kinfolkId } : {});
+export function getMyAccount(kinfolkId?: string, options?: CallOptions): Promise<AccountDto> {
+  return call<{ kinfolkId?: string }, AccountDto>('getMyAccount', kinfolkId !== undefined ? { kinfolkId } : {}, options);
 }
 
 /**
@@ -103,8 +103,8 @@ export interface FormSchemaDto {
  * as a fatal screen error. Account.tsx mirrors that by using retry:false
  * and ignoring query errors here (no LaunchError).
  */
-export function getFormSchema(schemaId: string): Promise<FormSchemaDto> {
-  return call<{ schemaId: string }, FormSchemaDto>('getFormSchema', { schemaId });
+export function getFormSchema(schemaId: string, options?: CallOptions): Promise<FormSchemaDto> {
+  return call<{ schemaId: string }, FormSchemaDto>('getFormSchema', { schemaId }, options);
 }
 
 // ── signKinfolkAvatar (functions/src/portal/signKinfolkAvatar.ts) ──────────
@@ -241,10 +241,11 @@ export interface BillingSetupSessionResult {
   checkoutUrl: string;
   sessionId: string;
 }
-export function getMyPaymentMethod(kinfolkId?: string): Promise<PaymentMethodDto> {
+export function getMyPaymentMethod(kinfolkId?: string, options?: CallOptions): Promise<PaymentMethodDto> {
   return call<{ kinfolkId?: string }, PaymentMethodDto>(
     'getMyPaymentMethod',
     kinfolkId !== undefined ? { kinfolkId } : {},
+    options,
   );
 }
 /**

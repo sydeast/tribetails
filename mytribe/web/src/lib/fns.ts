@@ -48,6 +48,18 @@ export interface CallOptions {
    * operator-driven retry, and quietly doubling the wait would undo it.
    */
   idempotent?: boolean;
+  /**
+   * #1282: a read nobody is looking at. The portal warm-up (`lib/portalWarmup.ts`)
+   * fires a screen's reads the moment the portal opens so the first open of
+   * that screen lands on a warm instance. Those calls must stay invisible: a
+   * refusal is swallowed by the caller, and it must NOT be the thing that
+   * signs the household out. `reactToCallableError` is skipped for a
+   * background call; the error is still rethrown so the caller sees it, and a
+   * success still re-arms the revocation guard like any other. The screen's
+   * own foreground call, which runs the full reaction, is what ends a
+   * genuinely revoked session.
+   */
+  background?: boolean;
 }
 
 export async function call<TReq, TRes>(
@@ -81,7 +93,7 @@ export async function call<TReq, TRes>(
       // refusal that cannot ever succeed. Awaited so the sign-out is under way
       // before the caller's own error handling paints anything, and it rethrows
       // regardless: this reacts to the error, it does not consume it.
-      await reactToCallableError(err);
+      if (!options.background) await reactToCallableError(err);
       throw err;
     }
   }

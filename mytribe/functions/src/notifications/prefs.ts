@@ -222,6 +222,47 @@ export function withAliasedChoicesResolved(prefs: UserNotificationPrefs): UserNo
   return { ...prefs, byKey, byCategory };
 }
 /**
+ * Why a notification is switched OFF for this recipient as a whole, before any
+ * channel is looked at, or null when it is on and the channels decide.
+ *
+ *   'operator'   the business override disables the notification on this
+ *                stream (#7, warn-but-allow-off: even an alwaysEnabled row).
+ *   'marketing'  the key is marketing-class and the recipient has not opted
+ *                in (CAN-SPAM/CASL), a legal gate the operator cannot lift.
+ *
+ * These are the only two reasons `resolveChannels` answers all-off without
+ * consulting a single channel, and since #1505 they are the only two reasons
+ * the dispatcher writes NO notifications record. A recipient who leaves the
+ * notification on but turns every delivery channel off is not disabled: the
+ * record is written for their notifications list and nothing is sent.
+ */
+export type NotificationDisabledReason = 'operator' | 'marketing';
+
+export function notificationDisabledFor(
+  def: NotificationDef,
+  userPrefs: UserNotificationPrefs,
+  rawBusinessOverride: BusinessNotificationOverride | null,
+  stream: AudienceStream,
+): NotificationDisabledReason | null {
+  const businessOverride = overrideForStream(rawBusinessOverride, stream);
+
+  // #7 (2026-06-08): warn-but-allow-off. The operator may disable any notification,
+  // including alwaysEnabled ones (the admin UI warns first). Honoring it here keeps
+  // the dispatch layer truthful with what the admin matrix shows (no UI/send divergence).
+  // Marketing opt-in (below) is a separate legal gate the operator cannot override.
+  if (businessOverride && businessOverride.enabled === false) {
+    return 'operator';
+  }
+
+  if (def.marketingCategory) {
+    const optedIn = userPrefs.marketingOptIn?.[def.marketingCategory] === true;
+    if (!optedIn) return 'marketing';
+  }
+
+  return null;
+}
+
+/**
  * Compute effective channels for a notification dispatch.
  *
  * Audience revamp 2026-07: the caller names which audience `stream` this copy
@@ -243,8 +284,11 @@ export function withAliasedChoicesResolved(prefs: UserNotificationPrefs): UserNo
  * Marketing-class notifications require an explicit marketingOptIn for the
  * marketingCategory; absence of opt-in = all channels off (CAN-SPAM/CASL).
  *
- * Returns `{ email:false, sms:false, push:false }` when fully suppressed ,
- * caller should skip dispatch in that case.
+ * Returns `{ email:false, sms:false, push:false }` when nothing is to be
+ * delivered. That alone does not mean "skip" any more (#1505): the dispatcher
+ * asks `notificationDisabledFor` whether the notification itself is off, and
+ * only then writes nothing. All-off channels on a notification that is ON
+ * still produce the notifications record, with no delivery behind it.
  */
 export function resolveChannels(
   def: NotificationDef,
@@ -255,17 +299,12 @@ export function resolveChannels(
   const businessOverride = overrideForStream(rawBusinessOverride, stream);
   const out: ResolvedChannels = { email: false, sms: false, push: false };
 
-  // #7 (2026-06-08): warn-but-allow-off. The operator may disable any notification,
-  // including alwaysEnabled ones (the admin UI warns first). Honoring it here keeps
-  // the dispatch layer truthful with what the admin matrix shows (no UI/send divergence).
-  // Marketing opt-in (below) is a separate legal gate the operator cannot override.
-  if (businessOverride && businessOverride.enabled === false) {
+  // Steps 1 and the marketing gate: the notification as a whole is off, so no
+  // channel is consulted. Shared with the dispatcher through
+  // `notificationDisabledFor`, which needs the same answer for a different
+  // reason (#1505): these are the only two cases in which it writes nothing.
+  if (notificationDisabledFor(def, userPrefs, rawBusinessOverride, stream) !== null) {
     return out;
-  }
-
-  if (def.marketingCategory) {
-    const optedIn = userPrefs.marketingOptIn?.[def.marketingCategory] === true;
-    if (!optedIn) return out;
   }
 
   for (const ch of ALL_CHANNELS) {

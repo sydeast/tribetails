@@ -36,6 +36,7 @@ import { refreshAfterSave } from '../lib/refreshAfterSave';
 import '../styles/notifications.css';
 import { SettingsBusinessFootnote, useBusinessName } from '../components/BusinessFootnote';
 import { businessLabel } from '../lib/businessLabel';
+import { myNotificationPrefsKey, notificationCatalogKey } from '../lib/portalQueryKeys';
 
 /**
  * Notification Settings, ported from
@@ -244,8 +245,8 @@ export function NotificationSettings() {
   const businessName = useBusinessName();
   const queryClient = useQueryClient();
 
-  const catalog = useQuery({ queryKey: ['notificationCatalog'], queryFn: getNotificationCatalog });
-  const prefs = useQuery({ queryKey: ['myNotificationPrefs'], queryFn: getMyNotificationPrefs });
+  const catalog = useQuery({ queryKey: notificationCatalogKey(), queryFn: () => getNotificationCatalog() });
+  const prefs = useQuery({ queryKey: myNotificationPrefsKey(), queryFn: () => getMyNotificationPrefs() });
 
   const [edited, setEdited] = useState<EditedPrefs | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});

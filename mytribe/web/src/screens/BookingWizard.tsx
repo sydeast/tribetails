@@ -8,6 +8,7 @@ import { announceSaved } from '../lib/saveNotice';
 import type { BookingMode, GetBookingPolicyResult, ServiceDto, TimeBlockDto } from '../api/bookingApi';
 import type { RequestBookingArgsVisit, RequestBookingResult } from '../contracts/bookingContracts.generated';
 import { getMyKin } from '../api/portal';
+import { bookingPolicyKey, businessClosuresKey, serviceCatalogKey } from '../lib/portalQueryKeys';
 import type { KinDto } from '../api/types';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
@@ -240,7 +241,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const [modeChoice, setModeChoice] = useState<BookingMode | null>(null);
 
   const kinQuery = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
-  const servicesQuery = useQuery({ queryKey: ['serviceCatalog', kinfolkId], queryFn: () => getServiceCatalog(kinfolkId) });
+  const servicesQuery = useQuery({ queryKey: serviceCatalogKey(kinfolkId), queryFn: () => getServiceCatalog(kinfolkId) });
 
   // C1: which dates are closed. A failed or still-loading read degrades to
   // "nothing known closed" (the picker offers every date, same as before this
@@ -248,7 +249,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   // is the actual authority and refuses a closed date regardless of what this
   // client shows.
   const closuresQuery = useQuery({
-    queryKey: ['businessClosures'],
+    queryKey: businessClosuresKey(),
     queryFn: () => {
       const today = new Date();
       const from = dateKey(today);
@@ -271,7 +272,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
    * fails. A secondary read must not decide whether the wizard opens, and the
    * server refuses whatever it will not accept regardless of what this shows.
    */
-  const policyQuery = useQuery({ queryKey: ['bookingPolicy'], queryFn: () => getBookingPolicy() });
+  const policyQuery = useQuery({ queryKey: bookingPolicyKey(), queryFn: () => getBookingPolicy() });
   const policy = policyQuery.data ?? CLOCK_ONLY_POLICY;
 
   /**

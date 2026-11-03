@@ -31,9 +31,13 @@ import com.kinfolk.portal.nav.AppNavHost
 import com.kinfolk.portal.nav.shellStartRoute
 import com.kinfolk.portal.portal.MyHomeResult
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.PortalWarmup
 import com.kinfolk.portal.theme.KinfolkPortalTheme
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Clock
 import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.request.crossfade
@@ -47,6 +51,12 @@ fun KinfolkPortalAppGuarded() {
     val functions: FunctionsClient = remember { platformFunctionsClient() }
     val firestoreClient = remember { com.kinfolk.portal.firebase.platformFirestoreClient() }
     val portalApi = remember(functions, firestoreClient) { PortalApi(functions, firestoreClient) }
+    // #1282: the warm-up reads through the client WITHOUT the #557 session
+    // reaction, so a refusal nobody is looking at can never sign the household
+    // out; the screens' own reads, through `functions` above, still can.
+    val portalWarmup = remember(functions, firestoreClient) {
+        PortalWarmup(functions.withoutSessionReaction(), firestoreClient)
+    }
     val notificationCatalog = remember(functions) {
         com.kinfolk.portal.notifications.NotificationCatalogRepository(functions)
     }
@@ -131,6 +141,20 @@ fun KinfolkPortalAppGuarded() {
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) { /* avatar keeps the household fallback */ }
+    }
+    // #1282: once the home payload is in hand, fire every portal screen's reads
+    // together so each screen's first open lands on a warm instance. Keyed on
+    // the payload itself: it is set once per tribe resolution (and again after a
+    // tribe switch, which is a fresh open of that tribe), and it carries the
+    // billing answer the money reads are gated on. A failed home read (the
+    // fallback payload with homeError set) warms nothing: its billingAccess is
+    // the default, not an answer, and a backend that just refused getMyHome is
+    // not one to fan twenty more reads at. The effect's own scope is what
+    // cancels the fan-out when the shell leaves; nothing in it throws.
+    LaunchedEffect(home, homeError) {
+        val payload = PortalWarmup.warmupPayload(home, homeError) ?: return@LaunchedEffect
+        val today = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
+        portalWarmup.run(payload, today)
     }
     // Resolve feature flags once the kinfolk is signed in (the callable needs
     // auth). On any failure we keep the compile-time defaults: that is the

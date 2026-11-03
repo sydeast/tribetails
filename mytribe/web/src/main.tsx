@@ -35,6 +35,7 @@ import './lib/firebase'; // initialize Firebase before anything else touches aut
 import { bootAttestation } from './lib/boot';
 import { initSentry } from './lib/sentry';
 import { queryClient } from './lib/queryClient';
+import { installPortalWarmup } from './lib/portalWarmup';
 import { router } from './router';
 
 // Start crash reporting before the app renders, so an error during first paint
@@ -101,6 +102,12 @@ if (new URLSearchParams(window.location.search).has('__record')) {
 // lib/boot.ts — the unconditional `ensureRecaptcha()` that used to sit here is
 // what made App Check unreachable for the whole life of the portal (#556).
 void bootAttestation();
+
+// #1282: the moment a route guard resolves an active tribe, fire every portal
+// screen's reads once so the first open of each screen lands on a warm Cloud
+// Function instance and a filled cache. See lib/portalWarmup.ts for why it is
+// installed here rather than in a guard or a component.
+installPortalWarmup();
 
 // Legacy hash deep links (#/claim/<id>) predate history routing. Rewrite them
 // to real URLs BEFORE the router binds; the old app had a hash-strip-before-

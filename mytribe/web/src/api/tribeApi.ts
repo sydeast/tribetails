@@ -5,7 +5,7 @@
  * transcribed from the backend handlers; each block cites its source file.
  */
 import { FirebaseError } from 'firebase/app';
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 
 // ── shared custom-field shape (functions/src/portal/getMyTribeProfile.ts,
 //    saveTribeProfile.ts, saveHomeAccess.ts all use the same {key,label,value}) ──
@@ -61,9 +61,9 @@ export interface GetMyTribeProfileResult {
 }
 
 /** Tribe profile + home access (home access fields null when the caller lacks `home_access` perm). */
-export function getMyTribeProfile(kinfolkId?: string): Promise<GetMyTribeProfileResult> {
+export function getMyTribeProfile(kinfolkId?: string, options?: CallOptions): Promise<GetMyTribeProfileResult> {
   const payload: GetMyTribeProfileRequest = kinfolkId !== undefined ? { kinfolkId } : {};
-  return call<GetMyTribeProfileRequest, GetMyTribeProfileResult>('getMyTribeProfile', payload);
+  return call<GetMyTribeProfileRequest, GetMyTribeProfileResult>('getMyTribeProfile', payload, options);
 }
 
 // ── saveTribeProfile (functions/src/portal/saveTribeProfile.ts) ─────────────
@@ -177,8 +177,8 @@ export interface FormSchemaDto {
  * back to the static mockup fields, exactly like TribeScreen.kt's
  * best-effort `try { ... } catch (_) { /* keep static fields *\/ }`.
  */
-export function getFormSchema(schemaId: 'tribeProfile' | 'homeAccess'): Promise<FormSchemaDto> {
-  return call<{ schemaId: string }, FormSchemaDto>('getFormSchema', { schemaId });
+export function getFormSchema(schemaId: 'tribeProfile' | 'homeAccess', options?: CallOptions): Promise<FormSchemaDto> {
+  return call<{ schemaId: string }, FormSchemaDto>('getFormSchema', { schemaId }, options);
 }
 
 // ── getVetClinics / submitVetClinic (functions/src/portal/{getVetClinics,submitVetClinic}.ts)
@@ -198,8 +198,8 @@ export interface GetVetClinicsResult {
 }
 
 /** The shared, operator-curated vet clinic catalog (approved entries only). */
-export function getVetClinics(): Promise<GetVetClinicsResult> {
-  return call<Record<string, never>, GetVetClinicsResult>('getVetClinics', {});
+export function getVetClinics(options?: CallOptions): Promise<GetVetClinicsResult> {
+  return call<Record<string, never>, GetVetClinicsResult>('getVetClinics', {}, options);
 }
 
 export interface SubmitVetClinicRequest {
@@ -345,9 +345,9 @@ export interface ListMembersResult {
 }
 
 /** Household members roster. PRIMARY-only (operator bypasses); a SECONDARY caller is denied. */
-export function listMembers(kinfolkId?: string): Promise<ListMembersResult> {
+export function listMembers(kinfolkId?: string, options?: CallOptions): Promise<ListMembersResult> {
   const payload = kinfolkId !== undefined ? { kinfolkId } : {};
-  return call<{ kinfolkId?: string }, ListMembersResult>('listMembers', payload);
+  return call<{ kinfolkId?: string }, ListMembersResult>('listMembers', payload, options);
 }
 
 // ── updateSecondaryPermissions (functions/src/membership/updateSecondaryPermissions.ts)

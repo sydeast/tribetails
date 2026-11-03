@@ -9,6 +9,7 @@ import { BrandLogo } from './BrandLogo';
 import { billingAccessOf } from '../lib/billingAccess';
 import { unreadBadgeLabel } from '../lib/notificationsList';
 import { SaveNoticeLine } from './SaveNotice';
+import { myHomeKey } from '../lib/portalQueryKeys';
 
 export type PortalNavTab = 'home' | 'tribe' | 'schedule' | 'kintales' | 'invoices' | 'account' | 'messages';
 
@@ -77,7 +78,7 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
   // put a second error banner in the chrome of every screen for a missing logo.
   const kinfolkId = getActiveKinfolkId();
   const branding = useQuery({
-    queryKey: ['myHome', kinfolkId],
+    queryKey: myHomeKey(kinfolkId),
     queryFn: () => getMyHome(kinfolkId),
     staleTime: 5 * 60_000,
   });
