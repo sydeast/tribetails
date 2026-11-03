@@ -14,6 +14,7 @@ import {
   enqueueNotificationDetailed,
   lastDeliveredAtMs,
 } from '../notifications/dispatcher';
+import { reachedAppOnly } from '../notifications/appOnly';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
@@ -83,12 +84,19 @@ export const Args = z.object({
  * because a resend does not change what the doc is, only whether it is waiting
  * for an answer. Returned rather than assumed so a client renders the outcome
  * without a second round trip, exactly as the two decision callables do.
+ *
+ * #1507: `appOnly` is present when THIS call wrote the household's copy, and
+ * true when every delivery channel was off for them: the quote is in their
+ * notifications list and nothing was emailed or texted. Absent on the retry
+ * of a resend that already completed, which sends nothing and has no new
+ * answer to give.
  */
 export const Result = z
   .object({
     ok: OkSchema,
     invoiceId: z.string().min(1),
     status: InvoiceStateSchema,
+    appOnly: z.boolean().optional(),
   })
   .strict();
 
@@ -344,6 +352,11 @@ export async function resendQuoteHandler(
     );
   }
 
+  // #1507: the household's copy exists; this says whether anything was sent
+  // behind it. Read for the household alone: `invoice.new` also writes an
+  // office copy, and the office's email is not the household's.
+  const appOnly = alreadyReachedHousehold ? false : reachedAppOnly(dispatched, recipientUid);
+
   const status = await firestore.runTransaction(async (tx) => {
     const txSnap = await tx.get(ref);
     if (!txSnap.exists) throw new HttpsError('not-found', `Quote '${args.invoiceId}' not found.`);
@@ -418,10 +431,10 @@ export async function resendQuoteHandler(
     function: 'resendQuote',
     event: 'admin.quote.resent',
     uid,
-    extra: { invoiceId: args.invoiceId, kinfolkId, status },
+    extra: { invoiceId: args.invoiceId, kinfolkId, status, appOnly },
   });
 
-  return validateResponse('resendQuote', Result, { ok: true, invoiceId: args.invoiceId, status });
+  return validateResponse('resendQuote', Result, { ok: true, invoiceId: args.invoiceId, status, appOnly });
 }
 
 export const resendQuote = onCall(

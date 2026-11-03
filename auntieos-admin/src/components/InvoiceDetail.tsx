@@ -23,7 +23,7 @@ import {
   type InvoiceAction,
 } from '../lib/invoiceFormat';
 import { checkInvoiceTotal, formatCentsUsd, storedTotalSourceLabel } from '../lib/invoiceReconcile';
-import { lastReminderLabel, reminderOutcomeMessage } from '../lib/invoiceReminder';
+import { APP_ONLY_NOTE, lastReminderLabel, reminderOutcomeMessage } from '../lib/invoiceReminder';
 import {
   markInvoicePaid,
   sendInvoiceReminder,
@@ -618,12 +618,18 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
    * press lands, sent or refused, without waiting for the list to reload.
    */
   const [lastReminderAt, setLastReminderAt] = useState<unknown>(invoice.reminderNotifiedAtMs);
+  // #1507: the stamp's companion. True when that reminder reached the household
+  // in the app only, so the fact can say so beside the time.
+  const [lastReminderAppOnly, setLastReminderAppOnly] = useState<boolean>(
+    invoice.reminderNotifiedAppOnly === true,
+  );
   // The invoice prop is the live row, so a stamp written while the panel is open
   // (the cron, another operator's press, another tab) arrives here and must
   // replace what the panel showed.
   useEffect(() => {
     setLastReminderAt(invoice.reminderNotifiedAtMs);
-  }, [invoice.reminderNotifiedAtMs]);
+    setLastReminderAppOnly(invoice.reminderNotifiedAppOnly === true);
+  }, [invoice.reminderNotifiedAtMs, invoice.reminderNotifiedAppOnly]);
   const [paidMethod, setPaidMethod] = useState('');
   const [paidReference, setPaidReference] = useState('');
   // Free text, not a number input, so a half-typed "2" is never read as $2.
@@ -1095,11 +1101,18 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     setBusy(true);
     setActionError(null);
     try {
-      await resendQuote(invoice._id);
+      const resent = await resendQuote(invoice._id);
       setBusy(false);
       setResendPrompt(false);
-      setNoticeIncomplete(false);
-      setNotice('Quote sent again. The household can accept or decline it now.');
+      // #1507: an app-only send is not the green "Done". The quote is in the
+      // household's notifications list, and nothing was emailed or texted, so
+      // the words say so and the tone agrees with them.
+      setNoticeIncomplete(resent.appOnly);
+      setNotice(
+        resent.appOnly
+          ? `Quote sent again, in the app only. ${APP_ONLY_NOTE} The household can accept or decline it now.`
+          : 'Quote sent again. The household can accept or decline it now.',
+      );
     } catch (caught) {
       setBusy(false);
       setResendPrompt(false);
@@ -1128,10 +1141,15 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // Only a real time moves the fact. `null` means no reminder is on record,
         // which is what the panel already shows; it never blanks a stamp.
         if (reminder.lastReminderAtMs !== null) setLastReminderAt(reminder.lastReminderAtMs);
+        // #1507: the flag moves only with a send this press made. A refusal
+        // carries the earlier reminder's time and says nothing about its channels.
+        if (reminder.sent) setLastReminderAppOnly(reminder.appOnly);
         outcome = reminderOutcomeMessage(reminder);
         // A refusal is not a failure (the household HAS been reminded), but it
-        // is not "Done" either: nothing was sent by this press.
-        if (!reminder.sent) incomplete = true;
+        // is not "Done" either: nothing was sent by this press. Nor is an
+        // app-only send (#1507): the sentence says no email or text went out,
+        // and the banner's tone has to agree with it.
+        if (!reminder.sent || reminder.appOnly) incomplete = true;
       } else if (meta.key === 'reviewSend') await reviewAndSendDraftInvoice(invoice._id);
       else if (meta.key === 'markPaid') {
         const method = paidMethod.trim();
@@ -1378,7 +1396,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           </div>
           <div className="invoice-detail__fact">
             <dt>Last reminder</dt>
-            <dd>{lastReminderLabel(lastReminderAt)}</dd>
+            <dd>{lastReminderLabel(lastReminderAt, undefined, lastReminderAppOnly)}</dd>
           </div>
         </dl>
 

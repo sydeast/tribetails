@@ -6,6 +6,7 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { reachedAppOnly } from '../notifications/appOnly';
 import { INVOICE_REMINDER_RESEND_WINDOW_MS } from '../admin/sendInvoiceReminder';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
@@ -72,6 +73,15 @@ import {
 const REMINDER_WINDOW_DAYS = 3;
 const NOTIFIED_FIELD_REMINDER = 'reminderNotifiedAtMs';
 const NOTIFIED_FIELD_OVERDUE = 'overdueNotifiedAtMs';
+/**
+ * #1507: written beside each stamp above for a notice THIS run sent. True when
+ * it reached the household in the app only (every delivery channel off: the
+ * record is in their notifications list, nothing was emailed or texted), so
+ * the "Last reminder" row can say so. A stamp copied from the dedupe ledger
+ * leaves the flag alone; the ledger does not know.
+ */
+const NOTIFIED_APP_ONLY_FIELD_REMINDER = 'reminderNotifiedAppOnly';
+const NOTIFIED_APP_ONLY_FIELD_OVERDUE = 'overdueNotifiedAppOnly';
 
 /**
  * How far back the dispatcher's ledger looks for an earlier overdue notice
@@ -171,7 +181,10 @@ export async function processReminderInvoice(
       dedupeWindowMs: INVOICE_REMINDER_RESEND_WINDOW_MS,
     });
     if (outcome.written.length > 0) {
-      await docSnap.ref.set({ [NOTIFIED_FIELD_REMINDER]: now }, { merge: true });
+      await docSnap.ref.set(
+        { [NOTIFIED_FIELD_REMINDER]: now, [NOTIFIED_APP_ONLY_FIELD_REMINDER]: reachedAppOnly(outcome) },
+        { merge: true },
+      );
       return true;
     }
     const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');
@@ -370,7 +383,10 @@ export async function processOverdueInvoice(
       dedupeWindowMs: OVERDUE_DEDUPE_WINDOW_MS,
     });
     if (outcome.written.length > 0) {
-      await docSnap.ref.set({ [NOTIFIED_FIELD_OVERDUE]: now }, { merge: true });
+      await docSnap.ref.set(
+        { [NOTIFIED_FIELD_OVERDUE]: now, [NOTIFIED_APP_ONLY_FIELD_OVERDUE]: reachedAppOnly(outcome) },
+        { merge: true },
+      );
       return true;
     }
     const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');

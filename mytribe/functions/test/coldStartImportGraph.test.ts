@@ -125,6 +125,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * `lib/recipientNotifications.ts`, the one reading of a household's rows that
  * it and `getMyHome` share. Two modules whose imports are all already
  * resident; not a structural change.
+ *
+ * #1507 adds `notifications/appOnly.ts`, the pure "did this reach the
+ * household in the app only" read of an `EnqueueOutcome`. Its only import is a
+ * type, so it costs one module and no new edges, and it is its own file rather
+ * than a dispatcher export because every callable test mocks the dispatcher
+ * whole. Measured at 423 after merging onto #1316, inside the 430
+ * already allowed, so the bound did not move.
  */
 const MAX_OWN_EAGER_MODULES = 430;
 

@@ -145,6 +145,14 @@ export interface InvoiceEntry {
    * through `lastReminderLabel`, which treats both as "none sent" (#832).
    */
   reminderNotifiedAtMs?: number | null;
+  /**
+   * #1507: written beside the stamp above by the same send. True when that
+   * reminder reached the household in the app only (every delivery channel
+   * off, nothing emailed or texted). Absent on a stamp from before the flag
+   * existed or one copied from the dedupe ledger; `lastReminderLabel` adds
+   * "app only" for an explicit true alone.
+   */
+  reminderNotifiedAppOnly?: boolean | null;
   createdAt: Timestamp | null;
   /**
    * Stamped by Task 5.1's `archiveInvoice` callable, cleared by `unarchiveInvoice`.

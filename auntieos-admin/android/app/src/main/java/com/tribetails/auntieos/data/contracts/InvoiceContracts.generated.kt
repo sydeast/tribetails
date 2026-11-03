@@ -1915,6 +1915,8 @@ data class ResendQuoteResult(
     val invoiceId: String,
     /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
     val status: String,
+    /** Null when the payload omits the key. */
+    val appOnly: Boolean? = null,
 )
 
 /**
@@ -1927,6 +1929,7 @@ internal fun decodeResendQuoteResult(raw: Map<String, Any?>?): ResendQuoteResult
         ok = raw?.get("ok") as? Boolean ?: false,
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
         status = (raw?.get("status") as? String).orEmpty(),
+        appOnly = raw?.get("appOnly") as? Boolean,
     )
 
 // ---------- reviewAndSendDraftInvoice ----------
@@ -1985,6 +1988,8 @@ data class SendInvoiceReminderResult(
     val reason: String,
     val lastReminderAtMs: Long?,
     val nextReminderAllowedAtMs: Long?,
+    /** Null when the payload omits the key. */
+    val appOnly: Boolean? = null,
 )
 
 /**
@@ -2000,6 +2005,7 @@ internal fun decodeSendInvoiceReminderResult(raw: Map<String, Any?>?): SendInvoi
         reason = (raw?.get("reason") as? String).orEmpty(),
         lastReminderAtMs = (raw?.get("lastReminderAtMs") as? Number)?.toLong(),
         nextReminderAllowedAtMs = (raw?.get("nextReminderAllowedAtMs") as? Number)?.toLong(),
+        appOnly = raw?.get("appOnly") as? Boolean,
     )
 
 // ---------- retryInvoiceCheckoutClose ----------

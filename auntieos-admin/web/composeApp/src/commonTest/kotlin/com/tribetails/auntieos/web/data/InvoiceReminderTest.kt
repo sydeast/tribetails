@@ -20,6 +20,36 @@ class InvoiceReminderTest {
     }
 
     @Test
+    fun decodesAnAppOnlySendAndOnlyAnExplicitTrue() {
+        // #1507
+        assertEquals(
+            ReminderOutcome(true, "sent", t, t + day, appOnly = true),
+            decodeReminderOutcome("""{"ok":true,"invoiceId":"i","sent":true,"reason":"sent","lastReminderAtMs":$t,"nextReminderAllowedAtMs":${t + day},"appOnly":true}""", 1L),
+        )
+        // A server from before #1507 omits the key: a channel send, as always.
+        assertEquals(false, decodeReminderOutcome("""{"ok":true,"sent":true,"reason":"sent","lastReminderAtMs":$t,"nextReminderAllowedAtMs":null}""", 1L).appOnly)
+        assertEquals(false, decodeReminderOutcome("""{"ok":true,"invoiceId":"i"}""", 42L).appOnly)
+    }
+
+    @Test
+    fun appOnlySendSaysWhereItWentAndWhatIsOff() {
+        // #1507
+        assertEquals(
+            "Reminder sent in the app only. Email and text are off for this household.",
+            reminderOutcomeMessage(ReminderOutcome(true, "sent", t, t + day, appOnly = true), TimeZone.UTC),
+        )
+    }
+
+    @Test
+    fun lastReminderLabelSaysAppOnlyForAnExplicitTrueFlagAlone() {
+        // #1507
+        assertEquals("Sep 14, 3:05 PM, app only", lastReminderLabel(t, TimeZone.UTC, appOnly = true))
+        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, TimeZone.UTC, appOnly = false))
+        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, TimeZone.UTC, appOnly = null))
+        assertEquals("none sent", lastReminderLabel(null, TimeZone.UTC, appOnly = true))
+    }
+
+    @Test
     fun decodesAnAlreadySentAnswer() {
         assertEquals(
             ReminderOutcome(false, "recent", t, t + day),

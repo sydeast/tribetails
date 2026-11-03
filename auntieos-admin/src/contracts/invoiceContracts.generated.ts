@@ -960,6 +960,7 @@ export interface ResendQuoteResult {
   ok: true;
   invoiceId: string;
   status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  appOnly?: boolean;
 }
 
 // ---------- reviewAndSendDraftInvoice ----------
@@ -998,6 +999,7 @@ export interface SendInvoiceReminderResult {
   reason: 'sent' | 'recent' | 'in-progress' | 'suppressed';
   lastReminderAtMs: number | null;
   nextReminderAllowedAtMs: number | null;
+  appOnly?: boolean;
 }
 
 // ---------- retryInvoiceCheckoutClose ----------

@@ -184,7 +184,22 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
 
     expect(await runInvoiceRemindersScan(now)).toBe(1);
-    expect(ctx.writes).toEqual([{ id: 'inv-sent', data: { reminderNotifiedAtMs: now } }]);
+    // #1507: the flag rides the stamp, false for a reminder a channel carried.
+    expect(ctx.writes).toEqual([{ id: 'inv-sent', data: { reminderNotifiedAtMs: now, reminderNotifiedAppOnly: false } }]);
+  });
+
+  it('#1507: a reminder that reached the household in the app only is stamped as such', async () => {
+    const now = 1_000_000_000_000;
+    const dueSoon = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+    const ctx = pagedDbMock([
+      { id: 'inv-app', data: { status: 'open', amountDue: 100, dueDate: dueSoon, kinfolkId: 'fam-app' } },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueueDetailed.mockResolvedValue({ written: ['n1'], suppressed: [], appOnly: ['kin-uid'] });
+
+    // Still counted as reminded: the record is in their notifications list.
+    expect(await runInvoiceRemindersScan(now)).toBe(1);
+    expect(ctx.writes).toEqual([{ id: 'inv-app', data: { reminderNotifiedAtMs: now, reminderNotifiedAppOnly: true } }]);
   });
 
   it('overdue scan also drains every past-due invoice across pages', async () => {
@@ -215,7 +230,22 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
 
     expect(await runInvoiceOverdueScan(now)).toBe(1);
-    expect(ctx.writes).toEqual([{ id: 'ov-sent', data: { overdueNotifiedAtMs: now } }]);
+    expect(ctx.writes).toEqual([{ id: 'ov-sent', data: { overdueNotifiedAtMs: now, overdueNotifiedAppOnly: false } }]);
+  });
+
+  it('#1507: an overdue notice that reached the household in the app only is stamped as such', async () => {
+    // `invoice.overdue` has required email, so only an operator override gets
+    // here; the dispatcher still names the recipient in `appOnly` when it does.
+    const now = 1_000_000_000_000;
+    const pastDue = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
+    const ctx = pagedDbMock([
+      { id: 'ov-app', data: { status: 'open', amountDue: 100, dueDate: pastDue, kinfolkId: 'fam-app' } },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueueDetailed.mockResolvedValue({ written: ['n1'], suppressed: [], appOnly: ['kin-uid'] });
+
+    expect(await runInvoiceOverdueScan(now)).toBe(1);
+    expect(ctx.writes).toEqual([{ id: 'ov-app', data: { overdueNotifiedAtMs: now, overdueNotifiedAppOnly: true } }]);
   });
 
   it('#871: a duplicate of an earlier run whose stamp did not land is stamped with THAT send time, never the run time', async () => {
@@ -274,7 +304,7 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     mocks.dbFn.mockReturnValue(nextDay.db);
     const later = now + 23 * 60 * 60 * 1000;
     expect(await runInvoiceOverdueScan(later)).toBe(1);
-    expect(nextDay.writes).toEqual([{ id: 'ov-muted', data: { overdueNotifiedAtMs: later } }]);
+    expect(nextDay.writes).toEqual([{ id: 'ov-muted', data: { overdueNotifiedAtMs: later, overdueNotifiedAppOnly: false } }]);
   });
 
   it('#832: the suppression wait is shorter than the 24-hour run period', () => {

@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { reachedAppOnly } from '../notifications/appOnly';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { isAutoReminder24hEnabled } from '../lib/autoReminder';
 import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
@@ -13,6 +14,12 @@ import { HOURLY_TICK } from '../lib/notificationSchedule';
 const WINDOW_LOWER_MS = 24 * 60 * 60 * 1000;
 const WINDOW_UPPER_MS = 48 * 60 * 60 * 1000;
 const NOTIFIED_FIELD = 'upcomingReminderNotifiedAtMs';
+/**
+ * #1507: beside the stamp, for a reminder THIS run sent: true when it reached
+ * the household in the app only (every delivery channel off, nothing emailed
+ * or texted). No admin screen reads it yet; it is on the doc so one can.
+ */
+const NOTIFIED_APP_ONLY_FIELD = 'upcomingReminderNotifiedAppOnly';
 const REMINDER_STATUSES = new Set(['confirmed', 'approved']);
 
 type BookingDoc = {
@@ -84,7 +91,10 @@ export async function processUpcomingBooking(
       fireAtMs: now,
     });
     if (outcome.written.length > 0) {
-      await docSnap.ref.set({ [NOTIFIED_FIELD]: now }, { merge: true });
+      await docSnap.ref.set(
+        { [NOTIFIED_FIELD]: now, [NOTIFIED_APP_ONLY_FIELD]: reachedAppOnly(outcome) },
+        { merge: true },
+      );
       return true;
     }
     const duplicate = outcome.suppressed.find((s) => s.reason === 'duplicate');

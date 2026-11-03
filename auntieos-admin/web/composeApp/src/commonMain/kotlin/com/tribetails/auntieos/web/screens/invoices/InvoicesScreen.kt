@@ -157,6 +157,12 @@ fun InvoicesScreen(
      * site having to clear a flag.
      */
     var reminderRefusalNotice by remember { mutableStateOf<String?>(null) }
+    /**
+     * #1507: the notice text of a reminder that reached the household in the app
+     * only. Same mechanism as the refusal above: Warning while that text is on
+     * screen, because nothing was emailed or texted and the words say so.
+     */
+    var reminderAppOnlyNotice by remember { mutableStateOf<String?>(null) }
 
     /**
      * #825: the submission each key was minted for, and the key. ONE KEY PER
@@ -224,6 +230,7 @@ fun InvoicesScreen(
                     val message = reminderOutcomeMessage(r.value)
                     actionNotice = message
                     reminderRefusalNotice = if (r.value.sent) null else message
+                    reminderAppOnlyNotice = if (r.value.sent && r.value.appOnly) message else null
                 }
             }
             remindingIds = remindingIds - invoiceId
@@ -269,9 +276,14 @@ fun InvoicesScreen(
 
         actionNotice?.let { msg ->
             val refused = msg == reminderRefusalNotice
+            val appOnly = msg == reminderAppOnlyNotice
             AuntieBanner(
-                tone  = if (refused) AuntieBannerTone.Warning else AuntieBannerTone.Success,
-                title = if (refused) "Reminder not sent" else "Done",
+                tone  = if (refused || appOnly) AuntieBannerTone.Warning else AuntieBannerTone.Success,
+                title = when {
+                    refused -> "Reminder not sent"
+                    appOnly -> "Done, but not all of it"
+                    else -> "Done"
+                },
                 icon  = Lucide.ReceiptText,
                 onDismiss = { actionNotice = null },
                 body  = { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) },
@@ -748,7 +760,7 @@ internal fun InvoiceRow(
             // operator can see it before pressing Send reminder, not after.
             if (remindable) {
                 Text(
-                    text  = "reminded ${lastReminderLabel(invoice.reminderNotifiedAtMs)}",
+                    text  = "reminded ${lastReminderLabel(invoice.reminderNotifiedAtMs, appOnly = invoice.reminderNotifiedAppOnly)}",
                     style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
                     color = c.textDim,
                 )

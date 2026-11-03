@@ -75,7 +75,9 @@ class InvoiceQuoteResendTest {
         val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
         invoiceRepo = mockk<InvoiceRepository>(relaxed = true)
         coEvery { invoiceRepo.getInvoiceById("inv1") } returns Result.success(invoice)
-        coEvery { invoiceRepo.resendQuote("inv1") } returns Result.success("quote")
+        coEvery { invoiceRepo.resendQuote("inv1") } returns Result.success(
+            com.tribetails.auntieos.data.contracts.ResendQuoteResult(ok = true, invoiceId = "inv1", status = "quote"),
+        )
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings())
         coEvery { invoiceRepo.getInvoiceLedger("inv1") } returns Result.success(

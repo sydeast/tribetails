@@ -548,6 +548,15 @@ data class Invoice(
      */
     var reminderNotifiedAtMs: Long? = null,
     /**
+     * #1507: written beside the stamp above by the same send. True when that
+     * reminder reached the household in the app only (every delivery channel
+     * off, nothing emailed or texted). NULLABLE for the same Class B reason:
+     * absent on every stamp from before the flag existed and on one copied from
+     * the dedupe ledger. `lastReminderLabel` adds "app only" for an explicit
+     * true alone.
+     */
+    var reminderNotifiedAppOnly: Boolean? = null,
+    /**
      * LEGACY (#1180): the old system's Viewed flag on migrated invoices. Nothing
      * in this system writes it and no screen reads it, so it is NOT a "viewed by
      * the household" receipt. `Any?` on purpose: migrated documents hold text

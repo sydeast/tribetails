@@ -56,8 +56,7 @@ function dueBookingRow() {
 }
 
 /** A db whose bookings collection-group holds one due booking and whose settings doc holds `settings`. */
-function dbWith(settings: Record<string, unknown> | undefined) {
-  const row = dueBookingRow();
+function dbWith(settings: Record<string, unknown> | undefined, row = dueBookingRow()) {
   const query: any = {
     where: vi.fn(() => query),
     orderBy: vi.fn(() => query),
@@ -110,6 +109,27 @@ describe('runKincareReminderScan honours the switch', () => {
     mocks.dbFn.mockReturnValue(dbWith({ enableAutoReminder24h: true }));
     expect(await runKincareReminderScan(NOW)).toBe(1);
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('#1507: the stamp says whether the reminder reached the household in the app only', async () => {
+    const emailed = dueBookingRow();
+    mocks.dbFn.mockReturnValue(dbWith({}, emailed));
+    expect(await runKincareReminderScan(NOW)).toBe(1);
+    expect(emailed.ref.set).toHaveBeenCalledWith(
+      { upcomingReminderNotifiedAtMs: NOW, upcomingReminderNotifiedAppOnly: false },
+      { merge: true },
+    );
+
+    const appOnly = dueBookingRow();
+    mocks.dbFn.mockReturnValue(dbWith({}, appOnly));
+    mocks.enqueue.mockResolvedValue({ written: ['n2'], suppressed: [], unresolved: [], appOnly: ['kin-uid'] });
+    // Still a reminder: the record is in their notifications list, so the
+    // booking is stamped and never reminded twice.
+    expect(await runKincareReminderScan(NOW)).toBe(1);
+    expect(appOnly.ref.set).toHaveBeenCalledWith(
+      { upcomingReminderNotifiedAtMs: NOW, upcomingReminderNotifiedAppOnly: true },
+      { merge: true },
+    );
   });
 
   it('enqueues nothing, and does not even scan, when the switch is off', async () => {

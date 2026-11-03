@@ -682,14 +682,24 @@ class InvoiceDetailViewModel(
                         // invoice stays exactly as the server sent it.
                         // Only a real time moves it: null means no reminder on
                         // record and must never blank a stamp the model holds.
+                        // #1507: the app-only flag moves only with a send THIS
+                        // press made; a refusal carries the earlier reminder's
+                        // time and says nothing about its channels.
                         invoice = current.invoice?.let { inv ->
-                            outcome.lastReminderAtMs?.let { inv.copy(reminderNotifiedAtMs = it) } ?: inv
+                            outcome.lastReminderAtMs?.let {
+                                inv.copy(
+                                    reminderNotifiedAtMs = it,
+                                    reminderNotifiedAppOnly = if (outcome.sent) outcome.appOnly else inv.reminderNotifiedAppOnly,
+                                )
+                            } ?: inv
                         },
                         toastMessage = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome),
                         toastVisible = true,
                         // A refusal is not a failure, but it must not read as a
                         // success toast either: nothing was sent by this press.
-                        toastIsError = !outcome.sent,
+                        // Nor is an app-only send (#1507): the words say no
+                        // email or text went out, and the tone agrees with them.
+                        toastIsError = !outcome.sent || outcome.appOnly,
                     )
                 }
                 .onFailure { err ->
@@ -887,7 +897,9 @@ class InvoiceDetailViewModel(
         _uiState.value = _uiState.value.copy(resendingQuote = true)
         viewModelScope.launch {
             invoiceRepository.resendQuote(invoice.id)
-                .onSuccess {
+                .onSuccess { result ->
+                    // #1507: null from an older server reads as a channel send.
+                    val appOnly = result.appOnly == true
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
                         repository       = repository,
@@ -901,9 +913,11 @@ class InvoiceDetailViewModel(
                     reloadInvoiceQuietly(invoice.id)
                     _uiState.value = _uiState.value.copy(
                         resendingQuote = false,
-                        toastMessage = "Quote sent again. The household can accept or decline it now.",
+                        toastMessage = com.tribetails.auntieos.domain.quoteResentMessage(appOnly),
                         toastVisible = true,
-                        toastIsError = false,
+                        // An app-only send is not a green toast (#1507): nothing
+                        // was emailed or texted, and the words say so.
+                        toastIsError = appOnly,
                     )
                 }
                 .onFailure { err ->

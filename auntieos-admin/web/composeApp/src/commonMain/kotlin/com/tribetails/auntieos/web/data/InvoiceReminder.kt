@@ -20,6 +20,12 @@ import kotlinx.serialization.json.longOrNull
  * none of which is an error: `recent` (one already went out inside the
  * window), `in-progress` (another press is sending one right now), and
  * `suppressed` (the household's notification settings block reminders).
+ *
+ * #1507: [sent] with [appOnly] means the reminder reached the household in the
+ * app only. Since #1505 a household that turned off every delivery channel
+ * still gets the record in their notifications list, and nothing is emailed or
+ * texted. "Reminder sent." alone would read as an email that does not exist,
+ * so the sentence says where it went.
  */
 data class ReminderOutcome(
     /** True when THIS call sent a reminder. */
@@ -30,7 +36,12 @@ data class ReminderOutcome(
     val lastReminderAtMs: Long?,
     /** The earliest moment a press can send again (ms epoch), or null when waiting would not help. */
     val nextReminderAllowedAtMs: Long?,
+    /** With [sent]: the reminder reached the household in the app only (#1507). Absent from an older server reads false. */
+    val appOnly: Boolean = false,
 )
+
+/** #1507: the clause every app-only send carries, on every admin surface. */
+const val APP_ONLY_NOTE = "Email and text are off for this household."
 
 private val REASONS = setOf("sent", "recent", "in-progress", "suppressed")
 
@@ -55,6 +66,9 @@ fun decodeReminderOutcome(body: String, nowMs: Long): ReminderOutcome {
         reason = reason,
         lastReminderAtMs = obj["lastReminderAtMs"]?.jsonPrimitive?.longOrNull,
         nextReminderAllowedAtMs = obj["nextReminderAllowedAtMs"]?.jsonPrimitive?.longOrNull,
+        // #1507: only an explicit true counts. A function deployed before #1507
+        // omits the key, and so does every non-send; both read as a channel send.
+        appOnly = obj["appOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
     )
 }
 
@@ -79,7 +93,7 @@ fun reminderOutcomeMessage(outcome: ReminderOutcome, zone: TimeZone = TimeZone.c
     val next = outcome.nextReminderAllowedAtMs
     val last = outcome.lastReminderAtMs
     return when (outcome.reason) {
-        "sent" -> "Reminder sent."
+        "sent" -> if (outcome.appOnly) "Reminder sent in the app only. $APP_ONLY_NOTE" else "Reminder sent."
         "in-progress" ->
             "Not sent: a reminder for this invoice is already being sent." +
                 (next?.let { " If it does not arrive, try again after ${formatReminderTime(it, zone)}." } ?: "")
@@ -92,6 +106,13 @@ fun reminderOutcomeMessage(outcome: ReminderOutcome, zone: TimeZone = TimeZone.c
     }
 }
 
-/** The value of the "Last reminder" row. Absent, null or non-positive means none on record. */
-fun lastReminderLabel(stampMs: Long?, zone: TimeZone = TimeZone.currentSystemDefault()): String =
-    if (stampMs != null && stampMs > 0L) formatReminderTime(stampMs, zone) else "none sent"
+/**
+ * The value of the "Last reminder" row. Absent, null or non-positive means none on record.
+ *
+ * #1507: [appOnly] is the companion flag the server writes beside the stamp
+ * (`reminderNotifiedAppOnly`). Only an explicit true adds "app only"; a stamp
+ * from before the flag existed, or one copied from the dedupe ledger, has none.
+ */
+fun lastReminderLabel(stampMs: Long?, zone: TimeZone = TimeZone.currentSystemDefault(), appOnly: Boolean? = false): String =
+    if (stampMs != null && stampMs > 0L) formatReminderTime(stampMs, zone) + (if (appOnly == true) ", app only" else "")
+    else "none sent"

@@ -367,6 +367,22 @@ class InvoiceRepositoryTest {
         // empty string, never a thrown decode over a call that succeeded.
         assertEquals("", com.tribetails.auntieos.data.contracts.decodeResendQuoteResult(null).status)
     }
+    @Test
+    fun `#1507 resendQuote decodes the app-only flag, null when an older server omits it`() {
+        assertEquals(
+            true,
+            com.tribetails.auntieos.data.contracts.decodeResendQuoteResult(
+                mapOf("ok" to true, "invoiceId" to "inv1", "status" to "quote", "appOnly" to true),
+            ).appOnly,
+        )
+        assertEquals(
+            null,
+            com.tribetails.auntieos.data.contracts.decodeResendQuoteResult(
+                mapOf("ok" to true, "invoiceId" to "inv1", "status" to "quote"),
+            ).appOnly,
+        )
+        assertEquals(null, com.tribetails.auntieos.data.contracts.decodeResendQuoteResult(null).appOnly)
+    }
 
     // ── linkInvoiceSessions result decode ────────────────────────────────────
 

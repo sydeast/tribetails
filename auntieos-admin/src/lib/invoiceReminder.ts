@@ -8,6 +8,12 @@
  *   - `recent`: one already went out inside the window (with when);
  *   - `in-progress`: another press is sending one right now;
  *   - `suppressed`: the household's notification settings block reminders.
+ *
+ * #1507: `sent` with `appOnly` means the reminder reached the household in the
+ * app only. Since #1505 a household that turned off every delivery channel
+ * still gets the record in their notifications list, and nothing is emailed or
+ * texted. "Reminder sent." alone would read as an email that does not exist,
+ * so the sentence says where it went.
  */
 import type { SendInvoiceReminderResult } from '../contracts/invoiceContracts.generated';
 
@@ -21,7 +27,12 @@ export interface ReminderOutcome {
   lastReminderAtMs: number | null;
   /** The earliest moment a press can send again (ms epoch), or null when waiting would not help. */
   nextReminderAllowedAtMs: number | null;
+  /** With `sent`: the reminder reached the household in the app only (#1507). */
+  appOnly: boolean;
 }
+
+/** #1507: the clause every app-only send carries, on every admin surface. */
+export const APP_ONLY_NOTE = 'Email and text are off for this household.';
 
 const REASONS: readonly ReminderReason[] = ['sent', 'recent', 'in-progress', 'suppressed'];
 
@@ -41,7 +52,7 @@ export function reminderOutcomeOf(
   nowMs: number,
 ): ReminderOutcome {
   if (typeof res?.sent !== 'boolean') {
-    return { sent: true, reason: 'sent', lastReminderAtMs: nowMs, nextReminderAllowedAtMs: null };
+    return { sent: true, reason: 'sent', lastReminderAtMs: nowMs, nextReminderAllowedAtMs: null, appOnly: false };
   }
   const reason = REASONS.includes(res.reason as ReminderReason)
     ? (res.reason as ReminderReason)
@@ -53,6 +64,9 @@ export function reminderOutcomeOf(
     reason,
     lastReminderAtMs: msOrNull(res.lastReminderAtMs),
     nextReminderAllowedAtMs: msOrNull(res.nextReminderAllowedAtMs),
+    // #1507: only an explicit true counts. A function deployed before #1507
+    // omits the key, and so does every non-send; both read as a channel send.
+    appOnly: res.appOnly === true,
   };
 }
 
@@ -72,7 +86,7 @@ export function reminderOutcomeMessage(outcome: ReminderOutcome, timeZone?: stri
   const at = (ms: number) => formatReminderTime(ms, timeZone);
   switch (outcome.reason) {
     case 'sent':
-      return 'Reminder sent.';
+      return outcome.appOnly ? `Reminder sent in the app only. ${APP_ONLY_NOTE}` : 'Reminder sent.';
     case 'recent':
       return (
         (outcome.lastReminderAtMs !== null
@@ -98,9 +112,12 @@ export function reminderOutcomeMessage(outcome: ReminderOutcome, timeZone?: stri
  * The value of the "Last reminder" fact. The stored stamp may be absent, null,
  * or not a number on a doc written outside the callables; all of those mean no
  * reminder is on record.
+ *
+ * #1507: `appOnly` is the companion flag the server writes beside the stamp
+ * (`reminderNotifiedAppOnly`). Only an explicit true adds "app only"; a stamp
+ * from before the flag existed, or one copied from the dedupe ledger, has none.
  */
-export function lastReminderLabel(stamp: unknown, timeZone?: string): string {
-  return typeof stamp === 'number' && Number.isFinite(stamp) && stamp > 0
-    ? formatReminderTime(stamp, timeZone)
-    : 'none sent';
+export function lastReminderLabel(stamp: unknown, timeZone?: string, appOnly?: unknown): string {
+  if (!(typeof stamp === 'number' && Number.isFinite(stamp) && stamp > 0)) return 'none sent';
+  return formatReminderTime(stamp, timeZone) + (appOnly === true ? ', app only' : '');
 }

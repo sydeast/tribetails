@@ -802,7 +802,13 @@ class AdminDataViewModel(
                 // the one server-written field on it (copy, never a rebuild).
                 outcome.lastReminderAtMs?.let { at ->
                     _invoices.value = _invoices.value.map {
-                        if (it.id == invoiceId) it.copy(reminderNotifiedAtMs = at) else it
+                        if (it.id == invoiceId) {
+                            // #1507: the flag moves only with a send this press made.
+                            it.copy(
+                                reminderNotifiedAtMs = at,
+                                reminderNotifiedAppOnly = if (outcome.sent) outcome.appOnly else it.reminderNotifiedAppOnly,
+                            )
+                        } else it
                     }
                 }
                 _invoiceActionMessage.value = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome)
