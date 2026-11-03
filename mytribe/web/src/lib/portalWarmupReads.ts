@@ -6,7 +6,7 @@ import { getAccountCreditHistory, getMyInvoices } from '../api/invoicesApi';
 import { getMyKinPhotos } from '../api/kinTalesApi';
 import { getMyNotificationPrefs, getNotificationCatalog } from '../api/notificationsApi';
 import { getBusinessContact, getMyHome, getMyVisits } from '../api/portal';
-import { getFormSchema as getTribeFormSchema, getMyTribeProfile, getVetClinics, listMembers } from '../api/tribeApi';
+import { getFormSchema as getTribeFormSchema, getMyTribeProfile, listMembers } from '../api/tribeApi';
 import { billingAccessOf } from './billingAccess';
 import { BOOKING_HORIZON_DAYS, bookingHorizonEnd, dateKey } from './bookingWizardLogic';
 import type { CallOptions } from './fns';
@@ -29,7 +29,6 @@ import {
   serviceCatalogKey,
   tribeHubPhotosKey,
   tribeProfileKey,
-  vetClinicsKey,
 } from './portalQueryKeys';
 import { queryClient as appQueryClient } from './queryClient';
 
@@ -86,8 +85,8 @@ import { queryClient as appQueryClient } from './queryClient';
  * lazy chunk they load once, when the first tribe resolves, alongside the
  * screen chunk the household is already waiting for.
  *
- * NOT HERE: saves (#1504) and `getVetClinics` as a direct Firestore read
- * (#1503) are separate issues.
+ * NOT HERE: saves (#1504) are a separate issue. `getVetClinics` is not warmed:
+ * it is a direct Firestore read (#1503), so there is no instance to wake.
  */
 
 /** Marks every warm-up call so `lib/fns.ts` keeps its refusal out of the sign-out path. */
@@ -152,7 +151,6 @@ export async function warmPortalScreens(kinfolkId: string, client: QueryClient =
     warm(tribeProfileKey(k), () => getMyTribeProfile(k, BACKGROUND)),
     warm(formSchemaKey('tribeProfile'), () => getTribeFormSchema('tribeProfile', BACKGROUND)),
     warm(formSchemaKey('homeAccess'), () => getTribeFormSchema('homeAccess', BACKGROUND)),
-    warm(vetClinicsKey(), () => getVetClinics(BACKGROUND)),
     warm(businessContactKey(), () => getBusinessContact(BACKGROUND)),
     warm(membersKey(k), () => listMembers(k, BACKGROUND)),
     // Booking wizard
