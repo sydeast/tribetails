@@ -17,6 +17,7 @@ import {
 } from '../lib/invoiceFormat';
 import { useAuth, useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
+import { accountCreditHistoryKey, myInvoicesKey } from '../lib/portalQueryKeys';
 import { PortalNav } from '../components/PortalNav';
 import { LeaveBilling } from '../components/LeaveBilling';
 import { isPermissionDenied } from '../lib/billingAccess';
@@ -43,7 +44,7 @@ import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 export function Invoices() {
   const queryClient = useQueryClient();
   const kinfolkId = getActiveKinfolkId();
-  const invoices = useQuery({ queryKey: ['myInvoices', kinfolkId], queryFn: () => getMyInvoices(kinfolkId) });
+  const invoices = useQuery({ queryKey: myInvoicesKey(kinfolkId), queryFn: () => getMyInvoices(kinfolkId) });
   // #1039: the viewer's own uid, so a declined quote's meta line can tell
   // "you declined this" from "Sam declined this" instead of assuming the
   // reader is always the one who answered.
@@ -76,7 +77,7 @@ export function Invoices() {
     // a second press. It now stays on its busy label until the reloaded list
     // shows the credit applied, and then says so in words.
     onSuccess: async () => {
-      await refreshAfterSave(queryClient, ['myInvoices', kinfolkId], ['accountCreditHistory', kinfolkId]);
+      await refreshAfterSave(queryClient, myInvoicesKey(kinfolkId), accountCreditHistoryKey(kinfolkId));
       announceSaved('Credit saved');
     },
   }, { policy: 'hold', what: 'this credit' });

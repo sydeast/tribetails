@@ -16,6 +16,7 @@ import {
 } from '../api/accountApi';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
+import { formSchemaKey, myAccountKey, myHomeKey, myPaymentMethodKey } from '../lib/portalQueryKeys';
 import { PortalNav } from '../components/PortalNav';
 import { SignedImageUpload } from '../components/SignedImageUpload';
 import { LaunchError } from './LaunchError';
@@ -103,16 +104,16 @@ export function Account() {
 
   // Thread the active household so an operator who stepped into another tribe
   // sees THAT household's profile, not their own admin account (impersonated).
-  const account = useQuery({ queryKey: ['myAccount', kinfolkId], queryFn: () => getMyAccount(kinfolkId) });
+  const account = useQuery({ queryKey: myAccountKey(kinfolkId), queryFn: () => getMyAccount(kinfolkId) });
   // Best-effort: getFormSchema('account') 404s until an admin seeds a
   // schema. retry:false keeps that from hammering the callable; the error
   // itself is never surfaced (see block comment above).
-  useQuery({ queryKey: ['formSchema', 'account'], queryFn: () => getFormSchema('account'), retry: false });
+  useQuery({ queryKey: formSchemaKey('account'), queryFn: () => getFormSchema('account'), retry: false });
   // #1282: home starts alongside the account read rather than after it. It
   // takes nothing from `account`, and waiting made the card row below (which
   // needs both account and home) three round trips deep instead of two.
   // #1465: the kin read left with the kin list; Tribe owns the roster.
-  const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId) });
+  const home = useQuery({ queryKey: myHomeKey(kinfolkId), queryFn: () => getMyHome(kinfolkId) });
 
   const [hydrated, setHydrated] = useState(false);
   const [displayName, setDisplayName] = useState('');
@@ -156,8 +157,8 @@ export function Account() {
       setStatus({ text: 'Saved.', tone: 'ok' });
       // Verify persistence by reloading from the server rather than trusting
       // the optimistic local state (matches the Compose screen).
-      const fresh = await queryClient.fetchQuery({ queryKey: ['myAccount', kinfolkId], queryFn: () => getMyAccount(kinfolkId) });
-      queryClient.setQueryData(['myAccount', kinfolkId], fresh);
+      const fresh = await queryClient.fetchQuery({ queryKey: myAccountKey(kinfolkId), queryFn: () => getMyAccount(kinfolkId) });
+      queryClient.setQueryData(myAccountKey(kinfolkId), fresh);
       setDisplayName(fresh.displayName && fresh.displayName !== fresh.email ? fresh.displayName : '');
       setPhone(formatPhone(fresh.phone));
       setPhotoUrl(fresh.photoUrl ?? '');
@@ -202,7 +203,7 @@ export function Account() {
   // and "Payment method on file" with nothing else on the row is exactly the
   // state a household writes in to ask about.
   const paymentMethod = useQuery({
-    queryKey: ['myPaymentMethod', kinfolkId],
+    queryKey: myPaymentMethodKey(kinfolkId),
     queryFn: () => getMyPaymentMethod(kinfolkId),
     // #1005: not asked for a member the server says has no billing access, so
     // it waits for that answer (a failed Home read still lets it through).
@@ -240,8 +241,8 @@ export function Account() {
     onSuccess: async (res) => {
       setConfirmingCardRemoval(false);
       setBillingStatus({ text: res.alreadyEmpty ? 'There was no card on file.' : 'Card removed.', tone: 'ok' });
-      await queryClient.invalidateQueries({ queryKey: ['myPaymentMethod', kinfolkId] });
-      await queryClient.invalidateQueries({ queryKey: ['myAccount', kinfolkId] });
+      await queryClient.invalidateQueries({ queryKey: myPaymentMethodKey(kinfolkId) });
+      await queryClient.invalidateQueries({ queryKey: myAccountKey(kinfolkId) });
     },
     onError: (err: unknown) => {
       if (isOfflineError(err)) return;
@@ -264,8 +265,8 @@ export function Account() {
     void (async () => {
       try {
         const synced = await syncMyPaymentMethod(kinfolkId);
-        queryClient.setQueryData(['myPaymentMethod', kinfolkId], synced);
-        await queryClient.invalidateQueries({ queryKey: ['myAccount', kinfolkId] });
+        queryClient.setQueryData(myPaymentMethodKey(kinfolkId), synced);
+        await queryClient.invalidateQueries({ queryKey: myAccountKey(kinfolkId) });
         setBillingStatus(
           synced.hasPaymentMethod
             ? { text: synced.changed ? 'Card saved.' : 'Card is already on file.', tone: 'ok' }

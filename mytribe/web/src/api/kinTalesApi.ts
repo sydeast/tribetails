@@ -1,4 +1,4 @@
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 import { auntieName, relativeDay, weekdayTime } from '../lib/portalFormat';
 import type { KinTaleDto } from './types';
 
@@ -396,11 +396,12 @@ export interface GetMyKinPhotosRequest {
 export function getMyKinPhotos(
   kinfolkId?: string,
   opts: { limit?: number; before?: number } = {},
+  options?: CallOptions,
 ): Promise<GetMyKinPhotosResult> {
   const payload: GetMyKinPhotosRequest = {
     ...(kinfolkId !== undefined ? { kinfolkId } : {}),
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
     ...(opts.before !== undefined ? { before: opts.before } : {}),
   };
-  return call<GetMyKinPhotosRequest, GetMyKinPhotosResult>('getMyKinPhotos', payload);
+  return call<GetMyKinPhotosRequest, GetMyKinPhotosResult>('getMyKinPhotos', payload, options);
 }

@@ -212,4 +212,24 @@ class RevocationAwareFunctionsClientTest {
             SessionEndedNotice.consume(),
         )
     }
+    // #1282: the portal warm-up reads through the bare client, so a refusal it
+    // swallows is never the one that ends the session.
+    @Test
+    fun without_session_reaction_rethrows_the_refusal_but_signs_nobody_out() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stubError("getMyInvoices", revoked)
+        val signOut = RecordingSignOut()
+        val client = RevocationAwareFunctionsClient(fake, signOut.block)
+        assertFailsWith<RuntimeException> { client.withoutSessionReaction().call("getMyInvoices", null) }
+        assertEquals(0, signOut.count)
+        assertNull(SessionEndedNotice.consume())
+        // The reacting client is untouched: the same refusal in the foreground still ends it.
+        assertFailsWith<RuntimeException> { client.call("getMyInvoices", null) }
+        assertEquals(1, signOut.count)
+    }
+    @Test
+    fun a_client_with_no_reaction_hands_back_itself() {
+        val fake = FakeFunctionsClient()
+        assertEquals(fake, fake.withoutSessionReaction())
+    }
 }

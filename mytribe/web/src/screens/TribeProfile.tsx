@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
+import { businessContactKey, formSchemaKey, membersKey, tribeProfileKey, vetClinicsKey } from '../lib/portalQueryKeys';
 import { SecretField } from '../components/SecretField';
 import { PhoneActions } from '../components/PhoneActions';
 import { EmergencyContactsCard } from '../components/EmergencyContactsCard';
@@ -106,16 +107,16 @@ export function TribeProfile() {
   const queryClient = useQueryClient();
   const kinfolkId = getActiveKinfolkId();
 
-  const profile = useQuery({ queryKey: ['tribeProfile', kinfolkId], queryFn: () => getMyTribeProfile(kinfolkId) });
+  const profile = useQuery({ queryKey: tribeProfileKey(kinfolkId), queryFn: () => getMyTribeProfile(kinfolkId) });
   const profileSchemaQ = useQuery({
-    queryKey: ['formSchema', 'tribeProfile'],
+    queryKey: formSchemaKey('tribeProfile'),
     queryFn: () => getFormSchema('tribeProfile'),
     retry: false,
   });
-  const homeSchemaQ = useQuery({ queryKey: ['formSchema', 'homeAccess'], queryFn: () => getFormSchema('homeAccess'), retry: false });
-  const vetClinicsQ = useQuery({ queryKey: ['vetClinics'], queryFn: () => getVetClinics() });
-  const contactQ = useQuery({ queryKey: ['businessContact'], queryFn: () => getBusinessContact() });
-  const membersQ = useQuery({ queryKey: ['members', kinfolkId], queryFn: () => listMembers(kinfolkId) });
+  const homeSchemaQ = useQuery({ queryKey: formSchemaKey('homeAccess'), queryFn: () => getFormSchema('homeAccess'), retry: false });
+  const vetClinicsQ = useQuery({ queryKey: vetClinicsKey(), queryFn: () => getVetClinics() });
+  const contactQ = useQuery({ queryKey: businessContactKey(), queryFn: () => getBusinessContact() });
+  const membersQ = useQuery({ queryKey: membersKey(kinfolkId), queryFn: () => listMembers(kinfolkId) });
   // 2026-09-27 Q3: a secondary kinfolk handed to the invite card by "Give portal access".
   const [invitePrefill, setInvitePrefill] = useState<SecondaryKinfolkDto | null>(null);
 
@@ -271,7 +272,7 @@ export function TribeProfile() {
         setVetClinicId('');
         setVetQuery('');
         setClinicCandidates([]);
-        await refreshAfterSave(queryClient, ['tribeProfile', kinfolkId]);
+        await refreshAfterSave(queryClient, tribeProfileKey(kinfolkId));
       })
       .catch((err: unknown) =>
         setSubmitClinicMsg(`Couldn't remove the clinic: ${err instanceof Error ? err.message : 'unknown error'}`),
@@ -308,7 +309,7 @@ export function TribeProfile() {
             ? 'Sent to Auntie for approval. It is on your record now and joins the shared list once approved.'
             : 'Added to the shared list and set as your clinic.',
         );
-        void queryClient.invalidateQueries({ queryKey: ['vetClinics'] });
+        void queryClient.invalidateQueries({ queryKey: vetClinicsKey() });
       })
       .catch((err: unknown) => setSubmitClinicMsg(`Couldn't submit: ${err instanceof Error ? err.message : 'unknown error'}`))
       .finally(() => setSubmittingClinic(false));
@@ -431,7 +432,7 @@ export function TribeProfile() {
       if (profileHalf.kind !== 'failed' && homeHalf.kind !== 'failed') {
         // #1281: awaited, so the save button stays busy until the reloaded
         // profile is what the inputs show.
-        await refreshAfterSave(queryClient, ['tribeProfile', kinfolkId]);
+        await refreshAfterSave(queryClient, tribeProfileKey(kinfolkId));
       }
       setSaving(false);
     }
@@ -921,7 +922,7 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
         },
       }),
     // #1281: pending until the member list shows the new permissions.
-    onSuccess: () => refreshAfterSave(queryClient, ['members', kinfolkId]),
+    onSuccess: () => refreshAfterSave(queryClient, membersKey(kinfolkId)),
   }, { policy: 'hold', what: 'this permission change' });
 
   const title = member.secondaryLabel?.trim() || member.invitedEmail?.trim() || 'Member';
