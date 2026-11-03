@@ -46,7 +46,9 @@ describe('reviewAndSendDraftInvoice when only the office roster read fails', () 
       },
     });
 
-    await expect(reviewAndSendDraftInvoiceHandler(req())).resolves.toEqual({ ok: true, invoiceId: 'inv1' });
+    // #1511: the household's copy went out by a channel (the real dispatcher,
+    // default prefs), so the answer says so; the failed office read is not theirs.
+    await expect(reviewAndSendDraftInvoiceHandler(req())).resolves.toEqual({ ok: true, invoiceId: 'inv1', appOnly: false });
 
     const household = ctx.writes.filter(
       (w) => w.path.startsWith('notifications/') && w.data.key === 'invoice.new' && w.data.recipientUid === 'kin-uid-1',

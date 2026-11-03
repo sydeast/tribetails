@@ -257,9 +257,10 @@ function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
 beforeEach(() => {
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
-  generateReceipt.mockReset();
+  // #1511: both answer whether the household's copy reached them in the app only.
+  generateReceipt.mockReset().mockResolvedValue({ appOnly: false });
   generateInvoicePdf.mockReset();
-  reviewAndSendDraftInvoice.mockReset();
+  reviewAndSendDraftInvoice.mockReset().mockResolvedValue({ appOnly: false });
   resendQuote.mockReset().mockResolvedValue({ status: 'quote', appOnly: false });
   updateInvoice.mockReset().mockResolvedValue({
     subtotalCents: 0, totalCents: 0, paidCents: 0, amountDueCents: 0,
@@ -436,7 +437,7 @@ describe('InvoiceDetail', () => {
   });
 
   it('sends a draft through reviewAndSendDraftInvoice, behind the same confirm step', async () => {
-    reviewAndSendDraftInvoice.mockResolvedValue(undefined);
+    reviewAndSendDraftInvoice.mockResolvedValue({ appOnly: false });
     render(
       <InvoiceDetail invoice={entry({ _id: 'inv4', status: 'draft', total: 40, amountDue: 40 })} onClose={vi.fn()} />,
     );
@@ -446,7 +447,22 @@ describe('InvoiceDetail', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
     await waitFor(() => expect(reviewAndSendDraftInvoice).toHaveBeenCalledWith('inv4'));
-    expect(await screen.findByText(/draft sent/i)).toBeInTheDocument();
+    expect(await screen.findByText('Draft sent.')).toBeInTheDocument();
+    expect(screen.getByText('Done')).toBeInTheDocument();
+  });
+
+  it('#1511: a draft that reached the household in the app only says so, in a warning', async () => {
+    reviewAndSendDraftInvoice.mockResolvedValue({ appOnly: true });
+    render(
+      <InvoiceDetail invoice={entry({ _id: 'inv4', status: 'draft', total: 40, amountDue: 40 })} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    expect(
+      await screen.findByText('Draft sent in the app only. Email and text are off for this household.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Done, but not all of it')).toBeInTheDocument();
+    expect(screen.queryByText('Draft sent.')).toBeNull();
   });
 
   it('fails loud, naming the callable, when reviewAndSendDraftInvoice rejects', async () => {
@@ -725,7 +741,7 @@ describe('InvoiceDetail', () => {
   });
 
   it('issues a receipt through generateReceipt', async () => {
-    generateReceipt.mockResolvedValue(undefined);
+    generateReceipt.mockResolvedValue({ appOnly: false });
     // Receipt is a PAID-only action now, so this exercises it on a paid invoice.
     render(
       <InvoiceDetail
@@ -736,7 +752,25 @@ describe('InvoiceDetail', () => {
     await userEvent.click(screen.getByRole('button', { name: /generate receipt/i }));
     await userEvent.click(screen.getByRole('button', { name: /^generate receipt$/i }));
     await waitFor(() => expect(generateReceipt).toHaveBeenCalledWith('inv9'));
-    expect(await screen.findByText(/receipt issued/i)).toBeInTheDocument();
+    expect(await screen.findByText('Receipt issued.')).toBeInTheDocument();
+    expect(screen.getByText('Done')).toBeInTheDocument();
+  });
+
+  it('#1511: a receipt notice that reached the household in the app only says so, in a warning', async () => {
+    generateReceipt.mockResolvedValue({ appOnly: true });
+    render(
+      <InvoiceDetail
+        invoice={entry({ _id: 'inv9', status: 'paid', editScope: 'none', amountDue: 0 })}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /generate receipt/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^generate receipt$/i }));
+    expect(
+      await screen.findByText('Receipt issued in the app only. Email and text are off for this household.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Done, but not all of it')).toBeInTheDocument();
+    expect(screen.queryByText('Receipt issued.')).toBeNull();
   });
 
   it('fails loud, naming the callable, when sendInvoiceReminder rejects', async () => {
@@ -1863,6 +1897,70 @@ describe('what the operator is told after the payment lands', () => {
     ).toBeInTheDocument();
     // Nothing was pending for the office, so nothing is said about it.
     expect(screen.queryByText(/office copy of the payment notice/i)).not.toBeInTheDocument();
+  });
+  it('#1511: a confirmation that reached the household in the app only is said so, in a warning, never as "did not go out"', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockResolvedValue({
+      ok: true,
+      paymentId: 'led1',
+      kinfolkId: 'kf1',
+      amountCents: 12750,
+      tipCents: 0,
+      feeCents: 0,
+      tipBasis: 'gross',
+      appliedCents: 0,
+      unappliedCents: 12750,
+      proceedsCents: 12750,
+      tipNetCents: 0,
+      autoApply: false,
+      application: null,
+      creditedToAccountCents: 0,
+      // The server's word: the record exists, no channel carried it.
+      confirmationEmailSent: false,
+      confirmationAppOnly: true,
+      householdNoPortalAccount: false,
+      officeNoticePending: false,
+    });
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(
+      await screen.findByText(
+        /The confirmation reached the household in the app only\. Email and text are off for this household\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/confirmation email did not go out/i)).toBeNull();
+    expect(screen.getByText('Done, but not all of it')).toBeInTheDocument();
+  });
+  it('#1511: an app-only flag is only read when a confirmation was asked for', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockResolvedValue({
+      ok: true,
+      paymentId: 'led1',
+      kinfolkId: 'kf1',
+      amountCents: 12750,
+      tipCents: 0,
+      feeCents: 0,
+      tipBasis: 'gross',
+      appliedCents: 0,
+      unappliedCents: 12750,
+      proceedsCents: 12750,
+      tipNetCents: 0,
+      autoApply: false,
+      application: null,
+      creditedToAccountCents: 0,
+      confirmationEmailSent: false,
+      confirmationAppOnly: true,
+      householdNoPortalAccount: false,
+      officeNoticePending: false,
+    });
+    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
+    expect(screen.queryByText(/in the app only/i)).toBeNull();
+    expect(screen.getByText('Done')).toBeInTheDocument();
   });
   // #866 fourth review: the two reasons are not the same, and the note used to
   // blame a missing portal account for both.

@@ -55,6 +55,7 @@ import com.tribetails.auntieos.web.data.toggleLinkPick
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
 import com.tribetails.auntieos.web.data.InvoicePaymentEntry
 import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
+import com.tribetails.auntieos.web.data.receiptGeneratedMessage
 import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
 import com.tribetails.auntieos.web.data.recordPaymentRefusalText
 import com.tribetails.auntieos.web.data.submitInvoicePayment
@@ -390,7 +391,12 @@ private fun InvoiceDetailBody(
                     is WriteResult.Ok  -> {
                         recordingPayment = false
                         showRecordPayment = false
-                        showToast(recordPaymentOutcomeMessage(r.value, entry.sendConfirmationEmail), false)
+                        // #1511: a confirmation that reached the household in the app
+                        // only is not the green toast, as for the reminder below.
+                        showToast(
+                            recordPaymentOutcomeMessage(r.value, entry.sendConfirmationEmail),
+                            entry.sendConfirmationEmail && r.value.confirmationAppOnly,
+                        )
                     }
                     is WriteResult.Err -> {
                         recordingPayment = false
@@ -482,7 +488,8 @@ private fun InvoiceDetailBody(
                     scope.launch {
                         when (val r = client.generateReceipt(invoice._id)) {
                             is WriteResult.Err -> showToast("Couldn't generate receipt: ${r.message}", true)
-                            is WriteResult.Ok  -> showToast("Receipt generated.", false)
+                            // #1511: honest about where the notice went, and not green when app-only.
+                            is WriteResult.Ok  -> showToast(receiptGeneratedMessage(r.value.appOnly), r.value.appOnly)
                         }
                         receiptLoading = false
                     }

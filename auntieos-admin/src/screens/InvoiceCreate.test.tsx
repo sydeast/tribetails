@@ -278,7 +278,9 @@ describe('InvoiceCreate work path', () => {
     // Nothing is sent for the fields the form stopped asking about.
     expect(sent).not.toHaveProperty('invoiceNumber');
     expect(sent).not.toHaveProperty('address');
-    expect(onCreated).toHaveBeenCalledWith('inv-1');
+    // #1511: the composer passes along what the create said about the send.
+    // An older `createInvoice` mock answers no `appOnly`, which reads as false.
+    expect(onCreated).toHaveBeenCalledWith('inv-1', { quote: false, appOnly: false });
     expect(onClose).toHaveBeenCalledOnce();
   });
 

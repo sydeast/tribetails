@@ -3,10 +3,13 @@ package com.tribetails.auntieos.ui.admin
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.admin.ActivityLogEntry
 import com.tribetails.auntieos.data.admin.NotificationEntry
+import com.tribetails.auntieos.data.contracts.GenerateReceiptResult
+import com.tribetails.auntieos.data.contracts.PostInvoiceEventResult
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.TrainingDocument
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
+import com.tribetails.auntieos.data.repository.CreatedInvoice
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
@@ -459,7 +462,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createInvoice refreshes invoices list on success`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns Result.success("inv-new")
+        coEvery { mockInvoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns Result.success(CreatedInvoice("inv-new"))
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
         val vm = buildViewModel()
@@ -486,7 +489,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createQuote routes through repository and refreshes on success`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns Result.success("q-new")
+        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns Result.success(CreatedInvoice("q-new"))
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
         val vm = buildViewModel()
@@ -501,7 +504,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `createQuote without send confirms quietly`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns Result.success("q-new")
+        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns Result.success(CreatedInvoice("q-new"))
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
@@ -509,6 +512,35 @@ class AdminDataViewModelTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), false, any(), any(), any(), any()) }
+        assertEquals("Quote created.", vm.invoiceActionMessage.value)
+    }
+
+    // ── #1511: a sent quote that reached the household in the app only ────────
+
+    @Test
+    fun `#1511 createQuote says when the sent quote reached the household in the app only`() = runTest(testDispatcher) {
+        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns
+            Result.success(CreatedInvoice("q-new", appOnly = true))
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.createQuote(TestFixtures.invoice1, sendToKinfolk = true)
+        advanceUntilIdle()
+
+        assertEquals("Quote created and sent in the app only. Email and text are off for this household.", vm.invoiceActionMessage.value)
+        assertNull(vm.error.value)
+    }
+
+    @Test
+    fun `#1511 an unsent quote never reads the flag`() = runTest(testDispatcher) {
+        coEvery { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns
+            Result.success(CreatedInvoice("q-new", appOnly = true))
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
+        advanceUntilIdle()
+
         assertEquals("Quote created.", vm.invoiceActionMessage.value)
     }
 
@@ -532,7 +564,7 @@ class AdminDataViewModelTest {
         runTest(testDispatcher) {
             coEvery {
                 mockInvoiceRepo.createInvoice(any(), any(), any(), any(), any())
-            } returns Result.success("inv-new")
+            } returns Result.success(CreatedInvoice("inv-new"))
             coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
             val vm = buildViewModel()
@@ -565,7 +597,7 @@ class AdminDataViewModelTest {
     fun `composeInvoice routes a quote request through createQuote`() = runTest(testDispatcher) {
         coEvery {
             mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any())
-        } returns Result.success("q-new")
+        } returns Result.success(CreatedInvoice("q-new"))
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
@@ -582,6 +614,46 @@ class AdminDataViewModelTest {
         coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), true, "due_on_receipt", null, null, any()) }
         assertEquals("Quote created and sent.", vm.invoiceActionMessage.value)
     }
+
+    @Test
+    fun `#1511 composeInvoice says when the sent quote reached the household in the app only, and still hands back the id`() =
+        runTest(testDispatcher) {
+            coEvery {
+                mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), any())
+            } returns Result.success(CreatedInvoice("q-new", appOnly = true))
+            coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+
+            val vm = buildViewModel()
+            var handed: Result<String>? = null
+            vm.composeInvoice(
+                NewInvoiceRequest(kind = InvoiceCreateKind.QUOTE, invoice = TestFixtures.invoice1, sendToKinfolk = true),
+            ) { handed = it }
+            advanceUntilIdle()
+
+            assertEquals("q-new", handed!!.getOrNull())
+            assertEquals(
+                "Quote created and sent in the app only. Email and text are off for this household.",
+                vm.invoiceActionMessage.value,
+            )
+        }
+
+    @Test
+    fun `#1511 a composed draft invoice keeps its no-send sentence whatever the flag says (#1513)`() =
+        runTest(testDispatcher) {
+            coEvery {
+                mockInvoiceRepo.createInvoice(any(), any(), any(), any(), any())
+            } returns Result.success(CreatedInvoice("inv-new", appOnly = true))
+            coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+
+            val vm = buildViewModel()
+            vm.composeInvoice(NewInvoiceRequest(kind = InvoiceCreateKind.INVOICE, invoice = TestFixtures.invoice1))
+            advanceUntilIdle()
+
+            assertEquals(
+                "Invoice created as a draft. Nothing has been sent to the household yet.",
+                vm.invoiceActionMessage.value,
+            )
+        }
 
     @Test
     fun `composeInvoice reports a refusal to the caller as well as to the error flow`() =
@@ -759,7 +831,7 @@ class AdminDataViewModelTest {
 
     @Test
     fun `generateReceipt routes through repository and refreshes invoices on success`() = runTest(testDispatcher) {
-        coEvery { mockInvoiceRepo.generateReceipt("inv-1") } returns Result.success(Unit)
+        coEvery { mockInvoiceRepo.generateReceipt("inv-1") } returns Result.success(GenerateReceiptResult(ok = true))
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
 
         val vm = buildViewModel()
@@ -770,6 +842,54 @@ class AdminDataViewModelTest {
         assertFalse(vm.isLoading.value)
         assertNull(vm.error.value)
         assertEquals(1, vm.invoices.value.size)
+        // #1511: an older function, or a channel send, keeps the plain confirmation.
+        assertEquals("Receipt generated.", vm.invoiceActionMessage.value)
+    }
+
+    @Test
+    fun `#1511 generateReceipt says when the notice reached the household in the app only`() = runTest(testDispatcher) {
+        coEvery { mockInvoiceRepo.generateReceipt("inv-1") } returns Result.success(GenerateReceiptResult(ok = true, appOnly = true))
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.generateReceipt("inv-1")
+        advanceUntilIdle()
+
+        assertEquals("Receipt generated in the app only. Email and text are off for this household.", vm.invoiceActionMessage.value)
+        assertNull(vm.error.value)
+    }
+
+    // ── #1511: the list's Review and send ──────────────────────────────────────
+
+    @Test
+    fun `reviewAndSendDraftInvoice confirms a channel send plainly`() = runTest(testDispatcher) {
+        val draft = TestFixtures.invoice1.copy(id = "inv-d", kinfolkId = "fam1", status = "draft")
+        coEvery { mockInvoiceRepo.reviewAndSendDraftInvoice("inv-d", "fam1") } returns Result.success(PostInvoiceEventResult(ok = true))
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+        coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
+
+        val vm = buildViewModel()
+        vm.reviewAndSendDraftInvoice(draft)
+        advanceUntilIdle()
+
+        assertEquals("Draft sent.", vm.invoiceActionMessage.value)
+        assertNull(vm.error.value)
+    }
+
+    @Test
+    fun `#1511 reviewAndSendDraftInvoice says when the invoice reached the household in the app only`() = runTest(testDispatcher) {
+        val draft = TestFixtures.invoice1.copy(id = "inv-d", kinfolkId = "fam1", status = "draft")
+        coEvery { mockInvoiceRepo.reviewAndSendDraftInvoice("inv-d", "fam1") } returns
+            Result.success(PostInvoiceEventResult(ok = true, appOnly = true))
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+        coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
+
+        val vm = buildViewModel()
+        vm.reviewAndSendDraftInvoice(draft)
+        advanceUntilIdle()
+
+        assertEquals("Draft sent in the app only. Email and text are off for this household.", vm.invoiceActionMessage.value)
+        assertNull(vm.error.value)
     }
 
     @Test

@@ -7,7 +7,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { householdAppOnly } from '../notifications/appOnly';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import {
@@ -140,12 +141,20 @@ export const Args = z.object({
  * is: the contract guard freezes it, and decision 2 generates the clients'
  * types from it. `.strict()`, so an added field is reported rather than
  * absorbed. Three deployed clients read this.
+ *
+ * #1511: `appOnly` is present when this call wrote the household's copy of
+ * `invoice.new`, and true when every delivery channel was off for them: the
+ * notice is in their notifications list and nothing was emailed or texted.
+ * Absent on a replay (the first attempt did the sending), when the dispatch
+ * failed (logged, the invoice stands) and when the household has no portal
+ * account.
  */
 export const Result = z
   .object({
     ok: OkSchema,
     /** The SERVER-minted doc id; the composer never invents one. */
     invoiceId: z.string().min(1),
+    appOnly: z.boolean().optional(),
   })
   .strict();
 
@@ -356,14 +365,19 @@ export async function createInvoiceHandler(
   });
 
   const recipientUid = await resolveBillingRecipientUid(args.familyId);
+  // #1511: whether the household's copy reached them in the app only. Left
+  // undefined, and so omitted from the answer, unless this call wrote one.
+  let appOnly: boolean | undefined;
   try {
-    await enqueueNotification({
+    const dispatched = await enqueueNotificationDetailed({
       key: 'invoice.new',
       recipientUid: recipientUid ?? '',
       data: { kinfolkId: args.familyId, invoiceId: ref.id },
       targetType: 'invoice',
       targetId: ref.id,
     });
+    // Per recipient: the office copy's channels are not the household's.
+    appOnly = householdAppOnly(dispatched, recipientUid);
   } catch (err) {
     logEvent({
       severity: 'warn',
@@ -373,7 +387,11 @@ export async function createInvoiceHandler(
     });
   }
 
-  return validateResponse('createInvoice', Result, { ok: true, invoiceId: ref.id });
+  return validateResponse('createInvoice', Result, {
+    ok: true,
+    invoiceId: ref.id,
+    ...(appOnly === undefined ? {} : { appOnly }),
+  });
 }
 
 export const createInvoice = onCall(

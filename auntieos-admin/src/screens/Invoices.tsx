@@ -31,6 +31,8 @@ import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
+import { Banner } from '../components/Banner';
+import { APP_ONLY_NOTE } from '../lib/invoiceReminder';
 import {
   ListToolbar,
   DATE_RANGE_PRESETS,
@@ -274,6 +276,11 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // The invoice the composer just created, so the sheet can open it by id even
   // when the list's current window does not hold it. Cleared with the sheet.
   const [createdId, setCreatedId] = useState<string | null>(null);
+  // #1511: the one thing the composer's answer can say that the open sheet
+  // cannot show: a quote the composer sent reached the household in the app
+  // only, with every delivery channel off for them. Null otherwise, which is
+  // the plain open-the-new-invoice this screen always did. Cleared with the sheet.
+  const [createdNotice, setCreatedNotice] = useState<string | null>(null);
   // Seeded only on mount: reopening the composer from the "New invoice" button
   // later must start blank, not silently re-seed the household from a stale URL.
   const [creating, setCreating] = useState<CreatingState | null>(
@@ -579,6 +586,15 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           }
         />
 
+        {/* #1511: a quote the composer sent with no email or text behind it.
+            Warning tone, as every app-only send on the detail sheet: the words
+            say nothing was emailed or texted, and the colour agrees. */}
+        {createdNotice && (
+          <Banner tone="warning" title="Done, but not all of it" onDismiss={() => setCreatedNotice(null)}>
+            {createdNotice}
+          </Banner>
+        )}
+
         {/* The three honest answers a deep link can get, never a silent nothing.
             'opening' is a status line rather than an alert: nothing has gone
             wrong yet, the read is simply still in flight. */}
@@ -710,6 +726,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
             setSelectedId(null);
             setArmedAction(null);
             setCreatedId(null);
+            setCreatedNotice(null);
           }}
         />
       )}
@@ -725,9 +742,16 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           // id through the same by-id read the deep links use, so it opens
           // whatever the list is showing, and it is where the invoice is
           // reviewed and sent from.
-          onCreated={(invoiceId) => {
+          onCreated={(invoiceId, sent) => {
             setCreatedId(invoiceId);
             setSelectedId(invoiceId);
+            // #1511: only a QUOTE is sent by its create; the composer's invoice
+            // is a draft and claims no send. (The server does enqueue
+            // `invoice.new` for that draft today, which is #1513, and until
+            // that is ruled there is no sentence here to hang its flag on.)
+            setCreatedNotice(
+              sent.quote && sent.appOnly ? `Quote created and sent in the app only. ${APP_ONLY_NOTE}` : null,
+            );
           }}
           onClose={() => setCreating(null)}
         />

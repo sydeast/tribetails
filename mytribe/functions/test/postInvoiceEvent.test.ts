@@ -19,13 +19,25 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   logEvent: vi.fn(),
   resolveUid: vi.fn(),
+  // #1511: the recipients whose record was written with every channel off.
+  appOnlyUids: vi.fn<() => string[]>(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+// #1511: the delegate reads the detailed outcome. One counted mock answers both
+// entry points, so every assertion below on `enqueue` still holds.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueue,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: ((await mocks.enqueue(args)) as string[] | undefined) ?? [],
+    suppressed: [],
+    unresolved: [],
+    appOnly: mocks.appOnlyUids(),
+  }),
+}));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
@@ -46,6 +58,7 @@ const DRAFT = { kinfolkId: '3', status: 'draft', invoiceNumber: 'INV-9', total: 
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.enqueue.mockReset().mockResolvedValue(['n1']);
+  mocks.appOnlyUids.mockReset().mockReturnValue([]);
   mocks.logEvent.mockReset();
   mocks.resolveUid.mockReset().mockResolvedValue('recipient-uid');
   (writeAuditEntry as any).mockClear();
@@ -172,11 +185,26 @@ describe('#906 the real callers: { status: "sent" } still works', () => {
   it('accepts the Android and desktop payload and sends the draft', async () => {
     const ctx = seed();
     const res = await postInvoiceEventHandler(call({ status: 'sent' }));
-    expect(res).toEqual({ ok: true });
+    // #1511: the delegate's `appOnly` rides the ack; false is a channel send.
+    expect(res).toEqual({ ok: true, appOnly: false });
     const write = ctx.writes.find((w) => w.path === 'invoices/inv-7');
     expect(write?.data.status).toBe('open');
     expect(write?.data.invoiceStatus).toBe('open');
     expect(write?.data.sentBy).toBe('admin-uid');
+  });
+
+  it('#1511 carries the delegate\'s app-only answer, so the installed clients can say so', async () => {
+    mocks.appOnlyUids.mockReturnValue(['recipient-uid']);
+    seed();
+    const res = await postInvoiceEventHandler(call({ status: 'sent' }));
+    expect(res).toEqual({ ok: true, appOnly: true });
+  });
+
+  it('#1511 with no household uid the delegate has no household delivery to describe, and neither does this', async () => {
+    mocks.resolveUid.mockResolvedValue(null);
+    seed();
+    const res = await postInvoiceEventHandler(call({ status: 'sent' }));
+    expect(res).toEqual({ ok: true });
   });
 
   it('routes through reviewAndSendDraftInvoice: its audit event, its notification', async () => {

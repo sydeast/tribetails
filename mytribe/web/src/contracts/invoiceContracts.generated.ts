@@ -159,6 +159,7 @@ export interface CreateInvoiceArgs {
 export interface CreateInvoiceResult {
   ok: true;
   invoiceId: string;
+  appOnly?: boolean;
 }
 
 // ---------- createQuote ----------
@@ -214,6 +215,7 @@ export interface CreateQuoteArgs {
 export interface CreateQuoteResult {
   ok: true;
   invoiceId: string;
+  appOnly?: boolean;
 }
 
 // ---------- denyQuote ----------
@@ -267,6 +269,7 @@ export interface GenerateReceiptArgs {
  */
 export interface GenerateReceiptResult {
   ok: true;
+  appOnly?: boolean;
 }
 
 // ---------- getInvoiceLedger ----------
@@ -612,6 +615,7 @@ export interface PostInvoiceEventArgs {
  */
 export interface PostInvoiceEventResult {
   ok: true;
+  appOnly?: boolean;
 }
 
 // ---------- recordPayment ----------
@@ -701,6 +705,7 @@ export interface RecordPaymentResult {
   application: RecordPaymentResultApplication | null;
   creditedToAccountCents: number;
   confirmationEmailSent: boolean;
+  confirmationAppOnly?: boolean;
   householdNoPortalAccount: boolean;
   officeNoticePending: boolean;
 }
@@ -978,6 +983,7 @@ export interface ReviewAndSendDraftInvoiceArgs {
 export interface ReviewAndSendDraftInvoiceResult {
   ok: true;
   invoiceId: string;
+  appOnly?: boolean;
 }
 
 // ---------- sendInvoiceReminder ----------

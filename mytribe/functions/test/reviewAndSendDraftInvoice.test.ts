@@ -6,13 +6,26 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   resolveUid: vi.fn(),
   enqueue: vi.fn(),
+  // #1511: what the dispatcher did to each recipient's copy (see recordPayment.test.ts).
+  appOnlyUids: vi.fn<() => string[]>(),
+  suppressed: vi.fn<() => Array<{ recipientUid: string; reason: 'duplicate' | 'prefs' | 'gate' }>>(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+// #1511: the handler reads the detailed outcome. One counted mock answers both
+// entry points, so every assertion below on `enqueue` still holds.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueue,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: ((await mocks.enqueue(args)) as string[] | undefined) ?? [],
+    suppressed: mocks.suppressed(),
+    unresolved: [],
+    appOnly: mocks.appOnlyUids(),
+  }),
+}));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
@@ -25,6 +38,8 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
   mocks.enqueue.mockReset().mockResolvedValue(['n1']);
+  mocks.appOnlyUids.mockReset().mockReturnValue([]);
+  mocks.suppressed.mockReset().mockReturnValue([]);
   (writeAuditEntry as any).mockClear();
 });
 
@@ -47,7 +62,8 @@ describe('reviewAndSendDraftInvoice happy path', () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
-    expect(res).toEqual({ ok: true, invoiceId: 'inv1' });
+    // #1511: `appOnly: false` is the household's copy going out by a channel.
+    expect(res).toEqual({ ok: true, invoiceId: 'inv1', appOnly: false });
     const write = ctx.writes.find((w) => w.path === 'invoices/inv1');
     expect(write?.data.status).toBe('open');
     expect(write?.data.invoiceStatus).toBe('open');
@@ -175,6 +191,43 @@ describe('reviewAndSendDraftInvoice payment options snapshot (issue #409)', () =
         'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-9', status: 'draft', total: 40, amountDue: 40 },
       },
     });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    expect(res).toEqual({ ok: true, invoiceId: 'inv1', appOnly: false });
+  });
+});
+
+describe('#1511 reviewAndSendDraftInvoice says when the household got it in the app only', () => {
+  it('every channel off for the household: appOnly true, and the draft still flips to open', async () => {
+    mocks.appOnlyUids.mockReturnValue(['kin-uid-1']);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    expect(res).toEqual({ ok: true, invoiceId: 'inv1', appOnly: true });
+    expect(ctx.writes.find((w) => w.path === 'invoices/inv1')?.data.status).toBe('open');
+  });
+
+  it('the office copy having no channels is not the household copy having none', async () => {
+    mocks.appOnlyUids.mockReturnValue(['office-uid']);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    expect(res.appOnly).toBe(false);
+  });
+
+  it('no portal account: only the office copy exists, so the answer omits appOnly', async () => {
+    mocks.resolveUid.mockResolvedValue(null);
+    // Even an office roster with every channel off must not read as the household's answer.
+    mocks.appOnlyUids.mockReturnValue(['office-uid']);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    expect(res).toEqual({ ok: true, invoiceId: 'inv1' });
+  });
+
+  it("a household copy the dispatcher held back has no delivery to describe, so appOnly is omitted", async () => {
+    mocks.suppressed.mockReturnValue([{ recipientUid: 'kin-uid-1', reason: 'gate' }]);
+    const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
     expect(res).toEqual({ ok: true, invoiceId: 'inv1' });

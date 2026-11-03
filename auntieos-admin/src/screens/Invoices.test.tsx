@@ -450,6 +450,60 @@ describe('Invoices screen', () => {
     const detail = await screen.findByRole('dialog');
     expect(within(detail).getByText(/INV-2026-0001/)).toBeInTheDocument();
     expect(useDocById).toHaveBeenCalledWith('invoices', 'inv-new');
+    // #1511: a draft invoice claims no send, so there is no app-only line.
+    expect(screen.queryByText(/in the app only/i)).toBeNull();
+  });
+
+  it('#1511: a quote the composer sent in the app only says so, in a warning, over the opened quote', async () => {
+    createQuote.mockResolvedValue({ invoiceId: 'q-new', appOnly: true });
+    usePagedCollection.mockReturnValue(paged([]));
+    useDocById.mockReturnValue({
+      status: 'ready',
+      data: entry({ _id: 'q-new', invoiceNumber: 'Q-2026-0001', status: 'quote' }),
+    });
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [{ _id: 'kf1', firstName: 'Pat', lastName: 'Whitfield' }],
+    });
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /^new invoice$/i }));
+    await screen.findByRole('heading', { name: 'New invoice' });
+    const composer = screen.getByRole('dialog');
+    await userEvent.selectOptions(within(composer).getByLabelText('What is this'), 'quote');
+    await userEvent.selectOptions(within(composer).getByLabelText('Household'), 'kf1');
+    await screen.findByRole('checkbox');
+    await userEvent.click(within(composer).getByRole('switch', { name: /send to kinfolk now/i }));
+    await userEvent.click(screen.getByRole('button', { name: /create quote for 1 visit/i }));
+    expect(
+      await screen.findByText('Quote created and sent in the app only. Email and text are off for this household.'),
+    ).toBeInTheDocument();
+    const banner = screen.getByText('Done, but not all of it').closest('[data-tone]');
+    expect(banner).toHaveAttribute('data-tone', 'warning');
+  });
+
+  it('#1511: a quote sent by a channel, or from an older server, shows no app-only line', async () => {
+    createQuote.mockResolvedValue({ invoiceId: 'q-new' });
+    usePagedCollection.mockReturnValue(paged([]));
+    useDocById.mockReturnValue({
+      status: 'ready',
+      data: entry({ _id: 'q-new', invoiceNumber: 'Q-2026-0001', status: 'quote' }),
+    });
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [{ _id: 'kf1', firstName: 'Pat', lastName: 'Whitfield' }],
+    });
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /^new invoice$/i }));
+    await screen.findByRole('heading', { name: 'New invoice' });
+    const composer = screen.getByRole('dialog');
+    await userEvent.selectOptions(within(composer).getByLabelText('What is this'), 'quote');
+    await userEvent.selectOptions(within(composer).getByLabelText('Household'), 'kf1');
+    await screen.findByRole('checkbox');
+    await userEvent.click(within(composer).getByRole('switch', { name: /send to kinfolk now/i }));
+    await userEvent.click(screen.getByRole('button', { name: /create quote for 1 visit/i }));
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(createQuote).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/in the app only/i)).toBeNull();
   });
   // #408: there is no second button. A quote is an invoice in QUOTE status,
   // which is what the status filters above have always said, so the kind is

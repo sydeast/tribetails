@@ -964,8 +964,11 @@ const FROZEN_RESPONSE_SHAPES: Record<
   // The `{ ok, invoiceId }` family. Thin, and deliberately so: the id is the
   // only thing the caller could not already know, and on `createInvoice` /
   // `createQuote` it is SERVER-MINTED, which is the whole reason it ships.
-  createInvoice: { load: () => import('../src/admin/createInvoice'), signature: ['invoiceId', 'ok'] },
-  createQuote: { load: () => import('../src/admin/createQuote'), signature: ['invoiceId', 'ok'] },
+  // #1511: the three that send `invoice.new` add `appOnly` (optional), present
+  // when this call wrote the household's copy and true when every delivery
+  // channel was off for them.
+  createInvoice: { load: () => import('../src/admin/createInvoice'), signature: ['appOnly', 'invoiceId', 'ok'] },
+  createQuote: { load: () => import('../src/admin/createQuote'), signature: ['appOnly', 'invoiceId', 'ok'] },
   archiveInvoice: { load: () => import('../src/admin/archiveInvoice'), signature: ['invoiceId', 'ok'] },
   unarchiveInvoice: { load: () => import('../src/admin/unarchiveInvoice'), signature: ['invoiceId', 'ok'] },
   retryInvoiceCheckoutClose: {
@@ -974,7 +977,7 @@ const FROZEN_RESPONSE_SHAPES: Record<
   },
   reviewAndSendDraftInvoice: {
     load: () => import('../src/admin/reviewAndSendDraftInvoice'),
-    signature: ['invoiceId', 'ok'],
+    signature: ['appOnly', 'invoiceId', 'ok'],
   },
   // #832: `sent` / `reason` / `lastReminderAtMs` / `nextReminderAllowedAtMs`
   // say whether THIS call reminded the household, and if not, why. #1507:
@@ -984,10 +987,12 @@ const FROZEN_RESPONSE_SHAPES: Record<
     load: () => import('../src/admin/sendInvoiceReminder'),
     signature: ['appOnly', 'invoiceId', 'lastReminderAtMs', 'nextReminderAllowedAtMs', 'ok', 'reason', 'sent'],
   },
-  // Bare acks. `postInvoiceEvent` merges an ARBITRARY payload and must not
-  // start echoing the doc back: that would make the merge's result a contract.
-  postInvoiceEvent: { load: () => import('../src/admin/postInvoiceEvent'), signature: ['ok'] },
-  generateReceipt: { load: () => import('../src/admin/generateReceipt'), signature: ['ok'] },
+  // Acks. `postInvoiceEvent` must not start echoing the doc back: that would
+  // make the (since #906, delegated) write's result a contract. #1511: both
+  // carry `appOnly` (optional), which is the delegate's answer about the
+  // household's copy, not an echo of anything stored.
+  postInvoiceEvent: { load: () => import('../src/admin/postInvoiceEvent'), signature: ['appOnly', 'ok'] },
+  generateReceipt: { load: () => import('../src/admin/generateReceipt'), signature: ['appOnly', 'ok'] },
   // A download-token URL, never bytes.
   generateInvoicePdf: {
     load: () => import('../src/admin/generateInvoicePdf'),
@@ -1054,6 +1059,9 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'application.totalCents',
       'appliedCents',
       'autoApply',
+      // #1511: `confirmationAppOnly` (optional) says the household copy reached
+      // them in the app only; `confirmationEmailSent` is then false.
+      'confirmationAppOnly',
       'confirmationEmailSent',
       'creditedToAccountCents',
       'feeCents',

@@ -192,7 +192,11 @@ const CASES: Array<{
   {
     name: 'createInvoice',
     schema: CreateInvoiceResult,
-    accepts: [['the minted id', { ok: true, invoiceId: 'inv1' }]],
+    accepts: [
+      ['the minted id', { ok: true, invoiceId: 'inv1' }],
+      // #1511: the household's copy reached them in the app only.
+      ['the minted id, sent in the app only', { ok: true, invoiceId: 'inv1', appOnly: true }],
+    ],
     refuses: [
       // `ok` is a literal, so there is exactly one success channel and
       // `HttpsError` is the only failure one.
@@ -204,7 +208,10 @@ const CASES: Array<{
   {
     name: 'createQuote',
     schema: CreateQuoteResult,
-    accepts: [['the minted id', { ok: true, invoiceId: 'q1' }]],
+    accepts: [
+      ['the minted id', { ok: true, invoiceId: 'q1' }],
+      ['the minted id, sent in the app only (#1511)', { ok: true, invoiceId: 'q1', appOnly: true }],
+    ],
     refuses: [['an empty invoiceId', { ok: true, invoiceId: '' }]],
   },
   {
@@ -289,6 +296,12 @@ const CASES: Array<{
     schema: RecordPaymentResult,
     accepts: [
       ['a household payment', { ok: true, paymentId: 'pay1', kinfolkId: 'fam1', ...paymentMoney() }],
+      // #1511: the confirmation reached the household in the app only, so the
+      // email flag is false and the companion says why.
+      [
+        'a household payment whose confirmation reached them in the app only',
+        { ok: true, paymentId: 'pay1', kinfolkId: 'fam1', ...paymentMoney({ confirmationAppOnly: true }) },
+      ],
       // `''` is the admin Payments tab's standalone row: a real payment that
       // belongs to no household. Refusing it here would report every one of
       // them as a server bug.
@@ -439,10 +452,14 @@ const CASES: Array<{
   {
     name: 'postInvoiceEvent',
     schema: PostInvoiceEventResult,
-    accepts: [['the bare ack', { ok: true }]],
+    accepts: [
+      ['the bare ack', { ok: true }],
+      // #1511: the delegate's answer about the household's copy, carried through.
+      ['the ack with the app-only flag', { ok: true, appOnly: true }],
+    ],
     refuses: [
-      // This callable merges an arbitrary payload; it must not start echoing
-      // the doc back, which would make the merge's result a client contract.
+      // This callable must not start echoing the doc back, which would make
+      // the delegated write's result a client contract.
       ['an echoed invoiceId, which this callable deliberately does not ship', { ok: true, invoiceId: 'inv1' }],
       ['ok: false', { ok: false }],
     ],
@@ -450,7 +467,10 @@ const CASES: Array<{
   {
     name: 'reviewAndSendDraftInvoice',
     schema: ReviewAndSendDraftInvoiceResult,
-    accepts: [['the sent id', { ok: true, invoiceId: 'inv1' }]],
+    accepts: [
+      ['the sent id', { ok: true, invoiceId: 'inv1' }],
+      ['the sent id, in the app only (#1511)', { ok: true, invoiceId: 'inv1', appOnly: true }],
+    ],
     refuses: [['ok: false', { ok: false, invoiceId: 'inv1' }]],
   },
   {
@@ -474,7 +494,10 @@ const CASES: Array<{
   {
     name: 'generateReceipt',
     schema: GenerateReceiptResult,
-    accepts: [['the bare ack', { ok: true }]],
+    accepts: [
+      ['the bare ack', { ok: true }],
+      ['the ack with the app-only flag (#1511)', { ok: true, appOnly: false }],
+    ],
     refuses: [['a receipt url, which this callable does not produce', { ok: true, receiptUrl: 'https://x.test/r.pdf' }]],
   },
   {

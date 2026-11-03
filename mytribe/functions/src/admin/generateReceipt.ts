@@ -7,7 +7,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
-import { contentDedupeKey, enqueueNotification } from '../notifications/dispatcher';
+import { contentDedupeKey, enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { householdAppOnly } from '../notifications/appOnly';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
@@ -26,8 +27,15 @@ export const Args = z.object({
  * callable identifies the invoice in the REQUEST, and echoing an id back that
  * the caller supplied would read like a server-side confirmation of something
  * the server never minted. `.strict()`, so adding one is a deliberate act.
+ *
+ * #1511: `appOnly` is that act. Present when this call wrote the household's
+ * `invoice.receipt` record, and true when every delivery channel was off for
+ * them: the receipt notice is in their notifications list and nothing was
+ * emailed or texted. Absent when the household has no portal account, when
+ * the ledger deduped a repeat press (the earlier press did the sending) and
+ * when the dispatch failed (logged, the receipt stands).
  */
-export const Result = z.object({ ok: OkSchema }).strict();
+export const Result = z.object({ ok: OkSchema, appOnly: z.boolean().optional() }).strict();
 
 /**
  * #832: the dispatcher identity of one receipt, named by WHAT IT RECEIPTS.
@@ -85,13 +93,19 @@ export async function generateReceiptHandler(
   });
 
   const recipientUid = await resolveBillingRecipientUid(familyId);
+  // #1511: whether the household's copy reached them in the app only. Left
+  // undefined, and so omitted from the answer, unless this call wrote one.
+  let appOnly: boolean | undefined;
   try {
-    await enqueueNotification({
+    const dispatched = await enqueueNotificationDetailed({
       key: 'invoice.receipt',
       recipientUid: recipientUid ?? '',
       data: { kinfolkId: familyId, invoiceId: args.invoiceId },
       dedupeKey: receiptDedupeKey(args.invoiceId, stored, payments),
     });
+    // Per recipient, and only for a record this press wrote: a deduped repeat
+    // wrote nothing and has no delivery to describe.
+    appOnly = householdAppOnly(dispatched, recipientUid);
   } catch (err) {
     logEvent({
       severity: 'warn',
@@ -101,7 +115,7 @@ export async function generateReceiptHandler(
     });
   }
 
-  return validateResponse('generateReceipt', Result, { ok: true });
+  return validateResponse('generateReceipt', Result, { ok: true, ...(appOnly === undefined ? {} : { appOnly }) });
 }
 
 export const generateReceipt = onCall(

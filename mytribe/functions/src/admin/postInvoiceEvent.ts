@@ -62,8 +62,14 @@ export const Args = z.object({
  * callable identifies the invoice in the REQUEST, and echoing an id back that
  * the caller supplied would read like a server-side confirmation of something
  * the server never minted. `.strict()`, so adding one is a deliberate act.
+ *
+ * #1511: `appOnly` is that act, and it is not an echo. It is the delegate's
+ * answer to "did the household's copy of `invoice.new` reach them in the app
+ * only", carried through so the two installed clients that still send drafts
+ * on this wire (admin Android and the desktop console) can say so. Present
+ * and absent exactly as on `reviewAndSendDraftInvoice`.
  */
-export const Result = z.object({ ok: OkSchema }).strict();
+export const Result = z.object({ ok: OkSchema, appOnly: z.boolean().optional() }).strict();
 
 /** Money. Refused here; `recordPayment` / `markInvoicePaid` / `updateInvoice` own these. */
 export const REFUSED_MONEY_KEYS = [
@@ -283,17 +289,21 @@ export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Pr
   // the `invoice.new` dispatch — and it reads `kinfolkId` off the doc, so no
   // household id travels from the caller into the write. Its refusals surface
   // verbatim (fail loud); its `invoiceId` echo is dropped because this
-  // callable's frozen response signature is the bare ack.
-  await reviewAndSendDraftInvoiceHandler({ ...req, data: { invoiceId: args.invoiceId } });
+  // callable's frozen response signature is the ack, and its `appOnly` (#1511)
+  // is carried through because the callers on this wire display the send.
+  const sent = await reviewAndSendDraftInvoiceHandler({ ...req, data: { invoiceId: args.invoiceId } });
   logEvent({
     severity: 'info',
     function: 'postInvoiceEvent',
     event: 'invoice.draft.sent.delegated',
     uid: req.auth?.uid,
-    extra: { invoiceId: args.invoiceId, familyId: args.familyId, to: 'reviewAndSendDraftInvoice' },
+    extra: { invoiceId: args.invoiceId, familyId: args.familyId, to: 'reviewAndSendDraftInvoice', appOnly: sent.appOnly },
   });
 
-  return validateResponse('postInvoiceEvent', Result, { ok: true });
+  return validateResponse('postInvoiceEvent', Result, {
+    ok: true,
+    ...(sent.appOnly === undefined ? {} : { appOnly: sent.appOnly }),
+  });
 }
 
 export const postInvoiceEvent = onCall(

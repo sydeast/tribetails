@@ -72,7 +72,21 @@ class NotificationQuickActionsClientTest {
             sendToKinfolk = true,
         )
         assertTrue(r is WriteResult.Ok)
-        assertEquals("q_1", (r as WriteResult.Ok).value)
+        assertEquals("q_1", (r as WriteResult.Ok).value.invoiceId)
+        // #1511: no flag from the server reads as a channel send.
+        assertEquals(false, r.value.appOnly)
+    }
+
+    @Test
+    fun createQuoteDecodesTheAppOnlyFlag() = runBlocking {
+        // #1511
+        JvmFirestoreFixtures.callableResponses =
+            mapOf("createQuote" to """{"ok":true,"invoiceId":"q_1","appOnly":true}""")
+        val r = FirestoreClient().createQuote(
+            Invoice(kinfolkId = "kf1", kinfolkName = "Halbrook", invoiceNumber = "Q-1", total = 50.0, amountDue = 50.0),
+            sendToKinfolk = true,
+        )
+        assertEquals(true, (r as WriteResult.Ok).value.appOnly)
     }
 
     @Test

@@ -2,6 +2,10 @@ package com.tribetails.auntieos.data.repository
 
 import com.tribetails.auntieos.data.contracts.CreateInvoiceArgsLineItem
 import com.tribetails.auntieos.data.contracts.CreateQuoteArgsLineItem
+import com.tribetails.auntieos.data.contracts.decodeCreateInvoiceResult
+import com.tribetails.auntieos.data.contracts.decodeCreateQuoteResult
+import com.tribetails.auntieos.data.contracts.decodeGenerateReceiptResult
+import com.tribetails.auntieos.data.contracts.decodePostInvoiceEventResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
 import org.junit.Assert.assertEquals
@@ -382,6 +386,37 @@ class InvoiceRepositoryTest {
             ).appOnly,
         )
         assertEquals(null, com.tribetails.auntieos.data.contracts.decodeResendQuoteResult(null).appOnly)
+    }
+
+    // ── #1511: the four more send results, and the payment's companion flag ──
+    @Test
+    fun `#1511 the send-shaped results decode the app-only flag, null when an older server omits it`() {
+        assertEquals(true, decodeGenerateReceiptResult(mapOf("ok" to true, "appOnly" to true)).appOnly)
+        assertEquals(false, decodeGenerateReceiptResult(mapOf("ok" to true, "appOnly" to false)).appOnly)
+        assertEquals(null, decodeGenerateReceiptResult(mapOf("ok" to true)).appOnly)
+        assertEquals(null, decodeGenerateReceiptResult(null).appOnly)
+
+        assertEquals(true, decodePostInvoiceEventResult(mapOf("ok" to true, "appOnly" to true)).appOnly)
+        assertEquals(null, decodePostInvoiceEventResult(mapOf("ok" to true)).appOnly)
+
+        assertEquals(true, decodeCreateQuoteResult(mapOf("ok" to true, "invoiceId" to "q1", "appOnly" to true)).appOnly)
+        assertEquals(null, decodeCreateQuoteResult(mapOf("ok" to true, "invoiceId" to "q1")).appOnly)
+        assertEquals(true, decodeCreateInvoiceResult(mapOf("ok" to true, "invoiceId" to "i1", "appOnly" to true)).appOnly)
+        assertEquals(null, decodeCreateInvoiceResult(mapOf("ok" to true, "invoiceId" to "i1")).appOnly)
+    }
+
+    @Test
+    fun `#1511 recordPayment decodes confirmationAppOnly beside confirmationEmailSent, null when absent`() {
+        val appOnly = com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult(
+            mapOf("ok" to true, "paymentId" to "pay1", "confirmationEmailSent" to false, "confirmationAppOnly" to true),
+        )
+        assertEquals(false, appOnly.confirmationEmailSent)
+        assertEquals(true, appOnly.confirmationAppOnly)
+        val older = com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult(
+            mapOf("ok" to true, "paymentId" to "pay1", "confirmationEmailSent" to true),
+        )
+        assertEquals(true, older.confirmationEmailSent)
+        assertEquals(null, older.confirmationAppOnly)
     }
 
     // ── linkInvoiceSessions result decode ────────────────────────────────────

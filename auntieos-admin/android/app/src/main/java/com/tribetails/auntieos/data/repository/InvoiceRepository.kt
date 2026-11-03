@@ -47,6 +47,10 @@ import com.tribetails.auntieos.data.contracts.UpdateInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeUpdateInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeCreateInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeCreateQuoteResult
+import com.tribetails.auntieos.data.contracts.GenerateReceiptResult
+import com.tribetails.auntieos.data.contracts.decodeGenerateReceiptResult
+import com.tribetails.auntieos.data.contracts.PostInvoiceEventResult
+import com.tribetails.auntieos.data.contracts.decodePostInvoiceEventResult
 import com.tribetails.auntieos.data.contracts.decodeGenerateInvoicePdfResult
 import com.tribetails.auntieos.data.contracts.decodeGetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.decodeLinkInvoiceSessionsResult
@@ -68,6 +72,14 @@ import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.tasks.await
 import com.tribetails.auntieos.util.runCatchingCancellable
 
+/**
+ * #1511: what `createInvoice` / `createQuote` answered. [appOnly] is true when
+ * the household's `invoice.new` copy reached them in the app only, with every
+ * delivery channel off for them (#1505). False from a function deployed before
+ * #1511, from a replay, from a quote that was not sent and when the household
+ * has no portal account: the plain "created" those always had.
+ */
+data class CreatedInvoice(val invoiceId: String, val appOnly: Boolean = false)
 /**
  * The INVOICE domain repo (W4-1): invoices, quotes, and the payment ledger that
  * settles them. First of the per-domain repos carved out of the `AuntieRepository`
@@ -171,7 +183,7 @@ class InvoiceRepository(
         lineItems: List<CreateInvoiceArgsLineItem>? = null,
         invoiceDiscountCents: Long? = null,
         idempotencyKey: String? = null,
-    ): Result<String> = runCatchingCancellable {
+    ): Result<CreatedInvoice> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         // In test mode force the invoice's household to the sandbox kinfolk so the
@@ -187,7 +199,11 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createInvoice").call(args.toPayload()).awaitCallable().data as? Map<String, Any?>
             ?: error("createInvoice: non-map payload")
-        decodeCreateInvoiceResult(raw).invoiceId.ifBlank { error("createInvoice: missing invoiceId") }
+        val decoded = decodeCreateInvoiceResult(raw)
+        CreatedInvoice(
+            invoiceId = decoded.invoiceId.ifBlank { error("createInvoice: missing invoiceId") },
+            appOnly = decoded.appOnly == true,
+        )
     }.onFailure { AuntieLog.e("Failed to create invoice", it) }
 
     /**
@@ -216,7 +232,7 @@ class InvoiceRepository(
         lineItems: List<CreateQuoteArgsLineItem>? = null,
         invoiceDiscountCents: Long? = null,
         idempotencyKey: String? = null,
-    ): Result<String> = runCatchingCancellable {
+    ): Result<CreatedInvoice> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         val args = createQuoteArgs(
@@ -231,7 +247,11 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createQuote").call(args.toPayload()).awaitCallable().data as? Map<String, Any?>
             ?: error("createQuote: non-map payload")
-        decodeCreateQuoteResult(raw).invoiceId.ifBlank { error("createQuote: missing invoiceId") }
+        val decoded = decodeCreateQuoteResult(raw)
+        CreatedInvoice(
+            invoiceId = decoded.invoiceId.ifBlank { error("createQuote: missing invoiceId") },
+            appOnly = decoded.appOnly == true,
+        )
     }.onFailure { AuntieLog.e("Failed to create quote", it) }
 
     // --- The un-invoiced queue (#408) ---
@@ -450,13 +470,21 @@ class InvoiceRepository(
         decodeMarkInvoicePaidResult(raw)
     }.onFailure { AuntieLog.e("markInvoicePaid failed for $invoiceId", it) }
 
-    /** Slice 2: marks an invoice receipted via the generateReceipt callable. */
-    suspend fun generateReceipt(invoiceId: String): Result<Unit> = runCatchingCancellable {
+    /**
+     * Slice 2: marks an invoice receipted via the generateReceipt callable.
+     *
+     * #1511: answers the server's `appOnly`, true when the receipt notice
+     * reached the household in the app only (every delivery channel off for
+     * them). The generated decoder reads a missing key as null, which the view
+     * models treat as a channel send, so an older function still works.
+     */
+    suspend fun generateReceipt(invoiceId: String): Result<GenerateReceiptResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        functions.getHttpsCallable("generateReceipt")
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("generateReceipt")
             .call(GenerateReceiptArgs(invoiceId = invoiceId).toPayload())
-            .awaitCallable()
-        Unit
+            .awaitCallable().data as? Map<String, Any?>
+        decodeGenerateReceiptResult(raw)
     }.onFailure { AuntieLog.e("generateReceipt failed for $invoiceId", it) }
 
     /**
@@ -498,18 +526,26 @@ class InvoiceRepository(
      * refuses every money and lifecycle key (`total`, `amountDue`, any `status`
      * other than `sent`, the `paymentAppliedNotice*` stamps) with a message
      * naming markInvoicePaid / recordPayment / updateInvoice instead.
+     *
+     * #1511: answers the delegate's `appOnly`, carried through `postInvoiceEvent`,
+     * true when the invoice reached the household in the app only (every
+     * delivery channel off for them). A missing key decodes as null, which the
+     * view models treat as a channel send, so an older function still works.
      */
-    suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): Result<Unit> = runCatchingCancellable {
-        authGate.ensureAuthenticated()
-        val mode = authGate.requireTestMode()
-        val args = PostInvoiceEventArgs(
-            familyId = mode.scopedKinfolkId(familyId),
-            invoiceId = invoiceId,
-            payload = PostInvoiceEventArgsPayload(status = "sent"),
-        )
-        functions.getHttpsCallable("postInvoiceEvent").call(args.toPayload()).awaitCallable()
-        Unit
-    }.onFailure { AuntieLog.e("reviewAndSendDraftInvoice failed for $invoiceId", it) }
+    suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): Result<PostInvoiceEventResult> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            val mode = authGate.requireTestMode()
+            val args = PostInvoiceEventArgs(
+                familyId = mode.scopedKinfolkId(familyId),
+                invoiceId = invoiceId,
+                payload = PostInvoiceEventArgsPayload(status = "sent"),
+            )
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("postInvoiceEvent").call(args.toPayload())
+                .awaitCallable().data as? Map<String, Any?>
+            decodePostInvoiceEventResult(raw)
+        }.onFailure { AuntieLog.e("reviewAndSendDraftInvoice failed for $invoiceId", it) }
 
     /**
      * Sends a DECLINED quote back out once the office has revised it (issue #448).

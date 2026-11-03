@@ -91,8 +91,15 @@ const STAFF_UID = 'staff-uid-1';
 /** One row per copy that actually reached a person. */
 let delivered: Array<{ key: string; recipientUid: string; household: boolean }>;
 let ledger: Map<string, number>;
+/** #1511: recipients whose record is written with every delivery channel off. */
+let appOnlyUids: string[];
 
-type FakeOutcome = { written: string[]; suppressed: never[]; unresolved: Array<{ resolver: string; error: string }> };
+type FakeOutcome = {
+  written: string[];
+  suppressed: never[];
+  unresolved: Array<{ resolver: string; error: string }>;
+  appOnly: string[];
+};
 
 function fakeEnqueue(args: EnqueueArgs): FakeOutcome {
   const recipients: Array<{ uid: string; household: boolean }> = [];
@@ -112,6 +119,7 @@ function fakeEnqueue(args: EnqueueArgs): FakeOutcome {
   const identity = dedupeIdentityOf(args, resolveTargetRef(args));
   const windowMs = dedupeWindowOf(args);
   const ids: string[] = [];
+  const appOnly: string[] = [];
   for (const r of recipients) {
     const k = `${args.key}|${identity}|${r.uid}`;
     const last = ledger.get(k);
@@ -119,13 +127,16 @@ function fakeEnqueue(args: EnqueueArgs): FakeOutcome {
     ledger.set(k, Date.now());
     delivered.push({ key: args.key, recipientUid: r.uid, household: r.household });
     ids.push(`n${delivered.length}`);
+    // As the real dispatcher does (#1507): reported only for a record written.
+    if (appOnlyUids.includes(r.uid)) appOnly.push(r.uid);
   }
-  return { written: ids, suppressed: [], unresolved };
+  return { written: ids, suppressed: [], unresolved, appOnly };
 }
 
 beforeEach(() => {
   delivered = [];
   ledger = new Map();
+  appOnlyUids = [];
   mocks.roster.state = 'on';
   mocks.enqueue.mockReset().mockImplementation(async (args: EnqueueArgs) => fakeEnqueue(args));
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
@@ -608,6 +619,42 @@ describe('#866 recordPayment: a retry of the same submission', () => {
     await adminApply(40, false, KEY);
     await adminApply(40, false, KEY);
     expect(appliedCount()).toBe(0);
+  });
+
+  it('#1511 a confirmation that reached the household in the app only is stamped so, and a retry past the ledger window sends nothing more', async () => {
+    seedInvoice();
+    appOnlyUids = ['kin-uid-1'];
+    const first = await adminApply(40, true, KEY);
+    expect(first.confirmationEmailSent).toBe(false);
+    expect(first.confirmationAppOnly).toBe(true);
+    expect(first.householdNoPortalAccount).toBe(false);
+    // The row says what happened: not an email, an app-only record.
+    expect(docs[`payments/${KEY}`]!['confirmationEmailSent']).toBe(false);
+    expect(docs[`payments/${KEY}`]!['confirmationAppOnly']).toBe(true);
+    expect(appliedCount()).toBe(1);
+
+    // Eight days on, the dispatcher ledger has forgotten this payment, so only
+    // the stamp can stop a second household copy. The record exists; sending
+    // again would not add a channel the household has turned off.
+    later(8 * 24 * HOUR);
+    const retry = await adminApply(40, true, KEY);
+    expect(appliedCount()).toBe(1);
+    expect(staffCount()).toBe(1);
+    // And the replay still says app-only, off the row.
+    expect(retry.confirmationEmailSent).toBe(false);
+    expect(retry.confirmationAppOnly).toBe(true);
+  });
+
+  it('#1511 a channel send answers confirmationAppOnly false, on the first attempt and on its replay', async () => {
+    seedInvoice();
+    const first = await adminApply(40, true, KEY);
+    expect(first.confirmationEmailSent).toBe(true);
+    expect(first.confirmationAppOnly).toBe(false);
+    expect(docs[`payments/${KEY}`]).not.toHaveProperty('confirmationAppOnly', true);
+    later(HOUR);
+    const retry = await adminApply(40, true, KEY);
+    expect(retry.confirmationEmailSent).toBe(true);
+    expect(retry.confirmationAppOnly).toBe(false);
   });
 
   it('ticked, settling, household has no portal account: a retry 25 hours later sends no second office copy', async () => {

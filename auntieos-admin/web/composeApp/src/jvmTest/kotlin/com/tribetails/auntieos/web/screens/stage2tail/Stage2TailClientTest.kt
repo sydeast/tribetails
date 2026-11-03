@@ -70,6 +70,16 @@ class Stage2TailClientTest {
         JvmFirestoreFixtures.callableResponses = mapOf("postInvoiceEvent" to """{"ok":true}""")
         val r = FirestoreClient().reviewAndSendDraftInvoice("inv_1", "kf1")
         assertTrue(r is WriteResult.Ok)
+        // #1511: a bare ack is a channel send, as it always read.
+        assertEquals(false, (r as WriteResult.Ok).value.appOnly)
+    }
+
+    @Test
+    fun reviewAndSendDraftDecodesTheAppOnlyFlagCarriedThroughPostInvoiceEvent() = runBlocking {
+        // #1511
+        JvmFirestoreFixtures.callableResponses = mapOf("postInvoiceEvent" to """{"ok":true,"appOnly":true}""")
+        val r = FirestoreClient().reviewAndSendDraftInvoice("inv_1", "kf1")
+        assertEquals(true, (r as WriteResult.Ok).value.appOnly)
     }
 
     // ---- batchUpdateBookings ----

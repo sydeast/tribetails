@@ -7,7 +7,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEventFn }));
 
 import { DEDUPE_COLLECTION, enqueueNotificationDetailed } from '../src/notifications/dispatcher';
 import { promoteQueuedNotification } from '../src/notifications/promoteQueued';
-import { reachedAppOnly } from '../src/notifications/appOnly';
+import { householdAppOnly, reachedAppOnly } from '../src/notifications/appOnly';
 import { notificationDisabledFor } from '../src/notifications/prefs';
 import { getNotificationDef } from '../src/notifications/catalog';
 
@@ -224,6 +224,28 @@ describe('#1507 reachedAppOnly on a hand-built outcome', () => {
   it('a blank recipient asks about the whole call, as a caller with an unresolved uid does', () => {
     const outcome = { written: ['n1'], suppressed: [], unresolved: [], appOnly: ['someone'] };
     expect(reachedAppOnly(outcome, '')).toBe(true);
+  });
+});
+
+describe('#1511 householdAppOnly: the optional answer for a both-audience send', () => {
+  const base = { written: ['n1', 'n2'], suppressed: [], unresolved: [] };
+
+  it('answers for the household alone: the office copy having no channels is not theirs', () => {
+    expect(householdAppOnly({ ...base, appOnly: ['kinUid'] }, 'kinUid')).toBe(true);
+    expect(householdAppOnly({ ...base, appOnly: ['admin1'] }, 'kinUid')).toBe(false);
+    expect(householdAppOnly(base, 'kinUid')).toBe(false);
+  });
+
+  it('is undefined with no household uid, however the office copy went', () => {
+    expect(householdAppOnly({ ...base, appOnly: ['admin1'] }, null)).toBeUndefined();
+    expect(householdAppOnly({ ...base, appOnly: ['admin1'] }, '')).toBeUndefined();
+  });
+
+  it('is undefined when the household copy was held back, whatever the reason', () => {
+    for (const reason of ['duplicate', 'prefs', 'gate'] as const) {
+      const outcome = { ...base, suppressed: [{ recipientUid: 'kinUid', reason }], appOnly: [] };
+      expect(householdAppOnly(outcome, 'kinUid'), reason).toBeUndefined();
+    }
   });
 });
 

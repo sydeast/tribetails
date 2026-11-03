@@ -7,6 +7,7 @@ import com.tribetails.auntieos.web.data.JvmFirestoreFixtures
 import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
 import com.tribetails.auntieos.web.data.RecordPaymentOutcome
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.decodeRecordPaymentOutcome
 import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
 import com.tribetails.auntieos.web.data.recordPaymentRefusalText
 import com.tribetails.auntieos.web.data.submitInvoicePayment
@@ -239,6 +240,28 @@ class RecordPaymentCallableClientTest {
             "Payment recorded. The invoice is paid in full.",
             recordPaymentOutcomeMessage(outcome(sent = false), false),
         )
+    }
+
+    @Test
+    fun aConfirmationThatReachedTheHouseholdInTheAppOnlyIsSaidSoNeverAsDidNotGoOut() {
+        // #1511
+        val appOnly = outcome(sent = false).copy(confirmationAppOnly = true)
+        val m = recordPaymentOutcomeMessage(appOnly, true)
+        assertEquals(
+            "Payment recorded. The invoice is paid in full. The confirmation reached the household in the app only. " +
+                "Email and text are off for this household.",
+            m,
+        )
+        // Not asked for, so nothing is said, whatever the flag says.
+        assertEquals("Payment recorded. The invoice is paid in full.", recordPaymentOutcomeMessage(appOnly, false))
+    }
+
+    @Test
+    fun theAppOnlyFlagDecodesAndOnlyAnExplicitTrue() {
+        // #1511
+        val body = """{"ok":true,"paymentId":"pay_1","confirmationEmailSent":false,"confirmationAppOnly":true}"""
+        assertEquals(true, decodeRecordPaymentOutcome(body).confirmationAppOnly)
+        assertEquals(false, decodeRecordPaymentOutcome(okBody).confirmationAppOnly)
     }
 
     @Test

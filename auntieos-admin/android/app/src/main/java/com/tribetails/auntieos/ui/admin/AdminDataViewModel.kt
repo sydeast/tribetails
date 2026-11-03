@@ -642,9 +642,11 @@ class AdminDataViewModel(
         )
         viewModelScope.launch {
             _isLoading.value = true
-            invoiceRepository.createQuote(invoice, sendToKinfolk, idempotencyKey = key).onSuccess {
+            invoiceRepository.createQuote(invoice, sendToKinfolk, idempotencyKey = key).onSuccess { created ->
                 releaseInvoiceCreateKey()
-                _invoiceActionMessage.value = if (sendToKinfolk) "Quote created and sent." else "Quote created."
+                // #1511: honest about where a sent quote went.
+                _invoiceActionMessage.value =
+                    com.tribetails.auntieos.domain.quoteCreatedMessage(sent = sendToKinfolk, appOnly = created.appOnly)
                 loadInvoices() // Refresh the list
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to create quote"
@@ -705,12 +707,19 @@ class AdminDataViewModel(
                     idempotencyKey = key,
                 )
             }
-            result.onSuccess {
+            result.onSuccess { created ->
                 releaseInvoiceCreateKey()
-                _invoiceActionMessage.value = when {
-                    request.kind == InvoiceCreateKind.QUOTE && request.sendToKinfolk -> "Quote created and sent."
-                    request.kind == InvoiceCreateKind.QUOTE -> "Quote created."
-                    else -> "Invoice created as a draft. Nothing has been sent to the household yet."
+                _invoiceActionMessage.value = when (request.kind) {
+                    // #1511: honest about where a sent quote went.
+                    InvoiceCreateKind.QUOTE ->
+                        com.tribetails.auntieos.domain.quoteCreatedMessage(
+                            sent = request.sendToKinfolk,
+                            appOnly = created.appOnly,
+                        )
+                    // The draft's `appOnly` is decoded and deliberately not shown:
+                    // this sentence claims no send (see #1513).
+                    InvoiceCreateKind.INVOICE ->
+                        "Invoice created as a draft. Nothing has been sent to the household yet."
                 }
                 loadInvoices() // Refresh the list
             }.onFailure { throwable ->
@@ -718,7 +727,8 @@ class AdminDataViewModel(
                     ?: if (request.kind == InvoiceCreateKind.QUOTE) "Failed to create quote" else "Failed to create invoice"
                 _isLoading.value = false
             }
-            onResult(result)
+            // The caller wants the id to land on; the send flag is this screen's to say.
+            onResult(result.map { it.invoiceId })
         }
     }
 
@@ -750,9 +760,12 @@ class AdminDataViewModel(
     fun generateReceipt(invoiceId: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            invoiceRepository.generateReceipt(invoiceId).onSuccess {
+            invoiceRepository.generateReceipt(invoiceId).onSuccess { result ->
                 loadInvoices() // Refresh to reflect receiptIssuedAt
-                _invoiceActionMessage.value = "Receipt generated."
+                // #1511: honest about where the notice went. A missing flag (an
+                // older function) is a channel send, as it always read.
+                _invoiceActionMessage.value =
+                    com.tribetails.auntieos.domain.receiptGeneratedMessage(result.appOnly == true)
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to generate receipt"
                 _isLoading.value = false
@@ -831,7 +844,7 @@ class AdminDataViewModel(
             return
         }
         viewModelScope.launch {
-            invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId).onSuccess {
+            invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId).onSuccess { sent ->
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope = viewModelScope,
                     repository = repository,
@@ -841,7 +854,8 @@ class AdminDataViewModel(
                     targetCollection = "invoices",
                 )
                 loadInvoices()
-                _invoiceActionMessage.value = "Draft sent."
+                // #1511: as for the receipt above.
+                _invoiceActionMessage.value = com.tribetails.auntieos.domain.draftSentMessage(sent.appOnly == true)
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to send draft"
             }

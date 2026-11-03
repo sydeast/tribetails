@@ -55,7 +55,16 @@ describe('createInvoice', () => {
     call.mockResolvedValue({ ok: true, invoiceId: 'inv-1' });
     const result = await createInvoice(input);
     expect(call).toHaveBeenCalledWith('createInvoice', input, { idempotent: false });
-    expect(result).toEqual({ invoiceId: 'inv-1' });
+    // #1511: a function from before #1511 omits `appOnly`; that reads as false.
+    expect(result).toEqual({ invoiceId: 'inv-1', appOnly: false });
+  });
+
+  it('#1511: decodes the app-only flag, and only an explicit true', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-1', appOnly: true });
+    await expect(createInvoice(invoiceInput())).resolves.toEqual({ invoiceId: 'inv-1', appOnly: true });
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-1', appOnly: false });
+    await expect(createInvoice(invoiceInput())).resolves.toEqual({ invoiceId: 'inv-1', appOnly: false });
   });
 
   it('propagates a rejection (fail loud, never swallowed)', async () => {
@@ -72,7 +81,16 @@ describe('createQuote', () => {
     call.mockResolvedValue({ ok: true, invoiceId: 'inv-2' });
     const result = await createQuote(input);
     expect(call).toHaveBeenCalledWith('createQuote', input, { idempotent: false });
-    expect(result).toEqual({ invoiceId: 'inv-2' });
+    expect(result).toEqual({ invoiceId: 'inv-2', appOnly: false });
+  });
+
+  it('#1511: decodes the app-only flag of a quote the create sent', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'q-2', appOnly: true });
+    await expect(createQuote({ ...invoiceInput({ status: '' }), sendToKinfolk: true })).resolves.toEqual({
+      invoiceId: 'q-2',
+      appOnly: true,
+    });
   });
 });
 
@@ -161,8 +179,18 @@ describe('generateReceipt', () => {
   it('sends only { invoiceId }', async () => {
     call.mockReset();
     call.mockResolvedValue({ ok: true });
-    await generateReceipt('inv-4');
+    // #1511: a bare ack, from an older function or a call that wrote no
+    // household copy, is a channel send as far as the toast is concerned.
+    await expect(generateReceipt('inv-4')).resolves.toEqual({ appOnly: false });
     expect(call).toHaveBeenCalledWith('generateReceipt', { invoiceId: 'inv-4' });
+  });
+
+  it('#1511: decodes the app-only flag, and only an explicit true', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, appOnly: true });
+    await expect(generateReceipt('inv-4')).resolves.toEqual({ appOnly: true });
+    call.mockResolvedValue({ ok: true, appOnly: false });
+    await expect(generateReceipt('inv-4')).resolves.toEqual({ appOnly: false });
   });
 });
 
@@ -226,8 +254,16 @@ describe('reviewAndSendDraftInvoice', () => {
   it('calls the dedicated reviewAndSendDraftInvoice callable with just { invoiceId }', async () => {
     call.mockReset();
     call.mockResolvedValue({ ok: true, invoiceId: 'inv-6' });
-    await reviewAndSendDraftInvoice('inv-6');
+    await expect(reviewAndSendDraftInvoice('inv-6')).resolves.toEqual({ appOnly: false });
     expect(call).toHaveBeenCalledWith('reviewAndSendDraftInvoice', { invoiceId: 'inv-6' });
+  });
+
+  it('#1511: decodes the app-only flag, and only an explicit true', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-6', appOnly: true });
+    await expect(reviewAndSendDraftInvoice('inv-6')).resolves.toEqual({ appOnly: true });
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-6', appOnly: false });
+    await expect(reviewAndSendDraftInvoice('inv-6')).resolves.toEqual({ appOnly: false });
   });
 
   it('fails loud on rejection', async () => {

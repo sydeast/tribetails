@@ -1150,8 +1150,16 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // app-only send (#1507): the sentence says no email or text went out,
         // and the banner's tone has to agree with it.
         if (!reminder.sent || reminder.appOnly) incomplete = true;
-      } else if (meta.key === 'reviewSend') await reviewAndSendDraftInvoice(invoice._id);
-      else if (meta.key === 'markPaid') {
+      } else if (meta.key === 'reviewSend') {
+        const sent = await reviewAndSendDraftInvoice(invoice._id);
+        // #1511: the invoice is in the household's notifications list and
+        // nothing was emailed or texted, so "Draft sent." alone would read as
+        // an email that does not exist.
+        if (sent.appOnly) {
+          outcome = `Draft sent in the app only. ${APP_ONLY_NOTE}`;
+          incomplete = true;
+        }
+      } else if (meta.key === 'markPaid') {
         const method = paidMethod.trim();
         const reference = paidReference.trim();
         const typed = paidAmount.trim();
@@ -1307,7 +1315,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             // the same money against the same bill a second time. The Apply
             // amount for this flow IS what markInvoicePaid collected.
             // #866: the server says WHY, so the note does not have to guess.
-            if (paidSendConfirmation && !ledgerRow.confirmationEmailSent) {
+            // #1511: an app-only confirmation is in the household's notifications
+            // list with nothing emailed or texted; it is neither "sent" nor "did
+            // not go out", and it is read first so the next branch cannot call it
+            // the latter.
+            if (paidSendConfirmation && ledgerRow.confirmationAppOnly === true) {
+              incomplete = true;
+              ledgerNote += ` The confirmation reached the household in the app only. ${APP_ONLY_NOTE}`;
+            } else if (paidSendConfirmation && !ledgerRow.confirmationEmailSent) {
               incomplete = true;
               ledgerNote += ledgerRow.householdNoPortalAccount
                 ? ' The confirmation email did not go out: the household has no portal account. The payment itself is recorded.'
@@ -1348,7 +1363,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // Both halves of the panel below now describe a stale invoice: the
         // payment just written is in neither list.
         reloadLedger();
-      } else await generateReceipt(invoice._id);
+      } else {
+        const issued = await generateReceipt(invoice._id);
+        // #1511: as for the draft send above.
+        if (issued.appOnly) {
+          outcome = `Receipt issued in the app only. ${APP_ONLY_NOTE}`;
+          incomplete = true;
+        }
+      }
 
       setBusy(false);
       setNoticeIncomplete(incomplete);

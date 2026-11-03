@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.CreatedInvoice
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
@@ -116,7 +117,7 @@ class InvoiceCreateIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal")) andThen
-                Result.success("inv-1")
+                Result.success(CreatedInvoice("inv-1"))
             val v = vm()
             val r = request()
 
@@ -135,7 +136,7 @@ class InvoiceCreateIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal")) andThen
-                Result.success("inv-2")
+                Result.success(CreatedInvoice("inv-2"))
             val v = vm()
 
             v.composeInvoice(request(total = 120.0))
@@ -153,7 +154,7 @@ class InvoiceCreateIdempotencyTest {
     fun `a created invoice releases the key, so the next one is its own bill`() =
         runTest(testDispatcher) {
             coEvery { invoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns
-                Result.success("inv-1")
+                Result.success(CreatedInvoice("inv-1"))
             val v = vm()
             val r = request()
 
@@ -181,7 +182,7 @@ class InvoiceCreateIdempotencyTest {
             coEvery { invoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal"))
             coEvery { invoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns
-                Result.success("q-1")
+                Result.success(CreatedInvoice("q-1"))
             val v = vm()
 
             v.composeInvoice(request(kind = InvoiceCreateKind.INVOICE))
@@ -201,7 +202,7 @@ class InvoiceCreateIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal")) andThen
-                Result.success("q-1")
+                Result.success(CreatedInvoice("q-1"))
             val v = vm()
             val r = request(kind = InvoiceCreateKind.QUOTE, sendToKinfolk = true)
 
@@ -225,7 +226,7 @@ class InvoiceCreateIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal")) andThen
-                Result.success("inv-1")
+                Result.success(CreatedInvoice("inv-1"))
             val v = vm()
 
             v.createInvoice(TestFixtures.invoice1)
@@ -243,7 +244,7 @@ class InvoiceCreateIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal")) andThen
-                Result.success("q-1")
+                Result.success(CreatedInvoice("q-1"))
             val v = vm()
 
             v.createQuote(TestFixtures.invoice1, sendToKinfolk = true)
@@ -265,7 +266,7 @@ class InvoiceCreateIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.createQuote(any(), any(), any(), any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal")) andThen
-                Result.success("q-1")
+                Result.success(CreatedInvoice("q-1"))
             val v = vm()
 
             v.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
@@ -322,7 +323,7 @@ class InvoiceCreateIdempotencyTest {
         runTest(testDispatcher) {
             coEvery { invoiceRepo.createInvoice(any(), any(), any(), any(), any()) } returns
                 Result.failure(RuntimeException("internal")) andThen
-                Result.success("inv-1")
+                Result.success(CreatedInvoice("inv-1"))
             coEvery { invoiceRepo.createPayment(any(), any()) } returns
                 Result.failure(RuntimeException("internal"))
             val v = vm()

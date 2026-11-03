@@ -9,7 +9,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { householdAppOnly } from '../notifications/appOnly';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
@@ -76,12 +77,19 @@ function normalizedStatus(d: InvoiceDoc): string {
  * is: the contract guard freezes it and decision 2 generates the clients'
  * types from it. `.strict()`, so an added field is reported rather than
  * absorbed.
+ *
+ * #1511: `appOnly` is present when this call wrote the household's copy of
+ * `invoice.new`, and true when every delivery channel was off for them: the
+ * invoice is in their notifications list and nothing was emailed or texted.
+ * Absent when the household has no portal account, so only the office copy
+ * was written and there is no household delivery to describe.
  */
 export const Result = z
   .object({
     ok: OkSchema,
     /** Echoed back so a caller batching several calls can pair up the answers. */
     invoiceId: z.string().min(1),
+    appOnly: z.boolean().optional(),
   })
   .strict();
 export async function reviewAndSendDraftInvoiceHandler(
@@ -133,13 +141,18 @@ export async function reviewAndSendDraftInvoiceHandler(
   // Fail loud: if dispatch throws, the callable surfaces it (no swallow) and
   // the invoice stays in DRAFT, so the admin sees the send did NOT happen
   // rather than a silent no-op paired with a flipped status.
-  await enqueueNotification({
+  const dispatched = await enqueueNotificationDetailed({
     key: 'invoice.new',
     recipientUid: recipientUid ?? '',
     data: { kinfolkId: familyId, invoiceId: args.invoiceId },
     targetType: 'invoice',
     targetId: args.invoiceId,
   });
+  // #1511: read for the household alone. `invoice.new` also writes an office
+  // copy, and the office's email is not the household's. With no household
+  // uid, or a household copy the dispatcher held back, there is no household
+  // delivery to describe, and the answer omits it.
+  const appOnly = householdAppOnly(dispatched, recipientUid);
 
   const update = {
     status: 'open',
@@ -193,7 +206,11 @@ export async function reviewAndSendDraftInvoiceHandler(
     extra: { invoiceId: args.invoiceId, kinfolkId: familyId },
   });
 
-  return validateResponse('reviewAndSendDraftInvoice', Result, { ok: true, invoiceId: args.invoiceId });
+  return validateResponse('reviewAndSendDraftInvoice', Result, {
+    ok: true,
+    invoiceId: args.invoiceId,
+    ...(appOnly === undefined ? {} : { appOnly }),
+  });
 }
 
 export const reviewAndSendDraftInvoice = onCall(

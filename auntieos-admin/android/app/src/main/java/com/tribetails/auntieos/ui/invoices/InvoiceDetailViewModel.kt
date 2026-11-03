@@ -383,11 +383,16 @@ class InvoiceDetailViewModel(
                 .onFailure { AuntieLog.e("Legacy payment row failed for invoice $invoiceId", it) }
             // #866: this call is the household confirmation's only sender, so a
             // confirmation she asked for and did not get is said in the toast.
+            // #1511: the server's word that the confirmation reached the household
+            // in the app only. Read only when she asked for one.
+            val confirmationAppOnly =
+                payment.sendConfirmationEmail && ledgerRow.getOrNull()?.confirmationAppOnly == true
             val confirmationNote = recordPaymentConfirmationNote(
                 requested = payment.sendConfirmationEmail,
                 confirmationSent = ledgerRow.getOrNull()?.confirmationEmailSent,
                 householdNoPortalAccount = ledgerRow.getOrNull()?.householdNoPortalAccount == true,
                 officeNoticePending = ledgerRow.getOrNull()?.officeNoticePending == true,
+                confirmationAppOnly = confirmationAppOnly,
             )
 
             com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -414,7 +419,9 @@ class InvoiceDetailViewModel(
                 toastMessage = recordPaymentToast(settlement) + confirmationNote +
                     recordPaymentCreditNote(ledgerRow.getOrNull()?.creditedToAccountCents),
                 toastVisible = true,
-                toastIsError = false,
+                // #1511: an app-only confirmation is not the green toast. The words
+                // say no email or text went out, and the tone agrees with them.
+                toastIsError = confirmationAppOnly,
             )
         }
     }
@@ -575,7 +582,7 @@ class InvoiceDetailViewModel(
         _uiState.value = _uiState.value.copy(generatingReceipt = true)
         viewModelScope.launch {
             invoiceRepository.generateReceipt(invoiceId)
-                .onSuccess {
+                .onSuccess { result ->
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
                         repository       = repository,
@@ -585,11 +592,14 @@ class InvoiceDetailViewModel(
                         targetCollection = "invoices",
                     )
                     reloadInvoiceQuietly(invoiceId)
+                    // #1511: an app-only send is not the green toast. A missing flag
+                    // (an older function) is a channel send, as it always read.
+                    val appOnly = result.appOnly == true
                     _uiState.value = _uiState.value.copy(
                         generatingReceipt = false,
-                        toastMessage = "Receipt generated.",
+                        toastMessage = com.tribetails.auntieos.domain.receiptGeneratedMessage(appOnly),
                         toastVisible = true,
-                        toastIsError = false,
+                        toastIsError = appOnly,
                     )
                 }
                 .onFailure { err ->
@@ -850,7 +860,7 @@ class InvoiceDetailViewModel(
         _uiState.value = _uiState.value.copy(sendingDraft = true)
         viewModelScope.launch {
             invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId)
-                .onSuccess {
+                .onSuccess { sent ->
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
                         repository       = repository,
@@ -860,11 +870,13 @@ class InvoiceDetailViewModel(
                         targetCollection = "invoices",
                     )
                     reloadInvoiceQuietly(invoice.id)
+                    // #1511: as for the receipt above.
+                    val appOnly = sent.appOnly == true
                     _uiState.value = _uiState.value.copy(
                         sendingDraft = false,
-                        toastMessage = "Draft sent.",
+                        toastMessage = com.tribetails.auntieos.domain.draftSentMessage(appOnly),
                         toastVisible = true,
-                        toastIsError = false,
+                        toastIsError = appOnly,
                     )
                 }
                 .onFailure { err ->
@@ -1199,15 +1211,22 @@ internal fun recordPaymentToast(settlement: MarkInvoicePaidResult): String = whe
  * [officeNoticePending] is the office copy not going out because the admin
  * roster could not be read, which has nothing to do with the household.
  * Pure; unit-tested.
+ *
+ * #1511: [confirmationAppOnly] is the server's word that the confirmation was
+ * written to the household's notifications list with every delivery channel
+ * off. It is read before the "did not go out" branches, because the record
+ * exists and only the email does not.
  */
 internal fun recordPaymentConfirmationNote(
     requested: Boolean,
     confirmationSent: Boolean?,
     householdNoPortalAccount: Boolean = false,
     officeNoticePending: Boolean = false,
+    confirmationAppOnly: Boolean = false,
 ): String {
     val household = when {
         !requested || confirmationSent == true -> ""
+        confirmationAppOnly -> com.tribetails.auntieos.domain.PAYMENT_CONFIRMATION_APP_ONLY_NOTE
         confirmationSent == null ->
             " The confirmation email did not go out, because the payment ledger row did not save. Let the household know another way."
         householdNoPortalAccount ->

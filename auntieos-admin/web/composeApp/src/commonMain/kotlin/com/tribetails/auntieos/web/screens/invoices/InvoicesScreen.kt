@@ -39,8 +39,11 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.invoiceSentMessage
 import com.tribetails.auntieos.web.data.lastReminderLabel
 import com.tribetails.auntieos.web.data.mintInvoiceIdempotencyKey
+import com.tribetails.auntieos.web.data.quoteCreatedMessage
+import com.tribetails.auntieos.web.data.receiptGeneratedMessage
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
 import com.tribetails.auntieos.web.data.mintQuoteIdempotencyKey
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -158,11 +161,13 @@ fun InvoicesScreen(
      */
     var reminderRefusalNotice by remember { mutableStateOf<String?>(null) }
     /**
-     * #1507: the notice text of a reminder that reached the household in the app
+     * #1507: the notice text of a send that reached the household in the app
      * only. Same mechanism as the refusal above: Warning while that text is on
      * screen, because nothing was emailed or texted and the words say so.
+     * #1511: set by every send this screen reports (reminder, receipt, draft
+     * send, created quote), not the reminder alone.
      */
-    var reminderAppOnlyNotice by remember { mutableStateOf<String?>(null) }
+    var appOnlyNotice by remember { mutableStateOf<String?>(null) }
 
     /**
      * #825: the submission each key was minted for, and the key. ONE KEY PER
@@ -206,7 +211,13 @@ fun InvoicesScreen(
         scope.launch {
             when (val r = client.generateReceipt(invoiceId)) {
                 is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> { actionError = null; actionNotice = "Receipt generated." }
+                is WriteResult.Ok -> {
+                    actionError = null
+                    // #1511: honest about where the notice went.
+                    val message = receiptGeneratedMessage(r.value.appOnly)
+                    actionNotice = message
+                    appOnlyNotice = if (r.value.appOnly) message else null
+                }
             }
         }
     }
@@ -230,7 +241,7 @@ fun InvoicesScreen(
                     val message = reminderOutcomeMessage(r.value)
                     actionNotice = message
                     reminderRefusalNotice = if (r.value.sent) null else message
-                    reminderAppOnlyNotice = if (r.value.sent && r.value.appOnly) message else null
+                    appOnlyNotice = if (r.value.sent && r.value.appOnly) message else null
                 }
             }
             remindingIds = remindingIds - invoiceId
@@ -243,7 +254,13 @@ fun InvoicesScreen(
         scope.launch {
             when (val r = client.reviewAndSendDraftInvoice(invoice._id, invoice.kinfolkId)) {
                 is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> { actionError = null; actionNotice = "Invoice sent." }
+                is WriteResult.Ok -> {
+                    actionError = null
+                    // #1511: honest about where the invoice went.
+                    val message = invoiceSentMessage(r.value.appOnly)
+                    actionNotice = message
+                    appOnlyNotice = if (r.value.appOnly) message else null
+                }
             }
         }
     }
@@ -276,7 +293,7 @@ fun InvoicesScreen(
 
         actionNotice?.let { msg ->
             val refused = msg == reminderRefusalNotice
-            val appOnly = msg == reminderAppOnlyNotice
+            val appOnly = msg == appOnlyNotice
             AuntieBanner(
                 tone  = if (refused || appOnly) AuntieBannerTone.Warning else AuntieBannerTone.Success,
                 title = when {
@@ -420,11 +437,15 @@ fun InvoicesScreen(
                     // deliberate second invoice with identical fields is not a replay.
                     if (request.isQuote) quoteSubmission = null else invoiceSubmission = null
                     actionError = null
-                    actionNotice = when {
+                    // #1511: a sent quote says where it went. The draft's flag is
+                    // decoded and deliberately not shown: its sentence claims no
+                    // send (see #1513).
+                    val message = when {
                         !request.isQuote -> "Draft invoice created."
-                        request.sendToKinfolk -> "Quote created and sent."
-                        else -> "Quote created."
+                        else -> quoteCreatedMessage(sent = request.sendToKinfolk, appOnly = r.value.appOnly)
                     }
+                    actionNotice = message
+                    appOnlyNotice = if (request.isQuote && request.sendToKinfolk && r.value.appOnly) message else null
                     closeComposers()
                 }
             }
