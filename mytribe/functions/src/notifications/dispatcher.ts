@@ -11,7 +11,13 @@ import {
   type HouseholdSendGate,
   type HouseholdSendGateState,
 } from './householdSendGate';
-import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from './prefs';
+import {
+  loadBusinessOverride,
+  loadUserPrefs,
+  notificationDisabledFor,
+  resolveChannels,
+  streamForRecipient,
+} from './prefs';
 import { resolveRecipients } from './recipientResolver';
 import { NoRecipientsError, isRecipientsUnavailable } from './recipientErrors';
 import type {
@@ -212,9 +218,12 @@ export function contentDedupeKey(scope: string, content: unknown): string {
  * Why a recipient got nothing from one enqueue.
  *
  * 'gate' is NOT a flavour of 'prefs', and callers must not fold the two
- * together. `prefs` means a standing choice by the operator or the recipient
- * about this notification; `gate` means the whole product has not opened yet
- * and this copy was household-bound (see notifications/householdSendGate.ts).
+ * together. `prefs` means the notification is OFF for this recipient: the
+ * operator disabled it, or it is marketing-class and they never opted in.
+ * Turning every delivery channel off is not 'prefs' (#1505); that copy is
+ * written as a record and nothing is sent. `gate` means the whole product has
+ * not opened yet and this copy was household-bound (see
+ * notifications/householdSendGate.ts).
  * A caller deciding how long to wait before retrying needs the difference: a
  * prefs suppression can sit for as long as the preference does, and a gate
  * suppression clears the day the operator flips one boolean.
@@ -308,10 +317,16 @@ export function resolveTargetRef(args: EnqueueArgs): {
  *   - Provide args.data.assignedAuntieUid for auntieAssignedToKincare resolver.
  *   - Provide fireAtMs for 'scheduled' mode (defaults to "now" if omitted, logs warning).
  *
- * Returns the list of dispatch document IDs written (one per recipient).
- * Empty array = every recipient was suppressed, by prefs or (#832) because the
- * same notification already reached them inside NOTIFICATION_DEDUPE_WINDOW_MS.
- * A caller that needs to tell those apart uses `enqueueNotificationDetailed`.
+ * Returns the list of notification document IDs written (one per recipient).
+ * Empty array = every recipient was suppressed: the notification is off for
+ * them (operator disabled, or marketing without opt-in), the household gate is
+ * shut, or (#832) the same notification already reached them inside
+ * NOTIFICATION_DEDUPE_WINDOW_MS. A caller that needs to tell those apart uses
+ * `enqueueNotificationDetailed`.
+ *
+ * An id in the list means the notifications record exists; it does not promise
+ * a delivery behind it (#1505). A recipient with every delivery channel off
+ * still counts as written, because the list behind the bell shows the record.
  */
 export async function enqueueNotification(args: EnqueueArgs): Promise<string[]> {
   return (await enqueueNotificationDetailed(args)).written;
@@ -439,18 +454,47 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
     // The same per-copy answer also decides what the card detail may say, so it
     // is resolved once here and threaded down rather than re-derived (#380).
     const stream = streamForRecipient(def, recipient.collection);
-    const channels = resolveChannels(def, userPrefs, businessOverride, stream);
 
-    if (!hasAnyChannel(channels)) {
+    /**
+     * THE PREFS CHECK, and since #1505 it asks a narrower question than "is
+     * anything to be delivered". Only a notification that is OFF as a whole is
+     * suppressed here: the operator disabled it on this stream, or it is
+     * marketing-class and this recipient never opted in. Both are reported as
+     * 'prefs', as before.
+     *
+     * A recipient who leaves the notification on but turns every delivery
+     * channel off (email, SMS, push) is NOT suppressed. The notifications list
+     * behind the bell (#1316) is a channel of its own, read straight off
+     * `notifications/{id}`, and it cannot be turned off from the prefs screen.
+     * So the copy walks on, through the gate and into `routeByDeliveryMode`,
+     * which writes the record and no work order: nothing is sent, and the
+     * alert is still there when they open the list.
+     */
+    const disabled = notificationDisabledFor(def, userPrefs, businessOverride, stream);
+    if (disabled !== null) {
       logEvent({
         severity: 'info',
         function: 'enqueueNotification',
         event: 'notification.suppressed',
         uid: recipient.uid,
-        extra: { key: def.key, reason: 'no-channels-after-prefs' },
+        extra: {
+          key: def.key,
+          reason: disabled === 'operator' ? 'disabled-by-operator' : 'marketing-not-opted-in',
+        },
       });
       outcome.suppressed.push({ recipientUid: recipient.uid, reason: 'prefs' });
       continue;
+    }
+
+    const channels = resolveChannels(def, userPrefs, businessOverride, stream);
+    if (!hasAnyChannel(channels)) {
+      logEvent({
+        severity: 'info',
+        function: 'enqueueNotification',
+        event: 'notification.record-only',
+        uid: recipient.uid,
+        extra: { key: def.key, reason: 'no-delivery-channels' },
+      });
     }
 
     /**
@@ -480,8 +524,11 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
      *     without anyone having been notified. Sitting above that write is what
      *     makes "flip it on and the backlog still goes out" true rather than
      *     hoped for.
-     *   - AFTER the prefs check, so the count below is what would ACTUALLY have
-     *     been delivered, not what was merely addressed.
+     *   - AFTER the prefs check, so a copy the operator switched off is not
+     *     counted as something the gate held back. A copy with every delivery
+     *     channel off still reaches the gate (#1505): with the gate shut it is
+     *     not written at all, record included, which is the one case in which
+     *     a kinfolk's list stays empty on purpose.
      */
     if (stream === 'kinfolk') {
       const { live, state } = await householdGate();
@@ -548,6 +595,8 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
         recipientType: 'household',
         gateState: gateSuppressedState,
         suppressedCount: gateSuppressed,
+        // Records written for the other copies, whether or not a channel is
+        // behind each one (#1505); the field name predates that distinction.
         deliveredCount: outcome.written.length,
       },
     });
@@ -714,6 +763,16 @@ async function routeByDeliveryMode(
       return writeOnce(def.key, identity, recipientUid, windowMs, (w) => {
         const ref = db().collection('notifications').doc();
         w.set(ref, content);
+        // NO WORK ORDER WHEN THERE IS NOTHING TO DELIVER (#1505). The work order
+        // exists to drive delivery: `onNotificationDispatchCreate` fans it out
+        // into channel subdocs and `listNotificationDeliveries` reads it back as
+        // the record of what was attempted. With every channel off there is
+        // nothing to fan out and nothing to list, and the fan-out would only
+        // stamp it `no-channels` and stop. The record above is the whole
+        // delivery here: it is what the notifications list reads. The dedupe
+        // ledger is still written by `writeOnce`, so a retry of this same event
+        // is refused exactly as it would be with a channel on.
+        if (activeChannels.length === 0) return ref.id;
         // The work order is written under the same id. Its onCreate trigger fans
         // out to channel subdocs, and that trigger reads the notification it is
         // delivering, so the mail must exist before the postman is called. Both
