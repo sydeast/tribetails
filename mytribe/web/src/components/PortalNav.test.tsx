@@ -275,29 +275,37 @@ describe('PortalNav bell (#1316)', () => {
     expect(screen.getByRole('menuitem', { name: 'Notification settings' })).toHaveAttribute('href', '/account/notifications');
   });
 
-  it('shows the unread count on the bell once getMyHome answers', async () => {
+  it('shows the unread count on the bell once getMyHome answers, and says it in the link name', async () => {
     homeWith(3);
     renderNav();
     const badge = await screen.findByTestId('bell-badge');
     expect(badge).toHaveTextContent('3');
-    expect(screen.getByRole('link', { name: 'Notifications' })).toContainElement(badge);
+    // The badge is aria-hidden, so the count has to be in the accessible name
+    // or a screen reader hears only "Notifications".
+    const bell = screen.getByRole('link', { name: 'Notifications, 3 unread' });
+    expect(bell).toContainElement(badge);
+    expect(bell).toHaveAttribute('href', '/notifications');
+    expect(screen.queryByRole('link', { name: 'Notifications' })).toBeNull();
   });
 
-  it('draws no badge at 0, and none when an older server leaves the field out', async () => {
+  it('draws no badge and reads plain Notifications at 0, and when an older server leaves the field out', async () => {
     homeWith(0);
     renderNav();
     await waitFor(() => expect(getMyHome).toHaveBeenCalled());
     expect(screen.queryByTestId('bell-badge')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Notifications' })).toHaveAttribute('href', '/notifications');
     cleanup();
     homeWith();
     renderNav();
     await waitFor(() => expect(getMyHome).toHaveBeenCalledTimes(2));
     expect(screen.queryByTestId('bell-badge')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Notifications' })).toHaveAttribute('href', '/notifications');
   });
 
-  it('caps the badge at 99+', async () => {
+  it('caps the drawn badge at 99+ while the name carries the exact count', async () => {
     homeWith(150);
     renderNav();
     expect(await screen.findByTestId('bell-badge')).toHaveTextContent('99+');
+    expect(screen.getByRole('link', { name: 'Notifications, 150 unread' })).toBeTruthy();
   });
 });

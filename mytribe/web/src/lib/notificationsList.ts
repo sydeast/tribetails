@@ -17,6 +17,17 @@ export function unreadBadgeLabel(count: number | null | undefined): string | nul
   return count > 99 ? '99+' : String(Math.floor(count));
 }
 
+/**
+ * The bell's accessible name. The badge is drawn `aria-hidden` (the link's
+ * `aria-label` would override its text anyway), so the count has to be in the
+ * name itself or a screen reader never hears it: "Notifications" at 0,
+ * "Notifications, 3 unread" above. The exact count, not the 99+ cap, since a
+ * spoken number has no room to run out of. Android's BellButton says the same.
+ */
+export function bellAccessibleName(count: number | null | undefined): string {
+  return unreadBadgeLabel(count) === null ? 'Notifications' : `Notifications, ${Math.floor(count as number)} unread`;
+}
+
 /** Where a tapped row goes. `none` stays on the list, read but not opened. */
 export type NotificationTarget =
   | { kind: 'visit'; visitId: string }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { InfiniteData } from '@tanstack/react-query';
 import type { ListMyNotificationsResult, NotificationItemDto } from '../api/notificationsApi';
-import { markReadInPages, notificationTarget, notificationWhen, unreadBadgeLabel } from './notificationsList';
+import { bellAccessibleName, markReadInPages, notificationTarget, notificationWhen, unreadBadgeLabel } from './notificationsList';
 
 /** #1316: the pure rules behind the bell badge and the notifications list. */
 
@@ -38,6 +38,21 @@ describe('unreadBadgeLabel', () => {
     expect(unreadBadgeLabel(99)).toBe('99');
     expect(unreadBadgeLabel(100)).toBe('99+');
     expect(unreadBadgeLabel(1500)).toBe('99+');
+  });
+});
+
+describe('bellAccessibleName', () => {
+  it('is plain Notifications whenever no badge is drawn', () => {
+    expect(bellAccessibleName(0)).toBe('Notifications');
+    expect(bellAccessibleName(undefined)).toBe('Notifications');
+    expect(bellAccessibleName(null)).toBe('Notifications');
+    expect(bellAccessibleName(-1)).toBe('Notifications');
+  });
+
+  it('speaks the exact count above 0, past the 99+ the badge draws', () => {
+    expect(bellAccessibleName(1)).toBe('Notifications, 1 unread');
+    expect(bellAccessibleName(3)).toBe('Notifications, 3 unread');
+    expect(bellAccessibleName(150)).toBe('Notifications, 150 unread');
   });
 });
 

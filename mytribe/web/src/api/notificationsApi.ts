@@ -341,16 +341,23 @@ export interface ListMyNotificationsResult {
   nextBefore: number | null;
 }
 
+/**
+ * Not warmed by `lib/portalWarmupReads.ts` on purpose: the list is fetched
+ * only when the bell is tapped (the badge rides `getMyHome`). `options` is
+ * here so this read takes the same arguments as every other fetcher in the
+ * api layer (#1282), should a warm-up ever want it.
+ */
 export function listMyNotifications(
   kinfolkId?: string,
   opts: { limit?: number; before?: number } = {},
+  options?: CallOptions,
 ): Promise<ListMyNotificationsResult> {
   const payload: ListMyNotificationsRequest = {
     ...(kinfolkId !== undefined ? { kinfolkId } : {}),
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
     ...(opts.before !== undefined ? { before: opts.before } : {}),
   };
-  return call<ListMyNotificationsRequest, ListMyNotificationsResult>('listMyNotifications', payload);
+  return call<ListMyNotificationsRequest, ListMyNotificationsResult>('listMyNotifications', payload, options);
 }
 
 export interface MarkNotificationReadRequest {

@@ -10,6 +10,7 @@ import type { GetMyHomeResult } from '../api/types';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { markReadInPages, notificationTarget, notificationWhen } from '../lib/notificationsList';
+import { myHomeKey } from '../lib/portalQueryKeys';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
@@ -76,12 +77,12 @@ export function NotificationsList() {
       // The bell follows at once; the server's own count replaces the guess
       // once the mark has landed (or failed, in which case the row comes back
       // unread on the next load and that is the truth).
-      queryClient.setQueryData<GetMyHomeResult>(['myHome', kinfolkId], (old) =>
+      queryClient.setQueryData<GetMyHomeResult>(myHomeKey(kinfolkId), (old) =>
         old ? { ...old, unreadNotifications: Math.max(0, (old.unreadNotifications ?? 0) - 1) } : old,
       );
       void markNotificationRead(item.id)
         .catch(() => undefined)
-        .then(() => queryClient.invalidateQueries({ queryKey: ['myHome', kinfolkId] }));
+        .then(() => queryClient.invalidateQueries({ queryKey: myHomeKey(kinfolkId) }));
     }
     const target = notificationTarget(item);
     switch (target.kind) {

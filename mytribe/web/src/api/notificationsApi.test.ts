@@ -304,11 +304,16 @@ describe('listMyNotifications / markNotificationRead wrappers (#1316)', () => {
 
   it('sends only what was given: the tribe, the page size and the cursor', async () => {
     await listMyNotifications('fam1', { limit: 20, before: 1_700_000_000_000 });
-    expect(call).toHaveBeenCalledWith('listMyNotifications', { kinfolkId: 'fam1', limit: 20, before: 1_700_000_000_000 });
+    expect(call).toHaveBeenCalledWith('listMyNotifications', { kinfolkId: 'fam1', limit: 20, before: 1_700_000_000_000 }, undefined);
     await listMyNotifications();
-    expect(call).toHaveBeenLastCalledWith('listMyNotifications', {});
+    expect(call).toHaveBeenLastCalledWith('listMyNotifications', {}, undefined);
     await listMyNotifications('fam1');
-    expect(call).toHaveBeenLastCalledWith('listMyNotifications', { kinfolkId: 'fam1' });
+    expect(call).toHaveBeenLastCalledWith('listMyNotifications', { kinfolkId: 'fam1' }, undefined);
+  });
+
+  it('passes call options through like every other fetcher (#1282)', async () => {
+    await listMyNotifications('fam1', { limit: 10 }, { background: true });
+    expect(call).toHaveBeenLastCalledWith('listMyNotifications', { kinfolkId: 'fam1', limit: 10 }, { background: true });
   });
 
   it('returns the callable result unchanged and does not swallow a rejection', async () => {

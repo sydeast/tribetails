@@ -447,4 +447,14 @@ class ShellNavTest {
         assertEquals("99+", unreadBadgeLabel(100))
         assertEquals("99+", unreadBadgeLabel(1500))
     }
+
+    /** TalkBack hears the count in the bell's name, the exact number past the badge's 99+, the same as web. */
+    @Test
+    fun bellAccessibleName_plainAtZero_countsAbove() {
+        assertEquals("Notifications", bellAccessibleName(0))
+        assertEquals("Notifications", bellAccessibleName(-1))
+        assertEquals("Notifications, 1 unread", bellAccessibleName(1))
+        assertEquals("Notifications, 3 unread", bellAccessibleName(3))
+        assertEquals("Notifications, 150 unread", bellAccessibleName(150))
+    }
 }

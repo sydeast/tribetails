@@ -38,6 +38,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -449,6 +453,7 @@ private fun Wordmark() {
 private fun BellButton(unread: Int, onClick: () -> Unit) {
     val type = LocalKinfolkTypography.current
     val badge = unreadBadgeLabel(unread)
+    val name = bellAccessibleName(unread)
     Box(
         modifier = Modifier
             .size(42.dp)
@@ -456,11 +461,15 @@ private fun BellButton(unread: Int, onClick: () -> Unit) {
             .background(KinfolkBrand.GlassSurface)
             .border(1.dp, KinfolkBrand.GlassBorder, RoundedCornerShape(13.dp))
             .clickable { onClick() }
+            // One thing to TalkBack, named with the count ("Notifications, 3
+            // unread"); the icon and the badge below add nothing of their own,
+            // so the number is heard once.
+            .semantics(mergeDescendants = true) { contentDescription = name }
             .testTag("bell"),
     ) {
         Icon(
             imageVector = Icons.Filled.Notifications,
-            contentDescription = "Notifications",
+            contentDescription = null,
             tint = KinfolkBrand.Navy,
             modifier = Modifier.size(20.dp).align(Alignment.Center),
         )
@@ -474,7 +483,7 @@ private fun BellButton(unread: Int, onClick: () -> Unit) {
                     .padding(1.5.dp)
                     .background(KinfolkBrand.SnuggleCoral, RoundedCornerShape(8.dp))
                     .padding(horizontal = 5.dp, vertical = 1.dp)
-                    .testTag("bellBadge"),
+                    .clearAndSetSemantics { testTag = "bellBadge" },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -497,6 +506,15 @@ fun unreadBadgeLabel(count: Int): String? = when {
     count > 99 -> "99+"
     else -> count.toString()
 }
+
+/**
+ * What TalkBack says for the bell: "Notifications" at 0, "Notifications, 3
+ * unread" above. The exact count, not the 99+ the badge draws, since a spoken
+ * number has no room to run out of. The web portal's `bellAccessibleName` says
+ * the same.
+ */
+fun bellAccessibleName(count: Int): String =
+    if (count <= 0) "Notifications" else "Notifications, $count unread"
 
 @Composable
 private fun AvatarMenuButton(
