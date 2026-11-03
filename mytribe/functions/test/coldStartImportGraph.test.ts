@@ -119,8 +119,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * `lib/weeklyHoursRule.ts`, the shared weekly-hours check `requestBooking` and
  * `rescheduleTimeRules` both call. One helper module over modules already
  * resident; not a structural change.
+ *
+ * 430 since #1316 (main had reached 420 exactly): that change adds
+ * `portal/listMyNotifications.ts`, the callable behind the portal bell, and
+ * `lib/recipientNotifications.ts`, the one reading of a household's rows that
+ * it and `getMyHome` share. Two modules whose imports are all already
+ * resident; not a structural change.
  */
-const MAX_OWN_EAGER_MODULES = 420;
+const MAX_OWN_EAGER_MODULES = 430;
 
 interface Edge {
   spec: string;

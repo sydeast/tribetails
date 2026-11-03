@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -89,6 +90,11 @@ fun TabShell(
      * #1457: and the avatar menu's Invoices item, see [ShellNav.accountMenu].
      */
     billingAccess: Boolean = true,
+    /**
+     * #1316: `getMyHome.unreadNotifications`, drawn on the bell. 0 draws no
+     * badge; above 99 reads "99+", the same cap as the web portal.
+     */
+    unreadNotifications: Int = 0,
     content: @Composable (Modifier) -> Unit,
 ) {
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -185,8 +191,10 @@ fun TabShell(
                     isOperator = onBackToDirectory != null,
                     billingAccess = billingAccess,
                     businessName = businessName,
+                    unreadNotifications = unreadNotifications,
                     onLink = { onTabLink(it) },
-                    onBell = { navigateMenu(NotificationsRoute) },
+                    // #1316: the bell opens the list; settings stay in the menu.
+                    onBell = { navigateMenu(NotificationsListRoute) },
                     onMenuItem = ::onMenuItem,
                 )
                 // Cap + center the body so wide web reads as a real desktop
@@ -210,7 +218,8 @@ fun TabShell(
                         isOperator = onBackToDirectory != null,
                         billingAccess = billingAccess,
                         businessName = businessName,
-                        onBell = { navigateMenu(NotificationsRoute) },
+                        unreadNotifications = unreadNotifications,
+                        onBell = { navigateMenu(NotificationsListRoute) },
                         onMenuItem = ::onMenuItem,
                     )
                     content(
@@ -243,6 +252,7 @@ private fun WideTopNav(
     isOperator: Boolean,
     billingAccess: Boolean,
     businessName: String,
+    unreadNotifications: Int,
     onLink: (ShellDestination) -> Unit,
     onBell: () -> Unit,
     onMenuItem: (AccountMenuItem) -> Unit,
@@ -269,7 +279,7 @@ private fun WideTopNav(
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                BellButton(onClick = onBell)
+                BellButton(unread = unreadNotifications, onClick = onBell)
                 Spacer(Modifier.width(10.dp))
                 AvatarMenuButton(
                     familyName = familyName,
@@ -328,6 +338,7 @@ private fun NarrowTopBar(
     isOperator: Boolean,
     billingAccess: Boolean,
     businessName: String,
+    unreadNotifications: Int,
     onBell: () -> Unit,
     onMenuItem: (AccountMenuItem) -> Unit,
 ) {
@@ -341,7 +352,7 @@ private fun NarrowTopBar(
             BrandLogo(logoUrl)
             Wordmark()
             Spacer(Modifier.weight(1f))
-            BellButton(onClick = onBell)
+            BellButton(unread = unreadNotifications, onClick = onBell)
             Spacer(Modifier.width(10.dp))
             AvatarMenuButton(
                 familyName = familyName,
@@ -428,15 +439,24 @@ private fun Wordmark() {
     )
 }
 
+/**
+ * The header bell (#1316). Opens the notifications list, and carries the unread
+ * count. It used to draw a coral dot unconditionally, which with a real count
+ * behind it would have been a lie at 0: the badge is now drawn only above 0,
+ * numeric, "99+" past 99, the same as the web portal's `unreadBadgeLabel`.
+ */
 @Composable
-private fun BellButton(onClick: () -> Unit) {
+private fun BellButton(unread: Int, onClick: () -> Unit) {
+    val type = LocalKinfolkTypography.current
+    val badge = unreadBadgeLabel(unread)
     Box(
         modifier = Modifier
             .size(42.dp)
             .clip(RoundedCornerShape(13.dp))
             .background(KinfolkBrand.GlassSurface)
             .border(1.dp, KinfolkBrand.GlassBorder, RoundedCornerShape(13.dp))
-            .clickable { onClick() },
+            .clickable { onClick() }
+            .testTag("bell"),
     ) {
         Icon(
             imageVector = Icons.Filled.Notifications,
@@ -444,18 +464,38 @@ private fun BellButton(onClick: () -> Unit) {
             tint = KinfolkBrand.Navy,
             modifier = Modifier.size(20.dp).align(Alignment.Center),
         )
-        // Coral ping dot with a cream ring, top-right like the design's .ping.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 6.dp, end = 7.dp)
-                .size(13.dp)
-                .background(KinfolkBrand.Cream, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(modifier = Modifier.size(8.dp).background(KinfolkBrand.SnuggleCoral, CircleShape))
+        if (badge != null) {
+            // Coral count with a cream ring, top-right like the design's .ping.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 3.dp, end = 3.dp)
+                    .background(KinfolkBrand.Cream, RoundedCornerShape(9.dp))
+                    .padding(1.5.dp)
+                    .background(KinfolkBrand.SnuggleCoral, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                    .testTag("bellBadge"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = badge,
+                    style = type.sansMeta.copy(fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                )
+            }
         }
     }
+}
+
+/**
+ * What the bell draws for an unread count: nothing at 0 (or below), the number
+ * up to 99, then "99+". Shared with [ShellNav] callers and tested without a
+ * Compose runtime in ShellNavTest.
+ */
+fun unreadBadgeLabel(count: Int): String? = when {
+    count <= 0 -> null
+    count > 99 -> "99+"
+    else -> count.toString()
 }
 
 @Composable

@@ -403,4 +403,48 @@ class ShellNavTest {
         assertEquals("C", avatarInitial(resolveShellPersonName("Casey QA", "jordan@x.com", "TEST SANDBOX")))
         assertEquals("J", avatarInitial(resolveShellPersonName("", "jordan@x.com", "TEST SANDBOX")))
     }
+
+    // ---- the bell and its list (#1316) ----
+
+    /** The bell's one door: chrome (so the bell's save/restore navigation is safe), in neither bar, not in the menu. */
+    @Test
+    fun notificationsList_isChrome_butNeitherABarTabNorAMenuItem() {
+        assertEquals(NotificationsListRoute, ShellDestination.NotificationsList.route)
+        assertEquals(NotificationsListRoute::class, ShellDestination.NotificationsList.routeClass)
+        assertTrue(isShellChromeDestination { it == NotificationsListRoute::class })
+        assertFalse(ShellDestination.NotificationsList in ShellNav.wideLinks)
+        assertFalse(ShellDestination.NotificationsList in ShellNav.narrowTabs)
+        listOf(false, true).forEach { operator ->
+            listOf(false, true).forEach { billing ->
+                assertFalse(
+                    ShellNav.accountMenu(isOperator = operator, billingAccess = billing)
+                        .any { it is AccountMenuItem.Open && it.destination == ShellDestination.NotificationsList },
+                    "the list is reached from the bell, not the menu (operator=$operator billing=$billing)",
+                )
+            }
+        }
+    }
+
+    /** Settings keep their menu entry and their own route; the list is a different screen. */
+    @Test
+    fun notificationSettings_stayInTheMenu_onTheirOwnRoute() {
+        assertEquals(NotificationsRoute, ShellDestination.Notifications.route)
+        assertTrue(
+            ShellNav.accountMenu(isOperator = false, billingAccess = false)
+                .any { it is AccountMenuItem.Open && it.destination == ShellDestination.Notifications },
+        )
+        assertEquals("Notifications", ShellDestination.NotificationsList.label)
+        assertEquals("Notification settings", ShellDestination.Notifications.label)
+    }
+
+    /** The bell draws nothing at 0, the number to 99, then 99+, the same as web's unreadBadgeLabel. */
+    @Test
+    fun unreadBadgeLabel_nothingAtZero_numberTo99_then99Plus() {
+        assertNull(unreadBadgeLabel(0))
+        assertNull(unreadBadgeLabel(-3))
+        assertEquals("1", unreadBadgeLabel(1))
+        assertEquals("99", unreadBadgeLabel(99))
+        assertEquals("99+", unreadBadgeLabel(100))
+        assertEquals("99+", unreadBadgeLabel(1500))
+    }
 }

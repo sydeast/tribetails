@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PortalNav } from './PortalNav';
@@ -246,5 +246,58 @@ describe('PortalNav Back to Directory (#1459)', () => {
     expect(screen.queryByRole('link', { name: 'Switch tribe' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
     expect(screen.queryByRole('menuitem', { name: 'Back to Directory' })).toBeNull();
+  });
+});
+
+/**
+ * #1316: the bell opens the notifications LIST, not Notification settings,
+ * and carries the unread count off the same cached `getMyHome` answer the
+ * branding reads. Settings stay in the avatar menu, pinned above.
+ */
+describe('PortalNav bell (#1316)', () => {
+  function homeWith(unreadNotifications?: number) {
+    vi.mocked(getMyHome).mockResolvedValueOnce({
+      businessLogoUrl: undefined,
+      businessName: 'Tribe Tails Pet Care',
+      ...(unreadNotifications !== undefined ? { unreadNotifications } : {}),
+    } as unknown as Awaited<ReturnType<typeof getMyHome>>);
+  }
+
+  it('is a link to /notifications named Notifications, and the header has no settings link', async () => {
+    homeWith(0);
+    renderNav();
+    const bell = screen.getByRole('link', { name: 'Notifications' });
+    expect(bell).toHaveAttribute('href', '/notifications');
+    expect(bell).toHaveClass('iconbtn');
+    expect(screen.queryByRole('link', { name: 'Notification settings' })).toBeNull();
+    // Settings are still one menu away.
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    expect(screen.getByRole('menuitem', { name: 'Notification settings' })).toHaveAttribute('href', '/account/notifications');
+  });
+
+  it('shows the unread count on the bell once getMyHome answers', async () => {
+    homeWith(3);
+    renderNav();
+    const badge = await screen.findByTestId('bell-badge');
+    expect(badge).toHaveTextContent('3');
+    expect(screen.getByRole('link', { name: 'Notifications' })).toContainElement(badge);
+  });
+
+  it('draws no badge at 0, and none when an older server leaves the field out', async () => {
+    homeWith(0);
+    renderNav();
+    await waitFor(() => expect(getMyHome).toHaveBeenCalled());
+    expect(screen.queryByTestId('bell-badge')).toBeNull();
+    cleanup();
+    homeWith();
+    renderNav();
+    await waitFor(() => expect(getMyHome).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId('bell-badge')).toBeNull();
+  });
+
+  it('caps the badge at 99+', async () => {
+    homeWith(150);
+    renderNav();
+    expect(await screen.findByTestId('bell-badge')).toHaveTextContent('99+');
   });
 });

@@ -1,0 +1,21 @@
+/* The notifications list behind the header bell (#1316). Shared glass/card/
+   hero-greet/btn primitives live in base.css; only the rows are here. The
+   unread mark reuses the bell's coral (.iconbtn .ping) so the row and the
+   badge that counted it read as the same thing. */
+
+.nl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.nl-list li + li { border-top: 1px solid var(--hairline); }
+.nl-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 12px; align-items: start; width: 100%;
+  text-align: left; background: transparent; border: 0; padding: 14px 6px; cursor: pointer; font: inherit; color: inherit;
+  border-radius: 12px; transition: background .2s var(--ease); }
+.nl-row:hover { background: rgba(223, 132, 49, .08); }
+.nl-row:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.nl-row__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; background: transparent; }
+.nl-row--unread .nl-row__dot { background: var(--coral); box-shadow: 0 0 0 3px rgba(213, 83, 90, .18); }
+.nl-row__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.nl-row__title { font-weight: 500; color: var(--navy); }
+.nl-row--unread .nl-row__title { font-weight: 600; }
+.nl-row__desc { color: var(--navy-muted); font-size: 13px; }
+.nl-row__when { font-family: var(--mono); font-size: 11px; letter-spacing: .04em; color: var(--navy-muted);
+  white-space: nowrap; margin-top: 3px; }
+.nl-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

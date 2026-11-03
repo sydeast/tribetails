@@ -113,6 +113,13 @@ export interface GetMyHomeResult {
    * server does not send it; absent reads as 0, so Home draws no line.
    */
   balanceDueCents?: number;
+  /**
+   * #1316: how many of the caller's newest notifications for this tribe have
+   * no `readAt`. The header bell's badge, read through `unreadBadgeLabel`
+   * (lib/notificationsList.ts), which draws nothing at 0. Optional because an
+   * older server does not send it; absent reads as 0.
+   */
+  unreadNotifications?: number;
 }
 
 // ── getMyBookings (functions/src/portal/getMyBookings.ts) ───────────────────

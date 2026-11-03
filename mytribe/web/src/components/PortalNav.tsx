@@ -7,6 +7,7 @@ import { useAccessState, getActiveKinfolkId } from '../lib/activeTribe';
 import { getMyHome } from '../api/portal';
 import { BrandLogo } from './BrandLogo';
 import { billingAccessOf } from '../lib/billingAccess';
+import { unreadBadgeLabel } from '../lib/notificationsList';
 import { SaveNoticeLine } from './SaveNotice';
 
 export type PortalNavTab = 'home' | 'tribe' | 'schedule' | 'kintales' | 'invoices' | 'account' | 'messages';
@@ -85,6 +86,10 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
   // #1457: the avatar menu's Invoices item follows the same answer.
   const billingAccess = billingAccessOf(branding.data);
   const navLinks = billingAccess ? NAV_LINKS : NAV_LINKS.filter((l) => l.id !== 'invoices');
+  // #1316: the bell's unread count rides the same cached answer, so the badge
+  // costs no call of its own; the list itself is fetched only when the bell
+  // is tapped. An older server leaves the field out, which reads as 0.
+  const unreadBadge = unreadBadgeLabel(branding.data?.unreadNotifications);
   // #1290: one source for the avatar on every screen (see lib/identity.ts).
   const { initial } = usePortalIdentity();
   const { signOut, signingOut } = useSignOut();
@@ -113,8 +118,15 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
             )}
           </div>
           <div className="right">
-            <Link className="iconbtn" to="/account/notifications" aria-label="Notification settings">
+            {/* #1316: the bell opens the notifications list. Settings stay in
+                the avatar menu below. */}
+            <Link className="iconbtn" to="/notifications" aria-label="Notifications">
               {'\u{1F514}'}
+              {unreadBadge !== null && (
+                <span className="iconbtn__badge" data-testid="bell-badge" aria-hidden="true">
+                  {unreadBadge}
+                </span>
+              )}
             </Link>
             {/* #538 made the avatar a link to Account; #1309 makes it a small menu
                 (Account, Notification settings, Sign out). Sign out is its own
