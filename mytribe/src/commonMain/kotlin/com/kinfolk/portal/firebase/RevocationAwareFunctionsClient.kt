@@ -92,6 +92,11 @@ class RevocationAwareFunctionsClient(
         }
     }
 
+    /**
+     * #1282: the wrapped client, reaction and all left behind. Only the portal
+     * warm-up asks; see [FunctionsClient.withoutSessionReaction].
+     */
+    override fun withoutSessionReaction(): FunctionsClient = delegate
     /** Test seam: forget that a teardown already ran. */
     internal suspend fun resetForTest() {
         gate.withLock { ended = false }

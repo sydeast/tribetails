@@ -36,12 +36,14 @@ import { refreshAfterSave } from '../lib/refreshAfterSave';
 import '../styles/notifications.css';
 import { SettingsBusinessFootnote, useBusinessName } from '../components/BusinessFootnote';
 import { businessLabel } from '../lib/businessLabel';
+import { myNotificationPrefsKey, notificationCatalogKey } from '../lib/portalQueryKeys';
 
 /**
  * Notification Settings, ported from
  * ui-ideas/mytribe-notifications-2026-05-31.html. Despite the filename this
  * is a PREFERENCES screen (category master switches + per-channel toggles),
- * not a notification feed — there's no feed/inbox callable in this codebase.
+ * not the notifications list. That list is NotificationsList.tsx, behind the
+ * header bell since #1316; this screen is reached from the avatar menu.
  *
  * Data: getNotificationCatalog (functions/src/notifications/
  * getNotificationCatalog.ts) supplies categories, each with one or more
@@ -243,8 +245,8 @@ export function NotificationSettings() {
   const businessName = useBusinessName();
   const queryClient = useQueryClient();
 
-  const catalog = useQuery({ queryKey: ['notificationCatalog'], queryFn: getNotificationCatalog });
-  const prefs = useQuery({ queryKey: ['myNotificationPrefs'], queryFn: getMyNotificationPrefs });
+  const catalog = useQuery({ queryKey: notificationCatalogKey(), queryFn: () => getNotificationCatalog() });
+  const prefs = useQuery({ queryKey: myNotificationPrefsKey(), queryFn: () => getMyNotificationPrefs() });
 
   const [edited, setEdited] = useState<EditedPrefs | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});

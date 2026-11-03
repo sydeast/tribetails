@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { call } from '../lib/fns';
 import {
   categoryChannels,
   categoryMarketingCategories,
@@ -10,10 +11,16 @@ import {
   keyChannelChecked,
   keyChannelOverridden,
   keyLockedChannels,
+  listMyNotifications,
+  markNotificationRead,
   marketingMasterState,
   type CategoryDto,
   type NotificationKeyDto,
 } from './notificationsApi';
+
+// The single callables choke point, replaced so the wrapper specs below assert
+// the exact payload each one builds without touching the network.
+vi.mock('../lib/fns', () => ({ call: vi.fn() }));
 
 function key(overrides: Partial<NotificationKeyDto>): NotificationKeyDto {
   return {
@@ -285,5 +292,39 @@ describe('keyTitle (#1372)', () => {
     expect(
       keyDescription({ title: 'Op', householdTitle: 'You accepted a quote', description: 'x', householdDescription: 'You accepted a quote.' }),
     ).toBe('');
+  });
+});
+
+/** #1316: the list behind the bell, and the read stamp a tap sends. */
+describe('listMyNotifications / markNotificationRead wrappers (#1316)', () => {
+  beforeEach(() => {
+    vi.mocked(call).mockReset();
+    vi.mocked(call).mockResolvedValue({ items: [], unreadCount: 0, hasMore: false, nextBefore: null } as never);
+  });
+
+  it('sends only what was given: the tribe, the page size and the cursor', async () => {
+    await listMyNotifications('fam1', { limit: 20, before: 1_700_000_000_000 });
+    expect(call).toHaveBeenCalledWith('listMyNotifications', { kinfolkId: 'fam1', limit: 20, before: 1_700_000_000_000 }, undefined);
+    await listMyNotifications();
+    expect(call).toHaveBeenLastCalledWith('listMyNotifications', {}, undefined);
+    await listMyNotifications('fam1');
+    expect(call).toHaveBeenLastCalledWith('listMyNotifications', { kinfolkId: 'fam1' }, undefined);
+  });
+
+  it('passes call options through like every other fetcher (#1282)', async () => {
+    await listMyNotifications('fam1', { limit: 10 }, { background: true });
+    expect(call).toHaveBeenLastCalledWith('listMyNotifications', { kinfolkId: 'fam1', limit: 10 }, { background: true });
+  });
+
+  it('returns the callable result unchanged and does not swallow a rejection', async () => {
+    await expect(listMyNotifications('fam1')).resolves.toEqual({ items: [], unreadCount: 0, hasMore: false, nextBefore: null });
+    vi.mocked(call).mockRejectedValueOnce(new Error('permission-denied'));
+    await expect(listMyNotifications('fam1')).rejects.toThrow('permission-denied');
+  });
+
+  it('markNotificationRead names the row by notificationId, the key markNotificationRead parses', async () => {
+    vi.mocked(call).mockResolvedValue({ ok: true } as never);
+    await expect(markNotificationRead('n-1')).resolves.toEqual({ ok: true });
+    expect(call).toHaveBeenCalledWith('markNotificationRead', { notificationId: 'n-1' });
   });
 });

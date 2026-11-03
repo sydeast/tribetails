@@ -11,7 +11,7 @@
  * What is left below is the part a generator cannot write: the argument order
  * a screen calls, and the prose about what these four operations mean.
  */
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 import type {
   AcceptQuoteArgs,
   AcceptQuoteResult,
@@ -50,9 +50,9 @@ export interface GetMyInvoicesRequest {
 }
 
 /** The signed-in kinfolk's invoices, bucketed open/paid/credits + account balance. */
-export function getMyInvoices(kinfolkId?: string): Promise<GetMyInvoicesResult> {
+export function getMyInvoices(kinfolkId?: string, options?: CallOptions): Promise<GetMyInvoicesResult> {
   const payload: GetMyInvoicesRequest = kinfolkId !== undefined ? { kinfolkId } : {};
-  return call<GetMyInvoicesRequest, GetMyInvoicesResult>('getMyInvoices', payload);
+  return call<GetMyInvoicesRequest, GetMyInvoicesResult>('getMyInvoices', payload, options);
 }
 
 // ── getMyInvoicePdf (functions/src/portal/getMyInvoicePdf.ts) ───────────────
@@ -134,10 +134,11 @@ export function redeemCredit(invoiceId: string, kinfolkId?: string): Promise<Red
  * `permission-denied`, and the screen hides the section on that code. Read
  * only, so the retry is safe.
  */
-export function getAccountCreditHistory(kinfolkId?: string): Promise<GetAccountCreditHistoryResult> {
+export function getAccountCreditHistory(kinfolkId?: string, options?: CallOptions): Promise<GetAccountCreditHistoryResult> {
   const payload: GetAccountCreditHistoryArgs = kinfolkId !== undefined ? { kinfolkId } : {};
   return call<GetAccountCreditHistoryArgs, GetAccountCreditHistoryResult>('getAccountCreditHistory', payload, {
     idempotent: true,
+    ...options,
   });
 }
 // ── acceptQuote / denyQuote (functions/src/portal/quoteDecision.ts) ─────────

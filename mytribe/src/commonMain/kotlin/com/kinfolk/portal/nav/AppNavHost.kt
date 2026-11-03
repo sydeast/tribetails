@@ -118,6 +118,14 @@ fun AppNavHost(
      * routes back to Home, with no error shown.
      */
     shellBillingAccess: Boolean = true,
+    /**
+     * #1316: `getMyHome.unreadNotifications`, the count on the header bell.
+     * The notifications list reports the server's count when it loads and the
+     * drop after each tap through [onUnreadNotificationsChanged], so the badge
+     * moves without a second `getMyHome`.
+     */
+    shellUnreadNotifications: Int = 0,
+    onUnreadNotificationsChanged: (Int) -> Unit = {},
     cameFromPicker: Boolean,
     resolveTribes: suspend () -> List<TribeSummary>,
     onPick: (kinfolkId: String) -> Unit,
@@ -182,6 +190,7 @@ fun AppNavHost(
             bannerDismissedByUser = shellBannerDismissedByUser,
             onDismissBannerPerUser = onDismissBannerPerUser,
             billingAccess = shellBillingAccess,
+            unreadNotifications = shellUnreadNotifications,
             content = content,
         )
     }
@@ -441,6 +450,26 @@ fun AppNavHost(
             }
             composable<NotificationsRoute> {
                 Shell { mod -> Box(mod) { NotificationSettingsScreen(shellFamilyName, portalApi, notificationCatalog) } }
+            }
+            // #1316: the list behind the bell. A tap marks the row read and
+            // opens the thing it is about: the visit, the booking request, the
+            // invoice, or the KinTales tab on that tale. A row about a whole
+            // request with no batch to open lands on Schedule.
+            composable<NotificationsListRoute> {
+                Shell { mod ->
+                    Box(mod) {
+                        com.kinfolk.portal.screens.notifications.NotificationsListScreen(
+                            kinfolkId = kinId,
+                            portalApi = portalApi,
+                            onOpenVisit = { visitId, batchId -> navController.navigate(KinCareDetailRoute(batchId, visitId)) },
+                            onOpenBookingRequest = { batchId -> navController.navigate(BookingEnvelopeRoute(batchId)) },
+                            onOpenSchedule = { navController.navigate(ScheduleRoute) { launchSingleTop = true } },
+                            onOpenInvoice = { invoiceId -> navController.navigate(InvoiceDetailRoute(invoiceId)) },
+                            onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
+                            onUnreadCount = onUnreadNotificationsChanged,
+                        )
+                    }
+                }
             }
             // #1411: "About {business}", from the avatar menu. Takes only the
             // public card and the version, no PortalApi and no kinfolkId.

@@ -1,4 +1,4 @@
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 
 /**
  * The seeded dog / cat breed banks behind the Kin breed dropdown, from the
@@ -34,8 +34,8 @@ export function decodeBreedBanks(data: unknown): BreedBanks {
   return { dogBreeds: names('dogBreeds'), catBreeds: names('catBreeds') };
 }
 
-export async function getBreeds(): Promise<BreedBanks> {
-  return decodeBreedBanks(await call<Record<string, never>, unknown>('getBreeds', {}));
+export async function getBreeds(options?: CallOptions): Promise<BreedBanks> {
+  return decodeBreedBanks(await call<Record<string, never>, unknown>('getBreeds', {}, options));
 }
 
 /**
@@ -46,7 +46,7 @@ export async function getBreeds(): Promise<BreedBanks> {
  */
 export const BREEDS_QUERY = {
   queryKey: ['breeds'] as const,
-  queryFn: getBreeds,
+  queryFn: () => getBreeds(),
   staleTime: Infinity,
   gcTime: Infinity,
   retry: 1,

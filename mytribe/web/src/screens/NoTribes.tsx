@@ -13,7 +13,7 @@ import { BusyLabel } from '../components/Loading';
  * planned for S5, and it needs a kinfolkId this screen doesn't have yet).
  */
 export function NoTribes() {
-  const contact = useQuery({ queryKey: ['businessContact'], queryFn: getBusinessContact });
+  const contact = useQuery({ queryKey: ['businessContact'], queryFn: () => getBusinessContact() });
   const { signOut, signingOut } = useSignOut();
 
   // Paused, the inert button kept saying "Loading contact info…" with nothing

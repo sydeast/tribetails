@@ -100,6 +100,22 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+/**
+ * Non-React subscription to the access state (#1282). `lib/portalWarmup.ts`
+ * listens from `main.tsx` for the moment an active tribe is resolved, which
+ * is a fact about the session that arrives without a navigation and so reaches
+ * no route guard or component on its own. Same store `useAccessState` reads;
+ * read it back with `getAccessState()`.
+ */
+export function subscribeAccess(listener: () => void): () => void {
+  return subscribe(listener);
+}
+
+/** Non-reactive read of the whole access state. Null until ensureAccess() resolves. */
+export function getAccessState(): AccessState | null {
+  return state;
+}
+
 function getSnapshot(): AccessState | null {
   return state;
 }

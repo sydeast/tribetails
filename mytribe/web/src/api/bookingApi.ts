@@ -13,7 +13,7 @@
  * GetServiceCatalogResult stay hand-written here, transcribed from
  * `functions/src/portal/getServiceCatalog.ts`.
  */
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 import type {
   AddBookingNoteArgs,
   AddBookingNoteResult,
@@ -74,10 +74,11 @@ export function pricesVisibleOf(catalog: { pricesVisible?: boolean } | null | un
  * the server needs it to decide billing access for an account holding more
  * than one, and without it that account sees no prices.
  */
-export function getServiceCatalog(kinfolkId?: string): Promise<GetServiceCatalogResult> {
+export function getServiceCatalog(kinfolkId?: string, options?: CallOptions): Promise<GetServiceCatalogResult> {
   return call<{ kinfolkId?: string }, GetServiceCatalogResult>(
     'getServiceCatalog',
     kinfolkId !== undefined ? { kinfolkId } : {},
+    options,
   );
 }
 
@@ -123,8 +124,8 @@ export interface GetBusinessClosuresResult {
   timeZone?: string;
 }
 
-export function getBusinessClosures(req: GetBusinessClosuresRequest): Promise<GetBusinessClosuresResult> {
-  return call<GetBusinessClosuresRequest, GetBusinessClosuresResult>('getBusinessClosures', req);
+export function getBusinessClosures(req: GetBusinessClosuresRequest, options?: CallOptions): Promise<GetBusinessClosuresResult> {
+  return call<GetBusinessClosuresRequest, GetBusinessClosuresResult>('getBusinessClosures', req, options);
 }
 
 // ── getBookingPolicy (functions/src/portal/getBookingPolicy.ts) ─────────────
@@ -169,8 +170,8 @@ export interface GetBookingPolicyResult {
 }
 
 /** What this business lets a household choose, and which windows it may pick from. */
-export function getBookingPolicy(): Promise<GetBookingPolicyResult> {
-  return call<Record<string, never>, GetBookingPolicyResult>('getBookingPolicy', {});
+export function getBookingPolicy(options?: CallOptions): Promise<GetBookingPolicyResult> {
+  return call<Record<string, never>, GetBookingPolicyResult>('getBookingPolicy', {}, options);
 }
 
 // ── requestBooking (functions/src/portal/requestBooking.ts, multi-visit shape) ──

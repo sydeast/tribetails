@@ -54,7 +54,15 @@ import kotlinx.serialization.Serializable
 @Serializable data object TribeRoute
 @Serializable data object TribeEditRoute
 @Serializable data object AccountRoute
+/** Notification SETTINGS, from the avatar menu. The bell no longer opens this (#1316). */
 @Serializable data object NotificationsRoute
+/**
+ * The notifications LIST behind the header bell (#1316): the household's recent
+ * alerts, newest first, with an unread mark. A chrome destination like
+ * [NotificationsRoute], because the bell reaches it the menu way (pop to Home,
+ * save/restore), which is only safe from a chrome screen.
+ */
+@Serializable data object NotificationsListRoute
 /** "About {business}" (#1411): hours, number, privacy policy, app version, off the public card. */
 @Serializable data object AboutRoute
 

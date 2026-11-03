@@ -18,4 +18,13 @@ interface FunctionsClient {
      * Throws on permission/auth/network errors.
      */
     suspend fun call(name: String, payload: JsonObject?): JsonObject
+    /**
+     * #1282: this client with the session reaction (#557) taken off, for reads
+     * nobody is looking at. The portal warm-up (`portal/PortalWarmup.kt`) fires
+     * a screen's reads the moment the portal opens; a refusal there is dropped
+     * by the caller and must not be the thing that signs the household out. The
+     * screen's own read, made through the reacting client, is. A client that
+     * has no reaction to take off returns itself.
+     */
+    fun withoutSessionReaction(): FunctionsClient = this
 }

@@ -69,6 +69,8 @@ class PortalApi(
             billingAccess = raw["billingAccess"]?.jsonPrimitive?.booleanOrNull ?: true,
             // #1462: absent means an older server, which knows of nothing owed.
             balanceDueCents = raw["balanceDueCents"]?.jsonPrimitive?.longOrNull ?: 0L,
+            // #1316: absent means an older server, which counts nothing unread.
+            unreadNotifications = raw["unreadNotifications"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(0) ?: 0,
         )
     }
 
@@ -633,8 +635,26 @@ class PortalApi(
     }
 
     /** Reads the shared `vet_clinics` catalog (the vet bank). Returns only
-     *  APPROVED clinics; pending kinfolk submissions are filtered server-side. */
+     *  APPROVED clinics; pending kinfolk submissions are filtered out.
+     *
+     *  #1503: Firestore first (see VetClinicsDirectRead.kt for why the rules
+     *  allow it and which filter the client applies), so Tribe Profile skips the
+     *  `getVetClinics` cold start. ANY failure falls back to the callable, the
+     *  old path unchanged. */
     suspend fun getVetClinics(): List<VetClinic> {
+        val direct = firestore
+        if (direct != null) {
+            try {
+                return readVetClinicsDirect(direct)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+                // Fall through to the callable; see above.
+            }
+        }
+        return getVetClinicsViaCallable()
+    }
+    private suspend fun getVetClinicsViaCallable(): List<VetClinic> {
         val raw = fns.call("getVetClinics", null)
         return (raw["clinics"] as? JsonArray)?.map { el ->
             val o = el.jsonObject
@@ -1946,6 +1966,33 @@ class PortalApi(
         )
     }
 
+    // -- Notifications list (#1316): the rows behind the header bell --
+
+    /**
+     * The household's recent alerts, newest first, with the bell's unread
+     * count. Decoded in NotificationListDtos.kt so the reading is testable
+     * without this class; a row the decoder cannot place is dropped rather than
+     * failing the page.
+     */
+    suspend fun listMyNotifications(
+        kinfolkId: String? = null,
+        limit: Int? = null,
+        before: Long? = null,
+    ): NotificationsPage {
+        val payload: JsonObject? = if (kinfolkId == null && limit == null && before == null) null
+        else buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            limit?.let { put("limit", it) }
+            before?.let { put("before", it) }
+        }
+        return decodeNotificationsPage(fns.call("listMyNotifications", payload))
+    }
+
+    /** Stamps `readAt` on one of the caller's own rows. The server refuses another recipient's. */
+    suspend fun markNotificationRead(notificationId: String) {
+        fns.call("markNotificationRead", buildJsonObject { put("notificationId", notificationId) })
+    }
+
     // -- Helpers --
     private fun decodeBooking(o: JsonObject): Booking = Booking(
         id = o["id"]?.jsonPrimitive?.contentOrNull ?: error("booking: missing id"),
@@ -2198,6 +2245,11 @@ data class MyHomeResult(
      * from an older server that does not send it. Not the account credit.
      */
     val balanceDueCents: Long = 0L,
+    /**
+     * #1316: how many of the caller's newest notifications for this tribe have
+     * no `readAt`, drawn on the header bell. 0 from an older server.
+     */
+    val unreadNotifications: Int = 0,
 )
 
 data class MyAccessResult(

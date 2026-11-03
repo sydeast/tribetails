@@ -1,4 +1,4 @@
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 
 /**
  * Wire types + wrapper functions for the Notification Settings screen's
@@ -66,8 +66,8 @@ export interface GetNotificationCatalogResult {
 }
 
 /** Auth: any signed-in caller; no payload (functions/src/notifications/getNotificationCatalog.ts). */
-export function getNotificationCatalog(): Promise<GetNotificationCatalogResult> {
-  return call<Record<string, never>, GetNotificationCatalogResult>('getNotificationCatalog', {});
+export function getNotificationCatalog(options?: CallOptions): Promise<GetNotificationCatalogResult> {
+  return call<Record<string, never>, GetNotificationCatalogResult>('getNotificationCatalog', {}, options);
 }
 
 // ── getMyNotificationPrefs / saveMyNotificationPrefs (functions/src/portal/notificationPrefs.ts) ──
@@ -90,8 +90,8 @@ export interface GetMyNotificationPrefsResult {
   updatedAtMs: number | null;
 }
 
-export function getMyNotificationPrefs(): Promise<GetMyNotificationPrefsResult> {
-  return call<Record<string, never>, GetMyNotificationPrefsResult>('getMyNotificationPrefs', {});
+export function getMyNotificationPrefs(options?: CallOptions): Promise<GetMyNotificationPrefsResult> {
+  return call<Record<string, never>, GetMyNotificationPrefsResult>('getMyNotificationPrefs', {}, options);
 }
 
 /**
@@ -289,4 +289,85 @@ export function keyChannelChecked(
  */
 export function keyChannelOverridden(byKeyForKey: Partial<Record<Channel, boolean>> | undefined, ch: Channel): boolean {
   return byKeyForKey?.[ch] !== undefined;
+}
+
+// ── listMyNotifications / markNotificationRead (#1316) ───────────────────────
+//
+// The notifications LIST behind the header bell (functions/src/portal/
+// listMyNotifications.ts), as distinct from the preference callables above.
+// Field names transcribed from `NotificationListItem` there.
+
+/** One row of the list. `readAt` null while unread: the server stamps it only on a read. */
+export interface NotificationItemDto {
+  id: string;
+  key: string;
+  category: string;
+  title: string;
+  description: string;
+  actorName: string;
+  actorPhotoUrl: string;
+  /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | '' as the dispatcher resolved it. */
+  targetType: string;
+  targetId: string;
+  /**
+   * The visit, when the row is about one visit. Null for a row about a whole
+   * booking request, whose `targetId` is the request's batch id, not a visit.
+   * `notificationTarget` (lib/notificationsList.ts) routes on this.
+   */
+  visitId: string | null;
+  /** The booking request (envelope) the row names, when it names one. */
+  batchId: string | null;
+  /** ISO 8601, or null when the row holds no readable time. */
+  createdAt: string | null;
+  /** ISO 8601 once read, null while unread. */
+  readAt: string | null;
+  detail?: Record<string, unknown>;
+}
+
+export interface ListMyNotificationsRequest {
+  kinfolkId?: string;
+  /** Rows per page, 1..100; the server defaults to 50. */
+  limit?: number;
+  /** `nextBefore` from the previous page. */
+  before?: number;
+}
+
+export interface ListMyNotificationsResult {
+  items: NotificationItemDto[];
+  /** The same number `getMyHome.unreadNotifications` carries, from the same server helper. */
+  unreadCount: number;
+  hasMore: boolean;
+  /** Cursor for the next page, or null at the end. */
+  nextBefore: number | null;
+}
+
+/**
+ * Not warmed by `lib/portalWarmupReads.ts` on purpose: the list is fetched
+ * only when the bell is tapped (the badge rides `getMyHome`). `options` is
+ * here so this read takes the same arguments as every other fetcher in the
+ * api layer (#1282), should a warm-up ever want it.
+ */
+export function listMyNotifications(
+  kinfolkId?: string,
+  opts: { limit?: number; before?: number } = {},
+  options?: CallOptions,
+): Promise<ListMyNotificationsResult> {
+  const payload: ListMyNotificationsRequest = {
+    ...(kinfolkId !== undefined ? { kinfolkId } : {}),
+    ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+    ...(opts.before !== undefined ? { before: opts.before } : {}),
+  };
+  return call<ListMyNotificationsRequest, ListMyNotificationsResult>('listMyNotifications', payload, options);
+}
+
+export interface MarkNotificationReadRequest {
+  notificationId: string;
+}
+export interface MarkNotificationReadResult {
+  ok: true;
+}
+
+/** Stamps `readAt` on one of the caller's own rows (functions/src/portal/markNotificationRead.ts). */
+export function markNotificationRead(notificationId: string): Promise<MarkNotificationReadResult> {
+  return call<MarkNotificationReadRequest, MarkNotificationReadResult>('markNotificationRead', { notificationId });
 }
