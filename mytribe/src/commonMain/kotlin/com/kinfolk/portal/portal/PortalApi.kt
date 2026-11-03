@@ -1923,33 +1923,6 @@ class PortalApi(
      * A photo entry with no id or no url is skipped rather than surfaced as a
      * blank tile, the same tolerance the KinTale `thumbs` decode applies.
      */
-    // -- Notifications list (#1316): the rows behind the header bell --
-
-    /**
-     * The household's recent alerts, newest first, with the bell's unread
-     * count. Decoded in NotificationListDtos.kt so the reading is testable
-     * without this class; a row the decoder cannot place is dropped rather than
-     * failing the page.
-     */
-    suspend fun listMyNotifications(
-        kinfolkId: String? = null,
-        limit: Int? = null,
-        before: Long? = null,
-    ): NotificationsPage {
-        val payload: JsonObject? = if (kinfolkId == null && limit == null && before == null) null
-        else buildJsonObject {
-            kinfolkId?.let { put("kinfolkId", it) }
-            limit?.let { put("limit", it) }
-            before?.let { put("before", it) }
-        }
-        return decodeNotificationsPage(fns.call("listMyNotifications", payload))
-    }
-
-    /** Stamps `readAt` on one of the caller's own rows. The server refuses another recipient's. */
-    suspend fun markNotificationRead(notificationId: String) {
-        fns.call("markNotificationRead", buildJsonObject { put("notificationId", notificationId) })
-    }
-
     suspend fun getMyKinPhotos(
         kinfolkId: String? = null,
         limit: Int? = null,
@@ -1991,6 +1964,33 @@ class PortalApi(
             hasMore = raw["hasMore"]?.jsonPrimitive?.booleanOrNull ?: false,
             nextBefore = raw["nextBefore"]?.jsonPrimitive?.longOrNull,
         )
+    }
+
+    // -- Notifications list (#1316): the rows behind the header bell --
+
+    /**
+     * The household's recent alerts, newest first, with the bell's unread
+     * count. Decoded in NotificationListDtos.kt so the reading is testable
+     * without this class; a row the decoder cannot place is dropped rather than
+     * failing the page.
+     */
+    suspend fun listMyNotifications(
+        kinfolkId: String? = null,
+        limit: Int? = null,
+        before: Long? = null,
+    ): NotificationsPage {
+        val payload: JsonObject? = if (kinfolkId == null && limit == null && before == null) null
+        else buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            limit?.let { put("limit", it) }
+            before?.let { put("before", it) }
+        }
+        return decodeNotificationsPage(fns.call("listMyNotifications", payload))
+    }
+
+    /** Stamps `readAt` on one of the caller's own rows. The server refuses another recipient's. */
+    suspend fun markNotificationRead(notificationId: String) {
+        fns.call("markNotificationRead", buildJsonObject { put("notificationId", notificationId) })
     }
 
     // -- Helpers --
