@@ -147,8 +147,7 @@ fun KinfolkPortalAppGuarded() {
     // not one to fan twenty more reads at. The effect's own scope is what
     // cancels the fan-out when the shell leaves; nothing in it throws.
     LaunchedEffect(home, homeError) {
-        val payload = home ?: return@LaunchedEffect
-        if (homeError != null) return@LaunchedEffect
+        val payload = PortalWarmup.warmupPayload(home, homeError) ?: return@LaunchedEffect
         val today = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
         portalWarmup.run(payload, today)
     }

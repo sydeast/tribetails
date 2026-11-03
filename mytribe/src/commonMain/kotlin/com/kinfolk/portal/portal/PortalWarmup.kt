@@ -94,5 +94,14 @@ class PortalWarmup(
     companion object {
         /** ScheduleScreen's page: `getMyVisits(kinfolkId, limit = 10)`. */
         const val SCHEDULE_VISITS_LIMIT = 10
+        /**
+         * The shell's gate: which home payload, if any, a run may use. The
+         * shell writes a FALLBACK `MyHomeResult` when `getMyHome` fails and
+         * records the failure in `homeError`; that payload's `billingAccess`
+         * is the default, not an answer, so it warms nothing. Pure, so the
+         * rule is tested without a Compose runtime.
+         */
+        fun warmupPayload(home: MyHomeResult?, homeError: String?): MyHomeResult? =
+            if (home == null || homeError != null) null else home
     }
 }

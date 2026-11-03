@@ -105,4 +105,16 @@ class PortalWarmupTest {
         val schemas = fake.calls.filter { it.first == "getFormSchema" }.map { it.second!!["schemaId"]?.jsonPrimitive?.content }
         assertEquals(listOf("account", "homeAccess", "kinProfile", "tribeProfile"), schemas.sortedBy { it })
     }
+    @Test
+    fun `the shell runs only on a home payload that actually resolved`() {
+        val resolved = home(billingAccess = true)
+        assertEquals(resolved, PortalWarmup.warmupPayload(resolved, homeError = null))
+        assertEquals(null, PortalWarmup.warmupPayload(null, homeError = null))
+    }
+    @Test
+    fun `a failed home read warms nothing, however its fallback payload reads`() {
+        // The shell's fallback after a failed getMyHome carries the default billingAccess = true.
+        val fallback = MyHomeResult(kinfolkId = "kin-1", displayName = "The kin-1 Tribe")
+        assertEquals(null, PortalWarmup.warmupPayload(fallback, homeError = "deadline exceeded"))
+    }
 }

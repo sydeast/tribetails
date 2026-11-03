@@ -38,7 +38,8 @@ const server = vi.hoisted(() => ({
   respond: vi.fn<(name: string, payload: unknown) => Promise<unknown>>(),
 }));
 
-import { installPortalWarmup, portalWarmupInFlight, resetPortalWarmupForTest, warmPortalScreens } from './portalWarmup';
+import { installPortalWarmup, portalWarmupInFlight, resetPortalWarmupForTest } from './portalWarmup';
+import { warmPortalScreens } from './portalWarmupReads';
 
 const ANSWERS: Record<string, unknown> = {
   getMyHome: { displayName: 'The Ruiz Tribe', billingAccess: true },
