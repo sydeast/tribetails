@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getMyKin } from '../api/portal';
 import { getMyKinPhotos, type KinPhotoDto } from '../api/kinTalesApi';
 import { getMyTribeProfile } from '../api/tribeApi';
+import { GALLERY_CARD_PAGE, tribeHubPhotosKey, tribeProfileKey } from '../lib/portalQueryKeys';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
@@ -24,7 +25,10 @@ const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
  * card would wrongly say there are none. The card draws at most
  * GALLERY_CARD_THUMBS of what comes back. Same numbers as TribeHubScreen.kt.
  */
-export const GALLERY_CARD_PAGE = 12;
+// GALLERY_CARD_PAGE lives in lib/portalQueryKeys.ts (#1282: the warm-up reads
+// the same page without pulling this screen's chunk in) and is re-exported
+// here for the test and for readers who come looking for it.
+export { GALLERY_CARD_PAGE };
 export const GALLERY_CARD_THUMBS = 8;
 
 type CardThumb =
@@ -62,10 +66,10 @@ export function TribeHub() {
   // ['myKinPhotos', kinfolkId], and a plain query in that slot would be the
   // wrong shape for it.
   const media = useQuery({
-    queryKey: ['myKinPhotos', 'tribe-hub', kinfolkId],
+    queryKey: tribeHubPhotosKey(kinfolkId),
     queryFn: () => getMyKinPhotos(kinfolkId, { limit: GALLERY_CARD_PAGE }),
   });
-  const profile = useQuery({ queryKey: ['tribeProfile', kinfolkId], queryFn: () => getMyTribeProfile(kinfolkId) });
+  const profile = useQuery({ queryKey: tribeProfileKey(kinfolkId), queryFn: () => getMyTribeProfile(kinfolkId) });
 
   const { signOut, signingOut } = useSignOut();
 

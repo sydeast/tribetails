@@ -3,6 +3,7 @@ import { serviceEyebrowOf, serviceLabelOf, visitTitleOf } from '../lib/serviceLa
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getMyBookings, getMyVisits } from '../api/portal';
+import { PAST_VISITS_LIMIT, myVisitsKey } from '../lib/portalQueryKeys';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { useBreadcrumbs } from '../lib/breadcrumbs';
@@ -59,7 +60,7 @@ export function Schedule() {
 
   const kinfolkId = getActiveKinfolkId();
   const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId) });
-  const visits = useQuery({ queryKey: ['myVisits', kinfolkId], queryFn: () => getMyVisits(kinfolkId, 20), retry: false });
+  const visits = useQuery({ queryKey: myVisitsKey(kinfolkId), queryFn: () => getMyVisits(kinfolkId, PAST_VISITS_LIMIT), retry: false });
 
   const liveVisit = visits.data?.visits.find((v) => v.status.toLowerCase() === 'arrived') ?? null;
   const liveBooking = liveVisit ? findBookingBySessionId(bookings.data, liveVisit.id) : null;

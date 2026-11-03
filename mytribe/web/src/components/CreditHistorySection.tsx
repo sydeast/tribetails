@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { FirebaseError } from 'firebase/app';
 
 import { getAccountCreditHistory } from '../api/invoicesApi';
+import { accountCreditHistoryKey } from '../lib/portalQueryKeys';
 import type {
   GetAccountCreditHistoryResultCredit,
   GetAccountCreditHistoryResultUse,
@@ -52,7 +53,7 @@ function isPermissionDenied(err: unknown): boolean {
 
 export function CreditHistorySection({ kinfolkId }: { kinfolkId: string | undefined }) {
   const history = useQuery({
-    queryKey: ['accountCreditHistory', kinfolkId],
+    queryKey: accountCreditHistoryKey(kinfolkId),
     queryFn: () => getAccountCreditHistory(kinfolkId),
     // A refusal is an answer, not a fault; asking again changes nothing.
     retry: (count, err) => !isPermissionDenied(err) && count < 2,

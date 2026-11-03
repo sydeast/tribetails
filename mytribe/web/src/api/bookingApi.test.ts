@@ -89,9 +89,9 @@ describe('#1037 getServiceCatalog wrapper and pricesVisibleOf', () => {
   });
   it('sends the active tribe when it has one, and nothing when it does not', async () => {
     await getServiceCatalog('fam1');
-    expect(call).toHaveBeenLastCalledWith('getServiceCatalog', { kinfolkId: 'fam1' });
+    expect(call).toHaveBeenLastCalledWith('getServiceCatalog', { kinfolkId: 'fam1' }, undefined);
     await getServiceCatalog();
-    expect(call).toHaveBeenLastCalledWith('getServiceCatalog', {});
+    expect(call).toHaveBeenLastCalledWith('getServiceCatalog', {}, undefined);
   });
   it('hides prices only on an explicit false; a missing field is an older server', () => {
     expect(pricesVisibleOf({ pricesVisible: false })).toBe(false);

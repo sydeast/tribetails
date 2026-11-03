@@ -1,4 +1,4 @@
-import { call } from '../lib/fns';
+import { call, type CallOptions } from '../lib/fns';
 import { FUNCTIONS_HTTP_BASE } from '../lib/firebase';
 import { readKinDirect } from '../lib/kinDirectRead';
 import type {
@@ -80,9 +80,9 @@ export async function getTribeSummaries(kinfolkIds: string[]): Promise<TribeSumm
 }
 
 /** Home payload (identity + portal config) for one kinfolk tribe. */
-export function getMyHome(kinfolkId?: string): Promise<GetMyHomeResult> {
+export function getMyHome(kinfolkId?: string, options?: CallOptions): Promise<GetMyHomeResult> {
   const payload: GetMyHomeRequest = kinfolkId !== undefined ? { kinfolkId } : {};
-  return call<GetMyHomeRequest, GetMyHomeResult>('getMyHome', payload);
+  return call<GetMyHomeRequest, GetMyHomeResult>('getMyHome', payload, options);
 }
 
 /**
@@ -107,12 +107,12 @@ export function getMyBookings(kinfolkId?: string): Promise<GetMyBookingsResult> 
 }
 
 /** AuntieOS-owned visit history (kin_care_sessions), incl. GPS route/summary. */
-export function getMyVisits(kinfolkId?: string, limit?: number): Promise<GetMyVisitsResult> {
+export function getMyVisits(kinfolkId?: string, limit?: number, options?: CallOptions): Promise<GetMyVisitsResult> {
   const payload: GetMyVisitsRequest = {
     ...(kinfolkId !== undefined ? { kinfolkId } : {}),
     ...(limit !== undefined ? { limit } : {}),
   };
-  return call<GetMyVisitsRequest, GetMyVisitsResult>('getMyVisits', payload);
+  return call<GetMyVisitsRequest, GetMyVisitsResult>('getMyVisits', payload, options);
 }
 
 /**
@@ -212,8 +212,8 @@ export function getMyKinTales(kinfolkId?: string, opts?: { before?: number; limi
 }
 
 /** Public-facing business contact details (name/email/phone/address). */
-export function getBusinessContact(): Promise<BusinessContactDto> {
-  return call<Record<string, never>, BusinessContactDto>('getBusinessContact', {});
+export function getBusinessContact(options?: CallOptions): Promise<BusinessContactDto> {
+  return call<Record<string, never>, BusinessContactDto>('getBusinessContact', {}, options);
 }
 
 /** Public invite preview for the claim screen (no auth required). */
