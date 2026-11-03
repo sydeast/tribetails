@@ -10,6 +10,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { payMethodSettingsFrom, resolveHomePayMethods, type PayMethod } from '../lib/paymentMethods';
 import { openBalanceCentsOf } from './getMyInvoices';
+import { countUnreadNotifications } from '../lib/recipientNotifications';
 
 interface GetMyHomeRequest {
   kinfolkId?: string;
@@ -107,6 +108,15 @@ interface GetMyHomeResult {
    * account credit (`accountBalanceCents`). Clients decode a missing field as 0.
    */
   balanceDueCents: number;
+  /**
+   * #1316: how many of the caller's newest notifications (the rows
+   * `listMyNotifications` lists for this tribe) have no `readAt` yet. The bell
+   * badge on both clients draws this, so the list callable fires only when the
+   * bell is tapped. Capped by the scan in `countUnreadNotifications`, and 0
+   * when that read fails: the badge is decoration and must never take Home
+   * down. Clients decode a missing field as 0.
+   */
+  unreadNotifications: number;
 }
 
 /**
@@ -151,12 +161,24 @@ export async function getMyHomeHandler(
   // #1462: the household's invoices ride the same batch so the Balance due
   // figure adds no round trip to the landing read. They are summed only when
   // the caller has billing access (below); otherwise nothing from them leaves.
-  const [familySnap, settingsSnap, clientSnap, billingAccess, invoiceSnap] = await Promise.all([
+  // #1316: the bell badge rides the same batch. Caught here, not thrown: a
+  // missing index or a slow scan must cost the household a badge, never Home.
+  const [familySnap, settingsSnap, clientSnap, billingAccess, invoiceSnap, unreadNotifications] = await Promise.all([
     firestore.collection('families').doc(kinfolkId).get(),
     firestore.collection('business_settings').doc('business_settings').get(),
     firestore.collection('clients').doc(uid).get(),
     hasBillingAccess(uid, kinfolkId, hasAdminClaim, 'getMyHome'),
     firestore.collection('invoices').where('kinfolkId', '==', kinfolkId).get(),
+    countUnreadNotifications(firestore, uid, kinfolkId).catch((err: unknown) => {
+      logEvent({
+        severity: 'warn',
+        function: 'getMyHome',
+        event: 'portal.home.unreadNotifications.failed',
+        uid,
+        errorMessage: (err as Error)?.message,
+      });
+      return 0;
+    }),
   ]);
   let displayName = (familySnap.data()?.displayName as string | undefined) ?? null;
 
@@ -292,6 +314,7 @@ export async function getMyHomeHandler(
     payMethods,
     billingAccess,
     balanceDueCents,
+    unreadNotifications,
   };
 }
 

@@ -150,9 +150,21 @@ describe('getMyHomeHandler', () => {
     expect(res).not.toHaveProperty('upcomingBookings');
     expect(res).not.toHaveProperty('recentBookings');
     // The fields legacy DOES decode must survive untouched. `payMethods`
-    // (PR30) and `billingAccess` (#1005) are the additions since O-19 was pinned.
+    // (PR30), `billingAccess` (#1005), `balanceDueCents` (#1462) and
+    // `unreadNotifications` (#1316) are the additions since O-19 was pinned.
     expect(Object.keys(res).sort()).toEqual(
-      ['balanceDueCents', 'bannerDismissedByUser', 'billingAccess', 'businessLogoUrl', 'businessName', 'displayName', 'kinfolkId', 'payMethods', 'portal'].sort(),
+      [
+        'balanceDueCents',
+        'bannerDismissedByUser',
+        'billingAccess',
+        'businessLogoUrl',
+        'businessName',
+        'displayName',
+        'kinfolkId',
+        'payMethods',
+        'portal',
+        'unreadNotifications',
+      ].sort(),
     );
   });
 

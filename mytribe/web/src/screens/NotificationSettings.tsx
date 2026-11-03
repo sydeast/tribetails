@@ -42,7 +42,8 @@ import { myNotificationPrefsKey, notificationCatalogKey } from '../lib/portalQue
  * Notification Settings, ported from
  * ui-ideas/mytribe-notifications-2026-05-31.html. Despite the filename this
  * is a PREFERENCES screen (category master switches + per-channel toggles),
- * not a notification feed — there's no feed/inbox callable in this codebase.
+ * not the notifications list. That list is NotificationsList.tsx, behind the
+ * header bell since #1316; this screen is reached from the avatar menu.
  *
  * Data: getNotificationCatalog (functions/src/notifications/
  * getNotificationCatalog.ts) supplies categories, each with one or more

@@ -1092,7 +1092,10 @@ One helper answers it, `hasBillingAccess` / `requireBillingAccess` in
   and sends `payMethods: []` when false. Clients read a missing field as true.
   `balanceDueCents` (#1462) is the sum of the household's `open` invoices with
   a balance above zero, in cents, and is 0 when `billingAccess` is false.
-  Clients read a missing field as 0.
+  Clients read a missing field as 0. `unreadNotifications` (#1316) is how many
+  of the caller's newest 100 notifications for this tribe have no `readAt`,
+  the bell badge on both portals; 0 when that read fails, and clients read a
+  missing field as 0.
 - `getAccountCreditHistory`: unchanged gate, now through the same helper.
 - `payInvoice`, `redeemCredit`, `acceptQuote`/`denyQuote` and the four card
   callables take the same billing access (operator ruling 2026-09-28,
@@ -2694,6 +2697,30 @@ archived. The notification may already be gone." rather than reading the resolve
 as success. Argument keys are NOT uniform across the family, and the mismatch is
 deliberate rather than an oversight, so a mirror that guesses will fail zod: the
 read pair takes `notificationId`, the archive family takes `id` / `ids`.
+
+### listMyNotifications (#1316, kinfolk)
+- req `{ kinfolkId?: string, limit?: number /* 1..100, default 50 */, before?: number /* previous page's nextBefore, ms */ }`
+- res `{ items: NotificationListItem[], unreadCount: number, hasMore: boolean, nextBefore: number | null }`
+  where `NotificationListItem = { id, key, category, title, description, actorName,
+  actorPhotoUrl, targetType, targetId, visitId: string | null, batchId: string | null,
+  createdAt: string | null /* ISO */, readAt: string | null /* ISO, null while unread */,
+  detail?: object }`
+- GATE: signed in, `refuseAuntie`, `resolveKinfolkAccess`, then `recipientUid ==`
+  on the query. Rows are the caller's own, newest first; archived rows
+  (`archivedAt` carrying a value) are left out, and so is a row whose
+  `data.kinfolkId` names a household other than the resolved tribe, so a kinfolk
+  holding two tribes sees each tribe's rows under that tribe.
+- **Unread is the ABSENCE of `readAt`** (the read callables stamp it, unread
+  deletes it), so `unreadCount` is a capped scan of the newest 100 rows filtered
+  in code, the same helper `getMyHome.unreadNotifications` uses. The bell badge
+  reads the home field; this callable fires only when the bell is tapped.
+- `visitId` / `batchId` come off the row's `data`, because `targetId` is a VISIT
+  for per-visit events (`onBookingsWrite`) and a BATCH for whole-request events
+  (`kincare.requested`, series approval, a declined request). Clients open the
+  visit when `visitId` is set, the request when only `batchId` is, else Schedule.
+- `nextBefore` is the oldest RAW row's `createdAt` on the page, not the oldest
+  visible one, so a page of all-archived rows still hands back a cursor that moves.
+- Needs the composite index `notifications: recipientUid ASC, createdAt DESC`.
 
 ### markNotificationRead / markNotificationUnread
 - req `{ notificationId: string /* 1..200 */ }`

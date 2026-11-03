@@ -342,6 +342,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   getKinTaleReaction: () => require('./portal/kinTaleEngagement'),
   toggleKinTaleLove: () => require('./portal/kinTaleEngagement'),
   getKinTaleComments: () => require('./portal/getKinTaleComments'),
+  // #1316: the list behind the portal bell. The badge count rides getMyHome.
+  listMyNotifications: () => require('./portal/listMyNotifications'),
   markNotificationRead: () => require('./portal/markNotificationRead'),
   markNotificationUnread: () => require('./portal/markNotificationRead'),
   bulkMarkNotificationsRead: () => require('./portal/bulkMarkNotificationsRead'),

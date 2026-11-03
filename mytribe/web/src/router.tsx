@@ -423,6 +423,18 @@ const notificationSettingsRoute = createRoute({
 });
 
 /**
+ * #1316: the list behind the header bell, the household's recent alerts.
+ * Distinct from /account/notifications above, which is the settings screen
+ * the bell used to open and which stays in the avatar menu.
+ */
+const notificationsListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/notifications',
+  beforeLoad: requireActiveTribe,
+  component: lazyRouteComponent(() => import('./screens/NotificationsList'), 'NotificationsList'),
+});
+
+/**
  * #1411: "About {business}". `requireSignedIn`, not `requireActiveTribe`: the
  * screen reads only `business_public/card` (the sign-in read, #1321), so it has
  * no household to need and opens before a tribe is picked.
@@ -461,6 +473,7 @@ const routeTree = rootRoute.addChildren([
   tribeEditRoute,
   accountRoute,
   notificationSettingsRoute,
+  notificationsListRoute,
   aboutRoute,
 ]);
 

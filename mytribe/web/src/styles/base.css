@@ -63,6 +63,10 @@ body {
 .iconbtn:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
 .iconbtn .ping { position: absolute; top: 9px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--coral);
   box-shadow: 0 0 0 3px var(--cream); }
+/* #1316: the unread count on the bell. Drawn only above 0, capped at 99+. */
+.iconbtn__badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--coral); color: #fff; font-family: var(--mono); font-size: 10.5px; font-weight: 500; line-height: 18px;
+  text-align: center; box-shadow: 0 0 0 2px var(--cream); }
 .avatar { width: 42px; height: 42px; border-radius: 50%; background: var(--tribe-grad); display: grid; place-items: center;
   color: #fff; font-family: var(--serif); font-size: 18px; cursor: pointer; box-shadow: var(--shadow-warm); }
 button.avatar { border: 0; padding: 0; }

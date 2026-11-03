@@ -81,6 +81,11 @@ fun KinfolkPortalAppGuarded() {
     var home by remember { mutableStateOf<MyHomeResult?>(null) }
     var homeError by remember { mutableStateOf<String?>(null) }
     var personName by remember { mutableStateOf("") }
+    // #1316: the bell badge. Seeded from getMyHome, then kept current by the
+    // notifications list itself (the server's count on load, one less per tap),
+    // since `home` is read once per tribe and would otherwise never move.
+    var unreadNotifications by remember { mutableStateOf(0) }
+    LaunchedEffect(home) { unreadNotifications = home?.unreadNotifications ?: 0 }
     var claimInviteId by remember { mutableStateOf<String?>(readInitialClaimInviteId()) }
     val initialShareToken = remember { readInitialShareToken() }
     // #1293: a launch link we could not place; cleared by Back to Home.
@@ -217,6 +222,8 @@ fun KinfolkPortalAppGuarded() {
                             shellHomeSections = home?.portal?.home ?: emptyList(),
                             shellChat = home?.portal?.chat ?: com.kinfolk.portal.portal.PortalChat(),
                             shellBillingAccess = home?.billingAccess ?: true,
+                            shellUnreadNotifications = unreadNotifications,
+                            onUnreadNotificationsChanged = { unreadNotifications = it },
                             onDismissBannerPerUser = { bannerId ->
                                 // Best-effort sync; never blocks the local hide.
                                 scope.launch {

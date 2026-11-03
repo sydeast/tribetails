@@ -49,6 +49,14 @@ enum class ShellDestination(
     Kin("The Kin", "Kin", Icons.Filled.Pets, KinRoute, KinRoute::class),
     Account("Account", "Account", Icons.Filled.PersonOutline, AccountRoute, AccountRoute::class),
     Notifications("Notification settings", "Notifications", Icons.Filled.Notifications, NotificationsRoute, NotificationsRoute::class),
+
+    /**
+     * #1316: the list behind the header bell. In neither bar and not in the
+     * menu (the bell is its one door), but a chrome destination so the bell's
+     * save/restore navigation is safe and leaving it never saves a corrupt
+     * stack, the same reason About is one.
+     */
+    NotificationsList("Notifications", "Notifications", Icons.Filled.Notifications, NotificationsListRoute, NotificationsListRoute::class),
     TribeEdit("Edit Tribe Profile", "Edit", Icons.Filled.Edit, TribeEditRoute, TribeEditRoute::class),
 
     /**
