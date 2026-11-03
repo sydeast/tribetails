@@ -146,8 +146,9 @@ export const Args = z.object({
  * `invoice.new`, and true when every delivery channel was off for them: the
  * notice is in their notifications list and nothing was emailed or texted.
  * Absent on a replay (the first attempt did the sending), when the dispatch
- * failed (logged, the invoice stands) and when the household has no portal
- * account.
+ * failed (logged, the invoice stands), when the household has no portal
+ * account, and for a DRAFT (#1513): a draft sends nothing, so there is no
+ * delivery to describe.
  */
 export const Result = z
   .object({
@@ -177,7 +178,7 @@ export async function createInvoiceHandler(
   // re-do work whose result it is going to throw away, and above all it must
   // not reach `mintInvoiceNumber`, which spends a number it cannot give back.
   // It also must not re-enqueue `invoice.new`: the household was told about
-  // this invoice on the first attempt.
+  // this invoice on the first attempt (or, for a draft, is told on send).
   if (args.idempotencyKey !== undefined) {
     const existing = await db().collection('invoices').doc(args.idempotencyKey).get();
     if (existing.exists) {
@@ -335,7 +336,7 @@ export async function createInvoiceHandler(
     // are refereed by the server rather than by the read above.
     if (args.idempotencyKey !== undefined) tx.create(ref, full);
     else tx.set(ref, full);
-    return invoiceNumber;
+    return { invoiceNumber, storedStatus: full.status };
   });
 
   if (written === null) {
@@ -347,7 +348,7 @@ export async function createInvoiceHandler(
     });
     return validateResponse('createInvoice', Result, { ok: true, invoiceId: ref.id });
   }
-  const invoiceNumber = written;
+  const { invoiceNumber, storedStatus } = written;
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -364,29 +365,37 @@ export async function createInvoiceHandler(
     },
   });
 
-  const recipientUid = await resolveBillingRecipientUid(args.familyId);
+  // #1513: the household hears on SEND, never before. Every composer creates a
+  // draft, and `reviewAndSendDraftInvoice` enqueues `invoice.new` when the
+  // office sends it; telling them here as well announces an unreviewed draft
+  // and then repeats itself. The decision reads the STORED status, which
+  // `invoiceStateStampOf` canonicalized in the write above (a caller's '' or
+  // 'sent' stores as 'open'), not `args.status`. A non-draft created directly
+  // is the send, so it still notifies.
   // #1511: whether the household's copy reached them in the app only. Left
   // undefined, and so omitted from the answer, unless this call wrote one.
   let appOnly: boolean | undefined;
-  try {
-    const dispatched = await enqueueNotificationDetailed({
-      key: 'invoice.new',
-      recipientUid: recipientUid ?? '',
-      data: { kinfolkId: args.familyId, invoiceId: ref.id },
-      targetType: 'invoice',
-      targetId: ref.id,
-    });
-    // Per recipient: the office copy's channels are not the household's.
-    appOnly = householdAppOnly(dispatched, recipientUid);
-  } catch (err) {
-    logEvent({
-      severity: 'warn',
-      function: 'createInvoice',
-      event: 'notification.dispatch.failed',
-      extra: { familyId: args.familyId, invoiceId: ref.id, key: 'invoice.new', err: (err as Error)?.message },
-    });
+  if (storedStatus !== 'draft') {
+    const recipientUid = await resolveBillingRecipientUid(args.familyId);
+    try {
+      const dispatched = await enqueueNotificationDetailed({
+        key: 'invoice.new',
+        recipientUid: recipientUid ?? '',
+        data: { kinfolkId: args.familyId, invoiceId: ref.id },
+        targetType: 'invoice',
+        targetId: ref.id,
+      });
+      // Per recipient: the office copy's channels are not the household's.
+      appOnly = householdAppOnly(dispatched, recipientUid);
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'createInvoice',
+        event: 'notification.dispatch.failed',
+        extra: { familyId: args.familyId, invoiceId: ref.id, key: 'invoice.new', err: (err as Error)?.message },
+      });
+    }
   }
-
   return validateResponse('createInvoice', Result, {
     ok: true,
     invoiceId: ref.id,
