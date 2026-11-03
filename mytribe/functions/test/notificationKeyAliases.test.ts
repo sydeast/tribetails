@@ -120,7 +120,17 @@ describe('notification key aliases: dispatch', () => {
     expect(written!.data.title).toBe('KinTale (visit report) published');
   });
 
-  it('a pref stored under the legacy key still suppresses the legacy dispatch', async () => {
+  /**
+   * What a legacy pref governs is DELIVERY. email was the only default-on
+   * channel and the stored legacy pref turned it off, so no work order is
+   * written and nothing goes out. The notifications record itself is still
+   * written (#1505): the list behind the bell is not a channel a pref can turn
+   * off, and the alias must not make it one by accident.
+   */
+  const workOrders = (writes: Array<{ path: string }>) => writes.filter((w) => w.path.startsWith('notificationDispatch/'));
+  const records = (writes: Array<{ path: string }>) => writes.filter((w) => w.path.startsWith('notifications/'));
+
+  it('a pref stored under the legacy key still governs the legacy dispatch: record, no delivery', async () => {
     const ctx = buildDbMock({
       docs: {
         'clients/kin1': {
@@ -134,11 +144,12 @@ describe('notification key aliases: dispatch', () => {
       recipientUid: 'kin1',
       data: { kinfolkId: 'f1' },
     });
-    // email was the only default-on channel and the stored legacy pref killed it.
-    expect(ids).toEqual([]);
+    expect(ids).toHaveLength(1);
+    expect(records(ctx.writes)).toHaveLength(1);
+    expect(workOrders(ctx.writes)).toEqual([]);
   });
 
-  it('a pref stored under the legacy key also governs the canonical dispatch', async () => {
+  it('a pref stored under the legacy key also governs the canonical dispatch: record, no delivery', async () => {
     const ctx = buildDbMock({
       docs: {
         'clients/kin1': {
@@ -152,7 +163,9 @@ describe('notification key aliases: dispatch', () => {
       recipientUid: 'kin1',
       data: { kinfolkId: 'f1' },
     });
-    expect(ids).toEqual([]);
+    expect(ids).toHaveLength(1);
+    expect(records(ctx.writes)).toHaveLength(1);
+    expect(workOrders(ctx.writes)).toEqual([]);
   });
 
   it('a business override stored under the legacy key still suppresses both keys', async () => {
