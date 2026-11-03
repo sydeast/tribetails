@@ -6,13 +6,26 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   resolveUid: vi.fn(),
   enqueue: vi.fn(),
+  // #1511: what the dispatcher did to each recipient's copy (see recordPayment.test.ts).
+  appOnlyUids: vi.fn<() => string[]>(),
+  suppressed: vi.fn<() => Array<{ recipientUid: string; reason: 'duplicate' | 'prefs' | 'gate' }>>(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+// #1511: the handler reads the detailed outcome. One counted mock answers both
+// entry points, so every assertion below on `enqueue` still holds.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueue,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: ((await mocks.enqueue(args)) as string[] | undefined) ?? [],
+    suppressed: mocks.suppressed(),
+    unresolved: [],
+    appOnly: mocks.appOnlyUids(),
+  }),
+}));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
@@ -26,6 +39,8 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
   mocks.enqueue.mockReset().mockResolvedValue(['n1']);
+  mocks.appOnlyUids.mockReset().mockReturnValue([]);
+  mocks.suppressed.mockReset().mockReturnValue([]);
   (writeAuditEntry as any).mockClear();
 });
 
@@ -168,8 +183,10 @@ describe('createQuote handler effects', () => {
   it('does NOT dispatch a notification when sendToKinfolk is omitted/false', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
-    await createQuoteHandler(req(validPayload));
+    const res = await createQuoteHandler(req(validPayload));
     expect(mocks.enqueue).not.toHaveBeenCalled();
+    // #1511: nothing was sent, so there is no delivery to describe.
+    expect(res).not.toHaveProperty('appOnly');
   });
 
   it('dispatches invoice.new with invoice target ref when sendToKinfolk is true', async () => {
@@ -184,6 +201,8 @@ describe('createQuote handler effects', () => {
         targetId: res.invoiceId,
       }),
     );
+    // #1511: a channel carried the household's copy.
+    expect(res.appOnly).toBe(false);
   });
 
   it('still returns ok when notification dispatch fails (swallowed + logged)', async () => {
@@ -192,6 +211,44 @@ describe('createQuote handler effects', () => {
     mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
     const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
     expect(res.ok).toBe(true);
+    // #1511: no record was written, so the answer makes no claim about one.
+    expect(res).not.toHaveProperty('appOnly');
+  });
+
+  // ── #1511: the quote that reached the household in the app only ────────────
+  it('#1511 every channel off for the household: appOnly true', async () => {
+    mocks.appOnlyUids.mockReturnValue(['kin-uid-1']);
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
+    expect(res.ok).toBe(true);
+    expect(res.appOnly).toBe(true);
+  });
+
+  it('#1511 the office copy having no channels is not the household copy having none', async () => {
+    mocks.appOnlyUids.mockReturnValue(['office-uid']);
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
+    expect(res.appOnly).toBe(false);
+  });
+
+  it('#1511 no portal account: the office copy alone was written, so appOnly is omitted', async () => {
+    mocks.resolveUid.mockResolvedValue(null);
+    mocks.appOnlyUids.mockReturnValue(['office-uid']);
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
+    expect(res.ok).toBe(true);
+    expect(res).not.toHaveProperty('appOnly');
+  });
+
+  it('#1511 a household copy the dispatcher held back has no delivery to describe', async () => {
+    mocks.suppressed.mockReturnValue([{ recipientUid: 'kin-uid-1', reason: 'prefs' }]);
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
+    expect(res).not.toHaveProperty('appOnly');
   });
 });
 

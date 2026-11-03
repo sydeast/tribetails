@@ -195,6 +195,94 @@ class InvoiceDetailViewModelTest {
         assertFalse(state.toastIsError)
     }
 
+    // ── #1511: the receipt and the draft send ────────────────────────────────
+    @Test
+    fun `generateReceipt that reached the household in the app only says so, not green`() = runTest {
+        val paid = Invoice(id = "inv1511", invoiceNumber = "INV-1511", kinfolkName = "The Whitfields", total = 40.0, amountDue = 0.0, status = "paid")
+        coEvery { invoiceRepository.getInvoiceById("inv1511") } returns Result.success(paid)
+        viewModel.loadInvoice("inv1511")
+        advanceUntilIdle()
+
+        coEvery { invoiceRepository.generateReceipt("inv1511") } returns Result.success(
+            com.tribetails.auntieos.data.contracts.GenerateReceiptResult(ok = true, appOnly = true),
+        )
+        viewModel.generateReceipt()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.generatingReceipt)
+        assertEquals("Receipt generated in the app only. Email and text are off for this household.", state.toastMessage)
+        assertTrue(state.toastIsError)
+    }
+
+    @Test
+    fun `generateReceipt from an older server, with no flag, keeps the plain green toast`() = runTest {
+        val paid = Invoice(id = "inv1512", invoiceNumber = "INV-1512", kinfolkName = "The Whitfields", total = 40.0, amountDue = 0.0, status = "paid")
+        coEvery { invoiceRepository.getInvoiceById("inv1512") } returns Result.success(paid)
+        viewModel.loadInvoice("inv1512")
+        advanceUntilIdle()
+
+        coEvery { invoiceRepository.generateReceipt("inv1512") } returns Result.success(
+            com.tribetails.auntieos.data.contracts.GenerateReceiptResult(ok = true),
+        )
+        viewModel.generateReceipt()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("Receipt generated.", state.toastMessage)
+        assertFalse(state.toastIsError)
+    }
+
+    /**
+     * A draft with a household on it: `loadInvoice` also loads that household's
+     * kincare sessions, and a relaxed mockk answers a `Result<List>` with a bare
+     * Object, so this screen's kincare repo is stubbed for the two draft cases.
+     */
+    private fun draftViewModel(kinfolkId: String): InvoiceDetailViewModel {
+        val kinCare = mockk<com.tribetails.auntieos.data.repository.KinCareRepository>(relaxed = true)
+        coEvery { kinCare.getKinCareSessionsForKinfolk(kinfolkId) } returns Result.success(emptyList())
+        return InvoiceDetailViewModel(repository, invoiceRepository, kinCare)
+    }
+
+    @Test
+    fun `reviewAndSendDraft that reached the household in the app only says so, not green`() = runTest {
+        val draft = Invoice(id = "d1511", kinfolkId = "fam1", invoiceNumber = "INV-D", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0, status = "draft")
+        coEvery { invoiceRepository.getInvoiceById("d1511") } returns Result.success(draft)
+        val vm = draftViewModel("fam1")
+        vm.loadInvoice("d1511")
+        advanceUntilIdle()
+
+        coEvery { invoiceRepository.reviewAndSendDraftInvoice("d1511", "fam1") } returns Result.success(
+            com.tribetails.auntieos.data.contracts.PostInvoiceEventResult(ok = true, appOnly = true),
+        )
+        vm.reviewAndSendDraft()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.sendingDraft)
+        assertEquals("Draft sent in the app only. Email and text are off for this household.", state.toastMessage)
+        assertTrue(state.toastIsError)
+    }
+
+    @Test
+    fun `reviewAndSendDraft by a channel keeps the plain green toast`() = runTest {
+        val draft = Invoice(id = "d1512", kinfolkId = "fam1", invoiceNumber = "INV-D", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0, status = "draft")
+        coEvery { invoiceRepository.getInvoiceById("d1512") } returns Result.success(draft)
+        val vm = draftViewModel("fam1")
+        vm.loadInvoice("d1512")
+        advanceUntilIdle()
+
+        coEvery { invoiceRepository.reviewAndSendDraftInvoice("d1512", "fam1") } returns Result.success(
+            com.tribetails.auntieos.data.contracts.PostInvoiceEventResult(ok = true, appOnly = false),
+        )
+        vm.reviewAndSendDraft()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals("Draft sent.", state.toastMessage)
+        assertFalse(state.toastIsError)
+    }
+
     @Test
     fun `sendReminder is pessimistic, a second tap while in flight fires nothing`() = runTest {
         val invoice = Invoice(id = "inv833", invoiceNumber = "INV-833")

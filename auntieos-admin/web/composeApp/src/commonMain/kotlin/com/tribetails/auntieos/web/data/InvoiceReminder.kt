@@ -43,6 +43,56 @@ data class ReminderOutcome(
 /** #1507: the clause every app-only send carries, on every admin surface. */
 const val APP_ONLY_NOTE = "Email and text are off for this household."
 
+/**
+ * #1511: what a send-shaped callable with a bare ack answered (`generateReceipt`,
+ * `postInvoiceEvent` for the draft send). [appOnly] is true when the household's
+ * copy reached them in the app only, with every delivery channel off for them.
+ * Absent from an older function and from every call that wrote no household
+ * copy; both read as false, which keeps the plain "sent" those always had.
+ */
+data class SendAck(val appOnly: Boolean = false)
+
+/**
+ * #1511: what `createInvoice` / `createQuote` answered. [appOnly] as on
+ * [SendAck], for the household's `invoice.new` copy. A body with no `invoiceId`
+ * decodes to a blank id rather than throwing, as the callers always read it.
+ */
+data class CreatedInvoice(val invoiceId: String, val appOnly: Boolean = false)
+
+private val ackJson = Json { ignoreUnknownKeys = true; isLenient = true }
+
+/** Decodes a send-shaped ack. Only an explicit `appOnly: true` counts. */
+fun decodeSendAck(body: String): SendAck =
+    SendAck(appOnly = ackJson.parseToJsonElement(body).jsonObject["appOnly"]?.jsonPrimitive?.booleanOrNull ?: false)
+
+/** Decodes a create answer. Only an explicit `appOnly: true` counts. */
+fun decodeCreatedInvoice(body: String): CreatedInvoice {
+    val obj = ackJson.parseToJsonElement(body).jsonObject
+    return CreatedInvoice(
+        invoiceId = obj["invoiceId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        appOnly = obj["appOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
+    )
+}
+
+/** The list's notice after a draft is reviewed and sent, honest about where it went (#1511). */
+fun invoiceSentMessage(appOnly: Boolean): String =
+    if (appOnly) "Invoice sent in the app only. $APP_ONLY_NOTE" else "Invoice sent."
+
+/** The notice after a receipt is issued, honest about where its notice went (#1511). */
+fun receiptGeneratedMessage(appOnly: Boolean): String =
+    if (appOnly) "Receipt generated in the app only. $APP_ONLY_NOTE" else "Receipt generated."
+
+/**
+ * The notice after a quote is created (#1511). [sent] is the composer's
+ * send-to-household toggle; [appOnly] is the server's word that the copy it
+ * sent reached the household in the app only, read only with [sent].
+ */
+fun quoteCreatedMessage(sent: Boolean, appOnly: Boolean): String = when {
+    !sent -> "Quote created."
+    appOnly -> "Quote created and sent in the app only. $APP_ONLY_NOTE"
+    else -> "Quote created and sent."
+}
+
 private val REASONS = setOf("sent", "recent", "in-progress", "suppressed")
 
 private val reminderJson = Json { ignoreUnknownKeys = true; isLenient = true }

@@ -316,6 +316,8 @@ data class CreateInvoiceArgs(
 data class CreateInvoiceResult(
     val ok: Boolean,
     val invoiceId: String,
+    /** Null when the payload omits the key. */
+    val appOnly: Boolean? = null,
 )
 
 /**
@@ -327,6 +329,7 @@ internal fun decodeCreateInvoiceResult(raw: Map<String, Any?>?): CreateInvoiceRe
     CreateInvoiceResult(
         ok = raw?.get("ok") as? Boolean ?: false,
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        appOnly = raw?.get("appOnly") as? Boolean,
     )
 
 // ---------- createQuote ----------
@@ -423,6 +426,8 @@ data class CreateQuoteArgs(
 data class CreateQuoteResult(
     val ok: Boolean,
     val invoiceId: String,
+    /** Null when the payload omits the key. */
+    val appOnly: Boolean? = null,
 )
 
 /**
@@ -434,6 +439,7 @@ internal fun decodeCreateQuoteResult(raw: Map<String, Any?>?): CreateQuoteResult
     CreateQuoteResult(
         ok = raw?.get("ok") as? Boolean ?: false,
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        appOnly = raw?.get("appOnly") as? Boolean,
     )
 
 // ---------- denyQuote ----------
@@ -526,6 +532,8 @@ data class GenerateReceiptArgs(
 /** Response from the `generateReceipt` callable. */
 data class GenerateReceiptResult(
     val ok: Boolean,
+    /** Null when the payload omits the key. */
+    val appOnly: Boolean? = null,
 )
 
 /**
@@ -536,6 +544,7 @@ data class GenerateReceiptResult(
 internal fun decodeGenerateReceiptResult(raw: Map<String, Any?>?): GenerateReceiptResult =
     GenerateReceiptResult(
         ok = raw?.get("ok") as? Boolean ?: false,
+        appOnly = raw?.get("appOnly") as? Boolean,
     )
 
 // ---------- getInvoiceLedger ----------
@@ -1219,6 +1228,8 @@ data class PostInvoiceEventArgs(
 /** Response from the `postInvoiceEvent` callable. */
 data class PostInvoiceEventResult(
     val ok: Boolean,
+    /** Null when the payload omits the key. */
+    val appOnly: Boolean? = null,
 )
 
 /**
@@ -1229,6 +1240,7 @@ data class PostInvoiceEventResult(
 internal fun decodePostInvoiceEventResult(raw: Map<String, Any?>?): PostInvoiceEventResult =
     PostInvoiceEventResult(
         ok = raw?.get("ok") as? Boolean ?: false,
+        appOnly = raw?.get("appOnly") as? Boolean,
     )
 
 // ---------- recordPayment ----------
@@ -1371,6 +1383,8 @@ data class RecordPaymentResult(
     val application: RecordPaymentResultApplication?,
     val creditedToAccountCents: Long,
     val confirmationEmailSent: Boolean,
+    /** Null when the payload omits the key. */
+    val confirmationAppOnly: Boolean? = null,
     val householdNoPortalAccount: Boolean,
     val officeNoticePending: Boolean,
 )
@@ -1397,6 +1411,7 @@ internal fun decodeRecordPaymentResult(raw: Map<String, Any?>?): RecordPaymentRe
         application = contractRawMap(raw?.get("application"))?.let { nested -> decodeRecordPaymentResultApplication(nested) },
         creditedToAccountCents = (raw?.get("creditedToAccountCents") as? Number)?.toLong() ?: 0L,
         confirmationEmailSent = raw?.get("confirmationEmailSent") as? Boolean ?: false,
+        confirmationAppOnly = raw?.get("confirmationAppOnly") as? Boolean,
         householdNoPortalAccount = raw?.get("householdNoPortalAccount") as? Boolean ?: false,
         officeNoticePending = raw?.get("officeNoticePending") as? Boolean ?: false,
     )
@@ -1951,6 +1966,8 @@ data class ReviewAndSendDraftInvoiceArgs(
 data class ReviewAndSendDraftInvoiceResult(
     val ok: Boolean,
     val invoiceId: String,
+    /** Null when the payload omits the key. */
+    val appOnly: Boolean? = null,
 )
 
 /**
@@ -1962,6 +1979,7 @@ internal fun decodeReviewAndSendDraftInvoiceResult(raw: Map<String, Any?>?): Rev
     ReviewAndSendDraftInvoiceResult(
         ok = raw?.get("ok") as? Boolean ?: false,
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        appOnly = raw?.get("appOnly") as? Boolean,
     )
 
 // ---------- sendInvoiceReminder ----------

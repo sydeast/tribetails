@@ -1370,7 +1370,7 @@ class FirestoreClient {
         termsCode: String? = null,
         lineItems: List<InvoiceLineItem>? = null,
         invoiceDiscountCents: Long? = null,
-    ): WriteResult<String> {
+    ): WriteResult<CreatedInvoice> {
         // Test admin: force the scoped kinfolkId so the create passes the rule.
         val scopedKinfolkId = enforceWriteKinfolkId(testMode, invoice.kinfolkId)
         val payload = createInvoicePayload(
@@ -1383,9 +1383,9 @@ class FirestoreClient {
         )
         return when (val r = platformInvokeCallable("createInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatchingCancellable {
-                WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["invoiceId"]?.jsonPrimitive?.contentOrNull.orEmpty())
-            }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+            // #1511: the id and whether the household's notice reached them in the app only.
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeCreatedInvoice(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
 
@@ -1411,12 +1411,18 @@ class FirestoreClient {
         }
     }
 
-    /** Slice 2: marks an invoice receipted (generateReceipt callable + invoice.receipt notify). */
-    suspend fun generateReceipt(invoiceId: String): WriteResult<Unit> {
+    /**
+     * Slice 2: marks an invoice receipted (generateReceipt callable + invoice.receipt notify).
+     *
+     * #1511: answers whether the receipt notice reached the household in the app
+     * only (see [SendAck]). A body that does not parse is still an Ok with the
+     * plain reading: the receipt was issued, and only the flag is unknown.
+     */
+    suspend fun generateReceipt(invoiceId: String): WriteResult<SendAck> {
         val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
         return when (val r = platformInvokeCallable("generateReceipt", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            is WriteResult.Ok -> WriteResult.Ok(runCatchingCancellable { decodeSendAck(r.value) }.getOrElse { SendAck() })
         }
     }
 
@@ -1457,7 +1463,7 @@ class FirestoreClient {
      * stamps) are refused with a message naming markInvoicePaid /
      * recordPayment / updateInvoice, and every refusal surfaces verbatim.
      */
-    suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<Unit> {
+    suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<SendAck> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)
         val payload = buildJsonObject {
             put("familyId", JsonPrimitive(scopedFamilyId))
@@ -1468,7 +1474,8 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("postInvoiceEvent", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            // #1511: the delegate's `appOnly`, carried through postInvoiceEvent; see [generateReceipt].
+            is WriteResult.Ok -> WriteResult.Ok(runCatchingCancellable { decodeSendAck(r.value) }.getOrElse { SendAck() })
         }
     }
 
@@ -1590,7 +1597,7 @@ class FirestoreClient {
         termsCode: String? = null,
         lineItems: List<InvoiceLineItem>? = null,
         invoiceDiscountCents: Long? = null,
-    ): WriteResult<String> {
+    ): WriteResult<CreatedInvoice> {
         val scopedKinfolkId = enforceWriteKinfolkId(testMode, invoice.kinfolkId)
         val payload = createQuotePayload(
             invoice,
@@ -1603,9 +1610,9 @@ class FirestoreClient {
         )
         return when (val r = platformInvokeCallable("createQuote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
-            is WriteResult.Ok -> runCatchingCancellable {
-                WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["invoiceId"]?.jsonPrimitive?.contentOrNull.orEmpty())
-            }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+            // #1511: the id and whether the household's copy reached them in the app only.
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeCreatedInvoice(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
     /**

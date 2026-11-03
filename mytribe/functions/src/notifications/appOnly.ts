@@ -26,3 +26,20 @@ export function reachedAppOnly(outcome: EnqueueOutcome, recipientUid?: string): 
   if (recipientUid !== undefined && recipientUid !== '') return appOnly.includes(recipientUid);
   return outcome.written.length > 0 && appOnly.length === outcome.written.length;
 }
+
+/**
+ * #1511: the household's answer for a callable whose `Result` carries an
+ * OPTIONAL `appOnly`, where absent means "no household delivery to describe".
+ *
+ * Undefined with no household uid (the enqueue wrote the office copy alone),
+ * and undefined when the dispatcher held the household's copy back, whether
+ * as a duplicate of an earlier delivery, by the household gate or by their
+ * settings: none of those wrote a record this call can speak for, and a false
+ * here would read as "a channel carried it". Otherwise `reachedAppOnly` for
+ * that one recipient.
+ */
+export function householdAppOnly(outcome: EnqueueOutcome, recipientUid: string | null): boolean | undefined {
+  if (recipientUid === null || recipientUid === '') return undefined;
+  if (outcome.suppressed.some((s) => s.recipientUid === recipientUid)) return undefined;
+  return reachedAppOnly(outcome, recipientUid);
+}

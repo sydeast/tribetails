@@ -26,6 +26,12 @@ import './InvoiceCreate.css';
 /** Invoice or quote. A quote is the same document in QUOTE status, not a second kind of thing. */
 export type InvoiceCreateMode = 'invoice' | 'quote';
 
+/** #1511: what the create said about the household's `invoice.new` copy. */
+export interface CreatedSend {
+  quote: boolean;
+  appOnly: boolean;
+}
+
 interface InvoiceCreateProps {
   /**
    * Which kind the composer opens on. The operator can change it inside: a
@@ -34,8 +40,14 @@ interface InvoiceCreateProps {
    */
   mode: InvoiceCreateMode;
   onClose: () => void;
-  /** Called with the new invoice id once the create callable resolves, before onClose. */
-  onCreated?: (invoiceId: string) => void;
+  /**
+   * Called with the new invoice id once the create callable resolves, before
+   * onClose. #1511: `sent` says what the create did about telling the
+   * household. `quote` is the kind the composer was on; `appOnly` is the
+   * server's word that the household's copy reached them in the app only,
+   * with every delivery channel off for them.
+   */
+  onCreated?: (invoiceId: string, sent: CreatedSend) => void;
   /**
    * Pre-selects the household picker. Set when the composer was opened FOR a
    * household rather than from the plain "New invoice" button, e.g. the
@@ -430,7 +442,9 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
           });
       submissionKey.current = null;
       setSubmitting(false);
-      onCreated?.(result.invoiceId);
+      // `=== true`: the wrapper already normalizes, but an answer shaped by an
+      // older build (or a test double) must still read as a channel send.
+      onCreated?.(result.invoiceId, { quote: isQuote, appOnly: result.appOnly === true });
       onClose();
     } catch (caught) {
       setSubmitting(false);

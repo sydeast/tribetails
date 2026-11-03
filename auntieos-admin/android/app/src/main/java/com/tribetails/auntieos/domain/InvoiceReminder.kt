@@ -43,6 +43,34 @@ fun quoteResentMessage(appOnly: Boolean): String =
     if (appOnly) "Quote sent again, in the app only. $APP_ONLY_NOTE The household can accept or decline it now."
     else "Quote sent again. The household can accept or decline it now."
 
+/** The toast after a draft invoice is reviewed and sent, honest about where it went (#1511). */
+fun draftSentMessage(appOnly: Boolean): String =
+    if (appOnly) "Draft sent in the app only. $APP_ONLY_NOTE" else "Draft sent."
+
+/** The toast after a receipt is issued, honest about where its notice went (#1511). */
+fun receiptGeneratedMessage(appOnly: Boolean): String =
+    if (appOnly) "Receipt generated in the app only. $APP_ONLY_NOTE" else "Receipt generated."
+
+/**
+ * The list's confirmation after a quote is created (#1511). [sent] is the
+ * composer's send-to-household toggle; [appOnly] is the server's word that the
+ * copy it sent reached the household in the app only, read only with [sent].
+ */
+fun quoteCreatedMessage(sent: Boolean, appOnly: Boolean): String = when {
+    !sent -> "Quote created."
+    appOnly -> "Quote created and sent in the app only. $APP_ONLY_NOTE"
+    else -> "Quote created and sent."
+}
+
+/**
+ * #1511: the clause appended to the payment toast when the household's
+ * confirmation was written to their notifications list with nothing emailed,
+ * texted or pushed. Said in place of "the confirmation email did not go out",
+ * which would be the wrong claim: the record exists.
+ */
+const val PAYMENT_CONFIRMATION_APP_ONLY_NOTE =
+    " The confirmation reached the household in the app only. $APP_ONLY_NOTE"
+
 /** "Sep 14, 3:05 PM", in [zone] (the device's own zone unless a test pins one). */
 fun formatReminderTime(ms: Long, zone: TimeZone = TimeZone.getDefault()): String =
     SimpleDateFormat("MMM d, h:mm a", Locale.US).apply { timeZone = zone }.format(Date(ms))

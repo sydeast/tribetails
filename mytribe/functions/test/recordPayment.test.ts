@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   resolveKinfolkUid: vi.fn(),
   enqueueNotification: vi.fn(),
+  // #1511: what the dispatcher did to each recipient's copy. `appOnlyUids`
+  // names the recipients whose record was written with every channel off;
+  // `suppressed` the ones whose copy was held back, and why.
+  appOnlyUids: vi.fn<() => string[]>(),
+  suppressed: vi.fn<() => Array<{ recipientUid: string; reason: 'duplicate' | 'prefs' | 'gate' }>>(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
@@ -24,12 +29,14 @@ vi.mock('firebase-admin/firestore', async () => {
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveKinfolkUid }));
 // #866: recordPayment calls the detailed variant. It delegates to the same
 // counted mock, so every assertion below on `enqueueNotification` still holds.
+// #1511: the outcome also carries what happened to the household's copy.
 vi.mock('../src/notifications/dispatcher', () => ({
   enqueueNotification: mocks.enqueueNotification,
   enqueueNotificationDetailed: async (args: unknown) => ({
     written: ((await mocks.enqueueNotification(args)) as string[] | undefined) ?? [],
-    suppressed: [],
+    suppressed: mocks.suppressed(),
     unresolved: [],
+    appOnly: mocks.appOnlyUids(),
   }),
 }));
 
@@ -42,6 +49,8 @@ beforeEach(() => {
   // case. The no-account case overrides this per test.
   mocks.resolveKinfolkUid.mockReset().mockResolvedValue('kin-uid-1');
   mocks.enqueueNotification.mockReset().mockResolvedValue(undefined);
+  mocks.appOnlyUids.mockReset().mockReturnValue([]);
+  mocks.suppressed.mockReset().mockReturnValue([]);
   (writeAuditEntry as any).mockClear();
 });
 
@@ -524,8 +533,79 @@ describe('recordPayment: the Send Confirmation Email toggle', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await recordPaymentHandler(req({ ...feeArgs, sendConfirmationEmail: true }));
     expect(res.confirmationEmailSent).toBe(false);
+    // #1511: no household copy was written, so there is no delivery to describe.
+    expect(res).not.toHaveProperty('confirmationAppOnly');
     // The payment is still recorded. That is the fact; the mail is not.
     expect(paymentWriteOf(ctx)).toBeTruthy();
+  });
+
+  // ── #1511: the confirmation that reached the household in the app only ─────
+  it('#1511 a channel send: confirmationEmailSent true and confirmationAppOnly false, both present', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await recordPaymentHandler(req({ ...feeArgs, sendConfirmationEmail: true }));
+    expect(res.confirmationEmailSent).toBe(true);
+    expect(res.confirmationAppOnly).toBe(false);
+  });
+  it('#1511 every channel off: the confirmation is reported app-only, and NOT as an email', async () => {
+    mocks.appOnlyUids.mockReturnValue(['kin-uid-1']);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await recordPaymentHandler(req({ ...feeArgs, sendConfirmationEmail: true }));
+    expect(res.confirmationEmailSent).toBe(false);
+    expect(res.confirmationAppOnly).toBe(true);
+    // Still not a no-account case, and nothing is pending.
+    expect(res.householdNoPortalAccount).toBe(false);
+    expect(res.officeNoticePending).toBe(false);
+  });
+  it('#1511 the office roster having every channel off does not make the household copy app-only', async () => {
+    mocks.appOnlyUids.mockReturnValue(['office-uid']);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await recordPaymentHandler(req({ ...feeArgs, sendConfirmationEmail: true }));
+    expect(res.confirmationEmailSent).toBe(true);
+    expect(res.confirmationAppOnly).toBe(false);
+  });
+  it('#1511 the ledger row carries the companion flag, and the stored confirmationEmailSent stays false', async () => {
+    mocks.appOnlyUids.mockReturnValue(['kin-uid-1']);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(
+      req({ ...feeArgs, sendConfirmationEmail: true, idempotencyKey: 'pay_1757860000000_abcdef' }),
+    );
+    // Written false with the row, then the stamp after the send.
+    const row = paymentWriteOf(ctx);
+    expect(row?.data).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: false });
+    const stamp = ctx.writes.find((w) => w.path === 'payments/pay_1757860000000_abcdef' && w.merge === true);
+    expect(stamp?.data).toEqual({ confirmationAppOnly: true, officeNoticeSentAt: '__TS__' });
+    expect(stamp?.data).not.toHaveProperty('confirmationEmailSent');
+  });
+  it('#1511 a channel send stamps confirmationEmailSent alone, as before', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(
+      req({ ...feeArgs, sendConfirmationEmail: true, idempotencyKey: 'pay_1757860000000_abcdef' }),
+    );
+    const stamp = ctx.writes.find((w) => w.path === 'payments/pay_1757860000000_abcdef' && w.merge === true);
+    expect(stamp?.data).toEqual({ confirmationEmailSent: true, officeNoticeSentAt: '__TS__' });
+  });
+  it('#1511 a household copy the gate held back is not reported as sent, app-only or otherwise', async () => {
+    // Before #1511 this read `confirmationEmailSent: true` off the uid alone.
+    mocks.suppressed.mockReturnValue([{ recipientUid: 'kin-uid-1', reason: 'gate' }]);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await recordPaymentHandler(req({ ...feeArgs, sendConfirmationEmail: true }));
+    expect(res.confirmationEmailSent).toBe(false);
+    expect(res).not.toHaveProperty('confirmationAppOnly');
+    expect(res.householdNoPortalAccount).toBe(false);
+  });
+  it('#1511 a household copy the ledger deduped counts as sent: the household has the earlier one', async () => {
+    mocks.suppressed.mockReturnValue([{ recipientUid: 'kin-uid-1', reason: 'duplicate' }]);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await recordPaymentHandler(req({ ...feeArgs, sendConfirmationEmail: true }));
+    expect(res.confirmationEmailSent).toBe(true);
+    expect(res.confirmationAppOnly).toBe(false);
   });
   it('survives a dispatcher failure: the money has landed, so it must not throw', async () => {
     // Throwing here would offer a retry that collects a second time.

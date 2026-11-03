@@ -159,6 +159,44 @@ class RecordPaymentMarkPaidAmountTest {
         )
     }
     @Test
+    fun `#1511 a confirmation that reached the household in the app only is said in the toast, and the toast is not green`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } returns
+                Result.success(
+                    decodeRecordPaymentResult(
+                        mapOf(
+                            "ok" to true, "paymentId" to "pay-1",
+                            "confirmationEmailSent" to false, "confirmationAppOnly" to true,
+                        ),
+                    )
+                )
+            val vm = InvoiceDetailViewModel(repository = repo, invoiceRepository = invoiceRepo, kinCareRepository = kinCareRepo)
+            vm.loadInvoice("inv1")
+            vm.recordPayment(dialog(127.5, 10.0, 2.71).apply { sendConfirmationEmail = true }, 127.5)
+            advanceUntilIdle()
+            val state = vm.uiState.value
+            assertEquals(
+                "Payment recorded. The invoice is paid in full. The confirmation reached the household in the " +
+                    "app only. Email and text are off for this household.",
+                state.toastMessage,
+            )
+            assertTrue(state.toastIsError)
+        }
+
+    @Test
+    fun `#1511 the app-only flag is ignored when no confirmation was asked for`() = runTest(testDispatcher) {
+        coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } returns
+            Result.success(decodeRecordPaymentResult(mapOf("ok" to true, "paymentId" to "pay-1", "confirmationAppOnly" to true)))
+        val vm = InvoiceDetailViewModel(repository = repo, invoiceRepository = invoiceRepo, kinCareRepository = kinCareRepo)
+        vm.loadInvoice("inv1")
+        vm.recordPayment(dialog(127.5, 10.0, 2.71), 127.5)
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertEquals("Payment recorded. The invoice is paid in full.", state.toastMessage)
+        assertFalse(state.toastIsError)
+    }
+
+    @Test
     fun `the credit note says nothing when there was no credit or no answer`() {
         assertEquals("", recordPaymentCreditNote(null))
         assertEquals("", recordPaymentCreditNote(0L))

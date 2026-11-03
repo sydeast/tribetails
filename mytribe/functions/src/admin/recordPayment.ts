@@ -30,6 +30,7 @@ import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempote
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../lib/paymentAppliedOwner';
 
@@ -370,8 +371,21 @@ export const Result = z
      * one, and a household with no portal account has no uid to send to. Either
      * way the payment is recorded; saying "sent" when nothing was is the class
      * of lie this whole surface is being cleaned of.
+     *
+     * #1511: false as well when the confirmation reached the household in the
+     * app only; `confirmationAppOnly` says so. Before that this read true for
+     * any household with a portal account, channels or no channels.
      */
     confirmationEmailSent: z.boolean(),
+    /**
+     * #1511: the household's confirmation was written to their notifications
+     * list and nothing was emailed, texted or pushed, because every delivery
+     * channel is off for them (#1505). Present when this call, or the first
+     * attempt a replay reports, wrote the household's copy; absent when no
+     * household copy was owed or sent. A client that says "confirmation email"
+     * reads it so the admin is not shown an email that does not exist.
+     */
+    confirmationAppOnly: z.boolean().optional(),
     /**
      * #866: Send Confirmation was ticked, and the household has no portal
      * account, so there was no household copy to send. Lets a client say that,
@@ -706,6 +720,10 @@ export async function recordPaymentHandler(
       // ticked confirmation this field does not record as sent, which the
       // replay finishes because nothing else will; see `replayWithConfirmation`.
       confirmationEmailSent: false,
+      // #1511: its companion, stamped true after the commit when the household's
+      // copy was written with every delivery channel off. Written false on
+      // every row for the same reason `confirmationEmailSent` is.
+      confirmationAppOnly: false,
     };
     // #866: WHETHER THIS PAYMENT PAID THE INVOICE OFF, decided in this
     // transaction and stored, so a same-key retry that finishes a lost office
@@ -814,7 +832,10 @@ export async function recordPaymentHandler(
     settlesInvoice: committed.settlesInvoice,
     officeDue: true,
   });
-  const confirmationEmailSent = sent.household;
+  // #1511: "sent" means a channel carried it. A copy that reached the household
+  // in the app only is reported through `confirmationAppOnly` instead.
+  const confirmationEmailSent = sent.household && !sent.householdAppOnly;
+  const confirmationAppOnly = sent.household && sent.householdAppOnly;
   {
     // STAMPED ON THE ROW, so a replay can report it (#825) and a same-key retry
     // knows what is left to send (#866). Outside the transaction because it is
@@ -852,6 +873,7 @@ export async function recordPaymentHandler(
       autoApply: autoApplied,
       creditedToAccountCents,
       confirmationEmailSent,
+      confirmationAppOnly,
       testMode: actor.testMode.active,
     },
   });
@@ -875,6 +897,8 @@ export async function recordPaymentHandler(
     application,
     creditedToAccountCents,
     confirmationEmailSent,
+    // Present only when a household copy was written by this call (#1511).
+    ...(sent.household ? { confirmationAppOnly } : {}),
     householdNoPortalAccount: sent.noPortalAccount,
     officeNoticePending: sent.officePending,
   });
@@ -977,10 +1001,17 @@ export const PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
  * the #825 answer field); `officeNoticeSentAt` is the office copy;
  * `officeNoticeSkippedReason` records an office-only copy that nobody exists to
  * receive, which a retry must not keep trying.
+ *
+ * #1511: a household copy that reached them in the app only stamps
+ * `confirmationAppOnly: true` and leaves `confirmationEmailSent` false, so the
+ * stored flag means what its name says. Either stamp settles the household
+ * copy for a retry: the record exists, and sending again would not add a
+ * channel the household has turned off.
  */
 function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
   return {
-    ...(sent.household ? { confirmationEmailSent: true } : {}),
+    ...(sent.household && !sent.householdAppOnly ? { confirmationEmailSent: true } : {}),
+    ...(sent.household && sent.householdAppOnly ? { confirmationAppOnly: true } : {}),
     ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
     ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
   };
@@ -993,8 +1024,9 @@ function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
  * then crashed, or whose enqueue failed, would otherwise leave them untold for
  * good.
  *
- *   - household copy: due when this submission was ticked and the row does not
- *     say `confirmationEmailSent: true`.
+ *   - household copy: due when this submission was ticked and the row says
+ *     neither `confirmationEmailSent: true` nor `confirmationAppOnly: true`
+ *     (#1511: an app-only copy is in their notifications list already).
  *   - office copy: due when the payment paid the invoice off (`settlesInvoice`,
  *     decided in the first attempt's transaction) or was ticked, and the row has
  *     no `officeNoticeSentAt`. An unticked partial is never due.
@@ -1011,7 +1043,8 @@ async function replayWithConfirmation(
 ): Promise<z.infer<typeof Result>> {
   const answer = replayResult(ref.id, stored);
   const settlesInvoice = stored['settlesInvoice'] === true;
-  const householdDue = householdRequested && stored['confirmationEmailSent'] !== true;
+  const householdTold = stored['confirmationEmailSent'] === true || stored['confirmationAppOnly'] === true;
+  const householdDue = householdRequested && !householdTold;
   const officeDue =
     (settlesInvoice || householdRequested) &&
     stored['officeNoticeSentAt'] == null &&
@@ -1031,11 +1064,18 @@ async function replayWithConfirmation(
     // #866: the first attempt told the household and its office copy did not go
     // out (the roster could not be read). The office is owed that copy alone,
     // settled invoice or not, because the ticked first attempt owed it one.
-    officeOwedWithoutHousehold: householdRequested && stored['confirmationEmailSent'] === true,
+    officeOwedWithoutHousehold: householdRequested && householdTold,
   });
+  // #1511: what the household copy amounted to, first attempt or this one. The
+  // stored stamps are exclusive, and a retry only sends when neither is set, so
+  // at most one of these is true.
+  const confirmationEmailSent = answer.confirmationEmailSent || (sent.household && !sent.householdAppOnly);
+  const confirmationAppOnly = answer.confirmationAppOnly === true || (sent.household && sent.householdAppOnly);
+  const householdCopy = confirmationEmailSent || confirmationAppOnly ? { confirmationAppOnly } : {};
   const reported = {
     ...answer,
-    confirmationEmailSent: answer.confirmationEmailSent || sent.household,
+    confirmationEmailSent,
+    ...householdCopy,
     householdNoPortalAccount: sent.noPortalAccount,
     officeNoticePending: sent.officePending,
   };
@@ -1054,9 +1094,9 @@ async function replayWithConfirmation(
     function: 'recordPayment',
     event: 'payment.confirmation.recovered',
     uid: actorUid,
-    extra: { paymentId: ref.id, household: sent.household, office: sent.office },
+    extra: { paymentId: ref.id, household: sent.household, householdAppOnly: sent.householdAppOnly, office: sent.office },
   });
-  return { ...answer, confirmationEmailSent: answer.confirmationEmailSent || sent.household };
+  return { ...answer, confirmationEmailSent, ...householdCopy };
 }
 
 function replayResult(paymentId: string, stored: Record<string, unknown>): z.infer<typeof Result> {
@@ -1088,6 +1128,10 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
     application,
     creditedToAccountCents: storedCents(stored, 'creditedToAccountCents'),
     confirmationEmailSent: stored['confirmationEmailSent'] === true,
+    // #1511: present only when the row records a household copy, either way.
+    ...(stored['confirmationEmailSent'] === true || stored['confirmationAppOnly'] === true
+      ? { confirmationAppOnly: stored['confirmationAppOnly'] === true }
+      : {}),
     // A replay answers from the row. What a retry itself sends is folded in by
     // `replayWithConfirmation`; the row alone cannot say either of these.
     householdNoPortalAccount: false,
@@ -1128,8 +1172,19 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
  *     uses. A partial, or a payment that paid nothing off, tells nobody.
  */
 interface ConfirmationOutcome {
-  /** The household copy was enqueued. */
+  /**
+   * The household copy was written (#1511: read off the dispatcher's outcome,
+   * not assumed from the uid). A copy the ledger deduped counts, because the
+   * household has it from the earlier delivery; a copy the gate or their
+   * settings held back does not.
+   */
   household: boolean;
+  /**
+   * #1511: the household copy in `household` was written with every delivery
+   * channel off, so it is in their notifications list and nothing was emailed,
+   * texted or pushed. Never true without `household`.
+   */
+  householdAppOnly: boolean;
   /** The office copy was enqueued: it rides every enqueue, unless its roster lookup failed. */
   office: boolean;
   /**
@@ -1171,7 +1226,13 @@ async function sendPaymentConfirmation(input: {
    */
   officeOwedWithoutHousehold?: boolean;
 }): Promise<ConfirmationOutcome> {
-  const none: ConfirmationOutcome = { household: false, office: false, noPortalAccount: false, officePending: false };
+  const none: ConfirmationOutcome = {
+    household: false,
+    householdAppOnly: false,
+    office: false,
+    noPortalAccount: false,
+    officePending: false,
+  };
   if (input.kinfolkId === '') return none;
   let recipientUid: string | null = null;
   let noPortalAccount = false;
@@ -1218,8 +1279,17 @@ async function sendPaymentConfirmation(input: {
         extra: { kinfolkId: input.kinfolkId, paymentId: input.paymentId, unresolved: outcome.unresolved },
       });
     }
+    // #1511: the household copy exists when the dispatcher did not hold it
+    // back. `written` is doc ids for both copies, so the household's is read
+    // from `suppressed` instead; a `duplicate` there is the earlier delivery of
+    // this same payment, which the household already has.
+    const householdSuppressed = outcome.suppressed.find((s) => s.recipientUid === recipientUid);
+    const household =
+      recipientUid !== null && (householdSuppressed === undefined || householdSuppressed.reason === 'duplicate');
     return {
-      household: recipientUid !== null,
+      household,
+      // Per recipient: the office's channels are not the household's.
+      householdAppOnly: household && recipientUid !== null && reachedAppOnly(outcome, recipientUid),
       office: !officeUnresolved,
       noPortalAccount,
       officePending: officeUnresolved,

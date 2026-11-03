@@ -115,4 +115,40 @@ class InvoiceReminderTest {
         assertEquals("none sent", lastReminderLabel(0L))
         assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, TimeZone.UTC))
     }
+
+    // ── #1511: the four more send results ─────────────────────────────────────
+
+    @Test
+    fun sendAckDecodesTheAppOnlyFlagAndOnlyAnExplicitTrue() {
+        assertEquals(SendAck(appOnly = true), decodeSendAck("""{"ok":true,"appOnly":true}"""))
+        assertEquals(SendAck(appOnly = false), decodeSendAck("""{"ok":true,"appOnly":false}"""))
+        // A bare ack, from an older function or a call that wrote no household copy.
+        assertEquals(SendAck(appOnly = false), decodeSendAck("""{"ok":true}"""))
+        assertEquals(SendAck(appOnly = false), decodeSendAck("""{"ok":true,"invoiceId":"inv1"}"""))
+    }
+
+    @Test
+    fun createdInvoiceDecodesTheIdAndTheFlag() {
+        assertEquals(CreatedInvoice("q1", appOnly = true), decodeCreatedInvoice("""{"ok":true,"invoiceId":"q1","appOnly":true}"""))
+        assertEquals(CreatedInvoice("inv1", appOnly = false), decodeCreatedInvoice("""{"ok":true,"invoiceId":"inv1"}"""))
+        // A body with no id decodes to a blank id, as the callers always read it.
+        assertEquals(CreatedInvoice("", appOnly = false), decodeCreatedInvoice("""{"ok":true}"""))
+        assertFailsWith<Exception> { decodeCreatedInvoice("not-json{") }
+    }
+
+    @Test
+    fun invoiceReceiptAndCreatedQuoteMessagesSayWhereTheNoticeWent() {
+        assertEquals("Invoice sent.", invoiceSentMessage(appOnly = false))
+        assertEquals("Invoice sent in the app only. Email and text are off for this household.", invoiceSentMessage(appOnly = true))
+        assertEquals("Receipt generated.", receiptGeneratedMessage(appOnly = false))
+        assertEquals("Receipt generated in the app only. Email and text are off for this household.", receiptGeneratedMessage(appOnly = true))
+        assertEquals("Quote created.", quoteCreatedMessage(sent = false, appOnly = false))
+        // An unsent quote has no delivery to describe, whatever the flag says.
+        assertEquals("Quote created.", quoteCreatedMessage(sent = false, appOnly = true))
+        assertEquals("Quote created and sent.", quoteCreatedMessage(sent = true, appOnly = false))
+        assertEquals(
+            "Quote created and sent in the app only. Email and text are off for this household.",
+            quoteCreatedMessage(sent = true, appOnly = true),
+        )
+    }
 }

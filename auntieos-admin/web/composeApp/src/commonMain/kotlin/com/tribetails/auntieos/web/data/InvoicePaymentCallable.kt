@@ -94,6 +94,12 @@ data class RecordPaymentOutcome(
     val confirmationEmailSent: Boolean,
     val householdNoPortalAccount: Boolean,
     val officeNoticePending: Boolean,
+    /**
+     * #1511: the household's confirmation reached them in the app only, with
+     * every delivery channel off for them; `confirmationEmailSent` is then
+     * false. Absent from an older function, which reads false.
+     */
+    val confirmationAppOnly: Boolean = false,
 )
 
 private val recordPaymentJson = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -115,6 +121,7 @@ fun decodeRecordPaymentOutcome(body: String): RecordPaymentOutcome {
         confirmationEmailSent = flag("confirmationEmailSent"),
         householdNoPortalAccount = flag("householdNoPortalAccount"),
         officeNoticePending = flag("officeNoticePending"),
+        confirmationAppOnly = flag("confirmationAppOnly"),
     )
 }
 
@@ -137,6 +144,9 @@ fun recordPaymentOutcomeMessage(outcome: RecordPaymentOutcome, confirmationReque
     }
     val household = when {
         !confirmationRequested || outcome.confirmationEmailSent -> ""
+        // #1511: the record exists and only the email does not, so this is read
+        // before the "did not go out" branches.
+        outcome.confirmationAppOnly -> " The confirmation reached the household in the app only. $APP_ONLY_NOTE"
         outcome.householdNoPortalAccount ->
             " The confirmation email did not go out: the household has no portal account."
         else -> " The confirmation email did not go out. Let the household know another way."

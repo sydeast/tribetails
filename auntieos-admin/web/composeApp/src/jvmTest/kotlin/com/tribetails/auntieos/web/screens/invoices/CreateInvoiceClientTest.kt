@@ -37,7 +37,18 @@ class CreateInvoiceClientTest {
         JvmFirestoreFixtures.callableResponses = mapOf("createInvoice" to """{"ok":true,"invoiceId":"inv_1"}""")
         val r = FirestoreClient().createInvoice(invoice())
         assertTrue(r is WriteResult.Ok)
-        assertEquals("inv_1", (r as WriteResult.Ok).value)
+        assertEquals("inv_1", (r as WriteResult.Ok).value.invoiceId)
+        // #1511: a function from before #1511 omits the flag; that is a channel send.
+        assertEquals(false, r.value.appOnly)
+    }
+
+    @Test
+    fun createInvoiceDecodesTheAppOnlyFlagAndOnlyAnExplicitTrue() = runBlocking {
+        // #1511
+        JvmFirestoreFixtures.callableResponses = mapOf("createInvoice" to """{"ok":true,"invoiceId":"inv_1","appOnly":true}""")
+        assertEquals(true, (FirestoreClient().createInvoice(invoice()) as WriteResult.Ok).value.appOnly)
+        JvmFirestoreFixtures.callableResponses = mapOf("createInvoice" to """{"ok":true,"invoiceId":"inv_1","appOnly":false}""")
+        assertEquals(false, (FirestoreClient().createInvoice(invoice()) as WriteResult.Ok).value.appOnly)
     }
 
     @Test
@@ -45,7 +56,7 @@ class CreateInvoiceClientTest {
         JvmFirestoreFixtures.callableResponses = mapOf("createInvoice" to """{"ok":true}""")
         val r = FirestoreClient().createInvoice(invoice())
         assertTrue(r is WriteResult.Ok)
-        assertEquals("", (r as WriteResult.Ok).value)
+        assertEquals("", (r as WriteResult.Ok).value.invoiceId)
     }
 
     @Test
@@ -60,5 +71,14 @@ class CreateInvoiceClientTest {
         JvmFirestoreFixtures.callableResponses = mapOf("generateReceipt" to """{"ok":true}""")
         val r = FirestoreClient().generateReceipt("inv_1")
         assertTrue(r is WriteResult.Ok)
+        // #1511: a bare ack is a channel send, as it always read.
+        assertEquals(false, (r as WriteResult.Ok).value.appOnly)
+    }
+
+    @Test
+    fun generateReceiptDecodesTheAppOnlyFlag() = runBlocking {
+        // #1511
+        JvmFirestoreFixtures.callableResponses = mapOf("generateReceipt" to """{"ok":true,"appOnly":true}""")
+        assertEquals(true, (FirestoreClient().generateReceipt("inv_1") as WriteResult.Ok).value.appOnly)
     }
 }

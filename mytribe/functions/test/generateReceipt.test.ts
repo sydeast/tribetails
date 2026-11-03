@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   resolveUid: vi.fn(),
   enqueue: vi.fn(),
+  // #1511: what the dispatcher did to each recipient's copy (see recordPayment.test.ts).
+  appOnlyUids: vi.fn<() => string[]>(),
+  suppressed: vi.fn<() => Array<{ recipientUid: string; reason: 'duplicate' | 'prefs' | 'gate' }>>(),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
@@ -14,9 +17,20 @@ vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockReso
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
 // `contentDedupeKey` stays real (#832): it names the receipt, and a stub that
 // returned undefined would make the enqueue throw and this suite test nothing.
+// #1511: the handler reads the detailed outcome. One counted mock answers both
+// entry points, so every assertion below on `enqueue` still holds.
 vi.mock('../src/notifications/dispatcher', async () => {
   const actual = await vi.importActual<typeof import('../src/notifications/dispatcher')>('../src/notifications/dispatcher');
-  return { contentDedupeKey: actual.contentDedupeKey, enqueueNotification: mocks.enqueue };
+  return {
+    contentDedupeKey: actual.contentDedupeKey,
+    enqueueNotification: mocks.enqueue,
+    enqueueNotificationDetailed: async (args: unknown) => ({
+      written: ((await mocks.enqueue(args)) as string[] | undefined) ?? [],
+      suppressed: mocks.suppressed(),
+      unresolved: [],
+      appOnly: mocks.appOnlyUids(),
+    }),
+  };
 });
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
@@ -30,6 +44,8 @@ beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
   mocks.enqueue.mockReset().mockResolvedValue(['n1']);
+  mocks.appOnlyUids.mockReset().mockReturnValue([]);
+  mocks.suppressed.mockReset().mockReturnValue([]);
   (writeAuditEntry as any).mockClear();
 });
 
@@ -78,10 +94,12 @@ describe('generateReceipt', () => {
   it('enqueues invoice.receipt notification', async () => {
     const ctx = buildDbMock({ docs: { 'invoices/inv1': { kinfolkId: 'fam1' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
-    await generateReceiptHandler(req({ invoiceId: 'inv1' }));
+    const res = await generateReceiptHandler(req({ invoiceId: 'inv1' }));
     expect(mocks.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'invoice.receipt', recipientUid: 'kin-uid-1' }),
     );
+    // #1511: a channel carried the household's copy.
+    expect(res).toEqual({ ok: true, appOnly: false });
   });
 
   it('still returns ok when notification dispatch fails', async () => {
@@ -90,5 +108,34 @@ describe('generateReceipt', () => {
     mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
     const res = await generateReceiptHandler(req({ invoiceId: 'inv1' }));
     expect(res.ok).toBe(true);
+    // #1511: no record was written, so the answer makes no claim about one.
+    expect(res).toEqual({ ok: true });
+  });
+
+  // ── #1511: the receipt notice that reached the household in the app only ──
+  it('#1511 every channel off for the household: appOnly true', async () => {
+    mocks.appOnlyUids.mockReturnValue(['kin-uid-1']);
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { kinfolkId: 'fam1' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await generateReceiptHandler(req({ invoiceId: 'inv1' }));
+    expect(res).toEqual({ ok: true, appOnly: true });
+  });
+
+  it('#1511 no portal account: nothing reached the household, so appOnly is omitted', async () => {
+    mocks.resolveUid.mockResolvedValue(null);
+    mocks.appOnlyUids.mockReturnValue(['office-uid']);
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { kinfolkId: 'fam1' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await generateReceiptHandler(req({ invoiceId: 'inv1' }));
+    expect(res).toEqual({ ok: true });
+  });
+
+  it('#1511 a repeat press the ledger deduped wrote nothing new, so appOnly is omitted', async () => {
+    mocks.enqueue.mockResolvedValue([]);
+    mocks.suppressed.mockReturnValue([{ recipientUid: 'kin-uid-1', reason: 'duplicate' }]);
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { kinfolkId: 'fam1' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await generateReceiptHandler(req({ invoiceId: 'inv1' }));
+    expect(res).toEqual({ ok: true });
   });
 });

@@ -92,13 +92,34 @@ import type {
  * key is minted by the SCREEN, once per submission, never per click: see
  * `lib/moneyIdempotency.ts`.
  */
-export async function createInvoice(
-  input: CreateInvoiceArgs,
-): Promise<Pick<CreateInvoiceResult, 'invoiceId'>> {
+export async function createInvoice(input: CreateInvoiceArgs): Promise<CreatedInvoice> {
   const res = await call<CreateInvoiceArgs, CreateInvoiceResult>('createInvoice', input, {
     idempotent: input.idempotencyKey !== undefined,
   });
-  return { invoiceId: res.invoiceId };
+  return { invoiceId: res.invoiceId, appOnly: res.appOnly === true };
+}
+
+/**
+ * #1511: what `createInvoice` / `createQuote` answered. `appOnly` is true when
+ * the household's `invoice.new` copy reached them in the app only, with every
+ * delivery channel off for them. Absent from a function deployed before
+ * #1511, from a replay, from a quote that was not sent and when the household
+ * has no portal account; all read as false, the plain "created" those always
+ * had.
+ */
+export interface CreatedInvoice {
+  invoiceId: string;
+  appOnly: boolean;
+}
+
+/**
+ * #1511: what a send-shaped callable with a bare ack answered. `appOnly` is
+ * true when the household's copy reached them in the app only. Absent from an
+ * older function and from every call that wrote no household copy; both read
+ * as false, which keeps the plain "sent" those always had.
+ */
+export interface SendOutcome {
+  appOnly: boolean;
 }
 
 /**
@@ -123,13 +144,11 @@ export async function createInvoice(
  * key is minted by the SCREEN, once per submission, never per click: see
  * `lib/moneyIdempotency.ts`.
  */
-export async function createQuote(
-  input: CreateQuoteArgs,
-): Promise<Pick<CreateQuoteResult, 'invoiceId'>> {
+export async function createQuote(input: CreateQuoteArgs): Promise<CreatedInvoice> {
   const res = await call<CreateQuoteArgs, CreateQuoteResult>('createQuote', input, {
     idempotent: input.idempotencyKey !== undefined,
   });
-  return { invoiceId: res.invoiceId };
+  return { invoiceId: res.invoiceId, appOnly: res.appOnly === true };
 }
 
 /**
@@ -149,9 +168,13 @@ export async function sendInvoiceReminder(invoiceId: string): Promise<ReminderOu
  * generateReceipt (admin): stamps `receiptIssuedAt`/`receiptIssuedBy` and
  * dispatches the `invoice.receipt` notification. Throws `not-found` if the
  * invoice is missing rather than silently creating one.
+ *
+ * #1511: answers whether the receipt notice reached the household in the app
+ * only (see `SendOutcome`).
  */
-export async function generateReceipt(invoiceId: string): Promise<void> {
-  await call<GenerateReceiptArgs, GenerateReceiptResult>('generateReceipt', { invoiceId });
+export async function generateReceipt(invoiceId: string): Promise<SendOutcome> {
+  const res = await call<GenerateReceiptArgs, GenerateReceiptResult>('generateReceipt', { invoiceId });
+  return { appOnly: res.appOnly === true };
 }
 
 /**
@@ -347,11 +370,16 @@ export async function repairInvoicePayments(
  * `failed-precondition` if the invoice isn't currently a draft, or if it's
  * missing a total, household, or invoice number (fail loud on an incomplete
  * draft rather than sending it anyway), `not-found` if the id is wrong.
+ *
+ * #1511: answers whether the invoice reached the household in the app only
+ * (see `SendOutcome`).
  */
-export async function reviewAndSendDraftInvoice(invoiceId: string): Promise<void> {
-  await call<ReviewAndSendDraftInvoiceArgs, ReviewAndSendDraftInvoiceResult>('reviewAndSendDraftInvoice', {
-    invoiceId,
-  });
+export async function reviewAndSendDraftInvoice(invoiceId: string): Promise<SendOutcome> {
+  const res = await call<ReviewAndSendDraftInvoiceArgs, ReviewAndSendDraftInvoiceResult>(
+    'reviewAndSendDraftInvoice',
+    { invoiceId },
+  );
+  return { appOnly: res.appOnly === true };
 }
 
 /**

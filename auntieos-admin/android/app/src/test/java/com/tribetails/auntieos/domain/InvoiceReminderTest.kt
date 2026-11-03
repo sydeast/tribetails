@@ -111,4 +111,21 @@ class InvoiceReminderTest {
         assertEquals("none sent", lastReminderLabel(0L))
         assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, utc))
     }
+
+    // ── #1511: the four more send results ─────────────────────────────────────
+    @Test
+    fun `draft, receipt and created-quote messages say where the notice went`() {
+        assertEquals("Draft sent.", draftSentMessage(appOnly = false))
+        assertEquals("Draft sent in the app only. Email and text are off for this household.", draftSentMessage(appOnly = true))
+        assertEquals("Receipt generated.", receiptGeneratedMessage(appOnly = false))
+        assertEquals("Receipt generated in the app only. Email and text are off for this household.", receiptGeneratedMessage(appOnly = true))
+        assertEquals("Quote created.", quoteCreatedMessage(sent = false, appOnly = false))
+        // An unsent quote has no delivery to describe, whatever the flag says.
+        assertEquals("Quote created.", quoteCreatedMessage(sent = false, appOnly = true))
+        assertEquals("Quote created and sent.", quoteCreatedMessage(sent = true, appOnly = false))
+        assertEquals(
+            "Quote created and sent in the app only. Email and text are off for this household.",
+            quoteCreatedMessage(sent = true, appOnly = true),
+        )
+    }
 }

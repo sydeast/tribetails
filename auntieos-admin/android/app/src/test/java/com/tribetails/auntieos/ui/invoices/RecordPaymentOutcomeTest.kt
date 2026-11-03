@@ -177,4 +177,23 @@ class RecordPaymentOutcomeTest {
         val msg = recordPaymentConfirmationNote(requested = false, confirmationSent = false, officeNoticePending = true)
         assertTrue(msg, msg.contains("office copy of the payment notice did not go out"))
     }
+
+    // ── #1511: the confirmation that reached the household in the app only ──
+
+    @Test
+    fun `a confirmation that reached the household in the app only is said so, never as did not go out`() {
+        val msg = recordPaymentConfirmationNote(requested = true, confirmationSent = false, confirmationAppOnly = true)
+        assertEquals(" The confirmation reached the household in the app only. Email and text are off for this household.", msg)
+        assertFalse(msg, msg.contains("did not go out"))
+    }
+
+    @Test
+    fun `the app-only flag is read only when a confirmation was asked for, and beside a pending office copy`() {
+        assertEquals("", recordPaymentConfirmationNote(requested = false, confirmationSent = false, confirmationAppOnly = true))
+        val msg = recordPaymentConfirmationNote(
+            requested = true, confirmationSent = false, officeNoticePending = true, confirmationAppOnly = true,
+        )
+        assertTrue(msg, msg.contains("reached the household in the app only"))
+        assertTrue(msg, msg.contains("office copy of the payment notice did not go out"))
+    }
 }
