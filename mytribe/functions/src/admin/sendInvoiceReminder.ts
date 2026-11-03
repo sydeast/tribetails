@@ -10,6 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { reachedAppOnly } from '../notifications/appOnly';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
@@ -37,6 +38,16 @@ import { paidCentsFromPayments } from '../lib/invoiceMath';
  * field used to resolve the recipient.
  */
 const NOTIFIED_FIELD_REMINDER = 'reminderNotifiedAtMs';
+
+/**
+ * #1507: written beside the stamp above, for the same send. True when the
+ * reminder reached the household in the app only (every delivery channel off,
+ * so the record exists and nothing was emailed or texted); false when a
+ * channel carried it. The "Last reminder" row reads it so a stamp never passes
+ * for an email. Untouched when the stamp is copied from the dedupe ledger,
+ * which does not know.
+ */
+const NOTIFIED_APP_ONLY_FIELD_REMINDER = 'reminderNotifiedAppOnly';
 
 /**
  * The in-flight claim. Deliberately NOT the stamp above: the stamp means "a
@@ -155,6 +166,13 @@ export const ReminderReasonSchema = z.enum(['sent', 'recent', 'in-progress', 'su
  * #832 added the reminder fields. `sent: false` is NOT a failure; `reason`
  * says which of the three non-sends it was, and every client renders it as a
  * sentence.
+ *
+ * #1507 added `appOnly`. Present only with `sent: true`, and true when the
+ * reminder reached the household in the app only: every delivery channel is
+ * off for them, so the record is in their notifications list and nothing was
+ * emailed or texted. A client that says "Reminder sent." reads it so the admin
+ * is not shown an email that does not exist. Absent on every non-send, which
+ * has no delivery to describe.
  */
 export const Result = z
   .object({
@@ -168,6 +186,8 @@ export const Result = z
     lastReminderAtMs: z.number().int().nonnegative().nullable(),
     /** The earliest moment a press can send again (ms epoch), or null when waiting would not help. */
     nextReminderAllowedAtMs: z.number().int().nonnegative().nullable(),
+    /** With `sent: true`: the reminder reached the household in the app only (#1507). */
+    appOnly: z.boolean().optional(),
   })
   .strict();
 
@@ -179,7 +199,13 @@ function ms(v: number | null): number | null {
   return v === null ? null : Math.floor(v);
 }
 
-function answer(invoiceId: string, reason: Reason, last: number | null, next: number | null): ResultShape {
+function answer(
+  invoiceId: string,
+  reason: Reason,
+  last: number | null,
+  next: number | null,
+  appOnly?: boolean,
+): ResultShape {
   return {
     ok: true,
     invoiceId,
@@ -187,6 +213,7 @@ function answer(invoiceId: string, reason: Reason, last: number | null, next: nu
     reason,
     lastReminderAtMs: ms(last),
     nextReminderAllowedAtMs: ms(next),
+    ...(appOnly === undefined ? {} : { appOnly }),
   };
 }
 
@@ -314,15 +341,18 @@ export async function sendInvoiceReminderHandler(
    * Settles the claim. Clears it only while it is still OURS, so a press that
    * took over an expired lease is never robbed of its own. `sentAtMs` records
    * a reminder that really went out; it is written even if the claim was
-   * taken over, because the reminder went out either way.
+   * taken over, because the reminder went out either way. `appOnly` goes with
+   * it when THIS call did the sending (#1507); a stamp copied from the ledger
+   * leaves the flag as it was.
    */
-  const settle = async (sentAtMs: number | null) => {
+  const settle = async (sentAtMs: number | null, appOnly?: boolean) => {
     await db().runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const ours = numberField(snap.data() as InvoiceDoc | undefined, CLAIM_FIELD_REMINDER) === now;
       const patch: Record<string, unknown> = {};
       if (ours) patch[CLAIM_FIELD_REMINDER] = FieldValue.delete();
       if (sentAtMs !== null) patch[NOTIFIED_FIELD_REMINDER] = sentAtMs;
+      if (sentAtMs !== null && appOnly !== undefined) patch[NOTIFIED_APP_ONLY_FIELD_REMINDER] = appOnly;
       if (Object.keys(patch).length > 0) tx.set(ref, patch, { merge: true });
     });
   };
@@ -416,11 +446,15 @@ export async function sendInvoiceReminderHandler(
     return validateResponse('sendInvoiceReminder', Result, answer(args.invoiceId, 'suppressed', prior, null));
   }
 
+  // #1507: `invoice.reminder` is kinfolk-only with one recipient, so the whole
+  // outcome is the household's answer.
+  const appOnly = reachedAppOnly(dispatched);
+
   // The reminder went out. A failure to RECORD it must not be reported as a
   // failure to send it: the household has the reminder. It is logged loudly;
   // the lease expires on its own, and a press after that meets the dispatcher's
   // duplicate refusal inside its window, which records the stamp then.
-  await settle(now).catch((stampErr) => {
+  await settle(now, appOnly).catch((stampErr) => {
     logEvent({
       severity: 'error',
       function: 'sendInvoiceReminder',
@@ -457,13 +491,13 @@ export async function sendInvoiceReminderHandler(
     function: 'sendInvoiceReminder',
     event: 'admin.invoice.reminder.sent',
     uid,
-    extra: { invoiceId: args.invoiceId, kinfolkId: familyId },
+    extra: { invoiceId: args.invoiceId, kinfolkId: familyId, appOnly },
   });
 
   return validateResponse(
     'sendInvoiceReminder',
     Result,
-    answer(args.invoiceId, 'sent', now, now + INVOICE_REMINDER_RESEND_WINDOW_MS),
+    answer(args.invoiceId, 'sent', now, now + INVOICE_REMINDER_RESEND_WINDOW_MS, appOnly),
   );
 }
 

@@ -10,6 +10,7 @@ import {
   generateReceipt,
   markInvoicePaid,
   recordPayment,
+  resendQuote,
   reviewAndSendDraftInvoice,
   linkInvoiceSessions,
 } from './invoicesWrite';
@@ -124,7 +125,29 @@ describe('sendInvoiceReminder', () => {
       reason: 'recent',
       lastReminderAtMs: 5,
       nextReminderAllowedAtMs: 9,
+      appOnly: false,
     });
+  });
+
+  it('#1507: carries an app-only send through', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-3', sent: true, reason: 'sent', lastReminderAtMs: 5, nextReminderAllowedAtMs: 9, appOnly: true });
+    await expect(sendInvoiceReminder('inv-3')).resolves.toMatchObject({ sent: true, appOnly: true });
+  });
+});
+
+describe('resendQuote', () => {
+  it('sends only { invoiceId } and returns the state with the delivery flag', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'q-1', status: 'quote', appOnly: true });
+    await expect(resendQuote('q-1')).resolves.toEqual({ status: 'quote', appOnly: true });
+    expect(call).toHaveBeenCalledWith('resendQuote', { invoiceId: 'q-1' });
+  });
+
+  it('#1507: an answer without the flag (an older function, or a retry of a completed resend) reads as a channel send', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'q-1', status: 'quote' });
+    await expect(resendQuote('q-1')).resolves.toEqual({ status: 'quote', appOnly: false });
   });
 
   it('fails loud when the invoice is already paid', async () => {

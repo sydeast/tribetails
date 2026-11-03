@@ -458,10 +458,20 @@ export async function generateInvoicePdf(invoiceId: string): Promise<string> {
  * (its due date has passed, so the household could only decline it again: give
  * it a new due date first, which is an ordinary edit). `not-found` if the id is
  * wrong. Branch on the CODE, never the message.
+ *
+ * #1507: `appOnly` is true when the quote reached the household in the app
+ * only, with every delivery channel off for them. Absent from a function
+ * deployed before #1507 and from the retry of a resend that already completed;
+ * both read as false, which keeps the plain "Quote sent again." those always had.
  */
-export async function resendQuote(invoiceId: string): Promise<ResendQuoteResult['status']> {
+export interface ResendQuoteOutcome {
+  status: ResendQuoteResult['status'];
+  appOnly: boolean;
+}
+
+export async function resendQuote(invoiceId: string): Promise<ResendQuoteOutcome> {
   const res = await call<ResendQuoteArgs, ResendQuoteResult>('resendQuote', { invoiceId });
-  return res.status;
+  return { status: res.status, appOnly: res.appOnly === true };
 }
 
 /**

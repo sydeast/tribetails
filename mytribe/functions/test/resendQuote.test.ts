@@ -103,7 +103,8 @@ describe('resendQuote happy path', () => {
 
     const res = await resendQuoteHandler(req({ invoiceId: 'q1' }));
 
-    expect(res).toEqual({ ok: true, invoiceId: 'q1', status: 'quote' });
+    // #1507: `appOnly: false`, a channel carried the household's copy.
+    expect(res).toEqual({ ok: true, invoiceId: 'q1', status: 'quote', appOnly: false });
     const data = quoteWrite(ctx)!;
     // The four decision fields are DELETED, not overwritten with a value: an
     // answer that is not there is what every client's `quoteDecision == null`
@@ -174,12 +175,37 @@ describe('resendQuote happy path', () => {
       suppressed: [{ recipientUid: 'kin-uid-1', reason: 'duplicate', existingId: 'n0', lastAtMs: 1 }],
     });
 
-    await expect(resendQuoteHandler(req({ invoiceId: 'q1' }))).resolves.toMatchObject({ ok: true });
+    // #1507: the earlier attempt did the delivering; this one answers for it as
+    // sent through a channel rather than guessing app-only.
+    await expect(resendQuoteHandler(req({ invoiceId: 'q1' }))).resolves.toMatchObject({ ok: true, appOnly: false });
 
     const data = quoteWrite(ctx)!;
     expect(data).toBeDefined();
     expect(data.quoteDecision).toBe('__DELETE__');
     expect(data.quoteResendCount).toEqual({ __increment: 1 });
+  });
+
+  it('#1507: when the household has every channel off, the answer says the quote reached them in the app only', async () => {
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // Both copies written; only the household's had no channel behind it.
+    mocks.enqueue.mockResolvedValue({ written: ['kin-copy', 'admin-copy'], suppressed: [], appOnly: ['kin-uid-1'] });
+
+    const res = await resendQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(res).toEqual({ ok: true, invoiceId: 'q1', status: 'quote', appOnly: true });
+    // Still a resend: the quote reopens exactly as it would with an email.
+    expect(quoteWrite(ctx)!.quoteDecision).toBe('__DELETE__');
+  });
+
+  it('#1507: the office copy being app-only does not make the household answer app-only', async () => {
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({ written: ['kin-copy', 'admin-copy'], suppressed: [], appOnly: ['admin-uid'] });
+
+    const res = await resendQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(res).toMatchObject({ ok: true, appOnly: false });
   });
 
   it('#832: a household with no portal account is unreachable, refused before anything is sent', async () => {
@@ -276,6 +302,8 @@ describe('resendQuote refusals', () => {
     const res = await resendQuoteHandler(req({ invoiceId: 'q1' }));
 
     expect(res).toMatchObject({ ok: true, invoiceId: 'q1' });
+    // #1507: nothing was sent by this call, so it has no delivery to describe.
+    expect(res).not.toHaveProperty('appOnly');
     expect(mocks.lastDelivered).toHaveBeenCalledWith('invoice.new', 'quote:q1:resend:1', 'kin-uid-1');
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(quoteWrite(ctx)).toBeUndefined();

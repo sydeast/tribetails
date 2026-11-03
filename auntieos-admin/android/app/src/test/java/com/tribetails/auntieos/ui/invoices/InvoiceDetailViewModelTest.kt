@@ -115,6 +115,86 @@ class InvoiceDetailViewModelTest {
         assertEquals(invoice.copy(reminderNotifiedAtMs = earlier), state.invoice)
     }
 
+    // ── #1507: the app-only send ─────────────────────────────────────────────
+    @Test
+    fun `sendReminder that reached the household in the app only says so, not green, and moves the flag with the stamp`() = runTest {
+        val invoice = Invoice(id = "inv1507", invoiceNumber = "INV-1507", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0)
+        coEvery { invoiceRepository.getInvoiceById("inv1507") } returns Result.success(invoice)
+        viewModel.loadInvoice("inv1507")
+        advanceUntilIdle()
+
+        val now = 1_757_862_300_000L
+        coEvery { invoiceRepository.sendInvoiceReminder("inv1507", any()) } returns Result.success(
+            com.tribetails.auntieos.domain.ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = now, nextReminderAllowedAtMs = now + 86_400_000L, appOnly = true),
+        )
+        viewModel.sendReminder()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("Reminder sent in the app only. Email and text are off for this household.", state.toastMessage)
+        // Not a success toast: no email or text went out, and the tone agrees with the words.
+        assertTrue(state.toastIsError)
+        assertEquals(invoice.copy(reminderNotifiedAtMs = now, reminderNotifiedAppOnly = true), state.invoice)
+    }
+
+    @Test
+    fun `sendReminder refused leaves the stored app-only flag alone`() = runTest {
+        val invoice = Invoice(id = "inv1508", invoiceNumber = "INV-1508", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0, reminderNotifiedAppOnly = true)
+        coEvery { invoiceRepository.getInvoiceById("inv1508") } returns Result.success(invoice)
+        viewModel.loadInvoice("inv1508")
+        advanceUntilIdle()
+
+        val earlier = 1_757_840_400_000L
+        coEvery { invoiceRepository.sendInvoiceReminder("inv1508", any()) } returns Result.success(
+            com.tribetails.auntieos.domain.ReminderOutcome(sent = false, reason = "recent", lastReminderAtMs = earlier, nextReminderAllowedAtMs = earlier + 86_400_000L),
+        )
+        viewModel.sendReminder()
+        advanceUntilIdle()
+
+        // A refusal names the earlier reminder's time and knows nothing of its channels.
+        assertEquals(invoice.copy(reminderNotifiedAtMs = earlier, reminderNotifiedAppOnly = true), viewModel.uiState.value.invoice)
+    }
+
+    @Test
+    fun `resendQuote that reached the household in the app only says so, not green`() = runTest {
+        val quote = Invoice(id = "q1507", invoiceNumber = "Q-1507", kinfolkName = "The Whitfields", total = 240.0, amountDue = 240.0, status = "quote", quoteDecision = "denied")
+        coEvery { invoiceRepository.getInvoiceById("q1507") } returns Result.success(quote)
+        viewModel.loadInvoice("q1507")
+        advanceUntilIdle()
+
+        coEvery { invoiceRepository.resendQuote("q1507") } returns Result.success(
+            com.tribetails.auntieos.data.contracts.ResendQuoteResult(ok = true, invoiceId = "q1507", status = "quote", appOnly = true),
+        )
+        viewModel.resendQuote()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.resendingQuote)
+        assertEquals(
+            "Quote sent again, in the app only. Email and text are off for this household. The household can accept or decline it now.",
+            state.toastMessage,
+        )
+        assertTrue(state.toastIsError)
+    }
+
+    @Test
+    fun `resendQuote from an older server, with no flag, keeps the plain green toast`() = runTest {
+        val quote = Invoice(id = "q1508", invoiceNumber = "Q-1508", kinfolkName = "The Whitfields", total = 240.0, amountDue = 240.0, status = "quote", quoteDecision = "denied")
+        coEvery { invoiceRepository.getInvoiceById("q1508") } returns Result.success(quote)
+        viewModel.loadInvoice("q1508")
+        advanceUntilIdle()
+
+        coEvery { invoiceRepository.resendQuote("q1508") } returns Result.success(
+            com.tribetails.auntieos.data.contracts.ResendQuoteResult(ok = true, invoiceId = "q1508", status = "quote"),
+        )
+        viewModel.resendQuote()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("Quote sent again. The household can accept or decline it now.", state.toastMessage)
+        assertFalse(state.toastIsError)
+    }
+
     @Test
     fun `sendReminder is pessimistic, a second tap while in flight fires nothing`() = runTest {
         val invoice = Invoice(id = "inv833", invoiceNumber = "INV-833")

@@ -74,6 +74,8 @@ describe('sendInvoiceReminder happy path', () => {
       reason: 'sent',
       lastReminderAtMs: NOW,
       nextReminderAllowedAtMs: NOW + INVOICE_REMINDER_RESEND_WINDOW_MS,
+      // #1507: a channel carried it.
+      appOnly: false,
     });
     expect(mocks.enqueue).toHaveBeenCalledWith(
       // #832: the dispatcher looks back the whole reminder window for this call.
@@ -92,6 +94,36 @@ describe('sendInvoiceReminder happy path', () => {
     const doc = await stored(ctx);
     expect(doc.reminderNotifiedAtMs).toBe(NOW);
     expect(doc.reminderClaimAtMs).toBe('__DELETE__');
+    // #1507: the flag rides the same stamp, false for a send a channel carried.
+    expect(doc.reminderNotifiedAppOnly).toBe(false);
+  });
+
+  it('#1507: a household with every channel off is told, in the answer and on the stamp', async () => {
+    // The dispatcher wrote the record and nothing else (#1505). `written` alone
+    // would make this press read "Reminder sent." with no email behind it.
+    const ctx = seed({ kinfolkId: 'fam1', reminderNotifiedAppOnly: false, reminderNotifiedAtMs: NOW - 3 * 86_400_000 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockResolvedValue({ written: ['n1'], suppressed: [], appOnly: ['kin-uid-1'] });
+
+    const res = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+
+    expect(res).toMatchObject({ sent: true, reason: 'sent', appOnly: true, lastReminderAtMs: NOW });
+    const doc = await stored(ctx);
+    expect(doc.reminderNotifiedAtMs).toBe(NOW);
+    // A stale false from the earlier emailed reminder is overwritten.
+    expect(doc.reminderNotifiedAppOnly).toBe(true);
+    // Still a send: audited as one.
+    expect(writeAuditEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('#1507: a later send a channel carried clears the app-only flag', async () => {
+    const ctx = seed({ kinfolkId: 'fam1', reminderNotifiedAppOnly: true, reminderNotifiedAtMs: NOW - 3 * 86_400_000 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await sendInvoiceReminderHandler(req({ invoiceId: 'inv1' }));
+
+    expect(res).toMatchObject({ sent: true, appOnly: false });
+    expect((await stored(ctx)).reminderNotifiedAppOnly).toBe(false);
   });
 
   it('writes a BILLING_REMINDER_SENT audit entry', async () => {
@@ -192,7 +224,12 @@ describe('sendInvoiceReminder refuses a duplicate (#832)', () => {
 
     expect(res).toMatchObject({ sent: false, reason: 'recent', lastReminderAtMs: dispatcherSaw });
     expect(writeAuditEntry).not.toHaveBeenCalled();
-    expect((await stored(ctx)).reminderNotifiedAtMs).toBe(dispatcherSaw);
+    const doc = await stored(ctx);
+    expect(doc.reminderNotifiedAtMs).toBe(dispatcherSaw);
+    // #1507: a stamp copied from the ledger says nothing about channels, so the
+    // answer omits `appOnly` and the flag is left as it was (here, unset).
+    expect(res).not.toHaveProperty('appOnly');
+    expect(doc.reminderNotifiedAppOnly).toBeUndefined();
   });
 });
 

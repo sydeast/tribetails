@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
@@ -78,6 +79,26 @@ class AdminDataViewModelReminderTest {
             "Not sent: this household's notification settings block payment reminders, so no reminder went out.",
             vm.invoiceActionMessage.value,
         )
+        assertNull(vm.error.value)
+    }
+
+    @Test
+    fun `#1507 an app-only send says so and moves the flag onto the row with the stamp`() = runTest {
+        val now = 1_757_862_300_000L
+        val row = Invoice(id = "inv1", invoiceNumber = "INV-1", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0, status = "open")
+        coEvery { invoiceRepo.getInvoices() } returns Result.success(listOf(row))
+        coEvery { invoiceRepo.sendInvoiceReminder("inv1", any()) } returns
+            Result.success(ReminderOutcome(sent = true, reason = "sent", lastReminderAtMs = now, nextReminderAllowedAtMs = now + 86_400_000L, appOnly = true))
+        val vm = vm()
+        vm.loadInvoices()
+        advanceUntilIdle()
+
+        vm.sendInvoiceReminder("inv1")
+        advanceUntilIdle()
+
+        assertEquals("Reminder sent in the app only. Email and text are off for this household.", vm.invoiceActionMessage.value)
+        // The row's "reminded ..., app only" line reads these two off the loaded model.
+        assertEquals(listOf(row.copy(reminderNotifiedAtMs = now, reminderNotifiedAppOnly = true)), vm.invoices.value)
         assertNull(vm.error.value)
     }
 

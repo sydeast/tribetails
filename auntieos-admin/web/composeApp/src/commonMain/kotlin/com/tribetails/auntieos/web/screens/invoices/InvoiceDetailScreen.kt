@@ -250,6 +250,8 @@ private fun InvoiceDetailBody(
     var reminderLoading by remember { mutableStateOf(false) }
     // Seeded from the stored stamp, moved to the server's answer after a press.
     var lastReminderAtMs by remember(invoice._id, invoice.reminderNotifiedAtMs) { mutableStateOf(invoice.reminderNotifiedAtMs) }
+    // #1507: the stamp's companion, moved only by a send THIS press made.
+    var lastReminderAppOnly by remember(invoice._id, invoice.reminderNotifiedAppOnly) { mutableStateOf(invoice.reminderNotifiedAppOnly == true) }
     var pdfLoading      by remember { mutableStateOf(false) }
     var toastMsg     by remember { mutableStateOf("") }
     var toastVisible by remember { mutableStateOf(false) }
@@ -504,7 +506,11 @@ private fun InvoiceDetailBody(
                             is WriteResult.Ok  -> {
                                 // Only a real time moves the row; null never blanks a stamp.
                                 r.value.lastReminderAtMs?.let { lastReminderAtMs = it }
-                                showToast(reminderOutcomeMessage(r.value), !r.value.sent)
+                                // #1507: a refusal says nothing about the earlier reminder's channels.
+                                if (r.value.sent) lastReminderAppOnly = r.value.appOnly
+                                // An app-only send is not a green toast either: the words say
+                                // no email or text went out, and the tone agrees with them.
+                                showToast(reminderOutcomeMessage(r.value), !r.value.sent || r.value.appOnly)
                             }
                         }
                         reminderLoading = false
@@ -541,7 +547,7 @@ private fun InvoiceDetailBody(
                 DetailRow("Client",   invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
                 DetailRow("Due date", invoice.dueDate.ifBlank { "-" })
-                DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs))
+                DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
             }

@@ -55,6 +55,7 @@ import com.tribetails.auntieos.data.contracts.decodeListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.decodeMarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
 import com.tribetails.auntieos.data.contracts.decodeResendQuoteResult
+import com.tribetails.auntieos.data.contracts.ResendQuoteResult
 import com.tribetails.auntieos.data.contracts.decodeRetryInvoiceCheckoutCloseResult
 import com.tribetails.auntieos.data.contracts.RetryInvoiceCheckoutCloseArgs
 import com.tribetails.auntieos.data.contracts.RetryInvoiceCheckoutCloseResult
@@ -529,16 +530,20 @@ class InvoiceRepository(
      * decline it again). Every refusal names what to do next, so the message
      * surfaces verbatim rather than being replaced with a generic sentence.
      *
-     * Returns the stamped state the resend left behind, which is 'quote'.
+     * Returns the server's answer: the stamped state the resend left behind
+     * (always 'quote') and, since #1507, `appOnly`, true when the quote reached
+     * the household in the app only because every delivery channel is off for
+     * them. The generated decoder reads a missing key as null, which the view
+     * model treats as a channel send, so an older server still works.
      */
-    suspend fun resendQuote(invoiceId: String): Result<String> = runCatchingCancellable {
+    suspend fun resendQuote(invoiceId: String): Result<ResendQuoteResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "resendQuote requires an invoice id" }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("resendQuote")
             .call(ResendQuoteArgs(invoiceId = invoiceId).toPayload())
             .awaitCallable().data as? Map<String, Any?>
-        decodeResendQuoteResult(raw).status
+        decodeResendQuoteResult(raw)
     }.onFailure { AuntieLog.e("resendQuote failed for $invoiceId", it) }
 
     /**
@@ -1079,6 +1084,9 @@ internal fun reminderOutcomeOf(raw: Map<String, Any?>?, nowMs: Long): ReminderOu
         reason = reason,
         lastReminderAtMs = decoded.lastReminderAtMs,
         nextReminderAllowedAtMs = decoded.nextReminderAllowedAtMs,
+        // #1507: only an explicit true counts. A function deployed before #1507
+        // omits the key, and so does every non-send; both read as a channel send.
+        appOnly = decoded.appOnly == true,
     )
 }
 

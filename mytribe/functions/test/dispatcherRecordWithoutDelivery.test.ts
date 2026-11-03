@@ -5,12 +5,9 @@ const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEventFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEventFn }));
 
-import {
-  DEDUPE_COLLECTION,
-  enqueueNotification,
-  enqueueNotificationDetailed,
-} from '../src/notifications/dispatcher';
+import { DEDUPE_COLLECTION, enqueueNotificationDetailed } from '../src/notifications/dispatcher';
 import { promoteQueuedNotification } from '../src/notifications/promoteQueued';
+import { reachedAppOnly } from '../src/notifications/appOnly';
 import { notificationDisabledFor } from '../src/notifications/prefs';
 import { getNotificationDef } from '../src/notifications/catalog';
 
@@ -70,6 +67,10 @@ describe('#1505 trigger mode: every delivery channel off', () => {
 
     expect(outcome.written).toHaveLength(1);
     expect(outcome.suppressed).toEqual([]);
+    // #1507: the outcome names the recipient whose record is the whole delivery.
+    expect(outcome.appOnly).toEqual(['kinUid']);
+    expect(reachedAppOnly(outcome)).toBe(true);
+    expect(reachedAppOnly(outcome, 'kinUid')).toBe(true);
 
     const record = records(ctx.writes);
     expect(record).toHaveLength(1);
@@ -98,6 +99,9 @@ describe('#1505 trigger mode: every delivery channel off', () => {
 
     expect(outcome.written).toEqual([]);
     expect(outcome.suppressed).toEqual([{ recipientUid: 'kinUid', reason: 'gate', gateState: 'off' }]);
+    // #1507: nothing written, so nothing reached them in the app either.
+    expect(outcome.appOnly).toEqual([]);
+    expect(reachedAppOnly(outcome)).toBe(false);
     expect(ctx.writes.map((w) => w.path), 'no record, no work order, no dedupe ledger').toEqual([]);
     expect(events()).toContain('notification.gated.household');
   });
@@ -116,6 +120,10 @@ describe('#1505 trigger mode: every delivery channel off', () => {
     expect(orders[0].path).toBe(`notificationDispatch/${outcome.written[0]}`);
     expect(orders[0].data).toMatchObject({ channels: ['email'], status: 'pending', mode: 'trigger' });
     expect(events()).not.toContain('notification.record-only');
+    // #1507: a channel carried it, so it is not app-only.
+    expect(outcome.appOnly).toEqual([]);
+    expect(reachedAppOnly(outcome)).toBe(false);
+    expect(reachedAppOnly(outcome, 'kinUid')).toBe(false);
   });
 
   it('OPERATOR DISABLED: still nothing written, still reported as prefs', async () => {
@@ -163,6 +171,9 @@ describe('#1505 trigger mode: every delivery channel off', () => {
     expect(second.suppressed).toEqual([
       { recipientUid: 'kinUid', reason: 'duplicate', existingId: first.written[0], lastAtMs: BASE_MS },
     ]);
+    // #1507: only the attempt that wrote the record reports it as app-only.
+    expect(first.appOnly).toEqual(['kinUid']);
+    expect(second.appOnly).toEqual([]);
     expect(records(ctx.writes)).toHaveLength(1);
     expect(ledger(ctx.writes)).toHaveLength(1);
     expect(workOrders(ctx.writes)).toEqual([]);
@@ -182,17 +193,37 @@ describe('#1505 trigger mode: every delivery channel off', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
 
-    const ids = await enqueueNotification({
+    const outcome = await enqueueNotificationDetailed({
       key: 'invoice.updated',
       recipientUid: 'kinUid',
       data: { invoiceId: 'inv1', kinfolkId: 'kf1' },
     });
 
-    expect(ids).toHaveLength(2);
+    expect(outcome.written).toHaveLength(2);
     expect(records(ctx.writes).map((w) => w.data.recipientUid).sort()).toEqual(['admin1', 'kinUid']);
     const orders = workOrders(ctx.writes);
     expect(orders).toHaveLength(1);
     expect(orders[0].data.recipientUid).toBe('admin1');
+    // #1507: the household's copy is app-only; the admin's is not, and the
+    // admin's email must not answer for the household. Asked per recipient the
+    // helper tells them apart; asked for the whole call it says no, because one
+    // copy did deliver.
+    expect(outcome.appOnly).toEqual(['kinUid']);
+    expect(reachedAppOnly(outcome, 'kinUid')).toBe(true);
+    expect(reachedAppOnly(outcome, 'admin1')).toBe(false);
+    expect(reachedAppOnly(outcome)).toBe(false);
+  });
+});
+
+describe('#1507 reachedAppOnly on a hand-built outcome', () => {
+  it('an outcome without the field (an older mock, or a pre-#1507 caller) is never app-only', () => {
+    expect(reachedAppOnly({ written: ['n1'], suppressed: [], unresolved: [] })).toBe(false);
+    expect(reachedAppOnly({ written: ['n1'], suppressed: [], unresolved: [] }, 'kinUid')).toBe(false);
+  });
+
+  it('a blank recipient asks about the whole call, as a caller with an unresolved uid does', () => {
+    const outcome = { written: ['n1'], suppressed: [], unresolved: [], appOnly: ['someone'] };
+    expect(reachedAppOnly(outcome, '')).toBe(true);
   });
 });
 
@@ -204,9 +235,16 @@ describe('#1505 queued modes mirror the rule', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
 
-    const ids = await enqueueNotification({ key: 'pets.updated', recipientUid: 'kinUid', data: { kinfolkId: 'kf1', kinId: 'k1' } });
+    const outcome = await enqueueNotificationDetailed({
+      key: 'pets.updated',
+      recipientUid: 'kinUid',
+      data: { kinfolkId: 'kf1', kinId: 'k1' },
+    });
 
-    expect(ids).toHaveLength(2);
+    expect(outcome.written).toHaveLength(2);
+    // #1507: the channels are frozen into the queue row at enqueue time, so the
+    // queued modes answer app-only here and now, not at promotion.
+    expect(outcome.appOnly).toEqual(['kinUid']);
     const rows = queued(ctx.writes);
     const kinRow = rows.find((w) => w.data.recipientUid === 'kinUid');
     const adminRow = rows.find((w) => w.data.recipientUid === 'admin1');

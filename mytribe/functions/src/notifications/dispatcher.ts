@@ -259,6 +259,15 @@ export interface EnqueueOutcome {
    * Empty when every resolver answered.
    */
   unresolved: UnresolvedResolver[];
+  /**
+   * #1507: recipients (uids) whose record in `written` was written with EVERY
+   * delivery channel off. The notifications list behind the bell shows the
+   * alert (#1505); nothing was emailed, texted or pushed, and no work order
+   * exists. A caller that tells an admin "sent" reads this so the admin is told
+   * the notice reached the household in the app only. Optional so a hand-built
+   * outcome in a test still type-checks; the dispatcher always sets it.
+   */
+  appOnly?: string[];
 }
 
 /**
@@ -427,7 +436,7 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
   // written NotificationEntry can render who caused it with an avatar.
   const actor = await resolveActor(args.actorUid);
 
-  const outcome: EnqueueOutcome = { written: [], suppressed: [], unresolved };
+  const outcome: EnqueueOutcome = { written: [], suppressed: [], unresolved, appOnly: [] };
   /**
    * THE PRE-LAUNCH HOUSEHOLD GATE, read at most once per enqueue and only when
    * a household copy is actually about to be written.
@@ -487,7 +496,8 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
     }
 
     const channels = resolveChannels(def, userPrefs, businessOverride, stream);
-    if (!hasAnyChannel(channels)) {
+    const recordOnly = !hasAnyChannel(channels);
+    if (recordOnly) {
       logEvent({
         severity: 'info',
         function: 'enqueueNotification',
@@ -556,6 +566,10 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
     const routed = await routeByDeliveryMode(def, args, recipient.uid, channels, actor, stream);
     if (routed.kind === 'written') {
       outcome.written.push(routed.id);
+      // Reported only for a record that was actually written (#1507): a gated
+      // copy logged `record-only` above and then wrote nothing, and a duplicate
+      // wrote nothing new. Both are already in `suppressed`.
+      if (recordOnly) outcome.appOnly?.push(recipient.uid);
     } else {
       logEvent({
         severity: 'info',

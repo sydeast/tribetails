@@ -104,9 +104,9 @@ import { formatUsd } from '../lib/invoiceFormat';
 import { formatReminderTime, type ReminderOutcome } from '../lib/invoiceReminder';
 
 /** What `sendInvoiceReminder` resolves to when THIS press sent the reminder (#832). */
-function reminderSent(): ReminderOutcome {
+function reminderSent(appOnly = false): ReminderOutcome {
   const at = Date.UTC(2026, 8, 14, 15, 0, 0);
-  return { sent: true, reason: 'sent', lastReminderAtMs: at, nextReminderAllowedAtMs: at + 24 * 60 * 60 * 1000 };
+  return { sent: true, reason: 'sent', lastReminderAtMs: at, nextReminderAllowedAtMs: at + 24 * 60 * 60 * 1000, appOnly };
 }
 
 /** The `<dd>` paired with a `<dt>` in the facts list. */
@@ -260,7 +260,7 @@ beforeEach(() => {
   generateReceipt.mockReset();
   generateInvoicePdf.mockReset();
   reviewAndSendDraftInvoice.mockReset();
-  resendQuote.mockReset().mockResolvedValue('quote');
+  resendQuote.mockReset().mockResolvedValue({ status: 'quote', appOnly: false });
   updateInvoice.mockReset().mockResolvedValue({
     subtotalCents: 0, totalCents: 0, paidCents: 0, amountDueCents: 0,
   });
@@ -473,6 +473,34 @@ describe('InvoiceDetail', () => {
     await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
     await waitFor(() => expect(sendInvoiceReminder).toHaveBeenCalledWith('inv1'));
     expect(await screen.findByText(/reminder sent/i)).toBeInTheDocument();
+  });
+
+  it('#1507: an app-only send says so, in a warning, and the fact says app only', async () => {
+    sendInvoiceReminder.mockResolvedValue(reminderSent(true));
+    render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+
+    expect(
+      await screen.findByText('Reminder sent in the app only. Email and text are off for this household.'),
+    ).toBeInTheDocument();
+    // Not the green "Done": no email or text went out, and the tone says so.
+    expect(screen.getByText('Done, but not all of it')).toBeInTheDocument();
+    expect(screen.queryByText('Reminder sent.')).toBeNull();
+    expect(factValue('Last reminder')).toBe(`${formatReminderTime(reminderSent().lastReminderAtMs!)}, app only`);
+  });
+
+  it('#1507: a stored app-only stamp reads "app only" on open, and a later channel send clears it', async () => {
+    const at = Date.UTC(2026, 8, 13, 14, 0, 0);
+    render(<InvoiceDetail invoice={entry({ reminderNotifiedAtMs: at, reminderNotifiedAppOnly: true })} onClose={vi.fn()} />);
+    expect(factValue('Last reminder')).toBe(`${formatReminderTime(at)}, app only`);
+
+    sendInvoiceReminder.mockResolvedValue(reminderSent(false));
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    expect(await screen.findByText('Reminder sent.')).toBeInTheDocument();
+    expect(screen.getByText('Done')).toBeInTheDocument();
+    expect(factValue('Last reminder')).toBe(formatReminderTime(reminderSent().lastReminderAtMs!));
   });
 
   it('#832: shows when the last reminder went out, and "none sent" when there is none', () => {
@@ -2571,7 +2599,21 @@ describe('InvoiceDetail and a quote the household has answered (issue #448)', ()
     expect(resendQuote).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Send quote again' }));
     await waitFor(() => expect(resendQuote).toHaveBeenCalledWith('inv1'));
-    expect(await screen.findByText(/Quote sent again/)).toBeInTheDocument();
+    expect(await screen.findByText('Quote sent again. The household can accept or decline it now.')).toBeInTheDocument();
+    expect(screen.getByText('Done')).toBeInTheDocument();
+  });
+  it('#1507: a quote that reached the household in the app only says so, in a warning', async () => {
+    const user = userEvent.setup();
+    resendQuote.mockResolvedValue({ status: 'quote', appOnly: true });
+    render(<InvoiceDetail invoice={declinedQuote()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Revise and resend' }));
+    await user.click(screen.getByRole('button', { name: 'Send quote again' }));
+    expect(
+      await screen.findByText(
+        'Quote sent again, in the app only. Email and text are off for this household. The household can accept or decline it now.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Done, but not all of it')).toBeInTheDocument();
   });
   it('surfaces a refusal verbatim, because every one of them names what to do next', async () => {
     const user = userEvent.setup();

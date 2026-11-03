@@ -48,6 +48,42 @@ class InvoiceReminderTest {
     }
 
     @Test
+    fun `#1507 decodes an app-only send, and only an explicit true`() {
+        assertEquals(
+            ReminderOutcome(true, "sent", t, t + day, appOnly = true),
+            reminderOutcomeOf(mapOf("ok" to true, "sent" to true, "reason" to "sent", "lastReminderAtMs" to t, "nextReminderAllowedAtMs" to t + day, "appOnly" to true), 1L),
+        )
+        // A server from before #1507 omits the key: a channel send, as always.
+        assertEquals(
+            false,
+            reminderOutcomeOf(mapOf("ok" to true, "sent" to true, "reason" to "sent", "lastReminderAtMs" to t, "nextReminderAllowedAtMs" to t + day), 1L).appOnly,
+        )
+        assertEquals(false, reminderOutcomeOf(mapOf("ok" to true, "sent" to true, "appOnly" to "yes"), 1L).appOnly)
+        assertEquals(false, reminderOutcomeOf(null, 42L).appOnly)
+    }
+
+    @Test
+    fun `#1507 an app-only send says where it went and what is off`() {
+        assertEquals(
+            "Reminder sent in the app only. Email and text are off for this household.",
+            reminderOutcomeMessage(ReminderOutcome(true, "sent", t, t + day, appOnly = true), utc),
+        )
+        assertEquals(
+            "Quote sent again, in the app only. Email and text are off for this household. The household can accept or decline it now.",
+            quoteResentMessage(appOnly = true),
+        )
+        assertEquals("Quote sent again. The household can accept or decline it now.", quoteResentMessage(appOnly = false))
+    }
+
+    @Test
+    fun `#1507 last reminder label says app only for an explicit true flag alone`() {
+        assertEquals("Sep 14, 3:05 PM, app only", lastReminderLabel(t, utc, appOnly = true))
+        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, utc, appOnly = false))
+        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, utc, appOnly = null))
+        assertEquals("none sent", lastReminderLabel(null, utc, appOnly = true))
+    }
+
+    @Test
     fun `formats month, day and clock time`() {
         assertEquals("Sep 14, 3:05 PM", formatReminderTime(t, utc))
     }

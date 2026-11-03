@@ -3668,6 +3668,14 @@ data class Invoice(
      */
     val reminderNotifiedAtMs: Long? = null,
     /**
+     * #1507: written beside the stamp above by the same send. True when that
+     * reminder reached the household in the app only (every delivery channel
+     * off, nothing emailed or texted). Null on a stamp from before the flag
+     * existed or one copied from the dedupe ledger; [lastReminderLabel] adds
+     * "app only" for an explicit true alone.
+     */
+    val reminderNotifiedAppOnly: Boolean? = null,
+    /**
      * #1174: the itemization, held RAW and read through
      * `screens.invoices.invoiceEditLinesOf`. Raw for the reason Android's model
      * gives: staff can write this collection directly, so the field can hold

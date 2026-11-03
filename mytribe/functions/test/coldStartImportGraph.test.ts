@@ -119,8 +119,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * `lib/weeklyHoursRule.ts`, the shared weekly-hours check `requestBooking` and
  * `rescheduleTimeRules` both call. One helper module over modules already
  * resident; not a structural change.
+ *
+ * 430 since #1507 (main had reached 420 exactly): that change adds
+ * `notifications/appOnly.ts`, the pure "did this reach the household in the
+ * app only" read of an `EnqueueOutcome`. Its only import is a type, so it
+ * costs one module and no new edges. It is its own file rather than a
+ * dispatcher export because every callable test mocks the dispatcher whole.
  */
-const MAX_OWN_EAGER_MODULES = 420;
+const MAX_OWN_EAGER_MODULES = 430;
 
 interface Edge {
   spec: string;

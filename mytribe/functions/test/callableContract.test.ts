@@ -977,10 +977,12 @@ const FROZEN_RESPONSE_SHAPES: Record<
     signature: ['invoiceId', 'ok'],
   },
   // #832: `sent` / `reason` / `lastReminderAtMs` / `nextReminderAllowedAtMs`
-  // say whether THIS call reminded the household, and if not, why.
+  // say whether THIS call reminded the household, and if not, why. #1507:
+  // `appOnly` (optional) says a send reached them in the app only, with every
+  // delivery channel off.
   sendInvoiceReminder: {
     load: () => import('../src/admin/sendInvoiceReminder'),
-    signature: ['invoiceId', 'lastReminderAtMs', 'nextReminderAllowedAtMs', 'ok', 'reason', 'sent'],
+    signature: ['appOnly', 'invoiceId', 'lastReminderAtMs', 'nextReminderAllowedAtMs', 'ok', 'reason', 'sent'],
   },
   // Bare acks. `postInvoiceEvent` merges an ARBITRARY payload and must not
   // start echoing the doc back: that would make the merge's result a contract.
