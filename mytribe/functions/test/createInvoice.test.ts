@@ -220,6 +220,29 @@ describe('createInvoice handler effects', () => {
     expect(res.appOnly).toBe(false);
   });
 
+  it("#1513 an explicit draft stores as draft, enqueues nothing and says nothing about delivery", async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createInvoiceHandler(req({ ...validPayload, status: 'draft' }));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.status).toBe('draft');
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(res.ok).toBe(true);
+    expect(res).not.toHaveProperty('appOnly');
+  });
+  it.each(['sent', ''])("#1513 caller status %j canonicalizes to open and still notifies once", async (status) => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.appOnlyUids.mockReturnValue(['kin-uid-1']);
+    const res = await createInvoiceHandler(req({ ...validPayload, status }));
+    const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
+    expect(write.data.status).toBe('open');
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'invoice.new', recipientUid: 'kin-uid-1' }),
+    );
+    expect(res.appOnly).toBe(true);
+  });
   it('still returns ok when notification dispatch fails (swallowed + logged)', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
