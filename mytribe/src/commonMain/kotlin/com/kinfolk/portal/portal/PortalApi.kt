@@ -635,8 +635,26 @@ class PortalApi(
     }
 
     /** Reads the shared `vet_clinics` catalog (the vet bank). Returns only
-     *  APPROVED clinics; pending kinfolk submissions are filtered server-side. */
+     *  APPROVED clinics; pending kinfolk submissions are filtered out.
+     *
+     *  #1503: Firestore first (see VetClinicsDirectRead.kt for why the rules
+     *  allow it and which filter the client applies), so Tribe Profile skips the
+     *  `getVetClinics` cold start. ANY failure falls back to the callable, the
+     *  old path unchanged. */
     suspend fun getVetClinics(): List<VetClinic> {
+        val direct = firestore
+        if (direct != null) {
+            try {
+                return readVetClinicsDirect(direct)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+                // Fall through to the callable; see above.
+            }
+        }
+        return getVetClinicsViaCallable()
+    }
+    private suspend fun getVetClinicsViaCallable(): List<VetClinic> {
         val raw = fns.call("getVetClinics", null)
         return (raw["clinics"] as? JsonArray)?.map { el ->
             val o = el.jsonObject
