@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { initSentry, reportError } from './sentry';
+import { initSentry, reportError, reportTaggedError } from './sentry';
 import { dropRecaptchaNoise } from './sentryFilter';
 
 // The transport is never real in tests; assert on how we call the SDK, not on
@@ -8,6 +8,7 @@ import { dropRecaptchaNoise } from './sentryFilter';
 vi.mock('@sentry/react', () => ({
   init: vi.fn(),
   captureException: vi.fn(),
+  isInitialized: vi.fn(),
 }));
 
 describe('initSentry', () => {
@@ -55,5 +56,31 @@ describe('reportError', () => {
 
   it('never throws (a reporter must not become the crash)', () => {
     expect(() => reportError(new Error('x'))).not.toThrow();
+  });
+});
+
+describe('reportTaggedError', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('forwards the exception with every tag when Sentry is initialised (#1547)', () => {
+    vi.mocked(Sentry.isInitialized).mockReturnValue(true);
+    const err = new Error('boom');
+    reportTaggedError(err, { code: 'messaging/token-subscribe-failed', stage: 'token' });
+    expect(Sentry.captureException).toHaveBeenCalledWith(err, {
+      tags: { code: 'messaging/token-subscribe-failed', stage: 'token' },
+    });
+  });
+
+  it('sends nothing when Sentry was never initialised (#1547)', () => {
+    vi.mocked(Sentry.isInitialized).mockReturnValue(false);
+    reportTaggedError(new Error('boom'), { code: 'x', stage: 'token' });
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it('never throws, even when the SDK itself does', () => {
+    vi.mocked(Sentry.isInitialized).mockImplementation(() => {
+      throw new Error('sdk broke');
+    });
+    expect(() => reportTaggedError(new Error('x'), { code: 'x', stage: 'token' })).not.toThrow();
   });
 });

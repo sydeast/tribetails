@@ -72,3 +72,18 @@ export function reportError(error: unknown, context?: string): void {
     // A reporter must never become the thing that crashes the caller.
   }
 }
+
+/**
+ * Report a caught throwable with several triage tags (#1547: the push enable
+ * failure wants `code` and `stage`). Unlike [reportError] this asks the SDK
+ * whether it was initialised first, so a caller can rely on "no DSN, no event"
+ * and a test can assert both sides of that. Never throws.
+ */
+export function reportTaggedError(error: unknown, tags: Record<string, string>): void {
+  try {
+    if (!Sentry.isInitialized()) return;
+    Sentry.captureException(error, { tags });
+  } catch {
+    // A reporter must never become the thing that crashes the caller.
+  }
+}

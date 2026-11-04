@@ -98,10 +98,97 @@ describe('push', () => {
     expect(registerFcmToken).toHaveBeenCalledWith('a-device-token');
   });
 
-  it('registerForPush surfaces a thrown error rather than swallowing it', async () => {
+  it('registerForPush surfaces a thrown error rather than swallowing it, naming the stage that threw', async () => {
     vi.mocked(getToken).mockRejectedValue(new Error('network down'));
     const { registerForPush } = await import('./push');
-    await expect(registerForPush()).resolves.toEqual({ status: 'error', message: 'network down' });
+    await expect(registerForPush()).resolves.toMatchObject({
+      status: 'error',
+      message: 'network down',
+      code: 'Error',
+      stage: 'token',
+    });
+  });
+
+  // #1547: the 2026-11-04 walk lost everything but the message. The error
+  // outcome now carries the FCM code, the stage, the thrown value (for Sentry)
+  // and a snapshot of the browser state, with no token and no key material.
+  it('registerForPush carries the FCM error code and a browser snapshot when getToken throws a FirebaseError (#1547)', async () => {
+    setNotificationPermission('granted');
+    setServiceWorkerRegistration({ active: {}, showNotification: vi.fn() });
+    const fcmError = Object.assign(new Error('Request timed out.'), { code: 'messaging/token-subscribe-failed' });
+    vi.mocked(getToken).mockRejectedValue(fcmError);
+    const { registerForPush } = await import('./push');
+
+    const outcome = await registerForPush();
+
+    expect(outcome).toMatchObject({
+      status: 'error',
+      message: 'Request timed out.',
+      code: 'messaging/token-subscribe-failed',
+      stage: 'token',
+      diagnostics: { permission: 'granted', serviceWorker: 'active', vapidKeySet: true },
+    });
+    expect((outcome as { error: unknown }).error).toBe(fcmError);
+    expect(registerFcmToken).not.toHaveBeenCalled();
+  });
+
+  it('registerForPush names the permission stage when the prompt itself throws (#1547)', async () => {
+    globalThis.Notification.requestPermission = vi.fn().mockRejectedValue(new TypeError('prompt blocked'));
+    const { registerForPush } = await import('./push');
+    await expect(registerForPush()).resolves.toMatchObject({
+      status: 'error',
+      code: 'TypeError',
+      stage: 'permission',
+      diagnostics: { serviceWorker: 'none' },
+    });
+  });
+
+  it('registerForPush names the service-worker stage when getRegistration rejects (#1547)', async () => {
+    Object.defineProperty(globalThis.navigator, 'serviceWorker', {
+      configurable: true,
+      value: { getRegistration: vi.fn().mockRejectedValue(new Error('worker lookup failed')) },
+    });
+    const { registerForPush } = await import('./push');
+    await expect(registerForPush()).resolves.toMatchObject({
+      status: 'error',
+      message: 'worker lookup failed',
+      stage: 'service-worker',
+      diagnostics: { serviceWorker: 'none' },
+    });
+  });
+
+  it('registerForPush names the register stage and the callable code when the backend call fails (#1547)', async () => {
+    vi.mocked(getToken).mockResolvedValue('a-device-token');
+    vi.mocked(registerFcmToken).mockRejectedValueOnce(Object.assign(new Error('internal'), { code: 'functions/internal' }));
+    const { registerForPush } = await import('./push');
+    await expect(registerForPush()).resolves.toMatchObject({
+      status: 'error',
+      code: 'functions/internal',
+      stage: 'register',
+    });
+  });
+
+  it('registerForPush reports an empty token as its own code at the token stage (#1547)', async () => {
+    vi.mocked(getToken).mockResolvedValue('');
+    const { registerForPush } = await import('./push');
+    await expect(registerForPush()).resolves.toMatchObject({
+      status: 'error',
+      message: 'No token returned.',
+      code: 'no-token',
+      stage: 'token',
+    });
+    expect(registerFcmToken).not.toHaveBeenCalled();
+  });
+
+  it('registerForPush reports a waiting or installing service worker as such in the snapshot (#1547)', async () => {
+    vi.mocked(getToken).mockRejectedValue(new Error('x'));
+    const { registerForPush } = await import('./push');
+
+    setServiceWorkerRegistration({ waiting: {}, showNotification: vi.fn() });
+    await expect(registerForPush()).resolves.toMatchObject({ diagnostics: { serviceWorker: 'waiting' } });
+
+    setServiceWorkerRegistration({ installing: {}, showNotification: vi.fn() });
+    await expect(registerForPush()).resolves.toMatchObject({ diagnostics: { serviceWorker: 'installing' } });
   });
 
   it('unregisterForPush unregisters the current token and never throws', async () => {

@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PushRegistrationCoordinatorTest {
 
@@ -138,5 +139,53 @@ class PushRegistrationCoordinatorTest {
         c.onSignedIn()
         assertEquals(3, fake.calls.size)
         assertEquals("registerFcmToken", fake.calls[2].first)
+    }
+
+    // #1547: a failure line must say which stage failed and what threw, not
+    // only the message, so a logcat line or a Sentry breadcrumb can be triaged.
+    @Test
+    fun `register failure logs the stage and the exception class, never only the message`() = runTest {
+        val fake = fakeWithStubs()
+        fake.stubError("registerFcmToken", IllegalStateException("network down"))
+        val lines = mutableListOf<String>()
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake),
+            platform = "test-mytribe",
+            tokenProvider = { "tok-1" },
+            logger = { lines += it },
+        )
+        c.onSignedIn()
+        assertEquals(listOf("register failed: IllegalStateException: network down"), lines)
+    }
+
+    @Test
+    fun `token provider failure logs the token stage and the exception class`() = runTest {
+        val fake = fakeWithStubs()
+        val lines = mutableListOf<String>()
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake),
+            platform = "test-mytribe",
+            tokenProvider = { throw UnsupportedOperationException("permission API exploded") },
+            logger = { lines += it },
+        )
+        c.onSignedIn()
+        assertEquals(listOf("token failed: UnsupportedOperationException: permission API exploded"), lines)
+    }
+
+    @Test
+    fun `unregister failure logs the unregister stage and never the token value`() = runTest {
+        val fake = fakeWithStubs()
+        val lines = mutableListOf<String>()
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake),
+            platform = "test-mytribe",
+            tokenProvider = { "tok-secret" },
+            logger = { lines += it },
+        )
+        c.onSignedIn()
+        fake.stubError("unregisterFcmToken", IllegalStateException("auth already torn down"))
+        c.onSignOut()
+        assertEquals(listOf("unregister failed: IllegalStateException: auth already torn down"), lines)
+        assertTrue(lines.none { it.contains("tok-secret") })
     }
 }
