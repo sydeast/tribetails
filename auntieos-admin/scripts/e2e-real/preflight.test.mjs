@@ -77,6 +77,33 @@ describe('plan', () => {
     expect(refusals.join('\n')).toMatch(/TWILIO_FROM_NUMBER: names a phone number in a forbidden area code/);
   });
 
+  // #1519: the sender is optional and defaults to Twilio's magic test number,
+  // so stored test credentials alone count as configured.
+  it('reports Twilio configured from SID and token alone and writes the magic test sender', () => {
+    const { values, refusals, available } = plan(DECLARED, {
+      TWILIO_TEST_ACCOUNT_SID: 'ACe2e',
+      TWILIO_TEST_AUTH_TOKEN: 'tok',
+    });
+    expect(refusals).toEqual([]);
+    expect(available.twilio).toBe(true);
+    expect(values.TWILIO_FROM_NUMBER).toBe('+15005550006');
+  });
+
+  it('reports Twilio not configured from the SID alone', () => {
+    const { available } = plan(DECLARED, { TWILIO_TEST_ACCOUNT_SID: 'ACe2e' });
+    expect(available.twilio).toBe(false);
+  });
+
+  it('still refuses a forbidden sender when the credentials are set', () => {
+    const { refusals, available } = plan(DECLARED, {
+      TWILIO_TEST_ACCOUNT_SID: 'ACe2e',
+      TWILIO_TEST_AUTH_TOKEN: 'tok',
+      TWILIO_TEST_FROM_NUMBER: '+19895550199',
+    });
+    expect(available.twilio).toBe(true);
+    expect(refusals.join('\n')).toMatch(/TWILIO_FROM_NUMBER: names a phone number in a forbidden area code/);
+  });
+
   it('refuses a value with a line break, which would smuggle a second key into the file', () => {
     const { refusals } = plan(DECLARED, { STRIPE_TEST_SECRET_KEY: 'sk_test_a\nSENTRY_DSN=x' });
     expect(refusals.join('\n')).toMatch(/line break/);
