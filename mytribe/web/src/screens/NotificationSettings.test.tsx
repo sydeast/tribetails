@@ -683,3 +683,24 @@ describe('pinned section shortcuts (#1553)', () => {
     );
   });
 });
+// #1554: the 2026-09-11 ruling allows no explanatory copy under a panel title.
+// The category description is the title's tooltip and its accessible description.
+describe('category description', () => {
+  it('is a tooltip on the title, not a line under it', async () => {
+    const { container } = await renderLoaded();
+    const desc = VISIT_CATEGORY.description;
+    const sub = Array.from(container.querySelectorAll('.sub')).find((n) => n.textContent === desc);
+    expect(sub).toBeUndefined();
+    const only = screen.getByText(desc);
+    expect(only.className).toBe('nf-visually-hidden');
+
+    const fold = container.querySelector('#nf-head-visit') as HTMLElement;
+    expect(fold).toHaveAccessibleDescription(desc);
+    const tip = screen.getByRole('button', { name: 'About Visit Updates' });
+    expect(tip).toHaveAttribute('title', desc);
+    const holder = tip.parentElement as HTMLElement;
+    expect(within(holder).queryByRole('tooltip')).toBeNull();
+    await userEvent.click(tip);
+    expect(within(holder).getByRole('tooltip')).toHaveTextContent(desc);
+  });
+});

@@ -1,16 +1,34 @@
 package com.kinfolk.portal.util
 
+import android.content.Context
+import android.content.SharedPreferences
+import com.kinfolk.portal.KinfolkPortalApplication
+
+internal actual fun deviceBannerDismissals(): BannerDismissals = SharedPrefsBannerDismissals {
+    KinfolkPortalApplication.appContext?.getSharedPreferences("banner_dismissals", Context.MODE_PRIVATE)
+}
+
 /**
- * Android: no localStorage equivalent wired up here, so per-device dismissals
- * are held in a process-lifetime in-memory set (holds for the session, not
- * across app restarts). See [BannerDismissStore] for rationale.
+ * Android: SharedPreferences, one boolean per dismissed banner id, so a dismiss
+ * survives an app restart (#1555). Every dismissal is also kept in memory, the
+ * fallback when the Application has not set its context yet (a preview, a test
+ * host), as SectionFoldStorage and BusinessPublicCardStore do.
  */
-actual object BannerDismissStore {
-    private val dismissed = mutableSetOf<String>()
+internal class SharedPrefsBannerDismissals(
+    private val prefs: () -> SharedPreferences?,
+) : BannerDismissals {
+    private val memory = InMemoryBannerDismissals()
 
-    actual fun isDismissed(id: String): Boolean = id.isNotBlank() && id in dismissed
+    override fun isDismissed(id: String): Boolean =
+        memory.isDismissed(id) || prefs()?.getBoolean(id, false) == true
 
-    actual fun dismiss(id: String) {
-        if (id.isNotBlank()) dismissed += id
+    override fun dismiss(id: String) {
+        memory.dismiss(id)
+        prefs()?.edit()?.putBoolean(id, true)?.apply()
+    }
+
+    override fun clear() {
+        memory.clear()
+        prefs()?.edit()?.clear()?.apply()
     }
 }

@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -253,7 +254,12 @@ class NotificationSettingsScreenTest {
         sectionHead("Schedule Reminders").assertExists()
         // #1545: the shortcut chip reads the same as its card.
         onNodeWithTag("notif-jump-schedule").assertTextEquals("Schedule Reminders")
+        // #1554: the description is no text line in the card; the title's
+        // info tip carries it as its content description.
         onNodeWithText(
+            "Reminders before upcoming and pending visits on your calendar.",
+        ).assertDoesNotExist()
+        onNodeWithContentDescription(
             "Reminders before upcoming and pending visits on your calendar.",
         ).assertExists()
         onNodeWithText("Upcoming Care").assertDoesNotExist()
