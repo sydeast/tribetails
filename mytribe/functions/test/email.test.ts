@@ -116,3 +116,64 @@ describe('sendTemplatedEmail (smtp2go)', () => {
     ).rejects.toThrow(/bad recipient|failed/);
   });
 });
+
+/**
+ * #1535: the wrappers log a thrown error's message and nothing else of it, and
+ * the real-services classifier (D3-e) attributes a line by vendor name and
+ * reads `HTTP NNN` or a timeout word off it. A network failure never reached
+ * the HTTP-error throws, so undici's bare `TypeError: fetch failed` was the
+ * whole log line. The shapes below are what undici really throws: the message
+ * is `fetch failed` and the code sits one level down on `err.cause.code`.
+ */
+describe('sendTemplatedEmail names smtp2go on every failure (#1535)', () => {
+  function undiciFailure(code: string, detail: string): TypeError {
+    return new TypeError('fetch failed', { cause: Object.assign(new Error(detail), { code }) });
+  }
+
+  it('an undici connect timeout rethrows as a smtp2go timeout with the code, original as cause', async () => {
+    const original = undiciFailure('UND_ERR_CONNECT_TIMEOUT', 'Connect Timeout Error');
+    fetchMock.mockRejectedValueOnce(original);
+    const { sendTemplatedEmail } = await import('../src/lib/email');
+    const thrown = await sendTemplatedEmail({
+      to: 'kin@tribetails.com',
+      subjectTemplate: 'x',
+      bodyTemplate: 'y',
+      data: {},
+    }).catch((e) => e);
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown.message).toBe('smtp2go send timed out (code UND_ERR_CONNECT_TIMEOUT): fetch failed');
+    expect(thrown).toMatchObject({ code: 'UND_ERR_CONNECT_TIMEOUT' });
+    expect(thrown.cause).toBe(original);
+  });
+
+  it('a reset connection rethrows as a smtp2go failure with the code, not a timeout', async () => {
+    fetchMock.mockRejectedValueOnce(undiciFailure('ECONNRESET', 'read ECONNRESET'));
+    const { sendTemplatedEmail } = await import('../src/lib/email');
+    const thrown = await sendTemplatedEmail({
+      to: 'kin@tribetails.com',
+      subjectTemplate: 'x',
+      bodyTemplate: 'y',
+      data: {},
+    }).catch((e) => e);
+    expect(thrown.message).toBe('smtp2go send failed (code ECONNRESET): fetch failed');
+    expect(thrown).toMatchObject({ code: 'ECONNRESET' });
+  });
+
+  it('an HTTP 503 keeps the existing message with the status and is not wrapped again', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: async () => ({ data: { error: 'Service Unavailable' } }),
+    });
+    const { sendTemplatedEmail } = await import('../src/lib/email');
+    const thrown = await sendTemplatedEmail({
+      to: 'kin@tribetails.com',
+      subjectTemplate: 'x',
+      bodyTemplate: 'y',
+      data: {},
+    }).catch((e) => e);
+    expect(thrown.message).toBe('smtp2go send failed (HTTP 503): Service Unavailable');
+    // The HTTP path throws its own Error directly: no cause, no double prefix.
+    expect(thrown.cause).toBeUndefined();
+  });
+});
