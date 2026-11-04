@@ -143,6 +143,112 @@ describe('classify: the verdict rule', () => {
     expect(quiet.reasons.join('\n')).toMatch(/twilio 503 with no incident on its status page/);
   });
 
+  // #1531: the exact lines `mytribe/functions/src/lib/providerFailure.ts`
+  // logs for the two real timeout shapes. smtp2go sends over `fetch`, and
+  // undici's timeout code sits on `err.cause.code`; Twilio's SDK sends over
+  // axios, whose client timeout is `ECONNABORTED` with `timeout of <n>ms
+  // exceeded`. Neither carries a status. Each must warn during a listed
+  // incident and stop without one.
+  describe('vendor timeouts as providerFailure.ts logs them (#1531)', () => {
+    const shapes = [
+      {
+        name: 'smtp2go fetch connect timeout (undici)',
+        vendor: 'email',
+        url: SMTP_URL,
+        incident: 'Delayed sending',
+        line: logLine({
+          function: 'sendExternalMessage',
+          event: 'sendExternalMessage.failure',
+          errorCode: 'unavailable',
+          errorMessage: 'smtp2go send timed out (code UND_ERR_CONNECT_TIMEOUT): fetch failed',
+          providerCode: 'UND_ERR_CONNECT_TIMEOUT',
+        }),
+      },
+      {
+        name: 'smtp2go fetch headers timeout (undici)',
+        vendor: 'email',
+        url: SMTP_URL,
+        incident: 'Delayed sending',
+        line: logLine({
+          errorMessage: 'smtp2go send timed out (code UND_ERR_HEADERS_TIMEOUT): fetch failed',
+          providerCode: 'UND_ERR_HEADERS_TIMEOUT',
+        }),
+      },
+      {
+        name: 'smtp2go fetch body timeout (undici)',
+        vendor: 'email',
+        url: SMTP_URL,
+        incident: 'Delayed sending',
+        line: logLine({
+          errorMessage: 'smtp2go send timed out (code UND_ERR_BODY_TIMEOUT): fetch failed',
+          providerCode: 'UND_ERR_BODY_TIMEOUT',
+        }),
+      },
+      {
+        name: 'Twilio axios client timeout',
+        vendor: 'twilio',
+        url: TWILIO_URL,
+        incident: 'Messaging delays',
+        line: logLine({
+          function: 'sendExternalMessage',
+          event: 'sendExternalMessage.failure',
+          errorCode: 'unavailable',
+          errorMessage: 'Twilio send timed out (code ECONNABORTED): timeout of 10000ms exceeded',
+          providerCode: 'ECONNABORTED',
+        }),
+      },
+      {
+        name: 'Twilio socket timeout',
+        vendor: 'twilio',
+        url: TWILIO_URL,
+        incident: 'Messaging delays',
+        line: logLine({
+          errorMessage: 'Twilio send timed out (code ETIMEDOUT): connect ETIMEDOUT 3.5.7.9:443',
+          providerCode: 'ETIMEDOUT',
+        }),
+      },
+      {
+        // A function built before #1531 still logs the #1530 line, which
+        // never says "timed out"; the code alone must read as a timeout.
+        name: 'Twilio axios client timeout as a pre-#1531 build logs it',
+        vendor: 'twilio',
+        url: TWILIO_URL,
+        incident: 'Messaging delays',
+        line: logLine({
+          errorMessage: 'Twilio send failed (code ECONNABORTED): timeout of 10000ms exceeded',
+          providerCode: 'ECONNABORTED',
+        }),
+      },
+    ];
+
+    for (const s of shapes) {
+      it(`${s.name} warns during a listed incident`, async () => {
+        const v = await classify({
+          results: results([failedHarness]),
+          logText: s.line,
+          cypressExit: 1,
+          fetchImpl: fakeFetch({ [s.url]: statuspage([{ ...STRIPE_INCIDENT, name: s.incident }]) }),
+          now: NOW,
+        });
+        expect(v.verdict).toBe('warn');
+        expect(v.reasons.join('\n')).toMatch(new RegExp(`warn: .*${s.vendor} timeout during "${s.incident}"`));
+        expect(v.failures[0].vendorErrors[0]).toMatchObject({ vendor: s.vendor, status: null, timeout: true, auth: false });
+      });
+
+      it(`${s.name} stops with no incident listed`, async () => {
+        const v = await classify({
+          results: results([failedHarness]),
+          logText: s.line,
+          cypressExit: 1,
+          fetchImpl: fakeFetch({ [s.url]: statuspage([]) }),
+          now: NOW,
+        });
+        expect(v.verdict).toBe('stop');
+        expect(v.reasons.join('\n')).toMatch(new RegExp(`${s.vendor} timeout with no incident on its status page`));
+      });
+    }
+  });
+
   it('a 5xx with no incident on the status page stops', async () => {
     const v = await classify({
       results: results([failedHarness]),
@@ -374,6 +480,30 @@ describe('extractVendorErrors', () => {
     const [e] = extractVendorErrors('Stripe retry gave up after ETIMEDOUT, last answer HTTP 400');
     expect(e).toMatchObject({ vendor: 'stripe', status: 400, timeout: true });
     expect(isOutageShaped(e)).toBe(false);
+  });
+
+  it('reads the undici, axios and libc timeout codes and the axios message, with no "timed out" on the line (#1531)', () => {
+    const cases = [
+      'Twilio send failed (code ECONNABORTED): timeout of 10000ms exceeded',
+      'Twilio request failed: timeout of 10000ms exceeded',
+      'Twilio send failed (code ECONNABORTED): socket closed',
+      'Twilio send failed (code ETIMEDOUT): connect ETIMEDOUT 3.5.7.9:443',
+      'smtp2go send failed (code UND_ERR_CONNECT_TIMEOUT): fetch failed',
+      'smtp2go send failed (code UND_ERR_HEADERS_TIMEOUT): fetch failed',
+      'smtp2go send failed (code UND_ERR_BODY_TIMEOUT): fetch failed',
+      '{"vendor":"smtp2go","providerCode":"UND_ERR_CONNECT_TIMEOUT"}',
+    ];
+    for (const text of cases) {
+      const [e] = extractVendorErrors(text);
+      expect(e, text).toMatchObject({ status: null, timeout: true, auth: false });
+      expect(isOutageShaped(e), text).toBe(true);
+    }
+  });
+
+  it('a timeout code is a word, not a substring: ECONNABORTEDX and UND_ERR_TIMEOUT_X do not match', () => {
+    for (const text of ['Twilio ECONNABORTEDX', 'smtp2go UND_ERR_CONNECT_TIMEOUTS', 'Twilio timeout of ms exceeded']) {
+      expect(extractVendorErrors(text)[0], text).toMatchObject({ status: null, timeout: false });
+    }
   });
 
   it('ignores stack frames that name a vendor’s spec file', () => {
