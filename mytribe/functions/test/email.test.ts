@@ -177,3 +177,87 @@ describe('sendTemplatedEmail names smtp2go on every failure (#1535)', () => {
     expect(thrown.cause).toBeUndefined();
   });
 });
+
+/**
+ * #1540: the body read is the other place a transport error can surface. The
+ * headers arrived, so `fetch` resolved, and only `res.json()` throws. undici
+ * errors the body stream with `TypeError: terminated` carrying the real error
+ * as `cause` (`code: 'UND_ERR_BODY_TIMEOUT'`, or ECONNRESET for a reset mid
+ * body), and `.catch(() => ({}))` swallowed it into the generic "no sends
+ * succeeded" line with no timeout word and no code. A body that is simply not
+ * JSON throws a plain SyntaxError with no code, and that keeps the
+ * empty-object fallback.
+ */
+describe('sendTemplatedEmail keeps a body-phase transport error (#1540)', () => {
+  function undiciBodyFailure(code: string, detail: string): TypeError {
+    return new TypeError('terminated', { cause: Object.assign(new Error(detail), { code }) });
+  }
+
+  it('a body timeout on a 2xx rethrows as a smtp2go timeout with the code, original as cause', async () => {
+    const original = undiciBodyFailure('UND_ERR_BODY_TIMEOUT', 'Body Timeout Error');
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.reject(original) });
+    const { sendTemplatedEmail } = await import('../src/lib/email');
+    const thrown = await sendTemplatedEmail({
+      to: 'kin@tribetails.com',
+      subjectTemplate: 'x',
+      bodyTemplate: 'y',
+      data: {},
+    }).catch((e) => e);
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown.message).toBe('smtp2go send timed out (code UND_ERR_BODY_TIMEOUT): terminated');
+    expect(thrown).toMatchObject({ code: 'UND_ERR_BODY_TIMEOUT' });
+    expect(thrown.cause).toBe(original);
+  });
+
+  it('a reset mid body rethrows as a smtp2go failure with the code, not a timeout', async () => {
+    const original = undiciBodyFailure('ECONNRESET', 'read ECONNRESET');
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.reject(original) });
+    const { sendTemplatedEmail } = await import('../src/lib/email');
+    const thrown = await sendTemplatedEmail({
+      to: 'kin@tribetails.com',
+      subjectTemplate: 'x',
+      bodyTemplate: 'y',
+      data: {},
+    }).catch((e) => e);
+    expect(thrown.message).toBe('smtp2go send failed (code ECONNRESET): terminated');
+    expect(thrown).toMatchObject({ code: 'ECONNRESET' });
+    expect(thrown.cause).toBe(original);
+  });
+
+  it('a 2xx whose body is not JSON keeps the empty-object fallback: the generic line, no code, no cause', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON at position 0')),
+    });
+    const { sendTemplatedEmail } = await import('../src/lib/email');
+    const thrown = await sendTemplatedEmail({
+      to: 'kin@tribetails.com',
+      subjectTemplate: 'x',
+      bodyTemplate: 'y',
+      data: {},
+    }).catch((e) => e);
+    // An unreadable 2xx is not a delivered send and not a transport error: the
+    // empty payload has no `succeeded`, so today's generic line stands.
+    expect(thrown.message).toBe('smtp2go send failed: no sends succeeded');
+    expect(thrown.code).toBeUndefined();
+    expect(thrown.cause).toBeUndefined();
+  });
+
+  it('a 4xx whose body is not JSON keeps the existing HTTP message', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON at position 0')),
+    });
+    const { sendTemplatedEmail } = await import('../src/lib/email');
+    const thrown = await sendTemplatedEmail({
+      to: 'kin@tribetails.com',
+      subjectTemplate: 'x',
+      bodyTemplate: 'y',
+      data: {},
+    }).catch((e) => e);
+    expect(thrown.message).toBe('smtp2go send failed (HTTP 400): unknown error');
+    expect(thrown.cause).toBeUndefined();
+  });
+});

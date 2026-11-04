@@ -2,7 +2,7 @@ import Handlebars from 'handlebars';
 import { stripUnresolvedTokens } from '../notifications/templateParsers';
 import { sendsAreSuppressed, suppressedId, logSuppressedSend } from './sendGuard';
 import { isReservedEmailDomain, logRefusedSend, refusedId } from './reservedEmailDomains';
-import { describeProviderFailure } from './providerFailure';
+import { describeProviderFailure, providerFailureFields } from './providerFailure';
 
 /**
  * Email transport: smtp2go HTTP API (replaced SendGrid 2026-06-10 when the
@@ -16,8 +16,9 @@ import { describeProviderFailure } from './providerFailure';
  *
  * Every failure it throws names smtp2go (#1535, lib/providerFailure.ts): an
  * HTTP error carries the status in its own message, and a network or timeout
- * error from `fetch` is rethrown through `describeProviderFailure`, so the
- * wrappers' one-line logs always carry the vendor and the code.
+ * error from `fetch` or from the body read (#1540) is rethrown through
+ * `describeProviderFailure`, so the wrappers' one-line logs always carry the
+ * vendor and the code.
  */
 
 const SMTP2GO_SEND_URL = 'https://api.smtp2go.com/v3/email/send';
@@ -159,7 +160,24 @@ export async function sendTemplatedEmail(args: SendArgs): Promise<string> {
     throw describeProviderFailure('smtp2go', err);
   }
 
-  const payload = (await res.json().catch(() => ({}))) as Smtp2goResponse;
+  // #1540: the headers can arrive and the body still fail. undici errors the
+  // body stream with `TypeError: terminated` and the real error as `cause`
+  // (UND_ERR_BODY_TIMEOUT, ECONNRESET mid body), and `.catch(() => ({}))`
+  // swallowed that into the generic "no sends succeeded" line below, with no
+  // timeout word and no code for the classifier. An error carrying a code (its
+  // own or `cause.code`) is a transport failure and is described like the
+  // `fetch` throw above. A plain SyntaxError from a body that is not JSON has
+  // no code and keeps the empty-object fallback: a 4xx then reads its HTTP
+  // status as before, and an unreadable 2xx is still not a delivered send.
+  let payload: Smtp2goResponse;
+  try {
+    payload = (await res.json()) as Smtp2goResponse;
+  } catch (err) {
+    if (providerFailureFields(err).providerCode !== undefined) {
+      throw describeProviderFailure('smtp2go', err);
+    }
+    payload = {};
+  }
   if (!res.ok) {
     throw new Error(`smtp2go send failed (HTTP ${res.status}): ${payload.data?.error ?? 'unknown error'}`);
   }
