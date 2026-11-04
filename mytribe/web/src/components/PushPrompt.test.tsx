@@ -133,7 +133,7 @@ describe('PushPrompt', () => {
 
   // #1550: the no-service-worker outcome was the one failure that left no
   // trace: a bare banner line, no console line, no Sentry event.
-  it('names the missing home-screen install in the banner when the app-shell service worker never registered (#1550)', async () => {
+  it('names the unready background worker in the banner, with the reload and the iPhone home-screen step, when the app-shell service worker never registered (#1550)', async () => {
     vi.mocked(registerForPush).mockResolvedValue(noServiceWorker);
     vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<PushPrompt />);
@@ -141,7 +141,7 @@ describe('PushPrompt', () => {
     await waitFor(() =>
       expect(
         screen.getByText(
-          'Could not enable notifications: MyTribe is not set up as an app on this device yet. Add it to your home screen, then try again.',
+          "Could not enable notifications: the app's background worker is not ready on this device. Reload the page and try again; on an iPhone, add MyTribe to the home screen first.",
         ),
       ).toBeInTheDocument(),
     );

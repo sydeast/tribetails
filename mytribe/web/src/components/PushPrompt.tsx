@@ -70,14 +70,15 @@ export function PushPrompt() {
     // #1550: nothing threw, but there is no app-shell worker to hand FCM, so
     // this used to be the one failure that left no trace anywhere. Same console
     // shape and the same Sentry tags as the error branch, with a constructed
-    // Error since there is no thrown value. The banner names the precondition
-    // in the words the install coach uses (AddToHomeScreen.tsx): push reaches
-    // the app on the home screen, not a tab the worker never installed into.
+    // Error since there is no thrown value. The banner has to be true in a
+    // Chrome tab as well as on an iPhone: in a tab the worker simply has not
+    // registered yet (a reload fixes it); on iOS Safari only a home-screen app
+    // ever gets a worker FCM can use (AddToHomeScreen.tsx says the same).
     const { code, stage, message } = NO_SERVICE_WORKER;
     console.error('[push] enable failed', { code, stage, message, ...outcome.diagnostics });
     reportTaggedError(new Error(message), { code, stage });
     setError(
-      'Could not enable notifications: MyTribe is not set up as an app on this device yet. Add it to your home screen, then try again.',
+      "Could not enable notifications: the app's background worker is not ready on this device. Reload the page and try again; on an iPhone, add MyTribe to the home screen first.",
     );
   }
 
