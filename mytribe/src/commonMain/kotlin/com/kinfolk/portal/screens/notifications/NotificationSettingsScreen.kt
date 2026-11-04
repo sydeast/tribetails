@@ -75,7 +75,8 @@ import kotlinx.coroutines.launch
  *   1. Section shortcuts (#1545): one chip per catalog category, in catalog
  *      order. A tap scrolls that card to the top, opens it if it was folded,
  *      and marks the chip current. Current follows the last tap, not the
- *      scroll; the web screen does the same so both read alike.
+ *      scroll; the web screen does the same so both read alike. The row is
+ *      pinned under the header while the sections scroll (#1553).
  *   2. Marketing opt-in card: per-marketingCategory toggle chip (off by
  *      default; CAN-SPAM/CASL unsubscribe-by-default).
  *   3. Per-category cards: header row with "select all by channel" chips;
@@ -243,12 +244,33 @@ fun NotificationSettingsScreen(
         }
     }
 
+    // #1553: the header and the shortcut row are pinned above the scroll, so the
+    // row is still there after a jump and the next section is one tap away. A
+    // jump scrolls only the column below, and the section tops are measured in
+    // that column, so a section lands at the top of the scrolling area, right
+    // under the row. The web screen pins its row under the sticky top nav.
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(scrollState),
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
     ) {
         ScreenHeader(title = "Notification Settings", kicker = "Account")
 
+        if (loaded && prefsLoaded) {
+            SectionShortcuts(
+                categories = effectiveCategories,
+                currentId = currentSection ?: effectiveCategories.firstOrNull()?.id,
+                onJump = jumpTo,
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .testTag("notif-scroll")
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
+        ) {
         if (!loaded) {
             Box(
                 modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.l),
@@ -281,12 +303,6 @@ fun NotificationSettingsScreen(
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
             )
         }
-
-        SectionShortcuts(
-            categories = effectiveCategories,
-            currentId = currentSection ?: effectiveCategories.firstOrNull()?.id,
-            onJump = jumpTo,
-        )
 
         MarketingOptInBlock(marketingOptIn = marketingOptIn, saving = saving, onPatch = savePatch)
 
@@ -350,6 +366,7 @@ fun NotificationSettingsScreen(
             modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
         )
         Spacer(Modifier.height(KinfolkSpacing.l))
+        }
     }
 }
 

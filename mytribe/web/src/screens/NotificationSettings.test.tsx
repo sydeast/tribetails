@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { NOTIFICATION_FOLD_STORAGE_KEY, NotificationSettings, setByBusinessNote } from './NotificationSettings';
 import type {
   CategoryDto,
@@ -634,5 +636,50 @@ describe('household-facing copy (#1317)', () => {
     renderScreen();
     await waitFor(() => expect(screen.getByText('Suggestion')).toBeTruthy());
     expect(screen.getByText('Suggestion').getAttribute('title')).toMatch(/suggested/i);
+  });
+});
+/**
+ * #1553: the shortcut row is pinned under the sticky top nav, so it is still
+ * there after a jump. jsdom loads no stylesheet and computes no layout, so the
+ * rendered row is checked for the class that carries the rule, and the rule
+ * itself is read from the sheet: sticky at the nav height, one line at a fixed
+ * height, and a section scroll margin that clears both.
+ */
+describe('pinned section shortcuts (#1553)', () => {
+  const stylesDir = resolve(__dirname, '../styles');
+  const sheet = (name: string) => readFileSync(resolve(stylesDir, name), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (css: string, selector: string) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = css.match(new RegExp(`(^|[}\\s])${escaped}\\s*\\{([^}]*)\\}`, 'm'));
+    if (!m) throw new Error(`no ${selector} rule`);
+    return m[2]!.replace(/\s+/g, ' ');
+  };
+  it('draws the row with the class that pins it', async () => {
+    mocks.getNotificationCatalog.mockResolvedValue({ categories: [VISIT_CATEGORY], schemaVersion: 1 });
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: BASE_PREFS, updatedAtMs: 1 });
+    renderScreen();
+    const row = await screen.findByRole('navigation', { name: 'Notification sections' });
+    expect(row).toHaveClass('nf-jump');
+  });
+  it('sticks the row under the top nav, one line at a fixed height, over a glass wash', () => {
+    const css = sheet('notifications.css');
+    const jump = rule(css, '.nf-jump');
+    expect(jump).toMatch(/position: sticky;/);
+    expect(jump).toMatch(/top: var\(--nav-h\);/);
+    expect(jump).toMatch(/height: var\(--nf-jump-h\);/);
+    expect(jump).toMatch(/flex-wrap: nowrap;/);
+    expect(jump).toMatch(/background: var\(--glass\);/);
+    expect(jump).toMatch(/backdrop-filter: blur\(/);
+    // Above the cards, under the nav (20) and the save notice (19).
+    const z = Number(jump.match(/z-index: (\d+);/)?.[1]);
+    expect(z).toBeGreaterThan(0);
+    expect(z).toBeLessThan(19);
+    expect(css).toMatch(/--nf-jump-h: \d+px;/);
+  });
+  it('keeps the section scroll margin in step with the nav and the row', () => {
+    expect(sheet('tokens.css')).toMatch(/--nav-h: \d+px;/);
+    expect(rule(sheet('notifications.css'), '.nf-section')).toMatch(
+      /scroll-margin-top: calc\(var\(--nav-h\) \+ var\(--nf-jump-h\) \+ \d+px\);/,
+    );
   });
 });

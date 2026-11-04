@@ -32,4 +32,8 @@
   --orange-pink: linear-gradient(to bottom right, #df8431, #d55c87);
   --teal-purple: linear-gradient(to bottom right, #0a8595, #74538a);
   --maxw: 1140px;
+  /* Height of the sticky top nav (base.css .nav): 14px padding above and below
+     the 42px bell and avatar, plus the 1px bottom border. Anything pinned under
+     the nav sits at this offset (#1553). */
+  --nav-h: 71px;
 }
