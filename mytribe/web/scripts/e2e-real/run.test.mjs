@@ -77,12 +77,14 @@ describe('portal run.sh on_exit', () => {
   });
 
   it('does not classify again when the run already wrote its verdict after Cypress', () => {
+    // on_exit silences the classifier's stdout, so the fake proves a call by
+    // writing a marker file, and the case checks that no marker appeared.
     const r = runOnExit(1, {
-      fakeNode: '#!/bin/sh\necho "fake node $*"\nexit 1\n',
+      fakeNode: '#!/bin/sh\nprintf "%s" "$*" > "$(dirname "$0")/call"\nexit 0\n',
       verdict: { verdict: 'stop', reasons: ['stop: x'] },
     });
     expect(r.status).toBe(1);
-    expect(r.stdout).not.toMatch(/fake node/);
+    expect(existsSync(join(r.dir, 'call'))).toBe(false);
     expect(JSON.parse(readFileSync(join(r.dir, 'verdict.json'), 'utf8'))).toEqual({ verdict: 'stop', reasons: ['stop: x'] });
   });
 });
