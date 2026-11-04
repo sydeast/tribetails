@@ -138,6 +138,42 @@ const CATEGORY_COLOR_CYCLE = ['cat-vu', 'cat-kt', 'cat-bi', 'cat-mk'];
  */
 const ASIDE_CATEGORY_IDS = new Set(['marketing', 'schedule']);
 
+/**
+ * #1545: which sections this browser has folded shut. Only collapsed ids are
+ * stored, so a section the catalog adds later opens expanded, the default.
+ * localStorage can be missing or throw (a private window, blocked site data),
+ * so every read and write is wrapped and the screen renders without it. The
+ * Android portal keeps the same set in its per-device store (SectionFoldStore).
+ */
+export const NOTIFICATION_FOLD_STORAGE_KEY = 'notificationSettings:collapsedSections';
+
+function readCollapsedSections(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(NOTIFICATION_FOLD_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return {};
+    const out: Record<string, boolean> = {};
+    for (const id of parsed) if (typeof id === 'string' && id) out[id] = true;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeCollapsedSections(collapsed: Record<string, boolean>): void {
+  try {
+    const ids = Object.keys(collapsed).filter((id) => collapsed[id]).sort();
+    localStorage.setItem(NOTIFICATION_FOLD_STORAGE_KEY, JSON.stringify(ids));
+  } catch {
+    // The fold still holds for this page view; it is only not remembered.
+  }
+}
+
+const sectionDomId = (catId: string) => `nf-section-${catId}`;
+const headDomId = (catId: string) => `nf-head-${catId}`;
+const bodyDomId = (catId: string) => `nf-body-${catId}`;
+
 const CHANNEL_ROW_COPY: Partial<Record<string, Partial<Record<Channel, { icon: string; label: string; desc: string }>>>> = {
   visit: {
     push: { icon: '\u{1F4F1}', label: 'Push', desc: 'Live alerts on your phone the moment a visit starts or ends.' },
@@ -249,7 +285,12 @@ export function NotificationSettings() {
   const prefs = useQuery({ queryKey: myNotificationPrefsKey(), queryFn: () => getMyNotificationPrefs() });
 
   const [edited, setEdited] = useState<EditedPrefs | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // #1545: folded sections, seeded once from this browser's storage and written
+  // back on every fold. Absence means open.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(readCollapsedSections);
+  // The shortcut row's current chip follows the last tap; before any tap it is
+  // the first section, where the page opens.
+  const [currentSection, setCurrentSection] = useState<string | null>(null);
   const [showSaved, setShowSaved] = useState(false);
   // Seed local state once from the server. After that it only changes when a
   // save is confirmed (see `save` below), so what is on screen is what the
@@ -309,6 +350,23 @@ export function NotificationSettings() {
   const categories = catalog.data?.categories ?? [];
   const mainCategories = categories.filter((c) => !ASIDE_CATEGORY_IDS.has(c.id));
   const asideCategories = categories.filter((c) => ASIDE_CATEGORY_IDS.has(c.id));
+  const currentId = currentSection ?? categories[0]?.id;
+
+  function setFolded(catId: string, folded: boolean) {
+    const next = { ...collapsed };
+    if (folded) next[catId] = true;
+    else delete next[catId];
+    writeCollapsedSections(next);
+    setCollapsed(next);
+  }
+  // A shortcut tap: the chip becomes current, a folded section opens, focus
+  // moves to the section's heading and the section scrolls to the top.
+  function jumpTo(cat: CategoryDto) {
+    setCurrentSection(cat.id);
+    if (collapsed[cat.id]) setFolded(cat.id, false);
+    document.getElementById(headDomId(cat.id))?.focus({ preventScroll: true });
+    document.getElementById(sectionDomId(cat.id))?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }
 
   function toggleChannelRow(cat: CategoryDto, ch: Channel) {
     if (!edited || busy || !categoryToggleableChannels(cat).includes(ch)) return;
@@ -351,7 +409,7 @@ export function NotificationSettings() {
     save.mutate({ byKey: { [key.key]: { [ch]: next === inherited ? null : next } } });
   }
   function renderCard(cat: CategoryDto, index: number) {
-    const isExpanded = expanded[cat.id] ?? true;
+    const isExpanded = !collapsed[cat.id];
     const isMarketing = cat.id === 'marketing';
     const rows = categoryChannels(cat);
     const masterState: MasterState = isMarketing
@@ -359,12 +417,26 @@ export function NotificationSettings() {
       : categoryMasterState(cat, edited?.byCategory[cat.id]);
 
     return (
-      <section className={`glass card d${(index % 4) + 1}`} key={cat.id}>
+      <section className={`glass card nf-section d${(index % 4) + 1}`} id={sectionDomId(cat.id)} key={cat.id}>
         <div className={`cathead ${categoryColorClass(cat.id, index)}`}>
           <div className="ico">{categoryIcon(cat.id)}</div>
           <div className="ht">
             <h3 className="title">
-              {displayTitle(cat)}
+              {/* #1545: the title is the fold control, a disclosure button that
+                  names the body it opens and closes. */}
+              <button
+                type="button"
+                id={headDomId(cat.id)}
+                className="nf-fold"
+                aria-expanded={isExpanded}
+                aria-controls={bodyDomId(cat.id)}
+                onClick={() => setFolded(cat.id, isExpanded)}
+              >
+                {displayTitle(cat)}
+                <span className="nf-chev" aria-hidden="true">
+                  {'▾'}
+                </span>
+              </button>
               {cat.id === 'schedule' && (
                 <span className="nf-sugtag" title="Suggested reminders for upcoming visits. Change any of them below.">
                   Suggestion
@@ -400,16 +472,18 @@ export function NotificationSettings() {
             />
           </div>
           <div className="exg" role="group" aria-label="Expand or collapse channels">
-            <button type="button" aria-pressed={isExpanded} onClick={() => setExpanded((prev) => ({ ...prev, [cat.id]: true }))}>
+            <button type="button" aria-pressed={isExpanded} onClick={() => setFolded(cat.id, false)}>
               Expand
             </button>
-            <button type="button" aria-pressed={!isExpanded} onClick={() => setExpanded((prev) => ({ ...prev, [cat.id]: false }))}>
+            <button type="button" aria-pressed={!isExpanded} onClick={() => setFolded(cat.id, true)}>
               Collapse
             </button>
           </div>
         </div>
 
-        <div className={`chans ${isExpanded ? '' : 'collapsed'}`}>
+        {/* Folded content is drawn at zero height; `inert` also takes its
+            switches out of the tab order while it is shut. */}
+        <div id={bodyDomId(cat.id)} className={`chans ${isExpanded ? '' : 'collapsed'}`} inert={!isExpanded}>
           <div className="inner">
             {isMarketing
               ? rows.map((ch) => (
@@ -535,6 +609,20 @@ export function NotificationSettings() {
           <p className="sub">Loading your notification preferences&hellip;</p>
         ) : (
           <>
+            {/* #1545: one shortcut per catalog section, in catalog order (the
+                two columns below reorder the cards; this row does not). */}
+            <nav className="nf-jump" aria-label="Notification sections">
+              {categories.map((cat) => (
+                <button
+                  type="button"
+                  key={cat.id}
+                  aria-current={cat.id === currentId ? 'true' : undefined}
+                  onClick={() => jumpTo(cat)}
+                >
+                  {displayTitle(cat)}
+                </button>
+              ))}
+            </nav>
             <div className="cols">
               <div className="stack">{mainCategories.map((c, i) => renderCard(c, i))}</div>
               <div className="stack">{asideCategories.map((c, i) => renderCard(c, mainCategories.length + i))}</div>

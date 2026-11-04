@@ -2,10 +2,22 @@
 
 package com.kinfolk.portal.screens.notifications
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ComposeUiTest
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.notifications.NotificationCatalogRepository
@@ -26,6 +38,32 @@ import kotlin.test.assertTrue
 
 class NotificationSettingsScreenTest {
 
+    // #1545: the real store survives the test run (the JVM user preferences
+    // node), so every render gets its own in-memory one and no test can fold a
+    // section for the next.
+    private class MemoryFoldStore(initial: Set<String> = emptySet()) : SectionFoldStore {
+        var saved: Set<String> = initial
+        override fun load(): Set<String> = saved
+        override fun save(collapsed: Set<String>) {
+            saved = collapsed
+        }
+    }
+
+    // #1545: a section title is on screen twice, on its shortcut chip and on the
+    // card head, so a title lookup names which one it means.
+    private fun isSectionHead() = SemanticsMatcher("is a section head") {
+        it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("notif-section-head-") == true
+    }
+
+    private fun isJumpChip() = SemanticsMatcher("is a section shortcut") {
+        it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("notif-jump-") == true
+    }
+
+    private fun ComposeUiTest.sectionHead(title: String) = onNode(hasText(title) and isSectionHead())
+
+    private fun hasStateDescription(value: String) =
+        SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, value)
+
     @Test
     fun load_rendersAllSixCategories() = runComposeUiTest {
         val fake = FakeFunctionsClient()
@@ -33,18 +71,116 @@ class NotificationSettingsScreenTest {
             put("prefs", buildJsonObject {})
             put("updatedAtMs", JsonNull)
         })
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake)) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         // Titles are the shipped KINFOLK_CATEGORIES titles. The schedule category
         // shows its relabeled "Schedule Reminders" title because the relabel flag
         // defaults on (D12).
-        onNodeWithText("Visit Updates").assertExists()
-        onNodeWithText("KinTales").assertExists()
-        onNodeWithText("Invoices & Payments").assertExists()
-        onNodeWithText("Schedule Reminders").assertExists()
-        onNodeWithText("Home & Pets").assertExists()
-        onNodeWithText("Newsletters & Community").assertExists()
+        sectionHead("Visit Updates").assertExists()
+        sectionHead("KinTales").assertExists()
+        sectionHead("Invoices & Payments").assertExists()
+        sectionHead("Schedule Reminders").assertExists()
+        sectionHead("Home & Pets").assertExists()
+        sectionHead("Newsletters & Community").assertExists()
         onNodeWithText("Each change saves as soon as you make it.").assertExists()
+    }
+
+    // ---- #1545: section shortcuts and folding ----
+
+    @Test
+    fun shortcutRow_listsEveryCatalogSectionInOrder_withTheTitleItsCardShows() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyNotificationPrefs", buildJsonObject {
+            put("prefs", buildJsonObject {})
+            put("updatedAtMs", JsonNull)
+        })
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
+        waitForIdle()
+        onNodeWithTag("notif-jump").assertExists()
+        val chips = onAllNodes(isJumpChip()).fetchSemanticsNodes()
+            .map { it.config[SemanticsProperties.TestTag].removePrefix("notif-jump-") }
+        assertEquals(listOf("visit", "kintale", "invoice", "schedule", "home", "marketing"), chips)
+        onNodeWithTag("notif-jump-visit").assertTextEquals("Visit Updates")
+        onNodeWithTag("notif-jump-schedule").assertTextEquals("Schedule Reminders")
+        onNodeWithTag("notif-jump-marketing").assertTextEquals("Newsletters & Community")
+        // The first section is current until a chip is tapped.
+        onNodeWithTag("notif-jump-visit").assertIsSelected()
+        onNodeWithTag("notif-jump-schedule").assertIsNotSelected()
+    }
+
+    @Test
+    fun shortcutTap_marksTheChipCurrent_andScrollsThatSectionIntoView() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyNotificationPrefs", buildJsonObject {
+            put("prefs", buildJsonObject {})
+            put("updatedAtMs", JsonNull)
+        })
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
+        waitForIdle()
+        // Six open sections are taller than the host window: the later ones start below it.
+        onNodeWithTag("notif-section-schedule").assertIsNotDisplayed()
+        onNodeWithTag("notif-jump-schedule").performClick()
+        waitForIdle()
+        onNodeWithTag("notif-jump-schedule").assertIsSelected()
+        onNodeWithTag("notif-jump-schedule").assert(hasStateDescription("Current section"))
+        onNodeWithTag("notif-jump-visit").assertIsNotSelected()
+        onNodeWithTag("notif-section-schedule").assertIsDisplayed()
+        assertEquals(0f, onNodeWithTag("notif-section-schedule").fetchSemanticsNode().boundsInRoot.top, 1f, "the section lands at the top")
+        // The row is not sticky, so it scrolls away with the header; bring it
+        // back and jump again from this scrolled position. The offsets are
+        // content positions, not screen positions, so the second jump lands too.
+        onNodeWithTag("notif-jump").performScrollTo()
+        waitForIdle()
+        onNodeWithText("Notification Settings").assertIsNotDisplayed()
+        onNodeWithTag("notif-jump-kintale").performClick()
+        waitForIdle()
+        onNodeWithTag("notif-jump-kintale").assertIsSelected()
+        onNodeWithTag("notif-jump-schedule").assertIsNotSelected()
+        onNodeWithTag("notif-section-kintale").assertIsDisplayed()
+        assertEquals(0f, onNodeWithTag("notif-section-kintale").fetchSemanticsNode().boundsInRoot.top, 1f, "the section lands at the top")
+    }
+
+    @Test
+    fun sectionHead_foldsThePerKeyControls_andTheDeviceRemembersIt() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisitPrefs(fake)
+        stubVisitCatalog(fake)
+        val catalog = NotificationCatalogRepository(fake)
+        val store = MemoryFoldStore()
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = store) }
+        waitForIdle()
+        // Open by default: the per-key chips are on screen without a tap.
+        onNodeWithTag("notif-section-head-visit").assert(hasStateDescription("Expanded"))
+        onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").assertExists()
+        onNodeWithTag("notif-section-head-visit").performClick()
+        waitForIdle()
+        onNodeWithTag("notif-section-head-visit").assert(hasStateDescription("Collapsed"))
+        onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").assertDoesNotExist()
+        // The "All in category" row is not part of the fold.
+        onNodeWithTag("catchip-visit-sms").assertExists()
+        assertEquals(setOf("visit"), store.saved)
+        onNodeWithTag("notif-section-head-visit").performClick()
+        waitForIdle()
+        onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").assertExists()
+        assertEquals(emptySet(), store.saved)
+    }
+
+    @Test
+    fun foldedSection_opensFolded_fromTheDeviceStore_andAShortcutTapOpensIt() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubVisitPrefs(fake)
+        stubVisitCatalog(fake)
+        val catalog = NotificationCatalogRepository(fake)
+        val store = MemoryFoldStore(initial = setOf("visit"))
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = store) }
+        waitForIdle()
+        onNodeWithTag("notif-section-head-visit").assert(hasStateDescription("Collapsed"))
+        onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").assertDoesNotExist()
+        onNodeWithTag("notif-jump-visit").performClick()
+        waitForIdle()
+        onNodeWithTag("notif-section-head-visit").assert(hasStateDescription("Expanded"))
+        onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").assertExists()
+        assertEquals(emptySet(), store.saved)
     }
 
     @Test
@@ -54,7 +190,7 @@ class NotificationSettingsScreenTest {
             put("prefs", buildJsonObject {})
             put("updatedAtMs", JsonNull)
         })
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake)) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         // Each per-channel category renders an Email/SMS/Push row. Marketing is an
         // opt-in category with no per-channel toggles, so the count is one per
@@ -67,7 +203,7 @@ class NotificationSettingsScreenTest {
     fun error_rendersErrorMessage() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stubError("getMyNotificationPrefs", IllegalStateException("prefs unavailable"))
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake)) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithText("prefs unavailable").assertExists()
     }
@@ -83,7 +219,7 @@ class NotificationSettingsScreenTest {
         val fake = FakeFunctionsClient()
         fake.stubError("getMyNotificationPrefs", IllegalStateException("prefs unavailable"))
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake)) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
         waitForIdle()
 
         onNodeWithText("prefs unavailable").assertExists()
@@ -107,10 +243,12 @@ class NotificationSettingsScreenTest {
             put("updatedAtMs", JsonNull)
         })
         setThemedContent {
-            NotificationSettingsScreen("The Foster", PortalApi(fake))
+            NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore())
         }
         waitForIdle()
-        onNodeWithText("Schedule Reminders").assertExists()
+        sectionHead("Schedule Reminders").assertExists()
+        // #1545: the shortcut chip reads the same as its card.
+        onNodeWithTag("notif-jump-schedule").assertTextEquals("Schedule Reminders")
         onNodeWithText(
             "Reminders before upcoming and pending visits on your calendar.",
         ).assertExists()
@@ -155,11 +293,9 @@ class NotificationSettingsScreenTest {
             })
         })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
-        // Per-key channel chips (and the lock reason) live in the expanded section.
-        onNodeWithText("Visit Updates").performClick()
-        waitForIdle()
+        // #1545: sections open by default, so the per-key chips and the lock reason are already on screen.
         onNodeWithText("Set by your Auntie, can't be changed here: SMS").assertExists()
     }
 
@@ -197,12 +333,10 @@ class NotificationSettingsScreenTest {
         setThemedContent {
             androidx.compose.runtime.CompositionLocalProvider(
                 com.kinfolk.portal.components.LocalBusinessName provides "Test Business",
-            ) { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+            ) { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         }
         waitForIdle()
-        // Per-key channel chips (and the lock reason) live in the expanded section.
-        onNodeWithText("Visit Updates").performClick()
-        waitForIdle()
+        // #1545: sections open by default, so the per-key chips and the lock reason are already on screen.
         onNodeWithText("Set by Test Business, can't be changed here: SMS").assertExists()
         onNodeWithText("Set by your Auntie, can't be changed here: SMS").assertDoesNotExist()
     }
@@ -239,9 +373,7 @@ class NotificationSettingsScreenTest {
             })
         })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
-        waitForIdle()
-        onNodeWithText("Visit Updates").performClick()
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithText("We text when your Auntie is en route so nobody misses her arrival.").assertExists()
         onNodeWithText("Set by your Auntie, can't be changed here: SMS").assertDoesNotExist()
@@ -298,16 +430,13 @@ class NotificationSettingsScreenTest {
             })
         })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
-        // Collapsed card: the select-all row is replaced by the honest note.
-        onNodeWithText("Set by your Auntie. Can't be changed here.").assertExists()
+        // Open by default (#1545): each fully locked key carries the same
+        // sentence (3 in all: the category note plus one per key), the select-all
+        // row is replaced by that note, and none of them says "always".
         onNodeWithText("All in category:").assertDoesNotExist()
         onNodeWithText("Always on. Required by Tribe Tails.").assertDoesNotExist()
-        // Expanded: each fully locked key carries the same sentence (3 in all:
-        // the category note plus one per key), and none of them says "always".
-        onNodeWithText("Account & Security").performClick()
-        waitForIdle()
         val honestLines = onAllNodesWithText(
             "Set by your Auntie. Can't be changed here.",
         ).fetchSemanticsNodes().size
@@ -316,6 +445,14 @@ class NotificationSettingsScreenTest {
             "Always on. Required by Tribe Tails (can't be changed here).",
         ).fetchSemanticsNodes().size
         assertTrue(oldPromise == 0, "the always-on promise came back on $oldPromise key lines")
+        // Folded: only the category note stays.
+        onNodeWithTag("notif-section-head-account").performClick()
+        waitForIdle()
+        onNodeWithText("Set by your Auntie. Can't be changed here.").assertExists()
+        val foldedLines = onAllNodesWithText(
+            "Set by your Auntie. Can't be changed here.",
+        ).fetchSemanticsNodes().size
+        assertTrue(foldedLines == 1, "expected only the category note once folded, got $foldedLines")
     }
 
     // ---- task 27a: override revert + category-control semantics ----
@@ -384,7 +521,7 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithText("Save Notification Preferences").assertDoesNotExist()
         onNodeWithTag("catchip-visit-sms").performClick()
@@ -399,7 +536,7 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithTag("catchip-visit-sms").performClick() // false -> true
         waitForIdle()
@@ -422,7 +559,7 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithTag("catchip-visit-email").performClick()
         waitForIdle()
@@ -436,10 +573,9 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
-        onNodeWithText("Visit Updates").performClick() // expand to reach per-key chips
-        waitForIdle()
+        // #1545: sections open by default, so the per-key chips are already on screen.
         // sms inherits false from the category default.
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick() // override: true
         waitForIdle()
@@ -460,9 +596,7 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
-        waitForIdle()
-        onNodeWithText("Visit Updates").performClick()
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick() // false -> true, diverges from category
         waitForIdle()
@@ -476,9 +610,7 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
-        waitForIdle()
-        onNodeWithText("Visit Updates").performClick()
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-push").performClick() // touch exactly one key/channel
         waitForIdle()
@@ -496,9 +628,7 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
-        waitForIdle()
-        onNodeWithText("Visit Updates").performClick()
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick() // override: sms true
         waitForIdle()
@@ -515,9 +645,7 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stubError("saveMyNotificationPrefs", IllegalStateException("network down"))
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
-        waitForIdle()
-        onNodeWithText("Visit Updates").performClick()
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithTag("perkey-chip-kincare.auntie.on_my_way-sms").performClick()
         waitForIdle()
@@ -536,7 +664,7 @@ class NotificationSettingsScreenTest {
         stubVisitCatalog(fake)
         fake.stub("saveMyNotificationPrefs", buildJsonObject { put("ok", true) })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithTag("mkt-chip-newsletter").performClick()
         waitForIdle()
@@ -570,9 +698,7 @@ class NotificationSettingsScreenTest {
             })
         })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
-        waitForIdle()
-        onNodeWithText("Visit Updates").performClick()
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithText("KinCare booking confirmed").assertExists()
         onNodeWithText("KinCare booking confirmed.").assertDoesNotExist()
@@ -584,7 +710,7 @@ class NotificationSettingsScreenTest {
         stubVisitPrefs(fake)
         stubVisitCatalog(fake)
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithText("Keys below with their own channel choice won't change when you flip this.").assertDoesNotExist()
         onNodeWithTag("catinfo-visit").assertExists()
@@ -624,9 +750,7 @@ class NotificationSettingsScreenTest {
             })
         })
         val catalog = NotificationCatalogRepository(fake)
-        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
-        waitForIdle()
-        onNodeWithText("Visit Updates").performClick()
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog, sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         onNodeWithText("When a KinCare visit on your schedule is changed.").assertExists()
         onNodeWithText("Kinfolk/Auntie updated, deleted, or requested changes to KinCare.").assertDoesNotExist()

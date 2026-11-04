@@ -1,6 +1,7 @@
 package com.kinfolk.portal.screens.notifications
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,12 +34,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinChip
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.LocalBusinessName
+import com.kinfolk.portal.components.animationsEnabled
 import com.kinfolk.portal.components.fillBusinessPlaceholders
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.notifications.ALL_MARKETING_CATEGORIES
@@ -55,17 +65,24 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 /**
  * Hybrid notification settings.
  *
  * UI layout:
- *   1. Marketing opt-in card — per-marketingCategory toggle chip (off by
+ *   1. Section shortcuts (#1545): one chip per catalog category, in catalog
+ *      order. A tap scrolls that card to the top, opens it if it was folded,
+ *      and marks the chip current. Current follows the last tap, not the
+ *      scroll; the web screen does the same so both read alike.
+ *   2. Marketing opt-in card: per-marketingCategory toggle chip (off by
  *      default; CAN-SPAM/CASL unsubscribe-by-default).
- *   2. Per-category cards — header row with "select all by channel" chips;
- *      expand chevron reveals per-key channel chips that override the row
- *      default.
+ *   3. Per-category cards: header row with "select all by channel" chips;
+ *      the header toggles the per-key channel chips that override the row
+ *      default. Open by default; a fold is remembered per device through
+ *      [SectionFoldStore], the same way the web screen keeps it in
+ *      localStorage.
  *
  * Saving (#1292): every tap saves on its own, pessimistically. Nothing on
  * screen changes until the server confirms; while the write is out every chip
@@ -93,9 +110,11 @@ fun NotificationSettingsScreen(
     familyName: String,
     portalApi: PortalApi,
     notificationCatalog: NotificationCatalogRepository? = null,
+    sectionFolds: SectionFoldStore = DeviceSectionFoldStore,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
 
     // `loaded` means the request FINISHED; `prefsLoaded` means it succeeded and
     // the three maps below hold real server state. They are separate on
@@ -125,7 +144,19 @@ fun NotificationSettingsScreen(
     // NotificationSettings.tsx implements the identical model.
     val byKey: SnapshotStateMap<String, MutableMap<String, Boolean>> = remember { mutableStateMapOf() }
     val marketingOptIn: SnapshotStateMap<String, Boolean> = remember { mutableStateMapOf() }
-    val expanded: SnapshotStateMap<String, Boolean> = remember { mutableStateMapOf() }
+    // #1545: only folded sections are held, so absence means open. Seeded once
+    // from the per-device store and written back on every header tap.
+    val collapsed: SnapshotStateMap<String, Boolean> = remember {
+        mutableStateMapOf<String, Boolean>().apply { sectionFolds.load().forEach { put(it, true) } }
+    }
+    val setFolded: (String, Boolean) -> Unit = { id, folded ->
+        if (folded) collapsed[id] = true else collapsed.remove(id)
+        sectionFolds.save(collapsed.filterValues { it }.keys)
+    }
+    // Where each section card sits in the scrolled content, from layout, so a
+    // shortcut tap can scroll straight to it.
+    val sectionTops: SnapshotStateMap<String, Int> = remember { mutableStateMapOf() }
+    var currentSection by remember { mutableStateOf<String?>(null) }
 
     // Dynamic catalog state. When notificationCatalog repo is provided, the
     // server is the source of truth (closes the static-mirror drift gap).
@@ -155,6 +186,17 @@ fun NotificationSettingsScreen(
     }
 
     val effectiveCategories: List<CategoryDef> = dynamicCategories ?: KINFOLK_CATEGORIES
+    val jumpTo: (CategoryDef) -> Unit = { cat ->
+        currentSection = cat.id
+        if (collapsed[cat.id] == true) setFolded(cat.id, false)
+        sectionTops[cat.id]?.let { top ->
+            scope.launch {
+                // ScrollState clamps to the content as it grows, so a card that
+                // was just unfolded is still reached by the animation.
+                if (animationsEnabled()) scrollState.animateScrollTo(top) else scrollState.scrollTo(top)
+            }
+        }
+    }
     // One tap, one write. The maps change only after the server says ok, so a
     // failed save leaves the screen showing what is really stored.
     val savePatch: (NotificationPrefsPatch) -> Unit = { patch ->
@@ -202,7 +244,7 @@ fun NotificationSettingsScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxSize().verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
     ) {
         ScreenHeader(title = "Notification Settings", kicker = "Account")
@@ -240,6 +282,12 @@ fun NotificationSettingsScreen(
             )
         }
 
+        SectionShortcuts(
+            categories = effectiveCategories,
+            currentId = currentSection ?: effectiveCategories.firstOrNull()?.id,
+            onJump = jumpTo,
+        )
+
         MarketingOptInBlock(marketingOptIn = marketingOptIn, saving = saving, onPatch = savePatch)
 
         effectiveCategories.forEach { cat ->
@@ -247,6 +295,7 @@ fun NotificationSettingsScreen(
             // framing from the mockup when the flag is on. Relabel only; the
             // catalog id/key/keys are untouched, so prefs still write the same.
             val scheduleRelabel = cat.id == "schedule"
+            val isExpanded = collapsed[cat.id] != true
             CategoryCard(
                 cat = cat,
                 byCategory = byCategory,
@@ -254,9 +303,15 @@ fun NotificationSettingsScreen(
                 marketingOptIn = marketingOptIn,
                 saving = saving,
                 onPatch = savePatch,
-                isExpanded = expanded[cat.id] == true,
-                onToggleExpand = { expanded[cat.id] = !(expanded[cat.id] == true) },
-                displayTitle = if (scheduleRelabel) "Schedule Reminders" else cat.title,
+                isExpanded = isExpanded,
+                onToggleExpand = { setFolded(cat.id, isExpanded) },
+                modifier = Modifier
+                    .testTag("notif-section-${cat.id}")
+                    .onGloballyPositioned {
+                        val top = it.positionInParent().y.roundToInt()
+                        if (sectionTops[cat.id] != top) sectionTops[cat.id] = top
+                    },
+                displayTitle = shownTitle(cat),
                 displayDescription = if (scheduleRelabel) {
                     "Reminders before upcoming and pending visits on your calendar."
                 } else {
@@ -295,6 +350,48 @@ fun NotificationSettingsScreen(
             modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
         )
         Spacer(Modifier.height(KinfolkSpacing.l))
+    }
+}
+
+/** D12: the schedule category is shown as "Schedule Reminders"; every other section keeps its catalog title. */
+private fun shownTitle(cat: CategoryDef): String = if (cat.id == "schedule") "Schedule Reminders" else cat.title
+
+/**
+ * #1545: the shortcut row. One chip per catalog section, in catalog order, with
+ * the section's shown title (so "Schedule Reminders", as the card reads). The
+ * current chip is `selected` for TalkBack and carries a state description, the
+ * Compose side of the web row's `aria-current`.
+ */
+@Composable
+private fun SectionShortcuts(
+    categories: List<CategoryDef>,
+    currentId: String?,
+    onJump: (CategoryDef) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = KinfolkSpacing.l)
+            .testTag("notif-jump")
+            .semantics { contentDescription = "Notification sections" },
+        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+    ) {
+        categories.forEach { cat ->
+            val isCurrent = cat.id == currentId
+            KinChip(
+                label = shownTitle(cat),
+                selected = isCurrent,
+                onClick = { onJump(cat) },
+                modifier = Modifier
+                    .testTag("notif-jump-${cat.id}")
+                    .semantics {
+                        role = Role.Button
+                        selected = isCurrent
+                        if (isCurrent) stateDescription = "Current section"
+                    },
+            )
+        }
     }
 }
 
@@ -345,6 +442,7 @@ private fun CategoryCard(
     onPatch: (NotificationPrefsPatch) -> Unit,
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
+    modifier: Modifier = Modifier,
     displayTitle: String = cat.title,
     displayDescription: String = cat.description,
 ) {
@@ -352,14 +450,22 @@ private fun CategoryCard(
     val isMarketingCategory = cat.id == "marketing"
 
     GlassCard(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
+        modifier = modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         contentPadding = PaddingValues(KinfolkSpacing.l),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+            // #1545: the header is the fold control. It reads as a button with
+            // its open or closed state, the Compose side of the web header's
+            // aria-expanded.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onToggleExpand() },
+                    .testTag("notif-section-head-${cat.id}")
+                    .semantics { stateDescription = if (isExpanded) "Expanded" else "Collapsed" }
+                    .clickable(
+                        role = Role.Button,
+                        onClickLabel = if (isExpanded) "Collapse" else "Expand",
+                    ) { onToggleExpand() },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
