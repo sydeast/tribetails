@@ -41,17 +41,19 @@ name: E2E real services
 #
 # VERDICT (D3-e). A red run means our integration broke and the release stops.
 # A vendor outage (a 5xx or timeout while the vendor's status page shows an
-# incident) only warns. run.sh classifies the run into
-# cypress/.real/verdict.json (`stop`, `warn` or `pass`, #1196) and exits 1 only
-# on `stop`, so a warning is a green job; the file is uploaded below so the
-# release can say so. A run from before the classifier has no file, and its
-# red is read by a person before a release is forced past it.
+# incident) only warns. Each job's run.sh classifies its own run into
+# cypress/.real/verdict.json (`stop`, `warn` or `pass`, #1196 admin, #1533
+# portal) and exits 1 only on `stop`, so a warning is a green job; both files
+# are uploaded below so the release can say so. A run from before the
+# classifier has no file, and its red is read by a person before a release is
+# forced past it.
 #
 # WHO READS IT (#1193). nightly-release.yml calls this workflow for the commit
 # it ships, before its release job, and that job refuses unless it came back
 # green. scripts/release.sh step 0b reads the verdict again for the commit,
 # hosted and local alike: the newest run of this file or of a nightly that
-# called it, then the verdict files in that run's artifacts.
+# called it, then every verdict file in that run's artifacts, the worst one
+# winning (any `stop` refuses, otherwise any `warn` warns).
 
 on:
   workflow_dispatch:
@@ -304,9 +306,14 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: e2e-real-portal-artifacts
+          # Same rules as the admin step above: verdict.json is this job's own
+          # classification (#1533), read by release.sh beside the admin's
+          # because the name matches `e2e-real*`; the secrets file is never
+          # listed. Each hidden component is named outright.
           path: |
             mytribe/web/cypress/.artifacts/real/
             mytribe/web/cypress/.real/emulators.log
             mytribe/web/cypress/.real/stripe-listen.log
+            mytribe/web/cypress/.real/verdict.json
           retention-days: 7
           if-no-files-found: ignore

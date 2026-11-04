@@ -597,14 +597,19 @@ no readable status, a failure with no vendor error at all, a spec that did not
 load, no results file, or a status page that did not answer. `run.sh` exits 1
 on `stop`, and 0 on `warn` and `pass`; on `warn` it prints a WARNING block
 naming each failure and its incident. A run that stops before Cypress (port
-check, build, preflight) still writes a `stop` verdict. The hosted admin
-job's `Upload artifacts` step in `.github/workflows/e2e-real.yml` uploads
-`cypress/.real/verdict.json` in the `e2e-real-artifacts` artifact on every
-exit, red or green, and stays quiet when a run wrote none (#1196).
-`scripts/release.sh` step 0b then reads it for the commit being shipped: it
-finds the newest `e2e-real.yml` run, or nightly that called it, for that
-commit, downloads its `e2e-real*` artifacts and reads every `verdict.json`
-in them, as "How a release reads it" above describes (#1193).
+check, build, preflight) still writes a `stop` verdict. The portal's `run.sh`
+does the same with the same classifier, writing
+`mytribe/web/cypress/.real/verdict.json` (#1533). Each hosted job's `Upload
+artifacts` step in `.github/workflows/e2e-real.yml` uploads its own
+`verdict.json` on every exit, red or green, the admin's in
+`e2e-real-artifacts` and the portal's in `e2e-real-portal-artifacts`, and
+stays quiet when a run wrote none (#1196). `scripts/release.sh` step 0b then
+reads both for the commit being shipped: it finds the newest `e2e-real.yml`
+run, or nightly that called it, for that commit, downloads its `e2e-real*`
+artifacts and reads every `verdict.json` in them, as "How a release reads it"
+above describes (#1193). The worst verdict wins: any `stop` refuses, even
+under two green jobs and even beside the other suite's `warn`; otherwise any
+`warn` warns; `pass` needs both files to pass.
 
 Status pages, checked 2026-10-23: Stripe `www.stripestatus.com` (the old
 `status.stripe.com` JSON is frozen in 2024), Twilio `status.twilio.com`,
@@ -655,12 +660,28 @@ npm run e2e:real
 | Ports (auth, Firestore, functions) | 9399, 8385, 5398 | 9499, 8485, 5498 |
 | Specs | `auntieos-admin/cypress/e2e-real/` | `mytribe/web/cypress/e2e-real/` |
 | CI job | `admin-real` | `portal-real` |
+| Verdict (D3-e) | `cypress/.real/verdict.json`, uploaded in `e2e-real-artifacts` | `cypress/.real/verdict.json`, uploaded in `e2e-real-portal-artifacts` |
+| Classifier | `scripts/e2e-real/classify-run.mjs` | the admin's, called by path |
 
 The portal preflight does not keep its own list of secrets or refusals. It
 imports `plan`, `disconnectRisks` and `declaredSecrets` from the admin
 preflight, so a refusal added there applies to both runs. Its tests
 (`mytribe/web/scripts/e2e-real/preflight.test.mjs`, run by the portal's
 `vitest`) check the three refusals through the portal's entry point.
+
+The portal run classifies itself the same way (#1533). After Cypress its
+`run.sh` runs the admin's `classify-run.mjs` with the portal's own
+`results.json` (written by the `after:run` hook in the portal's
+`cypress.real.config.ts`), its emulator log and its Cypress exit code, writes
+`mytribe/web/cypress/.real/verdict.json`, and exits 1 on `stop`, 0 on `warn`
+and `pass`. A run that stops before Cypress (port check, build, forwarder,
+preflight) still leaves a `stop` verdict. The classifier needs no portal
+change: a failure on the webhook side names `stripeWebhook`, which attributes
+to the Stripe vendor under the same rules. The `portal-real` job uploads the
+file in `e2e-real-portal-artifacts`, and the release reads it beside the
+admin's, worst verdict winning ("The verdict" above). The tests in
+`mytribe/web/scripts/e2e-real/run.test.mjs` drive the real `on_exit` and the
+classifier with portal-shaped inputs.
 
 Run one real-services run at a time on a machine. The portal run cannot overlap
 `npm run e2e:cy` in `mytribe/web` (they share 9499 and 8485), and the Cloud
