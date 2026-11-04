@@ -480,23 +480,62 @@ object VoiceTokenManager {
                 return null
             }
             _state.value = VoiceTokenState.Working
-            val token = ensureToken(forceRemint)
+            // #1559: this loop owns the Sentry decision for its own attempts, so
+            // the per-attempt failure line is held back from Sentry here.
+            val token = ensureToken(forceRemint, reportFailure = false)
             if (token != null) return token
             // `ensureToken` has already classified the refusal into [state], and
             // that classification is what decides whether another attempt buys
             // anything.
-            if (attempt >= MAX_MINT_ATTEMPTS || !isWorthRetrying(_state.value)) return null
+            val failure = _state.value
+            val error = lastMintError
+            if (attempt >= MAX_MINT_ATTEMPTS || !isWorthRetrying(failure)) {
+                reportGaveUp(failure, error, attempt)
+                return null
+            }
             val wait = MINT_RETRY_BACKOFF_MILLIS[attempt - 1]
-            AuntieLog.w(
+            // #1559 (AUNTIEOS-ADMIN-1V): a breadcrumb, not a Sentry event. The
+            // field cause is DNS not resolving for a second after a cold start on
+            // cellular, and a later attempt succeeds. Only giving up reports.
+            AuntieLog.breadcrumb(
                 "Voice token mint failed (attempt $attempt of $MAX_MINT_ATTEMPTS), " +
-                    "retrying in ${wait / 1000}s"
+                    "retrying in ${wait / 1000}s: ${describe(error)}"
             )
             backoff(wait)
             attempt++
         }
     }
-
-    private suspend fun ensureToken(forceRemint: Boolean): String? = mintMutex.withLock {
+    /**
+     * The one Sentry report a retry loop makes, when it stops without a token.
+     *
+     * An expected auth state ([VoiceTokenState.NotAuthorized], or a signed-out
+     * error) still never reaches Sentry (#1066); it goes to a breadcrumb.
+     * Everything else is one event naming the classified state, the last error
+     * and how many attempts were spent. It is a message rather than the
+     * exception on purpose: [AuntieLog] turns a transport exception into a
+     * breadcrumb, and an exhausted DNS failure is exactly the case worth seeing.
+     */
+    private fun reportGaveUp(failure: VoiceTokenState, error: Throwable?, attempt: Int) {
+        val summary = "Voice token mint gave up after attempt $attempt of $MAX_MINT_ATTEMPTS " +
+            "(${failure.javaClass.simpleName}): ${describe(error)}"
+        if (failure is VoiceTokenState.NotAuthorized || (error != null && isExpectedSignedOutFailure(error))) {
+            AuntieLog.breadcrumb("$summary; signed out or session over")
+        } else {
+            AuntieLog.e(summary)
+        }
+    }
+    private fun describe(error: Throwable?): String =
+        if (error == null) "no error" else "${error.javaClass.simpleName}: ${error.message}"
+    /**
+     * The error behind the last failed mint, read by [mintWithRetry] for its one
+     * report. Null when the last failure had no throwable.
+     */
+    private var lastMintError: Throwable? = null
+    private suspend fun ensureToken(
+        forceRemint: Boolean,
+        reportFailure: Boolean = true,
+    ): String? = mintMutex.withLock {
+        lastMintError = null
         val cached = cachedToken
         if (!forceRemint && cached != null && now() < cachedExpiresAtMillis - REFRESH_SKEW_SECONDS * 1000L) {
             return@withLock cached
@@ -524,9 +563,17 @@ object VoiceTokenManager {
             val error = result.exceptionOrNull()
                 ?: IllegalStateException("mintVoiceAccessToken failed without an error")
             _state.value = classifyTokenFailure(error)
-            // #1066: signed out, or a credential Firebase will no longer refresh,
-            // is an expected auth state and goes to a breadcrumb, not to Sentry.
-            logFailureUnlessSignedOut("Twilio Voice token mint failed", error)
+            lastMintError = error
+            if (reportFailure) {
+                // #1066: signed out, or a credential Firebase will no longer refresh,
+                // is an expected auth state and goes to a breadcrumb, not to Sentry.
+                logFailureUnlessSignedOut("Twilio Voice token mint failed", error)
+            } else {
+                // #1559: inside the retry loop, which reports once when it gives up.
+                AuntieLog.breadcrumb(
+                    "Twilio Voice token mint failed (${error.javaClass.simpleName}: ${error.message})"
+                )
+            }
             return@withLock null
         }
         cachedToken = minted.token
@@ -655,6 +702,7 @@ object VoiceTokenManager {
         cachedIdentity = ""
         cachedExpiresAtMillis = 0L
         registeredWithVoiceSdk = false
+        lastMintError = null
         _state.value = VoiceTokenState.Idle
     }
 }

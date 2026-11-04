@@ -38,6 +38,18 @@ object AuntieLog {
         Sentry.addBreadcrumb(message)
     }
 
+    /**
+     * Logcat plus a Sentry breadcrumb, and never a Sentry event (#1559).
+     *
+     * For a step that is worth seeing on the timeline of a later error but is
+     * not itself a defect, such as a retry that may still recover. [i] does the
+     * same today; this names the intent so a later change to [i] cannot turn a
+     * retry back into an event.
+     */
+    fun breadcrumb(message: String) {
+        Log.i(TAG, message)
+        Sentry.addBreadcrumb(message)
+    }
     fun w(message: String, throwable: Throwable? = null) {
         Log.w(TAG, message, throwable)
         report(message, throwable, SentryLevel.WARNING)

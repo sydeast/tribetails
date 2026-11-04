@@ -828,4 +828,70 @@ class VoiceTokenManagerTest {
         assertEquals(listOf(2_000L, 10_000L, 30_000L), backoffs)
         assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Failed)
     }
+
+    // ── #1559 (AUNTIEOS-ADMIN-1V): a retry that recovers is not a Sentry event ──
+    //
+    // In the field the first mint after a cold start on cellular fails because
+    // DNS has not resolved yet, and a later attempt succeeds. Each recovered
+    // attempt used to be a Sentry warning. Now only giving up reports, once.
+    private fun dnsFailure() = RuntimeException(
+        "INTERNAL",
+        UnknownHostException("Unable to resolve host \"us-central1-auntieos-ttpc.cloudfunctions.net\""),
+    )
+    @Test
+    fun `a mint that fails twice then succeeds reports no Sentry event`() = withLogSpy {
+        runBlocking {
+            var mints = 0
+            configure(mint = {
+                mints++
+                if (mints <= 2) Result.failure(dnsFailure()) else Result.success(token())
+            })
+            VoiceTokenManager.mintAndRegister()
+            assertEquals(3, mints)
+            assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Registered)
+            verify(exactly = 0) { AuntieLog.e(any(), any()) }
+            verify(exactly = 0) { AuntieLog.w(any(), any()) }
+            verify(exactly = 2) { AuntieLog.breadcrumb(match { it.contains("retrying in") }) }
+        }
+    }
+    @Test
+    fun `a mint that fails four times reports exactly one event naming the cause and 4 of 4`() =
+        withLogSpy {
+            runBlocking {
+                var mints = 0
+                configure(mint = { mints++; Result.failure(dnsFailure()) })
+                VoiceTokenManager.mintAndRegister()
+                assertEquals(4, mints)
+                verify(exactly = 0) { AuntieLog.w(any(), any()) }
+                verify(exactly = 1) { AuntieLog.e(any(), any()) }
+                verify(exactly = 1) {
+                    AuntieLog.e(
+                        match { it.contains("4 of 4") && it.contains("Failed") && it.contains("INTERNAL") },
+                        null,
+                    )
+                }
+            }
+        }
+    @Test
+    fun `a Misconfigured refusal on attempt 1 reports once and does not retry`() = withLogSpy {
+        runBlocking {
+            val refusal = mockk<FirebaseFunctionsException>()
+            every { refusal.cause } returns null
+            every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
+            every { refusal.details } returns
+                mapOf("code" to "missing_secret", "secret" to "TWIML_APP_SID")
+            every { refusal.message } returns
+                "Voice calling is not configured yet: the TWIML_APP_SID secret is not set."
+            var mints = 0
+            configure(mint = { mints++; Result.failure(refusal) })
+            VoiceTokenManager.mintAndRegister()
+            assertEquals(1, mints)
+            assertTrue(backoffs.isEmpty())
+            verify(exactly = 0) { AuntieLog.w(any(), any()) }
+            verify(exactly = 1) { AuntieLog.e(any(), any()) }
+            verify(exactly = 1) {
+                AuntieLog.e(match { it.contains("1 of 4") && it.contains("Misconfigured") }, null)
+            }
+        }
+    }
 }
