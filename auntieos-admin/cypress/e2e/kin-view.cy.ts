@@ -22,7 +22,17 @@ import { usingFixtureAdmin } from '../support/commands';
  *
  * Selectors moved onto the kit classes on 2026-09-11, after PR #776 rebuilt the
  * hero on `DenScreenHeading` and `StatusPill`.
+ *
+ * Stubbed `listKinRemovalRequests` on 2026-11-04 (#1521). PR #1408 put the Kin
+ * removal requests band on this screen, and the band calls that callable on
+ * mount. This suite pins callables at a dead port, so an unstubbed call made
+ * the band render its refused-connection banner (`role="alert"`), and #690's
+ * "no page banner" assertion was racing the refused fetch. The empty list in
+ * the `beforeEach` below is answered before any test opens the screen.
  */
+
+/** A callable's URL on the pinned functions port, as the sibling specs name it. */
+const CALLABLE = (name: string) => `**/us-central1/${name}`;
 
 /**
  * The Firestore WebChannel path every `updateDoc` in the app goes out on. The
@@ -85,6 +95,17 @@ function openKinFromProfile(kinfolkId: string, petName: string) {
 describe('kin view and edit', () => {
   before(function () {
     if (!usingFixtureAdmin()) this.skip();
+  });
+
+  beforeEach(() => {
+    // #1521: every test below mounts `KinRemovalRequestBand` (#1408), which
+    // reads this callable as soon as the screen opens. The wire shape is the
+    // server's `ListResult` (`mytribe/functions/src/admin/kinRemovalRequests.ts`)
+    // with no request waiting, so the band renders nothing.
+    cy.intercept('POST', CALLABLE('listKinRemovalRequests'), {
+      statusCode: 200,
+      body: { result: { requests: [] } },
+    });
   });
 
   it('#688 carries no "Kin profile." subtitle', () => {
