@@ -1,5 +1,5 @@
 /**
- * The words a provider send failure is logged with (#1524).
+ * The words a provider send failure is logged with (#1524, #1531).
  *
  * WHY. `wrapCallable` and `wrapTrigger` log an error's `message` and nothing
  * else of it, and that log line is what the real-services classifier
@@ -18,13 +18,25 @@
  * Twilio's body text never names Twilio. An error with neither status nor code
  * reads `<provider> send failed: <message>` as before.
  *
- * A message that already starts with `<provider> send failed` is passed through
- * unchanged: `lib/email.ts` throws exactly that, status included, so wrapping
- * it again would only double the prefix.
+ * TIMEOUTS (#1531). A timeout is the other half of the verdict rule, and the
+ * two real shapes carried no timeout word: smtp2go sends over `fetch`, and
+ * undici's timeout throws `TypeError: fetch failed` with the code on
+ * `err.cause.code` (`UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_HEADERS_TIMEOUT`,
+ * `UND_ERR_BODY_TIMEOUT`); Twilio's SDK sends over axios, whose client timeout
+ * is `code: 'ECONNABORTED'` with `timeout of <n>ms exceeded`. When the error
+ * has no status, the code is read from `err.code` and then `err.cause.code`
+ * (one level: that is where undici puts it), and a known timeout code reads
+ * `<provider> send timed out (code <code>): <message>`. An error that answered
+ * with a status is never a timeout, whatever its cause says.
  *
- * Only `status`, `code` and `message` are read. Never the whole object, and
- * never Twilio's `moreInfo` or `details`: the auth token and the request are
- * not something a log line should carry.
+ * A message that already starts with `<provider> send failed` or `<provider>
+ * send timed out` is passed through unchanged: `lib/email.ts` throws exactly
+ * the former, status included, and `describeProviderFailure` builds both, so
+ * wrapping again would only double the prefix.
+ *
+ * Only `status`, `code`, `message` and `cause.code` are read. Never the whole
+ * object, and never Twilio's `moreInfo` or `details`: the auth token and the
+ * request are not something a log line should carry.
  */
 
 export type ProviderName = 'Twilio' | 'smtp2go';
@@ -32,7 +44,7 @@ export type ProviderName = 'Twilio' | 'smtp2go';
 export interface ProviderFailureFields {
   /** The HTTP status the provider answered with, when the error carries one. */
   providerStatus?: number;
-  /** The provider's own error code (Twilio 20500, 21211; a Node code such as ECONNRESET on a network failure). */
+  /** The provider's own error code (Twilio 20500, 21211; a Node, undici or axios code such as ECONNRESET or UND_ERR_CONNECT_TIMEOUT on a network failure). */
   providerCode?: number | string;
 }
 
@@ -42,16 +54,39 @@ export interface RecipientScrub {
   masked: string;
 }
 
+/** The codes that mean the request never got an answer in time (#1531). */
+const TIMEOUT_CODES: ReadonlySet<string> = new Set([
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+]);
+
 function statusOf(err: unknown): number | undefined {
   const status = (err as { status?: unknown })?.status;
   return typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
 }
 
-function codeOf(err: unknown): number | string | undefined {
+function ownCodeOf(err: unknown): number | string | undefined {
   const code = (err as { code?: unknown })?.code;
   if (typeof code === 'number' && Number.isFinite(code)) return code;
   if (typeof code === 'string' && code.trim().length > 0) return code.trim();
   return undefined;
+}
+
+/**
+ * The error's code: its own, or, when it answered with no status, the code one
+ * level down on `err.cause` (undici's `fetch failed` keeps it there).
+ */
+function codeOf(err: unknown, status: number | undefined): number | string | undefined {
+  const own = ownCodeOf(err);
+  if (own !== undefined || status !== undefined) return own;
+  return ownCodeOf((err as { cause?: unknown })?.cause);
+}
+
+function isTimeout(status: number | undefined, code: number | string | undefined): boolean {
+  return status === undefined && typeof code === 'string' && TIMEOUT_CODES.has(code);
 }
 
 function messageOf(err: unknown): string {
@@ -63,7 +98,7 @@ function messageOf(err: unknown): string {
 /** The status and code a provider error carries, as structured log fields. Empty when it carries none. */
 export function providerFailureFields(err: unknown): ProviderFailureFields {
   const providerStatus = statusOf(err);
-  const providerCode = codeOf(err);
+  const providerCode = codeOf(err, providerStatus);
   return {
     ...(providerStatus !== undefined ? { providerStatus } : {}),
     ...(providerCode !== undefined ? { providerCode } : {}),
@@ -74,9 +109,9 @@ export function providerFailureFields(err: unknown): ProviderFailureFields {
 export function providerFailureMessage(provider: ProviderName, err: unknown, scrub?: RecipientScrub): string {
   let message = messageOf(err);
   if (scrub && scrub.plain.length > 0) message = message.split(scrub.plain).join(scrub.masked);
-  const prefix = `${provider} send failed`;
-  if (message.startsWith(prefix)) return message;
+  if (message.startsWith(`${provider} send failed`) || message.startsWith(`${provider} send timed out`)) return message;
   const { providerStatus, providerCode } = providerFailureFields(err);
+  const prefix = isTimeout(providerStatus, providerCode) ? `${provider} send timed out` : `${provider} send failed`;
   const parts = [
     ...(providerStatus !== undefined ? [`HTTP ${providerStatus}`] : []),
     ...(providerCode !== undefined ? [`code ${providerCode}`] : []),
@@ -92,7 +127,6 @@ export function providerFailureMessage(provider: ProviderName, err: unknown, scr
  */
 export function describeProviderFailure(provider: ProviderName, err: unknown, scrub?: RecipientScrub): Error {
   const out = new Error(providerFailureMessage(provider, err, scrub), { cause: err });
-  const status = statusOf(err);
-  const code = codeOf(err);
+  const { providerStatus: status, providerCode: code } = providerFailureFields(err);
   return Object.assign(out, status !== undefined ? { status } : {}, code !== undefined ? { code } : {});
 }

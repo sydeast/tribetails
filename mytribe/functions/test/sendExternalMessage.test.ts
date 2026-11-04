@@ -289,6 +289,40 @@ describe('sendExternalMessage provider failure (fail loud)', () => {
       message: 'smtp2go send failed (HTTP 503): service unavailable',
     });
   });
+
+  // #1531: lib/email.ts sends over `fetch`, and a network timeout surfaces as
+  // undici's `TypeError: fetch failed` with the code on `err.cause.code`, not
+  // in the message. The unavailable message must say "timed out" and carry
+  // the code, or the classifier reads "no status code or timeout" and stops.
+  it('an smtp2go fetch timeout (undici, code on err.cause) reads "timed out" and carries the code in details', async () => {
+    const ctx = cleanDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const cause = Object.assign(new Error('Connect Timeout Error'), { code: 'UND_ERR_CONNECT_TIMEOUT' });
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(new TypeError('fetch failed', { cause }));
+    await expect(
+      sendExternalMessageHandler(req({ channel: 'email', to: 'a@b.com', subject: 's', body: 'b' })),
+    ).rejects.toMatchObject({
+      code: 'unavailable',
+      message: 'smtp2go send timed out (code UND_ERR_CONNECT_TIMEOUT): fetch failed',
+      details: { channel: 'email', providerCode: 'UND_ERR_CONNECT_TIMEOUT' },
+    });
+    expect(ctx.adds.find((a) => a.collection === 'external_messages')).toBeUndefined();
+  });
+
+  it('a Twilio axios client timeout (ECONNABORTED) reads "timed out" and carries the code in details', async () => {
+    const ctx = cleanDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.twilioCreate.mockRejectedValueOnce(
+      Object.assign(new Error('timeout of 10000ms exceeded'), { code: 'ECONNABORTED' }),
+    );
+    await expect(
+      sendExternalMessageHandler(req({ channel: 'sms', to: '+14155552671', body: 'b' })),
+    ).rejects.toMatchObject({
+      code: 'unavailable',
+      message: 'Twilio send timed out (code ECONNABORTED): timeout of 10000ms exceeded',
+      details: { channel: 'sms', providerCode: 'ECONNABORTED' },
+    });
+  });
 });
 
 describe('redactRecipient helper', () => {

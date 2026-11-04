@@ -76,9 +76,19 @@ const STATUS_PATTERNS = [
   /\brefused[^:\n]*:\s*([1-5]\d\d)\b/i,
 ];
 
-/** Network and client timeouts. Cypress's own retry and task timeouts are excluded below. */
+/**
+ * Network and client timeouts. Cypress's own retry and task timeouts are
+ * excluded below. The codes are the ones our senders meet (#1531): the
+ * socket's ETIMEDOUT (and the old `request` package's ESOCKETTIMEDOUT, kept
+ * from before); undici's UND_ERR_CONNECT_TIMEOUT,
+ * UND_ERR_HEADERS_TIMEOUT and UND_ERR_BODY_TIMEOUT (smtp2go, through
+ * `fetch`); axios's ECONNABORTED with its `timeout of <n>ms exceeded` message
+ * (Twilio's SDK). `providerFailure.ts` also writes "timed out" on those lines,
+ * and this pattern reads the code alone so a function built before #1531,
+ * which logs `send failed (code ECONNABORTED)`, still classifies.
+ */
 const TIMEOUT_PATTERN =
-  /\b(ETIMEDOUT|ESOCKETTIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|ConnectTimeoutError|TimeoutError|request timed out|timed out)\b/i;
+  /\b(ETIMEDOUT|ESOCKETTIMEDOUT|ECONNABORTED|UND_ERR_[A-Z_]*TIMEOUT|ConnectTimeoutError|TimeoutError|request timed out|timed out|timeout of \d+ms exceeded)\b/i;
 const CYPRESS_TIMEOUT = /Timed out retrying|cy\.\w+\([^)]*\) timed out|timed out waiting for/i;
 
 const STACK_FRAME = /^\s*at\s|webpack:\/\/|\.cy\.[jt]sx?\b/;
