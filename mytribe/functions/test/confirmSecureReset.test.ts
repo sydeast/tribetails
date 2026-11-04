@@ -16,6 +16,8 @@
  *   - A consume call that throws after the change landed still files the
  *     incident and the alert (#892 review 2)
  *   - Identity Toolkit unreachable: 502, rejects oobCode: 400
+ *   - The verify body read fails (#1542): a transport error (a code on the
+ *     error or its cause) answers 503 retryable, a plain parse error keeps 400
  *   - Happy path: incident doc written, alert enqueued under the key for the
  *     account's role (kinfolk, staff, or unknown), 200
  *   - Notification failure does NOT block the 200 response (fail-loud log only)
@@ -586,6 +588,56 @@ describe('confirmSecureResetHandler: Identity Toolkit errors', () => {
     expect(captured.status).toBe(400);
     expect(captured.body.error).toBe('reset_failed');
     expect(mocks.incidentSet).not.toHaveBeenCalled();
+  });
+});
+
+// ── Verify body read (#1542) ──────────────────────────────────────────────────
+
+/**
+ * #1542: the verify headers can arrive as 2xx and the body still fail. undici
+ * errors the body stream with `TypeError: terminated` carrying the real error
+ * as `cause` (`code: 'UND_ERR_BODY_TIMEOUT'`, or ECONNRESET mid body), and the
+ * old `.catch(() => ({}))` turned that into "no account for this code", a 400
+ * that tells the user a good link is bad. A coded body error is the service
+ * not answering: logged at error with the code and answered 503 so the user
+ * can use the same link again. A body that is simply not JSON throws a plain
+ * SyntaxError with no code and keeps the 400 path.
+ */
+describe('confirmSecureResetHandler: the verify body read fails (#1542)', () => {
+  function verifyBodyRejects(err: unknown) {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: () => Promise.reject(err), text: async () => '' }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('a body timeout on a 2xx verify answers 503 retryable, logs the code at error, consumes nothing', async () => {
+    const fetchMock = verifyBodyRejects(
+      new TypeError('terminated', { cause: Object.assign(new Error('Body Timeout Error'), { code: 'UND_ERR_BODY_TIMEOUT' }) }),
+    );
+    const captured = await run();
+    expect(captured.status).toBe(503);
+    expect(captured.body).toMatchObject({ error: 'auth_unavailable', retryable: true, code: 'UND_ERR_BODY_TIMEOUT' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.store.has(emailDoc(OWNER_EMAIL))).toBe(false);
+    expect(mocks.incidentSet).not.toHaveBeenCalled();
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        event: 'security.oobCodeVerifyTransport',
+        extra: expect.objectContaining({ stage: 'verify', code: 'UND_ERR_BODY_TIMEOUT' }),
+      }),
+    );
+    expect(mocks.logEvent).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'security.oobCodeRejected' }));
+  });
+
+  it('a 2xx verify whose body is not JSON keeps 400 reset_failed, no transport log', async () => {
+    const fetchMock = verifyBodyRejects(new SyntaxError('Unexpected token < in JSON at position 0'));
+    const captured = await run();
+    expect(captured.status).toBe(400);
+    expect(captured.body).toEqual({ error: 'reset_failed', detail: 'no_account_for_code' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.incidentSet).not.toHaveBeenCalled();
+    expect(mocks.logEvent).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'security.oobCodeVerifyTransport' }));
   });
 });
 

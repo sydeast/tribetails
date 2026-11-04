@@ -21,7 +21,10 @@
  *      security.breach_attempt.kinfolk.
  *   8. Return { ok: true, incidentId }.
  *
- * Fail-loud: auth/Firestore errors propagate as 4xx/5xx.
+ * Fail-loud: auth/Firestore errors propagate as 4xx/5xx. A verify response
+ * whose body never arrives (#1542: a transport error after a 2xx status) is
+ * 503 with `retryable: true`, never the bad-link 400, so the same link can be
+ * used again.
  * Notification errors are logged loudly but MUST NOT block the reset response
  * (password was already changed by the time we dispatch).
  *
@@ -36,6 +39,9 @@ import { z } from 'zod';
 import { enqueueNotification } from '../notifications/dispatcher.js';
 import { logEvent } from '../lib/logger.js';
 import { TRIBETAILS_CORS } from '../lib/cors';
+// #1542: tells a transport error on the verify body read (a code on the error
+// or on its `cause`, where undici keeps it) from a plain JSON parse error.
+import { providerFailureFields } from '../lib/providerFailure';
 // Lazy Admin SDK access (#903 review). This function deploys as its own Cloud Run
 // service and nothing else initializes the default app in its process, so a bare
 // getFirestore() or getAuth() here throws "The default Firebase app does not exist".
@@ -394,7 +400,37 @@ export async function confirmSecureResetHandler(
       res.status(400).json({ error: 'reset_failed', detail });
       return;
     }
-    const verified = (await verifyResp.json().catch(() => ({}))) as { email?: unknown; requestType?: unknown };
+    // #1542: the status is 2xx, so the headers arrived, and the body can still
+    // fail. undici errors the body stream with `TypeError: terminated` and the
+    // real error as `cause` (UND_ERR_BODY_TIMEOUT, ECONNRESET mid body). A body
+    // error carrying a code (its own or `cause.code`) is the service not
+    // answering, not a bad link: logged at error with the code and answered 503
+    // retryable, so the user can use the same link again. The code was neither
+    // rejected nor consumed. A plain SyntaxError from a body that is not JSON
+    // has no code and keeps the empty-object fallback, which the check below
+    // reads as no account for the code, a 400 as before.
+    let verified: { email?: unknown; requestType?: unknown };
+    try {
+      verified = (await verifyResp.json()) as { email?: unknown; requestType?: unknown };
+    } catch (err) {
+      const { providerCode } = providerFailureFields(err);
+      if (providerCode !== undefined) {
+        logEvent({
+          severity: 'error',
+          function: 'confirmSecureReset',
+          event: 'security.oobCodeVerifyTransport',
+          extra: { stage: 'verify', code: providerCode, error: String(err) },
+        });
+        res.status(503).json({
+          error: 'auth_unavailable',
+          retryable: true,
+          code: providerCode,
+          detail: 'the sign-in service answered but its reply did not arrive; the same link can be used again',
+        });
+        return;
+      }
+      verified = {};
+    }
     if (typeof verified.email !== 'string' || !emailSchema.safeParse(verified.email).success) {
       logEvent({
         severity: 'warn',
