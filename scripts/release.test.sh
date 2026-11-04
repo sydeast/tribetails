@@ -1241,16 +1241,47 @@ else
   bad "a pass verdict was not read as a clean green (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
 
-# Two suites in one run (the portal job, #1194): one warning is enough to warn.
+# Two suites in one run (the portal job, #1194, writes its own file since
+# #1533): the worst verdict wins. Admin pass + portal warn warns; admin pass +
+# portal stop refuses, under two green jobs, naming the portal's file.
 green_dispatch dispatch-two
+printf 'Admin Cypress, real services\tcompleted\tsuccess\nPortal Cypress, real services\tcompleted\tsuccess\n' > "$FR/dispatch-two"
 printf '{"verdict":"pass","reasons":["pass"]}\n' > "$FR/dispatch-two.verdict"
 printf '{"verdict":"warn","reasons":["twilio: timeout during incident"]}\n' > "$FR/dispatch-two.portal-verdict"
 RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
 if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "WARNING: the run passed on a vendor-outage warning" &&
-   printf '%s' "$OUT" | grep >/dev/null -c "e2e-real-portal-artifacts/.real/verdict.json: twilio: timeout"; then
-  ok "a warning from either suite's verdict file is printed"
+   printf '%s' "$OUT" | grep >/dev/null -c "pass  e2e-real-artifacts/.real/verdict.json: pass" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "warn  e2e-real-portal-artifacts/.real/verdict.json: twilio: timeout"; then
+  ok "admin pass plus portal warn is a warning, with both files printed"
 else
   bad "a second suite's warning was missed (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+green_dispatch dispatch-two-stop
+printf 'Admin Cypress, real services\tcompleted\tsuccess\nPortal Cypress, real services\tcompleted\tsuccess\n' > "$FR/dispatch-two-stop"
+printf '{"verdict":"pass","reasons":["pass: 3 passed, 0 pending, none failed"]}\n' > "$FR/dispatch-two-stop.verdict"
+printf '{"verdict":"stop","reasons":["stop: pay-invoice-stripe.cy.ts > pays: stripe answered 400: our request"]}\n' > "$FR/dispatch-two-stop.portal-verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "passed its jobs for .*but its verdict file says STOP" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "stop  e2e-real-portal-artifacts/.real/verdict.json: stop: pay-invoice-stripe.cy.ts" &&
+   printf '%s' "$OUT" | grep >/dev/null -c "pass  e2e-real-artifacts/.real/verdict.json: pass: 3 passed" &&
+   ! printf '%s' "$OUT" | grep >/dev/null -c "real services: green"; then
+  ok "admin pass plus portal stop refuses: the worst verdict wins"
+else
+  bad "a portal stop under an admin pass did not refuse (rc $RC)"; printf '%s\n' "$OUT" | tail -20
+fi
+
+# Stop outranks warn too: a warning from one suite never softens the other's stop.
+green_dispatch dispatch-warn-stop
+printf 'Admin Cypress, real services\tcompleted\tsuccess\nPortal Cypress, real services\tcompleted\tsuccess\n' > "$FR/dispatch-warn-stop"
+printf '{"verdict":"warn","reasons":["cloudinary: 502 during incident"]}\n' > "$FR/dispatch-warn-stop.verdict"
+printf '{"verdict":"stop","reasons":["stop: Cypress produced no results"]}\n' > "$FR/dispatch-warn-stop.portal-verdict"
+RC="$(run_release "$DR" DRY_RUN=1 RELEASE_YES=1)"; OUT="$(stripped "$DR/out")"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep >/dev/null -c "but its verdict file says STOP" &&
+   ! printf '%s' "$OUT" | grep >/dev/null -c "WARNING: the run passed on a vendor-outage warning"; then
+  ok "admin warn plus portal stop refuses, and prints no outage warning"
+else
+  bad "a portal stop under an admin warn did not refuse (rc $RC)"; printf '%s\n' "$OUT" | tail -20
 fi
 
 green_dispatch dispatch-disagree

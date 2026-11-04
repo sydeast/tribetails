@@ -16,7 +16,11 @@
 #   4. boot auth + Firestore + functions under a demo- project id, so no
 #      secret lookup can reach production Secret Manager;
 #   5. run cypress.real.config.ts against a dev server pointed at all three;
-#   6. stop the forwarder and delete the secrets file whatever happened.
+#   6. classify the run (the admin's classify-run.mjs, D3-e, #1533):
+#      cypress/.real/verdict.json says stop, warn or pass, and this script
+#      exits 1 on stop, 0 otherwise;
+#   7. whatever happened: stop the forwarder and delete the secrets file.
+#      Neither can change the exit code the run already has.
 set -euo pipefail
 
 WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,19 +29,19 @@ MYTRIBE_DIR="$(cd "$WEB_DIR/.." && pwd)"
 FUNCTIONS_DIR="$MYTRIBE_DIR/functions"
 SECRETS_FILE="$FUNCTIONS_DIR/.secret.local"
 FIREBASE_CONFIG="$MYTRIBE_DIR/e2e.real.firebase.json"
+# The admin's scripts this run shares: the Secret Manager read (#1264) and the
+# D3-e classifier (#1196), which is self-contained so both runs can call it.
+ADMIN_E2E_DIR="$(cd "$MYTRIBE_DIR/../auntieos-admin/scripts/e2e-real" && pwd)"
 REAL_DIR="$WEB_DIR/cypress/.real"
 LOG="$REAL_DIR/emulators.log"
 STRIPE_LOG="$REAL_DIR/stripe-listen.log"
+RESULTS="$REAL_DIR/results.json"
+VERDICT="$REAL_DIR/verdict.json"
 
 # One place for both. A demo- id is the lock; the port is the one
 # e2e.real.firebase.json serves functions on, checked below so they cannot drift.
 export E2E_PROJECT_ID="demo-mytribe-e2e"
 export E2E_FUNCTIONS_PORT="5498"
-CONFIG_PORT="$(node -p "require('$FIREBASE_CONFIG').emulators.functions.port")"
-if [ "$CONFIG_PORT" != "$E2E_FUNCTIONS_PORT" ]; then
-  echo "e2e.real.firebase.json serves functions on $CONFIG_PORT, run.sh expects $E2E_FUNCTIONS_PORT" >&2
-  exit 1
-fi
 WEBHOOK_URL="http://127.0.0.1:$E2E_FUNCTIONS_PORT/$E2E_PROJECT_ID/us-central1/stripeWebhook"
 
 # CREDENTIALS ARE NOT HIDDEN. Same reasoning as the admin run.sh: with no ADC,
@@ -48,7 +52,16 @@ WEBHOOK_URL="http://127.0.0.1:$E2E_FUNCTIONS_PORT/$E2E_PROJECT_ID/us-central1/st
 # this script runs.
 
 STRIPE_PID=""
-cleanup() {
+# Runs on every exit, early refusals included, and keeps the exit code it was
+# handed: a failed cleanup is printed, never turned into the run's verdict.
+on_exit() {
+  local status=$?
+  set +e
+  # A run that stopped before Cypress still leaves a verdict for the release
+  # to read (#1533). No results file classifies as `stop`.
+  if [ -d "$REAL_DIR" ] && [ ! -f "$VERDICT" ]; then
+    node "$ADMIN_E2E_DIR/classify-run.mjs" --results "$RESULTS" --log "$LOG" --out "$VERDICT" --cypress-exit "$status" >/dev/null
+  fi
   if [ -n "$STRIPE_PID" ]; then
     kill "$STRIPE_PID" 2>/dev/null || true
   fi
@@ -57,10 +70,21 @@ cleanup() {
   if [ -f "$SECRETS_FILE" ] && head -1 "$SECRETS_FILE" | grep -q 'scripts/e2e-real/preflight.mjs'; then
     rm -f "$SECRETS_FILE"
   fi
+  exit "$status"
 }
-trap cleanup EXIT
 
 mkdir -p "$REAL_DIR"
+# A results or verdict file from an earlier run must never be read as this one's.
+rm -f "$RESULTS" "$VERDICT"
+trap on_exit EXIT
+
+# After the trap, so this refusal also leaves a `stop` verdict.
+CONFIG_PORT="$(node -p "require('$FIREBASE_CONFIG').emulators.functions.port")"
+if [ "$CONFIG_PORT" != "$E2E_FUNCTIONS_PORT" ]; then
+  echo "e2e.real.firebase.json serves functions on $CONFIG_PORT, run.sh expects $E2E_FUNCTIONS_PORT" >&2
+  exit 1
+fi
+
 : > "$LOG"
 export E2E_SERVER_LOG="$LOG"
 # The seed's per-call deadline (cypress/seed.ts). Every seeded account runs the
@@ -127,7 +151,7 @@ fi
 # and the vendor skips. Printed as `export` lines and evaluated, never written
 # to disk. In CI the workflow has already read them.
 echo "== e2e-real (portal): vendor values from Secret Manager"
-sm_exports="$(node "$MYTRIBE_DIR/../auntieos-admin/scripts/e2e-real/secret-manager.mjs" --shell)"
+sm_exports="$(node "$ADMIN_E2E_DIR/secret-manager.mjs" --shell)"
 eval "$sm_exports"
 unset sm_exports
 
@@ -149,5 +173,15 @@ firebase emulators:exec \
   "npm run e2e:real:run" 2>&1 | tee -a "$LOG"
 status=${PIPESTATUS[0]}
 set -e
-echo "== e2e-real (portal): exit $status"
-exit "$status"
+echo "== e2e-real (portal): Cypress exit $status"
+
+# D3-e. Our integration failing stops the release; a vendor outage (a 5xx or
+# timeout while its status page lists an incident) only warns. The classifier
+# writes $VERDICT and exits 1 on stop, 0 on warn (after a WARNING block) and
+# on pass. Its exit code is this run's.
+echo "== e2e-real (portal): classifying the run"
+set +e
+node "$ADMIN_E2E_DIR/classify-run.mjs" --results "$RESULTS" --log "$LOG" --out "$VERDICT" --cypress-exit "$status"
+verdict_status=$?
+set -e
+exit "$verdict_status"
