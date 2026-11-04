@@ -128,4 +128,36 @@ describe('sendSmsChannel', () => {
     await sendSmsChannel({ def: def(), recipientUid: 'u1', data: { name: 'A' } });
     expect(mocks.messagesCreate.mock.calls[0]![0].to).toBe('+15555552222');
   });
+
+  it('a Twilio rejection rethrows with the HTTP status and code in the message, fields and cause kept (#1524)', async () => {
+    // wrapTrigger logs the thrown message alone, and the real-services
+    // classifier reads `HTTP NNN` off that line. Twilio's RestException keeps
+    // the status in `err.status` and the code in `err.code`, so a bare rethrow
+    // logged "Service Unavailable" with no number and no vendor name.
+    const ctx = buildDbMock({
+      docs: { 'smsTemplates/t.k': { text: 'hi' }, 'clients/u1': { phone: '+15555551111' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const twilioErr = Object.assign(new Error('Service Unavailable'), { status: 503, code: 20500 });
+    mocks.messagesCreate.mockRejectedValue(twilioErr);
+    const thrown = await sendSmsChannel({ def: def(), recipientUid: 'u1', data: {} }).catch((e) => e);
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown.message).toBe('Twilio send failed (HTTP 503, code 20500): Service Unavailable');
+    expect(thrown).toMatchObject({ status: 503, code: 20500 });
+    expect(thrown.cause).toBe(twilioErr);
+  });
+
+  it('masks the recipient number out of Twilio text that quotes it (#1524)', async () => {
+    const ctx = buildDbMock({
+      docs: { 'smsTemplates/t.k': { text: 'hi' }, 'clients/u1': { phone: '+15555551111' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.messagesCreate.mockRejectedValue(
+      Object.assign(new Error("The 'To' number +15555551111 is not a valid phone number."), { status: 400, code: 21211 }),
+    );
+    const thrown = await sendSmsChannel({ def: def(), recipientUid: 'u1', data: {} }).catch((e) => e);
+    expect(thrown.message).toBe(
+      "Twilio send failed (HTTP 400, code 21211): The 'To' number +1******1111 is not a valid phone number.",
+    );
+  });
 });

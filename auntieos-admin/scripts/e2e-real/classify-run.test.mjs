@@ -80,6 +80,7 @@ function fakeFetch(byUrl) {
 
 const STRIPE_URL = VENDORS.stripe.status.url;
 const SMTP_URL = VENDORS.email.status.url;
+const TWILIO_URL = VENDORS.twilio.status.url;
 
 describe('classify: the verdict rule', () => {
   it('a 4xx from the vendor stops, without asking the status page', async () => {
@@ -108,6 +109,38 @@ describe('classify: the verdict rule', () => {
     expect(v.reasons.join('\n')).toMatch(/warn: .*email 503 during "Delayed sending"/);
     expect(v.statusPages.email.ok).toBe(true);
     expect(v.failures[0].vendorErrors[0]).toMatchObject({ vendor: 'email', status: 503 });
+  });
+
+  it('a Twilio 5xx as sendExternalMessage now logs it (#1524) warns during an incident and stops without one', async () => {
+    // The exact message `mytribe/functions/src/lib/providerFailure.ts` builds
+    // from a Twilio RestException: the SDK's own text is "Service Unavailable"
+    // with no number, so before #1524 this line stopped as "no status code".
+    const line = logLine({
+      function: 'sendExternalMessage',
+      event: 'sendExternalMessage.failure',
+      errorCode: 'unavailable',
+      errorMessage: 'Twilio send failed (HTTP 503, code 20500): Service Unavailable',
+    });
+    const during = await classify({
+      results: results([failedHarness]),
+      logText: line,
+      cypressExit: 1,
+      fetchImpl: fakeFetch({ [TWILIO_URL]: statuspage([{ ...STRIPE_INCIDENT, name: 'Messaging delays' }]) }),
+      now: NOW,
+    });
+    expect(during.verdict).toBe('warn');
+    expect(during.reasons.join('\n')).toMatch(/warn: .*twilio 503 during "Messaging delays"/);
+    expect(during.failures[0].vendorErrors[0]).toMatchObject({ vendor: 'twilio', status: 503, auth: false });
+
+    const quiet = await classify({
+      results: results([failedHarness]),
+      logText: line,
+      cypressExit: 1,
+      fetchImpl: fakeFetch({ [TWILIO_URL]: statuspage([]) }),
+      now: NOW,
+    });
+    expect(quiet.verdict).toBe('stop');
+    expect(quiet.reasons.join('\n')).toMatch(/twilio 503 with no incident on its status page/);
   });
 
   it('a 5xx with no incident on the status page stops', async () => {

@@ -214,6 +214,81 @@ describe('sendExternalMessage provider failure (fail loud)', () => {
       sendExternalMessageHandler(req({ channel: 'sms', to: '+14155552671', body: 'b' })),
     ).rejects.toMatchObject({ code: 'unavailable' });
   });
+
+  // #1524: wrapCallable logs the message alone, and the real-services
+  // classifier (D3-e) reads `HTTP NNN` off that line to tell a vendor outage
+  // from a refused request. Twilio's RestException keeps the status in
+  // `err.status` and the code in `err.code`; its message is the body text only.
+  function twilioRestException(status: number, code: number, message: string): Error {
+    return Object.assign(new Error(message), { status, code });
+  }
+
+  it('a Twilio 503 carries HTTP 503 and the Twilio code in the unavailable message and details', async () => {
+    const ctx = cleanDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.twilioCreate.mockRejectedValueOnce(twilioRestException(503, 20500, 'Service Unavailable'));
+    await expect(
+      sendExternalMessageHandler(req({ channel: 'sms', to: '+14155552671', body: 'b' })),
+    ).rejects.toMatchObject({
+      code: 'unavailable',
+      message: 'Twilio send failed (HTTP 503, code 20500): Service Unavailable',
+      details: { channel: 'sms', providerStatus: 503, providerCode: 20500 },
+    });
+    expect(ctx.adds.find((a) => a.collection === 'external_messages')).toBeUndefined();
+  });
+
+  it('a Twilio 401 carries HTTP 401 so the classifier reads a refusal, not an outage', async () => {
+    const ctx = cleanDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.twilioCreate.mockRejectedValueOnce(
+      twilioRestException(401, 20003, 'Authentication Error - invalid username'),
+    );
+    await expect(
+      sendExternalMessageHandler(req({ channel: 'sms', to: '+14155552671', body: 'b' })),
+    ).rejects.toMatchObject({
+      code: 'unavailable',
+      message: 'Twilio send failed (HTTP 401, code 20003): Authentication Error - invalid username',
+      details: { providerStatus: 401, providerCode: 20003 },
+    });
+  });
+
+  it('a Twilio error with no status still reads "Twilio send failed: <message>"', async () => {
+    const ctx = cleanDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.twilioCreate.mockRejectedValueOnce(new Error('socket hang up'));
+    const thrown = await sendExternalMessageHandler(
+      req({ channel: 'sms', to: '+14155552671', body: 'b' }),
+    ).catch((e) => e);
+    expect(thrown).toMatchObject({ code: 'unavailable', message: 'Twilio send failed: socket hang up' });
+    expect(thrown.details).toEqual({ channel: 'sms', recipientRedacted: '+1******2671' });
+  });
+
+  it('masks the recipient out of a provider message that quotes it (Twilio 21211)', async () => {
+    const ctx = cleanDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.twilioCreate.mockRejectedValueOnce(
+      twilioRestException(400, 21211, "The 'To' number +14155552671 is not a valid phone number."),
+    );
+    const thrown = await sendExternalMessageHandler(
+      req({ channel: 'sms', to: '+14155552671', body: 'b' }),
+    ).catch((e) => e);
+    expect(thrown.message).toBe(
+      "Twilio send failed (HTTP 400, code 21211): The 'To' number +1******2671 is not a valid phone number.",
+    );
+    expect(thrown.message).not.toContain('+14155552671');
+  });
+
+  it('an smtp2go error that already carries its status passes through once, not double-prefixed', async () => {
+    const ctx = cleanDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('smtp2go send failed (HTTP 503): service unavailable'));
+    await expect(
+      sendExternalMessageHandler(req({ channel: 'email', to: 'a@b.com', subject: 's', body: 'b' })),
+    ).rejects.toMatchObject({
+      code: 'unavailable',
+      message: 'smtp2go send failed (HTTP 503): service unavailable',
+    });
+  });
 });
 
 describe('redactRecipient helper', () => {
