@@ -18,8 +18,10 @@
 #   5. classify the run (classify-run.mjs, D3-e): cypress/.real/verdict.json
 #      says stop, warn or pass, and this script exits 1 on stop, 0 otherwise;
 #   6. whatever happened: empty the Cloudinary e2e/ folder
-#      (cloudinary-cleanup.mjs) and delete both secrets files. Neither can
-#      change the exit code the run already has.
+#      (cloudinary-cleanup.mjs), delete the events the calendar push wrote to
+#      the test calendar (google-calendar-cleanup.mjs, #1517) and delete both
+#      secrets files. None of the three can change the exit code the run
+#      already has.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,6 +69,11 @@ on_exit() {
   # Uploads from this run (D3: "an e2e/ folder, emptied at the end of each run").
   if ! node "$SCRIPT_DIR/cloudinary-cleanup.mjs"; then
     echo "== e2e-real: Cloudinary cleanup FAILED, e2e/ may still hold this run's uploads. Exit code unchanged ($status)." >&2
+  fi
+  # Events the calendar push wrote to the test calendar (#1517): only those
+  # whose private marker names an e2e session, never the calendar wholesale.
+  if ! node "$SCRIPT_DIR/google-calendar-cleanup.mjs"; then
+    echo "== e2e-real: Google Calendar cleanup FAILED, the test calendar may still hold this run's events. Exit code unchanged ($status)." >&2
   fi
   # Only a file this run wrote. preflight.mjs refuses to replace any other.
   local secrets_file

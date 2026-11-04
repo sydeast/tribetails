@@ -64,6 +64,28 @@ describe('plan', () => {
     expect(available.stripe).toBe(true);
   });
 
+  it('reports Google Calendar configured only with the token and id too, and keeps both out of the secrets file (#1517)', () => {
+    const client = {
+      E2E_GOOGLE_OAUTH_CLIENT_ID: 'client.apps.googleusercontent.com',
+      E2E_GOOGLE_OAUTH_CLIENT_SECRET: 'GOCSPX-e2e-client-secret',
+    };
+    // The OAuth client alone makes the secrets file complete, but the spec has
+    // nothing to seed the connection from, so the vendor reads as not configured.
+    expect(plan(DECLARED, client).available.googleCalendar).toBe(false);
+    const { values, available } = plan(DECLARED, {
+      ...client,
+      E2E_GOOGLE_CALENDAR_REFRESH_TOKEN: '1//0e2e-refresh-token',
+      E2E_GOOGLE_CALENDAR_ID: 'abc123@group.calendar.google.com',
+    });
+    expect(available.googleCalendar).toBe(true);
+    expect(values.GOOGLE_OAUTH_CLIENT_ID).toBe('client.apps.googleusercontent.com');
+    // Neither extra is a functions secret: the calendar spec's seed task is
+    // the only path by which they reach the emulator, as a Firestore document.
+    expect(Object.values(values)).not.toContain('1//0e2e-refresh-token');
+    expect(Object.values(values)).not.toContain('abc123@group.calendar.google.com');
+    expect(Object.keys(values).some((k) => /CALENDAR_ID|REFRESH_TOKEN/.test(k))).toBe(false);
+  });
+
   it('refuses a live Stripe key, whichever variable it arrives in', () => {
     expect(plan(DECLARED, { STRIPE_TEST_SECRET_KEY: 'sk_live_abc' }).refusals.join('\n')).toMatch(
       /STRIPE_SECRET_KEY: not a Stripe test-mode value/,

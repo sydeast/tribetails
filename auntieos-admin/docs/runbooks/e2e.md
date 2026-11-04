@@ -514,11 +514,21 @@ that cannot be asked, never for one that says no.
 - Any structured `severity: error` line our functions log during a test fails
   it. This is a harness condition, the server-side twin of the `console.error`
   signal both suites already use, not a spec's assertion. The emulator output
-  is teed to `cypress/.real/emulators.log` for it.
+  is teed to `cypress/.real/emulators.log` for it. A refused call (an
+  HttpsError with a user-fault code such as `not-found` or
+  `permission-denied`) logs its failure at warn and does not trip it (#1520);
+  only a server or programmer fault logs at error.
 - Never press Google Calendar Disconnect. It revokes the grant at Google, and
   the test calendar shares the account and OAuth client with production. The
   preflight refuses a spec that names it, and the support file fails any test
   whose browser reaches the callable.
+- Google Calendar writes go to the test calendar in `E2E_GOOGLE_CALENDAR_ID`
+  and nowhere else. The calendar spec seeds the connection document itself
+  (`seedGoogleCalendarConnection` in `cypress.real.config.ts`, from the two
+  `E2E_GOOGLE_CALENDAR_*` variables) in its own `before` and removes it in its
+  `after`; the run-wide seed never writes it, so the Integrations spec still
+  sees the not-connected state whichever order the files run in. The seed
+  refuses `primary`, which is the account's own calendar.
 - Twilio runs on the test credentials only. Nothing is sent, and no number in
   the business or private line's area code may appear anywhere.
 - Cloudinary uploads go to an `e2e/` folder emptied after each run, and emails
@@ -542,6 +552,7 @@ and asserts the outcome from the UI, almost always after a reload.
 | `external-send-sms.cy.ts` | (D3, Twilio row, #1516) | A reply from the Inbox channel card goes through `sendExternalMessage` (`channel: 'sms'`) to Twilio's magic test number on the test credentials; the card names the redacted recipient; after a reload the reply is an outbound row in the channel list and Communicate's Recent lists it as a Text with the state Sent. `ExternalSendPanel`, the entry point #1516 names, is not mounted on any screen (#1518) | Twilio |
 | `form-schemas.cy.ts` | `form-schemas.cy.ts` | The table sorts the server's rows (#717); an edit through `saveFormSchema` comes back with the version bumped, the time stamped and the editor named | none |
 | `gallery.cy.ts` | `gallery.cy.ts` | Delete through `deleteMediaFile` removes the `media_files` row: gone after a reload, counts one lower; Cancel sends nothing | none |
+| `google-calendar-push.cy.ts` | (#1517, D3 Calendar row) | With the connection seeded from the two `E2E_GOOGLE_CALENDAR_*` variables and one scheduled visit two days out, Push next 30 days writes a real event to the test calendar; the server's count is on screen, and after a reload the stamped receipt reads ok with 1 visit (the run-wide seed's upcoming visits have no end, so the push skips them) | Google Calendar |
 | `household-members.cy.ts` | `household-members.cy.ts` | The #684/#829 layout over the real reads; a secondary kinfolk added through `saveSecondaryKinfolk` is listed after a reload with no portal access, and Remove takes it off | none |
 | `invoice-paid-stripe.cy.ts` | (D3 phase 1) | Record payment settles an invoice through `markInvoicePaid` while a real Stripe test checkout is open on it; after a reload it reads paid and says its open payment link was closed | Stripe |
 | `kin-view.cy.ts` | `kin-view.cy.ts` | A pet tag survives the `kin/{id}` triggers: on the pet after a full reload, gone after removal | none |
@@ -554,8 +565,11 @@ and asserts the outcome from the UI, almost always after a reload.
 A vendor spec skips, naming the missing variables in the log, when the run has
 no credentials for it. One spec sends a text: `external-send-sms.cy.ts`, on
 Twilio's test credentials and magic number, and it skips without
-`TWILIO_TEST_ACCOUNT_SID` and `TWILIO_TEST_AUTH_TOKEN`. None needs Google
-Calendar credentials: the Integrations spec reads the stored connection only.
+`TWILIO_TEST_ACCOUNT_SID` and `TWILIO_TEST_AUTH_TOKEN`. One spec pushes
+visits to a calendar: `google-calendar-push.cy.ts`, the one spec that needs
+the calendar credentials (the OAuth client pair from Secret Manager plus
+`E2E_GOOGLE_CALENDAR_REFRESH_TOKEN` and `E2E_GOOGLE_CALENDAR_ID`); the
+Integrations spec reads the stored connection only and runs without them.
 
 Four PR-time tests have no counterpart, because each needs a server that can be
 told to stall or fail on command: #698's held loading state, #714's held
@@ -601,6 +615,19 @@ credentials: assets by the `e2e/` public-id prefix, assets whose asset folder
 is under `e2e`, then the folders. It touches nothing outside `e2e/`. Without
 the credentials it prints one `skipped` line. A failed delete is printed and
 leaves the exit code as it was.
+
+Right after it, `scripts/e2e-real/google-calendar-cleanup.mjs` deletes the
+events the calendar spec pushed to the test calendar (#1517). It refreshes an
+access token from `E2E_GOOGLE_CALENDAR_REFRESH_TOKEN` with the OAuth client
+pair, lists the calendar in `E2E_GOOGLE_CALENDAR_ID` over the window the push
+can write into, and deletes only the events whose private extended property
+`tribetailsSessionId` names an e2e session id (`e2e-sess-*`, `e2e-real-*`,
+`vis_e2e-real-*`). That property is the marker the push writes on every event
+it creates. An event with any other marker, or none, is listed and left
+alone, so the operator's own entries on the test calendar survive, and the
+script refuses `primary` outright. It prints counts only, never the id or an
+event's text. Without any of the four variables it prints one `skipped`
+line, and a failed delete is printed and leaves the exit code as it was.
 
 ## The portal's real-services run (added 2026-10-30, #1194)
 
