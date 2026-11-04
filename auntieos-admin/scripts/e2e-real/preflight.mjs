@@ -76,8 +76,10 @@ export const VENDOR_SECRETS = {
     { secret: 'TWILIO_ACCOUNT_SID', env: 'TWILIO_TEST_ACCOUNT_SID', placeholder: 'AC_e2e_not_configured' },
     { secret: 'TWILIO_AUTH_TOKEN', env: 'TWILIO_TEST_AUTH_TOKEN', placeholder: 'e2e-not-configured' },
     // Twilio's documented test-credential sender ("magic" number): it only
-    // works with test credentials and belongs to no one.
-    { secret: 'TWILIO_FROM_NUMBER', env: 'TWILIO_TEST_FROM_NUMBER', placeholder: '+15005550006' },
+    // works with test credentials and belongs to no one. The sender is
+    // optional (#1519): the SID and token decide whether the Twilio specs
+    // run, and this placeholder is the sender when no variable names one.
+    { secret: 'TWILIO_FROM_NUMBER', env: 'TWILIO_TEST_FROM_NUMBER', placeholder: '+15005550006', required: false },
   ],
   email: [
     { secret: 'SMTP2GO_API_KEY', env: 'E2E_SMTP2GO_API_KEY', placeholder: 'e2e-not-configured' },
