@@ -64,18 +64,6 @@ describe('plan', () => {
     expect(available.stripe).toBe(true);
   });
 
-  it('#1516: the Twilio SID and token alone configure the vendor, and the magic number is the sender written', () => {
-    // e2e-real.yml passes exactly these two; TWILIO_TEST_FROM_NUMBER is never set there.
-    const { refusals, values, available } = plan(DECLARED, {
-      TWILIO_TEST_ACCOUNT_SID: 'ACe2e0000000000000000000000000000',
-      TWILIO_TEST_AUTH_TOKEN: 'e2e-token',
-    });
-    expect(refusals).toEqual([]);
-    expect(available.twilio).toBe(true);
-    expect(values.TWILIO_FROM_NUMBER).toBe(ALLOWED_SPELLINGS[0]);
-    expect(plan(DECLARED, { TWILIO_TEST_ACCOUNT_SID: 'ACe2e0000000000000000000000000000' }).available.twilio).toBe(false);
-  });
-
   it('refuses a live Stripe key, whichever variable it arrives in', () => {
     expect(plan(DECLARED, { STRIPE_TEST_SECRET_KEY: 'sk_live_abc' }).refusals.join('\n')).toMatch(
       /STRIPE_SECRET_KEY: not a Stripe test-mode value/,
@@ -91,6 +79,33 @@ describe('plan', () => {
 
   it('refuses a Twilio sender in a forbidden area code', () => {
     const { refusals } = plan(DECLARED, { TWILIO_TEST_FROM_NUMBER: '+18055550100' });
+    expect(refusals.join('\n')).toMatch(/TWILIO_FROM_NUMBER: names a phone number in a forbidden area code/);
+  });
+
+  // #1519: the sender is optional and defaults to Twilio's magic test number,
+  // so stored test credentials alone count as configured.
+  it('reports Twilio configured from SID and token alone and writes the magic test sender', () => {
+    const { values, refusals, available } = plan(DECLARED, {
+      TWILIO_TEST_ACCOUNT_SID: 'ACe2e',
+      TWILIO_TEST_AUTH_TOKEN: 'tok',
+    });
+    expect(refusals).toEqual([]);
+    expect(available.twilio).toBe(true);
+    expect(values.TWILIO_FROM_NUMBER).toBe('+15005550006');
+  });
+
+  it('reports Twilio not configured from the SID alone', () => {
+    const { available } = plan(DECLARED, { TWILIO_TEST_ACCOUNT_SID: 'ACe2e' });
+    expect(available.twilio).toBe(false);
+  });
+
+  it('still refuses a forbidden sender when the credentials are set', () => {
+    const { refusals, available } = plan(DECLARED, {
+      TWILIO_TEST_ACCOUNT_SID: 'ACe2e',
+      TWILIO_TEST_AUTH_TOKEN: 'tok',
+      TWILIO_TEST_FROM_NUMBER: '+19895550199',
+    });
+    expect(available.twilio).toBe(true);
     expect(refusals.join('\n')).toMatch(/TWILIO_FROM_NUMBER: names a phone number in a forbidden area code/);
   });
 
