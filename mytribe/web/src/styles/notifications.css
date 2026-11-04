@@ -131,3 +131,7 @@
   padding: 8px 10px; border-radius: 10px; background: var(--navy); color: #fff; font-size: 12.5px; line-height: 1.45;
   text-transform: none; letter-spacing: normal; box-shadow: var(--shadow-card); visibility: hidden; opacity: 0; transition: opacity .15s; }
 .nf-tip:hover .nf-tip-text, .nf-tip:focus-within .nf-tip-text { visibility: visible; opacity: 1; }
+
+/* #1554: the category description, read by screen readers as the fold
+   button's description; sighted readers get it from the InfoTip. */
+.nf-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
