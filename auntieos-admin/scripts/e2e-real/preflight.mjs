@@ -76,8 +76,11 @@ export const VENDOR_SECRETS = {
     { secret: 'TWILIO_ACCOUNT_SID', env: 'TWILIO_TEST_ACCOUNT_SID', placeholder: 'AC_e2e_not_configured' },
     { secret: 'TWILIO_AUTH_TOKEN', env: 'TWILIO_TEST_AUTH_TOKEN', placeholder: 'e2e-not-configured' },
     // Twilio's documented test-credential sender ("magic" number): it only
-    // works with test credentials and belongs to no one.
-    { secret: 'TWILIO_FROM_NUMBER', env: 'TWILIO_TEST_FROM_NUMBER', placeholder: '+15005550006' },
+    // works with test credentials and belongs to no one. The placeholder IS
+    // the right sender, so it does not decide whether the Twilio spec runs:
+    // e2e-real.yml passes the SID and token only (#1516), and while this row
+    // was required the vendor read "not configured" with both of them set.
+    { secret: 'TWILIO_FROM_NUMBER', env: 'TWILIO_TEST_FROM_NUMBER', placeholder: '+15005550006', required: false },
   ],
   email: [
     { secret: 'SMTP2GO_API_KEY', env: 'E2E_SMTP2GO_API_KEY', placeholder: 'e2e-not-configured' },
@@ -170,6 +173,23 @@ export function disconnectRisks(specDir) {
     const src = readFileSync(file, 'utf8');
     if (/disconnectGoogleCalendar/.test(src)) out.push(`${file}: names the disconnectGoogleCalendar callable`);
     if (/\bDisconnect\b/.test(src)) out.push(`${file}: names the Disconnect control`);
+  }
+  return out;
+}
+
+/**
+ * Real-suite spec files that spell out a phone number in a forbidden area
+ * code (D3, the Twilio row; #1516). `plan` checks the Twilio VALUES the run is
+ * handed; this checks the specs, their fixtures and their comments, so a
+ * number the operator owns cannot reach a Twilio call through a spec either.
+ * Returns `file: reason` lines; empty means clean.
+ */
+export function forbiddenNumberRisks(specDir) {
+  const out = [];
+  for (const file of tsFiles(specDir)) {
+    if (isForbiddenNumber(readFileSync(file, 'utf8'))) {
+      out.push(`${file}: names a phone number in a forbidden area code (business or private line)`);
+    }
   }
   return out;
 }
@@ -307,7 +327,7 @@ async function main() {
       process.exit(1);
     }
   }
-  const refusals = disconnectRisks(specDir);
+  const refusals = [...disconnectRisks(specDir), ...forbiddenNumberRisks(specDir)];
   const planned = functionsDirs.map((dir) => ({ dir, ...plan(declaredSecrets(dir), process.env) }));
   for (const p of planned) refusals.push(...p.refusals);
   if (refusals.length > 0) {

@@ -539,6 +539,7 @@ and asserts the outcome from the UI, almost always after a reload.
 | `account-photo.cy.ts` | `account-photo.cy.ts` | A picked image really uploads to Cloudinary, is written to `users/{uid}.photoUrl`, and loads from Cloudinary after a reload. The signature comes from the admin's real `signCloudinaryUpload` (#1201), proven by the `e2e/` prefix only that signer adds | Cloudinary |
 | `bookings.cy.ts` | `bookings.cy.ts` | A real requested envelope is declined with an empty reason (#700) or booked through `manageBookingSeries`; after a reload it has left the queue, and a booking adds one to the Scheduled count; the block settles on its empty line (#698) | none |
 | `email-editor.cy.ts` | `email-editor.cy.ts` | A visual template with bold text and a button comes back from `listTemplates` after a reload; the preview is the server's render; Convert (with the server's dropped-image warning) then Save makes a template visual for good, Convert then Leave keeps it old | none |
+| `external-send-sms.cy.ts` | (D3, Twilio row, #1516) | A reply from the Inbox channel card goes through `sendExternalMessage` (`channel: 'sms'`) to Twilio's magic test number on the test credentials; the card names the redacted recipient; after a reload the reply is an outbound row in the channel list and Communicate's Recent lists it as a Text with the state Sent. `ExternalSendPanel`, the entry point #1516 names, is not mounted on any screen (#1518) | Twilio |
 | `form-schemas.cy.ts` | `form-schemas.cy.ts` | The table sorts the server's rows (#717); an edit through `saveFormSchema` comes back with the version bumped, the time stamped and the editor named | none |
 | `gallery.cy.ts` | `gallery.cy.ts` | Delete through `deleteMediaFile` removes the `media_files` row: gone after a reload, counts one lower; Cancel sends nothing | none |
 | `household-members.cy.ts` | `household-members.cy.ts` | The #684/#829 layout over the real reads; a secondary kinfolk added through `saveSecondaryKinfolk` is listed after a reload with no portal access, and Remove takes it off | none |
@@ -551,9 +552,10 @@ and asserts the outcome from the UI, almost always after a reload.
 | `templates.cy.ts` | `templates.cy.ts` | The #716 frame over a real list; the stored subject on the card and in the editor; an edit through `saveTemplate` comes back from `listTemplates` after a reload | none |
 
 A vendor spec skips, naming the missing variables in the log, when the run has
-no credentials for it. No spec of the twelve sends a text, so none needs
-Twilio, and none needs Google Calendar credentials: the Integrations spec reads
-the stored connection only.
+no credentials for it. One spec sends a text: `external-send-sms.cy.ts`, on
+Twilio's test credentials and magic number, and it skips without
+`TWILIO_TEST_ACCOUNT_SID` and `TWILIO_TEST_AUTH_TOKEN`. None needs Google
+Calendar credentials: the Integrations spec reads the stored connection only.
 
 Four PR-time tests have no counterpart, because each needs a server that can be
 told to stall or fail on command: #698's held loading state, #714's held

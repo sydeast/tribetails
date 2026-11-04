@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   declaredSecrets,
   disconnectRisks,
+  forbiddenNumberRisks,
   functionsEntry,
   isForbiddenNumber,
   MARKER,
@@ -25,15 +26,19 @@ import {
 
 const DECLARED = ['SENTRY_DSN', 'STRIPE_SECRET_KEY', 'TWILIO_FROM_NUMBER', 'TRIBE_PIN_PEPPER'];
 
+/** The two forbidden area codes in every common spelling, and the spellings that pass. Shared by the guard's tests and the spec scan's. */
+const REFUSED_SPELLINGS = ['+18055550100', '18055550100', '8055550100', '(805) 555-0100', '+1 989 555 0199', '989.555.0199'];
+const ALLOWED_SPELLINGS = ['+15005550006', '+15125550100', '', 'AC_e2e_not_configured'];
+
 describe('isForbiddenNumber', () => {
   it('refuses the two area codes in every common spelling', () => {
-    for (const n of ['+18055550100', '18055550100', '8055550100', '(805) 555-0100', '+1 989 555 0199', '989.555.0199']) {
+    for (const n of REFUSED_SPELLINGS) {
       expect(isForbiddenNumber(n), n).toBe(true);
     }
   });
 
   it('lets the Twilio test sender and other area codes through', () => {
-    for (const n of ['+15005550006', '+15125550100', '', 'AC_e2e_not_configured']) {
+    for (const n of ALLOWED_SPELLINGS) {
       expect(isForbiddenNumber(n), n).toBe(false);
     }
   });
@@ -57,6 +62,18 @@ describe('plan', () => {
     expect(refusals).toEqual([]);
     expect(values.STRIPE_SECRET_KEY).toBe('sk_test_abc');
     expect(available.stripe).toBe(true);
+  });
+
+  it('#1516: the Twilio SID and token alone configure the vendor, and the magic number is the sender written', () => {
+    // e2e-real.yml passes exactly these two; TWILIO_TEST_FROM_NUMBER is never set there.
+    const { refusals, values, available } = plan(DECLARED, {
+      TWILIO_TEST_ACCOUNT_SID: 'ACe2e0000000000000000000000000000',
+      TWILIO_TEST_AUTH_TOKEN: 'e2e-token',
+    });
+    expect(refusals).toEqual([]);
+    expect(available.twilio).toBe(true);
+    expect(values.TWILIO_FROM_NUMBER).toBe(ALLOWED_SPELLINGS[0]);
+    expect(plan(DECLARED, { TWILIO_TEST_ACCOUNT_SID: 'ACe2e0000000000000000000000000000' }).available.twilio).toBe(false);
   });
 
   it('refuses a live Stripe key, whichever variable it arrives in', () => {
@@ -109,6 +126,35 @@ describe('disconnectRisks', () => {
 
   it('passes a clean spec directory', () => {
     expect(disconnectRisks(specDir({ 'c.cy.ts': "cy.contains('button', 'Connect')" }))).toEqual([]);
+  });
+});
+
+/**
+ * #1516: the Twilio spec texts the magic test number, and the only way a real
+ * line could reach a Twilio call through the suite is a spec that spells one.
+ * The values check in `plan` never sees spec files, so this scan does.
+ */
+describe('forbiddenNumberRisks', () => {
+  function specDir(files) {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-real-specs-'));
+    mkdirSync(join(dir, 'nested'));
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+    return dir;
+  }
+
+  it('flags a spec that spells a number in a forbidden area code, in any spelling, anywhere in the file', () => {
+    for (const n of REFUSED_SPELLINGS) {
+      const dir = specDir({ 'a.cy.ts': `cy.task('upsertDoc', { doc: { counterpartNumber: '${n}' } })`, 'nested/b.cy.ts': `// reply to ${n}` });
+      const risks = forbiddenNumberRisks(dir).join('\n');
+      expect(risks, n).toMatch(/a\.cy\.ts: names a phone number in a forbidden area code/);
+      expect(risks, n).toMatch(/b\.cy\.ts: names a phone number in a forbidden area code/);
+    }
+  });
+
+  it('passes a spec that texts the Twilio magic number, and the real spec directory as it is', () => {
+    const magic = specDir({ 'c.cy.ts': `const TO = '${ALLOWED_SPELLINGS[0]}';\nconst BUDGET_MS = { RENDER: 15_000, SEND: 30_000 };` });
+    expect(forbiddenNumberRisks(magic)).toEqual([]);
+    expect(forbiddenNumberRisks(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'cypress', 'e2e-real'))).toEqual([]);
   });
 });
 
