@@ -12,12 +12,15 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
 /**
  * Email channel sender, reads recipient email from clients/{uid} or
  * staff/{uid}, looks up template via def.templates.email, renders, sends
- * via SendGrid (existing sendFromTemplate wrapper).
+ * via smtp2go (lib/email.ts).
  *
  * Throws if:
  *   - the catalog row has no email template id (a misconfigured row, which no
  *     operator action can fix)
- *   - the send itself fails
+ *   - the send itself fails. No catch here: `lib/email.ts` already throws an
+ *     error whose message names smtp2go with the HTTP status, or the network
+ *     code and a timeout word (#1535, lib/providerFailure.ts), so the outer
+ *     wrapTrigger's one-line log classifies the way the SMS channel's does.
  * Falls back to GENERIC wording (returns { usedFallback }) if:
  *   - `emailTemplates/{id}` does not exist. That means the operator has not
  *     authored the copy yet, which is a content gap on their schedule, not a

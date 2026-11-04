@@ -31,8 +31,10 @@
  *
  * A message that already starts with `<provider> send failed` or `<provider>
  * send timed out` is passed through unchanged: `lib/email.ts` throws exactly
- * the former, status included, and `describeProviderFailure` builds both, so
- * wrapping again would only double the prefix.
+ * the former, status included, on an HTTP error and rethrows a `fetch` network
+ * error through `describeProviderFailure` itself (#1535), so every
+ * `sendTemplatedEmail` caller is covered and wrapping again would only double
+ * the prefix.
  *
  * Only `status`, `code`, `message` and `cause.code` are read. Never the whole
  * object, and never Twilio's `moreInfo` or `details`: the auth token and the

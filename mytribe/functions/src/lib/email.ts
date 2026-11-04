@@ -2,6 +2,7 @@ import Handlebars from 'handlebars';
 import { stripUnresolvedTokens } from '../notifications/templateParsers';
 import { sendsAreSuppressed, suppressedId, logSuppressedSend } from './sendGuard';
 import { isReservedEmailDomain, logRefusedSend, refusedId } from './reservedEmailDomains';
+import { describeProviderFailure } from './providerFailure';
 
 /**
  * Email transport: smtp2go HTTP API (replaced SendGrid 2026-06-10 when the
@@ -12,6 +13,11 @@ import { isReservedEmailDomain, logRefusedSend, refusedId } from './reservedEmai
  * Env (Secret Manager, bind via `secrets: ['SMTP2GO_API_KEY', 'EMAIL_FROM']`):
  *   SMTP2GO_API_KEY  - restricted smtp2go API key with email send allowed
  *   EMAIL_FROM       - verified sender address
+ *
+ * Every failure it throws names smtp2go (#1535, lib/providerFailure.ts): an
+ * HTTP error carries the status in its own message, and a network or timeout
+ * error from `fetch` is rethrown through `describeProviderFailure`, so the
+ * wrappers' one-line logs always carry the vendor and the code.
  */
 
 const SMTP2GO_SEND_URL = 'https://api.smtp2go.com/v3/email/send';
@@ -124,21 +130,34 @@ export async function sendTemplatedEmail(args: SendArgs): Promise<string> {
 
   const { subject, text, html } = renderEmailParts(args);
 
-  const res = await fetch(SMTP2GO_SEND_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Smtp2go-Api-Key': key,
-    },
-    body: JSON.stringify({
-      sender: from,
-      to: [args.to],
-      subject,
-      text_body: text,
-      ...(html && { html_body: html }),
-      ...(args.replyTo && { custom_headers: [{ header: 'Reply-To', value: args.replyTo }] }),
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(SMTP2GO_SEND_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Smtp2go-Api-Key': key,
+      },
+      body: JSON.stringify({
+        sender: from,
+        to: [args.to],
+        subject,
+        text_body: text,
+        ...(html && { html_body: html }),
+        ...(args.replyTo && { custom_headers: [{ header: 'Reply-To', value: args.replyTo }] }),
+      }),
+    });
+  } catch (err) {
+    // #1535: a network failure never reaches the HTTP-error throws below. undici
+    // throws `TypeError: fetch failed` with the real code on `err.cause.code`
+    // (UND_ERR_CONNECT_TIMEOUT, ECONNRESET), and the trigger and callable
+    // wrappers log the message alone, so a bare rethrow logged a line with no
+    // vendor name and no timeout word for the real-services classifier (D3-e)
+    // to read. Wrapped here rather than in each caller so the notification
+    // channel, password reset, engagement, sendFromTemplate and suppressions
+    // all describe the failure the same way. The original stays as `cause`.
+    throw describeProviderFailure('smtp2go', err);
+  }
 
   const payload = (await res.json().catch(() => ({}))) as Smtp2goResponse;
   if (!res.ok) {
