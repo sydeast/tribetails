@@ -25,6 +25,17 @@ export interface ExternalSendPanelProps {
    * two, so the marketing case is the one that has to say so.
    */
   transactional?: boolean;
+  /**
+   * Communicate mounts this in its right column collapsed (#1518), the way the
+   * Kotlin web does: the live preview is that column's primary panel and the
+   * secondary ones open on demand so the column does not run below the fold.
+   * Both default to DenPanel's own defaults (always open, no toggle) so the
+   * panel alone behaves as it did before it was mounted anywhere.
+   */
+  collapsible?: boolean;
+  initiallyExpanded?: boolean;
+  /** Lands on the DenPanel section, which is what the screen grid places. */
+  className?: string;
 }
 
 /**
@@ -51,7 +62,12 @@ export interface ExternalSendPanelProps {
  * contact stays out of the audit log and out of the UI, and that is what the
  * confirmation shows.
  */
-export function ExternalSendPanel({ transactional = true }: ExternalSendPanelProps) {
+export function ExternalSendPanel({
+  transactional = true,
+  collapsible = false,
+  initiallyExpanded = true,
+  className,
+}: ExternalSendPanelProps) {
   const [channel, setChannel] = useState<ExternalChannel>('email');
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
@@ -122,6 +138,9 @@ export function ExternalSendPanel({ transactional = true }: ExternalSendPanelPro
     <DenPanel
       title="Send outside the tribe"
       subtitle="A one-off email or text to someone who is not a kinfolk. You write it, Auntie sends it and logs it."
+      collapsible={collapsible}
+      initiallyExpanded={initiallyExpanded}
+      {...(className !== undefined ? { className } : {})}
     >
       <div className="external-send__form">
         <fieldset className="external-send__fieldset" aria-labelledby={`${legendId}-channel`}>
