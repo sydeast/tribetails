@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { currentPushPermission, isPushSupported, registerForPush } from '../lib/push';
+import { reportTaggedError } from '../lib/sentry';
 import { BusyLabel } from '../components/Loading';
 
 /**
@@ -48,7 +49,18 @@ export function PushPrompt() {
       setSupported(false);
       return;
     }
-    setError(outcome.status === 'error' ? outcome.message : 'Could not enable notifications on this device.');
+    if (outcome.status === 'error') {
+      // #1547: the banner clears on the next render and the walk capture was
+      // empty, so the code, the stage and the browser state go to the console
+      // and to Sentry (when a DSN is set) as well as on screen. No token, no
+      // key material: states only.
+      const { code, stage, message, error: cause, diagnostics } = outcome;
+      console.error('[push] enable failed', { code, stage, message, ...diagnostics });
+      reportTaggedError(cause, { code, stage });
+      setError(`Could not enable notifications: ${message} (${code})`);
+      return;
+    }
+    setError('Could not enable notifications on this device.');
   }
 
   return (

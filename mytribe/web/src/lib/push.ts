@@ -53,12 +53,88 @@ function installForegroundHandler(
   });
 }
 
+/** Which step of [registerForPush] threw. */
+export type PushFailureStage = 'permission' | 'service-worker' | 'token' | 'register';
+
+/** The app-shell service worker's lifecycle state at the moment of failure. */
+export type ServiceWorkerState = 'active' | 'waiting' | 'installing' | 'none';
+
+/**
+ * Snapshot taken when registration fails, so the console line and the Sentry
+ * event can say what the browser looked like at that moment (#1547). Nothing
+ * here is a secret: no token value, no key material, just states.
+ */
+export type PushFailureDiagnostics = {
+  permission: NotificationPermission | 'unsupported';
+  serviceWorker: ServiceWorkerState;
+  vapidKeySet: boolean;
+};
+
 export type PushRegistrationOutcome =
   | { status: 'registered' }
   | { status: 'unsupported' }
   | { status: 'denied' }
   | { status: 'no-service-worker' }
-  | { status: 'error'; message: string };
+  | {
+      status: 'error';
+      message: string;
+      /** FCM error code (`messaging/token-subscribe-failed`, ...) or the error name when there is none. */
+      code: string;
+      stage: PushFailureStage;
+      /** The thrown value, for Sentry; never rendered. */
+      error: unknown;
+      diagnostics: PushFailureDiagnostics;
+    };
+
+/**
+ * FirebaseError carries the FCM code on `.code` (`messaging/...`); a plain
+ * Error has only a name. `err instanceof Error` does not expose `.code` to
+ * TypeScript, hence the structural check.
+ */
+function errorCodeOf(err: unknown): string {
+  if (typeof err === 'object' && err !== null && 'code' in err) {
+    const code = (err as { code: unknown }).code;
+    if (typeof code === 'string' && code) return code;
+  }
+  if (err instanceof Error && err.name) return err.name;
+  return 'unknown';
+}
+
+function serviceWorkerStateOf(reg: ServiceWorkerRegistration | null | undefined): ServiceWorkerState {
+  if (!reg) return 'none';
+  if (reg.active) return 'active';
+  if (reg.waiting) return 'waiting';
+  if (reg.installing) return 'installing';
+  return 'none';
+}
+
+/** getToken resolved with an empty string: no throw, no token, nothing to register. */
+class NoTokenError extends Error {
+  readonly code = 'no-token';
+  constructor() {
+    super('No token returned.');
+    this.name = 'NoTokenError';
+  }
+}
+
+function failure(
+  err: unknown,
+  stage: PushFailureStage,
+  swReg: ServiceWorkerRegistration | null | undefined,
+): PushRegistrationOutcome {
+  return {
+    status: 'error',
+    message: err instanceof Error ? err.message : String(err),
+    code: errorCodeOf(err),
+    stage,
+    error: err,
+    diagnostics: {
+      permission: currentPushPermission(),
+      serviceWorker: serviceWorkerStateOf(swReg),
+      vapidKeySet: VAPID_KEY.length > 0,
+    },
+  };
+}
 
 /**
  * Requests Notification permission (if not already decided) and registers
@@ -71,8 +147,15 @@ export type PushRegistrationOutcome =
  * Reuses the app-shell service worker (src/sw.ts, registered by vite-plugin-pwa)
  * via `serviceWorkerRegistration` rather than letting the SDK auto-register
  * its own firebase-messaging-sw.js — see vite.config.ts's comment for why.
+ *
+ * An error outcome names the step that threw and the FCM code (#1547): the
+ * 2026-11-04 walk saw this fail before the server was reached, and a bare
+ * message was all that survived. `stage` is advanced before each await so the
+ * catch knows where it was.
  */
 export async function registerForPush(): Promise<PushRegistrationOutcome> {
+  let stage: PushFailureStage = 'permission';
+  let swReg: ServiceWorkerRegistration | null | undefined;
   try {
     if (!(await isPushSupported())) return { status: 'unsupported' };
 
@@ -84,19 +167,22 @@ export async function registerForPush(): Promise<PushRegistrationOutcome> {
 
     // getRegistration() (not .ready) so a failed/absent registration resolves
     // to null instead of suspending forever.
-    const swReg = await navigator.serviceWorker.getRegistration();
+    stage = 'service-worker';
+    swReg = await navigator.serviceWorker.getRegistration();
     if (!swReg) return { status: 'no-service-worker' };
 
+    stage = 'token';
     const messaging = getMessaging(app);
     const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
-    if (!token) return { status: 'error', message: 'No token returned.' };
+    if (!token) return failure(new NoTokenError(), 'token', swReg);
 
+    stage = 'register';
     cachedToken = token;
     await registerFcmToken(token);
     installForegroundHandler(messaging, swReg);
     return { status: 'registered' };
   } catch (err) {
-    return { status: 'error', message: err instanceof Error ? err.message : String(err) };
+    return failure(err, stage, swReg);
   }
 }
 

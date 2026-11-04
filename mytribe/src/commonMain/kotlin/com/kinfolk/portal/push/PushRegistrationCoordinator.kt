@@ -25,13 +25,16 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * All Functions failures are logged and swallowed: push is best-effort and
  * must never break sign-in/out. A failed register leaves the cache empty so a
- * later auth emission retries.
+ * later auth emission retries. Each log line names the stage and the exception
+ * class (#1547): `t.message` alone is the server's sentence and said nothing
+ * about which step failed or what threw.
  */
 class PushRegistrationCoordinator(
     private val portalApi: PortalApi,
     private val platform: String = pushPlatform,
     private val appVersion: String? = null,
     private val tokenProvider: suspend () -> String? = { obtainPushToken() },
+    private val logger: (String) -> Unit = { println("[Push] $it") },
 ) {
     var registeredToken: String? = null
         private set
@@ -43,7 +46,7 @@ class PushRegistrationCoordinator(
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            log("obtainPushToken threw: ${t.message}")
+            logFailure("token", t)
             null
         } ?: return
         register(token)
@@ -63,7 +66,7 @@ class PushRegistrationCoordinator(
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            log("unregisterFcmToken failed: ${t.message}")
+            logFailure("unregister", t)
         }
     }
 
@@ -75,9 +78,16 @@ class PushRegistrationCoordinator(
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            log("registerFcmToken failed: ${t.message}")
+            logFailure("register", t)
         }
     }
 
-    private fun log(msg: String) = println("[Push] $msg")
+    /**
+     * One line per failure: the stage, the exception class and the message.
+     * No token value ever goes in here. The Android token step itself logs the
+     * whole throwable in PushToken.android.kt; this covers the stages that
+     * only this class sees.
+     */
+    private fun logFailure(stage: String, t: Throwable) =
+        logger("$stage failed: ${t::class.simpleName}: ${t.message}")
 }
