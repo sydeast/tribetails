@@ -255,6 +255,12 @@ export async function confirmSecureReset(req: ConfirmSecureResetRequest): Promis
       // No "contact Tribe Tails": staff reach this screen too (#892).
       throw new Error('Too many attempts for this account today. Try again tomorrow.');
     }
+    if (res.status === 503 || body['retryable'] === true) {
+      // #1544: a 503 (#1542: the verify body never arrived) is the service not
+      // answering, not a bad link; the same link works again. Wording matches
+      // secureResetFailureMessage in mytribe/src (Android and desktop).
+      throw new Error("Securing accounts isn't available right now. Try again in a few minutes.");
+    }
     throw new Error('Could not secure your account. The reset link may have expired.');
   }
   return body as unknown as ConfirmSecureResetResult;
