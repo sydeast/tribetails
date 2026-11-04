@@ -76,8 +76,10 @@ on_exit() {
     echo "== e2e-real: Google Calendar cleanup FAILED, the test calendar may still hold this run's events. Exit code unchanged ($status)." >&2
   fi
   # Only a file this run wrote. preflight.mjs refuses to replace any other.
+  # The `+` form is for bash 3.2 (macOS) under `set -u`, where expanding an
+  # unset array is an error that aborts the trap here; 4.4+ tolerates it (#1537).
   local secrets_file
-  for secrets_file in "${SECRETS_FILES[@]}"; do
+  for secrets_file in ${SECRETS_FILES[@]+"${SECRETS_FILES[@]}"}; do
     if [ -f "$secrets_file" ] && head -1 "$secrets_file" | grep -q 'scripts/e2e-real/preflight.mjs'; then
       rm -f "$secrets_file"
     fi
