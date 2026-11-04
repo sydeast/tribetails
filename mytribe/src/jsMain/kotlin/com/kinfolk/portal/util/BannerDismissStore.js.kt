@@ -4,15 +4,20 @@ import kotlinx.browser.localStorage
 import org.w3c.dom.get
 import org.w3c.dom.set
 
-/** Web: persists per-device banner dismissals in localStorage. */
-actual object BannerDismissStore {
-    private fun key(id: String) = "dismissedBanner:$id"
+internal actual fun deviceBannerDismissals(): BannerDismissals = LocalStorageBannerDismissals
 
-    actual fun isDismissed(id: String): Boolean =
-        id.isNotBlank() && localStorage[key(id)] != null
+/** Web: localStorage under `dismissedBanner:{id}`, the key the web portal has always written. */
+private object LocalStorageBannerDismissals : BannerDismissals {
+    private const val PREFIX = "dismissedBanner:"
 
-    actual fun dismiss(id: String) {
-        if (id.isBlank()) return
-        localStorage[key(id)] = "1"
+    override fun isDismissed(id: String): Boolean = localStorage[PREFIX + id] != null
+
+    override fun dismiss(id: String) {
+        localStorage[PREFIX + id] = "1"
+    }
+
+    override fun clear() {
+        val keys = (0 until localStorage.length).mapNotNull { localStorage.key(it) }
+        keys.filter { it.startsWith(PREFIX) }.forEach { localStorage.removeItem(it) }
     }
 }
