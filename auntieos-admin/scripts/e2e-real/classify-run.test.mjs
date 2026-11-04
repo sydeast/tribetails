@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -573,11 +573,34 @@ describe('classify-run.mjs as run.sh calls it', () => {
     expect(r.stderr).toMatch(/usage: classify-run\.mjs/);
   });
 
-  it('run.sh on_exit leaves a stop verdict when the run ended before Cypress, and keeps the exit code', () => {
+  /** preflight.mjs's MARKER, its first line; on_exit removes only a file whose first line carries `scripts/e2e-real/preflight.mjs`. */
+  const PREFLIGHT_HEADER = '# written by auntieos-admin/scripts/e2e-real/preflight.mjs (#1089). Deleted at the end of the run.\n';
+
+  /**
+   * run.sh's real `on_exit` (extracted, not copied), under the real `node`
+   * unless [fakeNode] is given. `SECRETS_FILES` is the two-file array run.sh
+   * iterates (#1201, one per functions codebase), so the removal branch runs
+   * for real. [secrets] sets the fixture up: 'both' writes both as
+   * preflight.mjs writes them; 'one-absent' writes only the first; 'unmarked'
+   * writes both but the second without the preflight header; 'unset' leaves
+   * the array undefined, as a run that died before the assignment would.
+   */
+  function runOnExit(exitCode, { fakeNode = null, secrets = 'both' } = {}) {
     const src = readFileSync(join(HERE, 'run.sh'), 'utf8');
     const fn = src.match(/^on_exit\(\) \{[\s\S]*?^\}$/m)?.[0];
     expect(fn, 'on_exit in run.sh').toBeTruthy();
     const dir = mkdtempSync(join(tmpdir(), 'e2e-real-onexit-'));
+    const env = bareEnv();
+    if (fakeNode !== null) {
+      const bin = join(dir, 'node');
+      writeFileSync(bin, fakeNode);
+      chmodSync(bin, 0o755);
+      env.PATH = `${dir}:${env.PATH}`;
+    }
+    const secretsFiles = [join(dir, 'mytribe.secret.local'), join(dir, 'admin.secret.local')];
+    writeFileSync(secretsFiles[0], `${PREFLIGHT_HEADER}X=1\n`);
+    if (secrets === 'both' || secrets === 'unset') writeFileSync(secretsFiles[1], `${PREFLIGHT_HEADER}Y=1\n`);
+    if (secrets === 'unmarked') writeFileSync(secretsFiles[1], '# someone else wrote this\nY=1\n');
     const script = [
       'set -euo pipefail',
       `SCRIPT_DIR=${JSON.stringify(HERE)}`,
@@ -585,18 +608,62 @@ describe('classify-run.mjs as run.sh calls it', () => {
       `VERDICT=${JSON.stringify(join(dir, 'verdict.json'))}`,
       `RESULTS=${JSON.stringify(join(dir, 'results.json'))}`,
       `LOG=${JSON.stringify(join(dir, 'emulators.log'))}`,
-      `SECRETS_FILE=${JSON.stringify(join(dir, 'none'))}`,
+      ...(secrets === 'unset' ? [] : [`SECRETS_FILES=(${secretsFiles.map((f) => JSON.stringify(f)).join(' ')})`]),
       fn,
       'trap on_exit EXIT',
-      // A preflight refusal, say: the run never reached Cypress.
-      'exit 4',
+      `exit ${exitCode}`,
     ].join('\n');
-    const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: bareEnv() });
+    const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', env });
+    return { ...r, dir, secretsFiles };
+  }
+
+  /** A `node` that does nothing, so a case about the trap itself touches no classifier and no vendor. */
+  const QUIET_NODE = '#!/bin/sh\nexit 0\n';
+
+  it('run.sh on_exit leaves a stop verdict when the run ended before Cypress, keeps the exit code, and removes both secrets files', () => {
+    // A preflight refusal, say: the run never reached Cypress.
+    const r = runOnExit(4);
     expect(r.status).toBe(4);
-    expect(existsSync(join(dir, 'verdict.json'))).toBe(true);
-    const v = JSON.parse(readFileSync(join(dir, 'verdict.json'), 'utf8'));
+    expect(existsSync(join(r.dir, 'verdict.json'))).toBe(true);
+    const v = JSON.parse(readFileSync(join(r.dir, 'verdict.json'), 'utf8'));
     expect(v.verdict).toBe('stop');
     expect(v.cypressExit).toBe(4);
     expect(r.stdout).toMatch(/cloudinary-cleanup: skipped/);
+    expect(r.secretsFiles.map((f) => existsSync(f))).toEqual([false, false]);
+  });
+
+  it('run.sh on_exit removes both secrets files whatever the exit code', () => {
+    for (const code of [0, 1, 7]) {
+      const r = runOnExit(code, { fakeNode: QUIET_NODE });
+      expect(r.status, `exit ${code}`).toBe(code);
+      expect(r.secretsFiles.map((f) => existsSync(f)), `exit ${code}`).toEqual([false, false]);
+    }
+  });
+
+  it('run.sh on_exit removes the secrets file still present and keeps the exit code when the other is already gone', () => {
+    // The second codebase's file was never written, or someone removed it by hand.
+    for (const code of [0, 3]) {
+      const r = runOnExit(code, { fakeNode: QUIET_NODE, secrets: 'one-absent' });
+      expect(r.status, `exit ${code}`).toBe(code);
+      expect(r.secretsFiles.map((f) => existsSync(f)), `exit ${code}`).toEqual([false, false]);
+      expect(r.stderr, `exit ${code}`).toBe('');
+    }
+  });
+
+  it('run.sh on_exit keeps a secrets file preflight.mjs did not write, and removes the one it did', () => {
+    const r = runOnExit(0, { fakeNode: QUIET_NODE, secrets: 'unmarked' });
+    expect(r.status).toBe(0);
+    expect(r.secretsFiles.map((f) => existsSync(f))).toEqual([false, true]);
+  });
+
+  it('run.sh on_exit survives an unset SECRETS_FILES under set -u, bash 3.2 included, and keeps the exit code', () => {
+    // bash 3.2 (macOS /bin/bash) rejects an unset array expansion under set -u
+    // and aborts the trap there; the shell still exits with the original status,
+    // so the status alone proves nothing. The stderr line is the tell (#1537).
+    const r = runOnExit(4, { fakeNode: QUIET_NODE, secrets: 'unset' });
+    expect(r.status).toBe(4);
+    expect(r.stderr).not.toMatch(/unbound variable/);
+    // Nothing named, nothing removed.
+    expect(r.secretsFiles.map((f) => existsSync(f))).toEqual([true, true]);
   });
 });

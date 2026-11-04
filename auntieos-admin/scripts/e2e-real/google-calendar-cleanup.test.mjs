@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -188,7 +188,12 @@ describe('cleanupE2eCalendarEvents', () => {
 describe('run.sh on_exit', () => {
   const here = dirname(fileURLToPath(import.meta.url));
 
-  /** run.sh's real `on_exit` (extracted, not copied) under a `node` that behaves as [fakeNode] says. */
+  /**
+   * run.sh's real `on_exit` (extracted, not copied) under a `node` that
+   * behaves as [fakeNode] says. `SECRETS_FILES` is the two-file array run.sh
+   * iterates (#1201), each written as preflight.mjs writes it, so a failed
+   * cleanup is also checked not to stop the secrets removal after it.
+   */
   function runOnExit(exitCode, { fakeNode = null, env = process.env } = {}) {
     const src = readFileSync(join(here, 'run.sh'), 'utf8');
     const fn = src.match(/^on_exit\(\) \{[\s\S]*?^\}$/m)?.[0];
@@ -201,6 +206,9 @@ describe('run.sh on_exit', () => {
       chmodSync(bin, 0o755);
       path = `${dir}:${env.PATH}`;
     }
+    const secretsFiles = [join(dir, 'mytribe.secret.local'), join(dir, 'admin.secret.local')];
+    // First line is preflight.mjs's MARKER, the one on_exit greps for.
+    for (const f of secretsFiles) writeFileSync(f, '# written by auntieos-admin/scripts/e2e-real/preflight.mjs (#1089). Deleted at the end of the run.\nX=1\n');
     const script = [
       'set -euo pipefail',
       `SCRIPT_DIR=${JSON.stringify(here)}`,
@@ -208,21 +216,23 @@ describe('run.sh on_exit', () => {
       `VERDICT=${JSON.stringify(join(dir, 'verdict.json'))}`,
       `RESULTS=${JSON.stringify(join(dir, 'results.json'))}`,
       `LOG=${JSON.stringify(join(dir, 'emulators.log'))}`,
-      `SECRETS_FILE=${JSON.stringify(join(dir, 'none'))}`,
+      `SECRETS_FILES=(${secretsFiles.map((f) => JSON.stringify(f)).join(' ')})`,
       fn,
       'trap on_exit EXIT',
       `exit ${exitCode}`,
     ].join('\n');
-    return spawnSync('bash', ['-c', script], { env: { ...env, PATH: path }, encoding: 'utf8' });
+    const r = spawnSync('bash', ['-c', script], { env: { ...env, PATH: path }, encoding: 'utf8' });
+    return { ...r, dir, secretsFiles };
   }
 
-  it('runs the calendar cleanup after the Cloudinary one, and keeps the run’s exit code when it fails', () => {
+  it('runs the calendar cleanup after the Cloudinary one, keeps the run’s exit code when it fails, and still removes both secrets files', () => {
     for (const code of [0, 1, 7]) {
       const r = runOnExit(code, { fakeNode: '#!/bin/sh\necho "fake node $*"\nexit 1\n' });
       expect(r.status, `exit ${code}`).toBe(code);
       expect(r.stderr).toMatch(/Google Calendar cleanup FAILED/);
       expect(r.stdout).toMatch(/fake node .*google-calendar-cleanup\.mjs/);
       expect(r.stdout.indexOf('cloudinary-cleanup.mjs')).toBeLessThan(r.stdout.indexOf('google-calendar-cleanup.mjs'));
+      expect(r.secretsFiles.map((f) => existsSync(f)), `exit ${code}`).toEqual([false, false]);
     }
   });
 
@@ -230,6 +240,7 @@ describe('run.sh on_exit', () => {
     const bare = { PATH: process.env.PATH, HOME: process.env.HOME };
     const r = runOnExit(0, { env: bare });
     expect(r.status).toBe(0);
+    expect(r.secretsFiles.map((f) => existsSync(f))).toEqual([false, false]);
     expect(r.stdout).toMatch(
       /google-calendar-cleanup: skipped, E2E_GOOGLE_OAUTH_CLIENT_ID, E2E_GOOGLE_OAUTH_CLIENT_SECRET, E2E_GOOGLE_CALENDAR_REFRESH_TOKEN, E2E_GOOGLE_CALENDAR_ID not set/,
     );
