@@ -1,6 +1,8 @@
 import Handlebars from 'handlebars';
 import { db } from '../../lib/firestoreAdmin';
 import { getTwilio, getTwilioFromNumber } from '../../lib/twilio';
+import { describeProviderFailure } from '../../lib/providerFailure';
+import { redactRecipient } from '../../lib/suppressions';
 import { stripUnresolvedTokens } from '../templateParsers';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
@@ -11,8 +13,10 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  *
  * Fails loud if:
  *   - the catalog row has no sms template id (a misconfigured row)
- *   - Twilio rejects (will surface error.code + status; outer wrapTrigger
- *     captures to Sentry)
+ *   - Twilio rejects. The rethrown error's message names Twilio and carries the
+ *     HTTP status and error code (#1524, lib/providerFailure.ts), because the
+ *     outer wrapTrigger logs the message alone; `status` and `code` stay on the
+ *     error as fields and the original is its `cause` for Sentry.
  * Soft-skips (returns { skipped }) if:
  *   - `smsTemplates/{id}` is missing or has no text. Unlike email and push there
  *     is NO generic fallback here: a segment costs money and content-free text
@@ -70,11 +74,21 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
     Handlebars.compile(tpl.text)({ ...data, recipientUid, notificationKey: def.key }),
   );
   const twilio = await getTwilio();
-  const message = await twilio.messages.create({
-    from: getTwilioFromNumber(),
-    to: phone,
-    body,
-  });
+  let message: { sid: string };
+  try {
+    message = await twilio.messages.create({
+      from: getTwilioFromNumber(),
+      to: phone,
+      body,
+    });
+  } catch (err) {
+    // #1524: wrapTrigger logs the thrown error's message and nothing else of
+    // it, so Twilio's `status` and `code` have to be in the message for the
+    // real-services classifier to tell a 5xx from a refusal. The rethrown
+    // error keeps both as fields and the original as `cause` for Sentry, and
+    // the number is masked out of Twilio's text.
+    throw describeProviderFailure('Twilio', err, { plain: phone, masked: redactRecipient('sms', phone) });
+  }
 
   return { providerMessageId: message.sid };
 }

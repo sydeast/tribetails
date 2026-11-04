@@ -11,6 +11,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sendTemplatedEmail } from '../lib/email';
 import { getTwilio, getTwilioFromNumber } from '../lib/twilio';
+import { providerFailureFields, providerFailureMessage } from '../lib/providerFailure';
 import { isValidPhone } from '../lib/phoneNormalize';
 import {
   isHardBounced,
@@ -53,7 +54,10 @@ import {
  *     middle digits) so the activity_log never holds a plaintext one-off contact.
  *
  * On provider failure we throw 'unavailable' with the provider error surfaced
- * (fail loud), never a silent success.
+ * (fail loud), never a silent success. The message names the provider and
+ * carries its HTTP status and error code when the error has them (#1524, see
+ * lib/providerFailure.ts); `details` carries the same as `providerStatus` /
+ * `providerCode`.
  *
  * `mirrorToChannel` (opt-in, sms only) additionally mirrors the send into
  * `sms_messages` with `direction: 'outbound'`, so an Inbox Channels thread reads
@@ -203,10 +207,18 @@ export async function sendExternalMessageHandler(req: CallableRequest<unknown>):
       providerMessageId = message.sid;
     }
   } catch (err) {
+    // #1524: the message carries the provider's HTTP status and code when the
+    // error has them (`Twilio send failed (HTTP 503, code 20500): ...`), because
+    // wrapCallable logs the message alone and the real-services classifier
+    // reads that line to tell an outage from a refused request. The provider's
+    // text can quote the recipient (Twilio 21211 does); it is masked here so
+    // the error and the log line stay as redacted as everything else.
     const provider = args.channel === 'email' ? 'smtp2go' : 'Twilio';
-    throw new HttpsError('unavailable', `${provider} send failed: ${(err as Error).message}`, {
+    const scrub = { plain: normalized, masked: recipientRedacted };
+    throw new HttpsError('unavailable', providerFailureMessage(provider, err, scrub), {
       channel: args.channel,
       recipientRedacted,
+      ...providerFailureFields(err),
     });
   }
 

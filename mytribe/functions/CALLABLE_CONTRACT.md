@@ -2939,6 +2939,14 @@ account under the household's name. `getMyAccount` already reports that state as
 - res `{ ok: true, channel: 'email'|'sms', providerMessageId: string, recipientRedacted: string, mirrored: boolean, mirrorSkippedReason: 'not_requested'|'no_existing_thread'|'write_failed'|null }`
 Mirrored by `auntieos-admin/src/api/externalSend.ts` and android's
 `AuntieRepository.sendExternalMessage` / `decodeExternalSendResult`.
+- `unavailable` on a provider failure (#1524). The message is
+  `<Twilio|smtp2go> send failed (HTTP <status>, code <code>): <provider text>`
+  when the error carries a status or code, else `<provider> send failed: <text>`;
+  `details` is `{ channel, recipientRedacted, providerStatus?, providerCode? }`.
+  The recipient is masked out of the provider's text. The shape is what
+  `auntieos-admin/scripts/e2e-real/classify-run.mjs` reads off the logged line
+  to tell a vendor 5xx from a refused request (D3-e); clients branch on `code`
+  and may show the message, never parse it. See `src/lib/providerFailure.ts`.
 - `mirrorToChannel` asks the server to ALSO record the send in `sms_messages`
   with `direction: 'outbound'`, so an Inbox Channels thread reads as a
   conversation rather than one-sided. Without it the reply lives only in

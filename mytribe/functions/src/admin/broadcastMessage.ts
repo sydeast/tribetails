@@ -10,6 +10,8 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { sendTemplatedEmail } from '../lib/email';
 import { getTwilio, getTwilioFromNumber } from '../lib/twilio';
+import { providerFailureFields, providerFailureMessage } from '../lib/providerFailure';
+import { redactRecipient } from '../lib/suppressions';
 import { normalizeE164 } from '../lib/phoneNormalize';
 import {
   CriteriaSchema,
@@ -509,7 +511,20 @@ export function broadcastSender(ctx: {
           detail.reached = true;
         } catch (err) {
           mark('email', 'failed');
-          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'email.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
+          // #1524: `err` names the provider and carries its HTTP status and code
+          // when the error has them, so the real-services classifier can read
+          // this warn line. The address is masked out of the provider's text.
+          logEvent({
+            severity: 'warn',
+            function: 'broadcastMessage',
+            event: 'email.send.failed',
+            uid,
+            extra: {
+              kinfolkId: k.id,
+              err: providerFailureMessage('smtp2go', err, { plain: email, masked: redactRecipient('email', email.toLowerCase()) }),
+              ...providerFailureFields(err),
+            },
+          });
         }
       }
     }
@@ -531,7 +546,20 @@ export function broadcastSender(ctx: {
           detail.reached = true;
         } catch (err) {
           mark('sms', 'failed');
-          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'sms.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
+          // #1524: as the email line above. Twilio's body text never names
+          // Twilio, so before this the classifier could not even attribute the
+          // line to a vendor, let alone read a status from it.
+          logEvent({
+            severity: 'warn',
+            function: 'broadcastMessage',
+            event: 'sms.send.failed',
+            uid,
+            extra: {
+              kinfolkId: k.id,
+              err: providerFailureMessage('Twilio', err, { plain: e164, masked: redactRecipient('sms', e164) }),
+              ...providerFailureFields(err),
+            },
+          });
         }
       }
     }
