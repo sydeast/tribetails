@@ -126,8 +126,16 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
       const isHttpsError = err instanceof HttpsError;
       const code = isHttpsError ? err.code : 'internal';
       const message = isHttpsError ? err.message : 'An error occurred. It\'s been reported to Auntie.';
-      // Skip user-fault codes from Sentry, they pollute the issue feed without
-      // signalling a server bug. Capture programmer faults + server faults only.
+      // One classification drives both Sentry and the log line (#1520). A
+      // user-fault code is a refused call, an expected state the client
+      // handles (a form schema no admin has seeded yet, a session that ended,
+      // a caller outside the staff gate): it stays out of Sentry, where it
+      // would pollute the issue feed without signalling a server bug, and it
+      // logs at warn, so Cloud Logging and the real-run harness (which fails a
+      // test on any `severity: error` line) do not read it as a fault either.
+      // Everything else, a non-HttpsError or a server-fault code (internal,
+      // unavailable, deadline-exceeded, resource-exhausted, data-loss, unknown,
+      // aborted, cancelled, unimplemented), is captured and logs at error.
       const userFaultCodes = new Set([
         'unauthenticated',
         'permission-denied',
@@ -137,12 +145,12 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
         'already-exists',
         'out-of-range',
       ]);
-      const shouldCapture = !isHttpsError || !userFaultCodes.has(code);
-      const sentryId = shouldCapture
-        ? captureFunctionError(err, { function: name, requestId, uid: req.auth?.uid, clientErrorId, code })
-        : undefined;
+      const isUserFault = isHttpsError && userFaultCodes.has(code);
+      const sentryId = isUserFault
+        ? undefined
+        : captureFunctionError(err, { function: name, requestId, uid: req.auth?.uid, clientErrorId, code });
       logEvent({
-        severity: 'error',
+        severity: isUserFault ? 'warn' : 'error',
         function: name,
         event: `${name}.failure`,
         requestId,

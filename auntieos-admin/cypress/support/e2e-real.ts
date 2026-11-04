@@ -22,6 +22,9 @@ import './commands';
  *    test. It is not a spec's assertion and no spec relies on it to make its
  *    claim; specs still assert from the UI only (2026-09-01 ruling). It exists
  *    because a callable or trigger can fail behind a screen that still renders.
+ *    A refused call (an HttpsError with a user-fault code such as `not-found`
+ *    or `permission-denied`) logs its failure at warn and does not trip it
+ *    (#1520); only a server or programmer fault logs at error.
  */
 
 let consoleErrors: string[] = [];
