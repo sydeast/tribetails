@@ -64,27 +64,39 @@
 
 /* ── the two columns ────────────────────────────────────────────────────── */
 /* The mock's `.cols`: 1.35fr against 1fr, 20px apart, both columns starting at
-   the top. The compose surface is the left column and spans both rows; the
-   right column holds the live preview (when the surface renders one) above
-   Recent. Column placement, not named areas: Personalize renders no preview,
-   and with areas the Recent panel would sit under an empty slot. Auto-placement
-   in column 2 lets it move up instead. */
+   the top. The compose surface is the left column and spans all three rows;
+   the right column holds the live preview (when the surface renders one), then
+   Send outside the tribe (#1518, collapsed), then Recent. Column placement,
+   not named areas: Personalize renders no preview, and with areas the panels
+   below would sit under an empty slot. Auto-placement in column 2 lets them
+   move up instead.
+   Three explicit rows, the last one `1fr`, and the compose surface spans all
+   three. MEASURED in headless Chromium against a 900px compose column, not
+   reasoned: with `max-content` rows alone the surface's extra height is dealt
+   out across the rows it spans, so Recent sat 420px down beside a 160px
+   preview, and a third cell in the column pushed Recent below the surface's
+   end at span 2 or into thirds (315, 525) at span 3. Letting the last row take
+   that extra instead stacks the cells at the top, 20px apart, in both modes
+   (Broadcast 0 / 180 / 256, Personalize 0 / 76), which is the column the
+   Kotlin web draws. */
 .communicate__cols {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  grid-template-rows: max-content max-content 1fr;
   grid-auto-rows: max-content;
   gap: var(--space-5);
   align-items: start;
 }
 .communicate__main {
   grid-column: 1;
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
 }
 .communicate__preview,
+.communicate__external,
 .communicate__recent {
   grid-column: 2;
   min-width: 0;
@@ -92,9 +104,11 @@
 @media (max-width: 60rem) {
   .communicate__cols {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
   }
   .communicate__main,
   .communicate__preview,
+  .communicate__external,
   .communicate__recent {
     grid-column: auto;
     grid-row: auto;

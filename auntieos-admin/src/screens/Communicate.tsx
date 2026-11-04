@@ -22,6 +22,7 @@ import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKi
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton } from '../components/Buttons';
+import { ExternalSendPanel } from '../components/ExternalSendPanel';
 import { CommunicateCompose } from './CommunicateCompose';
 import { CommunicatePersonalize } from './CommunicatePersonalize';
 import './Communicate.css';
@@ -55,7 +56,18 @@ import './Communicate.css';
  * own children, so Broadcast's `.communicate__preview` lands in the right
  * column above Recent without its form state being lifted out of the surface
  * that owns it. Personalize renders no preview (its draft is the editable
- * text itself), so Recent moves up to fill the column.
+ * text itself), so the panels below move up to fill the column.
+ *
+ * ── SEND OUTSIDE THE TRIBE, BETWEEN PREVIEW AND RECENT (#1518) ──────────────
+ * The Kotlin web and the Android admin both carry `ExternalSendPanel`, the
+ * one-off email or text to someone who is not a kinfolk, on this screen. The
+ * React port had the component and its tests but mounted it nowhere, so the
+ * fallback console lacked a send the other two clients have. It sits where
+ * the Kotlin web puts it: right column, under the live preview, above Recent,
+ * collapsed until opened. The mock predates the panel and is not evidence
+ * against it. Collapsed by default is the Kotlin web's #12 call: the preview
+ * is the column's primary panel and stays open; the secondary panels open on
+ * demand so the column does not run below the fold.
  *
  * Recent's own channel filter stays exactly as it was: a tablist over
  * `sendChannelOf`'s enumerated `SendChannel`, every predicate a POSITIVE
@@ -149,6 +161,10 @@ export function Communicate() {
             that started it. */}
         {mode === 'personalize' && <CommunicatePersonalize />}
         {mode === 'broadcast' && <CommunicateCompose />}
+        {/* Mounted once, outside the mode switch, so a half-written external
+            message survives flipping Personalize to Broadcast; it belongs to
+            neither surface. The DenPanel section is the grid cell. */}
+        <ExternalSendPanel collapsible initiallyExpanded={false} className="communicate__external" />
         <RecentSends />
       </div>
     </div>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type RecentSend } from '../api/communicate';
 
@@ -22,6 +22,19 @@ const { listRecentSends } = vi.hoisted(() => ({ listRecentSends: vi.fn() }));
 vi.mock('../api/communicate', async (orig) => ({
   ...(await orig<typeof import('../api/communicate')>()),
   listRecentSends,
+}));
+
+// The Send outside the tribe panel (#1518) is mounted for real, not stubbed:
+// its internals have their own file (ExternalSendPanel.test.tsx), but the
+// screen test has to prove a send typed INTO THE MOUNTED PANEL reaches the
+// callable, which a stub cannot. Same mock shape as that file.
+const { sendExternalMessage, suppressExternalRecipient } = vi.hoisted(() => ({
+  sendExternalMessage: vi.fn(),
+  suppressExternalRecipient: vi.fn(),
+}));
+vi.mock('../api/externalSend', () => ({
+  sendExternalMessage,
+  suppressExternalRecipient,
 }));
 
 // Stubbed rather than exercised for real: CommunicateCompose has its own full
@@ -69,6 +82,8 @@ function send(over: Partial<RecentSend>): RecentSend {
 
 beforeEach(() => {
   listRecentSends.mockReset();
+  sendExternalMessage.mockReset();
+  suppressExternalRecipient.mockReset();
 });
 
 /**
@@ -324,6 +339,113 @@ describe('Communicate screen', () => {
         row.querySelector('.communicate__row-dot')?.getAttribute('data-channel'),
       );
       expect(dots).toEqual(['email', 'sms']);
+    });
+  });
+
+  /**
+   * #1518. The Kotlin web and the Android admin both carry the one-off send to
+   * a non-kinfolk on this screen; the React port had the component and mounted
+   * it nowhere. These prove the mount, not the panel: present on every visit,
+   * collapsed until opened, placed between the compose surface and Recent, and
+   * wired so that what is typed into it is what the callable receives.
+   */
+  describe('Send outside the tribe (#1518)', () => {
+    /** The disclosure button DenPanel renders for a collapsible panel. */
+    function toggle() {
+      return screen.getByRole('button', { name: /send outside the tribe/i });
+    }
+
+    it('is mounted collapsed, with the heading the other two clients use', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      // The state carrier, not visibility: DenPanel unmounts the content while
+      // collapsed, and the aria-expanded attribute is what a reader announces.
+      expect(toggle()).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.getByRole('heading', { name: 'Send outside the tribe' })).toBeInTheDocument();
+      expect(screen.queryByRole('radiogroup', { name: 'Channel' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    });
+
+    it('sits in the right column between the compose surface and Recent, in both modes', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      const panel = document.querySelector('section.communicate__external');
+      expect(panel).not.toBeNull();
+      const recent = document.querySelector('section.communicate__recent');
+      expect(recent).not.toBeNull();
+      // DOM order is what grid auto-placement in column 2 follows, so the
+      // order here IS the order on screen: surface, then the panel, then Recent.
+      const before = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      expect(before(screen.getByTestId('personalize-stub'), panel!)).toBe(true);
+      expect(before(panel!, recent!)).toBe(true);
+
+      await userEvent.click(screen.getByRole('tab', { name: 'Broadcast' }));
+      const panelAfter = document.querySelector('section.communicate__external');
+      expect(panelAfter).not.toBeNull();
+      expect(before(screen.getByTestId('compose-stub'), panelAfter!)).toBe(true);
+      expect(before(panelAfter!, document.querySelector('section.communicate__recent')!)).toBe(true);
+    });
+
+    it('expands on its heading and shows the form', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      await userEvent.click(toggle());
+      expect(toggle()).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByRole('radiogroup', { name: 'Channel' })).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: 'Email' })).toBeChecked();
+      expect(screen.getByLabelText(/^email address$/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+    });
+
+    it('sends an email typed into the mounted panel through sendExternalMessage', async () => {
+      listRecentSends.mockResolvedValue([]);
+      sendExternalMessage.mockResolvedValue({
+        ok: true,
+        channel: 'email',
+        providerMessageId: 'p1',
+        recipientRedacted: 'p***@hanasamku.com',
+      });
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      await userEvent.click(toggle());
+      await userEvent.type(screen.getByLabelText(/^email address$/i), 'pawsome@hanasamku.com');
+      await userEvent.type(screen.getByLabelText(/^subject$/i), 'Your towel');
+      await userEvent.type(screen.getByLabelText(/^message$/i), 'You left a towel at the den.');
+      await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(sendExternalMessage).toHaveBeenCalledTimes(1));
+      expect(sendExternalMessage).toHaveBeenCalledWith({
+        channel: 'email',
+        to: 'pawsome@hanasamku.com',
+        subject: 'Your towel',
+        body: 'You left a towel at the den.',
+        transactional: true,
+      });
+      expect(await screen.findByText(/Sent to p\*\*\*@hanasamku\.com\./)).toBeInTheDocument();
+    });
+
+    it('sends a text with the channel the operator picked, not the default', async () => {
+      listRecentSends.mockResolvedValue([]);
+      sendExternalMessage.mockResolvedValue({
+        ok: true,
+        channel: 'sms',
+        providerMessageId: null,
+        recipientRedacted: '+1******4567',
+      });
+      render(<Communicate />);
+      await screen.findByText(/no external sends yet/i);
+      await userEvent.click(toggle());
+      await userEvent.click(screen.getByRole('radio', { name: 'Text' }));
+      await userEvent.type(screen.getByLabelText(/^phone number$/i), '+15551234567');
+      await userEvent.type(screen.getByLabelText(/^message$/i), 'Running ten minutes late.');
+      await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(sendExternalMessage).toHaveBeenCalledTimes(1));
+      expect(sendExternalMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: 'sms', to: '+15551234567', body: 'Running ten minutes late.' }),
+      );
+      expect(suppressExternalRecipient).not.toHaveBeenCalled();
     });
   });
 });
