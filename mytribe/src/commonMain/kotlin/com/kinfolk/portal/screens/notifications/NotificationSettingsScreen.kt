@@ -46,6 +46,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinChip
+import com.kinfolk.portal.components.KinInfoTip
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.LocalBusinessName
 import com.kinfolk.portal.components.animationsEnabled
@@ -469,9 +470,16 @@ private fun CategoryCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column(modifier = Modifier.padding(end = KinfolkSpacing.s)) {
-                    Text(displayTitle, style = type.heritageTitle)
-                    Text(displayDescription, style = type.sansBody)
+                // #1554: the description is the title's tooltip, never a line
+                // under it (2026-09-11 ruling). KinInfoTip's icon carries the
+                // text as its content description for TalkBack.
+                Row(
+                    modifier = Modifier.weight(1f, fill = false).padding(end = KinfolkSpacing.s),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
+                ) {
+                    Text(displayTitle, style = type.heritageTitle, modifier = Modifier.weight(1f, fill = false))
+                    KinInfoTip(displayDescription)
                 }
                 Icon(
                     imageVector = if (isExpanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,

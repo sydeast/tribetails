@@ -29,6 +29,7 @@ import { useSignOut } from '../lib/auth';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { InfoTip } from '../components/InfoTip';
 import { viewOfQuery } from '../lib/queryState';
 import { OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
@@ -173,6 +174,7 @@ function writeCollapsedSections(collapsed: Record<string, boolean>): void {
 const sectionDomId = (catId: string) => `nf-section-${catId}`;
 const headDomId = (catId: string) => `nf-head-${catId}`;
 const bodyDomId = (catId: string) => `nf-body-${catId}`;
+const descDomId = (catId: string) => `nf-desc-${catId}`;
 
 const CHANNEL_ROW_COPY: Partial<Record<string, Partial<Record<Channel, { icon: string; label: string; desc: string }>>>> = {
   visit: {
@@ -430,6 +432,7 @@ export function NotificationSettings() {
                 className="nf-fold"
                 aria-expanded={isExpanded}
                 aria-controls={bodyDomId(cat.id)}
+                aria-describedby={descDomId(cat.id)}
                 onClick={() => setFolded(cat.id, isExpanded)}
               >
                 {displayTitle(cat)}
@@ -442,8 +445,14 @@ export function NotificationSettings() {
                   Suggestion
                 </span>
               )}
+              {/* #1554: the description is a tooltip on the title, not a line
+                  under it (2026-09-11 ruling). The hidden copy keeps it the
+                  fold button's accessible description. */}
+              <InfoTip text={displayDescription(cat)} label={`About ${displayTitle(cat)}`} />
             </h3>
-            <div className="sub">{displayDescription(cat)}</div>
+            <span id={descDomId(cat.id)} className="nf-visually-hidden">
+              {displayDescription(cat)}
+            </span>
           </div>
         </div>
 
