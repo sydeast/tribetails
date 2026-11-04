@@ -207,7 +207,8 @@ describe('run.sh on_exit', () => {
       path = `${dir}:${env.PATH}`;
     }
     const secretsFiles = [join(dir, 'mytribe.secret.local'), join(dir, 'admin.secret.local')];
-    for (const f of secretsFiles) writeFileSync(f, '# written by scripts/e2e-real/preflight.mjs for this run\nX=1\n');
+    // First line is preflight.mjs's MARKER, the one on_exit greps for.
+    for (const f of secretsFiles) writeFileSync(f, '# written by auntieos-admin/scripts/e2e-real/preflight.mjs (#1089). Deleted at the end of the run.\nX=1\n');
     const script = [
       'set -euo pipefail',
       `SCRIPT_DIR=${JSON.stringify(here)}`,

@@ -573,8 +573,8 @@ describe('classify-run.mjs as run.sh calls it', () => {
     expect(r.stderr).toMatch(/usage: classify-run\.mjs/);
   });
 
-  /** The first line preflight.mjs writes; on_exit removes only a file that starts with it. */
-  const PREFLIGHT_HEADER = '# written by scripts/e2e-real/preflight.mjs for this run\n';
+  /** preflight.mjs's MARKER, its first line; on_exit removes only a file whose first line carries `scripts/e2e-real/preflight.mjs`. */
+  const PREFLIGHT_HEADER = '# written by auntieos-admin/scripts/e2e-real/preflight.mjs (#1089). Deleted at the end of the run.\n';
 
   /**
    * run.sh's real `on_exit` (extracted, not copied), under the real `node`
