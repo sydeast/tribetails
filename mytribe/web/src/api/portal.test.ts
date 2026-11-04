@@ -109,31 +109,38 @@ describe('confirmSecureReset failure messages (#1544)', () => {
   const RETRY = "Securing accounts isn't available right now. Try again in a few minutes.";
   const BAD_LINK = 'Could not secure your account. The reset link may have expired.';
   const req = { oobCode: 'code-1', newPassword: 'longenough1' } as never;
+
   function answer(status: number, body: unknown) {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({ ok: status >= 200 && status < 300, status, json: async () => body })),
     );
   }
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
+
   it('a 503 auth_unavailable (#1542, the verify body never arrived) says try again, matching Android and desktop', async () => {
     answer(503, { error: 'auth_unavailable', retryable: true, code: 'UND_ERR_BODY_TIMEOUT', detail: 'x' });
     await expect(confirmSecureReset(req)).rejects.toThrow(RETRY);
   });
+
   it('retryable: true on any other failing status also says try again', async () => {
     answer(500, { error: 'auth_unavailable', retryable: true });
     await expect(confirmSecureReset(req)).rejects.toThrow(RETRY);
   });
+
   it('a 429 keeps the daily-limit message', async () => {
     answer(429, { error: 'rate_limited', retryable: true });
     await expect(confirmSecureReset(req)).rejects.toThrow('Too many attempts for this account today. Try again tomorrow.');
   });
+
   it('a 400 reset_failed keeps the bad-link message', async () => {
     answer(400, { error: 'reset_failed', detail: 'no_account_for_code' });
     await expect(confirmSecureReset(req)).rejects.toThrow(BAD_LINK);
   });
+
   it('a 200 with ok: true returns the body', async () => {
     answer(200, { ok: true, incidentId: 'inc-1' });
     await expect(confirmSecureReset(req)).resolves.toEqual({ ok: true, incidentId: 'inc-1' });
