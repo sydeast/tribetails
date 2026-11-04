@@ -80,6 +80,7 @@ function fakeFetch(byUrl) {
 
 const STRIPE_URL = VENDORS.stripe.status.url;
 const SMTP_URL = VENDORS.email.status.url;
+const TWILIO_URL = VENDORS.twilio.status.url;
 
 describe('classify: the verdict rule', () => {
   it('a 4xx from the vendor stops, without asking the status page', async () => {
@@ -159,6 +160,44 @@ describe('classify: the verdict rule', () => {
     });
     expect(v.verdict).toBe('stop');
     expect(v.reasons.join('\n')).toMatch(/twilio refused our credentials/);
+  });
+
+  // #1516: the Twilio spec (`external-send-sms.cy.ts`) has no tag of its own.
+  // `sendExternalMessage` throws `unavailable` with "Twilio send failed: ..."
+  // and `wrapCallable` logs that at severity error inside the spec's window,
+  // which is what names the vendor here. The two cases are the D3-e rule for
+  // that line: a 5xx during a listed Twilio incident warns, a 4xx stops.
+  it('a Twilio 5xx in the spec window while status.twilio.com lists an incident warns', async () => {
+    const v = await classify({
+      results: results([failedHarness]),
+      logText: logLine({
+        function: 'sendExternalMessage',
+        errorMessage: 'Twilio send failed: Unable to create record: Service Unavailable (HTTP 503)',
+      }),
+      cypressExit: 1,
+      fetchImpl: fakeFetch({ [TWILIO_URL]: statuspage([{ ...STRIPE_INCIDENT, name: 'Degraded SMS delivery' }]) }),
+      now: NOW,
+    });
+    expect(v.verdict).toBe('warn');
+    expect(v.reasons.join('\n')).toMatch(/warn: .*twilio 503 during "Degraded SMS delivery"/);
+    expect(v.failures[0].vendorErrors[0]).toMatchObject({ vendor: 'twilio', status: 503 });
+  });
+
+  it('a Twilio 4xx (a bad number or payload) stops without asking the status page', async () => {
+    const fetchImpl = fakeFetch({});
+    const v = await classify({
+      results: results([failedHarness]),
+      logText: logLine({
+        function: 'sendExternalMessage',
+        errorMessage: "Twilio send failed: The 'To' number is not a valid phone number. (HTTP 400)",
+      }),
+      cypressExit: 1,
+      fetchImpl,
+      now: NOW,
+    });
+    expect(v.verdict).toBe('stop');
+    expect(v.reasons.join('\n')).toMatch(/twilio answered 400: our request/);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('one 4xx beside an outage-shaped 5xx in the same failure stops', async () => {

@@ -177,6 +177,23 @@ export function disconnectRisks(specDir) {
 }
 
 /**
+ * Real-suite spec files that spell out a phone number in a forbidden area
+ * code (D3, the Twilio row; #1516). `plan` checks the Twilio VALUES the run is
+ * handed; this checks the specs, their fixtures and their comments, so a
+ * number the operator owns cannot reach a Twilio call through a spec either.
+ * Returns `file: reason` lines; empty means clean.
+ */
+export function forbiddenNumberRisks(specDir) {
+  const out = [];
+  for (const file of tsFiles(specDir)) {
+    if (isForbiddenNumber(readFileSync(file, 'utf8'))) {
+      out.push(`${file}: names a phone number in a forbidden area code (business or private line)`);
+    }
+  }
+  return out;
+}
+
+/**
  * The file the emulator loads for the codebase in [functionsDir]: its
  * package.json `main`, as firebase-tools resolves it, or `index.js` when the
  * field is absent (Node's own default).
@@ -309,7 +326,7 @@ async function main() {
       process.exit(1);
     }
   }
-  const refusals = disconnectRisks(specDir);
+  const refusals = [...disconnectRisks(specDir), ...forbiddenNumberRisks(specDir)];
   const planned = functionsDirs.map((dir) => ({ dir, ...plan(declaredSecrets(dir), process.env) }));
   for (const p of planned) refusals.push(...p.refusals);
   if (refusals.length > 0) {
