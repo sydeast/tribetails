@@ -597,9 +597,14 @@ no readable status, a failure with no vendor error at all, a spec that did not
 load, no results file, or a status page that did not answer. `run.sh` exits 1
 on `stop`, and 0 on `warn` and `pass`; on `warn` it prints a WARNING block
 naming each failure and its incident. A run that stops before Cypress (port
-check, build, preflight) still writes a `stop` verdict. The hosted job does
-not upload `verdict.json` yet; uploading it and reading it in the release is
-#1193.
+check, build, preflight) still writes a `stop` verdict. The hosted admin
+job's `Upload artifacts` step in `.github/workflows/e2e-real.yml` uploads
+`cypress/.real/verdict.json` in the `e2e-real-artifacts` artifact on every
+exit, red or green, and stays quiet when a run wrote none (#1196).
+`scripts/release.sh` step 0b then reads it for the commit being shipped: it
+finds the newest `e2e-real.yml` run, or nightly that called it, for that
+commit, downloads its `e2e-real*` artifacts and reads every `verdict.json`
+in them, as "How a release reads it" above describes (#1193).
 
 Status pages, checked 2026-10-23: Stripe `www.stripestatus.com` (the old
 `status.stripe.com` JSON is frozen in 2024), Twilio `status.twilio.com`,
