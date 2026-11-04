@@ -2,6 +2,11 @@ import { defineConfig } from 'cypress';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import seed, { upsert, remove } from './e2e/seed';
+import {
+  GOOGLE_CALENDAR_DOC_ID,
+  INTEGRATIONS_COLLECTION,
+  googleCalendarConnectionSeed,
+} from './e2e/googleCalendarConnectionSeed';
 
 /**
  * Cypress config for the REAL-SERVICES run (#1089, operator ruling D3,
@@ -191,6 +196,38 @@ export default defineConfig({
           const uid = json.users?.[0]?.localId;
           if (!res.ok || !uid) throw new Error(`authUid: no auth-emulator account for ${email}`);
           return uid;
+        },
+        /**
+         * Writes `integrations_config/googleCalendar` from
+         * `E2E_GOOGLE_CALENDAR_REFRESH_TOKEN` and `E2E_GOOGLE_CALENDAR_ID`
+         * (#1517), so the real `pushVisitsToGoogleCalendar` has a connection to
+         * read. ONLY the calendar spec's own `before` calls this, and its
+         * `after` calls `removeGoogleCalendarConnection`: the run-wide seed
+         * never writes it, because `settings-integrations.cy.ts` asserts the
+         * not-connected state. The token is read here, on the node side, and
+         * the task returns nothing, so it never reaches the browser or the
+         * command log. See `e2e/googleCalendarConnectionSeed.ts`.
+         */
+        async seedGoogleCalendarConnection({
+          connectedByUid,
+          googleAccountEmail,
+        }: {
+          connectedByUid: string;
+          googleAccountEmail: string;
+        }) {
+          const doc = googleCalendarConnectionSeed({
+            env: process.env,
+            connectedByUid,
+            googleAccountEmail,
+            nowIso: new Date().toISOString(),
+          });
+          await upsert(INTEGRATIONS_COLLECTION, GOOGLE_CALENDAR_DOC_ID, doc);
+          return null;
+        },
+        /** The inverse. Safe on a missing document, so an `after` can call it after a skipped `before`. */
+        async removeGoogleCalendarConnection() {
+          await remove(INTEGRATIONS_COLLECTION, GOOGLE_CALENDAR_DOC_ID);
+          return null;
         },
         /**
          * Destroys one asset this suite uploaded. Refuses anything outside the

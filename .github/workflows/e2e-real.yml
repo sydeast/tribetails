@@ -31,6 +31,14 @@ name: E2E real services
 # A vendor whose values are not available is not a failure: its specs skip
 # with the missing variable named in the log.
 #
+# CLEANUP runs inside run.sh's EXIT trap, so it runs whether Cypress passed,
+# failed or never started: the Cloudinary `e2e/` folder is emptied, and the
+# events the calendar spec pushed to the test calendar are deleted by the
+# marker the push writes on them (google-calendar-cleanup.mjs, #1517). The
+# calendar cleanup reads the same four variables the spec does: the OAuth
+# client pair this job exports from Secret Manager and the id and token from
+# the environment above.
+#
 # VERDICT (D3-e). A red run means our integration broke and the release stops.
 # A vendor outage (a 5xx or timeout while the vendor's status page shows an
 # incident) only warns. run.sh classifies the run into
