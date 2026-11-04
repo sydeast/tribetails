@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { NotificationSettings, setByBusinessNote } from './NotificationSettings';
+import { NOTIFICATION_FOLD_STORAGE_KEY, NotificationSettings, setByBusinessNote } from './NotificationSettings';
 import type {
   CategoryDto,
   GetMyNotificationPrefsResult,
@@ -137,6 +137,8 @@ beforeEach(() => {
   mocks.getNotificationCatalog.mockReset();
   mocks.getMyNotificationPrefs.mockReset();
   mocks.saveMyNotificationPrefs.mockReset();
+  // #1545: a fold is remembered in this browser; no test inherits another's.
+  localStorage.clear();
 });
 
 describe('per-key expansion', () => {
@@ -401,6 +403,106 @@ describe('category control and existing overrides', () => {
     const trigger = screen.getAllByRole('button', { name: 'About this switch' })[0]!;
     expect(trigger.getAttribute('aria-describedby')).toBe(tip.id);
     expect(container.querySelector('p.nf-helper')).toBeNull();
+  });
+});
+/**
+ * #1545 (walk 2026-11-04): the screen is a long scroll. A shortcut row at the
+ * top lists the catalog's sections and each section head folds its body, with
+ * the fold remembered in this browser. jsdom cannot see the fold itself (the
+ * body is drawn at zero height by CSS), so these assert the state carriers:
+ * aria-expanded, aria-controls, the body's class and `inert`, and storage.
+ */
+describe('section shortcuts and folds (#1545)', () => {
+  const SCHEDULE: CategoryDto = {
+    id: 'schedule',
+    title: 'Upcoming Care',
+    description: 'x',
+    keys: [key({ key: 'sched.reminder', title: 'Visit tomorrow', description: 'The day before.', allowedChannels: ['push', 'email'] })],
+  };
+  const ACCOUNT: CategoryDto = {
+    id: 'account',
+    title: 'Account',
+    description: 'Account notices.',
+    keys: [key({ key: 'auth.signin', title: 'New sign in', description: 'A new device signed in.', allowedChannels: ['email'] })],
+  };
+  const scrolled: Element[] = [];
+  beforeEach(() => {
+    scrolled.length = 0;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    } as typeof Element.prototype.scrollIntoView;
+  });
+  async function renderThree() {
+    mocks.getNotificationCatalog.mockResolvedValue({ categories: [VISIT_CATEGORY, SCHEDULE, ACCOUNT], schemaVersion: 1 });
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: BASE_PREFS, updatedAtMs: 1 });
+    const result = renderScreen();
+    await waitFor(() => expect(screen.getByText('New sign in')).toBeTruthy());
+    return result;
+  }
+  const nav = () => screen.getByRole('navigation', { name: 'Notification sections' });
+  const chips = () => within(nav()).getAllByRole('button');
+  const head = (id: string) => document.getElementById(`nf-head-${id}`) as HTMLButtonElement;
+  const section = (id: string) => document.getElementById(`nf-section-${id}`) as HTMLElement;
+
+  it('lists exactly the catalog sections, in catalog order, with the title each card shows', async () => {
+    await renderThree();
+    // The two columns draw schedule last (the aside); the row keeps catalog order.
+    expect(chips().map((b) => b.textContent)).toEqual(['Visit Updates', 'Schedule Reminders', 'Account']);
+    expect(chips()[0]).toHaveAttribute('aria-current', 'true');
+    expect(chips()[1]).not.toHaveAttribute('aria-current');
+    expect(chips()[2]).not.toHaveAttribute('aria-current');
+  });
+  it('a chip tap marks it current, focuses the section head and scrolls that section into view', async () => {
+    await renderThree();
+    await userEvent.click(chips()[2]!);
+    expect(chips()[2]).toHaveAttribute('aria-current', 'true');
+    expect(chips()[0]).not.toHaveAttribute('aria-current');
+    expect(scrolled).toEqual([section('account')]);
+    expect(document.activeElement).toBe(head('account'));
+  });
+  it('the section head folds its body, flips aria-expanded, and this browser remembers it', async () => {
+    const first = await renderThree();
+    expect(head('visit')).toHaveAttribute('aria-expanded', 'true');
+    expect(head('visit')).toHaveAttribute('aria-controls', 'nf-body-visit');
+    expect(document.getElementById('nf-body-visit')).toBeTruthy();
+    await userEvent.click(head('visit'));
+    expect(head('visit')).toHaveAttribute('aria-expanded', 'false');
+    const body = document.getElementById('nf-body-visit')!;
+    expect(body.className).toContain('collapsed');
+    expect(body.hasAttribute('inert')).toBe(true);
+    expect(JSON.parse(localStorage.getItem(NOTIFICATION_FOLD_STORAGE_KEY)!)).toEqual(['visit']);
+    // The master switch sits above the fold and stays reachable.
+    expect(box('All in category: Visit Updates').disabled).toBe(false);
+    // Only the folded section is remembered; the others open as before.
+    first.unmount();
+    await renderThree();
+    expect(head('visit')).toHaveAttribute('aria-expanded', 'false');
+    expect(head('account')).toHaveAttribute('aria-expanded', 'true');
+    expect(head('schedule')).toHaveAttribute('aria-expanded', 'true');
+  });
+  it('a chip tap on a folded section opens it', async () => {
+    localStorage.setItem(NOTIFICATION_FOLD_STORAGE_KEY, JSON.stringify(['account']));
+    await renderThree();
+    expect(head('account')).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(chips()[2]!);
+    expect(head('account')).toHaveAttribute('aria-expanded', 'true');
+    expect(document.getElementById('nf-body-account')!.hasAttribute('inert')).toBe(false);
+    expect(localStorage.getItem(NOTIFICATION_FOLD_STORAGE_KEY)).toBe('[]');
+  });
+  it('opens every section when the stored value is not a list of ids', async () => {
+    localStorage.setItem(NOTIFICATION_FOLD_STORAGE_KEY, '{not json');
+    await renderThree();
+    expect(head('visit')).toHaveAttribute('aria-expanded', 'true');
+    expect(head('account')).toHaveAttribute('aria-expanded', 'true');
+  });
+  it('the Expand and Collapse buttons drive the same fold as the head', async () => {
+    await renderThree();
+    await userEvent.click(within(section('visit')).getByRole('button', { name: 'Collapse' }));
+    expect(head('visit')).toHaveAttribute('aria-expanded', 'false');
+    expect(JSON.parse(localStorage.getItem(NOTIFICATION_FOLD_STORAGE_KEY)!)).toEqual(['visit']);
+    await userEvent.click(within(section('visit')).getByRole('button', { name: 'Expand' }));
+    expect(head('visit')).toHaveAttribute('aria-expanded', 'true');
+    expect(localStorage.getItem(NOTIFICATION_FOLD_STORAGE_KEY)).toBe('[]');
   });
 });
 describe('mixed master state (#1317)', () => {
