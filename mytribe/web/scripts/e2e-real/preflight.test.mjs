@@ -81,9 +81,16 @@ describe('Secret Manager values in the portal run (#1264)', () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
   it('run.sh reads them through the admin allowlist, before the preflight', () => {
     const src = readFileSync(join(HERE, 'run.sh'), 'utf8');
-    const read = src.indexOf('auntieos-admin/scripts/e2e-real/secret-manager.mjs" --shell');
-    expect(read).toBeGreaterThan(0);
-    expect(read).toBeLessThan(src.indexOf('node scripts/e2e-real/preflight.mjs'));
+    // run.sh names the admin's script directory once (#1533) and calls the
+    // Secret Manager read through it. The directory it builds resolves to
+    // auntieos-admin/scripts/e2e-real, and the call sits before the preflight.
+    const dir = src.indexOf('ADMIN_E2E_DIR="$(cd "$MYTRIBE_DIR/../auntieos-admin/scripts/e2e-real" && pwd)"');
+    expect(dir).toBeGreaterThan(0);
+    const read = src.indexOf('node "$ADMIN_E2E_DIR/secret-manager.mjs" --shell');
+    expect(read).toBeGreaterThan(dir);
+    const preflight = src.indexOf('node scripts/e2e-real/preflight.mjs');
+    expect(preflight).toBeGreaterThan(0);
+    expect(read).toBeLessThan(preflight);
     // The path run.sh builds ($MYTRIBE_DIR/../auntieos-admin/...) exists.
     expect(existsSync(join(HERE, '../../../../auntieos-admin/scripts/e2e-real/secret-manager.mjs'))).toBe(true);
   });
