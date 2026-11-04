@@ -18,7 +18,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.notifications.NotificationCatalogRepository
@@ -118,6 +117,11 @@ class NotificationSettingsScreenTest {
         })
         setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
         waitForIdle()
+        val rowTop = onNodeWithTag("notif-jump").fetchSemanticsNode().boundsInRoot.top
+        val rowBottom = onNodeWithTag("notif-jump").fetchSemanticsNode().boundsInRoot.bottom
+        // #1553: sections scroll in the area under the pinned row.
+        val scrollTop = onNodeWithTag("notif-scroll").fetchSemanticsNode().boundsInRoot.top
+        assertTrue(scrollTop >= rowBottom, "the scrolling area starts below the row")
         // Six open sections are taller than the host window: the later ones start below it.
         onNodeWithTag("notif-section-schedule").assertIsNotDisplayed()
         onNodeWithTag("notif-jump-schedule").performClick()
@@ -126,19 +130,19 @@ class NotificationSettingsScreenTest {
         onNodeWithTag("notif-jump-schedule").assert(hasStateDescription("Current section"))
         onNodeWithTag("notif-jump-visit").assertIsNotSelected()
         onNodeWithTag("notif-section-schedule").assertIsDisplayed()
-        assertEquals(0f, onNodeWithTag("notif-section-schedule").fetchSemanticsNode().boundsInRoot.top, 1f, "the section lands at the top")
-        // The row is not sticky, so it scrolls away with the header; bring it
-        // back and jump again from this scrolled position. The offsets are
+        assertEquals(scrollTop, onNodeWithTag("notif-section-schedule").fetchSemanticsNode().boundsInRoot.top, 1f, "the section lands at the top of the scrolling area")
+        // #1553: the row is pinned. After the jump it is where it was, on screen,
+        // and the next jump needs no scrolling back to it. The offsets are
         // content positions, not screen positions, so the second jump lands too.
-        onNodeWithTag("notif-jump").performScrollTo()
-        waitForIdle()
-        onNodeWithText("Notification Settings").assertIsNotDisplayed()
+        onNodeWithTag("notif-jump").assertIsDisplayed()
+        assertEquals(rowTop, onNodeWithTag("notif-jump").fetchSemanticsNode().boundsInRoot.top, 0.5f, "the row did not move")
         onNodeWithTag("notif-jump-kintale").performClick()
         waitForIdle()
         onNodeWithTag("notif-jump-kintale").assertIsSelected()
         onNodeWithTag("notif-jump-schedule").assertIsNotSelected()
         onNodeWithTag("notif-section-kintale").assertIsDisplayed()
-        assertEquals(0f, onNodeWithTag("notif-section-kintale").fetchSemanticsNode().boundsInRoot.top, 1f, "the section lands at the top")
+        assertEquals(scrollTop, onNodeWithTag("notif-section-kintale").fetchSemanticsNode().boundsInRoot.top, 1f, "the section lands at the top of the scrolling area")
+        assertEquals(rowTop, onNodeWithTag("notif-jump").fetchSemanticsNode().boundsInRoot.top, 0.5f, "the row did not move")
     }
 
     @Test
