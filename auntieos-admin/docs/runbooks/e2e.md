@@ -514,7 +514,10 @@ that cannot be asked, never for one that says no.
 - Any structured `severity: error` line our functions log during a test fails
   it. This is a harness condition, the server-side twin of the `console.error`
   signal both suites already use, not a spec's assertion. The emulator output
-  is teed to `cypress/.real/emulators.log` for it.
+  is teed to `cypress/.real/emulators.log` for it. A refused call (an
+  HttpsError with a user-fault code such as `not-found` or
+  `permission-denied`) logs its failure at warn and does not trip it (#1520);
+  only a server or programmer fault logs at error.
 - Never press Google Calendar Disconnect. It revokes the grant at Google, and
   the test calendar shares the account and OAuth client with production. The
   preflight refuses a spec that names it, and the support file fails any test

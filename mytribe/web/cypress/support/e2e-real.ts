@@ -22,7 +22,11 @@ import { KINFOLK } from '../fixtures/accounts';
  * 4. OUR FUNCTIONS' ERRORS ARE A SIGNAL TOO. A structured `severity: error`
  *    line our functions log while a test runs fails that test. A harness
  *    condition, the server-side twin of the `console.error` signal, not a
- *    spec's assertion; specs still assert from the UI only.
+ *    spec's assertion; specs still assert from the UI only. A refused call
+ *    (an HttpsError with a user-fault code such as `not-found` or
+ *    `permission-denied`) logs its failure at warn and does not trip it
+ *    (#1520), so the warm-up's reads of form schemas no admin has seeded are
+ *    not errors here.
  */
 
 let consoleErrors: string[] = [];

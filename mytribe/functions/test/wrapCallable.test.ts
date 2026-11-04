@@ -113,6 +113,133 @@ describe('wrapCallable', () => {
     expect(captureMock).toHaveBeenCalled();
   });
 
+  // -------------------------------------------------------------------------
+  // #1520 the failure line's severity follows the Sentry rule. A refused call
+  // (an HttpsError whose code is in the user-fault set) is an expected state:
+  // it logs at warn and stays out of Sentry. A server or programmer fault logs
+  // at error and is captured. The real-run harness fails a test on any
+  // `severity: error` line, so a warm-up's not-found must never produce one.
+  // -------------------------------------------------------------------------
+
+  it('#1520: a not-found HttpsError logs the failure at warn and is not captured to Sentry', async () => {
+    const { HttpsError } = await import('firebase-functions/v2/https');
+    const { wrapCallable } = await import('../src/lib/wrapCallable');
+    const wrapped = wrapCallable('getFormSchema', async () => {
+      throw new HttpsError('not-found', "Schema 'homeAccess' not found.");
+    });
+    await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toMatchObject({
+      code: 'not-found',
+      message: "Schema 'homeAccess' not found.",
+    });
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(logEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'warn',
+        function: 'getFormSchema',
+        event: 'getFormSchema.failure',
+        errorCode: 'not-found',
+        errorMessage: "Schema 'homeAccess' not found.",
+        uid: 'u1',
+        authCheck: 'miss',
+        extra: { sentryId: undefined, clientErrorId: expect.any(String) },
+      }),
+    );
+    expect(logEventMock).not.toHaveBeenCalledWith(expect.objectContaining({ severity: 'error' }));
+  });
+
+  it('#1520: every user-fault code logs the failure at warn', async () => {
+    const { HttpsError } = await import('firebase-functions/v2/https');
+    const { wrapCallable } = await import('../src/lib/wrapCallable');
+    const codes = [
+      'unauthenticated',
+      'permission-denied',
+      'not-found',
+      'invalid-argument',
+      'failed-precondition',
+      'already-exists',
+      'out-of-range',
+    ] as const;
+    for (const code of codes) {
+      logEventMock.mockClear();
+      captureMock.mockClear();
+      const wrapped = wrapCallable('test', async () => {
+        throw new HttpsError(code, `refused: ${code}`);
+      });
+      await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toMatchObject({ code });
+      expect(captureMock, code).not.toHaveBeenCalled();
+      expect(logEventMock, code).toHaveBeenCalledWith(
+        expect.objectContaining({ severity: 'warn', event: 'test.failure', errorCode: code }),
+      );
+    }
+  });
+
+  it('#1520: an internal HttpsError logs the failure at error and is captured to Sentry', async () => {
+    const { HttpsError } = await import('firebase-functions/v2/https');
+    const { wrapCallable } = await import('../src/lib/wrapCallable');
+    const wrapped = wrapCallable('test', async () => {
+      throw new HttpsError('internal', 'the server broke');
+    });
+    await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toMatchObject({
+      code: 'internal',
+      message: 'the server broke',
+    });
+    expect(captureMock).toHaveBeenCalledTimes(1);
+    expect(logEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        event: 'test.failure',
+        errorCode: 'internal',
+        errorMessage: 'the server broke',
+        extra: { sentryId: 'sentry-id-1', clientErrorId: expect.any(String) },
+      }),
+    );
+  });
+
+  it('#1520: every server-fault HttpsError code logs the failure at error and is captured', async () => {
+    const { HttpsError } = await import('firebase-functions/v2/https');
+    const { wrapCallable } = await import('../src/lib/wrapCallable');
+    const codes = [
+      'internal',
+      'unavailable',
+      'deadline-exceeded',
+      'resource-exhausted',
+      'data-loss',
+      'unknown',
+      'aborted',
+      'cancelled',
+      'unimplemented',
+    ] as const;
+    for (const code of codes) {
+      logEventMock.mockClear();
+      captureMock.mockClear();
+      const wrapped = wrapCallable('test', async () => {
+        throw new HttpsError(code, `server: ${code}`);
+      });
+      await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toMatchObject({ code });
+      expect(captureMock, code).toHaveBeenCalledTimes(1);
+      expect(logEventMock, code).toHaveBeenCalledWith(
+        expect.objectContaining({ severity: 'error', event: 'test.failure', errorCode: code }),
+      );
+    }
+  });
+
+  it('#1520: a thrown non-HttpsError logs the failure at error, is captured, and surfaces as internal', async () => {
+    const { wrapCallable } = await import('../src/lib/wrapCallable');
+    const wrapped = wrapCallable('test', async () => {
+      throw new Error('secret detail');
+    });
+    await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toMatchObject({ code: 'internal' });
+    expect(captureMock).toHaveBeenCalledTimes(1);
+    expect(logEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        event: 'test.failure',
+        errorCode: 'internal',
+        errorMessage: 'secret detail',
+      }),
+    );
+  });
+
   // A4 audit (2026-08): the ERROR_FUNCTION_FAILURE entry written here carried
   // severity: 'warn' and no explicit status. writeAuditEntry's old default
   // guessed status from severity ('critical' -> FAILURE, else SUCCESS), so
@@ -186,8 +313,9 @@ describe('wrapCallable', () => {
     // A refused session is a user fault, not a server bug: it must not land in
     // the Sentry feed alongside real defects.
     expect(captureMock).not.toHaveBeenCalled();
+    // #1520: and it is logged as a refusal (warn), not as a server fault.
     expect(logEventMock).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'getMyHome.failure', errorCode: 'unauthenticated' }),
+      expect.objectContaining({ event: 'getMyHome.failure', errorCode: 'unauthenticated', severity: 'warn' }),
     );
   });
 
