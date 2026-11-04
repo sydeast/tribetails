@@ -14,6 +14,13 @@ import { BusyLabel } from '../components/Loading';
 
 const DISMISS_KEY = 'mytribe.push.dismissed';
 
+/** Console and Sentry identity of the no-service-worker outcome (#1550). */
+const NO_SERVICE_WORKER = {
+  code: 'no-service-worker',
+  stage: 'service-worker',
+  message: 'No service worker registration.',
+} as const;
+
 export function PushPrompt() {
   const [supported, setSupported] = useState<boolean | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() => currentPushPermission());
@@ -60,7 +67,19 @@ export function PushPrompt() {
       setError(`Could not enable notifications: ${message} (${code})`);
       return;
     }
-    setError('Could not enable notifications on this device.');
+    // #1550: nothing threw, but there is no app-shell worker to hand FCM, so
+    // this used to be the one failure that left no trace anywhere. Same console
+    // shape and the same Sentry tags as the error branch, with a constructed
+    // Error since there is no thrown value. The banner has to be true in a
+    // Chrome tab as well as on an iPhone: in a tab the worker simply has not
+    // registered yet (a reload fixes it); on iOS Safari only a home-screen app
+    // ever gets a worker FCM can use (AddToHomeScreen.tsx says the same).
+    const { code, stage, message } = NO_SERVICE_WORKER;
+    console.error('[push] enable failed', { code, stage, message, ...outcome.diagnostics });
+    reportTaggedError(new Error(message), { code, stage });
+    setError(
+      "Could not enable notifications: the app's background worker is not ready on this device. Reload the page and try again; on an iPhone, add MyTribe to the home screen first.",
+    );
   }
 
   return (

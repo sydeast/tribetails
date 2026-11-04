@@ -28,6 +28,12 @@ const fcmFailure = {
   diagnostics: { permission: 'granted' as const, serviceWorker: 'active' as const, vapidKeySet: true },
 };
 
+/** What registerForPush returns when getRegistration() resolved null (#1550). */
+const noServiceWorker = {
+  status: 'no-service-worker' as const,
+  diagnostics: { permission: 'granted' as const, serviceWorker: 'none' as const, vapidKeySet: true },
+};
+
 describe('PushPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -125,13 +131,60 @@ describe('PushPrompt', () => {
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
-  it('still shows a plain line when the app-shell service worker never registered', async () => {
-    vi.mocked(registerForPush).mockResolvedValue({ status: 'no-service-worker' });
+  // #1550: the no-service-worker outcome was the one failure that left no
+  // trace: a bare banner line, no console line, no Sentry event.
+  it('names the unready background worker in the banner, with the reload and the iPhone home-screen step, when the app-shell service worker never registered (#1550)', async () => {
+    vi.mocked(registerForPush).mockResolvedValue(noServiceWorker);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<PushPrompt />);
     await userEvent.click(await screen.findByText('Enable notifications'));
     await waitFor(() =>
-      expect(screen.getByText('Could not enable notifications on this device.')).toBeInTheDocument(),
+      expect(
+        screen.getByText(
+          "Could not enable notifications: the app's background worker is not ready on this device. Reload the page and try again; on an iPhone, add MyTribe to the home screen first.",
+        ),
+      ).toBeInTheDocument(),
     );
+    expect(screen.queryByText('Could not enable notifications on this device.')).not.toBeInTheDocument();
+  });
+
+  it('logs one structured console line for the no-service-worker outcome with the same six fields (#1550)', async () => {
+    vi.mocked(registerForPush).mockResolvedValue(noServiceWorker);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<PushPrompt />);
+    await userEvent.click(await screen.findByText('Enable notifications'));
+    await waitFor(() => expect(consoleError).toHaveBeenCalledTimes(1));
+    expect(consoleError).toHaveBeenCalledWith('[push] enable failed', {
+      code: 'no-service-worker',
+      stage: 'service-worker',
+      message: 'No service worker registration.',
+      permission: 'granted',
+      serviceWorker: 'none',
+      vapidKeySet: true,
+    });
+  });
+
+  it('reports the no-service-worker outcome to Sentry as an Error tagged with code and stage (#1550)', async () => {
+    vi.mocked(Sentry.isInitialized).mockReturnValue(true);
+    vi.mocked(registerForPush).mockResolvedValue(noServiceWorker);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<PushPrompt />);
+    await userEvent.click(await screen.findByText('Enable notifications'));
+    await waitFor(() => expect(Sentry.captureException).toHaveBeenCalledTimes(1));
+    const [reported, context] = vi.mocked(Sentry.captureException).mock.calls[0]!;
+    expect(reported).toBeInstanceOf(Error);
+    expect((reported as Error).message).toBe('No service worker registration.');
+    expect(context).toEqual({ tags: { code: 'no-service-worker', stage: 'service-worker' } });
+  });
+
+  it('sends the no-service-worker outcome nowhere when Sentry was never initialised (#1550)', async () => {
+    vi.mocked(Sentry.isInitialized).mockReturnValue(false);
+    vi.mocked(registerForPush).mockResolvedValue(noServiceWorker);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<PushPrompt />);
+    await userEvent.click(await screen.findByText('Enable notifications'));
+    await waitFor(() => expect(consoleError).toHaveBeenCalledTimes(1));
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it('dismiss hides the banner for the rest of the session without registering', async () => {

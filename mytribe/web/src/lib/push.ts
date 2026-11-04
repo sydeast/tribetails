@@ -74,7 +74,16 @@ export type PushRegistrationOutcome =
   | { status: 'registered' }
   | { status: 'unsupported' }
   | { status: 'denied' }
-  | { status: 'no-service-worker' }
+  | {
+      /**
+       * `getRegistration()` resolved null: the app-shell worker is not installed
+       * in this browser. Nothing threw, so there is no error or code, but the
+       * same snapshot as the error branch rides along (#1550) so the banner,
+       * the console and Sentry can say what the browser looked like.
+       */
+      status: 'no-service-worker';
+      diagnostics: PushFailureDiagnostics;
+    }
   | {
       status: 'error';
       message: string;
@@ -117,6 +126,14 @@ class NoTokenError extends Error {
   }
 }
 
+function diagnosticsOf(swReg: ServiceWorkerRegistration | null | undefined): PushFailureDiagnostics {
+  return {
+    permission: currentPushPermission(),
+    serviceWorker: serviceWorkerStateOf(swReg),
+    vapidKeySet: VAPID_KEY.length > 0,
+  };
+}
+
 function failure(
   err: unknown,
   stage: PushFailureStage,
@@ -128,11 +145,7 @@ function failure(
     code: errorCodeOf(err),
     stage,
     error: err,
-    diagnostics: {
-      permission: currentPushPermission(),
-      serviceWorker: serviceWorkerStateOf(swReg),
-      vapidKeySet: VAPID_KEY.length > 0,
-    },
+    diagnostics: diagnosticsOf(swReg),
   };
 }
 
@@ -169,7 +182,7 @@ export async function registerForPush(): Promise<PushRegistrationOutcome> {
     // to null instead of suspending forever.
     stage = 'service-worker';
     swReg = await navigator.serviceWorker.getRegistration();
-    if (!swReg) return { status: 'no-service-worker' };
+    if (!swReg) return { status: 'no-service-worker', diagnostics: diagnosticsOf(swReg) };
 
     stage = 'token';
     const messaging = getMessaging(app);

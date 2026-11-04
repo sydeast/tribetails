@@ -77,10 +77,17 @@ describe('push', () => {
     expect(registerFcmToken).not.toHaveBeenCalled();
   });
 
-  it('registerForPush returns no-service-worker when the app shell worker never registered', async () => {
+  // #1550: nothing threw, so there is no code or error, but the outcome carries
+  // the same browser snapshot as the error branch so the walk can see it.
+  it('registerForPush returns no-service-worker with a browser snapshot when the app shell worker never registered (#1550)', async () => {
+    setNotificationPermission('granted');
     setServiceWorkerRegistration(null);
     const { registerForPush } = await import('./push');
-    await expect(registerForPush()).resolves.toEqual({ status: 'no-service-worker' });
+    await expect(registerForPush()).resolves.toEqual({
+      status: 'no-service-worker',
+      diagnostics: { permission: 'granted', serviceWorker: 'none', vapidKeySet: true },
+    });
+    expect(registerFcmToken).not.toHaveBeenCalled();
   });
 
   it('registerForPush registers the token with the backend and reuses the app-shell SW registration', async () => {
