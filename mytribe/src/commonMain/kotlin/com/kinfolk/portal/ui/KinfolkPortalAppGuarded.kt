@@ -31,6 +31,7 @@ import com.kinfolk.portal.nav.AppNavHost
 import com.kinfolk.portal.nav.shellStartRoute
 import com.kinfolk.portal.portal.MyHomeResult
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.ForegroundCalls
 import com.kinfolk.portal.portal.PortalWarmup
 import com.kinfolk.portal.theme.KinfolkPortalTheme
 import kotlin.coroutines.cancellation.CancellationException
@@ -48,14 +49,19 @@ fun KinfolkPortalAppGuarded() {
     setSingletonImageLoaderFactory { ctx ->
         installCoilNetwork(ImageLoader.Builder(ctx).crossfade(true)).build()
     }
-    val functions: FunctionsClient = remember { platformFunctionsClient() }
+    // #1561: every screen read goes through this tracked client, so the
+    // warm-up below can wait until the screen the household opened has its
+    // answers before it puts twenty reads of its own on the wire.
+    val foregroundCalls = remember { ForegroundCalls() }
+    val functions: FunctionsClient = remember { foregroundCalls.track(platformFunctionsClient()) }
     val firestoreClient = remember { com.kinfolk.portal.firebase.platformFirestoreClient() }
     val portalApi = remember(functions, firestoreClient) { PortalApi(functions, firestoreClient) }
     // #1282: the warm-up reads through the client WITHOUT the #557 session
     // reaction, so a refusal nobody is looking at can never sign the household
-    // out; the screens' own reads, through `functions` above, still can.
+    // out; the screens' own reads, through `functions` above, still can. That
+    // client is also untracked, so the warm-up never waits on itself.
     val portalWarmup = remember(functions, firestoreClient) {
-        PortalWarmup(functions.withoutSessionReaction(), firestoreClient)
+        PortalWarmup(functions.withoutSessionReaction(), firestoreClient, foregroundCalls)
     }
     val notificationCatalog = remember(functions) {
         com.kinfolk.portal.notifications.NotificationCatalogRepository(functions)
@@ -142,8 +148,10 @@ fun KinfolkPortalAppGuarded() {
             throw c
         } catch (_: Throwable) { /* avatar keeps the household fallback */ }
     }
-    // #1282: once the home payload is in hand, fire every portal screen's reads
-    // together so each screen's first open lands on a warm instance. Keyed on
+    // #1282: once the home payload is in hand, and the screen it opens has its
+    // own answers (#1561, PortalWarmup.run waits on foregroundCalls), fire
+    // every portal screen's reads together so each screen's first open lands
+    // on a warm instance. Keyed on
     // the payload itself: it is set once per tribe resolution (and again after a
     // tribe switch, which is a fresh open of that tribe), and it carries the
     // billing answer the money reads are gated on. A failed home read (the

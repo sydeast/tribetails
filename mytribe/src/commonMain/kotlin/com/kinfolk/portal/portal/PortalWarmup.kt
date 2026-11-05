@@ -37,6 +37,13 @@ import kotlinx.datetime.LocalDate
  * ([FunctionsClient.withoutSessionReaction]), so a refusal here can never be
  * the thing that signs the household out; the screen's own read is.
  *
+ * THE OPENED SCREEN GOES FIRST (#1561). The shell's NavHost mounts the start
+ * screen in the same frame this run is launched, so firing at once would put
+ * twenty reads ahead of the ones the household opened the app for. [run]
+ * first waits on [foreground] (the shell's tracked client, see
+ * [ForegroundCalls]) until the screens' own callables have settled, with a
+ * ceiling so a hung screen read still lets the rest of the portal warm.
+ *
  * NOT HERE: saves (#1504) are a separate issue. `getMyKin` (#1282) and
  * `getVetClinics` (#1503) are not warmed: both are direct Firestore reads on
  * this platform, so there is no instance to wake.
@@ -44,6 +51,7 @@ import kotlinx.datetime.LocalDate
 class PortalWarmup(
     private val fns: FunctionsClient,
     firestore: FirestoreClient? = null,
+    private val foreground: ForegroundCalls? = null,
 ) {
     private val api = PortalApi(fns, firestore)
 
@@ -51,10 +59,16 @@ class PortalWarmup(
     data class Outcome(val name: String, val result: Result<Unit>)
 
     /**
-     * Fires the fan-out for [home]'s tribe. Returns when every read has
-     * settled; never throws except for cancellation.
+     * Waits for the opened screen's reads, then fires the fan-out for
+     * [home]'s tribe. Returns when every read has settled; never throws
+     * except for cancellation.
      */
-    suspend fun run(home: MyHomeResult, today: LocalDate): List<Outcome> = coroutineScope {
+    suspend fun run(home: MyHomeResult, today: LocalDate): List<Outcome> {
+        foreground?.awaitSettled()
+        return fanOut(home, today)
+    }
+
+    private suspend fun fanOut(home: MyHomeResult, today: LocalDate): List<Outcome> = coroutineScope {
         val k = home.kinfolkId
         val horizonEnd = bookingHorizonEnd(today)
         val reads = mutableListOf<Pair<String, suspend () -> Unit>>(

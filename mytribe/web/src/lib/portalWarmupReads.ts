@@ -43,15 +43,27 @@ import { queryClient as appQueryClient } from './queryClient';
  * portal to look at Home; they open it to do one thing on one of those screens,
  * so the slow open is the one they came for.
  *
- * WHAT THIS DOES. The moment an active tribe is resolved (`ensureAccess` landed
- * with an `activeKinfolkId`, which only happens behind a portal route guard),
- * every one of those screens' reads is fired once, together, under the EXACT
- * query key the screen reads (`lib/portalQueryKeys.ts`, shared with the
- * screens). Each read lands on its own Cloud Run service and leaves it warm,
- * and its answer sits in the React Query cache, so the screen's own `useQuery`
- * mounts into data instead of a spinner. The reads a screen already fires on
- * Home (`myHome`, `myBookings`, the KinTales preview) are not duplicated; the
- * cache dedupes any that overlap.
+ * WHAT THIS DOES. Once an active tribe is resolved (`ensureAccess` landed with
+ * an `activeKinfolkId`, which only happens behind a portal route guard) AND the
+ * screen the household opened has finished its own reads, every one of those
+ * screens' reads is fired once, together, under the EXACT query key the screen
+ * reads (`lib/portalQueryKeys.ts`, shared with the screens). Each read lands on
+ * its own Cloud Run service and leaves it warm, and its answer sits in the
+ * React Query cache, so the screen's own `useQuery` mounts into data instead of
+ * a spinner. A key the opened screen already filled (`myHome` from PortalNav,
+ * `myInvoices` on an invoice deep link) is not asked again.
+ *
+ * THE ORDER (#1561). The warm-up makes the NEXT screen fast and must never slow
+ * the CURRENT one. It used to fire the moment access resolved, which is inside
+ * the route guard, before the screen's chunk had loaded: on a deep link to
+ * `/invoices/<id>` the twenty warm-up reads took the browser's six HTTP/1.1
+ * connections to the emulator first, and the screen's own `getMyInvoices` left
+ * 18 s after the visit. `lib/portalWarmup.ts` now holds the fan-out until the
+ * opened screen has mounted its queries and none of them has been fetching for
+ * a short quiet window, with a 10 s ceiling so a screen that hangs still gets
+ * the rest of the portal warmed. Prod callables are HTTP/2 and do not queue
+ * like that, but the cold starts are the same, and the household's read is the
+ * one that has to win.
  *
  * THE MONEY GATE (#1005). `getMyInvoices`, `getAccountCreditHistory` and
  * `getMyPaymentMethod` refuse a member without billing access, and the server
@@ -78,7 +90,8 @@ import { queryClient as appQueryClient } from './queryClient';
  *   - nothing here rejects: `warmPortalScreens` resolves whatever happens.
  *
  * WHEN IT RUNS is `lib/portalWarmup.ts`'s business: once per session per
- * tribe, from a listener on the access store. That module loads THIS one on
+ * tribe, from a listener on the access store, after the opened screen's reads
+ * have settled (THE ORDER, above). That module loads THIS one on
  * demand. The reads below pull every api module and the booking date logic
  * into whatever chunk holds them, and O-26 took exactly those out of the
  * entry chunk (measured here: a static import grew it by 27 KB raw). As a
@@ -98,10 +111,14 @@ const HOME_STALE_MS = 5 * 60_000;
 type Outcome<T> = { ok: true; data: T } | { ok: false };
 
 /**
- * One cached read that leaves nothing behind on failure. `fetchQuery` dedupes
- * with a screen's in-flight read of the same key and returns cached data that
- * is still within `staleTime`, so a screen that got there first costs nothing
- * here.
+ * One cached read that leaves nothing behind on failure.
+ *
+ * A key the cache already answers, or one a mounted screen holds, is left
+ * alone: the warm-up now runs AFTER the opened screen's reads (#1561), so
+ * those are the reads that screen just made, and `fetchQuery` with a
+ * staleTime of 0 would fire each of them a second time. Its data, when there
+ * is some, is handed back so the money gate can still read the home payload.
+ * Otherwise `fetchQuery` dedupes with any in-flight read of the same key.
  */
 async function warmOne<T>(
   client: QueryClient,
@@ -109,6 +126,9 @@ async function warmOne<T>(
   queryFn: () => Promise<T>,
   staleTime = 0,
 ): Promise<Outcome<T>> {
+  const existing = client.getQueryCache().find({ queryKey, exact: true });
+  if (existing !== undefined && existing.state.data !== undefined) return { ok: true, data: existing.state.data as T };
+  if (existing !== undefined && existing.getObserversCount() > 0) return { ok: false };
   try {
     const data = await client.fetchQuery({ queryKey, queryFn, staleTime, retry: false });
     return { ok: true, data };

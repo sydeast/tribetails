@@ -1,6 +1,7 @@
 import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryObserver } from '@tanstack/react-query';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccessState } from './activeTribe';
 import { BOOKING_HORIZON_DAYS, bookingHorizonEnd, dateKey } from './bookingWizardLogic';
 import { queryClient } from './queryClient';
@@ -38,7 +39,9 @@ const server = vi.hoisted(() => ({
   respond: vi.fn<(name: string, payload: unknown) => Promise<unknown>>(),
 }));
 
+import { getMyInvoices } from '../api/invoicesApi';
 import { installPortalWarmup, portalWarmupInFlight, resetPortalWarmupForTest } from './portalWarmup';
+import { myInvoicesKey } from './portalQueryKeys';
 import { warmPortalScreens } from './portalWarmupReads';
 
 const ANSWERS: Record<string, unknown> = {
@@ -106,7 +109,9 @@ const MONEY_CALLABLES = ['getMyInvoices', 'getAccountCreditHistory', 'getMyPayme
 const sortedJson = (keys: unknown[][]) => keys.map((k) => JSON.stringify(k)).sort();
 
 beforeEach(() => {
-  resetPortalWarmupForTest();
+  // No screen mounts in these tests, so nothing to yield to: the ceiling is 0.
+  // The ordering itself is pinned under 'the opened screen goes first'.
+  resetPortalWarmupForTest({ maxWaitMs: 0 });
   queryClient.clear();
   store.state = null;
   store.listeners.clear();
@@ -273,5 +278,103 @@ describe('silence', () => {
       throw new Error('synchronous failure');
     });
     expect(() => publish(access({}))).not.toThrow();
+  });
+});
+
+describe('the opened screen goes first (#1561)', () => {
+  /** A promise the test resolves by hand: the screen's read, still on the wire. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  }
+
+  /** Mounts what `InvoiceDetail` mounts first: `getMyInvoices` under the shared key, through the real api module. */
+  function mountInvoiceScreen(): () => void {
+    const observer = new QueryObserver(queryClient, {
+      queryKey: myInvoicesKey('k1'),
+      queryFn: () => getMyInvoices('k1'),
+    });
+    return observer.subscribe(() => undefined);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetPortalWarmupForTest({ quietMs: 150, maxWaitMs: 10_000 });
+    installPortalWarmup();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('on a deep link, the route’s read is issued before any warm-up read, and the warm-up runs once it settles', async () => {
+    const invoices = deferred<unknown>();
+    server.respond.mockImplementation((name) =>
+      name === 'getMyInvoices' ? invoices.promise : Promise.resolve(ANSWERS[name] ?? {}),
+    );
+
+    // The route guard resolves access before the screen chunk has loaded.
+    publish(access({}));
+    await vi.advanceTimersByTimeAsync(500); // the chunk loading
+    expect(calledNames()).toEqual([]);
+
+    const unmount = mountInvoiceScreen();
+    await vi.advanceTimersByTimeAsync(5_000); // a slow cold start on the screen's own read
+    expect(calledNames()).toEqual(['getMyInvoices']);
+
+    invoices.resolve([]);
+    await vi.advanceTimersByTimeAsync(149);
+    expect(calledNames()).toEqual(['getMyInvoices']); // still inside the quiet window
+
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+
+    const names = calledNames();
+    expect(names[0]).toBe('getMyInvoices');
+    expect(names).toContain('getMyHome');
+    expect(names).toContain('getMyTribeProfile');
+    expect(names).toContain('getAccountCreditHistory'); // the money gate still opens
+    // The read the screen just made is not fired a second time.
+    expect(names.filter((n) => n === 'getMyInvoices')).toHaveLength(1);
+    unmount();
+  });
+
+  it('still warms after the ceiling when the route’s read hangs', async () => {
+    server.respond.mockImplementation((name) =>
+      name === 'getMyInvoices' ? new Promise(() => undefined) : Promise.resolve(ANSWERS[name] ?? {}),
+    );
+    publish(access({}));
+    const unmount = mountInvoiceScreen();
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(calledNames()).toEqual(['getMyInvoices']);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(calledNames()).toContain('getMyHome');
+    expect(calledNames()).toContain('getBreeds');
+    expect(calledNames().filter((n) => n === 'getMyInvoices')).toHaveLength(1);
+    unmount();
+  });
+
+  it('still warms after the ceiling when no screen ever mounts a query', async () => {
+    publish(access({}));
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(calledNames()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(calledNames()).toContain('getMyHome');
+  });
+
+  it('warms nothing for a tribe that was signed out of during the wait', async () => {
+    publish(access({}));
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    publish(null);
+    queryClient.clear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle();
+    expect(calledNames()).toEqual([]);
   });
 });
