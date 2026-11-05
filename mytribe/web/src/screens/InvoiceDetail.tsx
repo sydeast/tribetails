@@ -35,6 +35,7 @@ import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutat
 import { viewOfQuery } from '../lib/queryState';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
+import { accountCreditHistoryKey, businessContactKey, myHomeKey, myInvoicesKey } from '../lib/portalQueryKeys';
 import { announceSaved } from '../lib/saveNotice';
 import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
 import '../styles/invoices.css';
@@ -68,8 +69,8 @@ export function InvoiceDetail() {
   const auth = useAuth();
   const viewerUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
-  const invoices = useQuery({ queryKey: ['myInvoices', kinfolkId], queryFn: () => getMyInvoices(kinfolkId) });
-  const business = useQuery({ queryKey: ['businessContact'], queryFn: () => getBusinessContact() });
+  const invoices = useQuery({ queryKey: myInvoicesKey(kinfolkId), queryFn: () => getMyInvoices(kinfolkId) });
+  const business = useQuery({ queryKey: businessContactKey(), queryFn: () => getBusinessContact() });
   // PR30: `payMethods` (the resolved option list) rides the same
   // `['myHome', kinfolkId]` cache PortalNav already keeps warm on every
   // screen for branding, so this is free on the common path where the nav
@@ -79,7 +80,7 @@ export function InvoiceDetail() {
   // ISSUE #409 kept this query rather than dropping it: the invoice's own
   // list is preferred now, but a server that predates that field still
   // answers here, and this screen must keep working across that window.
-  const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId), staleTime: 5 * 60_000 });
+  const home = useQuery({ queryKey: myHomeKey(kinfolkId), queryFn: () => getMyHome(kinfolkId), staleTime: 5 * 60_000 });
 
   /**
    * #825: ONE CHECKOUT KEY PER SUBMISSION, held across a re-tap.
@@ -159,7 +160,7 @@ export function InvoiceDetail() {
     // #1281: see the same mutation on Invoices.tsx. Pending until the reloaded
     // invoice shows the credit applied, then confirmed in words.
     onSuccess: async () => {
-      await refreshAfterSave(queryClient, ['myInvoices', kinfolkId], ['accountCreditHistory', kinfolkId]);
+      await refreshAfterSave(queryClient, myInvoicesKey(kinfolkId), accountCreditHistoryKey(kinfolkId));
       announceSaved('Credit saved');
     },
   }, { policy: 'hold', what: 'this credit' });
@@ -180,7 +181,7 @@ export function InvoiceDetail() {
     mutationFn: (decision: 'accept' | 'decline') =>
       decision === 'accept' ? acceptQuote(invoiceId, kinfolkId) : denyQuote(invoiceId, kinfolkId),
     // #1281: pending until the reloaded invoice shows the answer.
-    onSuccess: () => refreshAfterSave(queryClient, ['myInvoices', kinfolkId]),
+    onSuccess: () => refreshAfterSave(queryClient, myInvoicesKey(kinfolkId)),
   }, { policy: 'hold', what: 'your answer' });
 
   // These three used to fail silently — a rejected mutation just stopped the
