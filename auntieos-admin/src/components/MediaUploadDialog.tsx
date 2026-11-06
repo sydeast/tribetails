@@ -75,6 +75,8 @@ function stageLabel(stage: UploadStage): string {
  * Targets one of three entities (`api/mediaUpload.ts#UploadEntityType`):
  *   KINFOLK   picked from the already-streamed household roster (a real
  *             picker, never free-text, since the whole roster is on hand).
+ *             Starts unchosen (#1604): a default household is a wrong-family
+ *             upload waiting for a hurried click.
  *   KIN       free-text kin document id: Gallery.tsx does not stream the
  *             `kin` collection (its own header explicitly scopes out a
  *             household filter's *sibling* concept), so there is no roster
@@ -111,7 +113,10 @@ export function MediaUploadDialog({
   onUploaded,
 }: MediaUploadDialogProps) {
   const [pickedType, setPickedType] = useState<UploadEntityType>('KINFOLK');
-  const [kinfolkId, setKinfolkId] = useState(kinfolkOptions[0]?.id ?? '');
+  // Starts unchosen (#1604). It used to preselect the first household on the
+  // roster, so an upload accepted with the default filed a photo under whichever
+  // family sorted first.
+  const [kinfolkId, setKinfolkId] = useState('');
   const [kinId, setKinId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   /**
@@ -138,7 +143,12 @@ export function MediaUploadDialog({
         ? kinId.trim()
         : BUSINESS_ENTITY_ID;
 
-  const entityIdError = touched && entityId === '' ? 'Choose a target before uploading.' : null;
+  const entityIdError =
+    touched && entityId === ''
+      ? entityType === 'KINFOLK'
+        ? 'Choose a household before uploading.'
+        : 'Choose a target before uploading.'
+      : null;
   const fileError =
     rejectedFileError ?? (touched && file === null ? 'Choose a photo or video to upload.' : null);
 
@@ -257,6 +267,7 @@ export function MediaUploadDialog({
                 onChange={(e) => setKinfolkId(e.target.value)}
                 aria-invalid={entityIdError !== null}
               >
+                <option value="">Choose a household</option>
                 {kinfolkOptions.map((opt) => (
                   <option key={opt.id} value={opt.id}>
                     {opt.label}

@@ -287,6 +287,7 @@ export function Gallery() {
         <TagKinDialog
           media={tagMedia}
           allKin={allKin}
+          householdLabels={kinfolkLabel}
           kinLoading={kinState.status === 'loading'}
           kinError={kinState.status === 'error' ? kinState.message : null}
           onClose={() => setTagMedia(null)}

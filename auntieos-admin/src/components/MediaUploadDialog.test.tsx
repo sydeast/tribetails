@@ -26,10 +26,24 @@ beforeEach(() => {
 });
 
 describe('MediaUploadDialog', () => {
-  it('defaults to the KINFOLK target with the first household pre-selected', () => {
+  it('defaults to the KINFOLK target with NO household pre-selected (#1604)', () => {
     render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
     expect(screen.getByLabelText('Target type')).toHaveValue('KINFOLK');
-    expect(screen.getByLabelText('Household')).toHaveValue('kf1');
+    expect(screen.getByLabelText('Household')).toHaveValue('');
+    expect(screen.getByRole('option', { name: 'Choose a household' })).toBeInTheDocument();
+  });
+  it('refuses a household upload until a household is chosen, then lets it through (#1604)', async () => {
+    uploadMediaFile.mockResolvedValue('newMedia2');
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
+    await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Choose a household before uploading.');
+    expect(uploadMediaFile).not.toHaveBeenCalled();
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf2');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
+    await waitFor(() => expect(uploadMediaFile).toHaveBeenCalledTimes(1));
+    expect(uploadMediaFile).toHaveBeenCalledWith(expect.objectContaining({ entityType: 'KINFOLK', entityId: 'kf2' }));
   });
 
   it('shows "no households" when the roster is empty, rather than a blank/broken select', () => {
@@ -98,7 +112,7 @@ describe('MediaUploadDialog', () => {
     const input = screen.getByLabelText('Photo or video');
     await userEvent.upload(input, photoFile());
     await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
-    expect(await screen.findByText(/choose a target/i)).toBeInTheDocument();
+    expect(await screen.findByText(/choose a household before uploading/i)).toBeInTheDocument();
     expect(uploadMediaFile).not.toHaveBeenCalled();
   });
 
@@ -133,6 +147,7 @@ describe('MediaUploadDialog', () => {
         }),
     );
     render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
 
     await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
     await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
@@ -153,6 +168,7 @@ describe('MediaUploadDialog', () => {
     uploadMediaFile.mockRejectedValue(new Error('Cloudinary upload failed (HTTP 401)'));
     const onUploaded = vi.fn();
     render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={onUploaded} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
 
     await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
     await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
@@ -253,6 +269,7 @@ describe('MediaUploadDialog, file validation (#397 S1)', () => {
   it('clears the refusal once an acceptable file is chosen', async () => {
     uploadMediaFile.mockResolvedValue('new-doc-1');
     render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
     const input = screen.getByLabelText('Photo or video');
     dropFileOnInput(input, fileOf('invoice.pdf', 'application/pdf', 900));
     expect(screen.getByRole('alert')).toHaveTextContent(/not a photo or a video/i);
