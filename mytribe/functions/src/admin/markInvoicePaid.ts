@@ -13,6 +13,7 @@ import {
   invoiceTotalCentsOf,
   settleInvoice,
   centsToDollars,
+  formatUsdCents,
   type PaymentAmount,
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
@@ -63,9 +64,13 @@ import {
  * dollar `total`/`amountDue` fields on the doc are a SERVER-DERIVED PROJECTION
  * written from the same cents figures in the same pass, never an input.
  *
- * OVERPAYMENT: settles the invoice, clamps `amountDue` at zero, and records the
- * excess as `overpaidCents` for the operator to act on deliberately. It is never
- * turned into a credit automatically. The full reasoning, and why a negative
+ * OVERPAYMENT: an `amount` above what is still owed is REFUSED (#1566,
+ * `overBalanceRefusal` below): under the 2026-09-27 ruling the excess is tip,
+ * and this callable has no tip to put it in. An invoice can still reach the
+ * `overpaid` state another way (its total edited down after payment, or rows
+ * written before the guard); then it settles, clamps `amountDue` at zero, and
+ * records the excess as `overpaidCents` for the operator to act on
+ * deliberately. It is never turned into a credit automatically. The full reasoning, and why a negative
  * balance would be actively wrong here, is on `settleInvoice` in invoiceMath.ts.
  *
  * Canonical store is the FLAT top-level `invoices` collection (the same one
@@ -207,6 +212,46 @@ export function alreadySettledRefusal(
     };
   }
   return null;
+}
+
+/**
+ * #1566: NO MORE MAY GO ONTO AN INVOICE THAN IT STILL OWES.
+ *
+ * Operator ruling, 2026-09-27: an overpayment is all tip, the processor fee
+ * comes out of the tip, and account credit exists only when she types an
+ * amount. So the part of a payment that lands on the bill stops at the
+ * balance, and whatever is over it is tip, booked by `recordPayment` on the
+ * payment row where the fee can come out of it.
+ *
+ * Before this, an applied figure above the balance was accepted and the
+ * invoice went `overpaid`: $100 typed against $78.50 put $100 on the bill and
+ * $0.00 in the tip, so the $21.50 over was recorded as neither, and the fee had
+ * nothing to come out of.
+ *
+ * REFUSED, NOT CLAMPED. This callable carries no tip, so clamping here would
+ * drop the excess on the floor; and `paymentApply` is handed a tip the admin
+ * typed, which the server never rewrites. The clients do the split before they
+ * send (`paymentSplit` on admin web and Android, `recordPaymentSplit` on the
+ * desktop console) and show it as she types; this is the guard behind them.
+ *
+ * `before` is the settlement from every recorded payment, the same figure the
+ * already-settled guard reads, so a stale `amountDue` scalar cannot move it.
+ * The `overpaid` state itself is kept: an invoice whose total is edited down
+ * after it was paid, and rows written before this guard, still land there.
+ */
+export const OVER_BALANCE_REFUSAL_CODE = 'invoice_amount_exceeds_balance';
+export function overBalanceRefusal(
+  appliedCents: number,
+  before: { amountDueCents: number },
+): { code: string; message: string; amountDueCents: number } | null {
+  if (appliedCents <= before.amountDueCents) return null;
+  return {
+    code: OVER_BALANCE_REFUSAL_CODE,
+    amountDueCents: before.amountDueCents,
+    message:
+      `${formatUsdCents(appliedCents)} is more than the ${formatUsdCents(before.amountDueCents)} still owed on this invoice. ` +
+      `Apply ${formatUsdCents(before.amountDueCents)} and record the rest of the payment as tip.`,
+  };
 }
 
 export function isDraftOrQuote(d: InvoiceDoc): boolean {
@@ -389,6 +434,12 @@ export async function markInvoicePaidHandler(
   // leave outstanding. Reading `data.amountDue` here instead would record a $0
   // payment on every invoice the old write had already zeroed.
   const paidCents = args.amount !== undefined ? Math.round(args.amount * 100) : before.amountDueCents;
+  // #1566: what is over the balance is tip, and this callable has no tip to
+  // put it in. Refused before anything is written.
+  const overBalance = overBalanceRefusal(paidCents, before);
+  if (overBalance) {
+    throw new HttpsError('failed-precondition', overBalance.message, { code: overBalance.code });
+  }
   const paidAmount = centsToDollars(paidCents);
   const paidAtIso = args.paidAt ?? new Date().toISOString();
 

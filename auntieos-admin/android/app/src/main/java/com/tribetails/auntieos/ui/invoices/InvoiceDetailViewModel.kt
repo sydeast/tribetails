@@ -83,6 +83,14 @@ data class InvoiceDetailUiState(
      * so the panel can say which one it is for as long as it is true.
      */
     val paymentsError: String? = null,
+    /**
+     * #1566: what the invoice still owes, from `getInvoiceLedger` (summed from
+     * the recorded payments, the figure `markInvoicePaid` refuses against).
+     * The Record Payment dialog stops the applied part here and puts the rest
+     * in the tip. Null until the ledger answers, and after it fails: then the
+     * dialog caps nothing and the server's refusal says what is owed.
+     */
+    val ledgerAmountDueCents: Long? = null,
     val showRecordPayment: Boolean = false,
     val recordingPayment: Boolean = false,
     // Stage 2 tail: header receipt / reminder + draft review-and-send actions.
@@ -249,13 +257,14 @@ class InvoiceDetailViewModel(
             )
             return
         }
-        _uiState.value = _uiState.value.copy(paymentsLoading = true, paymentsError = null)
+        _uiState.value = _uiState.value.copy(paymentsLoading = true, paymentsError = null, ledgerAmountDueCents = null)
         viewModelScope.launch {
             invoiceRepository.getInvoiceLedger(invoiceId)
                 .onSuccess { ledger ->
                     _uiState.value = _uiState.value.copy(
                         linkedPayments = ledger.ledgerPayments,
                         clientPayments = ledger.unlinkedKinfolkPayments,
+                        ledgerAmountDueCents = ledger.amountDueCents,
                         paymentsLoading = false,
                         paymentsError = null,
                     )

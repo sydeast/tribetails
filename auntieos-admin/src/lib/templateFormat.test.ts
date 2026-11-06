@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import type { TemplateSummary } from '../api/templates';
 import {
+  templateFieldErrors,
   templateRowTitle,
   templateSubjectPreview,
   previewTags,
@@ -291,6 +292,16 @@ describe('templateIdError', () => {
   });
 });
 
+describe('templateFieldErrors (#1614)', () => {
+  it('lists every blocking problem with its field, in form order', () => {
+    expect(
+      templateFieldErrors(fields({ templateId: '', subject: '', body: '' }), { isCreate: true }).map((e) => e.field),
+    ).toEqual(['templateId', 'subject', 'body']);
+  });
+  it('skips the key on edit and is empty for a complete form', () => {
+    expect(templateFieldErrors(fields({ templateId: '' }), { isCreate: false })).toEqual([]);
+  });
+});
 describe('templateFormError', () => {
   it('is null for a complete create-mode form', () => {
     expect(templateFormError(fields(), { isCreate: true })).toBeNull();

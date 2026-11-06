@@ -241,6 +241,11 @@ interface FormSchemasProps {
   onSelect?: (id: string) => void;
   /** Opens the editor screen (`FormSchemaEditor.tsx`) in create-new mode. Called with no arguments to start a new schema. */
   onNew?: () => void;
+  /**
+   * #1615: bumped by the parent after the editor saves, so the list reads again
+   * and shows the new or changed row. The first value is the initial load.
+   */
+  reloadKey?: number;
 }
 
 /**
@@ -271,7 +276,7 @@ interface FormSchemasProps {
  * is mounted in a modal by the router (`routes/FormSchemasView.tsx`), which
  * wires the `onSelect` and `onNew` handlers. See the props doc above.
  */
-export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
+export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps) {
   const { showToast } = useToast();
   const [schemas, setSchemas] = useState<Async<FormSchemaSummary[]>>({ status: 'loading' });
   const [emailByUid, setEmailByUid] = useState<ReadonlyMap<string, string>>(new Map());
@@ -301,7 +306,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
     };
   }, []);
 
-  useEffect(() => load(), [load]);
+  useEffect(() => load(), [load, reloadKey]);
 
   // Independent of the schemas load: a roster it cannot fetch leaves
   // `updatedBy` showing the raw/shortened uid rather than costing the
