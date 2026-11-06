@@ -8,6 +8,8 @@ import {
   attachmentCountLabel,
   distinctCommTypes,
   dropEmptyTribalIntel,
+  TRIBAL_INTEL_EMPTY_COPY,
+  TRIBAL_INTEL_SUBTITLE,
   filterByCommType,
   filterTribalIntel,
   isTribalIntelTitleFallback,
@@ -119,7 +121,7 @@ export function TribalIntel() {
         kicker="The Den · Tribal Intel"
         title="Tribal"
         accentTail="Intel."
-        subtitle="Guides and educational resources for care delivery, newest first."
+        subtitle={TRIBAL_INTEL_SUBTITLE}
         trailing={
           editing === null ? (
             <PrimaryButton
@@ -165,14 +167,21 @@ export function TribalIntel() {
         <StatCard label="With content" value={withContentCount} trend="have a body" tone="purple" />
       </div>
 
-      <DenPanel title="Document library" subtitle="Search across titles, content, and comm. type.">
+      {/* The search tooltip only exists while there is a search box: the box is drawn
+          inside the ready branch below, so an empty library has neither (#1616). */}
+      <DenPanel
+        title="Document library"
+        {...(rows.status === 'ready' && dropEmptyTribalIntel(rows.data).length > 0
+          ? { subtitle: 'Search across titles, content, and comm. type.' }
+          : {})}
+      >
         <AsyncRegion
           state={rows}
           what="Tribal Intel"
           isEmpty={(data) => dropEmptyTribalIntel(data).length === 0}
           loading={<LoadingRow label="Loading Tribal Intel…" className="tribal-intel__hint" />}
           empty={
-            <EmptyHint>No Tribal Intel yet. Training materials and guides will appear here once uploaded.</EmptyHint>
+            <EmptyHint>{TRIBAL_INTEL_EMPTY_COPY}</EmptyHint>
           }
         >
           {(data) => {
