@@ -14,6 +14,7 @@ import {
   activityPayloadRows,
   humanizeAction,
   localDayKey,
+  activityWhen,
 } from './activityDetail';
 
 function entry(over: Partial<ActivityLogEntry> = {}): ActivityLogEntry {
@@ -322,6 +323,39 @@ describe('the collapsed row, per the mock', () => {
   });
 });
 
+describe('activityWhen (#1585)', () => {
+  it('reads a UTC stamp on the Chicago clock, standard time', () => {
+    expect(activityWhen('2026-11-04T21:34:00Z', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '3:34p' });
+  });
+  it('reads it in daylight time too', () => {
+    expect(activityWhen('2026-07-16T21:34:00Z', 'America/Chicago')).toEqual({ dayKey: '2026-07-16', clock: '4:34p' });
+  });
+  it('moves the day back when UTC has already rolled over', () => {
+    expect(activityWhen('2026-11-05T02:34:00.123Z', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '8:34p' });
+  });
+  it('moves the day forward when the zone is ahead of UTC', () => {
+    expect(activityWhen('2026-11-04T23:30:00Z', 'Asia/Tokyo')).toEqual({ dayKey: '2026-11-05', clock: '8:30a' });
+  });
+  it('defaults to America/Chicago when no zone is given', () => {
+    expect(activityWhen('2026-11-04T21:34:00Z')?.clock).toBe('3:34p');
+  });
+  it('reads a stamp with an offset as the instant it names', () => {
+    expect(activityWhen('2026-11-04T16:34:00-05:00', 'America/Chicago')?.clock).toBe('3:34p');
+  });
+  it('keeps a zone-less stamp as the business wall clock', () => {
+    expect(activityWhen('2026-11-04T09:00:00', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '9:00a' });
+  });
+  it('returns null for a stamp with no readable time', () => {
+    expect(activityWhen('')).toBeNull();
+    expect(activityWhen('2026-11-04')).toBeNull();
+    expect(activityWhen('not a date')).toBeNull();
+  });
+  it('adds the business reading beside the raw stamp in the opened entry', () => {
+    const rows = activityDetailRows(entry({ timestamp: '2026-11-04T21:34:00Z' }), 'America/Chicago');
+    expect(rows[0]).toEqual({ label: 'When', value: '2026-11-04T21:34:00Z' });
+    expect(rows[1]).toEqual({ label: 'Business time', value: '2026-11-04 3:34p' });
+  });
+});
 // #1049: saveEmergencyContacts audits every refused save. The Activity Log has no
 // per-event formatter; this pins that the generic one reads the new event well.
 describe('EMERGENCY_CONTACT_SAVE_REFUSED (#1049)', () => {
