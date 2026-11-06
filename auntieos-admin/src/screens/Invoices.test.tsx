@@ -386,6 +386,22 @@ describe('Invoices screen', () => {
       overpaidCents: 0,
     });
     recordPayment.mockResolvedValue({ ok: true, confirmationEmailSent: false, creditedToAccountCents: 0 });
+    // #1566: the record-payment dialog stops the applied part at the ledger's
+    // balance, so the ledger has to agree this $40 invoice still owes $40.
+    getInvoiceLedger.mockImplementation(async (invoiceId: string) => ({
+      invoiceId,
+      payments: [],
+      paidCents: 0,
+      totalCents: 4000,
+      amountDueCents: 4000,
+      ledgerPayments: [],
+      unlinkedKinfolkPayments: [],
+      unresolvedAmountCount: 0,
+      sessions: [],
+      missingSessionIds: [],
+      orphanSessionIds: [],
+      truncated: false,
+    }));
     usePagedCollection.mockReturnValue(
       paged([
         entry({

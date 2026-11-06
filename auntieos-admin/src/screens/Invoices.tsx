@@ -1,3 +1,4 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useMemo, useState } from 'react';
 import {
   invoiceDispute,
@@ -11,7 +12,7 @@ import {
   type InvoiceEntry,
   type InvoiceState,
 } from '../api/invoices';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import {
   formatUsd,
   humanizeDate,
@@ -25,7 +26,7 @@ import {
   localDateIso,
   unstampedStateInfo,
 } from '../lib/invoiceFormat';
-import { useCollection, useDocById } from '../lib/firestore';
+import { useDocById } from '../lib/firestore';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
@@ -312,7 +313,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // The facet's options come from the household DIRECTORY rather than from the
   // loaded invoices: a facet built from the page can only offer households that
   // are already visible, which is the opposite of what the control is for.
-  const households = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const households = useKinfolkRoster();
   const householdOptions = useMemo(
     () =>
       households.status === 'ready'

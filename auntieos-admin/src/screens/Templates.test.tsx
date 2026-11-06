@@ -731,21 +731,54 @@ describe('Templates screen: an empty list that says which fact it means', () => 
     listTemplateCategories.mockReset();
     listTemplateCategories.mockResolvedValue([]);
   });
-  it('a search that matched nothing over an OPEN cursor admits it only searched the loaded page', async () => {
-    listTemplates.mockResolvedValue({
-      templates: [tpl({ templateId: 'a', title: 'Alpha' }), tpl({ templateId: 'b', title: 'Beta' })],
-      nextCursor: 'b',
-    });
+  it('#1614: a search reads the remaining pages and finds a template that was not on the first one', async () => {
+    listTemplates
+      .mockResolvedValueOnce({
+        templates: [tpl({ templateId: 'a', title: 'Alpha' })],
+        nextCursor: 'a',
+        total: 2,
+      })
+      .mockResolvedValueOnce({
+        templates: [tpl({ templateId: 'refund.notice', title: 'Refund notice' })],
+        nextCursor: null,
+        total: 2,
+      });
     render(<Templates />);
     await screen.findByText('Alpha');
     await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'refund');
-    expect(
-      await screen.findByText(
-        'Nothing matches "refund". Searched the 2 templates loaded so far, by title and key. Load more to search further.',
-      ),
-    ).toBeInTheDocument();
-    // The control that lifts the bound the message just named is on screen.
-    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
+    expect(await screen.findByText('Refund notice')).toBeInTheDocument();
+    expect(listTemplates).toHaveBeenCalledTimes(2);
+  });
+  it('#1614: the All chip shows the bank total, not the page size', async () => {
+    listTemplates.mockResolvedValueOnce({
+      templates: [tpl({ templateId: 'a', title: 'Alpha' })],
+      nextCursor: 'a',
+      total: 137,
+    });
+    listTemplateCategories.mockResolvedValue(['Booking']);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    expect(screen.getByRole('tab', { name: /^All 137$/ })).toBeInTheDocument();
+    // A category count is only true once every page is read, so none is drawn yet.
+    expect(screen.getByRole('tab', { name: /^Booking$/ })).toBeInTheDocument();
+  });
+  it('#1614: a failed page stops the search chase and shows the inline error once', async () => {
+    listTemplates
+      .mockResolvedValueOnce({ templates: [tpl({ templateId: 'a', title: 'Alpha' })], nextCursor: 'a', total: 2 })
+      .mockRejectedValueOnce(new Error('permission-denied'));
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'x');
+    expect(await screen.findByText(/listTemplates failed: permission-denied/)).toBeInTheDocument();
+    expect(listTemplates).toHaveBeenCalledTimes(2);
+  });
+  it('#1614: a key wraps at its separators, not mid-word', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'booking.confirmed_notice', title: 'Alpha' })]);
+    render(<Templates />);
+    await screen.findByText('Alpha');
+    const code = document.querySelector('.templates__card-id') as HTMLElement;
+    expect(code.querySelectorAll('wbr').length).toBe(2);
+    expect(code.textContent).toBe('booking.confirmed_notice');
   });
   it('a search that matched nothing over an EXHAUSTED list says it searched all of them', async () => {
     listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);

@@ -291,6 +291,7 @@ fun InvoiceDetailScreen(
         uiState.invoice?.let { inv ->
             RecordPaymentDialog(
                 invoice    = inv,
+                amountDueCents = uiState.ledgerAmountDueCents,
                 submitting = uiState.recordingPayment,
                 onDismiss  = { viewModel.closeRecordPayment() },
                 onSubmit   = { payment, applied -> viewModel.recordPayment(payment, applied) },
@@ -1646,6 +1647,8 @@ private fun LedgerCaveatBanner(rows: List<GetInvoiceLedgerResultLedgerPayment>) 
 @Composable
 private fun RecordPaymentDialog(
     invoice: Invoice,
+    /** #1566: the ledger's balance; the applied part stops here. Null caps nothing. */
+    amountDueCents: Long?,
     submitting: Boolean,
     onDismiss: () -> Unit,
     /** The whole transaction, and the Amount box: the part applied to this invoice (#982). */
@@ -1677,7 +1680,7 @@ private fun RecordPaymentDialog(
     // tip (the rest, unless she typed one) and the credit she chose. Null while a
     // box is half-typed.
     val split: PaymentSplit? = if (amountValue != null && amountValue > 0.0) {
-        paymentSplit(amountValue, tip, credit, total)
+        paymentSplit(amountValue, tip, credit, total, amountDueCents)
     } else null
     val creditNeedsHousehold = split is PaymentSplit.Ok && split.creditCents > 0L && invoice.kinfolkId.isBlank()
     val canSave = split is PaymentSplit.Ok && method.isNotBlank() && tipValue != null &&
@@ -1690,24 +1693,17 @@ private fun RecordPaymentDialog(
                 label   = "Record payment",
                 onClick = {
                     val ok = split as? PaymentSplit.Ok ?: return@PrimaryButton
-                    onSubmit(
-                        buildInvoicePayment(
-                            invoice = invoice,
-                            amount = amountValue ?: 0.0,
-                            paymentMethod = method,
-                            referenceNumber = reference,
-                            date = date,
-                            notes = notes,
-                            // The tip as split: typed, or the rest of the payment.
-                            tip = ok.tipCents / 100.0,
-                            fee = feeValue ?: 0.0,
-                            // The whole transaction, applied + tip + credit.
-                            paymentTotal = ok.paidCents / 100.0,
-                            creditToAccount = ok.creditCents / 100.0,
-                            sendConfirmationEmail = sendConfirmation,
-                        ),
-                        amountValue ?: 0.0,
+                    val (payment, applied) = recordPaymentSubmission(
+                        invoice = invoice,
+                        split = ok,
+                        method = method,
+                        reference = reference,
+                        date = date,
+                        notes = notes,
+                        fee = feeValue ?: 0.0,
+                        sendConfirmation = sendConfirmation,
                     )
+                    onSubmit(payment, applied)
                 },
                 loading = submitting,
                 enabled = canSave && !submitting,
@@ -1751,6 +1747,42 @@ private fun RecordPaymentDialog(
     }
 }
 /**
+ * What the Record press hands the view model: the ledger row and the figure
+ * `markInvoicePaid` settles with. Pure; unit-tested.
+ *
+ * #1566: the settlement is the split's APPLIED part, which stops at the balance,
+ * never the Amount box as typed. Whatever was over the balance is already in the
+ * split's tip, which is where the fee comes out of.
+ */
+internal fun recordPaymentSubmission(
+    invoice: Invoice,
+    split: PaymentSplit.Ok,
+    method: String,
+    reference: String,
+    date: String,
+    notes: String,
+    fee: Double,
+    sendConfirmation: Boolean,
+): Pair<Payment, Double> {
+    val appliedDollars = split.appliedCents / 100.0
+    return buildInvoicePayment(
+        invoice = invoice,
+        amount = appliedDollars,
+        paymentMethod = method,
+        referenceNumber = reference,
+        date = date,
+        notes = notes,
+        // The tip as split: typed, or the rest of the payment, plus any part of
+        // the Amount over the balance.
+        tip = split.tipCents / 100.0,
+        fee = fee,
+        // The whole transaction, applied + tip + credit.
+        paymentTotal = split.paidCents / 100.0,
+        creditToAccount = split.creditCents / 100.0,
+        sendConfirmationEmail = sendConfirmation,
+    ) to appliedDollars
+}
+/**
  * #988: where the payment goes, in words, shown before Save. Pure; unit-tested.
  *
  * The fee is named as coming out of the tip, never out of the bill.
@@ -1760,8 +1792,14 @@ internal fun recordPaymentSplitCopy(split: PaymentSplit?, feeCents: Long?): Stri
     is PaymentSplit.Refused -> split.message
     is PaymentSplit.Ok -> {
         val fee = if (feeCents != null && feeCents > 0L) " (the ${formatCentsUsd(feeCents)} fee comes out of it)" else ""
+        // #1566: said out loud when the Amount was over the balance.
+        val over = if (split.overCents > 0L) {
+            " The invoice owes ${formatCentsUsd(split.appliedCents)}, so the ${formatCentsUsd(split.overCents)} over it is tip."
+        } else {
+            ""
+        }
         "${formatCentsUsd(split.paidCents)} paid: ${formatCentsUsd(split.appliedCents)} to this invoice, " +
-            "${formatCentsUsd(split.tipCents)} tip$fee, ${formatCentsUsd(split.creditCents)} account credit."
+            "${formatCentsUsd(split.tipCents)} tip$fee, ${formatCentsUsd(split.creditCents)} account credit.$over"
     }
 }
 /**
