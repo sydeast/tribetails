@@ -1,0 +1,15 @@
+fix(form-schemas): the list reads again after the editor saves (#1615)
+
+The web Form Schemas route opened the editor over the list and closed it on
+save, but the list only loaded on mount, so a new or edited schema did not
+appear until the operator pressed Reload. FormSchemas now takes a reloadKey and
+FormSchemasView bumps it from onSaved. Cancel does not reload.
+
+Android and the desktop console were read for the same defect and do not have
+it: their list screen leaves composition while the editor is open and reloads
+when it returns, and both editors confirm a save through their toast host.
+
+Tests: FormSchemasView.test.tsx covers the reload after save and the confirmation
+staying on screen, plus a single load on mount.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
