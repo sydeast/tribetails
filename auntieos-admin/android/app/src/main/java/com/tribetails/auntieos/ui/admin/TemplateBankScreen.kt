@@ -1012,6 +1012,9 @@ internal const val TEMPLATE_KEY_MAX_LENGTH = 120
  * here is not a promise the key is free: `saveTemplate` is called with
  * `expectNew` and the server has the last word. This is the fast, local half.
  */
+/** #1614: "Subject is required." once the operator has touched the field and left it blank. */
+internal fun requiredFieldHint(label: String, value: String, touched: Boolean): String? =
+    if (touched && value.isBlank()) "$label is required." else null
 internal fun templateKeyError(key: String, existingKeys: List<String>): String? {
     val trimmed = key.trim()
     return when {
@@ -1086,6 +1089,15 @@ private fun TemplateEditorScreen(
     var tags by rememberSaveable(template.templateId, creating, stateSaver = StringListSaver) { mutableStateOf(template.tags) }
 
     val keyError = if (creating) templateKeyError(templateId, existingKeys) else null
+    // #1614: a stale "Couldn't save" banner must not outlive the fix, and a
+    // required field left blank says so at the field instead of only greying Save.
+    var subjectTouched by rememberSaveable(template.templateId, creating) { mutableStateOf(false) }
+    var bodyTouched by rememberSaveable(template.templateId, creating) { mutableStateOf(false) }
+    val subjectHint = requiredFieldHint("Subject", subject, subjectTouched)
+    val bodyHint = requiredFieldHint("Body", bodyValue.text, bodyTouched)
+    LaunchedEffect(templateId, title, subject, bodyValue.text, category, description, tags) {
+        if (saveError != null) onDismissError()
+    }
     val mode = remember(template.templateId, creating) { templateEditMode(template, creating) }
     val canSave = when (mode) {
         TemplateEditMode.READ_ONLY -> false
@@ -1244,11 +1256,16 @@ private fun TemplateEditorScreen(
                     Spacer(Modifier.height(6.dp))
                     AuntieField(
                         value = subject,
-                        onValueChange = { subject = it },
+                        onValueChange = { subject = it; subjectTouched = true },
                         placeholder = "Your booking is confirmed",
                         enabled = mode != TemplateEditMode.READ_ONLY,
+                        isError = subjectHint != null,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    subjectHint?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, style = AuntieTheme.typography.bodySmall, color = c.error)
+                    }
                 }
 
                 // FULL keeps the markdown toolbar + body field, unchanged.
@@ -1279,11 +1296,15 @@ private fun TemplateEditorScreen(
                             )
                             AuntieMarkdownField(
                                 value = bodyValue,
-                                onValueChange = { bodyValue = it },
+                                onValueChange = { bodyValue = it; bodyTouched = true },
                                 label = "Body · Markdown and Handlebars",
                                 minLines = 6,
                                 modifier = Modifier.fillMaxWidth(),
                             )
+                            bodyHint?.let {
+                                Spacer(Modifier.height(6.dp))
+                                Text(it, style = AuntieTheme.typography.bodySmall, color = c.error)
+                            }
                             Spacer(Modifier.height(6.dp))
                             // The mock's `.edmeta`: the count, and what happens to a token.
                             Text(

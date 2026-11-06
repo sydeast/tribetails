@@ -10,16 +10,22 @@ import { FormSchemaEditor } from '../screens/FormSchemaEditor';
  */
 export function FormSchemasView() {
   const [editor, setEditor] = useState<{ id?: string } | null>(null);
+  // #1615: a save changes the list, and the list used to keep showing what it
+  // loaded before the editor opened until the operator pressed Reload.
+  const [reloadKey, setReloadKey] = useState(0);
   return (
     <>
-      <FormSchemas onNew={() => setEditor({})} onSelect={(id) => setEditor({ id })} />
+      <FormSchemas reloadKey={reloadKey} onNew={() => setEditor({})} onSelect={(id) => setEditor({ id })} />
       {editor && (
         // Keyed on the record: picking a different schema without closing the
         // modal must load that schema, not keep the previous one's draft.
         <FormSchemaEditor
           key={editor.id ?? '__new__'}
           {...(editor.id ? { schemaId: editor.id } : {})}
-          onSaved={() => setEditor(null)}
+          onSaved={() => {
+            setEditor(null);
+            setReloadKey((k) => k + 1);
+          }}
           onCancel={() => setEditor(null)}
         />
       )}
