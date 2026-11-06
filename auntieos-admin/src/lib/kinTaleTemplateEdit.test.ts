@@ -248,6 +248,10 @@ describe('new-template drafts', () => {
     expect(d.isDefault).toBe(false);
   });
 
+  it('#1614: neither draft prefills the built-in default description', () => {
+    expect(newTemplateDraft().description).toBe('');
+    expect(seedTemplateDraft().description).toBe('');
+  });
   it('neither draft prefills a default message: mark 23 of the 2026-08-17 walk', () => {
     expect(seedTemplateDraft().defaultEmailMessage).toBe('');
     expect(newTemplateDraft().defaultEmailMessage).toBe('');

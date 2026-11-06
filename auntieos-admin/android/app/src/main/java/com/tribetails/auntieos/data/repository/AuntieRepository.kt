@@ -6,9 +6,11 @@ import com.tribetails.auntieos.data.contracts.ManageBookingSeriesArgs
 import com.tribetails.auntieos.data.contracts.decodeBatchUpdateBookingsResult
 import com.tribetails.auntieos.data.contracts.decodeManageBookingSeriesResult
 import com.tribetails.auntieos.domain.withSandboxScope
+import com.tribetails.auntieos.domain.sortVetClinics
 import com.tribetails.auntieos.domain.RecentSend
 import com.tribetails.auntieos.domain.decodeRecentSends
 
+import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
@@ -2939,8 +2941,12 @@ class AuntieRepository(
 
     // ---- Vet clinics shared catalog (matches web `vet_clinics` collection) ----
 
-    /** Ordered/capped exactly like the web `VET_CLINICS_QUERY` (name ascending, 500). */
-    private fun vetClinicsQuery() = firestore.collection("vet_clinics").orderBy("name").limit(500)
+    /**
+     * Paged/capped exactly like the web `VET_CLINICS_QUERY` (document id, 500).
+     * NOT `orderBy("name")`: Firestore drops a document missing the ordered field
+     * (#1565). Callers sort A to Z with [sortVetClinics].
+     */
+    private fun vetClinicsQuery() = firestore.collection("vet_clinics").orderBy(FieldPath.documentId()).limit(500)
 
     fun observeVetClinics(): Flow<List<VetClinic>> = observeVetClinicsOrFail().map { it.clinics }
 
@@ -2952,7 +2958,7 @@ class AuntieRepository(
      */
     suspend fun getVetClinicsOnce(): Result<List<VetClinic>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        vetClinicsQuery().get().await().toObjects(VetClinic::class.java)
+        sortVetClinics(vetClinicsQuery().get().await().toObjects(VetClinic::class.java))
     }.onFailure { AuntieLog.e("Failed to read vet clinics", it) }
 
     /**
@@ -2974,7 +2980,7 @@ class AuntieRepository(
                     trySend(VetClinicsSnapshot(failed = true))
                     return@addSnapshotListener
                 }
-                trySend(VetClinicsSnapshot(clinics = snap?.toObjects(VetClinic::class.java).orEmpty()))
+                trySend(VetClinicsSnapshot(clinics = sortVetClinics(snap?.toObjects(VetClinic::class.java).orEmpty())))
             }
         awaitClose { reg.remove() }
     }

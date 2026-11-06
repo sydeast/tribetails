@@ -1,6 +1,7 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useState } from 'react';
 import { TRIBAL_INTEL_QUERY, type TribalIntelEntry } from '../api/tribalIntel';
-import { KINFOLK_QUERY, KIN_QUERY, type Kin, type Kinfolk } from '../api/directory';
+import { KIN_QUERY, type Kin, type Kinfolk } from '../api/directory';
 import { deleteTrainingDocument } from '../api/tribalIntelWrite';
 import {
   TRIBAL_INTEL_DELETE_CAVEAT,
@@ -62,7 +63,7 @@ export function TribalIntel() {
   // The target picker's rosters. Streamed here rather than inside the form so
   // opening the panel is instant instead of showing an empty household list
   // while a fresh listener warms up.
-  const kinfolkRows = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkRows = useKinfolkRoster();
   const kinRows = useCollection<Kin>(KIN_QUERY);
 
   const [query, setQuery] = useState('');

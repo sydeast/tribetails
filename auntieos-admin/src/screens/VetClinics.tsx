@@ -1,3 +1,4 @@
+import { useVetClinics } from '../lib/useVetClinics';
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
@@ -6,7 +7,7 @@ import { EntityCardGrid } from '../components/EntityCardGrid';
 import { GhostButton, IconButton, PrimaryButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
 import { useCollection } from '../lib/firestore';
-import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
+import { type VetClinic } from '../api/vetClinics';
 import { HOUSEHOLD_DATA_QUERY } from '../api/householdData';
 import {
   updateVetClinic,
@@ -64,7 +65,7 @@ import './VetClinics.css';
  * named "Retire" and wears an archive glyph, and the mock is amended to match.
  */
 export function VetClinics() {
-  const clinics = useCollection<VetClinic>(VET_CLINICS_QUERY);
+  const clinics = useVetClinics();
   const households = useCollection<VetLinkedHousehold>(HOUSEHOLD_DATA_QUERY);
   const [query, setQuery] = useState('');
   const [adding, setAdding] = useState(false);
