@@ -330,6 +330,18 @@ describe('KinTales screen', () => {
     expect(onSelect).toHaveBeenCalledWith('tale-42');
   });
 
+  it('#1563: a draft row selects its namespaced id, which the view routes to Communicate', async () => {
+    setDrafts([draft({ _id: 'gd-5' })]);
+    const onSelect = vi.fn();
+    render(<KinTales onSelect={onSelect} />);
+    await user.click(screen.getByRole('button', { name: /The Okafors/i }));
+    expect(onSelect).toHaveBeenCalledWith('generated_drafts/gd-5');
+  });
+  it('#1563: a draft already sent as a KinTale is not listed again under Drafts', () => {
+    setDrafts([draft({ _id: 'gd-sent', publishedReportId: 'r1' })]);
+    render(<KinTales />);
+    expect(screen.queryByText('The Okafors')).toBeNull();
+  });
   it('omitting onSelect renders each row STATIC (not a live no-op button)', () => {
     usePagedCollection.mockReturnValue(paged([entry({})]));
     render(<KinTales />);

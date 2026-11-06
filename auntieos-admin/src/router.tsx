@@ -387,7 +387,11 @@ const settingsRoute = createRoute({
 const communicateRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'communicate',
-  component: lazyRouteComponent(() => import('./screens/Communicate'), 'Communicate'),
+  // `draftId` opens one stored `generated_drafts` doc in Personalize for
+  // review, send or delete (#1563). It is where KinTales > Drafts and Home's
+  // "KinTales pending" rows land; without it every stored draft was stranded.
+  validateSearch: optionalIdSearch(['draftId'] as const),
+  component: lazyRouteComponent(() => import('./routes/CommunicateView'), 'CommunicateView'),
 });
 
 // Scheduled campaigns: Communicate's sibling, the same act at a later time.

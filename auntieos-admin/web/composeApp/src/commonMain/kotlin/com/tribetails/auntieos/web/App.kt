@@ -196,6 +196,9 @@ private fun SignedInApp(
     var invoiceLineVisitId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(current) { if (current != Destination.Sessions) invoiceLineVisitId = null }
     var reportSessionId by remember { mutableStateOf(if (initialRoute.dest == Destination.KinTales) initialRoute.detailId else null) }
+    // #1563: a stored KinTale draft handed to Communicate from KinTales or Home.
+    // Communicate clears it once applied, so the next visit opens blank.
+    var openDraft by remember { mutableStateOf<com.tribetails.auntieos.web.data.GeneratedDraft?>(null) }
     var mediaEntityId by remember { mutableStateOf(if (initialRoute.dest == Destination.MediaGallery) initialRoute.detailId else null) }
     var mediaEntityType by remember { mutableStateOf(if (initialRoute.dest == Destination.MediaGallery) initialRoute.detailType else null) }
     var mediaEntityName by remember { mutableStateOf<String?>(null) }
@@ -404,8 +407,15 @@ private fun SignedInApp(
         // which screen or sub-route the operator lands on.
         RouteToastHost {
         when (current) {
-            Destination.Home        -> HomeScreen(authUser = user, onNavigate = { current = it })
-            Destination.Communicate -> CommunicateScreen()
+            Destination.Home        -> HomeScreen(
+                authUser = user,
+                onNavigate = { current = it },
+                onOpenDraft = { draft -> openDraft = draft; current = Destination.Communicate },
+            )
+            Destination.Communicate -> CommunicateScreen(
+                openDraft = openDraft,
+                onDraftConsumed = { openDraft = null },
+            )
             Destination.Directory   -> DirectoryScreen(
                 initialKinfolkId = directoryKinfolkId,
                 initialKinId     = directoryKinId,
@@ -423,7 +433,10 @@ private fun SignedInApp(
                         onBack     = { reportSessionId = null },
                     )
                 } else {
-                    KinTaleLogsScreen(onOpenReport = { reportSessionId = it })
+                    KinTaleLogsScreen(
+                        onOpenReport = { reportSessionId = it },
+                        onOpenDraft = { draft -> openDraft = draft; current = Destination.Communicate },
+                    )
                 }
             }
             Destination.Bookings    -> BookingScreen()

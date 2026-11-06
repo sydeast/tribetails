@@ -410,6 +410,21 @@ describe('pendingTaleRows and pendingDraftCount', () => {
     expect(pendingTaleRows([draft({ generatedCopy: '   ' })])).toEqual([]);
   });
 
+  it('#1563: drops a draft already sent as a KinTale, which is waiting on nobody', () => {
+    const rows = pendingTaleRows([draft({ _id: 'sent', publishedReportId: 'r1' }), draft({ _id: 'open' })]);
+    expect(rows.map((r) => r.id)).toEqual(['open']);
+  });
+
+  it('#1563: lists only drafts still waiting, since each row opens its draft', () => {
+    const rows = pendingTaleRows([
+      draft({ _id: 'approved', status: 'approved' }),
+      draft({ _id: 'gen', status: 'generated' }),
+      draft({ _id: 'blank', status: '' }),
+      draft({ _id: 'pend', status: 'PENDING' }),
+    ]);
+    expect(rows.map((r) => r.id)).toEqual(['gen', 'blank', 'pend']);
+  });
+
   it('skips blank leading lines to find the real first line of copy', () => {
     const rows = pendingTaleRows([draft({ generatedCopy: '\n\n  Real opening line\nmore' })]);
     expect(rows[0]?.blurb).toBe('Real opening line');

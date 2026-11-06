@@ -50,6 +50,7 @@ import com.composables.icons.lucide.Settings
 import com.composables.icons.lucide.TriangleAlert
 import com.composables.icons.lucide.UserPlus
 import com.composables.icons.lucide.X
+import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.isUntriagedOrphan
@@ -95,6 +96,11 @@ fun KinTaleLogsScreen(
     onBack: () -> Unit,
     onOpenReport: (sessionId: String) -> Unit = {},
     /**
+     * #1563: opens one `generated_drafts` doc in Communicate, where a draft is
+     * reviewed, sent or deleted. Drafts were not listed here at all before.
+     */
+    onOpenDraft: (draftId: String) -> Unit = {},
+    /**
      * The logs mock's one head control, "Edit templates", which opens the
      * KinTale template editor. Null renders no control at all rather than a
      * button that no-ops (the Buttons.tsx ControlShell rule, applied here).
@@ -102,6 +108,8 @@ fun KinTaleLogsScreen(
     onOpenTemplates: (() -> Unit)? = null,
 ) {
     val reports by viewModel.kinCareReports.collectAsState()
+    val generatedDrafts by viewModel.generatedDrafts.collectAsState()
+    val draftsError by viewModel.generatedDraftsError.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val kinfolkList by viewModel.kinfolkDirectory.collectAsState()
     val triageResult by viewModel.triageResult.collectAsState()
@@ -116,6 +124,7 @@ fun KinTaleLogsScreen(
 
     LaunchedEffect(Unit) {
         viewModel.loadKinCareReports()
+        viewModel.loadGeneratedDrafts()
         viewModel.loadKinfolkDirectory()
     }
 
@@ -130,18 +139,22 @@ fun KinTaleLogsScreen(
     // KinTales only; no server-side report search exists.
     val matching = nonOrphanActive.filter { matchesSearch(it, searchQuery) }
     val grouped = sortReports(matching, sortMode).groupBy { bucketFor(it) }
+    // #1563: the generated drafts join the Drafts bucket and every count.
+    val matchingDrafts = generatedDrafts.filter { matchesDraftSearch(it, searchQuery) }
+    val loadedCount = nonOrphanActive.size + generatedDrafts.size
+    val matchingCount = matching.size + matchingDrafts.size
 
     // The two readings of that filter, both decided in one place so the chip in
     // the heading and the list below it can never tell different stories.
     val countLabel = resultCountLabel(
-        loaded = nonOrphanActive.size,
-        matching = matching.size,
+        loaded = loadedCount,
+        matching = matchingCount,
         isLoading = isLoading,
         hasError = loadError != null,
     )
     val outcome = listOutcome(
-        loaded = nonOrphanActive.size,
-        matching = matching.size,
+        loaded = loadedCount,
+        matching = matchingCount,
         orphans = orphans.size,
         isLoading = isLoading,
     )
@@ -150,7 +163,10 @@ fun KinTaleLogsScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             AuntiePullRefresh(
                 isRefreshing = isLoading,
-                onRefresh = { viewModel.loadKinCareReports() },
+                onRefresh = {
+                    viewModel.loadKinCareReports()
+                    viewModel.loadGeneratedDrafts()
+                },
             ) {
                 Column(
                     modifier = Modifier
@@ -233,14 +249,25 @@ fun KinTaleLogsScreen(
                         ListOutcome.NoMatch -> NoMatchState()
                         ListOutcome.Rows    -> Bucket.entries.forEach { bucket ->
                             val items = grouped[bucket].orEmpty()
-                            if (items.isNotEmpty()) {
+                            val drafts = if (bucket == Bucket.Drafts) matchingDrafts else emptyList()
+                            if (items.isNotEmpty() || drafts.isNotEmpty()) {
                                 BucketGroup(
                                     bucket       = bucket,
                                     reports      = items,
+                                    drafts       = drafts,
                                     onOpenReport = onOpenReport,
+                                    onOpenDraft  = onOpenDraft,
                                 )
                             }
                         }
+                    }
+                    // A failed drafts read never passes for "no drafts".
+                    draftsError?.let { msg ->
+                        Text(
+                            text  = "Drafts could not be loaded ($msg), so the Drafts count is missing them.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.error,
+                        )
                     }
 
                     Spacer(Modifier.size(4.dp))
@@ -620,17 +647,63 @@ private fun ArchiveBadDataDialog(
 private fun BucketGroup(
     bucket: Bucket,
     reports: List<KinCareReport>,
+    drafts: List<Draft> = emptyList(),
     onOpenReport: (sessionId: String) -> Unit = {},
+    onOpenDraft: (draftId: String) -> Unit = {},
 ) {
     // The mock's `.bucket-head`: the label, then the count as the mono note on
     // the rule (`DenPanel.meta`), never a pill that reads as a status.
     DenPanel(
         title = bucket.label,
-        meta = "${reports.size}",
+        meta = "${reports.size + drafts.size}",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
             reports.forEach { ReportRow(it, onOpenReport) }
+            drafts.forEach { GeneratedDraftRow(it, onOpenDraft) }
         }
+    }
+}
+/**
+ * #1563: one `generated_drafts` doc in the Drafts bucket. Same frame as
+ * [ReportRow]; the submeta names the draft's type ("visit report", "sms"),
+ * because the generator writes every kind of message into this collection.
+ * Always tappable: it opens the draft in Communicate.
+ */
+@Composable
+private fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> Unit) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val name = draft.kinfolkName.orEmpty()
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(c.surfaceGlass)
+            .border(dims.borderHairline, c.border, shape)
+            .clickable(onClickLabel = "Open draft") { onOpenDraft(draft.id) }
+            .padding(horizontal = 15.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(13.dp),
+    ) {
+        AuntieIconTile(icon = Lucide.FileText, tone = AuntieStatusTone.Neutral, size = 36.dp)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                text  = name.ifBlank { "Unnamed Kinfolk" },
+                style = if (name.isBlank()) {
+                    AuntieTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic, fontWeight = FontWeight.Normal)
+                } else {
+                    AuntieTheme.typography.titleMedium
+                },
+                color = if (name.isBlank()) c.textDim else c.textPrimary,
+            )
+            Text(
+                text  = draftSubmeta(draft),
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
+        AuntieStatusPill(label = draft.status.lowercase().ifBlank { "pending" }, tone = AuntieStatusTone.Neutral, compact = true)
     }
 }
 
@@ -923,6 +996,23 @@ internal fun listOutcome(loaded: Int, matching: Int, orphans: Int, isLoading: Bo
         else                                     -> ListOutcome.Rows
     }
 
+/**
+ * #1563: a draft row's line under the household: its type, then its date.
+ * Pure; tested.
+ */
+internal fun draftSubmeta(d: Draft): String {
+    val type = d.communicationType.replace('_', ' ').trim().ifBlank { "visit report" }
+    val whenText = if (d.createdOn.isBlank()) "Date TBD" else shortDateTime(d.createdOn)
+    return "$type · $whenText"
+}
+/** #1563: the list search over a draft (household, type, copy). Pure; tested. */
+internal fun matchesDraftSearch(d: Draft, query: String): Boolean {
+    val q = query.lowercase().trim()
+    if (q.isBlank()) return true
+    return d.kinfolkName.orEmpty().lowercase().contains(q) ||
+        d.communicationType.replace('_', ' ').lowercase().contains(q) ||
+        d.generatedCopy.lowercase().contains(q)
+}
 /** List-level search predicate (Kinfolk name, service, body). */
 internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
     val q = query.lowercase().trim()

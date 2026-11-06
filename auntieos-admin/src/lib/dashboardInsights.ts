@@ -2,6 +2,7 @@ import { threadHouseholdName, threadPreviewText } from './inboxFormat';
 import { sessionState, sessionDayKey, sessionHousehold, shiftDayIso } from './sessionFormat';
 import { formatCentsUsd, isoDatePrefixOrNull } from './invoiceFormat';
 import { str, arr } from './coerce';
+import { draftStatusAsKinTaleStatus } from './kinTaleList';
 import { isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import type { GeneratedDraftRow } from '../api/drafts';
 import type { ConversationSummary } from '../api/inbox';
@@ -798,6 +799,12 @@ export function pendingTaleRows(
 ): TaleRow[] {
   return drafts
     .filter((d) => str(d.generatedCopy).trim() !== '')
+    // #1563: only drafts still waiting on a decision. The rows and the button
+    // open what they list, so an approved or already-sent draft here would open
+    // a draft there is nothing left to do with. Same positive status match the
+    // KinTales list makes (`draftStatusAsKinTaleStatus`).
+    .filter((d) => str(d.publishedReportId).trim() === '')
+    .filter((d) => draftStatusAsKinTaleStatus(str(d.status)) === 'DRAFT')
     .slice(0, Math.max(0, limit))
     .map((d) => {
       const type = str(d.communicationType).replace(/_/g, ' ').trim();
