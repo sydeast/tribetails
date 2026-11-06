@@ -116,6 +116,7 @@ the stale "~26":
   `src/lib/moneyIdempotency.ts`. The `shapeSignature` walker unwraps optional/nullable/
   default/effects and descends arrays, so a rename at ANY depth (e.g.
   `schema.sections[].fields[].required`) fails the guard.
+- `listTemplates` response gained `total` (#1614): the whole bank's size, so a paged client can show the true count. Additive; an unbounded read reports its own length.
 - `listTemplates` response gained three fields per row (#953, doc-only: this
   response is not in `shapeKeys`/`contracts:check`):
   - `format`: `'visual'` for a visual template, the doc's raw value for
