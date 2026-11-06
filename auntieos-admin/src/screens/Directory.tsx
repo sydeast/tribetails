@@ -1,7 +1,7 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
-  KINFOLK_QUERY,
   KIN_QUERY,
   KINFOLK_SORT_OPTIONS,
   KIN_SORT_OPTIONS,
@@ -378,7 +378,7 @@ export function Directory({
   openUnappliedPayments = false,
   unappliedPaymentId = '',
 }: DirectoryProps) {
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   const kinState = useCollection<Kin>(KIN_QUERY);
   const navigate = useNavigate();
   // #890: Add Kinfolk keeps a household waiting on its Emergency Contact per operator.

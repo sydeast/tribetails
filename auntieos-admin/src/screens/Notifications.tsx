@@ -1,3 +1,4 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useMemo, useState } from 'react';
 import {
   NOTIFICATIONS_QUERY,
@@ -16,7 +17,7 @@ import {
 } from '../api/notificationsWrite';
 import { batchUpdateBookings, type BatchBookingAction } from '../api/bookingsWrite';
 import { plainBatchError } from '../lib/bookingBulk';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import { useCollection } from '../lib/firestore';
 import {
   NOTIF_UNREAD_FILTER,
@@ -154,7 +155,7 @@ export interface NotificationsProps {
  */
 export function Notifications({ onNavigate }: NotificationsProps = {}) {
   const rows = useCollection<NotificationEntry>(NOTIFICATIONS_QUERY);
-  const households = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const households = useKinfolkRoster();
 
   // Issue #707: WAS a Set<string>, so any write for a row disabled all six of
   // its buttons for however long that ONE call took (10s+ for

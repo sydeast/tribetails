@@ -20,7 +20,7 @@ import { MAX_CREDIT_REASON_LENGTH, stageGivenCredit } from '../lib/creditLedger'
 import { planApply, stageApply, type ApplyOutcome } from '../lib/paymentApply';
 import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
 import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
-import type { InvoiceDoc } from './markInvoicePaid';
+import { OVER_BALANCE_REFUSAL_CODE, type InvoiceDoc } from './markInvoicePaid';
 
 /**
  * DECIDE WHAT AN UNAPPLIED CARD PAYMENT BECOMES (#1003).
@@ -305,6 +305,17 @@ export async function resolveUnappliedPaymentHandler(
         kinfolkId,
         spendableCents: (paymentCents ?? 0) - args.creditCents,
       });
+      // #1566: planApply now refuses an apply above the balance on its own,
+      // with words for the record-payment dialogs (the rest is tip). Here the
+      // rest belongs in account credit, so this path keeps its own code and
+      // sentence, below.
+      if (!plannedApply.ok && plannedApply.refusal.code === OVER_BALANCE_REFUSAL_CODE) {
+        refuse(
+          'apply_exceeds_due',
+          `Invoice ${str((doc as Record<string, unknown> | null)?.['invoiceNumber']) || applyInvoiceId} owes ` +
+            `${usd(plannedApply.refusal.amountDueCents ?? 0)}, so no more than that can be applied to it.`,
+        );
+      }
       if (!plannedApply.ok) refuse(plannedApply.refusal.code, plannedApply.refusal.message);
       // NO OVERPAYMENT BY DECISION. What the invoice does not owe belongs in
       // account credit, where the admin can see it and say why; putting it on

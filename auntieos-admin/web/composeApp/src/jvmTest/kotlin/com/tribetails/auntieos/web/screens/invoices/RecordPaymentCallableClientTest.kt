@@ -372,4 +372,75 @@ class RecordPaymentCallableClientTest {
         assertTrue(form is RecordPaymentForm.Invalid)
         assertTrue((form as RecordPaymentForm.Invalid).message.contains("is not a fee"))
     }
+
+    // ── #1566: an Apply figure over the balance is tip, never applied ──────
+    // The walk: $78.50 owed, $100 applied, fee $2.
+    private val owes7850 = invoice.copy(total = 78.5, amountDue = 78.5)
+    @Test
+    fun overBalanceApplyIsCappedAndTheRestIsTip() {
+        assertEquals(
+            RecordPaymentSplit.Ok(paidCents = 10_000L, appliedCents = 7_850L, tipCents = 2_150L, creditCents = 0L, overCents = 2_150L),
+            recordPaymentSplit("100", "100", "", "", amountDueCents = 7_850L),
+        )
+    }
+    @Test
+    fun overBalanceTypedTipIsAddedToTheOverPart() {
+        val split = recordPaymentSplit("105", "100", "5", "", amountDueCents = 7_850L) as RecordPaymentSplit.Ok
+        assertEquals(7_850L, split.appliedCents)
+        assertEquals(2_650L, split.tipCents)
+    }
+    @Test
+    fun overBalanceCreditComesOutOfTheOverPart() {
+        val split = recordPaymentSplit("100", "100", "", "10", amountDueCents = 7_850L) as RecordPaymentSplit.Ok
+        assertEquals(7_850L, split.appliedCents)
+        assertEquals(1_150L, split.tipCents)
+        assertEquals(1_000L, split.creditCents)
+    }
+    @Test
+    fun overBalanceTypedTipThatNoLongerFitsIsRefusedAndSaysWhy() {
+        val split = recordPaymentSplit("100", "100", "21.50", "", amountDueCents = 7_850L) as RecordPaymentSplit.Refused
+        assertTrue(split.message.contains("does not cover \$78.50 applied plus a \$43.00 tip"), split.message)
+        assertTrue(split.message.contains("The invoice owes \$78.50, so \$21.50 of the amount applied counts as tip."), split.message)
+    }
+    @Test
+    fun exactlyTheBalanceIsUnchanged() {
+        assertEquals(
+            RecordPaymentSplit.Ok(7_850L, 7_850L, 0L, 0L),
+            recordPaymentSplit("78.50", "78.50", "", "", amountDueCents = 7_850L),
+        )
+    }
+    @Test
+    fun aZeroAmountDueIsNotTrustedAndCapsNothing() {
+        assertEquals(null, invoiceBalanceCents(invoice.copy(amountDue = 0.0)))
+        assertEquals(7_850L, invoiceBalanceCents(owes7850))
+        val split = recordPaymentSplit("100", "100", "", "", amountDueCents = null) as RecordPaymentSplit.Ok
+        assertEquals(10_000L, split.appliedCents)
+    }
+    @Test
+    fun anInvoiceThatOwesNothingTakesNoPayment() {
+        assertEquals(
+            RecordPaymentSplit.Refused("This invoice owes nothing, so no payment can be recorded against it."),
+            recordPaymentSplit("100", "100", "", "", amountDueCents = 0L),
+        )
+    }
+    @Test
+    fun overBalanceSplitLineSaysTheInvoiceTakesTheBalanceAndTheRestIsTip() {
+        assertEquals(
+            "\$100.00 paid: \$78.50 to this invoice, \$21.50 tip (the \$2.00 fee comes out of it), \$0.00 account credit. " +
+                "The invoice owes \$78.50, so the \$21.50 over it is tip.",
+            recordPaymentSplitLine(recordPaymentSplit("100", "100", "", "", invoiceBalanceCents(owes7850)), "2"),
+        )
+    }
+    @Test
+    fun overBalanceFormSendsTheBalanceAsApplyAndTheRestAsTip() {
+        val form = parseRecordPaymentForm(
+            owes7850, "100", "100", "", "2", "Venmo", "", "2026-11-05", "", "", false,
+        )
+        val e = (form as RecordPaymentForm.Ready).entry
+        assertEquals(78.5, e.applyAmount)
+        assertEquals(21.5, e.payment.tip)
+        assertEquals(100.0, e.payment.amount)
+        assertEquals(2.0, e.fee)
+        assertEquals(0L, e.creditToAccountCents)
+    }
 }
