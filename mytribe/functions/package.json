@@ -85,7 +85,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@firebase/rules-unit-testing": "^5.0.2",
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@types/node": "^26.6.5",
     "@types/sanitize-html": "^2.16.2",
     "eslint": "^10.13.0",
