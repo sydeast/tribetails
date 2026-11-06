@@ -159,6 +159,15 @@
 .template-editor__textarea::placeholder {
   color: var(--color-text-faint);
 }
+.template-editor__input[aria-invalid='true'],
+.template-editor__textarea[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+.template-editor__field-error {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-error);
+}
 .template-editor__input:disabled,
 .template-editor__textarea:disabled {
   opacity: 0.6;

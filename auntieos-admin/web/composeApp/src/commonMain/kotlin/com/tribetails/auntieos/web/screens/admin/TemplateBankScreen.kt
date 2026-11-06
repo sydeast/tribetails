@@ -346,7 +346,6 @@ fun TemplateBankBody(
                 onValueChange = { query = it },
                 placeholder = "Search templates by title or key...",
                 leadingIcon = Lucide.Search,
-                shortcutHint = "Ctrl K",
                 onClear = { query = "" },
                 modifier = Modifier.widthIn(max = 340.dp),
             )
@@ -731,6 +730,8 @@ private fun TemplateEditorOverlay(
     var category by remember(template.templateId, creating) { mutableStateOf(template.category ?: "") }
     var description by remember(template.templateId, creating) { mutableStateOf(template.description ?: "") }
 
+    // #1614: a required field left blank says so at the field, not only by greying Save.
+    var subjectTouched by remember(template.templateId, creating) { mutableStateOf(false) }
     val keyTaken = creating && templateId.trim() in existingKeys
     val keyValid = !creating || (templateId.isNotBlank() && !keyTaken)
     val mode = remember(template.templateId, creating) { templateEditMode(template, creating) }
@@ -838,11 +839,14 @@ private fun TemplateEditorOverlay(
                 }
                 BottomBorderField(
                     value = subject,
-                    onValueChange = { subject = it },
+                    onValueChange = { subject = it; subjectTouched = true },
                     label = "Subject",
                     enabled = mode != TemplateEditMode.READ_ONLY,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                requiredFieldHint("Subject", subject, subjectTouched)?.let {
+                    Text(it, style = AuntieTheme.typography.bodySmall, color = c.error)
+                }
                 // FULL keeps the markdown toolbar + body field, unchanged.
                 // SUBJECT_ONLY shows the hand-authored body read-only, with a
                 // note this device may not touch it. READ_ONLY (a visual
@@ -940,3 +944,7 @@ private fun TemplateEditorOverlay(
         }
     }
 }
+
+/** #1614: "Subject is required." once the operator has touched the field and left it blank. */
+internal fun requiredFieldHint(label: String, value: String, touched: Boolean): String? =
+    if (touched && value.isBlank()) "$label is required." else null
