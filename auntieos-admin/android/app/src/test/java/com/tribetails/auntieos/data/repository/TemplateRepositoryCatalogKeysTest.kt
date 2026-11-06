@@ -157,4 +157,69 @@ class TemplateRepositoryCatalogKeysTest {
         // Bank unavailable: an empty id set must not paint every override as broken.
         assertFalse(resolvedTemplateMissing(row, emptySet(), bankLoaded = false))
     }
+
+    // #1586: the 2026-11-05 walk. Five keys were called broken; only a direct send
+    // with no template can fail, and invite.verify-email now has a repo copy.
+    private fun walked(key: String, effect: String, inCorpus: Boolean = true, source: String = "catalog") =
+        TemplateRepository.CatalogKey(
+            key = key, label = key, category = null, audience = null, source = source,
+            defaultTemplateId = key, hasDefaultTemplate = false, bound = false, resolvedTemplateId = key,
+            whenTemplateMissing = effect, inRepoCorpus = inCorpus,
+        )
+
+    @Test fun `none of the five walked keys fails on send`() {
+        val rows = listOf(
+            walked("broadcast.message", "unused", inCorpus = false),
+            walked("invite.verify-email", "repoCopy", source = "direct-send"),
+            walked("kin.removal.archived", "generic"),
+            walked("kin.removal.declined", "generic"),
+            walked("kin.removal.requested", "generic"),
+        )
+        assertEquals(0, rows.count { failsOnSend(it, emptySet(), bankLoaded = true) })
+        assertEquals(
+            listOf("invite.verify-email", "kin.removal.archived", "kin.removal.declined", "kin.removal.requested"),
+            rows.filter { awaitingImport(it, emptySet(), bankLoaded = true) }.map { it.key },
+        )
+    }
+
+    @Test fun `a direct send with no template and no repo copy fails`() {
+        val row = walked("invite.primary", "fails", inCorpus = false, source = "direct-send")
+        assertTrue(failsOnSend(row, emptySet(), bankLoaded = true))
+        assertEquals(null, missingTemplateNote(row, templateMissing = true))
+    }
+
+    @Test fun `the quiet note names what goes out instead`() {
+        assertEquals(
+            "Not in the bank yet, so this sends generic wording that cannot say what happened. Load it from Template Import.",
+            missingTemplateNote(walked("kin.removal.requested", "generic"), templateMissing = true),
+        )
+        assertEquals(
+            "Not in the bank yet, so this sends the repo copy. Load it from Template Import.",
+            missingTemplateNote(walked("invite.verify-email", "repoCopy"), templateMissing = true),
+        )
+        assertEquals(
+            "Written when it is sent, so no template is used.",
+            missingTemplateNote(walked("broadcast.message", "unused"), templateMissing = true),
+        )
+        assertEquals(null, missingTemplateNote(walked("kin.removal.requested", "generic"), templateMissing = false))
+    }
+
+    @Test fun `decode reads the effect, and an old server without it as fails`() = runBlocking {
+        val functions = functionsReturning(
+            mapOf(
+                "rows" to listOf(
+                    rowMap("kin.removal.requested", hasDefault = false) +
+                        mapOf("whenTemplateMissing" to "generic", "inRepoCorpus" to true),
+                    rowMap("old.server.row", hasDefault = false),
+                    rowMap("garbage.row") + mapOf("whenTemplateMissing" to "explode"),
+                ),
+            ),
+        )
+        val rows = repoWith(functions).listCatalogKeys().getOrThrow()
+        assertEquals("generic", rows[0].whenTemplateMissing)
+        assertTrue(rows[0].inRepoCorpus)
+        assertEquals("fails", rows[1].whenTemplateMissing)
+        assertFalse(rows[1].inRepoCorpus)
+        assertEquals("fails", rows[2].whenTemplateMissing)
+    }
 }

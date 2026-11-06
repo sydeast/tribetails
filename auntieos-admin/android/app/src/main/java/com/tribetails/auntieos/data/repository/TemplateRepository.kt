@@ -105,6 +105,15 @@ class TemplateRepository(
         val hasDefaultTemplate: Boolean,
         val bound: Boolean,
         val resolvedTemplateId: String,
+        /**
+         * #1586: what a send does when the resolved template document is missing:
+         * "fails", "repoCopy", "generic" or "unused". A server from before #1586
+         * omits it, and the decode reads that as "fails", which is what this
+         * screen used to say about every missing template.
+         */
+        val whenTemplateMissing: String = "fails",
+        /** Whether the repo carries a copy Template Import can load. */
+        val inRepoCorpus: Boolean = false,
     )
 
     suspend fun listTemplates(): Result<List<EmailTemplate>> = runCatchingCancellable {
@@ -278,6 +287,9 @@ class TemplateRepository(
                 hasDefaultTemplate = m["hasDefaultTemplate"] as? Boolean ?: false,
                 bound = m["bound"] as? Boolean ?: false,
                 resolvedTemplateId = m["resolvedTemplateId"] as? String ?: default,
+                whenTemplateMissing = (m["whenTemplateMissing"] as? String)
+                    ?.takeIf { it in MISSING_TEMPLATE_EFFECTS } ?: "fails",
+                inRepoCorpus = m["inRepoCorpus"] as? Boolean ?: false,
             )
         }
     }.onFailure { AuntieLog.e("TemplateRepository.listCatalogKeys failed", it) }
@@ -417,6 +429,45 @@ internal fun routingSource(row: TemplateRepository.CatalogKey): String = when {
     else -> "default, matched by name"
 }
 
+/** The values the server sends for [TemplateRepository.CatalogKey.whenTemplateMissing]. */
+internal val MISSING_TEMPLATE_EFFECTS = setOf("fails", "repoCopy", "generic", "unused")
+
+/**
+ * #1586: whether this key's next send FAILS. A missing template only breaks a
+ * send when the server says so: the email channel sends generic wording, a
+ * direct send with a repo copy sends that, and a broadcast never reads one.
+ */
+internal fun failsOnSend(
+    row: TemplateRepository.CatalogKey,
+    bankTemplateIds: Set<String>,
+    bankLoaded: Boolean,
+): Boolean = row.whenTemplateMissing == "fails" && resolvedTemplateMissing(row, bankTemplateIds, bankLoaded)
+
+/** #1586: missing from the bank, still delivered, and loadable from Template Import. */
+internal fun awaitingImport(
+    row: TemplateRepository.CatalogKey,
+    bankTemplateIds: Set<String>,
+    bankLoaded: Boolean,
+): Boolean = row.inRepoCorpus &&
+    (row.whenTemplateMissing == "generic" || row.whenTemplateMissing == "repoCopy") &&
+    resolvedTemplateMissing(row, bankTemplateIds, bankLoaded)
+
+/**
+ * #1586: the quiet line under a row whose template is missing but whose send
+ * still goes out, or null. A failing send gets the loud line instead.
+ */
+internal fun missingTemplateNote(row: TemplateRepository.CatalogKey, templateMissing: Boolean): String? {
+    if (row.whenTemplateMissing == "unused") {
+        return if (row.source == "legacy") null else "Written when it is sent, so no template is used."
+    }
+    if (!templateMissing) return null
+    val load = if (row.inRepoCorpus) " Load it from Template Import." else ""
+    return when (row.whenTemplateMissing) {
+        "generic" -> "Not in the bank yet, so this sends generic wording that cannot say what happened.$load"
+        "repoCopy" -> "Not in the bank yet, so this sends the repo copy.$load"
+        else -> null
+    }
+}
 /**
  * Pure: whether the template this key resolves to is actually missing.
  *

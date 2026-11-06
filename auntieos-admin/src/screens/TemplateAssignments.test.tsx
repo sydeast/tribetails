@@ -26,6 +26,7 @@ vi.mock('../api/templates', async (orig) => ({
 }));
 
 import { TemplateAssignments } from './TemplateAssignments';
+import { decodeCatalogKeyRow } from '../api/templateBindings';
 
 function binding(over: Partial<TemplateBinding> = {}): TemplateBinding {
   return { catalogKey: 'booking.confirmed', templateId: 'tmpl_ok', audience: 'kinfolk', triggerKey: null, active: true, ...over };
@@ -44,6 +45,8 @@ function catalogRow(over: Partial<CatalogKeyRow> = {}): CatalogKeyRow {
     hasDefaultTemplate: true,
     bound: false,
     resolvedTemplateId: 'kincare.booking.confirm',
+    whenTemplateMissing: 'generic',
+    inRepoCorpus: true,
     ...over,
   };
 }
@@ -133,25 +136,66 @@ describe('TemplateAssignments routing table', () => {
     ).toBeInTheDocument();
   });
 
-  it('warns loudly about a key whose template document does not exist', async () => {
+  it('warns loudly about a key whose send fails because its template does not exist', async () => {
     listTemplateBindings.mockResolvedValue([]);
     listCatalogKeys.mockResolvedValue([
       catalogRow({
-        key: 'account.welcome.business',
-        label: 'Business welcome',
-        defaultTemplateId: 'account.welcome.business',
-        resolvedTemplateId: 'account.welcome.business',
+        key: 'invite.primary',
+        label: 'Portal invite to a primary kinfolk',
+        source: 'direct-send',
+        defaultTemplateId: 'invite.primary',
+        resolvedTemplateId: 'invite.primary',
         hasDefaultTemplate: false,
+        whenTemplateMissing: 'fails',
+        inRepoCorpus: false,
       }),
     ]);
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const row = (await screen.findByText('account.welcome.business')).closest('li')!;
+    const row = (await screen.findByText('invite.primary')).closest('li')!;
     expect(
-      within(row).getByText(/no emailTemplates\/account\.welcome\.business document/i),
+      within(row).getByText(/no emailTemplates\/invite\.primary document/i),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText(/1 key resolves to a template document that does not exist/i),
+      await screen.findByText(/1 key fails on the next send because the template does not exist/i),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * #1586: the 2026-11-05 walk. Five keys were called broken; only the one
+   * direct send without a template could fail, and since #1586 it has a repo
+   * copy. The screen now reports none of the five as failing.
+   */
+  it('reports only keys that really fail: none of the five from the walk', async () => {
+    listTemplateBindings.mockResolvedValue([]);
+    const missing = (key: string, over: Partial<CatalogKeyRow> = {}) =>
+      catalogRow({ key, label: key, defaultTemplateId: key, resolvedTemplateId: key, hasDefaultTemplate: false, ...over });
+    listCatalogKeys.mockResolvedValue([
+      missing('broadcast.message', { whenTemplateMissing: 'unused', inRepoCorpus: false }),
+      missing('invite.verify-email', { source: 'direct-send', whenTemplateMissing: 'repoCopy' }),
+      missing('kin.removal.archived'),
+      missing('kin.removal.declined'),
+      missing('kin.removal.requested'),
+    ]);
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    await screen.findByText('kin.removal.requested');
+    expect(screen.queryByText(/fails? on the next send/i)).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    expect(screen.getByTestId('tassign-awaiting-import').textContent).toBe(
+      'Not in the bank yet, still delivered: invite.verify-email, kin.removal.archived, kin.removal.declined, kin.removal.requested. Load them from Template Import.',
+    );
+    const kin = screen.getByText('kin.removal.requested').closest('li')!;
+    expect(within(kin).getByText(/sends generic wording that cannot say what happened/i)).toBeInTheDocument();
+    const verify = screen.getByText('invite.verify-email').closest('li')!;
+    expect(within(verify).getByText(/sends the repo copy\. Load it from Template Import/i)).toBeInTheDocument();
+    const broadcast = screen.getByText('broadcast.message').closest('li')!;
+    expect(within(broadcast).getByText(/no template is used/i)).toBeInTheDocument();
+  });
+
+  it('decodes a pre-#1586 row with no effect as failing, so an old server never hides a break', () => {
+    const raw = catalogRow({ hasDefaultTemplate: false }) as Partial<CatalogKeyRow>;
+    delete raw.whenTemplateMissing;
+    delete raw.inRepoCorpus;
+    expect(decodeCatalogKeyRow(raw as CatalogKeyRow)).toMatchObject({ whenTemplateMissing: 'fails', inRepoCorpus: false });
   });
 
   it('does not paint every override as broken when the template bank fails to load', async () => {
@@ -161,7 +205,7 @@ describe('TemplateAssignments routing table', () => {
     render(<TemplateAssignments onClose={vi.fn()} />);
     const row = (await screen.findByText('booking.confirmed')).closest('li')!;
     expect(within(row).queryByText(/does not exist/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/to a template document that does not exist/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/on the next send because the template does not exist/i)).not.toBeInTheDocument();
   });
 
   it('offers Override on an unbound key and Remove override only on a bound one', async () => {

@@ -8,6 +8,7 @@ import {
   explainUnbindableKey,
   isLiveCatalogKey,
   liveCatalogKeys,
+  missingTemplateEffect,
 } from '../src/notifications/catalogKeys';
 import {
   NOTIFICATION_CATALOG,
@@ -141,5 +142,67 @@ describe('buildCatalogKeyRows', () => {
     expect(keys).toEqual([...keys].sort());
     expect(new Set(keys).size).toBe(keys.length);
     expect(rows.filter((r) => r.key === 'invite.primary')).toHaveLength(1);
+  });
+});
+
+/**
+ * #1586: Manage assignments said five keys would throw for want of a template.
+ * Only invite.verify-email did. These pin what each kind of key really does.
+ */
+describe('whenTemplateMissing (#1586)', () => {
+  const rows = buildCatalogKeyRows(new Set(['old.legacy.key']), new Map(), new Set());
+  const row = (key: string) => {
+    const r = rows.find((x) => x.key === key);
+    if (!r) throw new Error(`no row ${key}`);
+    return r;
+  };
+
+  it('a catalog row sent by the email channel falls back to generic wording, never a throw', () => {
+    for (const key of ['kin.removal.archived', 'kin.removal.declined', 'kin.removal.requested']) {
+      expect(row(key).whenTemplateMissing, key).toBe('generic');
+      expect(row(key).inRepoCorpus, key).toBe(true);
+    }
+  });
+
+  it('broadcast.message composes its own email, so a missing template is unused', () => {
+    expect(row('broadcast.message').whenTemplateMissing).toBe('unused');
+  });
+
+  it('invite.verify-email now has a repo copy, so it sends that instead of throwing', () => {
+    expect(row('invite.verify-email')).toMatchObject({
+      source: 'direct-send',
+      inRepoCorpus: true,
+      whenTemplateMissing: 'repoCopy',
+    });
+  });
+
+  it('a direct send with no repo copy still fails', () => {
+    expect(row('invite.primary')).toMatchObject({ inRepoCorpus: false, whenTemplateMissing: 'fails' });
+  });
+
+  it('the external password reset row uses its repo copy', () => {
+    expect(row('auth.password.reset').whenTemplateMissing).toBe('repoCopy');
+  });
+
+  it('a legacy key nothing sends is unused', () => {
+    expect(row('old.legacy.key').whenTemplateMissing).toBe('unused');
+  });
+
+  it('table: the pure helper agrees with the rows', () => {
+    expect(missingTemplateEffect('x', 'direct-send', false)).toBe('fails');
+    expect(missingTemplateEffect('x', 'direct-send', true)).toBe('repoCopy');
+    expect(missingTemplateEffect('x', 'legacy', true)).toBe('unused');
+    expect(missingTemplateEffect('kincare.requested', 'catalog', false)).toBe('generic');
+  });
+
+  it('exactly one key on the walk list still fails: none of the five', () => {
+    const walked = [
+      'broadcast.message',
+      'invite.verify-email',
+      'kin.removal.archived',
+      'kin.removal.declined',
+      'kin.removal.requested',
+    ];
+    expect(walked.filter((k) => row(k).whenTemplateMissing === 'fails')).toEqual([]);
   });
 });
