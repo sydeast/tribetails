@@ -1,5 +1,12 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.SEND_BUDGET_SECONDS
+import com.tribetails.auntieos.domain.SendCheckAction
+import com.tribetails.auntieos.domain.SendMarks
+import com.tribetails.auntieos.domain.SilenceKind
+import com.tribetails.auntieos.domain.sendMarksOf
+import com.tribetails.auntieos.domain.sendOutcomeAfterSilence
+import com.tribetails.auntieos.util.isSilentSendFailure
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
@@ -760,6 +767,9 @@ class AdminDataViewModel(
     fun generateReceipt(invoiceId: String) {
         viewModelScope.launch {
             _isLoading.value = true
+            // #1567: the model carries no receipt stamp, so the "before" is read
+            // from the server, for the case where the send goes silent.
+            val before = invoiceRepository.readInvoiceSendMarks(invoiceId)
             invoiceRepository.generateReceipt(invoiceId).onSuccess { result ->
                 loadInvoices() // Refresh to reflect receiptIssuedAt
                 // #1511: honest about where the notice went. A missing flag (an
@@ -767,6 +777,11 @@ class AdminDataViewModel(
                 _invoiceActionMessage.value =
                     com.tribetails.auntieos.domain.receiptGeneratedMessage(result.appOnly == true)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.RECEIPT, before, invoiceId)
+                    _isLoading.value = false
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to generate receipt"
                 _isLoading.value = false
             }
@@ -781,6 +796,22 @@ class AdminDataViewModel(
     val invoiceActionMessage: StateFlow<String?> = _invoiceActionMessage.asStateFlow()
 
     fun clearInvoiceActionMessage() { _invoiceActionMessage.value = null }
+    /**
+     * #1567: a row send got no answer. Re-reads the invoice from the server and
+     * reports what it shows (domain/InvoiceSendCheck.kt): a landed send is the
+     * confirmation line and refreshes the list; anything else is the error line,
+     * worded as "not sent" or "cannot tell", never "failed".
+     */
+    private suspend fun reportAfterSilence(action: SendCheckAction, before: SendMarks?, invoiceId: String) {
+        val after = invoiceRepository.readInvoiceSendMarks(invoiceId)
+        val outcome = sendOutcomeAfterSilence(action, SEND_BUDGET_SECONDS, before, after)
+        if (outcome.kind == SilenceKind.SENT) {
+            loadInvoices()
+            _invoiceActionMessage.value = outcome.message
+        } else {
+            _error.value = outcome.message
+        }
+    }
 
     /**
      * Stage 2 tail: send an on-demand payment reminder for an invoice via the
@@ -799,6 +830,8 @@ class AdminDataViewModel(
         if (invoiceId.isBlank()) return
         if (invoiceId in _remindingInvoiceIds.value) return
         _remindingInvoiceIds.value = _remindingInvoiceIds.value + invoiceId
+        // #1567: the reminder stamp as it stood at the press.
+        val before = _invoices.value.firstOrNull { it.id == invoiceId }?.let { sendMarksOf(it) }
         viewModelScope.launch {
             invoiceRepository.sendInvoiceReminder(invoiceId).onSuccess { outcome ->
                 if (outcome.sent) {
@@ -826,6 +859,10 @@ class AdminDataViewModel(
                 }
                 _invoiceActionMessage.value = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.REMINDER, before, invoiceId)
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to send reminder"
             }
             _remindingInvoiceIds.value = _remindingInvoiceIds.value - invoiceId
@@ -843,6 +880,8 @@ class AdminDataViewModel(
             _error.value = "This invoice has no client (kinfolk) on record, so it cannot be sent."
             return
         }
+        // #1567: the status as it stood at the press.
+        val before = sendMarksOf(invoice)
         viewModelScope.launch {
             invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId).onSuccess { sent ->
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -857,6 +896,10 @@ class AdminDataViewModel(
                 // #1511: as for the receipt above.
                 _invoiceActionMessage.value = com.tribetails.auntieos.domain.draftSentMessage(sent.appOnly == true)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.REVIEW_SEND, before, invoice.id)
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to send draft"
             }
         }

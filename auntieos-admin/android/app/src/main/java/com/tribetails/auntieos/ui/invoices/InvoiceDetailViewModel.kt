@@ -19,6 +19,14 @@ import com.tribetails.auntieos.domain.dollarsToCents
 import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.isSilentSendFailure
+import com.tribetails.auntieos.domain.SEND_BUDGET_SECONDS
+import com.tribetails.auntieos.domain.SendCheckAction
+import com.tribetails.auntieos.domain.SendMarks
+import com.tribetails.auntieos.domain.SilenceKind
+import com.tribetails.auntieos.domain.SilenceOutcome
+import com.tribetails.auntieos.domain.sendMarksOf
+import com.tribetails.auntieos.domain.sendOutcomeAfterSilence
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -581,6 +589,10 @@ class InvoiceDetailViewModel(
         if (_uiState.value.generatingReceipt) return
         _uiState.value = _uiState.value.copy(generatingReceipt = true)
         viewModelScope.launch {
+            // #1567: the model carries no receipt stamp, so the "before" is read
+            // from the server. Null (the read failed) only matters if the send
+            // then goes silent, and then the toast says it cannot tell.
+            val before = invoiceRepository.readInvoiceSendMarks(invoiceId)
             invoiceRepository.generateReceipt(invoiceId)
                 .onSuccess { result ->
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -603,6 +615,16 @@ class InvoiceDetailViewModel(
                     )
                 }
                 .onFailure { err ->
+                    if (isSilentSendFailure(err)) {
+                        val outcome = checkAfterSilence(SendCheckAction.RECEIPT, before, invoiceId)
+                        _uiState.value = _uiState.value.copy(
+                            generatingReceipt = false,
+                            toastMessage = outcome.message,
+                            toastVisible = true,
+                            toastIsError = outcome.kind != SilenceKind.SENT,
+                        )
+                        return@onFailure
+                    }
                     _uiState.value = _uiState.value.copy(
                         generatingReceipt = false,
                         toastMessage = "Couldn't generate receipt: ${err.message}",
@@ -670,6 +692,8 @@ class InvoiceDetailViewModel(
         val invoiceId = _uiState.value.invoice?.id ?: return
         if (_uiState.value.sendingReminder) return
         _uiState.value = _uiState.value.copy(sendingReminder = true)
+        // #1567: the reminder stamp as it stood at the press.
+        val before = _uiState.value.invoice?.let { sendMarksOf(it) }
         viewModelScope.launch {
             invoiceRepository.sendInvoiceReminder(invoiceId)
                 .onSuccess { outcome ->
@@ -713,6 +737,16 @@ class InvoiceDetailViewModel(
                     )
                 }
                 .onFailure { err ->
+                    if (isSilentSendFailure(err)) {
+                        val outcome = checkAfterSilence(SendCheckAction.REMINDER, before, invoiceId)
+                        _uiState.value = _uiState.value.copy(
+                            sendingReminder = false,
+                            toastMessage = outcome.message,
+                            toastVisible = true,
+                            toastIsError = outcome.kind != SilenceKind.SENT,
+                        )
+                        return@onFailure
+                    }
                     _uiState.value = _uiState.value.copy(
                         sendingReminder = false,
                         toastMessage = "Couldn't send reminder: ${err.message}",
@@ -858,6 +892,8 @@ class InvoiceDetailViewModel(
             return
         }
         _uiState.value = _uiState.value.copy(sendingDraft = true)
+        // #1567: the status as it stood at the press.
+        val before = sendMarksOf(invoice)
         viewModelScope.launch {
             invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId)
                 .onSuccess { sent ->
@@ -880,6 +916,17 @@ class InvoiceDetailViewModel(
                     )
                 }
                 .onFailure { err ->
+                    if (isSilentSendFailure(err)) {
+                        val outcome = checkAfterSilence(SendCheckAction.REVIEW_SEND, before, invoice.id)
+                        if (outcome.kind == SilenceKind.SENT) reloadInvoiceQuietly(invoice.id)
+                        _uiState.value = _uiState.value.copy(
+                            sendingDraft = false,
+                            toastMessage = outcome.message,
+                            toastVisible = true,
+                            toastIsError = outcome.kind != SilenceKind.SENT,
+                        )
+                        return@onFailure
+                    }
                     _uiState.value = _uiState.value.copy(
                         sendingDraft = false,
                         toastMessage = "Couldn't send draft: ${err.message}",
@@ -908,6 +955,8 @@ class InvoiceDetailViewModel(
         if (_uiState.value.resendingQuote) return
         _uiState.value = _uiState.value.copy(resendingQuote = true)
         viewModelScope.launch {
+            // #1567: as for the receipt, the resend stamp is read from the server.
+            val before = invoiceRepository.readInvoiceSendMarks(invoice.id)
             invoiceRepository.resendQuote(invoice.id)
                 .onSuccess { result ->
                     // #1507: null from an older server reads as a channel send.
@@ -933,6 +982,17 @@ class InvoiceDetailViewModel(
                     )
                 }
                 .onFailure { err ->
+                    if (isSilentSendFailure(err)) {
+                        val outcome = checkAfterSilence(SendCheckAction.RESEND_QUOTE, before, invoice.id)
+                        if (outcome.kind == SilenceKind.SENT) reloadInvoiceQuietly(invoice.id)
+                        _uiState.value = _uiState.value.copy(
+                            resendingQuote = false,
+                            toastMessage = outcome.message,
+                            toastVisible = true,
+                            toastIsError = outcome.kind != SilenceKind.SENT,
+                        )
+                        return@onFailure
+                    }
                     _uiState.value = _uiState.value.copy(
                         resendingQuote = false,
                         toastMessage = err.message ?: "Couldn't send the quote again.",
@@ -1006,6 +1066,18 @@ class InvoiceDetailViewModel(
         }
     }
     /** Re-fetch the invoice into state without flipping the loading shimmer. */
+    /**
+     * #1567: a send got no answer. Re-reads the invoice from the server and
+     * says what it shows, never "couldn't send" (domain/InvoiceSendCheck.kt).
+     */
+    private suspend fun checkAfterSilence(
+        action: SendCheckAction,
+        before: SendMarks?,
+        invoiceId: String,
+    ): SilenceOutcome {
+        val after = invoiceRepository.readInvoiceSendMarks(invoiceId)
+        return sendOutcomeAfterSilence(action, SEND_BUDGET_SECONDS, before, after)
+    }
     private fun reloadInvoiceQuietly(invoiceId: String) {
         viewModelScope.launch {
             invoiceRepository.getInvoiceById(invoiceId)
