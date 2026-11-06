@@ -944,7 +944,7 @@ private fun RecordPaymentDialog(
             BottomBorderField(credit, { credit = it }, label = "Leave as account credit", placeholder = "0.00", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
             // #988: where the money goes, before Save.
             Text(
-                recordPaymentSplitLine(recordPaymentSplit(amount, apply, tip, credit), fee),
+                recordPaymentSplitLine(recordPaymentSplit(amount, apply, tip, credit, invoiceBalanceCents(invoice)), fee),
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )
