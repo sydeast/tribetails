@@ -148,20 +148,56 @@ fun parseOptionalMoney(raw: String): Double? {
  * the desktop console. `null` means a box cannot be read yet.
  */
 sealed interface PaymentSplit {
-    data class Ok(val paidCents: Long, val appliedCents: Long, val tipCents: Long, val creditCents: Long) : PaymentSplit
+    data class Ok(
+        val paidCents: Long,
+        val appliedCents: Long,
+        val tipCents: Long,
+        val creditCents: Long,
+        /**
+         * #1566: how much of the Amount box was over the balance and moved to the
+         * tip. Already inside [tipCents]. Zero in the ordinary case.
+         */
+        val overCents: Long = 0L,
+    ) : PaymentSplit
     data class Refused(val message: String) : PaymentSplit
 }
-
-fun paymentSplit(applied: Double, tip: String, credit: String, paymentTotal: String): PaymentSplit? {
+/**
+ * #1566: THE APPLIED PART STOPS AT THE BALANCE. An overpayment is all tip
+ * (2026-09-27), so an Amount above what the invoice still owes is split: the
+ * invoice takes [amountDueCents] and the rest joins the tip, where the fee
+ * comes out of it. $100 against $78.50 is $78.50 to the invoice and $21.50 tip.
+ *
+ * [amountDueCents] is the balance `getInvoiceLedger` summed from the recorded
+ * payments, the figure the server refuses against. `null` (the ledger has not
+ * answered, or failed) caps nothing: the server's refusal then says what is
+ * owed, which beats capping at a stale zero and making the whole payment tip.
+ */
+fun paymentSplit(
+    applied: Double,
+    tip: String,
+    credit: String,
+    paymentTotal: String,
+    amountDueCents: Long? = null,
+): PaymentSplit? {
     val total = parseOptionalMoney(paymentTotal) ?: return null
     val creditDollars = parseOptionalMoney(credit) ?: return null
     val tipBlank = tip.isBlank()
     val tipDollars = if (tipBlank) 0.0 else (parseOptionalMoney(tip) ?: return null)
-    val appliedCents = dollarsToCents(applied)
+    val typedAppliedCents = dollarsToCents(applied)
+    val overCents = if (amountDueCents != null && typedAppliedCents > amountDueCents) {
+        typedAppliedCents - amountDueCents
+    } else {
+        0L
+    }
+    val appliedCents = typedAppliedCents - overCents
+    if (overCents > 0L && appliedCents <= 0L) {
+        return PaymentSplit.Refused("This invoice owes nothing, so no payment can be recorded against it.")
+    }
     val creditCents = dollarsToCents(creditDollars)
+    // The part over the balance is tip, added to any tip she typed.
+    val typedTipCents = dollarsToCents(tipDollars) + overCents
     if (total <= 0.0) {
-        val tipCents = dollarsToCents(tipDollars)
-        return PaymentSplit.Ok(appliedCents + tipCents + creditCents, appliedCents, tipCents, creditCents)
+        return PaymentSplit.Ok(appliedCents + typedTipCents + creditCents, appliedCents, typedTipCents, creditCents, overCents)
     }
     val paidCents = dollarsToCents(total)
     val leftoverCents = paidCents - appliedCents
@@ -177,14 +213,19 @@ fun paymentSplit(applied: Double, tip: String, credit: String, paymentTotal: Str
                 "left after the ${formatCentsUsd(appliedCents)} applied to this invoice.",
         )
     }
-    val tipCents = if (tipBlank) leftoverCents - creditCents else dollarsToCents(tipDollars)
+    val tipCents = if (tipBlank) leftoverCents - creditCents else typedTipCents
     val sum = appliedCents + tipCents + creditCents
     if (sum != paidCents) {
+        val overNote = if (overCents > 0L) {
+            " The invoice owes ${formatCentsUsd(appliedCents)}, so ${formatCentsUsd(overCents)} of the amount counts as tip."
+        } else {
+            ""
+        }
         return PaymentSplit.Refused(
             "${formatCentsUsd(appliedCents)} applied, a ${formatCentsUsd(tipCents)} tip and " +
                 "${formatCentsUsd(creditCents)} account credit add up to ${formatCentsUsd(sum)}, not the " +
-                "${formatCentsUsd(paidCents)} paid. Change the tip or the credit, or leave the tip blank to take the rest.",
+                "${formatCentsUsd(paidCents)} paid.$overNote Change the tip or the credit, or leave the tip blank to take the rest.",
         )
     }
-    return PaymentSplit.Ok(paidCents, appliedCents, tipCents, creditCents)
+    return PaymentSplit.Ok(paidCents, appliedCents, tipCents, creditCents, overCents)
 }

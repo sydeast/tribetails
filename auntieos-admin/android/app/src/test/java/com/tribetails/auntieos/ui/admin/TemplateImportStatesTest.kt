@@ -267,3 +267,17 @@ class TemplateKeyRuleTest {
         assertTrue(templateKeyError("  invoice.new  ", listOf("invoice.new")) != null)
     }
 }
+class RequiredFieldHintTest {
+    @org.junit.Test
+    fun untouchedBlankFieldSaysNothing() {
+        org.junit.Assert.assertNull(requiredFieldHint("Subject", "", touched = false))
+    }
+    @org.junit.Test
+    fun touchedBlankFieldNamesItself() {
+        org.junit.Assert.assertEquals("Subject is required.", requiredFieldHint("Subject", "  ", touched = true))
+    }
+    @org.junit.Test
+    fun fixedFieldClears() {
+        org.junit.Assert.assertNull(requiredFieldHint("Body", "Hi", touched = true))
+    }
+}
