@@ -122,6 +122,7 @@ fun KinCareSessionsScreen(
 
 private enum class Phase(val label: String, val tone: AuntieStatusTone) {
     Active        ("Active",   AuntieStatusTone.Teal),
+    Overdue       ("Overdue",  AuntieStatusTone.Warning),
     Upcoming      ("Upcoming", AuntieStatusTone.Orange),
     CompletedToday("Recent",   AuntieStatusTone.Muted),
 }
@@ -279,7 +280,8 @@ private fun AuntieTimeListScreen(
                 val today = nowIso().take(10)
                 // Only show sessions that are relevant for a day-of operational view:
                 //   Active:   always (any date, currently in flight)
-                //   Upcoming: today and next 14 days only (hides stale migration noise)
+                //   Overdue:  SCHEDULED more than a day past its slot, back 30 days (#702, #1590)
+                //   Upcoming: yesterday through the next 14 days (hides stale migration noise)
                 //   Recent:   completed/cancelled today or yesterday only
                 // NOTE (audit): DRAFT/PENDING bookings are intentionally excluded;
                 // a booking surfaces here only once it is approved to SCHEDULED.
@@ -290,7 +292,7 @@ private fun AuntieTimeListScreen(
                 } else {
                     val grouped = visible
                         .sortedBy { it.startTime }   // earliest first inside each phase
-                        .groupBy { phaseFor(it) }
+                        .groupBy { phaseFor(it, today) }
 
                     // Real stat row, computed from the same stream (no extra fetch):
                     // in-flight count, today's scheduled run, and today's wraps.
@@ -877,12 +879,16 @@ internal fun gpsEffectFor(patch: Map<String, String>): GpsEffect =
  * Day-of window filter for the Auntie Time list, given [today] as "YYYY-MM-DD".
  *
  *   in flight (ON_MY_WAY / ARRIVED / DEPARTED) -> always visible, any date
- *   SCHEDULED                                  -> yesterday .. today + 14 days
+ *   SCHEDULED                                  -> today - [OVERDUE_WINDOW_DAYS] .. today + 14 days
  *   COMPLETED / CANCELLED                      -> yesterday onward
  *   anything else (DRAFT / PENDING / REJECTED)  -> hidden BY DESIGN (AO-60)
  *
  * A booking surfaces here only once it is approved to SCHEDULED; the Bookings
  * screen owns the DRAFT/PENDING queue.
+ *
+ * The SCHEDULED lower bound used to be yesterday, so a visit that missed its
+ * slot by more than a day vanished from the board (#702 fixed web and Android;
+ * #1590 brings this console level, because Home now links to the Overdue group).
  */
 internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Boolean {
     val status    = session.status.uppercase()
@@ -891,12 +897,29 @@ internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Bool
     val cutoff    = dateAddDays(today, 14)
     return when {
         status in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> true
-        status == "SCHEDULED"                               -> date in yesterday..cutoff
+        status == "SCHEDULED"                               -> date in dateSubDays(today, OVERDUE_WINDOW_DAYS)..cutoff
         status in setOf("COMPLETED", "CANCELLED")           -> date >= yesterday
         else                                                -> false
     }
 }
-
+/** How far back a SCHEDULED visit stays on the board once its slot has passed. */
+internal const val OVERDUE_WINDOW_DAYS = 30
+/**
+ * A SCHEDULED visit whose slot passed more than a day ago (#702): yesterday is
+ * still "today's run sheet", the day before is a problem to close out.
+ */
+internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean {
+    if (session.status.uppercase() != "SCHEDULED") return false
+    val date = session.startTime.take(10)
+    if (date.length < 10) return false
+    return date < dateSubDays(today, 1)
+}
+/**
+ * How many sessions the board files under Overdue: on the board AND overdue.
+ * Home's Today's Pack reads this so its count is the heading's count (#1590).
+ */
+internal fun overdueOnAuntieTime(sessions: List<KinCareSession>, today: String): Int =
+    sessions.count { isVisibleOnAuntieTime(it, today) && isOverdueScheduled(it, today) }
 // ---------- Status mapping ----------
 
 /** Maps a session status to the Den status tone (color signature). */
@@ -922,9 +945,9 @@ private fun statusGlyph(status: String) = when (status.uppercase()) {
     else                  -> Lucide.CalendarClock
 }
 
-private fun phaseFor(s: KinCareSession): Phase = when (s.status.uppercase()) {
+private fun phaseFor(s: KinCareSession, today: String): Phase = when (s.status.uppercase()) {
     "ON_MY_WAY", "ARRIVED", "DEPARTED" -> Phase.Active
-    "SCHEDULED"                        -> Phase.Upcoming
+    "SCHEDULED"                        -> if (isOverdueScheduled(s, today)) Phase.Overdue else Phase.Upcoming
     else                               -> Phase.CompletedToday
 }
 

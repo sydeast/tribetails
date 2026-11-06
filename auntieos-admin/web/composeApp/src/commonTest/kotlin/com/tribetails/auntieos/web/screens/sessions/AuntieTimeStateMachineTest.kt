@@ -249,9 +249,32 @@ class AuntieTimeStateMachineTest {
     }
 
     @Test
-    fun `SCHEDULED yesterday is in, two days ago is excluded`() {
+    fun `SCHEDULED reaches back 30 days as Overdue and stops at 31`() {
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-07-20T09:00:00Z"), today))
-        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-06-21T09:00:00Z"), today))
+        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-06-20T09:00:00Z"), today))
+    }
+    @Test
+    fun `isOverdueScheduled is false exactly one day late and true two days late`() {
+        assertTrue(!isOverdueScheduled(session(status = "SCHEDULED", startTime = "2026-07-20T09:00:00Z"), today))
+        assertTrue(isOverdueScheduled(session(status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"), today))
+        assertTrue(!isOverdueScheduled(session(status = "COMPLETED", startTime = "2026-07-01T09:00:00Z"), today))
+        assertTrue(!isOverdueScheduled(session(status = "PENDING", startTime = "2026-07-01T09:00:00Z"), today))
+    }
+    @Test
+    fun `overdueOnAuntieTime counts the Overdue heading and nothing else (#1590)`() {
+        val rows = listOf(
+            session(id = "a", status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"),
+            session(id = "b", status = "SCHEDULED", startTime = "2026-07-01T09:00:00Z"),
+            session(id = "c", status = "SCHEDULED", startTime = "2026-07-20T09:00:00Z"),
+            session(id = "d", status = "SCHEDULED", startTime = "2026-05-01T09:00:00Z"),
+            session(id = "e", status = "ARRIVED",   startTime = "2026-07-01T09:00:00Z"),
+            session(id = "f", status = "PENDING",   startTime = "2026-07-01T09:00:00Z"),
+            session(id = "g", status = "SCHEDULED", startTime = "2026-07-22T09:00:00Z"),
+        )
+        assertEquals(2, overdueOnAuntieTime(rows, today))
+        assertEquals(0, overdueOnAuntieTime(emptyList(), today))
     }
 
     @Test
@@ -304,12 +327,15 @@ class AuntieTimeStateMachineTest {
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-30T09:00:00Z"), nye))
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2027-01-14T09:00:00Z"), nye))
         assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2027-01-15T09:00:00Z"), nye))
-        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-29T09:00:00Z"), nye))
+        // Dec 29 is Overdue now (#1590), still on the board; 31 days back is not.
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-29T09:00:00Z"), nye))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-01T09:00:00Z"), nye))
+        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-11-30T09:00:00Z"), nye))
     }
 
     @Test
     fun `a SCHEDULED session with no startTime is excluded`() {
-        // "" never falls inside yesterday..cutoff, so undated scheduled rows stay
+        // "" never falls inside the window, so undated scheduled rows stay
         // off the day-of view rather than pinning to the top.
         assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = ""), today))
     }

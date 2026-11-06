@@ -782,6 +782,9 @@ private fun AuthenticatedNavHost(
                     viewModel             = homeVm,
                     onNavigateToCommunicate = { navController.navigate(Screen.Communicate.route) },
                     onNavigateToCalls     = { navController.navigate(Screen.Calls.route) },
+                    onNavigateToAuntieTime = {
+                        navController.navigate(Screen.AuntieTime.route) { launchSingleTop = true }
+                    },
                     onWriteKinTale        = { sessionId ->
                         navController.navigate(Screen.KinTaleReport.createRoute(sessionId))
                     },

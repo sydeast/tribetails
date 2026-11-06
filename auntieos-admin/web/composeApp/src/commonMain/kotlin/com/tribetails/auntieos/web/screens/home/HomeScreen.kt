@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.ArrowDown
 import com.composables.icons.lucide.ArrowUp
+import com.composables.icons.lucide.CalendarClock
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Eye
 import com.composables.icons.lucide.EyeOff
@@ -62,6 +63,7 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.RouteResult
 import com.tribetails.auntieos.web.data.SupplySummary
 import com.tribetails.auntieos.web.screens.invoices.formatMoney
+import com.tribetails.auntieos.web.screens.sessions.overdueOnAuntieTime
 import com.tribetails.auntieos.web.screens.weeklyRevenue
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -416,11 +418,21 @@ fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 hoverLift = true,
                             ) {
+                                // #1590: late work belongs on the card that opens the day. The
+                                // count is Auntie Time's own Overdue rule over the same stream.
+                                val overdueLabel = if (sessionsState is FirestoreResult.Data) {
+                                    todaysPackOverdueLabel(overdueOnAuntieTime(sessions, todayKey))
+                                } else null
+                                if (overdueLabel != null) {
+                                    TodaysPackOverdueRow(overdueLabel) { onNavigate(Destination.Sessions) }
+                                }
                                 when {
                                     sessionsState is FirestoreResult.Loading ->
                                         EmptyHint("Loading today's visits…")
                                     sessionsState is FirestoreResult.Error ->
                                         EmptyHint("Couldn't load visits: ${(sessionsState as FirestoreResult.Error).message}", error = true)
+                                    todaySessions.isEmpty() && overdueLabel != null ->
+                                        EmptyHint("Nothing else on the books today.")
                                     todaySessions.isEmpty() ->
                                         EmptyHint("Nothing on the books today. Enjoy the quiet.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -855,5 +867,29 @@ private fun TaleRow(draft: GeneratedDraft, index: Int) {
                 color = c.textFaint,
             )
         }
+    }
+}
+
+/**
+ * The Today's Pack overdue line: a real clickable row, because it navigates to
+ * Auntie Time, where the same visits sit under the Overdue heading.
+ */
+@Composable
+internal fun TodaysPackOverdueRow(label: String, onClick: () -> Unit) {
+    val c = AuntieTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, c.warning, RoundedCornerShape(12.dp))
+            .background(c.warning.copy(alpha = 0.12f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Lucide.CalendarClock, contentDescription = null, tint = c.warning, modifier = Modifier.size(18.dp))
+        Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
     }
 }
