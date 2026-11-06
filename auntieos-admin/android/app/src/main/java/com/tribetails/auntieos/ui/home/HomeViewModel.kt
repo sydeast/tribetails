@@ -309,8 +309,10 @@ class HomeViewModel(
                     todayIso = businessTodayIso(bs.timeZone),
                     limit = 5,
                 )
+                var allKinLoaded = true
                 val allKin = allKinDef.await().getOrElse { e ->
                     AuntieLog.e("Home: failed to load kin for insight widgets", e)
+                    allKinLoaded = false
                     emptyList()
                 }
 
@@ -365,7 +367,11 @@ class HomeViewModel(
                     isLoading         = false,
                     isOffline         = hasReadError,
                     kinfolkCount      = kf,
-                    kinCount          = kn,
+                    // #1601: "Kin in care" is the pets not marked inactive or archived,
+                    // counted over the same list the Directory's Kin tab filters. The
+                    // server count of every kin doc is the fallback when that list
+                    // could not be read, so a failed read never shows a false zero.
+                    kinCount          = if (allKinLoaded) com.tribetails.auntieos.domain.kinInCareCount(allKin) else kn,
                     pendingDraftCount = pd,
                     recentDrafts      = rd,
                     todayVisits       = cards,

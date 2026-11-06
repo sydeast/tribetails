@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { KinTales } from '../screens/KinTales';
+import { isDateRangeKey } from '../components/ListToolbar';
 import { KinTaleCompose } from '../screens/KinTaleCompose';
 import { KinTaleDetail } from '../screens/KinTaleDetail';
 
@@ -36,7 +37,7 @@ export function KinTalesView() {
   //     the operator on the list to hunt for it would be the wrong screen.
   // Initial state only, so closing either one returns to the list rather than
   // bouncing back off a stale URL.
-  const { kinTaleId, sessionId } = useSearch({ from: '/admin/kintales' });
+  const { kinTaleId, sessionId, range } = useSearch({ from: '/admin/kintales' });
   const navigate = useNavigate();
   const [mode, setMode] = useState<KinTalesMode>(() => {
     if (kinTaleId) return { kind: 'detail', kinTaleId };
@@ -76,5 +77,10 @@ export function KinTalesView() {
   // ruling 2026-09-10, #676), and that entry is Auntie Time's "Complete
   // KinTale", which lands here with `?sessionId=`. The list offers no blank
   // composer of its own.
-  return <KinTales onSelect={(id) => setMode({ kind: 'detail', kinTaleId: id })} />;
+  return (
+    <KinTales
+      onSelect={(id) => setMode({ kind: 'detail', kinTaleId: id })}
+      {...(isDateRangeKey(range) ? { initialRange: range } : {})}
+    />
+  );
 }

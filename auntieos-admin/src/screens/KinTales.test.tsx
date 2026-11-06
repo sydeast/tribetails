@@ -420,6 +420,11 @@ describe('KinTales screen: the date window', () => {
     expect(lastSpec().filters?.map((f) => [f[0], f[1]])).toEqual([['createdAt', '>=']]);
   });
 
+  it('opens in the window it is told to, so Home can link to the archive its draft count covers (#1601)', () => {
+    render(<KinTales initialRange="all" />);
+    expect(screen.getByRole('tab', { name: 'All (archive)' })).toHaveAttribute('aria-selected', 'true');
+    expect(lastSpec().filters ?? []).toEqual([]);
+  });
   it('windows against an ISO string, which is what kin_care_reports.createdAt holds', () => {
     render(<KinTales />);
     const bound = lastSpec().filters?.[0]?.[2];

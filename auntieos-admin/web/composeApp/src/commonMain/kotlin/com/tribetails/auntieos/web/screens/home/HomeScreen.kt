@@ -168,7 +168,7 @@ fun HomeScreen(
     val doneCount = todaySessions.count { it.status.uppercase() == "COMPLETED" }
     val onWayCount = todaySessions.count { it.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED") }
 
-    val draftsPending = drafts.filter { it.status.lowercase() != "approved" }
+    val draftsPending = drafts.filter { isDraftAwaitingReview(it.status) }
     val kinfolkCount = (kinfolkState as? FirestoreResult.Data)?.value?.count { it.status != "archived" } ?: 0
     // Bookings stream is pre-filtered to booking requests server-side; count the
     // stream length (the old `status=='pending'` predicate was dead - stream is DRAFT).
@@ -442,7 +442,7 @@ fun HomeScreen(
                                         EmptyHint("Couldn't load drafts: ${(draftsState as FirestoreResult.Error).message}", error = true)
                                     draftsPending.isEmpty() -> EmptyHint("All caught up, no drafts waiting.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                                        draftsPending.take(4).forEachIndexed { i, d -> TaleRow(d, i) }
+                                        draftsPending.take(4).forEachIndexed { i, d -> TaleRow(d, i) { onNavigate(Destination.Communicate) } }
                                     }
                                 }
                                 Spacer(Modifier.height(14.dp))
@@ -816,7 +816,7 @@ private fun localWeekStartIso(): String {
 
 /** A KinTales-pending tale row: colored mark, title, blurb, mono meta line. */
 @Composable
-private fun TaleRow(draft: GeneratedDraft, index: Int) {
+private fun TaleRow(draft: GeneratedDraft, index: Int, onClick: () -> Unit) {
     val c = AuntieTheme.colors
     val markTone = when (index % 3) { 0 -> c.primary; 1 -> c.secondary; else -> c.accent }
     Row(
@@ -825,6 +825,8 @@ private fun TaleRow(draft: GeneratedDraft, index: Int) {
             .clip(RoundedCornerShape(13.dp))
             .background(c.surfaceGlass)
             .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(13.dp))
+            // #1601: the row goes somewhere (the review queue), so it is clickable.
+            .clickable(onClick = onClick)
             .padding(13.dp),
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {

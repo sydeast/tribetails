@@ -399,4 +399,14 @@ class DashboardInsightsTest {
         assertEquals("2h 00m", formatDuration(120))
         assertEquals("0m", formatDuration(-5))
     }
+
+    // ── KinTales to review (#1601) ───────────────────────────────────────────
+    @Test
+    fun `isDraftAwaitingReview counts generated, pending and blank, never approved`() {
+        assertTrue(isDraftAwaitingReview("generated"))
+        assertTrue(isDraftAwaitingReview("PENDING"))
+        assertTrue(isDraftAwaitingReview(""))
+        assertTrue(!isDraftAwaitingReview("approved"))
+        assertTrue(!isDraftAwaitingReview("mystery"))
+    }
 }

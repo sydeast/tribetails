@@ -2,6 +2,8 @@ import { threadHouseholdName, threadPreviewText } from './inboxFormat';
 import { sessionState, sessionDayKey, sessionHousehold, shiftDayIso } from './sessionFormat';
 import { formatCentsUsd, isoDatePrefixOrNull } from './invoiceFormat';
 import { str, arr } from './coerce';
+import { isKinInCare } from '../api/directory';
+import { draftStatusAsKinTaleStatus } from './kinTaleList';
 import { isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import type { GeneratedDraftRow } from '../api/drafts';
 import type { ConversationSummary } from '../api/inbox';
@@ -821,13 +823,22 @@ export function pendingTaleRows(
 }
 /**
  * How many drafts are waiting on a decision: the stat row's "KinTales to
- * review". A POSITIVE match on `status === 'pending'`, which is the value
- * android's `getPendingDraftCount` counts server-side, never "not approved".
+ * review". It asks the KinTales list's own question, so the card and the list
+ * cannot disagree about what a draft is: a `generated_drafts` doc is a draft
+ * when `draftStatusAsKinTaleStatus` files it as DRAFT (generated, pending or
+ * blank). Approved and anything unrecognised are not counted, as there.
  */
 export function pendingDraftCount(drafts: readonly GeneratedDraftRow[]): number {
-  return drafts.reduce((n, d) => (str(d.status).trim().toLowerCase() === 'pending' ? n + 1 : n), 0);
+  return drafts.reduce(
+    (n, d) => (draftStatusAsKinTaleStatus(str(d.status)).toUpperCase() === 'DRAFT' ? n + 1 : n),
+    0,
+  );
 }
-/** Pets in care: the roster minus the archived. Mirrors android's kin count. */
+/**
+ * Pets in care: the roster minus the inactive and the archived (#1601: it used
+ * to count every record, so Sandbox Bird, marked inactive, was "in care").
+ * The Directory's Kin tab "In care" filter uses the same `isKinInCare`.
+ */
 export function activeKinCount(kin: readonly { status?: string | undefined }[]): number {
-  return kin.reduce((n, k) => (str(k.status).trim().toLowerCase() === 'archived' ? n : n + 1), 0);
+  return kin.reduce((n, k) => (isKinInCare(k) ? n + 1 : n), 0);
 }

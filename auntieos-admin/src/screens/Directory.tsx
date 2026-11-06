@@ -9,6 +9,7 @@ import {
   TAG_FILTER_ALL,
   filterSortKinfolk,
   filterSortKin,
+  isKinInCare,
   tagFilterOptions,
   activeKinByKinfolk,
   kinfolkDisplayName,
@@ -326,6 +327,10 @@ interface OpenKin {
 }
 
 interface DirectoryProps {
+  /** The tab the screen opens on. Home's "Kin in care" card opens `kin` (#1601). */
+  initialTab?: DirectoryTab;
+  /** Open the Kin tab narrowed to pets in care (not inactive, not archived). */
+  initialKinInCare?: boolean;
   /**
    * Card-open override. Propless (the router default), a kinfolk card NAVIGATES
    * to `/directory/{kinfolkId}`; the profile is then mounted by that route, not
@@ -377,6 +382,8 @@ export function Directory({
   onProfileClose,
   openUnappliedPayments = false,
   unappliedPaymentId = '',
+  initialTab = 'kinfolk',
+  initialKinInCare = false,
 }: DirectoryProps) {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const kinState = useCollection<Kin>(KIN_QUERY);
@@ -385,7 +392,13 @@ export function Directory({
   const auth = useAuth();
   const operatorUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
-  const [tab, setTab] = useState<DirectoryTab>('kinfolk');
+  const [tab, setTab] = useState<DirectoryTab>(initialTab);
+  /**
+   * Kin tab status narrowing (#1601). Off by default, because the tab is "every
+   * pet"; on, it keeps what `isKinInCare` keeps, which is exactly what Home's
+   * "Kin in care" card counts.
+   */
+  const [kinInCareOnly, setKinInCareOnly] = useState(initialKinInCare);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>(SORT_OPTION_DEFAULT);
   /**
@@ -702,6 +715,23 @@ export function Directory({
           </label>
         )}
 
+        {tab === 'kin' && (
+          <label className="directory__sort">
+            <span className="directory__sort-label">Show</span>
+            <select
+              className="directory__sort-select"
+              value={kinInCareOnly ? 'inCare' : 'all'}
+              onChange={(e) => setKinInCareOnly(e.target.value === 'inCare')}
+              aria-label="Filter kin by status"
+            >
+              <option value="all">All kin</option>
+              <option value="inCare">In care</option>
+            </select>
+            <span className="directory__sort-chevron">
+              <ChevronGlyph />
+            </span>
+          </label>
+        )}
         <label className="directory__sort">
           <span className="directory__sort-label">Sort</span>
           <select
@@ -775,7 +805,7 @@ export function Directory({
           empty={<EmptyHint>No kin on file yet.</EmptyHint>}
         >
           {(rows) => {
-            const visible = filterSortKin(rows, query, sort, activeKinTag);
+            const visible = filterSortKin(kinInCareOnly ? rows.filter(isKinInCare) : rows, query, sort, activeKinTag);
             if (visible.length === 0) {
               return <EmptyHint>{noMatchHint(query, activeKinTag)}</EmptyHint>;
             }

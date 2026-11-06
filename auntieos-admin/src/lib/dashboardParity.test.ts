@@ -436,10 +436,25 @@ describe('pendingTaleRows and pendingDraftCount', () => {
     expect(pendingDraftCount(rows)).toBe(3);
     expect(pendingDraftCount([])).toBe(0);
   });
+  it('counts what the KinTales list files as a draft: generated, pending and blank, never approved (#1601)', () => {
+    const rows = [
+      draft({ _id: 'a', status: 'generated' }),
+      draft({ _id: 'b', status: 'pending' }),
+      draft({ _id: 'c', status: '' }),
+      draft({ _id: 'd', status: 'approved' }),
+      draft({ _id: 'e', status: 'mystery' }),
+    ];
+    expect(pendingDraftCount(rows)).toBe(3);
+  });
 });
 
 describe('activeKinCount', () => {
   it('counts the roster minus the archived', () => {
     expect(activeKinCount([{ status: 'active' }, {}, { status: 'archived' }])).toBe(2);
+  });
+  it('leaves out inactive pets too, so Sandbox Bird is not "in care" (#1601)', () => {
+    expect(
+      activeKinCount([{ status: 'active' }, { status: 'inactive' }, { status: ' Inactive ' }, { status: 'archived' }, {}]),
+    ).toBe(2);
   });
 });

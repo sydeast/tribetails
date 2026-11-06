@@ -618,11 +618,26 @@
 }
 /* W3 KinTales row: a tone mark, then title / blurb / meta stacked. */
 .tale-row {
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+}
+/* The whole row is one button (#1601): it opens the KinTales list. */
+.tale-row__open {
   display: grid;
   grid-template-columns: 4px minmax(0, 1fr);
   gap: 0.7rem;
+  width: 100%;
+  margin: 0;
   padding: 0.55rem 0;
-  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.tale-row__open:hover .tale-row__title,
+.tale-row__open:focus-visible .tale-row__title {
+  text-decoration: underline;
 }
 .tale-row:last-child {
   border-bottom: none;

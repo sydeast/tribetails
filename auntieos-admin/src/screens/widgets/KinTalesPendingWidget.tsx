@@ -10,6 +10,8 @@ import './widgets.css';
 interface KinTalesPendingWidgetProps {
   /** Opens Communicate, where a draft is reviewed and sent. */
   onReviewTales: () => void;
+  /** Opens the KinTales list, where the draft is a row. A row is a button because it goes somewhere. */
+  onOpenTale: () => void;
 }
 
 /**
@@ -27,7 +29,7 @@ interface KinTalesPendingWidgetProps {
  * Compose row printed it as both the subtitle and the meta, which is how the
  * live screenshot came to read "visit report / Sara / GENERATED · Sara".
  */
-export function KinTalesPendingWidget({ onReviewTales }: KinTalesPendingWidgetProps) {
+export function KinTalesPendingWidget({ onReviewTales, onOpenTale }: KinTalesPendingWidgetProps) {
   const drafts = useDraftsStream();
   const rows = useMemo(
     () => (drafts.status === 'ready' ? pendingTaleRows(drafts.data, 4) : []),
@@ -59,12 +61,14 @@ export function KinTalesPendingWidget({ onReviewTales }: KinTalesPendingWidgetPr
                 // The mark's tone cycles over three, matching the phone's
                 // `index % 3`, so a stack of four rows reads as four rows.
                 <li key={row.id} className="tale-row" data-mark={i % 3}>
-                  <span className="tale-row__mark" aria-hidden="true" />
-                  <span className="tale-row__body">
-                    <span className="tale-row__title">{row.title}</span>
-                    <span className="tale-row__blurb">{row.blurb}</span>
-                    <span className="tale-row__meta">{row.meta}</span>
-                  </span>
+                  <button type="button" className="tale-row__open" onClick={onOpenTale}>
+                    <span className="tale-row__mark" aria-hidden="true" />
+                    <span className="tale-row__body">
+                      <span className="tale-row__title">{row.title}</span>
+                      <span className="tale-row__blurb">{row.blurb}</span>
+                      <span className="tale-row__meta">{row.meta}</span>
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>

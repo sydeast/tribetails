@@ -21,7 +21,24 @@ vi.mock('../api/dashboardLayout', () => ({ getDashboardLayout, saveDashboardLayo
 // All nineteen live widgets self-load from Firestore or a callable. This suite
 // is about the BOARD (order, edit chrome, persistence), so each is stubbed down
 // to a marker; every widget has its own suite next door.
-vi.mock('./widgets/StatsWidget', () => ({ StatsWidget: () => <p>stats body</p> }));
+vi.mock('./widgets/StatsWidget', () => ({
+  StatsWidget: ({
+    onOpenKinTales,
+    onOpenKinInCare,
+    onOpenInvoices,
+  }: {
+    onOpenKinTales: () => void;
+    onOpenKinInCare: () => void;
+    onOpenInvoices: () => void;
+  }) => (
+    <>
+      <p>stats body</p>
+      <button type="button" aria-label="card kintales" onClick={onOpenKinTales} />
+      <button type="button" aria-label="card kin" onClick={onOpenKinInCare} />
+      <button type="button" aria-label="card invoices" onClick={onOpenInvoices} />
+    </>
+  ),
+}));
 vi.mock('./widgets/TodaysPackWidget', () => ({
   TodaysPackWidget: ({ onOpenSessions }: { onOpenSessions: () => void }) => (
     <button type="button" onClick={onOpenSessions}>
@@ -596,5 +613,18 @@ describe('Home wiring that predates edit mode', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'open inbox' }));
     expect(navigate).toHaveBeenCalledWith({ to: '/inbox' });
+  });
+  it('sends the stat cards to the screens they summarise, filtered to what they count (#1601)', async () => {
+    getDashboardLayout.mockResolvedValue(stored([w('stats', 'wide')]));
+    render(<Home />);
+    fireEvent.click(await screen.findByRole('button', { name: 'card kintales' }));
+    expect(navigate).toHaveBeenLastCalledWith({ to: '/kintales', search: { range: 'all' } });
+    fireEvent.click(screen.getByRole('button', { name: 'card kin' }));
+    expect(navigate).toHaveBeenLastCalledWith({
+      to: '/directory',
+      search: { tab: 'kin', inCare: '1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'card invoices' }));
+    expect(navigate).toHaveBeenLastCalledWith({ to: '/invoices' });
   });
 });

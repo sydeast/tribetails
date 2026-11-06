@@ -223,7 +223,10 @@ const invoicesRoute = createRoute({
 const directoryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory',
-  component: lazyRouteComponent(() => import('./screens/Directory'), 'Directory'),
+  // `tab=kin` opens the Kin tab; `inCare=1` narrows it to the pets Home's "Kin
+  // in care" card counts (#1601).
+  validateSearch: optionalIdSearch(['tab', 'inCare'] as const),
+  component: lazyRouteComponent(() => import('./routes/DirectoryView'), 'DirectoryView'),
 });
 
 // Every household's invites in one list. Distinct from
@@ -313,13 +316,16 @@ const sessionDetailRoute = createRoute({
 const kinTalesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintales',
+  // `range` is the list's date window (7d / 30d / 90d / all). Home's "KinTales
+  // to review" card and its pending rows send `all`, because the drafts Home
+  // counts are not limited to the last week (#1601).
   // `kinTaleId` opens one report in DETAIL (a kintale notification's "Open").
   // `sessionId` opens the COMPOSER scaffolded from that visit, which is where
   // Auntie Time's "Complete KinTale" button routes (#703): the write-up belongs
   // to a visit, and the composer already takes a `sessionId` to seed a draft
   // from one. Two ids because they name two different things and two different
   // destinations, never one id the view has to guess the meaning of.
-  validateSearch: optionalIdSearch(['kinTaleId', 'sessionId'] as const),
+  validateSearch: optionalIdSearch(['kinTaleId', 'sessionId', 'range'] as const),
   component: lazyRouteComponent(() => import('./routes/KinTalesView'), 'KinTalesView'),
 });
 

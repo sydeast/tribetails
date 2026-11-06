@@ -78,6 +78,9 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     onNavigateToCommunicate: () -> Unit,
     onNavigateToCalls: () -> Unit,
+    onNavigateToAuntieTime: () -> Unit = {},
+    onNavigateToKinInCare: () -> Unit = {},
+    onNavigateToInvoices: () -> Unit = {},
     onWriteKinTale: (sessionId: String) -> Unit,
     onLiveTrack: (sessionId: String, kinfolkId: String, kinfolkName: String) -> Unit = { _, _, _ -> },
     onViewRoute: (routeId: String, kinfolkName: String) -> Unit = { _, _ -> },
@@ -287,6 +290,7 @@ fun HomeScreen(
                                             tone = AuntieStatusTone.Orange,
                                             feature = true,
                                             modifier = Modifier.weight(1.5f),
+                                            onClick = onNavigateToAuntieTime,
                                         )
                                         StatCard(
                                             label = "KinTales to review",
@@ -308,6 +312,7 @@ fun HomeScreen(
                                             trend = "across all households",
                                             tone = AuntieStatusTone.Purple,
                                             modifier = Modifier.weight(1f),
+                                            onClick = onNavigateToKinInCare,
                                         )
                                         StatCard(
                                             label = "This week",
@@ -317,6 +322,7 @@ fun HomeScreen(
                                             trend = "paid invoices this week",
                                             tone = AuntieStatusTone.Success,
                                             modifier = Modifier.weight(1f),
+                                            onClick = onNavigateToInvoices,
                                         )
                                     }
                                 }
@@ -373,7 +379,7 @@ fun HomeScreen(
                                     state.isLoading -> EmptyHint("Loading drafts…")
                                     state.recentDrafts.isEmpty() -> EmptyHint("All caught up, no drafts waiting.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                                        state.recentDrafts.take(4).forEachIndexed { i, d -> TaleRow(d, i) }
+                                        state.recentDrafts.take(4).forEachIndexed { i, d -> TaleRow(d, i, onClick = onNavigateToCommunicate) }
                                     }
                                 }
                                 Spacer(Modifier.height(14.dp))
@@ -866,7 +872,7 @@ fun OfflineBanner(
 
 /** A KinTales-pending tale row: colored mark, type + recipient, mono meta line. */
 @Composable
-private fun TaleRow(draft: Draft, index: Int) {
+private fun TaleRow(draft: Draft, index: Int, onClick: () -> Unit) {
     val c = AuntieTheme.colors
     val markTone = when (index % 3) { 0 -> c.primary; 1 -> c.secondary; else -> c.accent }
     Row(
@@ -875,6 +881,8 @@ private fun TaleRow(draft: Draft, index: Int) {
             .clip(RoundedCornerShape(13.dp))
             .background(c.surfaceGlass)
             .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(13.dp))
+            // #1601: the row goes somewhere, so it is a button, not a card that looks like one.
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(13.dp),
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {

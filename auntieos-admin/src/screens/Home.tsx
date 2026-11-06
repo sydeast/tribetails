@@ -100,6 +100,11 @@ interface WidgetProps {
   onOpenInbox: () => void;
   onOpenSessions: () => void;
   onOpenCommunicate: () => void;
+  /** KinTales, widened to the whole archive so every draft the Home count includes is listed. */
+  onOpenKinTales: () => void;
+  /** Directory's Kin tab, filtered to the pets "Kin in care" counts. */
+  onOpenKinInCare: () => void;
+  onOpenInvoices: () => void;
 }
 
 /**
@@ -115,10 +120,17 @@ interface WidgetProps {
  * the placeholder has nothing left to catch.
  */
 const WEB_WIDGETS: Readonly<Record<DashKey, (props: WidgetProps) => ReactElement>> = {
-  stats: () => <StatsWidget />,
+  stats: ({ onOpenSessions, onOpenKinTales, onOpenKinInCare, onOpenInvoices }) => (
+    <StatsWidget
+      onOpenSessions={onOpenSessions}
+      onOpenKinTales={onOpenKinTales}
+      onOpenKinInCare={onOpenKinInCare}
+      onOpenInvoices={onOpenInvoices}
+    />
+  ),
   todaysPack: ({ onOpenSessions }) => <TodaysPackWidget onOpenSessions={onOpenSessions} />,
-  kintales: ({ onOpenCommunicate }) => (
-    <KinTalesPendingWidget onReviewTales={onOpenCommunicate} />
+  kintales: ({ onOpenCommunicate, onOpenKinTales }) => (
+    <KinTalesPendingWidget onReviewTales={onOpenCommunicate} onOpenTale={onOpenKinTales} />
   ),
   cashFlow: () => <CashFlowWidget />,
   gatekeeper: () => <GatekeeperWidget />,
@@ -367,6 +379,11 @@ export function Home() {
                 onOpenInbox={() => void navigate({ to: '/inbox' })}
                 onOpenSessions={() => void navigate({ to: '/sessions' })}
                 onOpenCommunicate={() => void navigate({ to: '/communicate' })}
+                onOpenKinTales={() => void navigate({ to: '/kintales', search: { range: 'all' } })}
+                onOpenKinInCare={() =>
+                  void navigate({ to: '/directory', search: { tab: 'kin', inCare: '1' } })
+                }
+                onOpenInvoices={() => void navigate({ to: '/invoices' })}
               />
             </div>
           ))

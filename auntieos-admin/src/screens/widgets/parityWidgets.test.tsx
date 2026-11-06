@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { Async } from '../../lib/async';
 import type { SessionEntry } from '../../api/sessions';
 import type { Kin } from '../../api/directory';
@@ -118,6 +118,14 @@ beforeEach(() => {
   useCollection.mockReset();
 });
 
+function statsNav() {
+  return {
+    onOpenSessions: vi.fn(),
+    onOpenKinTales: vi.fn(),
+    onOpenKinInCare: vi.fn(),
+    onOpenInvoices: vi.fn(),
+  };
+}
 describe('StatsWidget', () => {
   it('reports today, the review queue, the pack and the week from four real streams', () => {
     wire({
@@ -132,7 +140,7 @@ describe('StatsWidget', () => {
       kin: { status: 'ready', data: [kin(), kin({ _id: 'p2' })] },
       invoices: { status: 'ready', data: [inv()] },
     });
-    render(<StatsWidget />);
+    render(<StatsWidget {...statsNav()} />);
 
     // Two visits today and two pets in care, so the tiles are read through
     // their labels rather than by hunting for a bare "2" on the page.
@@ -150,15 +158,45 @@ describe('StatsWidget', () => {
     expect(screen.getByText('across all households')).toBeInTheDocument();
   });
 
+  it('opens the matching screen from each of the four cards (#1601)', () => {
+    wire({});
+    const nav = statsNav();
+    render(<StatsWidget {...nav} />);
+    for (const [name, handler] of [
+      [/Today's pack/, nav.onOpenSessions],
+      [/KinTales to review/, nav.onOpenKinTales],
+      [/Kin in care/, nav.onOpenKinInCare],
+      [/This week/, nav.onOpenInvoices],
+    ] as const) {
+      const card = screen.getByRole('button', { name });
+      fireEvent.click(card);
+      expect(handler).toHaveBeenCalledTimes(1);
+    }
+  });
+  it('counts only pets in care: inactive and archived are out (#1601)', () => {
+    wire({
+      kin: {
+        status: 'ready',
+        data: [
+          kin(),
+          kin({ _id: 'p2', status: 'inactive', name: 'Sandbox Bird' }),
+          kin({ _id: 'p3', status: 'archived' }),
+        ],
+      },
+    });
+    render(<StatsWidget {...statsNav()} />);
+    const kinCard = screen.getByRole('button', { name: /Kin in care/ });
+    expect(kinCard.querySelector('.den-stat-value')?.textContent).toBe('1');
+  });
   it('shows a real zero when the streams are readable and genuinely empty', () => {
     wire({});
-    render(<StatsWidget />);
+    render(<StatsWidget {...statsNav()} />);
     expect(screen.getAllByText('0').length).toBeGreaterThan(0);
   });
 
   it('shows a DASH and the failure, never a confident zero, on a failed read', () => {
     wire({ invoices: { status: 'error', message: 'permission-denied' } });
-    render(<StatsWidget />);
+    render(<StatsWidget {...statsNav()} />);
 
     expect(screen.getByText(/permission-denied/i)).toBeInTheDocument();
     // The trend beside a failed tile is a claim about data nobody read.
@@ -167,7 +205,7 @@ describe('StatsWidget', () => {
 
   it('claims nothing at all while a stream is still loading', () => {
     wire({ kin: { status: 'loading' } });
-    render(<StatsWidget />);
+    render(<StatsWidget {...statsNav()} />);
     expect(screen.getByLabelText(/Kin in care, still loading/i)).toBeInTheDocument();
   });
 });
@@ -213,22 +251,29 @@ describe('KinTalesPendingWidget', () => {
 
   it('shows title, blurb and meta with the household named once', () => {
     wire({ generated_drafts: { status: 'ready', data: [draft({ status: 'generated' })] } });
-    render(<KinTalesPendingWidget onReviewTales={noop} />);
+    render(<KinTalesPendingWidget onReviewTales={noop} onOpenTale={noop} />);
 
     expect(screen.getByText('visit report')).toBeInTheDocument();
     expect(screen.getByText('Biscuit had a lovely time.')).toBeInTheDocument();
     expect(screen.getByText(`GENERATED · Sara · ${TODAY}`)).toBeInTheDocument();
   });
 
+  it('makes each row a button that opens the KinTales list (#1601)', () => {
+    wire({ generated_drafts: { status: 'ready', data: [draft({ status: 'generated' })] } });
+    const open = vi.fn();
+    render(<KinTalesPendingWidget onReviewTales={noop} onOpenTale={open} />);
+    fireEvent.click(screen.getByRole('button', { name: /visit report/i }));
+    expect(open).toHaveBeenCalledTimes(1);
+  });
   it('is all caught up when there is nothing to review', () => {
     wire({ generated_drafts: READY_EMPTY });
-    render(<KinTalesPendingWidget onReviewTales={noop} />);
+    render(<KinTalesPendingWidget onReviewTales={noop} onOpenTale={noop} />);
     expect(screen.getByText(/All caught up/i)).toBeInTheDocument();
   });
 
   it('never says "all caught up" over a failed draft read', () => {
     wire({ generated_drafts: { status: 'error', message: 'permission-denied' } });
-    render(<KinTalesPendingWidget onReviewTales={noop} />);
+    render(<KinTalesPendingWidget onReviewTales={noop} onOpenTale={noop} />);
     expect(screen.getByText(/permission-denied/i)).toBeInTheDocument();
     expect(screen.queryByText(/All caught up/i)).not.toBeInTheDocument();
   });

@@ -782,6 +782,15 @@ private fun AuthenticatedNavHost(
                     viewModel             = homeVm,
                     onNavigateToCommunicate = { navController.navigate(Screen.Communicate.route) },
                     onNavigateToCalls     = { navController.navigate(Screen.Calls.route) },
+                    onNavigateToAuntieTime = {
+                        navController.navigate(Screen.AuntieTime.route) { launchSingleTop = true }
+                    },
+                    onNavigateToKinInCare = {
+                        // Opens the Directory's Kin tab narrowed to the pets the card counted.
+                        com.tribetails.auntieos.ui.directory.DirectoryDeepLink.requestKinInCare()
+                        navController.navigate(Screen.Directory.route) { launchSingleTop = true }
+                    },
+                    onNavigateToInvoices = { navController.navigate(Screen.AdminInvoices.route) },
                     onWriteKinTale        = { sessionId ->
                         navController.navigate(Screen.KinTaleReport.createRoute(sessionId))
                     },

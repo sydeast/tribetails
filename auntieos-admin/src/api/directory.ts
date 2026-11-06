@@ -177,6 +177,16 @@ export const KINFOLK_QUERY: CollectionSpec = {
  * compiler forces a default at each read instead of promising a `string` the
  * document never carried. `_id` stays required (useCollection sets it).
  */
+/**
+ * A pet that counts as "in care": anything not marked inactive or archived. A
+ * blank status counts, because no `kin` writer sets the field on every doc
+ * (see KIN_QUERY). Home's "Kin in care" card and the Directory's Kin tab "In
+ * care" filter both call this, so the card's number is the list's length.
+ */
+export function isKinInCare(kin: { status?: string | undefined }): boolean {
+  const s = (kin.status ?? '').trim().toLowerCase();
+  return s !== 'inactive' && s !== 'archived';
+}
 export interface Kin {
   _id: string;
   kinfolkId?: string | undefined;
