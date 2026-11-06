@@ -51,6 +51,7 @@ import type { StagedWriter } from './moneyIdempotency';
 import {
   alreadySettledRefusal,
   isDraftOrQuote,
+  overBalanceRefusal,
   refusedLifecycle,
   type InvoiceDoc,
 } from '../admin/markInvoicePaid';
@@ -86,6 +87,8 @@ export interface ApplyOutcome {
 export interface ApplyRefusal {
   code: string;
   message: string;
+  /** #1566: set on an over-balance refusal, the balance the apply ran into. */
+  amountDueCents?: number;
 }
 
 /** The refusal a caller turns into one `failed-precondition`, or the plan to commit. */
@@ -203,6 +206,11 @@ export function planApply(input: {
 
   const settled = alreadySettledRefusal(doc, invoice.existingPayments.length, before.state);
   if (settled !== null) return { ok: false, refusal: settled };
+
+  // #1566: the applied part stops at the balance; anything over it is tip,
+  // which the admin enters on this payment. Same guard as `markInvoicePaid`.
+  const overBalance = overBalanceRefusal(appliedCents, before);
+  if (overBalance !== null) return { ok: false, refusal: overBalance };
 
   return {
     ok: true,

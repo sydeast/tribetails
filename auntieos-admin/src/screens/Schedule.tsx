@@ -1,3 +1,4 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { SCHEDULE_SESSIONS_QUERY, SCHEDULE_BUSY_SLOTS_QUERY, type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
@@ -34,7 +35,7 @@ import {
 import { getBusinessSettings } from '../api/settings';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { businessInstantMs, businessTodayIso, sessionsByBusinessDay } from '../lib/businessZoneTime';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import { rescheduleBooking } from '../api/bookingsWrite';
 import {
   deleteBlockedTimeSlot,
@@ -276,7 +277,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
   // The household list for the New visit dialog. Directory already streams this
   // collection for its own tab; this is Schedule's own bounded listener, the
   // same one-listener-per-screen rule `SCHEDULE_SESSIONS_QUERY` follows.
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   const households = useMemo(
     () =>
       kinfolkState.status === 'ready'
