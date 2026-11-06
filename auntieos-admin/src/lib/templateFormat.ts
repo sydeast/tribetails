@@ -348,15 +348,32 @@ export function templateFormError(
   fields: Pick<TemplateFormFields, 'templateId' | 'subject' | 'body'>,
   opts: { isCreate: boolean },
 ): string | null {
+  return templateFieldErrors(fields, opts)[0]?.message ?? null;
+}
+/**
+ * #1614: every blocking problem in the form at once, each tied to its field,
+ * in the order the form reads (key, subject, body). The single-message
+ * `templateFormError` above is the first of these. The editor draws each one at
+ * its own field and clears it when that field is edited.
+ */
+export type TemplateErrorField = 'templateId' | 'subject' | 'body' | 'headline' | 'content';
+export interface TemplateFieldError {
+  field: TemplateErrorField;
+  message: string;
+}
+export function templateFieldErrors(
+  fields: Pick<TemplateFormFields, 'templateId' | 'subject' | 'body'>,
+  opts: { isCreate: boolean },
+): TemplateFieldError[] {
+  const out: TemplateFieldError[] = [];
   if (opts.isCreate) {
     const idError = templateIdError(fields.templateId);
-    if (idError) return idError;
+    if (idError) out.push({ field: 'templateId', message: idError });
   }
-  if (fields.subject.trim() === '') return 'Subject is required.';
-  if (fields.body.trim() === '') return 'Body is required.';
-  return null;
+  if (fields.subject.trim() === '') out.push({ field: 'subject', message: 'Subject is required.' });
+  if (fields.body.trim() === '') out.push({ field: 'body', message: 'Body is required.' });
+  return out;
 }
-
 /**
  * The exact `saveTemplate` callable payload for these form fields. Mirrors
  * `saveTemplateHandler`'s `Args` shape field-for-field
@@ -483,16 +500,23 @@ export function visualFormError(
   fields: Pick<TemplateFormFields, 'templateId' | 'subject' | 'headline' | 'content'>,
   opts: { isCreate: boolean },
 ): string | null {
+  return visualFieldErrors(fields, opts)[0]?.message ?? null;
+}
+/** #1614: every blocking problem in a visual template, per field. See `templateFieldErrors`. */
+export function visualFieldErrors(
+  fields: Pick<TemplateFormFields, 'templateId' | 'subject' | 'headline' | 'content'>,
+  opts: { isCreate: boolean },
+): TemplateFieldError[] {
+  const out: TemplateFieldError[] = [];
   if (opts.isCreate) {
     const idError = templateIdError(fields.templateId);
-    if (idError) return idError;
+    if (idError) out.push({ field: 'templateId', message: idError });
   }
-  if (fields.subject.trim() === '') return 'Subject is required.';
-  if (fields.headline.trim() === '') return 'Headline is required.';
-  if (!hasTextBlock(fields.content)) return 'The email needs some content.';
-  return null;
+  if (fields.subject.trim() === '') out.push({ field: 'subject', message: 'Subject is required.' });
+  if (fields.headline.trim() === '') out.push({ field: 'headline', message: 'Headline is required.' });
+  if (!hasTextBlock(fields.content)) out.push({ field: 'content', message: 'The email needs some content.' });
+  return out;
 }
-
 /** The exact visual `saveTemplate` payload. Optional-field rules match `buildSaveTemplatePayload`. */
 export function buildVisualSavePayload(
   fields: TemplateFormFields,

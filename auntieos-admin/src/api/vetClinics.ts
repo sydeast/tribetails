@@ -52,7 +52,13 @@ export interface VetClinic {
 }
 
 /**
- * Bounded, ordered live query, per the `useCollection` contract. 500 is the same
+ * Bounded live query, per the `useCollection` contract. Paged by DOCUMENT ID,
+ * not `name` (#1565): Firestore's `orderBy` drops a document that lacks the
+ * field, so a clinic saved without a name would vanish from the bank and every
+ * picker. Read it through `useVetClinics` (`lib/useVetClinics.ts`), which sorts
+ * A to Z on the client with {@link sortVetClinics}.
+ *
+ * Original note: 500 is the same
  * cap Directory uses and is far above the real catalog size; if a metro's bank
  * ever passes it, the picker's search is a client-side filter over what the
  * listener returned, so the cap would start hiding clinics and this becomes a
@@ -60,7 +66,7 @@ export interface VetClinic {
  */
 export const VET_CLINICS_QUERY: CollectionSpec = {
   path: 'vet_clinics',
-  order: ['name', 'asc'],
+  order: ['__name__', 'asc'],
   max: 500,
 };
 
@@ -94,4 +100,18 @@ export function clinicName(c: VetClinic): string {
 /** Phone and address as one secondary line, omitting whichever is missing. */
 export function clinicDetail(c: VetClinic): string {
   return [(c.phone ?? '').trim(), (c.address ?? '').trim()].filter((s) => s !== '').join(' · ');
+}
+
+/** A to Z by clinic name, then document id; a clinic with no name sorts first and is never dropped. */
+export function sortVetClinics<T extends { name?: string | undefined; _id?: string }>(
+  rows: readonly T[],
+): T[] {
+  return [...rows].sort((a, b) => {
+    const na = (a.name ?? '').trim().toLowerCase();
+    const nb = (b.name ?? '').trim().toLowerCase();
+    if (na !== nb) return na < nb ? -1 : 1;
+    const ia = a._id ?? '';
+    const ib = b._id ?? '';
+    return ia < ib ? -1 : ia > ib ? 1 : 0;
+  });
 }
