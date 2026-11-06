@@ -349,6 +349,20 @@ describe('recordPayment: the Apply box', () => {
     ).rejects.toMatchObject({ code: 'failed-precondition' });
     expect(ctx.writes).toHaveLength(0);
   });
+  it('#1566: REFUSES an apply above what the invoice owes, and writes NOTHING', async () => {
+    // The desktop console's single-step path. $137.50 paid, no tip typed, all
+    // of it applied to a $127.50 bill: the $10 over is tip under the
+    // 2026-09-27 ruling, so the client has to send it as tip, not as apply.
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      recordPaymentHandler(req({ ...feeArgs, tip: 0, apply: { invoiceId: 'inv1', amount: 137.5 } })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_amount_exceeds_balance' },
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
   it('refuses an apply against a draft, and writes nothing', async () => {
     const ctx = seed({ invoice: { kinfolkId: 'fam1', status: 'draft', total: 127.5 } });
     mocks.dbFn.mockReturnValue(ctx.db);
