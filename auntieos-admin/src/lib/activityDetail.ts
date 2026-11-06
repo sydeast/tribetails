@@ -206,44 +206,59 @@ export function activityMatchesStatus(
 // tested here so the two clients cannot label the same entry differently.
 
 /**
- * The mock's six filter chips. Same taxonomy as Android's `ActivityFilter`, and
- * the same overlapping prefix rules: a category is a QUESTION asked of the
- * action type ("is this about a booking?"), not a partition, so one entry can
- * answer yes to two chips (ADMIN_TRIAGE_ORPHAN_REPORT is both KinTales and
- * Admin). The tile tone picks the first match in this order.
+ * The filter chips: the mock's six plus Billing (#1613).
+ *
+ * A category is a PARTITION: every action type lands under exactly one chip,
+ * chosen by the first rule below that claims it, so the filter and the row's tile
+ * can never disagree and a billing event cannot sit under KinTales. It used to be
+ * a set of overlapping substring questions ("DRAFT" was KinTales, so
+ * BILLING_DRAFT_INVOICE_SENT filed there), and Admin matched almost nothing
+ * because the real admin events (THEME_*, MEMBERSHIP_*, PERM_*, RETENTION_*, ...)
+ * were never listed. Android and the desktop console carry the same rules, in the
+ * same order; change all three together.
  */
-export type ActivityCategory = 'all' | 'auth' | 'bookings' | 'kintales' | 'notifications' | 'admin';
-
-export function activityMatchesCategory(entry: ActivityLogEntry, category: ActivityCategory): boolean {
-  if (category === 'all') return true;
-  const a = str(entry.actionType).toUpperCase();
-  switch (category) {
-    case 'auth':
-      return a.startsWith('AUTH') || a.includes('LOGIN') || a.includes('LOGOUT');
-    case 'bookings':
-      return a.startsWith('BOOKING') || a.startsWith('KINCARE') || a.includes('SESSION') || a.includes('VISIT');
-    case 'kintales':
-      return a.includes('KINTALE') || a.includes('CONTENT') || a.includes('DRAFT') || a.includes('REPORT');
-    case 'notifications':
-      return a.includes('NOTIFICATION') || a.includes('NOTIF');
-    case 'admin':
-      return a.startsWith('ADMIN') || a.includes('TRIAGE') || a.startsWith('UPDATE_SETTINGS') || a.startsWith('SETTINGS');
-  }
-}
-
-const CATEGORY_ORDER: readonly Exclude<ActivityCategory, 'all'>[] = [
-  'auth',
-  'bookings',
-  'kintales',
-  'notifications',
-  'admin',
+export type ActivityCategory = 'all' | 'auth' | 'bookings' | 'kintales' | 'notifications' | 'billing' | 'admin';
+type RealCategory = Exclude<ActivityCategory, 'all'>;
+const startsWithAny = (a: string, prefixes: readonly string[]): boolean => prefixes.some((p) => a.startsWith(p));
+const includesAny = (a: string, needles: readonly string[]): boolean => needles.some((n) => a.includes(n));
+/** First match wins, so the order is part of the contract. Money first: it must never fall to a later, broader rule. */
+const CATEGORY_RULES: readonly (readonly [RealCategory, (a: string) => boolean])[] = [
+  ['billing', (a) => startsWithAny(a, ['BILLING_', 'EXPENSE_']) || includesAny(a, ['INVOICE', 'PAYMENT', 'QUOTE'])],
+  ['auth', (a) => startsWithAny(a, ['AUTH', 'SECRETS_']) || includesAny(a, ['LOGIN', 'LOGOUT'])],
+  [
+    'notifications',
+    (a) =>
+      includesAny(a, ['NOTIFICATION', 'NOTIF']) ||
+      startsWithAny(a, ['CONVERSATION', 'EXTERNAL_MESSAGE', 'BROADCAST', 'MARKETING_BLAST']),
+  ],
+  [
+    'admin',
+    (a) =>
+      startsWithAny(a, [
+        'ADMIN', 'UPDATE_SETTINGS', 'SETTINGS', 'THEME_', 'MEMBERSHIP_', 'PERM_', 'SAVE_FORM_SCHEMA',
+        'DELETE_FORM_SCHEMA', 'BUSINESS_', 'BRANDING_', 'EMAIL_FRAME_', 'VET_CLINIC_', 'CREATE_KINFOLK',
+        'ARCHIVE_KIN', 'RESTORE_KIN', 'KIN_REMOVAL', 'CREATE_TRAINING', 'UPDATE_TRAINING', 'DELETE_TRAINING',
+        'SUPPL', 'EXPIRATION_', 'INTEGRATION_', 'AUDIENCE_SEGMENT', 'EXTERNAL_SUPPRESSION', 'OPERATOR_',
+        'RETENTION_', 'ERROR_', 'PROFILE_', 'HOME_ACCESS', 'EMERGENCY_CONTACT',
+      ]) || a.includes('TRIAGE'),
+  ],
+  [
+    'kintales',
+    (a) => startsWithAny(a, ['CONTENT_', 'MEDIA_']) || includesAny(a, ['KINTALE', 'TALE_', 'DRAFT', 'REPORT']),
+  ],
+  [
+    'bookings',
+    (a) => includesAny(a, ['BOOKING', 'KINCARE', 'SESSION', 'VISIT', 'RESCHEDULE', 'BLOCKED_TIME_SLOT', 'CANCEL_REQUEST']),
+  ],
 ];
-
-/** The category that paints the row's glyph tile, or null for an action nothing claims. */
-export function activityCategoryOf(entry: ActivityLogEntry): Exclude<ActivityCategory, 'all'> | null {
-  return CATEGORY_ORDER.find((c) => activityMatchesCategory(entry, c)) ?? null;
+/** The one category an entry belongs to, or null for an action nothing claims (it still shows under All). */
+export function activityCategoryOf(entry: ActivityLogEntry): RealCategory | null {
+  const a = str(entry.actionType).toUpperCase();
+  return CATEGORY_RULES.find(([, claims]) => claims(a))?.[0] ?? null;
 }
-
+export function activityMatchesCategory(entry: ActivityLogEntry, category: ActivityCategory): boolean {
+  return category === 'all' || activityCategoryOf(entry) === category;
+}
 /** `KINCARE_ARRIVED` reads as "Kincare arrived": the mock's bold line. Mirrors Android's `humanizeAction`. */
 export function humanizeAction(actionType: string): string {
   const lower = actionType.toLowerCase().replace(/_/g, ' ').trim();

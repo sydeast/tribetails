@@ -269,6 +269,7 @@ describe('ActivityLog filtering', () => {
       'Bookings',
       'KinTales',
       'Notifications',
+      'Billing',
       'Admin',
     ]);
     expect(within(list).getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
@@ -292,6 +293,29 @@ describe('ActivityLog filtering', () => {
     expect(screen.queryByText('BOOKING_SUBMITTED')).toBeNull();
     expect(screen.getByText('KINCARE_ARRIVED')).toBeInTheDocument();
     expect(screen.getByText(/1 of 3 loaded/i)).toBeInTheDocument();
+  });
+  it('has a Billing chip that holds the billing events and an Admin chip that is not empty (#1613)', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 'p1', actionType: 'BILLING_DRAFT_INVOICE_SENT' }),
+        entry({ _id: 'p2', actionType: 'BILLING_PAYMENT_RECORDED' }),
+        entry({ _id: 'a1', actionType: 'THEME_BRAND_TOKENS_UPDATED' }),
+        entry({ _id: 'a2', actionType: 'MEMBERSHIP_INVITE_SENT' }),
+        entry({ _id: 'k1', actionType: 'CONTENT_KINTALE_NOTE_ADDED' }),
+      ],
+    });
+    render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Billing' }));
+    expect(screen.getByText('BILLING_DRAFT_INVOICE_SENT')).toBeInTheDocument();
+    expect(screen.getByText('BILLING_PAYMENT_RECORDED')).toBeInTheDocument();
+    expect(screen.queryByText('THEME_BRAND_TOKENS_UPDATED')).toBeNull();
+    await userEvent.click(screen.getByRole('tab', { name: 'KinTales' }));
+    expect(screen.queryByText('BILLING_DRAFT_INVOICE_SENT')).toBeNull();
+    expect(screen.getByText('CONTENT_KINTALE_NOTE_ADDED')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Admin' }));
+    expect(screen.getByText('THEME_BRAND_TOKENS_UPDATED')).toBeInTheDocument();
+    expect(screen.getByText('MEMBERSHIP_INVITE_SENT')).toBeInTheDocument();
   });
 });
 
