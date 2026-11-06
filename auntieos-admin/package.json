@@ -41,7 +41,7 @@
     "@tiptap/starter-kit": "^3.32.0",
     "@tribetails/geo": "*",
     "@tribetails/issue-recorder": "*",
-    "firebase": "^12.19.0",
+    "firebase": "^13.2.0",
     "mapbox-gl": "^3.33.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
