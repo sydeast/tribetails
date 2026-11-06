@@ -318,7 +318,7 @@ class KinTaleTemplateEditorViewModel(
         val template = _uiState.value.template
         if (template.id.isBlank()) return
         viewModelScope.launch {
-            repository.deleteKinTaleTemplate(template.id).getOrNull()
+            repository.removeKinTaleTemplate(template.id).getOrNull()
         }
     }
 

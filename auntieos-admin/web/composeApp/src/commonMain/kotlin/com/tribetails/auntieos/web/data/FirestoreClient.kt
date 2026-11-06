@@ -2295,6 +2295,27 @@ class FirestoreClient {
     suspend fun deleteKinTaleTemplate(templateId: String): WriteResult<Unit> =
         platformDeleteKinTaleTemplate(templateId)
 
+    /**
+     * #1591: the one entry point that takes a KinTale template out of service.
+     * Which modes exist is the operator's ruling (see [KinTaleTemplateRemoval]).
+     */
+    suspend fun removeKinTaleTemplate(
+        templateId: String,
+        mode: KinTaleTemplateRemoval = KinTaleTemplateRemoval.DELETE,
+    ): WriteResult<Unit> = when (mode) {
+        KinTaleTemplateRemoval.DELETE -> deleteKinTaleTemplate(templateId)
+    }
+    /** #1591: what uses this template, for a confirm that names what breaks. Owner-only on the server. */
+    suspend fun getKinTaleTemplateUsage(templateId: String): WriteResult<KinTaleTemplateUsage> {
+        val payload = buildJsonObject { put("templateId", JsonPrimitive(templateId)) }
+        return when (val r = platformInvokeCallable("getKinTaleTemplateUsage", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(decodeKinTaleTemplateUsage(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "usage decode failed") }
+        }
+    }
+
     // ---- Booking notes subcollections ----
     /**
      * Live stream of notes under a booking. internal=false reads `notes/` (kinfolk-facing);

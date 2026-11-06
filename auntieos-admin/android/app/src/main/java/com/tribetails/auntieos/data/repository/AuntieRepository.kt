@@ -2857,11 +2857,35 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to update KinTale template $templateId", it) }
 
-    suspend fun deleteKinTaleTemplate(templateId: String): Result<Unit> = runCatchingCancellable {
+    private suspend fun deleteKinTaleTemplate(templateId: String): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         firestore.collection("kintale_templates").document(templateId).delete().await()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete KinTale template $templateId", it) }
+
+    /**
+     * #1591: the one entry point that takes a KinTale template out of service.
+     * Which modes exist is the operator's ruling (see [KinTaleTemplateRemoval]);
+     * the editor's delete goes through here, never to the collection directly.
+     */
+    suspend fun removeKinTaleTemplate(
+        templateId: String,
+        mode: com.tribetails.auntieos.data.model.KinTaleTemplateRemoval =
+            com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.DELETE,
+    ): Result<Unit> = when (mode) {
+        com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.DELETE -> deleteKinTaleTemplate(templateId)
+    }
+    /** #1591: what uses this template, for a confirm that names what breaks. Owner-only on the server. */
+    suspend fun getKinTaleTemplateUsage(
+        templateId: String,
+    ): Result<com.tribetails.auntieos.data.model.KinTaleTemplateUsage> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("getKinTaleTemplateUsage")
+            .call(mapOf("templateId" to templateId)).awaitCallable().data as? Map<String, Any?>
+            ?: error("getKinTaleTemplateUsage: non-map payload")
+        com.tribetails.auntieos.data.model.parseKinTaleTemplateUsage(raw)
+    }.onFailure { AuntieLog.e("Failed to read usage of KinTale template $templateId", it) }
 
     /** Pick the best template for a service type. Falls back to the default template if no match. */
     suspend fun getActiveTemplateForService(serviceType: String): Result<KinTaleTemplate?> = runCatchingCancellable {

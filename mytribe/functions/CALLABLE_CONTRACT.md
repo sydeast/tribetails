@@ -298,6 +298,11 @@ must say "next reconcile pass", never "instantly".
   into a Dossier or Kin411 is NOT unmerged; the handler's audit payload records
   that, and every client's delete confirm must state it before committing.
 
+### getKinTaleTemplateUsage
+- req `{ templateId: string /* 1..200 */ }`
+- res `{ templateId: string, exists: boolean, name: string, isDefault: boolean, isActive: boolean, kintaleCount: number, otherActiveTemplateCount: number }`
+- Read only, owner-only. `kintaleCount` counts `kin_care_reports` docs whose `templateId` is this id (sent and draft). The built-in default has no doc and no id on a report, so it is never counted. Every client's delete or archive confirm for a KinTale template reads this to name what breaks before the operator commits (#1591).
+
 ## Invoices (admin-gated; the W2-1 pair also admits a scoped test admin, see each section's GATE line)
 
 All three write the FLAT top-level `invoices` collection, the same one the
