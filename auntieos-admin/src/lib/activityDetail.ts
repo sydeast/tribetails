@@ -1,5 +1,8 @@
 import { rec, str } from './coerce';
 import { type ActivityLogEntry } from '../api/activityLog';
+import { businessInstantMs, businessWallClock } from './businessZoneTime';
+import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
+import { formatTime } from './denFormat';
 
 /**
  * What an Activity Log row shows when it is OPENED.
@@ -37,13 +40,20 @@ export interface ActivityDetailRow {
  * "which second" is routinely the question when reconciling an audit trail
  * against a provider's logs.
  */
-export function activityDetailRows(entry: ActivityLogEntry): ActivityDetailRow[] {
+export function activityDetailRows(
+  entry: ActivityLogEntry,
+  zone: string = DEFAULT_BUSINESS_TIME_ZONE,
+): ActivityDetailRow[] {
   const rows: ActivityDetailRow[] = [];
   const push = (label: string, value: string): void => {
     if (value.trim() !== '') rows.push({ label, value });
   };
 
   push('When', str(entry.timestamp));
+  // The stored stamp is UTC; the row above it reads in the business zone (#1585).
+  // Showing both is what lets someone reconcile the two without doing the sum.
+  const when = activityWhen(str(entry.timestamp), zone);
+  if (when !== null) push('Business time', `${when.dayKey} ${when.clock}`);
   push('Action', str(entry.actionType));
   push('Status', str(entry.status));
   push('Severity', str(entry.severity));
@@ -274,6 +284,26 @@ export function activityDayLabel(day: string, today: string): string {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/** A log timestamp read on the business's calendar: its day key and its compact clock ("9:34p"). */
+export interface ActivityWhen {
+  dayKey: string;
+  clock: string;
+}
+/**
+ * Reads a log timestamp in the BUSINESS zone (#1585), never the device's and
+ * never the UTC wall clock the string happens to carry. A stamp with a zone
+ * (`...Z`, `+05:00`) is an instant; one without is already the business's wall
+ * clock (the same reading `businessInstantMs` gives visit times). Null when the
+ * string has no readable date and time, so the caller can say "Undated" instead
+ * of inventing one.
+ */
+export function activityWhen(timestamp: string, zone: string = DEFAULT_BUSINESS_TIME_ZONE): ActivityWhen | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(timestamp)) return null;
+  const ms = businessInstantMs(timestamp, zone);
+  if (ms === null) return null;
+  const wc = businessWallClock(ms, zone);
+  return { dayKey: wc.dateIso, clock: formatTime(`${wc.dateIso}T${wc.hhmm}`) };
+}
 /** Local `YYYY-MM-DD` for a Date, the shape `activityDayLabel` compares against. */
 export function localDayKey(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
