@@ -57,6 +57,18 @@ class DirectorySortTest {
 
     // ── Kinfolk tab ─────────────────────────────────────────────────────────
 
+    /** #1565: a household with no last name stays in the list and sorts by the name it has. */
+    @Test
+    fun `a household with no last name is kept and sorted by its first name`() {
+        val rows = listOf(
+            household("1", "Ann", "Young"),
+            household("2", "No Lead", ""),
+            household("3", "Zed", "Adams"),
+        )
+        val out = sortKinfolkDirectory(rows, SortOption.AlphaAsc)
+        assertEquals(3, out.size)
+        assertEquals(listOf("3", "2", "1"), out.map { it.id })
+    }
     /** 03-directory item 3 still holds: A to Z is by surname, first name breaking ties. */
     @Test
     fun `A to Z orders households by surname with a first-name tiebreak`() {
