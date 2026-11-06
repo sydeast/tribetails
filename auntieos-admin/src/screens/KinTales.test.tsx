@@ -482,8 +482,9 @@ describe('KinTales screen: the kinfolk facet', () => {
     const select = screen.getByLabelText('Household');
     expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
       'All households',
-      'Dana Ruiz',
+      // A to Z by surname: the roster hook sorts, the stream is paged by id (#1565).
       'Sam Okafor',
+      'Dana Ruiz',
     ]);
   });
 

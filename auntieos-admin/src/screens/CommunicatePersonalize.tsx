@@ -1,7 +1,8 @@
 import { useEffect, useId, useState } from 'react';
-import { useCollection, useDocById } from '../lib/firestore';
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
+import { useDocById } from '../lib/firestore';
 import { str } from '../lib/coerce';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { type GeneratedDraftRow } from '../api/drafts';
 import { publishGeneratedDraft, deleteGeneratedDraft } from '../api/kinTaleDraftActions';
 import { draftBody, draftKinfolkId, draftHousehold, draftTitle, isPublishedDraft } from '../lib/kinTaleList';
@@ -91,7 +92,7 @@ function messageTypeOfDraft(draft: GeneratedDraftRow): GenerateCommunicationType
     : 'visit_report';
 }
 export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: CommunicatePersonalizeProps = {}) {
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   // A by-id read, not a search of Home's 50-row drafts stream: a draft from
   // May can sit outside that window and still be the one the operator clicked.
   const stored = useDocById<GeneratedDraftRow>('generated_drafts', openDraftId ?? null);
