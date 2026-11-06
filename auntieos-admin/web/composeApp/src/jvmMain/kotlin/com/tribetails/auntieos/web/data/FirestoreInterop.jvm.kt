@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * Desktop (JVM) Firestore actuals.
@@ -52,6 +53,8 @@ object JvmFirestoreFixtures {
     var trainingDocs: List<TrainingDocument>? = null
     var dynamicFields: List<DynamicField>? = null
     var businessSettings: BusinessSettings? = null
+    /** #1608: the raw `requireArrivalDepartureVerification` value; null reads as an absent key. */
+    var arrivalRuleRaw: Boolean? = null
     var callableResponses: Map<String, String> = emptyMap()
     /** #867 review, #890: callables that answer with this Err message, so a test can show a screen a failed call. */
     var callableErrors: Map<String, String> = emptyMap()
@@ -116,6 +119,7 @@ object JvmFirestoreFixtures {
         voicemails = null; calls = null; sms = null; emails = null
         activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
         callableResponses = emptyMap(); callableErrors = emptyMap(); callableErrorCodes = emptyMap(); broadcastRows = null; incomingKinCares = null
+        arrivalRuleRaw = null
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null; callablePayloads.clear()
         lastWrite = null
@@ -346,6 +350,19 @@ internal actual fun platformBusinessSettingsStream(): Flow<FirestoreResult<Busin
             lastLoadedBusinessSettings = loaded
             loaded
         }
+
+// #1608: the raw switch, never the decoded model (whose default is `true`).
+// Only an explicit boolean `true` turns the rule on, as in `arrivalVerification.ts`.
+internal actual suspend fun platformArrivalRuleRequired(): WriteResult<Boolean> =
+    if (JvmFirestoreFixtures.active || JvmFirestoreFixtures.arrivalRuleRaw != null) {
+        WriteResult.Ok(JvmFirestoreFixtures.arrivalRuleRaw == true)
+    } else {
+        transportResult("settings read failed") {
+            val raw = JvmFirestoreRest.getDocPlain("business_settings", BUSINESS_SETTINGS_DOC_ID)
+                ?.get("requireArrivalDepartureVerification")
+            WriteResult.Ok((raw as? JsonPrimitive)?.booleanOrNull == true)
+        }
+    }
 
 internal actual fun platformBookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>> =
     JvmFirestoreFixtures.bookingRequests?.let { fixtureFlow(it) }

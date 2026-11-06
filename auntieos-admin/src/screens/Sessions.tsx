@@ -22,6 +22,8 @@ import {
 } from '../lib/sessionFormat';
 import { cardLifecycleActionsFor, lifecycleNowIso } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
+import { completeRefusal } from '../lib/completeRule';
+import { useArrivalRule } from '../lib/useArrivalRule';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
@@ -416,6 +418,20 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   const [completing, setCompleting] = useState(false);
   const [completeAsked, setCompleteAsked] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  // #1608: the operator's arrival-and-departure rule, checked BEFORE the
+  // confirm. The server still enforces it; this saves asking a question whose
+  // answer is already known to be no, and then making the operator wait for it.
+  const arrivalRule = useArrivalRule();
+
+  function askComplete() {
+    const refusal = completeRefusal(arrivalRule, entry);
+    if (refusal !== null) {
+      setCompleteError(refusal);
+      return;
+    }
+    setCompleteError(null);
+    setCompleteAsked(true);
+  }
 
   async function runComplete() {
     setCompleteAsked(false);
@@ -563,7 +579,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           {offersComplete && (
             <GhostButton
               label="Complete"
-              onClick={() => setCompleteAsked(true)}
+              onClick={askComplete}
               disabled={clock.saving || completing}
             />
           )}

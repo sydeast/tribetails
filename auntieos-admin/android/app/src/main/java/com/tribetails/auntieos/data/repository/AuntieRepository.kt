@@ -1598,6 +1598,24 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get business settings", it) }
 
     /**
+     * ISSUE #1608: is "Verify arrival and departure" on, read the way the server
+     * reads it? Off the RAW snapshot rather than [BusinessSettings], because the
+     * model defaults the field to `true` for the Settings editor while the
+     * server treats an absent key as off (`arrivalVerification.ts`). Reading
+     * the model would refuse a Complete the server would accept.
+     */
+    suspend fun getArrivalRuleRequired(): Result<Boolean> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        val snapshot = firestore.collection("business_settings")
+            .document("business_settings")
+            .get()
+            .await()
+        com.tribetails.auntieos.domain.arrivalRuleRequired(
+            if (snapshot.exists()) snapshot.get("requireArrivalDepartureVerification") else null,
+        )
+    }.onFailure { AuntieLog.e("Failed to read the arrival rule", it) }
+
+    /**
      * The Google Calendar sync's last-run receipt, read straight off the same
      * business_settings doc. Null when no sync has ever been stamped.
      *

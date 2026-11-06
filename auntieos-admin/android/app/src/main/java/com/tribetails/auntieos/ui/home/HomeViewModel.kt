@@ -21,6 +21,7 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.first
 import com.tribetails.auntieos.domain.arrivalCheckNotice
 import com.tribetails.auntieos.domain.arrivalNoFixNotice
+import com.tribetails.auntieos.domain.completeRefusal
 import com.tribetails.auntieos.location.ArrivalFixProvider
 import com.tribetails.auntieos.location.FusedArrivalFixProvider
 import com.tribetails.auntieos.location.LocationTrackingService
@@ -49,6 +50,8 @@ data class HomeUiState(
     val recentDrafts: List<Draft> = emptyList(),
     val todayVisits: List<TodayVisitCard> = emptyList(),
     val businessSettings: BusinessSettings = BusinessSettings(),
+    // #1608: "Verify arrival and departure", read raw (absent is off). Null when unknown.
+    val arrivalRule: Boolean? = null,
     val pendingActionSessionId: String? = null,
     // Stage 2 Step 2: "This week $" revenue = sum of PAID invoices dated within the
     // current local week (Monday..today), computed via the pure weeklyRevenue helper.
@@ -240,6 +243,8 @@ class HomeViewModel(
                 val pendingDrafts  = async { repo.getPendingDraftCount() }
                 val recentDrafts   = async { repo.getRecentDrafts() }
                 val settings       = async { repo.getBusinessSettings() }
+                // #1608: the arrival rule, read raw (absent is off, as on the server).
+                val arrivalRuleDef = async { repo.getArrivalRuleRequired() }
                 // #1158: today is the BUSINESS's day, so the bounds wait on its zone.
                 // A failed settings read falls back to America/Chicago, the server's default.
                 val todaySessions  = async {
@@ -284,6 +289,8 @@ class HomeViewModel(
                     AuntieLog.e("Home: failed to load business settings", e)
                     hasReadError = true; BusinessSettings()
                 }
+                // Unknown on a failed read: Complete is then sent and the server decides.
+                val arrivalRule = arrivalRuleDef.await().getOrNull()
                 var invoicesLoaded = true
                 val invoices = invoicesDef.await().getOrElse { e ->
                     AuntieLog.e("Home: failed to load invoices for weekly revenue", e)
@@ -370,6 +377,7 @@ class HomeViewModel(
                     recentDrafts      = rd,
                     todayVisits       = cards,
                     businessSettings  = bs,
+                    arrivalRule       = arrivalRule,
                     weeklyRevenue     = weekRevenue,
                     outstandingTotal  = outstanding.sumOf { it.amountDue },
                     outstandingCount  = outstanding.size,
@@ -588,8 +596,21 @@ class HomeViewModel(
     }
 
     fun complete(sessionId: String) {
+        // #1608: the operator's arrival rule answers before anything is sent.
+        val card = _uiState.value.todayVisits.firstOrNull { it.session.id == sessionId }
+        val refusal = card?.let { completeRefusal(_uiState.value.arrivalRule, it.session) }
+        if (refusal != null) {
+            _uiState.value = _uiState.value.copy(actionError = "Couldn't complete: $refusal")
+            return
+        }
         runOnSession(sessionId) { card ->
-            kinCareRepo.markSessionComplete(sessionId).onSuccess {
+            kinCareRepo.markSessionComplete(sessionId).onFailure { e ->
+                // A refusal used to vanish here: the card stayed put and nothing
+                // said why. The server's sentence is what the operator reads.
+                _uiState.value = _uiState.value.copy(
+                    actionError = "Couldn't complete: ${e.message ?: "the server refused"}",
+                )
+            }.onSuccess {
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repo,
