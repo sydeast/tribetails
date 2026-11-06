@@ -211,7 +211,7 @@ kotlin {
             //   Could not find com.google.firebase:firebase-auth:
             // (note the empty version). Pinning the BOM is the supported answer
             // and it also stops the three SDKs drifting apart from each other.
-            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.19.0"))
+            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:35.1.0"))
             implementation("com.google.firebase:firebase-analytics-ktx:22.5.0")
             // Native Firebase Functions SDK — used by NativeAndroidFunctionsClient
             // to bypass gitlive 2.x's FirebaseEncoder, which throws
