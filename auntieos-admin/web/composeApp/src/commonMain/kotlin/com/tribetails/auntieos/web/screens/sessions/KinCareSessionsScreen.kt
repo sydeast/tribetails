@@ -234,10 +234,10 @@ private fun AuntieTimeListScreen(
         // mislabeled Schedule subtitle was removed; that content lives here, not nowhere.
         // TODO(auntie copy): any subtitle rewording to surface "route" is author-owned.
         DenScreenHeading(
-            kicker     = "The Den · Auntie Time",
+            kicker     = "Care Ops · Auntie Time",
             title      = "Auntie",
             accentTail = "Time.",
-            subtitle   = "Day-of view. Clock in, clock out, every Kin Care in flight.",
+            subtitle   = "Day-of view. Clock in, clock out, every KinCare in flight.",
         )
         Spacer(Modifier.height(20.dp))
 
@@ -265,7 +265,7 @@ private fun AuntieTimeListScreen(
             is FirestoreResult.Error ->
                 AuntieBanner(
                     tone  = AuntieBannerTone.Error,
-                    title = "Could not load your Kin Cares",
+                    title = "Could not load your KinCares",
                     icon  = Lucide.TriangleAlert,
                 ) {
                     Text(
@@ -380,7 +380,7 @@ private fun StatRow(activeCount: Int, upcomingToday: Int, recentDone: Int) {
         StatCard(
             label   = "Wrapped today",
             value   = recentDone.toString(),
-            trend   = "completed Kin Cares",
+            trend   = "completed KinCares",
             tone    = AuntieStatusTone.Success,
             modifier = Modifier.weight(1f),
         )
@@ -784,7 +784,7 @@ private fun EmptyState() {
     GlassSurface(cornerRadius = 16.dp, modifier = Modifier.fillMaxWidth()) {
         AuntieEmptyState(
             title   = "Nothing in flight right now",
-            message = "Approved Kin Cares for today and the next two weeks land here, plus anything " +
+            message = "Approved KinCares for today and the next two weeks land here, plus anything " +
                       "completed or cancelled since yesterday. New bookings show up once you approve them " +
                       "on the Bookings screen.",
             icon    = Lucide.PawPrint,
