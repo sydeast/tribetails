@@ -1571,14 +1571,23 @@ class AuntieRepository(
 
     suspend fun getPendingDraftCount(): Result<Int> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        scoped.scopedCount(
+        // #1601: counted client-side with the web's draft rule (generated, pending or
+        // blank), which a Firestore filter cannot express: a blank status is often a
+        // missing field. Stage-0I sandbox: scope to this tribe (kinfolk_id == testScope);
+        // an unfiltered read is denied by rules for a test admin.
+        scoped.scopedQuery(
             "generated_drafts",
             field = "kinfolk_id",
-            // Stage-0I sandbox: scope to this tribe (kinfolk_id == testScope) and count
-            // 'pending' client-side to avoid a composite (kinfolk_id, status) index. An
-            // unfiltered read is denied by rules for a test admin.
-            sandbox = { snap -> snap.documents.count { it.getString("status") == "pending" } },
-            unscoped = { whereEqualTo("status", "pending") },
+            sandbox = { q ->
+                q.get().await().documents.count {
+                    com.tribetails.auntieos.domain.isDraftAwaitingReview(it.getString("status"))
+                }
+            },
+            unscoped = { col ->
+                col.get().await().documents.count {
+                    com.tribetails.auntieos.domain.isDraftAwaitingReview(it.getString("status"))
+                }
+            },
         )
     }.onFailure { AuntieLog.e("Failed to get pending draft count", it) }
 
