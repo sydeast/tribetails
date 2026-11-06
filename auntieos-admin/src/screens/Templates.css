@@ -309,7 +309,9 @@
   font-family: var(--type-mono-family);
   font-size: 10.5px;
   color: var(--color-text-dim);
-  word-break: break-all;
+  /* #1614: break at the separators (see KeyWithBreaks), and inside a word only
+     when a single run is wider than the card. */
+  overflow-wrap: break-word;
 }
 /* The mock's `.subj` (l.125): 13px, dim, one line, ellipsis. The full subject
    is in the `title` attribute and in the editor, so nothing here is
