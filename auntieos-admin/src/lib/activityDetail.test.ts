@@ -40,6 +40,18 @@ function entry(over: Partial<ActivityLogEntry> = {}): ActivityLogEntry {
  * not about new data.
  */
 describe('activityDetailRows', () => {
+  it('names the actor and keeps the uid beside the name on the opened record (#1592)', () => {
+    const rows = activityDetailRows(entry({ actorId: 'u1' }), 'America/Chicago', new Map([['u1', 'Syd East']]));
+    expect(rows).toContainEqual({ label: 'Actor', value: 'Syd East' });
+    expect(rows).toContainEqual({ label: 'Actor id', value: 'u1' });
+  });
+
+  it('shows an unknown actor uid as it is, with no second id row', () => {
+    const rows = activityDetailRows(entry({ actorId: 'u9' }), 'America/Chicago', new Map());
+    expect(rows).toContainEqual({ label: 'Actor', value: 'u9' });
+    expect(rows.some((r) => r.label === 'Actor id')).toBe(false);
+  });
+
   it('leads with the FULL timestamp, which is the part the collapsed row truncates', () => {
     const rows = activityDetailRows(entry());
     expect(rows[0]).toEqual({ label: 'When', value: '2026-08-03T14:02:11.482Z' });
