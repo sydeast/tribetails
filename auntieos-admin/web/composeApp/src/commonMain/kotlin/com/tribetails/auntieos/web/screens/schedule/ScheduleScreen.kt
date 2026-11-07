@@ -201,7 +201,7 @@ fun ScheduleScreen() {
         // which owns that day-of content. TODO(auntie copy): any final descriptive
         // subtitle wording is author-owned; the range below is data-derived only.
         DenScreenHeading(
-            kicker = "The Den · Schedule",
+            kicker = "Care Ops · Schedule",
             title = "Schedule",
             accentTail = "${viewMode.label.lowercase()}.",
             subtitle = selected?.let { rangeLabelFor(it, viewMode) },
@@ -860,7 +860,7 @@ private fun EventBlock(
             color = accent,
         )
         Text(
-            text = session.kinfolkName.ifBlank { session.serviceType.ifBlank { "Kin Care Visit" } },
+            text = session.kinfolkName.ifBlank { session.serviceType.ifBlank { "KinCare Visit" } },
             style = AuntieTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
             color = c.textPrimary,
             maxLines = 1,
@@ -1015,7 +1015,7 @@ private fun DayAgenda(
     if (sessions.isEmpty()) {
         EmptyHint(
             text = if (selected == null) "Select a day to inspect bookings."
-            else "No Kin Care sessions on this day.",
+            else "No KinCare sessions on this day.",
         )
         return
     }
@@ -1066,7 +1066,7 @@ private fun DayAgenda(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = session.serviceType.ifBlank { "Kin Care Visit" },
+                            text = session.serviceType.ifBlank { "KinCare Visit" },
                             style = AuntieTheme.typography.titleLarge,
                             color = c.textPrimary,
                         )

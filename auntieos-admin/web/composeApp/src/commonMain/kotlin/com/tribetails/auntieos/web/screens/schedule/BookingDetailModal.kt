@@ -235,7 +235,7 @@ fun BookingDetailModal(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = session.serviceType.ifBlank { "Kin Care Visit" },
+                            text = session.serviceType.ifBlank { "KinCare Visit" },
                             style = AuntieTheme.typography.headlineMedium,
                             color = c.textPrimary,
                         )

@@ -868,7 +868,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onClose }: KinTal
             {kinIds.length > 0 ? kinList : <EmptyHint>No kin recorded on this recap.</EmptyHint>}
           </DenPanel>
 
-          <DenPanel title="Visit" subtitle="The Kin Care this recap belongs to.">
+          <DenPanel title="Visit" subtitle="The KinCare this recap belongs to.">
             <dl className="kintale-detail__who">
               <div className="kintale-detail__who-row">
                 <dt>Service</dt>

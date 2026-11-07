@@ -1066,7 +1066,17 @@ internal fun decodeListStaff(raw: Map<*, *>?): List<StaffMember> =
                 email = m["email"] as? String,
             )
         }
-        .sortedBy { (it.displayName ?: it.uid).lowercase() }
+        .sortedBy { it.label.lowercase() }
+
+/**
+ * #1564: uid -> the name the Gallery shows for an uploader (name, else email).
+ * A staff member with neither is left out, so their uid line stays as it was.
+ */
+internal fun staffNamesByUid(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { member ->
+        val name = member.displayName?.ifBlank { null } ?: member.email?.ifBlank { null }
+        name?.let { member.uid to it }
+    }.toMap()
 
 /**
  * Pure encode of the assignAuntie callable payload. The backend schema is

@@ -221,7 +221,7 @@ fun CommunicateScreen(
             // the info button.
             item {
                 DenScreenHeading(
-                    kicker = "The Den · Communicate",
+                    kicker = "Care Ops · Communicate",
                     title = "Talk to your",
                     accentTail = "kinfolk",
                     subtitle = if (mode == ComposeMode.Broadcast)
