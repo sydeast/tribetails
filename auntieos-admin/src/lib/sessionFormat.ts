@@ -422,6 +422,17 @@ export function sessionPhase(row: PhaseRow, todayIso: string): SessionPhase | nu
   return diff >= -1 ? 'upcoming' : 'overdue';
 }
 
+/**
+ * How many rows Auntie Time files under its Overdue heading. Home's Today's
+ * Pack reads this, so the number on Home is the number on the board by
+ * construction: both call `sessionPhase`, and Home reads the same
+ * `sessionsWindowQuery` range the board pages through.
+ */
+export function overdueSessionCount(rows: readonly PhaseRow[], todayIso: string): number {
+  let n = 0;
+  for (const row of rows) if (sessionPhase(row, todayIso) === 'overdue') n += 1;
+  return n;
+}
 /** One phase's rows, still sub-grouped by local day so the day headers survive. */
 export interface SessionPhaseGroup<T> {
   phase: SessionPhase;

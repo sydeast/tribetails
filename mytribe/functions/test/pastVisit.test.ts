@@ -165,8 +165,13 @@ describe('createKinCareSession, #1574', () => {
     const res = await createKinCareSessionHandler(req({ ...base, startTime: start, endTime: end, recordAsCompleted: true }));
 
     expect(res.ok).toBe(true);
-    const write = ctx.adds.find((a) => a.collection === 'kin_care_sessions');
+    const write = ctx.writes.find((w) => w.path.startsWith('kin_care_sessions/'));
     expect(write?.data).toMatchObject({ status: 'COMPLETED', completedAt: end, recordedAfterTheFact: true, startTime: start });
+    // #1575's booking record follows: the household's copy is completed too.
+    const visit = ctx.writes.find((w) => /^families\/kf1\/bookings\/[^/]+\/kinCares\/[^/]+$/.test(w.path));
+    expect(visit?.data).toMatchObject({ status: 'completed', assignedAuntieUid: null });
+    const envelope = ctx.writes.find((w) => /^families\/kf1\/bookings\/[^/]+$/.test(w.path));
+    expect(envelope?.data).toMatchObject({ envelopeStatus: 'completed', confirmedCount: 0, completedCount: 1 });
     expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
       expect.objectContaining({ payload: expect.objectContaining({ status: 'COMPLETED', recordedAfterTheFact: true }) }),
     );
@@ -174,11 +179,14 @@ describe('createKinCareSession, #1574', () => {
 
   /**
    * The ruling's own check: "a backdated Completed visit must not fire
-   * household notices or the live-visit flow". The handler writes exactly one
-   * document, the session; nothing lands in a notification, message or
-   * envelope collection, and the status is never one Auntie Time works.
+   * household notices or the live-visit flow". The handler writes the three
+   * documents of a booking record (envelope, visit, session) and nothing in a
+   * notification, message or mail collection; the visit is created
+   * `completed`, which `onBookingsWrite` answers with nothing
+   * (`bookingSeriesConfirmed.test.ts`), and the session's status is never one
+   * Auntie Time works.
    */
-  it('a backdated record writes the session and nothing else: no notice, no envelope, no live visit', async () => {
+  it('a backdated record writes the booking record only: no notice, no live visit', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
 
@@ -186,10 +194,12 @@ describe('createKinCareSession, #1574', () => {
       req({ ...base, startTime: '2025-11-01T14:00:00.000Z', endTime: '2025-11-01T14:30:00.000Z', recordAsCompleted: true }),
     );
 
-    expect(ctx.adds.map((a) => a.collection)).toEqual(['kin_care_sessions']);
-    expect(ctx.writes.filter((w) => !w.path.startsWith('kin_care_sessions/'))).toEqual([]);
-    const status = ctx.adds[0]!.data.status;
-    expect(['SCHEDULED', 'CONFIRMED', 'ARRIVED', 'IN_PROGRESS', 'DEPARTED']).not.toContain(status);
+    expect(ctx.adds).toEqual([]);
+    expect(
+      ctx.writes.filter((w) => !w.path.startsWith('kin_care_sessions/') && !w.path.startsWith('families/kf1/bookings/')),
+    ).toEqual([]);
+    const session = ctx.writes.find((w) => w.path.startsWith('kin_care_sessions/'))!;
+    expect(['SCHEDULED', 'CONFIRMED', 'ON_MY_WAY', 'ARRIVED', 'IN_PROGRESS', 'DEPARTED']).not.toContain(session.data.status);
   });
 
   it('a backdated record skips the busy and closure guards and still runs the overlap guard', async () => {
@@ -215,7 +225,7 @@ describe('createKinCareSession, #1574', () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
     await createKinCareSessionHandler(req({ ...base, startTime: iso(NOW + HOUR), endTime: iso(NOW + 2 * HOUR) }));
-    const write = ctx.adds.find((a) => a.collection === 'kin_care_sessions');
+    const write = ctx.writes.find((w) => w.path.startsWith('kin_care_sessions/'));
     expect(write?.data.status).toBe('SCHEDULED');
     expect(write?.data).not.toHaveProperty('completedAt');
     expect(write?.data).not.toHaveProperty('recordedAfterTheFact');

@@ -157,7 +157,7 @@ describe('createKinCareSession: creating a visit into an occupied slot', () => {
       code: 'failed-precondition',
       details: { code: 'visit_overlap_conflict', attempt: 'create_visit' },
     });
-    expect(ctx.adds.filter((a) => a.collection === 'kin_care_sessions')).toHaveLength(0);
+    expect(ctx.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toHaveLength(0);
   });
 
   it('an explicit override creates it anyway', async () => {
@@ -168,7 +168,7 @@ describe('createKinCareSession: creating a visit into an occupied slot', () => {
       req({ ...visitArgs, overrideVisitConflict: true }),
     );
     expect(res.ok).toBe(true);
-    expect(ctx.adds.filter((a) => a.collection === 'kin_care_sessions')).toHaveLength(1);
+    expect(ctx.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toHaveLength(1);
   });
 
   /**
@@ -184,7 +184,7 @@ describe('createKinCareSession: creating a visit into an occupied slot', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
 
     await createKinCareSessionHandler(req(visitArgs));
-    const added = ctx.adds.find((a) => a.collection === 'kin_care_sessions');
+    const added = ctx.writes.find((w) => w.path.startsWith('kin_care_sessions/'));
     expect(added?.data).toMatchObject({ kinfolkName: 'Ada Lovelace', serviceType: '30Minute' });
   });
 
@@ -193,7 +193,7 @@ describe('createKinCareSession: creating a visit into an occupied slot', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
 
     await createKinCareSessionHandler(req(visitArgs));
-    expect(ctx.adds.find((a) => a.collection === 'kin_care_sessions')?.data).toMatchObject({
+    expect(ctx.writes.find((w) => w.path.startsWith('kin_care_sessions/'))?.data).toMatchObject({
       kinfolkName: 'kf1',
     });
   });

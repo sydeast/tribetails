@@ -50,12 +50,12 @@ describe('createKinCareSession', () => {
       startTime: '2026-06-10T13:00:00Z', endTime: '2026-06-10T14:00:00Z',
     }));
     expect(res.ok).toBe(true);
-    const add = ctx.adds.find((a) => a.collection === 'kin_care_sessions');
+    const add = ctx.writes.find((w) => w.path.startsWith('kin_care_sessions/'));
     expect(add).toBeDefined();
     expect(add?.data.status).toBe('SCHEDULED');
     expect(add?.data.kinfolkId).toBe('kf1');
     expect(add?.data.kinIds).toEqual(['k1']);
-    expect(res.sessionId).toBe(add?.id);
+    expect(add?.path).toBe(`kin_care_sessions/${res.sessionId}`);
   });
 
   it('HAPPY: writes a CREATE_KINCARE_SESSION audit entry', async () => {
