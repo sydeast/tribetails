@@ -326,6 +326,25 @@ export function sessionsForKinfolkQuery(kinfolkId: string): CollectionSpec {
  * missing `startTime` is dropped by the sort and never reaches the 'Undated'
  * group. Backfill rather than weaken the sort.
  */
+/**
+ * #1607: SCHEDULED visits from before the board's own window. Auntie Time reads
+ * a window from 30 days back, so a July visit nobody closed out was overdue in
+ * Bookings and absent from Auntie Time's Overdue. This reaches the rest, newest
+ * first, on the existing `status` + `startTime` index.
+ */
+export function overdueBeforeWindowQuery(todayIso: string): CollectionSpec {
+  const { from } = sessionsWindowBounds(todayIso);
+  return {
+    path: 'kin_care_sessions',
+    order: ['startTime', 'desc'],
+    max: 200,
+    filters: [
+      ['status', '==', 'SCHEDULED'],
+      ['startTime', '<', from],
+    ],
+  };
+}
+
 export function sessionsWindowQuery(todayIso: string): CollectionSpec {
   const { from, to } = sessionsWindowBounds(todayIso);
   return sessionsArchiveQuery(from, to);

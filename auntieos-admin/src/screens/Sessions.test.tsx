@@ -131,11 +131,14 @@ function paged(
  * hand the kin roster to the address lookup and vice versa, which is exactly the
  * confusion the card must never make.
  */
-function directory(households: Kinfolk[] = [], kin: Kin[] = []) {
+function directory(households: Kinfolk[] = [], kin: Kin[] = [], olderOverdue: SessionEntry[] = []) {
   useCollection.mockImplementation((spec: CollectionSpec) =>
     spec.path === 'kin'
       ? { status: 'ready', data: kin }
-      : { status: 'ready', data: households },
+      : // #1607: the overdue visits from before the board's window.
+        spec.path === 'kin_care_sessions'
+        ? { status: 'ready', data: olderOverdue }
+        : { status: 'ready', data: households },
   );
 }
 
@@ -277,6 +280,29 @@ describe('Auntie Time: the four phase groups', () => {
     expect(phaseCount('Overdue')).toBe('1');
     expect(phaseCount('Upcoming')).toBe('1');
     expect(phaseCount('Recent')).toBe('1');
+  });
+
+  /**
+   * #1607: Bookings marked July and August visits OVERDUE while this board's
+   * Overdue showed only six from October, because the board reads a window
+   * from 30 days back. The older ones arrive through their own query and land
+   * in the same group, counted once.
+   */
+  it('Overdue also holds the scheduled visits older than the board window, once each', () => {
+    const july = entry({ _id: 'jul', kinfolkName: 'Left In July', status: 'SCHEDULED', startTime: at(-120) });
+    const recent = entry({ _id: 'rec', kinfolkName: 'Left Last Week', status: 'SCHEDULED', startTime: at(-7) });
+    directory([], [], [july, recent]);
+    usePagedCollection.mockReturnValue(paged([recent]));
+    renderBoard();
+    expect(phaseCount('Overdue')).toBe('2');
+    expect(screen.getByText('Left In July')).toBeInTheDocument();
+    const spec = useCollection.mock.calls
+      .map((c) => c[0] as CollectionSpec)
+      .find((c) => c.path === 'kin_care_sessions');
+    expect(spec?.filters).toEqual([
+      ['status', '==', 'SCHEDULED'],
+      ['startTime', '<', expect.any(String)],
+    ]);
   });
 
   it('sorts each visit into its own phase group', () => {
