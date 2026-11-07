@@ -51,9 +51,11 @@ beforeEach(() => {
 });
 
 describe('TribalIntelForm', () => {
-  it('states up front that saved intel folds in on the NEXT reconcile pass, never instantly', () => {
+  it('says, in the title tooltip, that saved intel folds in overnight, never instantly (#1595)', () => {
     renderForm();
-    expect(screen.getByText(/next reconcile pass/i)).toBeInTheDocument();
+    const tip = screen.getByRole('tooltip', { hidden: true });
+    expect(tip).toHaveTextContent(/folded into the household's dossier and the pet's 411 overnight/i);
+    expect(document.querySelector('.tribal-form__blurb')).toBeNull();
   });
 
   it('creates with the exact callable payload the deployed contract parses', async () => {

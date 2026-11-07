@@ -10,7 +10,7 @@ import {
 import { type BusinessSettings } from '../../api/settings';
 import { type Async } from '../../lib/async';
 import { AsyncRegion } from '../../components/AsyncRegion';
-import { DenPanel } from '../../components/DenScreenKit';
+import { DenPanel, InfoTip } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { GhostButton } from '../../components/Buttons';
 import { IconTile } from '../../components/IconTile';
@@ -202,8 +202,15 @@ function IntegrationCard({ integration, declaredKnown, calendarOpen, onToggleCal
         size={40}
       />
       <div className="integrations__body">
-        <h4 className="integrations__name">{integration.name}</h4>
-        <p className="integrations__purpose">{integration.purpose}</p>
+        <h4 className="integrations__name">
+          {integration.name}
+          {integration.purpose !== '' ? (
+            <>
+              {' '}
+              <InfoTip text={integration.purpose} />
+            </>
+          ) : null}
+        </h4>
 
         <p className="integrations__summary">{integration.summary}</p>
 

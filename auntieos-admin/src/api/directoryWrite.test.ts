@@ -15,6 +15,7 @@ vi.mock('../lib/fns', () => ({ call }));
 import {
   createKinfolk,
   createKin,
+  updateKin,
   updateKinTags,
   updateKinfolkTags,
   setKinArchived,
@@ -250,5 +251,30 @@ describe('updateKinfolkTags', () => {
   it('propagates a genuine write failure for the caller to surface fail-loud', async () => {
     updateDoc.mockRejectedValue(new Error('permission-denied'));
     await expect(updateKinfolkTags('kf1', [])).rejects.toThrow('permission-denied');
+  });
+});
+
+describe('kin age and weight are numbers (#1583)', () => {
+  beforeEach(() => {
+    addDoc.mockReset();
+    updateDoc.mockReset();
+  });
+
+  it('createKin refuses a non-numeric age before any write', async () => {
+    await expect(createKin(kinInput({ age: 'abc-5' }))).rejects.toThrow(/number of years/);
+    expect(addDoc).not.toHaveBeenCalled();
+  });
+
+  it('updateKin refuses a non-numeric age or weight before any write', async () => {
+    await expect(updateKin('p1', { age: 'abc-5' })).rejects.toThrow(/number of years/);
+    await expect(updateKin('p1', { weight: 'heavy-ish' })).rejects.toThrow(/Weight is a number/);
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('updateKin lets a patch that leaves age and weight alone through, and accepts good ones', async () => {
+    updateDoc.mockResolvedValue(undefined);
+    await updateKin('p1', { colorMarkings: 'Brindle' });
+    await updateKin('p1', { age: '5', weight: '40 lb' });
+    expect(updateDoc).toHaveBeenCalledTimes(2);
   });
 });
