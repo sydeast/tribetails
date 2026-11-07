@@ -204,6 +204,11 @@ fun decodeBroadcastResult(dataJson: String): BroadcastResult {
  * through verbatim (fail loud, never hide a provider/validation failure).
  */
 fun broadcastErrorText(message: String): String = when {
+    // #1610: the server refuses a merge field it cannot fill.
+    message.contains("unsupported_merge_fields", ignoreCase = true) -> {
+        val list = message.substringAfter("unsupported_merge_fields:", "").trim()
+        "The message has merge fields a broadcast cannot fill" + (if (list.isNotEmpty()) " ($list)" else "") + ". Nothing was sent."
+    }
     // #867 review: a timeout is not a failure the operator can read as "nothing
     // went out". The function may still be sending, and only a resend with the
     // same draft (same idempotency key) lands on that broadcast.

@@ -71,6 +71,9 @@ const SYSTEM_FRAMING = [
   '',
   'HARD RULES:',
   "- Output ONLY the communication itself. No preamble, no 'here is your message', no meta-commentary.",
+  // #1610: the operator types the email subject; a "Subject:" line in the body
+  // gave the confirm one subject and the email a second, different one.
+  '- Never write a subject line, a "Subject:" header or a title. The subject is set separately.',
   '- No em dashes. No en dashes. Ever. Use ellipses (.....), commas, or parentheses.',
   '- First person, contractions always. Never corporate. No generic filler.',
   "- Pets are always 'Kin', never 'pet' or 'animal'. Clients are always 'Kinfolk', never 'client', 'customer', or 'owner'.",
@@ -409,6 +412,21 @@ async function callClaude(anthropic, system, userMessage, model) {
 }
 
 /**
+ * #1610: the body never carries its own subject line. The model is told not to
+ * write one, and this removes one anyway (the same enforce-not-hope reason as
+ * sanitizeCopy), so an email has one subject: the one on the confirm. A leading
+ * `Subject: ...` line (optionally bold, as markdown) and the blank lines after
+ * it are cut, and its text is returned so a blank subject field can take it.
+ * Text with no such line comes back unchanged with subject ''.
+ */
+function splitSubjectLine(text) {
+  const s = String(text || '');
+  const m = /^\s*(?:\*\*)?\s*subject\s*:\s*(.*?)\s*(?:\*\*)?\s*(?:\r?\n|$)/i.exec(s);
+  if (!m) return { subject: '', body: s };
+  return { subject: String(m[1] || '').replace(/\*\*/g, '').trim(), body: s.slice(m[0].length).replace(/^\s*\n/, '').trimStart() };
+}
+
+/**
  * The model is told "no quotes, no ending punctuation" but occasionally adds
  * them anyway, same reason sanitizeCopy exists for dashes. Enforce rather than
  * hope: a stray wrapping quote is visible in every tale list forever.
@@ -471,11 +489,19 @@ async function runGenerate(deps, body) {
     avoidOpening: v.avoid_opening,
   });
 
-  const { text } = await callClaude(anthropic, system, userMessage, model);
+  const raw = await callClaude(anthropic, system, userMessage, model);
+  // #1610: one subject. A subject line the model wrote anyway leaves the body
+  // and, when a title is wanted, becomes it instead of a second guess.
+  const split = splitSubjectLine(raw.text);
+  const text = split.body;
 
   // After the body, and from the body, so the title describes what was actually
   // written rather than the raw notes it came from.
-  const generatedTitle = v.want_title ? await generateTitle(anthropic, text, model) : '';
+  const generatedTitle = v.want_title
+    ? split.subject !== ''
+      ? normalizeTitle(split.subject)
+      : await generateTitle(anthropic, text, model)
+    : '';
 
   const warnings = [];
   let draftId = null;
@@ -535,6 +561,7 @@ module.exports = {
   ALLOWED_TYPES,
   TITLE_INSTRUCTION,
   normalizeTitle,
+  splitSubjectLine,
   generateTitle,
   sanitizeCopy,
   loadVoiceSource,

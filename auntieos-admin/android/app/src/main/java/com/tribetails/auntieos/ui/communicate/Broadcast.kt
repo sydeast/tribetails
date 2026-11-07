@@ -266,6 +266,11 @@ internal fun decodeSavedSegmentId(raw: Map<String, Any?>?): String = (raw?.get("
 fun broadcastErrorText(message: String): String = when {
     message.contains("no_recipients", ignoreCase = true) ->
         "That audience has no kinfolk right now. Nothing was sent."
+    // #1610: the server refuses a merge field it cannot fill.
+    message.contains("unsupported_merge_fields", ignoreCase = true) -> {
+        val list = message.substringAfter("unsupported_merge_fields:", "").trim()
+        "The message has merge fields a broadcast cannot fill" + (if (list.isNotEmpty()) " ($list)" else "") + ". Nothing was sent."
+    }
     message.contains("broadcast_all_failed", ignoreCase = true) ->
         "Every send failed. Nothing reached anyone. Check the provider settings and try again."
     // #823's two, from `stopBroadcast`. Both mean the press changed nothing and
@@ -289,4 +294,114 @@ fun broadcastSummary(result: BroadcastResult): String {
         .filter { it.value.sent > 0 || it.value.failed > 0 || it.value.skipped > 0 }
         .map { (ch, c) -> "$ch: ${c.sent} sent" + (if (c.skipped > 0) ", ${c.skipped} skipped" else "") + (if (c.failed > 0) ", ${c.failed} failed" else "") }
     return "Reached ${result.recipientCount} kinfolk. " + parts.joinToString("; ")
+}
+
+// ── #1610: merge fields, the By status picker, and the pre-send count ──────
+
+/** The fields a broadcast fills per household. Mirrors mytribe/functions/src/lib/broadcastMerge.ts. */
+val BROADCAST_MERGE_FIELDS: List<String> = listOf("firstName", "lastName", "kinfolkName", "business", "Business")
+
+/** Operator ruling, 2026-11-05: a blank first name reads "Kinfolk". */
+const val KINFOLK_NAME_STAND_IN = "Kinfolk"
+
+/** The Directory's kinfolk statuses, in its order. Archived is never matched by a broadcast. */
+val BROADCAST_STATUS_OPTIONS: List<String> = listOf("active", "prospect", "inactive")
+
+/** The preview's sample household. */
+val BROADCAST_PREVIEW_SAMPLE: Map<String, String> = mapOf(
+    "firstName" to "Sandy",
+    "lastName" to "Wren",
+    "kinfolkName" to "Sandy Wren",
+    "business" to "Tribe Tails",
+    "Business" to "Tribe Tails",
+)
+
+private val SIMPLE_TOKEN = Regex("""\{\{\s*([A-Za-z_]\w*)\s*\}\}""")
+private val STRAY_BRACES = Regex("""\{\{[^}]*\}*\}?|\}\}""")
+
+/** Every field (or stray brace run) a broadcast cannot fill, first-seen order, no repeats. Pure. */
+fun unsupportedMergeFields(vararg texts: String?): List<String> {
+    val out = LinkedHashSet<String>()
+    for (text in texts) {
+        if (text.isNullOrEmpty()) continue
+        SIMPLE_TOKEN.findAll(text).forEach { m ->
+            val name = m.groupValues[1]
+            if (name !in BROADCAST_MERGE_FIELDS) out += name
+        }
+        STRAY_BRACES.findAll(text.replace(SIMPLE_TOKEN, "")).forEach { out += it.value.trim() }
+    }
+    return out.toList()
+}
+
+/** The composer's refusal for unfillable fields, or null. Mirrors the React admin's mergeFieldBlocker. Pure. */
+fun mergeFieldBlocker(subject: String, body: String): String? {
+    val bad = unsupportedMergeFields(subject, body)
+    if (bad.isEmpty()) return null
+    return "A broadcast can fill {{firstName}}, {{lastName}}, {{kinfolkName}} and {{business}} only. Remove or fix: ${bad.joinToString(", ")}."
+}
+
+/** Toggles one status in or out of the comma-joined list, kept in picker order. Pure. */
+fun toggleBroadcastStatus(statusesText: String, status: String, on: Boolean): String {
+    val list = statusesText.split(',').map { it.trim() }.filter { it.isNotEmpty() && it != status }.toMutableList()
+    if (on) list += status
+    return BROADCAST_STATUS_OPTIONS.filter { it in list }.joinToString(", ")
+}
+
+/** What `previewBroadcastAudience` answers: households a broadcast audience reaches. */
+data class BroadcastAudiencePreview(
+    val targeted: Int,
+    val withEmail: Int,
+    val withPhone: Int,
+    val withApp: Int,
+    val withoutFirstName: Int,
+)
+
+private fun anyInt(v: Any?): Int = when (v) {
+    is Number -> v.toInt()
+    else -> 0
+}
+
+/** Decodes the callable reply; null when it is not one. Pure. */
+fun decodeBroadcastAudiencePreview(raw: Map<String, Any?>?): BroadcastAudiencePreview? {
+    if (raw == null || raw["targeted"] !is Number) return null
+    return BroadcastAudiencePreview(
+        targeted = anyInt(raw["targeted"]),
+        withEmail = anyInt(raw["withEmail"]),
+        withPhone = anyInt(raw["withPhone"]),
+        withApp = anyInt(raw["withApp"]),
+        withoutFirstName = anyInt(raw["withoutFirstName"]),
+    )
+}
+
+/** The confirm's reach line. Mirrors the React admin's reachLine word for word. Pure. */
+fun reachLine(p: BroadcastAudiencePreview): String {
+    val base = "${p.targeted} kinfolk match this audience (${p.withEmail} with an email address, " +
+        "${p.withPhone} with a phone number, ${p.withApp} with the app)."
+    if (p.withoutFirstName == 0) return base
+    val who = if (p.withoutFirstName == 1) "1 has" else "${p.withoutFirstName} have"
+    return "$base $who no first name on file and will read \"$KINFOLK_NAME_STAND_IN\" where you wrote {{firstName}}."
+}
+
+/** The pre-send count on the broadcast confirm. */
+sealed interface BroadcastReachState {
+    data object Loading : BroadcastReachState
+    data class Ready(val preview: BroadcastAudiencePreview) : BroadcastReachState
+    data class Failed(val message: String) : BroadcastReachState
+}
+
+/** Generated copy split into its own subject line (if any) and the body without it (#1610). */
+data class SubjectSplit(val subject: String, val body: String)
+
+private val SUBJECT_LINE = Regex("""^\s*(?:\*\*)?\s*subject\s*:\s*(.*?)\s*(?:\*\*)?\s*(?:\r?\n|$)""", RegexOption.IGNORE_CASE)
+
+/**
+ * #1610: cuts a leading `Subject: ...` line and the blank lines after it from
+ * generated copy. Mirrors `splitSubjectLine` in the React admin's
+ * api/communicateGenerate.ts and the generator itself. Pure.
+ */
+fun splitSubjectLine(text: String): SubjectSplit {
+    val m = SUBJECT_LINE.find(text) ?: return SubjectSplit("", text)
+    if (m.range.first != 0) return SubjectSplit("", text)
+    val body = text.substring(m.range.last + 1).replace(Regex("""^\s*\n"""), "").trimStart()
+    return SubjectSplit(m.groupValues[1].replace("**", "").trim(), body)
 }
