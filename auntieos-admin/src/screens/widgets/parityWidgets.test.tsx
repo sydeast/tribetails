@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { Async } from '../../lib/async';
 import type { SessionEntry } from '../../api/sessions';
 import type { Kin } from '../../api/directory';
@@ -200,6 +201,63 @@ describe('TodaysPackWidget', () => {
     expect(screen.getByText(/Enjoy the quiet/i)).toBeInTheDocument();
   });
 
+  it('shows the overdue count and opens Auntie Time when visits are late and none are booked today (#1590)', () => {
+    wire({
+      kin_care_sessions: {
+        status: 'ready',
+        data: Array.from({ length: 6 }, (_, i) =>
+          sess({ _id: `late-${String(i)}`, startTime: `${daysAgo(5)}T09:00:00`, status: 'SCHEDULED' }),
+        ),
+      },
+    });
+    const open = vi.fn();
+    render(<TodaysPackWidget onOpenSessions={open} />);
+    expect(screen.queryByText(/Enjoy the quiet/i)).not.toBeInTheDocument();
+    const link = screen.getByRole('button', { name: /6\s*overdue visits/i });
+    link.click();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+  it('counts overdue the way the Auntie Time board does, not the way the Overdue visits card does', () => {
+    wire({
+      kin_care_sessions: {
+        status: 'ready',
+        data: [
+          sess({ _id: 'yesterday', startTime: `${daysAgo(1)}T09:00:00` }),
+          sess({ _id: 'booking', startTime: `${daysAgo(9)}T09:00:00`, status: 'PENDING' }),
+          sess({ _id: 'done', startTime: `${daysAgo(9)}T09:00:00`, status: 'COMPLETED' }),
+          sess({ _id: 'old', startTime: `${daysAgo(9)}T09:00:00` }),
+        ],
+      },
+    });
+    render(<TodaysPackWidget onOpenSessions={noop} />);
+    expect(screen.getByRole('button', { name: /1\s*overdue visit to close out/i })).toBeInTheDocument();
+  });
+  /**
+   * #1704 (with #1607): Auntie Time's Overdue also lists SCHEDULED visits from
+   * before its 30-day window, so Home's count reads them too, once each.
+   */
+  it('counts the overdue visits older than the board window as well, once each', () => {
+    const recent = sess({ _id: 'recent', startTime: `${daysAgo(5)}T09:00:00`, status: 'SCHEDULED' });
+    const july = sess({ _id: 'july', startTime: `${daysAgo(120)}T09:00:00`, status: 'SCHEDULED' });
+    useCollection.mockImplementation((spec: { path: string; filters?: unknown[][] }) => {
+      if (spec.path !== 'kin_care_sessions') return READY_EMPTY;
+      const older = (spec.filters ?? []).some((f) => f[0] === 'status' && f[1] === '==');
+      return { status: 'ready', data: older ? [july, recent] : [recent] };
+    });
+    render(<TodaysPackWidget onOpenSessions={noop} />);
+    expect(screen.getByRole('button', { name: /2\s*overdue visits/i })).toBeInTheDocument();
+  });
+  it('keeps the overdue line beside a populated run', () => {
+    wire({
+      kin_care_sessions: {
+        status: 'ready',
+        data: [sess(), sess({ _id: 'late', startTime: `${daysAgo(3)}T09:00:00` })],
+      },
+    });
+    render(<TodaysPackWidget onOpenSessions={noop} />);
+    expect(screen.getByText('Rivera')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /1\s*overdue visit/i })).toBeInTheDocument();
+  });
   it('fails loud rather than claiming a quiet day over an unreadable stream', () => {
     wire({ kin_care_sessions: { status: 'error', message: 'deadline-exceeded' } });
     render(<TodaysPackWidget onOpenSessions={noop} />);
@@ -217,13 +275,41 @@ describe('KinTalesPendingWidget', () => {
 
     expect(screen.getByText('visit report')).toBeInTheDocument();
     expect(screen.getByText('Biscuit had a lovely time.')).toBeInTheDocument();
-    expect(screen.getByText(`GENERATED · Sara · ${TODAY}`)).toBeInTheDocument();
+    expect(screen.getByText(`DRAFT · Sara · ${TODAY}`)).toBeInTheDocument();
   });
 
-  it('is all caught up when there is nothing to review', () => {
+  it('#1563: every row opens its own draft', async () => {
+    const onReviewTales = vi.fn();
+    wire({
+      generated_drafts: {
+        status: 'ready',
+        data: [draft({ _id: 'gd-new', generatedCopy: 'Newest tale.' }), draft({ _id: 'gd-old', generatedCopy: 'Older tale.' })],
+      },
+    });
+    render(<KinTalesPendingWidget onReviewTales={onReviewTales} />);
+    await userEvent.click(screen.getByRole('button', { name: /Older tale/ }));
+    expect(onReviewTales).toHaveBeenCalledWith('gd-old');
+  });
+  it('#1563: the button opens the newest draft, never a blank form', async () => {
+    const onReviewTales = vi.fn();
+    wire({
+      generated_drafts: {
+        status: 'ready',
+        data: [draft({ _id: 'gd-new', generatedCopy: 'Newest tale.' }), draft({ _id: 'gd-old', generatedCopy: 'Older tale.' })],
+      },
+    });
+    render(<KinTalesPendingWidget onReviewTales={onReviewTales} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Review and send tales' }));
+    expect(onReviewTales).toHaveBeenCalledWith('gd-new');
+  });
+  it('is all caught up when there is nothing to review', async () => {
+    const onReviewTales = vi.fn();
     wire({ generated_drafts: READY_EMPTY });
-    render(<KinTalesPendingWidget onReviewTales={noop} />);
+    render(<KinTalesPendingWidget onReviewTales={onReviewTales} />);
     expect(screen.getByText(/All caught up/i)).toBeInTheDocument();
+    // Nothing to open, so the button opens a blank form.
+    await userEvent.click(screen.getByRole('button', { name: 'Review and send tales' }));
+    expect(onReviewTales).toHaveBeenCalledWith(null);
   });
 
   it('never says "all caught up" over a failed draft read', () => {

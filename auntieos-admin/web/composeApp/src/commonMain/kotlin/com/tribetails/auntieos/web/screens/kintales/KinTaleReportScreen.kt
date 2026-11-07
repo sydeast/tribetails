@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +48,7 @@ import com.tribetails.auntieos.web.data.SentChecklistItem
 import com.tribetails.auntieos.web.data.resolveSentChecklist
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareReport
+import com.tribetails.auntieos.web.data.canDeleteAsDraft
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.toBreadcrumbs
@@ -110,6 +112,11 @@ fun KinTaleReportScreen(
     val media = (mediaState as? FirestoreResult.Data)?.value.orEmpty()
     val kinById = (kinState as? FirestoreResult.Data)?.value.orEmpty().associateBy { it._id }
     val liveSession = (sessionState as? FirestoreResult.Data)?.value
+
+    // #1631: a deleted draft leaves the screen.
+    androidx.compose.runtime.LaunchedEffect(vm.justDeleted) {
+        if (vm.justDeleted) onBack()
+    }
 
     ScreenScaffold {
         // ── Den heading: mono kicker + serif title + Back / status trailing ──
@@ -211,6 +218,31 @@ private fun DraftBody(vm: KinTaleReportViewModel, report: KinCareReport, session
 @Composable
 private fun DraftEditorAndActions(vm: KinTaleReportViewModel, report: KinCareReport, session: KinCareSession?) {
     val c = AuntieTheme.colors
+    var confirmDelete by remember { androidx.compose.runtime.mutableStateOf(false) }
+    // #1631: an unsent, saved draft can be deleted, after a confirm.
+    if (report.canDeleteAsDraft()) {
+        AuntieDialog(
+            visible = confirmDelete,
+            title = "Delete this draft?",
+            onDismiss = { confirmDelete = false },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { confirmDelete = false })
+                PrimaryButton(
+                    label = "Delete",
+                    onClick = {
+                        confirmDelete = false
+                        vm.deleteDraft(report)
+                    },
+                )
+            },
+        ) {
+            Text(
+                text = deleteDraftConfirmText(report.kinfolkName),
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+            )
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         MultilineField(
             value = vm.effectiveBody(report.bodyCopy),
@@ -231,6 +263,13 @@ private fun DraftEditorAndActions(vm: KinTaleReportViewModel, report: KinCareRep
             )
         }
 
+        if (report.canDeleteAsDraft()) {
+            GhostButton(
+                label = if (vm.isDeleting) "Deleting..." else "Delete draft",
+                onClick = { confirmDelete = true },
+                enabled = !vm.isSending && !vm.isDeleting,
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             GhostButton(
                 label = if (vm.isDraftSaved) "Draft saved" else "Save Draft",
@@ -241,7 +280,7 @@ private fun DraftEditorAndActions(vm: KinTaleReportViewModel, report: KinCareRep
             PrimaryButton(
                 label = if (vm.isSending) "Sending..." else "Send to kinfolk",
                 onClick = { vm.send(report, session) },
-                enabled = !vm.isSending,
+                enabled = !vm.isSending && !vm.isDeleting,
                 loading = vm.isSending,
                 modifier = Modifier.weight(1f),
                 leading = if (vm.isSending) null else {
@@ -1014,3 +1053,11 @@ private fun ChecklistSections(report: KinCareReport, kinById: Map<String, Kin>) 
         }
     }
 }
+
+/** #1631: the delete confirm's line, naming the household when there is one. Pure; tested. */
+internal fun deleteDraftConfirmText(recipient: String): String =
+    if (recipient.isBlank()) {
+        "This KinTale has not been sent. Deleting it cannot be undone."
+    } else {
+        "This KinTale for $recipient has not been sent. Deleting it cannot be undone."
+    }

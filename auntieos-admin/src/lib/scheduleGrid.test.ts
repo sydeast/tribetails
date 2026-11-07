@@ -21,6 +21,8 @@ import {
   dropMinuteFromOffsetPx,
   rescheduleTimesForDrop,
   snapMinuteOfDay,
+  gridWindowFor,
+  DEFAULT_GRID_WINDOW,
 } from './scheduleGrid';
 import { businessWallClockToMs } from './businessZoneTime';
 
@@ -250,5 +252,28 @@ describe('isNoOpDrop', () => {
 
   it('the same clock time on a different day is a real move', () => {
     expect(isNoOpDrop(visit, '2026-07-16', '2026-07-17', 9 * 60, SNAP_MINUTES_ON, BIZ)).toBe(false);
+  });
+});
+// #1606: the week grows in whole hours to reach every visit, never past midnight.
+describe('gridWindowFor', () => {
+  it('is 8a to 6p for a week inside those hours, or an empty one', () => {
+    expect(gridWindowFor([])).toEqual(DEFAULT_GRID_WINDOW);
+    expect(gridWindowFor([{ startMinute: 9 * 60, endMinute: 10 * 60 }])).toEqual({ startHour: 8, endHour: 18 });
+  });
+  it('reaches back to an early start and down past a late end, in whole hours', () => {
+    expect(gridWindowFor([{ startMinute: 6 * 60 + 30, endMinute: 7 * 60 }])).toEqual({ startHour: 6, endHour: 18 });
+    expect(gridWindowFor([{ startMinute: 18 * 60 + 30, endMinute: 19 * 60 }])).toEqual({ startHour: 8, endHour: 19 });
+    expect(gridWindowFor([{ startMinute: 20 * 60, endMinute: 20 * 60 + 1 }])).toEqual({ startHour: 8, endHour: 21 });
+  });
+  it('never runs past midnight, and an end it cannot read still gets a row', () => {
+    expect(gridWindowFor([{ startMinute: 23 * 60 + 50, endMinute: 25 * 60 }])).toEqual({ startHour: 8, endHour: 24 });
+    expect(gridWindowFor([{ startMinute: 19 * 60, endMinute: null }])).toEqual({ startHour: 8, endHour: 20 });
+  });
+  it('places, drops and clamps against the window it is handed', () => {
+    const w = { startHour: 6, endHour: 20 };
+    expect(gridPlacement(6 * 60, 60, w)?.topPx).toBe(0);
+    expect(gridPlacement(19 * 60, 60, w)).not.toBeNull();
+    expect(clampDropMinute(5 * 60, w)).toBe(6 * 60);
+    expect(clampDropMinute(21 * 60, w)).toBe(20 * 60 - 1);
   });
 });

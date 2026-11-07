@@ -10,6 +10,7 @@ import {
   bulkOutcomeSummary,
   chunkEnvelopeIds,
   ENVELOPE_BATCH_LIMIT,
+  bulkActionsFor,
 } from './bookingBulk';
 
 function fakeTs(iso: string): Timestamp {
@@ -52,6 +53,13 @@ describe('bulkActionApplies (the lifecycle guard, positively enumerated)', () =>
     expect(bulkActionApplies('scheduled', 'REJECT')).toBe(false);
   });
 
+  it('#1578: lets a visit under way be cancelled, and refuses to approve or reject it', () => {
+    for (const state of ['onMyWay', 'arrived', 'departed'] as const) {
+      expect(bulkActionApplies(state, 'CANCEL')).toBe(true);
+      expect(bulkActionApplies(state, 'APPROVE')).toBe(false);
+      expect(bulkActionApplies(state, 'REJECT')).toBe(false);
+    }
+  });
   it('refuses every action on a terminal or unrecognized booking', () => {
     for (const state of ['completed', 'cancelled', 'unknown'] as const) {
       expect(bulkActionApplies(state, 'APPROVE')).toBe(false);
@@ -264,5 +272,14 @@ describe('bulkOutcomeSummary', () => {
       [],
     );
     expect(bulkOutcomeSummary(out)).toBe('Cancelled 1 of 1 selected booking.');
+  });
+});
+
+describe('bulkActionsFor (#1607)', () => {
+  it('offers each action that fits at least one picked row, in the bar order', () => {
+    expect(bulkActionsFor(['scheduled', 'scheduled'])).toEqual(['CANCEL']);
+    expect(bulkActionsFor(['pending'])).toEqual(['APPROVE', 'REJECT']);
+    expect(bulkActionsFor(['pending', 'scheduled'])).toEqual(['APPROVE', 'REJECT', 'CANCEL']);
+    expect(bulkActionsFor(['completed', 'cancelled'])).toEqual([]);
   });
 });

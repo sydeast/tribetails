@@ -41,6 +41,7 @@ export function HouseholdMembersView() {
     <HouseholdMembers
       kinfolkId={kinfolkId}
       kinfolkName={kinfolkDisplayName(household.data)}
+      kinfolkEmail={typeof household.data.email === 'string' ? household.data.email : ''}
       onBack={() => void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })}
     />
   );

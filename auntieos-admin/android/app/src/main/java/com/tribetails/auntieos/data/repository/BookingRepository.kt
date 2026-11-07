@@ -297,6 +297,23 @@ class BookingRepository(
         Unit
     }.onFailure { AuntieLog.e("Error moving booking $bookingId", it) }
 
+    /**
+     * #1576: the envelope's own copy of the status, after the session's
+     * transition landed through `transitionBookingStatus`. A two-field update
+     * for the same reason [updateBookingTimes] is one: [updateBooking] rebuilds
+     * the whole document from the model it is handed.
+     */
+    suspend fun updateBookingStatus(bookingId: String, status: BookingStatus): Result<Unit> = runCatchingCancellable {
+        require(bookingId.isNotBlank()) { "updateBookingStatus needs an enhanced_bookings document id" }
+        firestore.collection("enhanced_bookings").document(bookingId).update(
+            mapOf(
+                "status" to status.name,
+                "updatedAt" to LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+            )
+        ).await()
+        Unit
+    }.onFailure { AuntieLog.e("Error setting booking $bookingId to $status", it) }
+
     suspend fun deleteBooking(bookingId: String): Result<Unit> = runCatchingCancellable {
         AuntieLog.w("Deleting enhanced booking: $bookingId")
         firestore.collection("enhanced_bookings").document(bookingId).delete().await()
@@ -371,6 +388,18 @@ class BookingRepository(
         awaitClose { registration.remove() }
     }
 
+    /**
+     * #1577: the household's own notes on a booking request, the envelope-level
+     * `notes` at `families/{familyId}/bookings/{batchId}` (no visit doc carries
+     * them). Read when the request is opened, not streamed with the queue.
+     * Blank when the request has none.
+     */
+    suspend fun bookingRequestNotes(familyId: String, batchId: String): Result<String> = runCatchingCancellable {
+        val snap = firestore.collection("families").document(familyId)
+            .collection("bookings").document(batchId)
+            .get().await()
+        snap.getString("notes").orEmpty().trim()
+    }.onFailure { AuntieLog.e("bookingRequestNotes failed", it) }
     // === Conflict Detection ===
 
     suspend fun checkBookingConflicts(
@@ -1204,6 +1233,8 @@ data class IncomingKinCare(
     val startTimePending: Boolean = false,
     /** #1098: the night asked for, `YYYY-MM-DD` in the business zone. Blank when absent. */
     val requestedDate: String = "",
+    /** #1577: the Kin this visit covers, as the visit doc names them. Empty when absent. */
+    val kinNames: List<String> = emptyList(),
 )
 
 /**
@@ -1240,6 +1271,7 @@ internal fun incomingKinCareOf(path: String, visitId: String, data: Map<String, 
         serviceId = str("serviceId"),
         startTimePending = data["startTimePending"] == true,
         requestedDate = str("requestedDate"),
+        kinNames = (data["kinNames"] as? List<*>).orEmpty().mapNotNull { (it as? String)?.takeIf { n -> n.isNotBlank() } },
     )
 }
 

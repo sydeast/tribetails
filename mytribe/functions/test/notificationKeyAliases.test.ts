@@ -30,6 +30,7 @@ import {
 } from '../src/notifications/catalog';
 import { resolveChannels } from '../src/notifications/prefs';
 import { enqueueNotification } from '../src/notifications/dispatcher';
+import { DIRECT_SEND_KEYS } from '../src/notifications/catalogKeys';
 
 const LEGACY = 'kincare.report.sent';
 const CANONICAL = 'kintale.published';
@@ -96,9 +97,15 @@ describe('notification key aliases: seeded templates', () => {
   it('every seed dir is a catalog key or a declared alias (mirrors the seeder guard)', () => {
     // seedNotificationTemplates.ts throws on a dir that is neither. The retired
     // key keeps its dir and its already-seeded docs; nothing is orphaned.
-    const known = new Set([...listNotificationKeys(), ...Object.keys(NOTIFICATION_KEY_ALIASES)]);
+    // #1586: a direct-send key (DIRECT_SEND_KEYS, e.g. invite.verify-email)
+    // may carry a dir too; the seeder accepts it the same way.
+    const known = new Set([
+      ...listNotificationKeys(),
+      ...Object.keys(NOTIFICATION_KEY_ALIASES),
+      ...DIRECT_SEND_KEYS.map((d) => d.key),
+    ]);
     for (const dir of readdirSync(seedsDir)) {
-      expect(known.has(dir), `seed dir ${dir} matches no catalog key or alias`).toBe(true);
+      expect(known.has(dir), `seed dir ${dir} matches no catalog key, alias or direct-send key`).toBe(true);
     }
     expect(readdirSync(seedsDir)).toContain(LEGACY);
   });

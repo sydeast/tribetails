@@ -426,6 +426,42 @@ describe('updateInvoice money validation', () => {
   });
 });
 
+describe('#1609 updateInvoice and the invoice number', () => {
+  it('refuses a cleared number in words the edit form can show, writing nothing', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { invoiceNumber: '   ' } })),
+    ).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'An invoice needs a number. Type one, or put the old one back.',
+    });
+    expect(invoiceWrite(ctx)).toBeUndefined();
+  });
+  it('refuses a number another invoice already holds', async () => {
+    const ctx = buildDbMock({
+      docs: { 'invoices/inv1': OPEN_INVOICE },
+      queryDocs: {
+        'invoices/inv1/payments': [],
+        invoices: [{ id: 'inv2', data: { invoiceNumber: '1018' } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { invoiceNumber: '1018' } })),
+    ).rejects.toMatchObject({ code: 'already-exists' });
+    expect(invoiceWrite(ctx)).toBeUndefined();
+  });
+  it('lets an invoice keep its own number when another field changes', async () => {
+    const ctx = buildDbMock({
+      docs: { 'invoices/inv1': OPEN_INVOICE },
+      queryDocs: { 'invoices/inv1/payments': [], invoices: [{ id: 'inv1', data: OPEN_INVOICE }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { invoiceNumber: 'INV-9', terms: 'Net 7' } }));
+    expect(invoiceWrite(ctx)!.data.invoiceNumber).toBe('INV-9');
+  });
+});
 describe('updateInvoice argument + auth failures', () => {
   it('rejects a missing invoiceId', async () => {
     const ctx = seed();

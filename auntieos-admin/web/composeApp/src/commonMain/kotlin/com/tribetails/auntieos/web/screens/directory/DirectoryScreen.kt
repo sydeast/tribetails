@@ -448,10 +448,15 @@ private fun DirectoryListScreen(
                                       else "Try a different name, species, or breed.",
                         )
                     } else {
+                        // #1602: each card names its household, so two kin
+                        // with the same name can be told apart.
+                        val ownerNames = (uiState.allKinfolk as? FirestoreResult.Data)?.value.orEmpty()
+                            .associate { it._id to it.displayName }
                         CardGrid(items = filtered) { kin ->
                             KinCard(
-                                kin      = kin,
-                                onClick  = { onEditKin(kin.kinfolkId, kin._id) },
+                                kin       = kin,
+                                ownerName = ownerNames[kin.kinfolkId].orEmpty(),
+                                onClick   = { onEditKin(kin.kinfolkId, kin._id) },
                             )
                         }
                     }
@@ -784,6 +789,8 @@ private fun KinOverflowChip(remaining: Int) {
 @Composable
 private fun KinCard(
     kin: Kin,
+    /** #1602: the household's name, or "" while households load. */
+    ownerName: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -852,9 +859,11 @@ private fun KinCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text  = if (kin.sex.isNotBlank()) kin.sex else "",
+                    text  = kinCardFooter(ownerName, kin.sex),
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 StatusPill(status = kin.status)
             }
@@ -893,3 +902,7 @@ private fun initials(name: String): String {
         else -> (parts.first().first().toString() + parts.last().first().toString()).uppercase()
     }
 }
+
+/** #1602: a kin card's footer line, the household then the sex, either one blank-safe. Pure. */
+internal fun kinCardFooter(ownerName: String, sex: String): String =
+    listOf(ownerName.trim(), sex.trim()).filter { it.isNotEmpty() }.joinToString(" · ")

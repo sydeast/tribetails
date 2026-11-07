@@ -106,6 +106,29 @@ class FirestoreClient {
      */
     suspend fun approveGeneratedDraft(draftId: String, editedCopy: String): WriteResult<Unit> =
         platformApproveGeneratedDraft(draftId, editedCopy)
+    /**
+     * #1563: send a KinTale draft to its household through the
+     * `publishGeneratedDraft` callable, which writes the SENT `kin_care_reports`
+     * doc the portal lists and marks the draft sent in one transaction, and
+     * answers a repeat with the first report. Returns that report id.
+     */
+    suspend fun publishGeneratedDraft(draftId: String, bodyCopy: String, title: String): WriteResult<String> {
+        val payload = publishGeneratedDraftPayloadOf(draftId, bodyCopy, title)
+        return when (val r = platformInvokeCallable("publishGeneratedDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> decodePublishedReportId(r.value)
+                ?.let { WriteResult.Ok(it) }
+                ?: WriteResult.Err("publishGeneratedDraft returned no reportId")
+        }
+    }
+    /** #1563: delete an unsent generated draft. The server refuses one already sent. */
+    suspend fun deleteGeneratedDraft(draftId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("draftId", JsonPrimitive(draftId.trim())) }
+        return when (val r = platformInvokeCallable("deleteGeneratedDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
     fun reportsStream():    Flow<FirestoreResult<List<KinCareReport>>>  {
         val scope = kinfolkScopeFilter(testMode)
         return if (scope != null) platformReportsForKinfolkStream(scope).scopeKinfolk(testMode) { it.kinfolkId }
@@ -911,10 +934,7 @@ class FirestoreClient {
             emit(DefaultKinTaleTemplate.template)
             templatesStream().collect { res ->
                 if (res !is FirestoreResult.Data) return@collect
-                val active = res.value.filter { it.isActive }
-                val needle = serviceType.lowercase().trim()
-                val match  = active.firstOrNull { tpl -> tpl.serviceTypeKeys.any { it.lowercase().trim() == needle } }
-                emit(match ?: active.firstOrNull { it.isDefault } ?: DefaultKinTaleTemplate.template)
+                emit(pickActiveTemplate(res.value, serviceType))
             }
         }
 
@@ -982,6 +1002,20 @@ class FirestoreClient {
         reportId: String,
         reason: String,
     ): WriteResult<Unit> = platformArchiveOrphanReportAsBadData(reportId, reason)
+
+    /**
+     * #1631: delete one unsent KinTale report draft through the
+     * `deleteKinTaleReportDraft` callable, which refuses a SENT row, a row with
+     * a `sentAt` and an untriaged orphan (the `purgeOldDrafts` conditions) and
+     * audits the delete. Owner only.
+     */
+    suspend fun deleteKinTaleReportDraft(reportId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("reportId", JsonPrimitive(reportId.trim())) }
+        return when (val r = platformInvokeCallable("deleteKinTaleReportDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
 
     fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> =
         kotlinx.coroutines.flow.flow {
@@ -1440,6 +1474,22 @@ class FirestoreClient {
      * went out; that is an Ok, not an Err, because the household has been
      * reminded. See [decodeReminderOutcome] for the pre-#832 response rule.
      */
+    /**
+     * #1609: who a reminder ("reminder") or a draft send ("reviewSend") will
+     * reach, and by which channel, read before the operator confirms it.
+     */
+    suspend fun previewInvoiceNotice(invoiceId: String, action: String): WriteResult<InvoiceNoticePreview> {
+        val payload = buildJsonObject {
+            put("invoiceId", JsonPrimitive(invoiceId))
+            put("action", JsonPrimitive(action))
+        }
+        return when (val r = platformInvokeCallable("previewInvoiceNotice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeInvoiceNoticePreview(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     suspend fun sendInvoiceReminder(
         invoiceId: String,
         nowMs: Long = reminderNowMs(),
@@ -1685,6 +1735,13 @@ class FirestoreClient {
 
     // ---- Business settings ----
     fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> = platformBusinessSettingsStream()
+
+    /**
+     * #1608: is "Verify arrival and departure" on, read the way the server reads
+     * it? Off the raw document: only an explicit `true` counts, while
+     * [BusinessSettings] defaults the field to `true` for the Settings editor.
+     */
+    suspend fun arrivalRuleRequired(): WriteResult<Boolean> = platformArrivalRuleRequired()
     suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> = platformSaveBusinessSettings(settings)
 
     // ---- Tag vocabulary writes ----
@@ -1779,7 +1836,13 @@ class FirestoreClient {
     // ---- Care-ops session callables (1E §A.9) + series approve/cancel (1G) ----
     private val callableJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id. */
+    /**
+     * 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id.
+     *
+     * #1574: [recordAsCompleted] writes down a visit whose window has already
+     * ended, as COMPLETED; the server refuses it for a window that has not, and
+     * refuses a past window without it. Sent only when true.
+     */
     suspend fun createKinCareSession(
         kinfolkId: String,
         kinIds: List<String>,
@@ -1788,6 +1851,7 @@ class FirestoreClient {
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
+        recordAsCompleted: Boolean = false,
     ): WriteResult<String> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
@@ -1797,6 +1861,7 @@ class FirestoreClient {
             put("endTime", JsonPrimitive(endTime))
             put("serviceDurationMinutes", JsonPrimitive(serviceDurationMinutes))
             put("notes", JsonPrimitive(notes))
+            if (recordAsCompleted) put("recordAsCompleted", JsonPrimitive(true))
         }
         return when (val r = platformInvokeCallable("createKinCareSession", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
@@ -2317,6 +2382,46 @@ class FirestoreClient {
     suspend fun deleteKinTaleTemplate(templateId: String): WriteResult<Unit> =
         platformDeleteKinTaleTemplate(templateId)
 
+    /**
+     * #1591: the one entry point that archives, restores or deletes a KinTale
+     * template (operator ruling 2026-11-05: "both"). ARCHIVE and RESTORE go
+     * through the #994 field diff, so only `archived`, `archivedAt`,
+     * `updatedAt` (and on a restore that must give up the default, `isDefault`)
+     * are written. DELETE removes the doc, which `firestore.rules` allows only
+     * for an archived template.
+     */
+    suspend fun removeKinTaleTemplate(
+        template: KinTaleTemplate,
+        mode: KinTaleTemplateRemoval,
+        clearDefault: Boolean = false,
+        at: String = com.tribetails.auntieos.web.util.nowIso(),
+    ): WriteResult<Unit> {
+        val edited = when (mode) {
+            KinTaleTemplateRemoval.DELETE -> return deleteKinTaleTemplate(template._id)
+            KinTaleTemplateRemoval.ARCHIVE -> template.copy(archived = true, archivedAt = at, updatedAt = at)
+            KinTaleTemplateRemoval.RESTORE -> template.copy(
+                archived = false,
+                archivedAt = "",
+                updatedAt = at,
+                isDefault = template.isDefault && !clearDefault,
+            )
+        }
+        return when (val r = updateKinTaleTemplate(template, edited)) {
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+        }
+    }
+    /** #1591: what uses this template, for a confirm that names what breaks. Owner-only on the server. */
+    suspend fun getKinTaleTemplateUsage(templateId: String): WriteResult<KinTaleTemplateUsage> {
+        val payload = buildJsonObject { put("templateId", JsonPrimitive(templateId)) }
+        return when (val r = platformInvokeCallable("getKinTaleTemplateUsage", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(decodeKinTaleTemplateUsage(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "usage decode failed") }
+        }
+    }
+
     // ---- Booking notes subcollections ----
     /**
      * Live stream of notes under a booking. internal=false reads `notes/` (kinfolk-facing);
@@ -2661,6 +2766,7 @@ internal expect fun platformBookingTimeSlotsStream(): Flow<FirestoreResult<List<
 internal expect suspend fun platformRecordPayment(payment: Payment, idempotencyKey: String?): WriteResult<String>
 
 internal expect fun platformBusinessSettingsStream(): Flow<FirestoreResult<BusinessSettings>>
+internal expect suspend fun platformArrivalRuleRequired(): WriteResult<Boolean>
 internal expect suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit>
 
 internal expect fun platformBookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>>
@@ -3448,7 +3554,42 @@ data class GeneratedDraft(
     val kinfolkName: String = "",
     val createdOn: String = "",
     val approvedAt: String = "",
-)
+    // #1563: the SECOND writer's spellings. `web/functions/generate.js` writes this
+    // same collection in snake_case, so a draft it wrote decoded here with no
+    // household and no copy. Read through the accessors below, which take the
+    // first non-blank of the two.
+    val kinfolk_id: String = "",
+    val kinfolk_name: String = "",
+    val generated_copy: String = "",
+    val communication_type: String = "",
+    val generated_at: String = "",
+    val generatedTitle: String = "",
+    val generated_title: String = "",
+    /** #1563: the kin_care_reports id this draft was sent as; set by `publishGeneratedDraft`. */
+    val publishedReportId: String = "",
+) {
+    fun householdId(): String = kinfolkId.trim().ifBlank { kinfolk_id.trim() }
+    fun household(): String = kinfolkName.trim().ifBlank { kinfolk_name.trim() }
+    fun body(): String = generatedCopy.ifBlank { generated_copy }
+    fun type(): String = communicationType.trim().ifBlank { communication_type.trim() }
+    fun title(): String = generatedTitle.trim().ifBlank { generated_title.trim() }
+    fun created(): String = createdOn.trim().ifBlank { generated_at.trim() }
+    /** Already sent to the household as a KinTale. */
+    val isPublished: Boolean get() = publishedReportId.isNotBlank()
+    /**
+     * Not sent, and in a status that means nobody has signed it off: `pending`
+     * (n8n era), `generated` (generate.js) or blank. The positive match the web
+     * list makes; `approved` and anything unknown are not "waiting".
+     */
+    val isUnsent: Boolean get() = !isPublished && status.trim().lowercase() in setOf("pending", "generated", "")
+}
+/**
+ * #1563: the drafts waiting on a decision, newest first: Home's "KinTales
+ * pending" rows and its "KinTales to review" count, and the KinTales list's
+ * Drafts bucket. Pure; tested.
+ */
+fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
+    drafts.filter { it.isUnsent }.sortedByDescending { it.created() }
 
 /**
  * KinCareReport - the "KinTale" visit recap that goes home to a kinfolk after a
@@ -3511,9 +3652,32 @@ data class KinCareReport(
  * pass-1 ("legacy_orphan") or pass-2 ("legacy_visit_logs") backfill markers
  * the May-17 migration scripts wrote.
  */
+/**
+ * The template a NEW KinTale is written against: an active template whose
+ * service keys name [serviceType], else the active default, else the built-in.
+ * #1591: an archived template is never picked. Pure; tested.
+ */
+fun pickActiveTemplate(templates: List<KinTaleTemplate>, serviceType: String): KinTaleTemplate {
+    val active = templates.filter { it.isActive && !it.archived }
+    val needle = serviceType.lowercase().trim()
+    val match = active.firstOrNull { tpl -> tpl.serviceTypeKeys.any { it.lowercase().trim() == needle } }
+    return match ?: active.firstOrNull { it.isDefault } ?: DefaultKinTaleTemplate.template
+}
 fun KinCareReport.isUntriagedOrphan(): Boolean =
     kinfolkId.isBlank() && triageStatus.isBlank() &&
     sentVia in setOf("legacy_orphan", "legacy_visit_logs")
+
+/**
+ * #1631: whether this report may offer Delete. A saved (has an id), unsent
+ * draft: status DRAFT, no `sentAt`, not an untriaged orphan. The server's three
+ * refusals, so the control never appears where it can only be refused. Pure;
+ * tested.
+ */
+fun KinCareReport.canDeleteAsDraft(): Boolean =
+    _id.isNotBlank() &&
+        status.trim().uppercase() == "DRAFT" &&
+        sentAt.isBlank() &&
+        !isUntriagedOrphan()
 
 // --- Comms log models - one per channel, all written to Firestore by the
 // inbound pipeline and consumed by the four log screens. Field shape mirrors
@@ -3686,6 +3850,8 @@ data class Invoice(
     val address: String = "",
     val date: String = "",
     val terms: String = "",
+    /** #1609: the structured terms code when the terms came from the picker, else "". */
+    val termsCode: String = "",
     val dueDate: String = "",
     val discount: String = "",
     val total: Double = 0.0,
@@ -4163,7 +4329,9 @@ data class BusinessSettings(
     // ---- GPS / tracking ----
     val enableGPSTrackingForAllVisits: Boolean = true,
     val enablePhotoLocationTagging: Boolean = true,
-    val requireArrivalDepartureVerification: Boolean = true,
+    // #1620: absent means OFF, the server's reading (`=== true` in
+    // functions/src/lib/arrivalVerification.ts).
+    val requireArrivalDepartureVerification: Boolean = false,
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value. 150 m matches ARRIVAL_RADIUS_DEFAULT_METERS on the server, which
@@ -4699,3 +4867,16 @@ data class UserProfile(
             return ""
         }
 }
+
+/** #1563: the `publishGeneratedDraft` request body. A blank title is left out (the draft's own is used). Pure; tested. */
+internal fun publishGeneratedDraftPayloadOf(draftId: String, bodyCopy: String, title: String): JsonObject =
+    buildJsonObject {
+        put("draftId", JsonPrimitive(draftId.trim()))
+        put("bodyCopy", JsonPrimitive(bodyCopy))
+        if (title.isNotBlank()) put("title", JsonPrimitive(title.trim()))
+    }
+/** #1563: the report id out of a `publishGeneratedDraft` reply, or null. Pure; tested. */
+internal fun decodePublishedReportId(raw: String): String? =
+    runCatching {
+        Json.parseToJsonElement(raw).jsonObject["reportId"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()?.takeIf { it.isNotBlank() }

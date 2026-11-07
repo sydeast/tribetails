@@ -156,6 +156,8 @@ fun InvoicesScreen(
         }
     }
     var actionError by remember { mutableStateOf<String?>(null) }
+    /** #1609: the row send waiting on its confirm. */
+    var rowSendConfirm by remember { mutableStateOf<Pair<String, HouseholdSend>?>(null) }
 
     var actionNotice by remember { mutableStateOf<String?>(null) }
     /**
@@ -387,7 +389,7 @@ fun InvoicesScreen(
                     Spacer(Modifier.height(AuntieTheme.dims.space4))
 
                     val sorted = s.value.sortedByDescending {
-                        isoDatePrefixOrNull(it.date) ?: isoDatePrefixOrNull(it.dueDate) ?: ""
+                        invoiceDayOrNull(it.date) ?: invoiceDayOrNull(it.dueDate) ?: ""
                     }
                     val visible = sorted.filter {
                         invoiceMatchesFilter(it, filter, todayIso) &&
@@ -412,10 +414,27 @@ fun InvoicesScreen(
                                 todayIso = todayIso,
                                 onInvoiceClick = onInvoiceClick,
                                 onReceipt = onReceipt,
-                                onSendReminder = onSendReminder,
-                                onReviewSend = onReviewSend,
+                                // #1609: both confirm first, naming who the send reaches.
+                                onSendReminder = { id -> rowSendConfirm = id to HouseholdSend.REMINDER },
+                                onReviewSend = { inv -> rowSendConfirm = inv._id to HouseholdSend.REVIEW_SEND },
                                 remindingIds = remindingIds,
                             )
+                            rowSendConfirm?.let { (id, send) ->
+                                SendConfirmDialog(
+                                    client = client,
+                                    invoiceId = id,
+                                    send = send,
+                                    onConfirm = {
+                                        rowSendConfirm = null
+                                        if (send == HouseholdSend.REMINDER) {
+                                            onSendReminder(id)
+                                        } else {
+                                            s.value.firstOrNull { it._id == id }?.let(onReviewSend)
+                                        }
+                                    },
+                                    onDismiss = { rowSendConfirm = null },
+                                )
+                            }
                         }
                     }
                 }
@@ -540,25 +559,36 @@ private fun NewInvoiceCta(onClick: () -> Unit) {
     }
 }
 
+/** #1570: open invoices whose due date names no day; none of them can be counted overdue. */
+internal fun unreadableDueOpenCount(invoices: List<Invoice>): Int =
+    invoices.count { invoiceStateOrNull(it) == InvoiceState.OPEN && isUnreadableDueDate(it.dueDate) }
+/**
+ * The Overdue card's line: the worst overdue invoice and its days past, and
+ * (#1570) how many open invoices carry a due date that cannot be read, because
+ * "all clear" over an invoice the console could not date is the silent skip.
+ */
+internal fun overdueCaptionFor(invoices: List<Invoice>, todayIso: String): String {
+    val worst = invoices.filter { invoiceIsOverdue(it, todayIso) }.maxByOrNull { daysOverdue(it, todayIso) ?: 0 }
+    val worstLine = worst?.let {
+        val who = it.kinfolkName.ifBlank { it.client.ifBlank { "a kinfolk" } }
+        val days = daysOverdue(it, todayIso)
+        if (days != null) "$who, $days days past" else who
+    }
+    val unreadable = unreadableDueOpenCount(invoices)
+    if (unreadable == 0) return worstLine ?: "all clear"
+    val count = if (unreadable == 1) "1 open invoice has a due date" else "$unreadable open invoices have due dates"
+    return (worstLine?.let { "$it. " } ?: "") + "$count that cannot be read"
+}
 @Composable
 private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
     val outstanding = invoices.filter { invoiceIsOutstanding(it) }
     val outstandingTotal = outstanding.sumOf { it.amountDue }
-    val billedTotal = invoices.sumOf { it.total }
+    val billedTotal = invoiceBilledTotal(invoices)
     val overdueInvoices = invoices.filter { invoiceIsOverdue(it, todayIso) }
     val overdueCount = overdueInvoices.size
 
-    // Name the worst-overdue invoice + its days-past for the Overdue card subline
-    // (mockup intent), computed from real fields only.
-    val worstOverdue = overdueInvoices.maxByOrNull { daysOverdue(it, todayIso) ?: 0 }
-    val overdueCaption = when {
-        worstOverdue == null -> "all clear"
-        else -> {
-            val who = worstOverdue.kinfolkName.ifBlank { worstOverdue.client.ifBlank { "a kinfolk" } }
-            val days = daysOverdue(worstOverdue, todayIso)
-            if (days != null) "$who, $days days past" else who
-        }
-    }
+    val overdueCaption = overdueCaptionFor(invoices, todayIso)
+    val unreadableDue = unreadableDueOpenCount(invoices)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -579,7 +609,7 @@ private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
         StatCard(
             label    = "Billed total",
             value    = formatMoney(billedTotal),
-            trend    = "all invoices on the books",
+            trend    = "sent invoices on the books",
             tone     = AuntieStatusTone.Teal,
             modifier = Modifier.weight(1f),
         )
@@ -587,7 +617,7 @@ private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
             label    = "Overdue",
             value    = "$overdueCount",
             trend    = overdueCaption,
-            tone     = if (overdueCount > 0) AuntieStatusTone.Error else AuntieStatusTone.Muted,
+            tone     = if (overdueCount > 0 || unreadableDue > 0) AuntieStatusTone.Error else AuntieStatusTone.Muted,
             feature  = overdueCount > 0,
             modifier = Modifier.weight(1f),
         )
@@ -703,9 +733,14 @@ internal fun invoiceRowActionOrNull(invoice: Invoice): InvoiceAction? {
 internal fun invoiceRowDateLine(invoice: Invoice, todayIso: String): String {
     val state = invoiceStateOrNull(invoice)
     val days = daysOverdue(invoice, todayIso)
+    // #1570: a due date that names no day is said, quoted, where the due date
+    // would be, so the operator sees what is stored instead of a silent skip.
+    val dueUnreadable = isUnreadableDueDate(invoice.dueDate) &&
+        (state == InvoiceState.OPEN || invoice.date.isBlank())
     return when {
         state == InvoiceState.QUOTE -> "quote"
         state == InvoiceState.DRAFT -> "draft"
+        dueUnreadable -> "due date cannot be read: \"${invoice.dueDate.trim()}\""
         days != null -> "$days day${if (days == 1) "" else "s"} overdue"
         state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate, todayIso)}"
         invoice.date.isNotBlank() ->
@@ -770,7 +805,7 @@ internal fun InvoiceRow(
                 color = c.textDim,
             )
             Text(
-                text  = "#${invoice.invoiceNumber.ifBlank { "(none)" }}",
+                text  = invoiceNumberLabel(invoice.invoiceNumber),
                 style = AuntieTheme.typography.mono.copy(fontWeight = FontWeight.Medium),
                 color = c.textPrimary,
             )
@@ -916,3 +951,17 @@ private fun EmptyState() {
         icon    = Lucide.ReceiptText,
     )
 }
+
+/** #1609: the row's number, or "No number" in words rather than "#(none)". */
+internal fun invoiceNumberLabel(number: String): String =
+    if (number.isBlank()) "No number" else "#${number.trim()}"
+/**
+ * #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
+ * estimate the household has not agreed to, so neither counts toward Billed
+ * total. Same rule as admin web and admin Android. Pure; tested.
+ */
+internal fun invoiceBilledTotal(invoices: List<Invoice>): Double =
+    invoices.filter {
+        val state = invoiceStateOrNull(it)
+        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE
+    }.sumOf { it.total }

@@ -28,12 +28,14 @@ import {
   notesLocked,
   visitDurationMinutes,
 } from '../lib/bookingDetailFormat';
+import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import { sessionHousehold, sessionState, sessionStateInfo } from '../lib/sessionFormat';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { DenPanel, EmptyHint, ServicePill } from './DenScreenKit';
 import { useToast } from './Toast';
+import { useStaffNames } from '../lib/useStaffNames';
 import './BookingDetailModal.css';
 
 /** Whatever a rejected callable or Firestore read gave us, as operator copy. */
@@ -75,7 +77,8 @@ export interface BookingDetailModalProps {
    * A caller-owned panel of status transitions, rendered directly under the
    * booking facts. Bookings.tsx passes `BookingStatusActions` (Approve /
    * Reject / Cancel / Mark Completed on the flat `kin_care_sessions` row);
-   * Schedule.tsx omits it, and then nothing renders in that slot.
+   * Schedule.tsx passes the same panel (#1576). A caller that omits it gets
+   * nothing in that slot.
    *
    * A SLOT rather than a `showActions` flag, and rather than importing the
    * write surface here, because this component deliberately knows nothing
@@ -515,6 +518,12 @@ function ReschedulePanel({ entry, durationMinutes, businessZone, onDone }: Resch
       setError('Enter a real date and a time of day before rescheduling.');
       return;
     }
+    // #1574: a visit is never moved into the past; say so before sending.
+    const pastRefusal = rescheduleIntoPastRefusal(times.startTime, Date.now());
+    if (pastRefusal !== null) {
+      setError(pastRefusal);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -598,6 +607,8 @@ interface NotesPanelProps {
  * conditional hook in the parent would be illegal.
  */
 function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPanelProps) {
+  // #1607: a staff note names its writer, not a role.
+  const staffNames = useStaffNames();
   const state = useCollection<BookingNoteEntry>(
     bookingNotesQuery(kinfolkId, batchId, visitId, internal),
   );
@@ -652,7 +663,7 @@ function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPane
             {sortNotes(state.data).map((note) => (
               <li key={note._id} className="bdm__note">
                 <span className="bdm__note-body">{noteBody(note)}</span>
-                <span className="bdm__note-author">{noteAuthorLabel(note)}</span>
+                <span className="bdm__note-author">{noteAuthorLabel(note, staffNames)}</span>
               </li>
             ))}
           </ul>

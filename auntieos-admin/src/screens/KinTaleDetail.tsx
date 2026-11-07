@@ -38,7 +38,7 @@ import {
   kinfolkPreviewHeadline,
   kinfolkPreviewBody,
 } from '../lib/kinTaleDetailFormat';
-import { useCollection } from '../lib/firestore';
+import { useCollection, useDocById } from '../lib/firestore';
 import { type Async } from '../lib/async';
 import {
   DenScreenHeading,
@@ -51,6 +51,8 @@ import {
 import { AsyncRegion } from '../components/AsyncRegion';
 import { LoadingRow } from '../components/LoadingRow';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { DeleteKinTaleDraftButton } from '../components/DeleteKinTaleDraftButton';
+import { canDeleteKinTaleDraft } from '../api/kinTaleReportDraftDelete';
 import { Banner } from '../components/Banner';
 import './KinTaleDetail.css';
 
@@ -107,6 +109,11 @@ export interface KinTaleDetailProps {
    * convention: no live no-op).
    */
   onEdit?: (kinTaleId: string) => void;
+  /**
+   * #1631: called once an unsent draft has been deleted. Omit to offer no
+   * Delete at all (the same no-live-no-op rule as `onEdit`).
+   */
+  onDeleted?: () => void;
   onClose: () => void;
 }
 
@@ -132,7 +139,7 @@ function railWhen(iso: string): string {
   return formatWhenFull(kinTaleTimeOf(iso)) ?? 'Not recorded';
 }
 
-export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps) {
+export function KinTaleDetail({ kinTaleId, onEdit, onDeleted, onClose }: KinTaleDetailProps) {
   const reports = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const kin = useCollection<Kin>(KIN_QUERY);
   // Third bounded stream, and the same one `KinTaleCompose.tsx` already opens
@@ -148,7 +155,24 @@ export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps
   // to show a placeholder title for as long as the read takes. So the body
   // owns the band once there is a report, and the screen draws a bare one
   // (crumbs, "KinTale", Close) only while there is not.
-  const entry = reports.status === 'ready' ? reports.data.find((r) => r._id === kinTaleId) : undefined;
+  const streamed = reports.status === 'ready' ? reports.data.find((r) => r._id === kinTaleId) : undefined;
+  // #1563: the stream is the 200 newest reports, so a KinTale written before
+  // them (an old draft, a link from a notification) was "not found" while it
+  // sat in Firestore. Read it by id whenever the stream has settled without it.
+  const direct = useDocById<KinTaleEntry>(
+    'kin_care_reports',
+    reports.status === 'ready' && streamed === undefined ? kinTaleId : null,
+  );
+  const entry = streamed ?? (direct.status === 'ready' && direct.data !== null ? direct.data : undefined);
+  // What the "not found" region waits on: the stream, then the by-id read.
+  const lookup: Async<KinTaleEntry[]> =
+    reports.status !== 'ready'
+      ? reports
+      : direct.status === 'ready'
+        ? { status: 'ready', data: [] }
+        : direct.status === 'error'
+          ? direct
+          : { status: 'loading' };
 
   if (entry !== undefined) {
     return (
@@ -159,6 +183,7 @@ export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps
           templateRows={templateRows}
           onClose={onClose}
           {...(onEdit ? { onEdit } : {})}
+          {...(onDeleted ? { onDeleted } : {})}
         />
       </div>
     );
@@ -174,7 +199,7 @@ export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps
         subtitle="The recap, the comment thread, and the reaction, all in one place."
         trailing={<GhostButton label="Close" onClick={onClose} />}
       />
-      <AsyncRegion state={reports} what="the KinTale" isEmpty={() => false} empty={null}>
+      <AsyncRegion state={lookup} what="the KinTale" isEmpty={() => false} empty={null}>
         {() => <EmptyHint>No KinTale found with id &ldquo;{kinTaleId}&rdquo;.</EmptyHint>}
       </AsyncRegion>
     </div>
@@ -189,12 +214,13 @@ interface KinTaleDetailBodyProps {
   /** Raw `kintale_templates` docs; decoded here, see `moods` below. */
   templateRows: Async<Record<string, unknown>[]>;
   onEdit?: (kinTaleId: string) => void;
+  onDeleted?: () => void;
   onClose: () => void;
 }
 
 type DetailBanner = { tone: 'error' | 'success'; text: string };
 
-function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onClose }: KinTaleDetailBodyProps) {
+function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClose }: KinTaleDetailBodyProps) {
   // Every read off `entry` is defaulted. KinTaleEntry is a CAST over raw
   // Firestore data, not a validation of it: `title` is absent on 89 of the 92
   // live kin_care_reports, and reading one blind throws through React's error
@@ -544,6 +570,15 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onClose }: KinTal
         trailing={
           <div className="kintale-detail__actions">
             {onEdit ? <GhostButton label="Edit" onClick={() => onEdit(entry._id)} /> : null}
+            {/* #1631: an unsent draft can be deleted. Only where the server
+                would allow it, so the control is never a refusal. */}
+            {onDeleted && canDeleteKinTaleDraft(entry) ? (
+              <DeleteKinTaleDraftButton
+                reportId={entry._id}
+                household={entry.kinfolkName ?? ''}
+                onDeleted={onDeleted}
+              />
+            ) : null}
             <GhostButton label="Close" onClick={onClose} />
           </div>
         }

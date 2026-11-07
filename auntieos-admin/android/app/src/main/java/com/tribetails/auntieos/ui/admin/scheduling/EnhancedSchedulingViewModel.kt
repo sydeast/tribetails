@@ -432,6 +432,8 @@ class EnhancedSchedulingViewModel(
     private val kinCareRepository: KinCareRepository = com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository,
     private val visitRequestRepository: com.tribetails.auntieos.data.repository.VisitRequestRepository =
         com.tribetails.auntieos.data.repository.VisitRequestRepository(),
+    /** #1574: the clock "already passed" is judged on. A parameter so a test can stand at a known instant. */
+    private val clock: java.time.Clock = java.time.Clock.systemUTC(),
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SchedulingState())
@@ -535,6 +537,9 @@ class EnhancedSchedulingViewModel(
         }
     }
 
+    /** #1577: the household's notes on [series], read when its detail sheet opens. */
+    suspend fun loadRequestNotes(series: IncomingSeries): Result<String> =
+        bookingRepository.bookingRequestNotes(series.familyId, series.batchId)
     /** Approve a whole incoming series: flips every visit confirmed + creates the
      *  linked sessions server-side (manageBookingSeries). The stream then drops the
      *  series (no longer 'requested'). */
@@ -1023,6 +1028,62 @@ class EnhancedSchedulingViewModel(
         }
     }
 
+    /** #1574: now, on the business clock, as the wall clock this screen types and sends. */
+    internal fun businessNow(): java.time.LocalDateTime =
+        java.time.LocalDateTime.now(clock.withZone(businessZoneOf(_state.value.businessSettings.timeZone)))
+
+    /**
+     * #1574, operator ruling 2026-11-05: a visit created with a past date is
+     * allowed only as already Completed, never Scheduled. New Booking turns into
+     * "Record completed visit" for a window that has ended, and this writes it
+     * through `createKinCareSession` with `recordAsCompleted`, the same call the
+     * web's New visit makes. The server writes the visit Completed, starts no
+     * live visit and sends the household nothing. Times go as UTC instants
+     * converted on the business clock, exactly as the web sends them.
+     */
+    fun recordCompletedVisit(
+        kinfolkId: String,
+        kinfolkName: String,
+        serviceType: String,
+        startUtcIso: String,
+        endUtcIso: String,
+        durationMinutes: Int,
+        notes: String,
+    ) {
+        if (_state.value.isLoading) return
+        if (kinfolkId.isBlank() || serviceType.isBlank()) {
+            _state.value = _state.value.copy(errorMessage = "Pick a household and a service before recording the visit.")
+            return
+        }
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            kinCareRepository.createKinCareSession(
+                kinfolkId = kinfolkId,
+                kinIds = emptyList(),
+                serviceType = serviceType,
+                startTime = startUtcIso,
+                endTime = endUtcIso,
+                serviceDurationMinutes = durationMinutes,
+                notes = notes,
+                recordAsCompleted = true,
+            ).fold(
+                onSuccess = {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        bookingActionMessage = "${kinfolkName.ifBlank { kinfolkId }}'s visit is recorded as completed.",
+                    )
+                    loadBookingsForDateRange()
+                },
+                onFailure = { e ->
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        errorMessage = e.message ?: "Could not record that visit.",
+                    )
+                },
+            )
+        }
+    }
+
     fun createBooking(booking: EnhancedBooking, internalNote: String = "") {
         if (_state.value.isLoading) return
         _state.value = _state.value.copy(isLoading = true)
@@ -1392,6 +1453,63 @@ class EnhancedSchedulingViewModel(
     }
 
     fun clearBookingActionMessage() { _state.value = _state.value.copy(bookingActionMessage = null) }
+
+    /**
+     * #1576: Mark Completed from the Schedule's visit sheet, the action web
+     * Bookings offers beside Cancel. The visit is the linked `kin_care_sessions`
+     * row, completed through `transitionBookingStatus` (the only writer the
+     * rules allow for a terminal status); the envelope this screen draws then
+     * follows with a status-only update. Exactly one linked visit, or it says
+     * why not, the same rule a move follows. The server's refusal (the
+     * arrival-and-departure rule, an illegal transition) is shown as sent.
+     */
+    fun markBookingCompleted(booking: EnhancedBooking) {
+        if (_state.value.isLoading) return
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            val who = booking.kinfolkName.ifBlank { booking.kinfolkId }
+            val sessionIds = findLinkedSessionIds(booking.id).getOrElse { e ->
+                _state.value = _state.value.copy(isLoading = false, errorMessage = "Could not look up the visit behind this booking: ${e.message}")
+                return@launch
+            }
+            if (sessionIds.size != 1) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = if (sessionIds.isEmpty())
+                        "No scheduled visit is linked to this booking, so there is nothing to complete."
+                    else
+                        "This booking has ${sessionIds.size} visits linked to it. Complete each visit from Auntie Time.",
+                )
+                return@launch
+            }
+            kinCareRepository.markSessionComplete(sessionIds.first()).fold(
+                onSuccess = {
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = auntieRepository,
+                        actionType       = "VISIT_COMPLETED",
+                        description      = "Completed visit for $who from the Schedule",
+                        targetId         = sessionIds.first(),
+                        targetCollection = "kin_care_sessions",
+                    )
+                    val patched = bookingRepository.updateBookingStatus(booking.id, BookingStatus.COMPLETED)
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        selectedBooking = null,
+                        // Same sentence as web's BookingActions COMPLETE.confirmedToast.
+                        bookingActionMessage = "$who's visit is marked Completed.",
+                        errorMessage = patched.exceptionOrNull()?.let {
+                            "The visit is completed, but this calendar could not be updated to match: ${it.message}. Refresh to see it."
+                        },
+                    )
+                    loadBookingsForDateRange()
+                },
+                onFailure = { e ->
+                    _state.value = _state.value.copy(isLoading = false, errorMessage = e.message ?: "Could not complete that visit.")
+                },
+            )
+        }
+    }
 
     /**
      * Stage 2 tail: apply ONE transition (APPROVE/REJECT/CANCEL) to many bookings at
@@ -1783,6 +1901,12 @@ class EnhancedSchedulingViewModel(
         endIso: String,
         override: ScheduleOverrideKind?,
     ): VisitMoveOutcome {
+        // #1574: a visit is never moved into the past. Said here, before the
+        // lookup or the callable, for the detail sheet, the drag and every bulk
+        // row alike; the server refuses the same move with the same sentence.
+        com.tribetails.auntieos.domain.rescheduleIntoPastRefusal(startIso, businessNow())?.let {
+            return VisitMoveOutcome.NotAttempted(it)
+        }
         val sessionIds = findLinkedSessionIds(booking.id).getOrElse { e ->
             return VisitMoveOutcome.NotAttempted("Could not look up the visit behind this booking: ${e.message}")
         }

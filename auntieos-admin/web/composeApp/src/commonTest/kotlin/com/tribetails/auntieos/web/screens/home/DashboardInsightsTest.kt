@@ -399,4 +399,12 @@ class DashboardInsightsTest {
         assertEquals("2h 00m", formatDuration(120))
         assertEquals("0m", formatDuration(-5))
     }
+
+    // ── Today's Pack overdue line (#1590) ────────────────────────────────────
+    @Test
+    fun `todaysPackOverdueLabel is silent at zero and counts in words otherwise`() {
+        assertNull(todaysPackOverdueLabel(0))
+        assertEquals("1 overdue visit to close out in Auntie Time", todaysPackOverdueLabel(1))
+        assertEquals("6 overdue visits to close out in Auntie Time", todaysPackOverdueLabel(6))
+    }
 }

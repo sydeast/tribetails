@@ -53,6 +53,7 @@ import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ServicePill
 import com.tribetails.auntieos.web.ui.components.ToastKind
+import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.ui.components.serviceTone
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
@@ -116,6 +117,10 @@ fun BookingDetailModal(
     var reschedError by remember { mutableStateOf<String?>(null) }
     // #1154: the refused move and the override its refusal offers; null offer means the message stands alone.
     var reschedRetry by remember { mutableStateOf<RescheduleAttempt?>(null) }
+    // #1576: the Actions panel's write in flight, and the server's refusal when it says no.
+    var transitioning by remember(session._id) { mutableStateOf(false) }
+    var transitionError by remember(session._id) { mutableStateOf<String?>(null) }
+    var confirming by remember(session._id) { mutableStateOf<ScheduleSheetAction?>(null) }
 
     // Assigned Auntie (assignAuntie callable). Only envelope visits carry the
     // batch/visit ids the callable needs; legacy flat sessions hide the row.
@@ -156,6 +161,12 @@ fun BookingDetailModal(
     // the life of the modal. A load error shows inline with a retry.
     var pickerOpen by remember(session._id) { mutableStateOf(false) }
     var staff by remember { mutableStateOf<List<StaffMember>?>(null) }
+    // #1607: the notes name their staff writer, so the roster is read for them too.
+    // A failed read leaves the byline at "Staff", never a guessed role.
+    var noteStaff by remember { mutableStateOf<List<StaffMember>?>(null) }
+    LaunchedEffect(session._id) {
+        noteStaff = (client.listStaff() as? WriteResult.Ok)?.value
+    }
     var staffError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(pickerOpen, staffError) {
         if (pickerOpen && staff == null && staffError == null) {
@@ -359,6 +370,70 @@ fun BookingDetailModal(
                     }
                 }
 
+                // ── Actions (#1576) ──
+                // The same transitions Bookings offers, all through
+                // transitionBookingStatus: Mark Completed / Cancel on a visit on
+                // the books (scheduled or in the field), Approve / Reject on a
+                // request. Nothing on a closed visit.
+                val sheetActions = scheduleSheetActions(session.status)
+                if (sheetActions.isNotEmpty()) {
+                    DenPanel(title = "Actions") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val name = session.kinfolkName.ifBlank { "Unnamed" }
+                            val pending = confirming
+                            if (pending == null) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    sheetActions.forEachIndexed { i, action ->
+                                        // Asked first, as on the web: every one of these is final.
+                                        val onClick: () -> Unit = { transitionError = null; confirming = action }
+                                        if (i == 0) {
+                                            PrimaryButton(label = action.label, enabled = !transitioning, onClick = onClick)
+                                        } else {
+                                            GhostButton(label = action.label, enabled = !transitioning, onClick = onClick)
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(scheduleSheetConfirmBody(pending, name), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    PrimaryButton(
+                                        label = if (transitioning) "Saving" else scheduleSheetConfirmLabel(pending),
+                                        enabled = !transitioning,
+                                        onClick = {
+                                            scope.launch {
+                                                transitioning = true
+                                                transitionError = null
+                                                val r = when (pending) {
+                                                    ScheduleSheetAction.MarkCompleted -> client.completeKinCare(session._id, nowIso())
+                                                    ScheduleSheetAction.Cancel -> client.cancelBooking(session._id)
+                                                    ScheduleSheetAction.Approve -> client.approveBooking(session._id)
+                                                    ScheduleSheetAction.Reject -> client.rejectBooking(session._id)
+                                                }
+                                                transitioning = false
+                                                confirming = null
+                                                when (r) {
+                                                    is WriteResult.Ok -> {
+                                                        routeToast.show(scheduleSheetActionToast(pending, name), ToastKind.Success)
+                                                        onDismiss()
+                                                    }
+                                                    // The server's own sentence: a refused Complete names what is missing.
+                                                    is WriteResult.Err -> transitionError = r.message
+                                                }
+                                            }
+                                        },
+                                    )
+                                    GhostButton(label = "Keep it", enabled = !transitioning, onClick = { confirming = null })
+                                }
+                            }
+                            transitionError?.let { err ->
+                                AuntieBanner(tone = AuntieBannerTone.Error, title = "Couldn't change this visit") {
+                                    Text(err, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // ── Reschedule (real rescheduleBooking write) ──
                 // Only before the visit starts (SCHEDULED). Replaces the old "drag not
                 // wired" dead-end for the common case; drag physics stay gated separately.
@@ -378,8 +453,15 @@ fun BookingDetailModal(
                                 enabled = !rescheduling && reschedDate.length == 10 && reschedTime.length == 5,
                                 onClick = {
                                     val times = buildRescheduleTimes(reschedDate, reschedTime, session.serviceDurationMinutes, localZone)
+                                    val pastRefusal = times?.let {
+                                        rescheduleIntoPastRefusal(it.first, localZone, Clock.System.now().toEpochMilliseconds())
+                                    }
                                     if (times == null) {
                                         reschedError = "Enter a valid date (YYYY-MM-DD) and time (HH:MM)."
+                                    } else if (pastRefusal != null) {
+                                        // #1574: a visit is never moved into the past; said before sending.
+                                        reschedError = pastRefusal
+                                        reschedRetry = null
                                     } else {
                                         scope.launch {
                                             rescheduling = true
@@ -450,7 +532,7 @@ fun BookingDetailModal(
                     subtitle = "Visible to kinfolk. Editable until 3 hours before the visit.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        NotesList(state = kinfolkNotes, emptyMsg = "No kinfolk-facing notes yet.")
+                        NotesList(state = kinfolkNotes, emptyMsg = "No kinfolk-facing notes yet.", staff = noteStaff)
                         MultilineField(
                             value = kinfolkInput,
                             onValueChange = { kinfolkInput = it },
@@ -500,7 +582,7 @@ fun BookingDetailModal(
                     subtitle = "Hidden from kinfolk. Visible to staff on every session of this booking.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        NotesList(state = internalNotes, emptyMsg = "No internal notes yet.")
+                        NotesList(state = internalNotes, emptyMsg = "No internal notes yet.", staff = noteStaff)
                         MultilineField(
                             value = internalInput,
                             onValueChange = { internalInput = it },
@@ -559,7 +641,7 @@ private fun FactRow(label: String, value: String) {
 }
 
 @Composable
-private fun NotesList(state: FirestoreResult<List<BookingNote>>, emptyMsg: String) {
+private fun NotesList(state: FirestoreResult<List<BookingNote>>, emptyMsg: String, staff: List<StaffMember>?) {
     val c = AuntieTheme.colors
     when (state) {
         is FirestoreResult.Loading -> Text("Loading notes", style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -582,7 +664,7 @@ private fun NotesList(state: FirestoreResult<List<BookingNote>>, emptyMsg: Strin
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(note.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary, modifier = Modifier.weight(1f).padding(end = 8.dp))
-                            Text(note.authorRole, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+                            Text(bookingNoteAuthorLabel(note, staff), style = AuntieTheme.typography.labelSmall, color = c.textDim)
                         }
                     }
                 }
@@ -650,4 +732,60 @@ private fun displayDateTime(iso: String, zone: TimeZone): String {
     val hour12 = when (ldt.hour % 12) { 0 -> 12; else -> ldt.hour % 12 }
     val minute = ldt.minute.toString().padStart(2, '0')
     return "$dow, $month ${ldt.date.day} at $hour12:$minute $ampm"
+}
+
+/**
+ * #1607: who wrote a note. `authorRole` is "admin" for EVERY staff caller (the
+ * server cannot tell an admin from an Auntie by it), so a staff note is named by
+ * its writer from the staff roster, and reads "Staff" until that is known; a
+ * household's note reads "Kinfolk". Never the raw role, never "Auntie" by default.
+ */
+internal fun bookingNoteAuthorLabel(note: BookingNote, staff: List<StaffMember>?): String = when (note.authorRole.trim().lowercase()) {
+    "admin" -> staff?.firstOrNull { it.uid == note.authorUid && note.authorUid.isNotBlank() }?.pickerLabel ?: "Staff"
+    "kinfolk" -> "Kinfolk"
+    else -> "Unknown"
+}
+
+/** #1576: one transition the Schedule's visit sheet offers. The first in a list is the primary button. */
+internal enum class ScheduleSheetAction(val label: String) {
+    MarkCompleted("Mark Completed"),
+    Cancel("Cancel"),
+    Approve("Approve"),
+    Reject("Reject"),
+}
+
+/**
+ * #1576: what the visit sheet offers, by status: the web's `actionsFor` in
+ * `BookingActions.tsx`. A visit on the books (SCHEDULED, or in the field:
+ * ON_MY_WAY / ARRIVED / DEPARTED, which the server completes or cancels from)
+ * gets Mark Completed and Cancel; a request (PENDING, or no status yet) gets
+ * Approve and Reject (DRAFT or PENDING); a closed or unrecognised status gets
+ * nothing, since an action against a status this app does not know would be a guess.
+ */
+internal fun scheduleSheetActions(status: String): List<ScheduleSheetAction> = when (status.trim().uppercase()) {
+    "SCHEDULED", "ON_MY_WAY", "ARRIVED", "DEPARTED" -> listOf(ScheduleSheetAction.MarkCompleted, ScheduleSheetAction.Cancel)
+    "DRAFT", "PENDING" -> listOf(ScheduleSheetAction.Approve, ScheduleSheetAction.Reject)
+    else -> emptyList()
+}
+
+/** The question asked before a transition is sent. Same sentences as the web's `confirmBody`. */
+internal fun scheduleSheetConfirmBody(action: ScheduleSheetAction, name: String): String = when (action) {
+    ScheduleSheetAction.MarkCompleted -> "$name's visit will be marked Completed and leave the scheduled list."
+    ScheduleSheetAction.Cancel -> "$name's visit will be cancelled. This cannot be undone."
+    ScheduleSheetAction.Approve -> "$name's request will move to Scheduled and appear on the calendar."
+    ScheduleSheetAction.Reject -> "$name's request will be cancelled. This cannot be undone."
+}
+/** The confirm button. Same words as the web's `confirmLabel`. */
+internal fun scheduleSheetConfirmLabel(action: ScheduleSheetAction): String = when (action) {
+    ScheduleSheetAction.MarkCompleted -> "Yes, mark it completed"
+    ScheduleSheetAction.Cancel -> "Yes, cancel the visit"
+    ScheduleSheetAction.Approve -> "Yes, approve it"
+    ScheduleSheetAction.Reject -> "Yes, reject it"
+}
+/** The toast after a transition lands. Same sentences as the web's `confirmedToast`. */
+internal fun scheduleSheetActionToast(action: ScheduleSheetAction, name: String): String = when (action) {
+    ScheduleSheetAction.MarkCompleted -> "$name's visit is marked Completed."
+    ScheduleSheetAction.Cancel -> "$name's visit is cancelled."
+    ScheduleSheetAction.Approve -> "$name's request is now Scheduled."
+    ScheduleSheetAction.Reject -> "$name's request is cancelled."
 }

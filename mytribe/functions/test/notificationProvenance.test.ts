@@ -140,6 +140,11 @@ describe('no emitter can land undocumented', () => {
       // marketing keys is `scheduleMarketingBlast.ts`, which is documented and
       // which is where the key literals live.
       if (f === 'src/admin/marketingAudience.ts') return false;
+      // #1609: the same kind of read. `previewInvoiceNotice` resolves the
+      // channels a reminder or a draft send WOULD use, so the confirm can name
+      // them; it enqueues and delivers nothing. The emitters stay
+      // sendInvoiceReminder.ts and reviewAndSendDraftInvoice.ts.
+      if (f === 'src/admin/previewInvoiceNotice.ts') return false;
       const src = read(f);
       if (EXTERNAL_DIRECT_SENDERS.includes(f)) return src.includes('sendTemplatedEmail(');
       return DISPATCH_CALLS.some((fn) => src.includes(`${fn}(`));

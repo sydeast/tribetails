@@ -1,6 +1,6 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
-import { useMemo, useState } from 'react';
-import { sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
+import { useCallback, useMemo, useState } from 'react';
+import { overdueBeforeWindowQuery, sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
 import { KIN_QUERY, type Kin } from '../api/directory';
 import { transitionBookingStatus } from '../api/bookingsWrite';
 import {
@@ -23,10 +23,13 @@ import {
 } from '../lib/sessionFormat';
 import { cardLifecycleActionsFor, lifecycleNowIso } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
+import { completeRefusal } from '../lib/completeRule';
+import { useArrivalRule } from '../lib/useArrivalRule';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
 import { directionsHref } from '../lib/directions';
+import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressCompleteness';
 import { DenScreenHeading, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
 import { AsyncLoading } from '../components/AsyncRegion';
 import { LoadingRow } from '../components/LoadingRow';
@@ -159,6 +162,18 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
     [mode, archiveFrom, archiveTo, todayIso],
   );
   const { state: rows, hasMore, more, loadMore, reload } = usePagedCollection<SessionEntry>(spec);
+  // #1607: the overdue visits older than the window, so Overdue here counts the
+  // same visits the Bookings list marks OVERDUE. Board mode only.
+  const olderOverdueSpec = useMemo(() => overdueBeforeWindowQuery(todayIso), [todayIso]);
+  const olderOverdue = useCollection<SessionEntry>(olderOverdueSpec);
+  const withOlderOverdue = useCallback(
+    (data: SessionEntry[]): SessionEntry[] => {
+      if (olderOverdue.status !== 'ready') return data;
+      const seen = new Set(data.map((r) => r._id));
+      return [...data, ...olderOverdue.data.filter((r) => !seen.has(r._id))];
+    },
+    [olderOverdue],
+  );
 
   /**
    * THE TWO JOINS THE CARD NEEDS, both of them household-directory streams this
@@ -270,7 +285,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
                     stagger would clamp them inside the group instead of centring
                     them on the viewport. */}
                 <ul className="sessions__phases">
-                  {groupSessionsByPhase(data, todayIso).map((p) => (
+                  {groupSessionsByPhase(withOlderOverdue(data), todayIso).map((p) => (
                     <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
                       <h3 className="sessions__phase-header">
                         {p.label}
@@ -418,6 +433,20 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   const [completing, setCompleting] = useState(false);
   const [completeAsked, setCompleteAsked] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  // #1608: the operator's arrival-and-departure rule, checked BEFORE the
+  // confirm. The server still enforces it; this saves asking a question whose
+  // answer is already known to be no, and then making the operator wait for it.
+  const arrivalRule = useArrivalRule();
+
+  function askComplete() {
+    const refusal = completeRefusal(arrivalRule, entry);
+    if (refusal !== null) {
+      setCompleteError(refusal);
+      return;
+    }
+    setCompleteError(null);
+    setCompleteAsked(true);
+  }
 
   async function runComplete() {
     setCompleteAsked(false);
@@ -537,6 +566,12 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           📍 {address}
         </a>
       )}
+      {/* #1602: "18605" was all the walk's chip said, with no hint. */}
+      {addressLooksIncomplete(address) && (
+        <p className="sessions__addr-hint" role="note">
+          {INCOMPLETE_ADDRESS_HINT}
+        </p>
+      )}
       {note !== '' && <p className="sessions__note">{note}</p>}
       {str(entry.invoiceId).trim() !== '' && <p className="sessions__invoice">Invoice linked</p>}
 
@@ -565,7 +600,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           {offersComplete && (
             <GhostButton
               label="Complete"
-              onClick={() => setCompleteAsked(true)}
+              onClick={askComplete}
               disabled={clock.saving || completing}
             />
           )}

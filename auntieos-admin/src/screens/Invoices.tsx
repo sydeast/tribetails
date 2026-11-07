@@ -23,6 +23,8 @@ import {
   type InvoiceAction,
   type InvoicePartialPayment,
   isInvoiceOverdue,
+  invoiceDayOrNull,
+  isUnreadableDueDate,
   localDateIso,
   unstampedStateInfo,
 } from '../lib/invoiceFormat';
@@ -115,6 +117,10 @@ const ARCHIVED_OPTIONS = [
   { value: 'only', label: 'Only archived' },
 ] as const;
 
+/** #1609: a draft or a quote is not money billed. */
+export function isUnbilledState(state: InvoiceState | null): boolean {
+  return state === 'draft' || state === 'quote';
+}
 function archivedAllows(mode: ArchivedMode, entry: InvoiceEntry): boolean {
   if (mode === 'hide') return !isArchivedInvoice(entry);
   if (mode === 'only') return isArchivedInvoice(entry);
@@ -128,7 +134,10 @@ function archivedAllows(mode: ArchivedMode, entry: InvoiceEntry): boolean {
  */
 function rangeLabel(range: DateRangeKey): string {
   const preset = DATE_RANGE_PRESETS.find((p) => p.key === range);
-  if (preset === undefined || preset.days === null) return 'the archive';
+  // #1609: not "the archive". That word belongs to the Archived facet, and
+  // "all 0 invoices in the archive" under Only archived read as a claim about
+  // archived invoices when it meant every date.
+  if (preset === undefined || preset.days === null) return 'the full date range';
   return `the ${preset.label.toLowerCase()}`;
 }
 
@@ -181,8 +190,36 @@ interface RowView {
   overdue: boolean;
   /** Whole days past due, or null when the invoice is not a dated overdue balance. */
   daysOverdue: number | null;
+  /**
+   * #1570: the invoice carries a due date that names no day ("Net 14",
+   * "07/14/2026"), so it can never be counted overdue. Flagged on the row and
+   * counted on the Overdue card, never dropped silently.
+   */
+  dueUnreadable: boolean;
   /** Non-null when money has come in that does not cover the invoice. */
   partial: InvoicePartialPayment | null;
+}
+
+/** #1609: the day an invoice date names, for sorting. */
+function invoiceSortDay(raw: string): string | null {
+  // #1570's reader: an imported "July 14, 2026" sorts by the day it names.
+  return invoiceDayOrNull(raw);
+}
+
+/** #1609: the loaded rows by invoice day, newest first; ties by creation, undated last. */
+function newestFirst(views: RowView[]): RowView[] {
+  const day = (v: RowView) => invoiceSortDay(v.entry.date);
+  const made = (v: RowView) => v.entry.createdAt?.toMillis?.() ?? 0;
+  return [...views].sort((a, b) => {
+    const da = day(a);
+    const db = day(b);
+    if (da !== db) {
+      if (da === null) return 1;
+      if (db === null) return -1;
+      return da < db ? 1 : -1;
+    }
+    return made(b) - made(a);
+  });
 }
 
 /**
@@ -203,6 +240,7 @@ function stableJson(value: unknown): string {
     return Object.fromEntries(Object.keys(rec).sort().map((k) => [k, rec[k]]));
   });
 }
+
 function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
   // Normalize BEFORE anything reads a field. InvoiceEntry is a cast over raw
   // Firestore data, not a guarantee, and real docs ARE missing keys it declares.
@@ -216,6 +254,7 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
       state,
       overdue: isInvoiceOverdue(state, entry.dueDate, todayIso),
       daysOverdue: invoiceDaysOverdue(state, entry.dueDate, todayIso),
+      dueUnreadable: isUnreadableDueDate(entry.dueDate),
       // Like `overdue`, a display refinement of `open` rather than a state of
       // its own, so it changes the chip and never the actions.
       partial: invoicePartialPayment(state, entry),
@@ -443,8 +482,13 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // AND the list off the SAME views, rather than re-walking the page per stat.
   // asyncScalar's projector runs only in the `ready` branch, where `views` holds
   // the ready data; AsyncRegion likewise renders its children only when ready.
+  // #1609: NEWEST FIRST, AS THE SUBTITLE PROMISES. The page arrives in
+  // Firestore's `date desc`, which is a TEXT order: a stored "July 14, 2026"
+  // outranks every ISO day, so the walk's list was not newest first. The loaded
+  // rows are put in day order here, newest first, ties by when each was made,
+  // and rows whose date names no day last.
   const views = useMemo(
-    () => (rows.status === 'ready' ? rowViewsFor(rows.data, todayIso) : []),
+    () => (rows.status === 'ready' ? newestFirst(rowViewsFor(rows.data, todayIso)) : []),
     [rows, todayIso],
   );
 
@@ -479,8 +523,16 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   const outstandingTotal = asyncScalar(rows, () =>
     openRows.reduce((sum, r) => sum + r.entry.amountDue, 0),
   );
-  const billedTotal = asyncScalar(rows, () => inScope.reduce((sum, r) => sum + r.entry.total, 0));
+  // #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
+  // estimate the household has not agreed to, so neither is money billed; the
+  // walk's Billed total counted an unsent draft. Both still list below.
+  const billedRows = useMemo(() => inScope.filter((r) => !isUnbilledState(r.state)), [inScope]);
+  const unbilledCount = inScope.length - billedRows.length;
+  const billedTotal = asyncScalar(rows, () => billedRows.reduce((sum, r) => sum + r.entry.total, 0));
   const overdueCount = asyncScalar(rows, () => overdueRows.length);
+  // #1570: open invoices whose due date names no day. Each could be overdue
+  // and none can be counted, so the Overdue card says how many.
+  const unreadableDueOpen = useMemo(() => openRows.filter((r) => r.dueUnreadable).length, [openRows]);
 
   /**
    * WHO IS WORST, and by how long. Android's Overdue card carries this and the
@@ -516,9 +568,19 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
       ? null
       : (hasMore
           ? `These totals cover the ${String(loaded)} invoice${plural} loaded so far, not all of ${windowLabel}.`
-          : `These totals cover ${everyOne} invoice${plural} in ${windowLabel}.`) +
+          : loaded === 0
+            ? // #1609: "all 0 invoices" is not a sentence anyone writes either.
+              `No invoices in ${windowLabel} are counted in these totals.`
+            : `These totals cover ${everyOne} invoice${plural} in ${windowLabel}.`) +
+        // #1609: under Only archived the rows left out are the ones NOT
+        // archived, and the sentence used to call them archived.
         (archivedHidden > 0
-          ? ` ${String(archivedHidden)} archived invoice${archivedHidden === 1 ? '' : 's'} excluded, counted within the invoices loaded here rather than across the books.`
+          ? archived === 'only'
+            ? ` ${String(archivedHidden)} invoice${archivedHidden === 1 ? '' : 's'} not archived excluded, counted within the invoices loaded here rather than across the books.`
+            : ` ${String(archivedHidden)} archived invoice${archivedHidden === 1 ? '' : 's'} excluded, counted within the invoices loaded here rather than across the books.`
+          : '') +
+        (unbilledCount > 0
+          ? ` Billed total leaves out ${String(unbilledCount)} unsent draft${unbilledCount === 1 ? '' : 's'} or quote${unbilledCount === 1 ? '' : 's'}.`
           : '');
 
   // THE HONESTY LINE. What the search box actually reaches, plus the two costs of
@@ -580,8 +642,16 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           // Names the worst offender and how long, matching Android. "all clear"
           // rather than a blank when there are none, because an empty subline
           // under a zero reads as a card that failed to finish rendering.
-          trend={worstOverdue ?? 'all clear'}
-          tone={overdueCount.kind === 'value' && overdueCount.value > 0 ? 'error' : 'muted'}
+          trend={
+            unreadableDueOpen > 0
+              ? `${worstOverdue === null ? '' : `${worstOverdue}. `}${String(unreadableDueOpen)} open invoice${
+                  unreadableDueOpen === 1 ? ' has a due date' : 's have due dates'
+                } that cannot be read`
+              : (worstOverdue ?? 'all clear')
+          }
+          tone={
+            (overdueCount.kind === 'value' && overdueCount.value > 0) || unreadableDueOpen > 0 ? 'error' : 'muted'
+          }
           feature={overdueCount.kind === 'value' && overdueCount.value > 0}
         />
       </div>
@@ -817,7 +887,7 @@ interface InvoiceRowProps {
 }
 
 function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
-  const { entry, state, overdue, daysOverdue, partial } = view;
+  const { entry, state, overdue, daysOverdue, partial, dueUnreadable } = view;
   // Overdue is a display-level refinement of "open" (see FILTERS' comment),
   // it never becomes its own InvoiceState, it just outranks the plain "Open"
   // chip visually, the same relationship the wasm's InvoiceRow renders.
@@ -839,8 +909,12 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
   // that decides what to do about it, and it is the same stored dueDate either
   // way. Android's meta line reads the same. An overdue invoice whose age cannot
   // be computed keeps the plain due date rather than inventing a number.
-  const dateLine =
-    daysOverdue !== null
+  // #1570: a due date that names no day is said, quoted, where the due date
+  // would be, so the operator can see what is stored and fix it.
+  const flagDue = dueUnreadable && (state === 'open' || !entry.date);
+  const dateLine = flagDue
+    ? `due date cannot be read: "${entry.dueDate.trim()}"`
+    : daysOverdue !== null
       ? `${String(daysOverdue)} day${daysOverdue === 1 ? '' : 's'} overdue`
       : state === 'open' && entry.dueDate
         ? `due ${humanizeDate(entry.dueDate, todayIso)}`
@@ -862,14 +936,24 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
 
   const body = (
     <>
-      <span className="invoices__row-number">#{entry.invoiceNumber || '(none)'}</span>
+      {entry.invoiceNumber.trim() === '' ? (
+        <span className="invoices__row-number invoices__row-number--missing">No number</span>
+      ) : (
+        <span className="invoices__row-number" title={`#${entry.invoiceNumber}`}>
+          #{entry.invoiceNumber}
+        </span>
+      )}
 
       <span className="invoices__row-who">
         <span className="invoices__row-name">{household}</span>
         {secondary ? <span className="invoices__row-secondary">{secondary}</span> : null}
       </span>
 
-      <span className={overdue ? 'invoices__row-meta invoices__row-meta--overdue' : 'invoices__row-meta'}>
+      <span
+        className={
+          overdue || flagDue ? 'invoices__row-meta invoices__row-meta--overdue' : 'invoices__row-meta'
+        }
+      >
         {dateLine}
         {entry.sessionIds.length > 0 ? (
           <span className="invoices__row-visits">

@@ -399,7 +399,13 @@ class KinCareRepository(
 
     // ---- Care-ops session callables (1E §A.9) ----
 
-    /** 1E §A.9: create a SCHEDULED kin_care_sessions doc. Returns the new session id. */
+    /**
+     * 1E §A.9: create a SCHEDULED kin_care_sessions doc. Returns the new session id.
+     *
+     * #1574: [recordAsCompleted] writes down a visit whose window has already
+     * ended, as COMPLETED; the server refuses it for a window that has not, and
+     * refuses a past window without it. Sent only when true.
+     */
     suspend fun createKinCareSession(
         kinfolkId: String,
         kinIds: List<String>,
@@ -408,6 +414,7 @@ class KinCareRepository(
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
+        recordAsCompleted: Boolean = false,
     ): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
@@ -416,7 +423,7 @@ class KinCareRepository(
             "kinfolkId" to kinfolkId, "kinIds" to kinIds, "serviceType" to serviceType,
             "startTime" to startTime, "endTime" to endTime,
             "serviceDurationMinutes" to serviceDurationMinutes, "notes" to notes,
-        )
+        ) + (if (recordAsCompleted) mapOf("recordAsCompleted" to true) else emptyMap())
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createKinCareSession").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("createKinCareSession: non-map payload")
@@ -930,6 +937,21 @@ class KinCareRepository(
             .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to archive orphan report $reportId", it) }
+
+    /**
+     * #1631: delete one unsent KinTale report draft through the
+     * `deleteKinTaleReportDraft` callable. The server refuses a SENT row, a row
+     * with a `sentAt` and an untriaged migration orphan (the `purgeOldDrafts`
+     * conditions), inside one transaction, and audits the delete. Owner only.
+     */
+    suspend fun deleteKinTaleReportDraft(reportId: String): Result<Unit> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(reportId.isNotBlank()) { "reportId required" }
+        functions.getHttpsCallable("deleteKinTaleReportDraft")
+            .call(mapOf("reportId" to reportId))
+            .awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to delete KinTale draft $reportId", it) }
 
     // ───────────────────────────────────────────────────────────────────────
     // KinTale share link (view-as-kinfolk). Mints a scrubbed, kinfolk-facing

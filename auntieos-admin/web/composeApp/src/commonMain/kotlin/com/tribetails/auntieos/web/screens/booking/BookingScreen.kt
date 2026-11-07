@@ -67,6 +67,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieCheckbox
 import com.tribetails.auntieos.web.ui.components.AuntieChipGroup
 import com.tribetails.auntieos.web.ui.components.AuntieDatePickerDialog
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
@@ -168,6 +169,8 @@ private fun BookingListScreen(
     val selectedIds = remember { mutableStateMapOf<String, Boolean>() }
     // Display name per selected id, so a refused id is reported by kinfolk name.
     val selectedNames = remember { mutableStateMapOf<String, String>() }
+    // #1607: each picked row's status, so the bar offers only what fits them.
+    val selectedStatuses = remember { mutableStateMapOf<String, String>() }
     var bulkBusy by remember { mutableStateOf(false) }
     var bulkNotice by remember { mutableStateOf<String?>(null) }
     // 1025: a landed single approve/reject used to report nothing -- the card
@@ -185,10 +188,14 @@ private fun BookingListScreen(
     fun batchVisitId(b: KinCareSession): String = bulkVisitId(b)
     fun toggleSelect(b: KinCareSession) {
         val id = batchVisitId(b)
-        if (selectedIds[id] == true) { selectedIds.remove(id); selectedNames.remove(id) }
-        else { selectedIds[id] = true; selectedNames[id] = b.kinfolkName.ifBlank { b.kinfolkId } }
+        if (selectedIds[id] == true) { selectedIds.remove(id); selectedNames.remove(id); selectedStatuses.remove(id) }
+        else {
+            selectedIds[id] = true
+            selectedNames[id] = b.kinfolkName.ifBlank { b.kinfolkId }
+            selectedStatuses[id] = b.status
+        }
     }
-    fun clearSelection() { selectedIds.clear(); selectedNames.clear() }
+    fun clearSelection() { selectedIds.clear(); selectedNames.clear(); selectedStatuses.clear() }
 
     // 1025: the single-row confirmations. Each awaits the ViewModel write (which
     // owns errorMessage) and only sets actionNotice when nothing failed, so a
@@ -354,18 +361,27 @@ private fun BookingListScreen(
                         color = c.textPrimary,
                         modifier = Modifier.weight(1f),
                     )
-                    PrimaryButton(
-                        label   = if (bulkBusy) "Working..." else "Approve",
-                        onClick = { if (!bulkBusy) runBulk("APPROVE") },
-                    )
-                    GhostButton(
-                        label   = "Reject",
-                        onClick = { if (!bulkBusy) runBulk("REJECT") },
-                    )
-                    GhostButton(
-                        label   = "Cancel",
-                        onClick = { if (!bulkBusy) runBulk("CANCEL") },
-                    )
+                    // #1607: only the transitions at least one picked row can take.
+                    // Approve and Reject on scheduled visits could only ever skip.
+                    val offered = bulkActionsForStatuses(selectedStatuses.values)
+                    if ("APPROVE" in offered) {
+                        PrimaryButton(
+                            label   = if (bulkBusy) "Working..." else "Approve",
+                            onClick = { if (!bulkBusy) runBulk("APPROVE") },
+                        )
+                    }
+                    if ("REJECT" in offered) {
+                        GhostButton(
+                            label   = "Reject",
+                            onClick = { if (!bulkBusy) runBulk("REJECT") },
+                        )
+                    }
+                    if ("CANCEL" in offered) {
+                        GhostButton(
+                            label   = "Cancel",
+                            onClick = { if (!bulkBusy) runBulk("CANCEL") },
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -374,8 +390,10 @@ private fun BookingListScreen(
         // ── stat row: counts mirror the three sections ────────────────────────
         val pending   = (pendingState as? FirestoreResult.Data)?.value.orEmpty()
         val sessions  = (sessionsState as? FirestoreResult.Data)?.value.orEmpty()
-        val scheduled = sessions.filter { it.status.uppercase() == "SCHEDULED" }
-        val history   = sessions.filter { it.status.uppercase() !in setOf("SCHEDULED", "DRAFT", "PENDING") }
+        // #1578: a visit under way (on the way, arrived, departed) is still on
+        // the books, so it sits with Scheduled rather than in History.
+        val scheduled = sessions.filter { isOnTheBooks(it.status) }
+        val history   = sessions.filter { !isOnTheBooks(it.status) && it.status.trim().uppercase() !in setOf("DRAFT", "PENDING") }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -426,6 +444,7 @@ private fun BookingListScreen(
                                 locked = vm.seriesActionBatchId != null,
                                 onApprove = { scope.launch { vm.approveSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
                                 onCancel  = { scope.launch { vm.cancelSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
+                                zone      = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone),
                             )
                         }
                     }
@@ -710,6 +729,10 @@ private fun SectionCount(count: String) {
 
 // 16.5: one incoming booking envelope (1..N visits). Approve/cancel the whole
 // series via manageBookingSeries (backend creates the linked sessions).
+//
+// #1577: the household is the card's title, the card body opens the request,
+// and both Approve and Cancel go through a confirm step titled with the
+// household, the same as the web and Android queues.
 @Composable
 private fun IncomingSeriesCard(
     series: BookingSeries,
@@ -717,8 +740,11 @@ private fun IncomingSeriesCard(
     locked: Boolean,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
+    zone: TimeZone,
 ) {
     val c = AuntieTheme.colors
+    var confirming by remember(series.kinfolkId, series.batchId) { mutableStateOf<String?>(null) }
+    var detailOpen by remember(series.kinfolkId, series.batchId) { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -727,20 +753,89 @@ private fun IncomingSeriesCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(series.kinfolkName.ifBlank { "Kinfolk request" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-        Text(
-            buildString {
-                append(if (series.visitCount == 1) "1 visit" else "${series.visitCount} visits")
-                if (series.isSeries) append(" · recurring series")
-                if (series.serviceType.isNotBlank()) append(" · ${series.serviceType}")
-            },
-            style = AuntieTheme.typography.bodySmall,
-            color = c.textDim,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = onApprove, enabled = !locked)
-            GhostButton(label = "Cancel", onClick = onCancel, enabled = !locked)
+        Column(
+            modifier = Modifier.fillMaxWidth().clickable(onClickLabel = "Open the request") { detailOpen = true },
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(series.householdLabel(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+            Text(series.subject(), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { confirming = "approve" }, enabled = !locked)
+            GhostButton(label = "Cancel", onClick = { confirming = "cancel" }, enabled = !locked)
+        }
+    }
+
+    AuntieDialog(
+        visible = confirming != null,
+        title = if (confirming == "cancel") series.declineConfirmTitle() else series.approveConfirmTitle(),
+        onDismiss = { confirming = null },
+        footer = {
+            GhostButton(label = "Never mind", onClick = { confirming = null })
+            PrimaryButton(
+                label = if (confirming == "cancel") "Turn it down" else "Book it",
+                onClick = {
+                    val decision = confirming
+                    confirming = null
+                    if (decision == "cancel") onCancel() else onApprove()
+                },
+                enabled = !locked,
+            )
+        },
+    ) {
+        Text(series.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(
+            when {
+                confirming == "cancel" -> "Nothing will be booked. The household will be told."
+                series.visitCount == 1 -> "This visit will go on the schedule and on the household's portal."
+                else -> "All ${series.visitCount} visits will go on the schedule and on the household's portal."
+            },
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+    }
+
+    AuntieDialog(
+        visible = detailOpen,
+        title = series.detailTitle(),
+        onDismiss = { detailOpen = false },
+        footer = {
+            GhostButton(label = "Close", onClick = { detailOpen = false })
+            GhostButton(
+                label = "Cancel",
+                onClick = {
+                    detailOpen = false
+                    confirming = "cancel"
+                },
+                enabled = !locked,
+            )
+            PrimaryButton(
+                label = "Approve",
+                onClick = {
+                    detailOpen = false
+                    confirming = "approve"
+                },
+                enabled = !locked,
+            )
+        },
+    ) {
+        IncomingFact("Household", series.householdLabel())
+        IncomingFact("Service", series.serviceType.ifBlank { "Not on the request" })
+        IncomingFact(
+            if (series.visitCount == 1) "Visit" else "${series.visitCount} visits",
+            series.visitLines(zone).joinToString("\n"),
+        )
+        val notes = series.visits.map { it.notes.trim() }.filter { it.isNotEmpty() }.distinct()
+        IncomingFact("Notes on the request", notes.joinToString("\n").ifBlank { "None given" })
+    }
+}
+
+@Composable
+private fun IncomingFact(label: String, value: String) {
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(bottom = 10.dp)) {
+        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Text(value, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
     }
 }
 
@@ -823,7 +918,7 @@ private fun BookingCard(
             }
 
             Spacer(Modifier.height(9.dp))
-            AuntieStatusPill(label = booking.status, tone = tone, mono = true)
+            AuntieStatusPill(label = bookingStatusLabel(booking.status), tone = tone, mono = true)
             if (notePreview.isNotBlank()) {
                 Spacer(Modifier.height(7.dp))
                 Text(
@@ -1366,10 +1461,26 @@ private fun initialsFor(name: String): String {
     }
 }
 
+/** #1578: the three in-visit statuses the field app writes. */
+internal val IN_FLIGHT_STATUSES: Set<String> = setOf("ON_MY_WAY", "ARRIVED", "DEPARTED")
+/**
+ * #1578: a visit still on the books, scheduled or under way. The server
+ * completes or cancels from all four (`bookingTransitions.ts`), so they share
+ * the Scheduled section and its Cancel.
+ */
+internal fun isOnTheBooks(status: String): Boolean =
+    status.trim().uppercase().let { it == "SCHEDULED" || it in IN_FLIGHT_STATUSES }
+/** The pill's words: the stored status, with ON_MY_WAY read as Auntie Time reads it. */
+internal fun bookingStatusLabel(status: String): String =
+    status.trim().uppercase().let { if (it == "ON_MY_WAY") "ON THE WAY" else it }
 private fun bookingStatusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
     "DRAFT"     -> AuntieStatusTone.Orange
     "PENDING"   -> AuntieStatusTone.Warning
     "SCHEDULED" -> AuntieStatusTone.Teal
+    // #1578: Auntie Time's in-visit hues.
+    "ON_MY_WAY" -> AuntieStatusTone.Orange
+    "ARRIVED"   -> AuntieStatusTone.Teal
+    "DEPARTED"  -> AuntieStatusTone.Purple
     "COMPLETED" -> AuntieStatusTone.Purple
     "CANCELLED" -> AuntieStatusTone.Muted
     else        -> AuntieStatusTone.Neutral
@@ -1431,4 +1542,19 @@ private class FirestoreClientBookingDataSource(
         client.kinTaleCommentsStream(taleId, kinfolkId)
     override suspend fun addKinTaleComment(taleId: String, kinfolkId: String, body: String, parentCommentId: String?) =
         client.addKinTaleComment(taleId, kinfolkId, body, parentCommentId)
+}
+
+/**
+ * #1607: the bulk transitions worth offering for a selection, in the bar's
+ * order: Approve and Reject for a request (DRAFT / PENDING), Cancel for a visit
+ * on the books (SCHEDULED, or under way). The web's `bulkActionsFor`.
+ */
+internal fun bulkActionsForStatuses(statuses: Collection<String>): List<String> {
+    val up = statuses.map { it.trim().uppercase() }
+    val request = up.any { it == "DRAFT" || it == "PENDING" }
+    val onTheBooks = up.any { it == "SCHEDULED" || it == "ON_MY_WAY" || it == "ARRIVED" || it == "DEPARTED" }
+    return buildList {
+        if (request) { add("APPROVE"); add("REJECT") }
+        if (onTheBooks) add("CANCEL")
+    }
 }

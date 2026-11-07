@@ -30,6 +30,8 @@ describe('decodeKinTaleTemplate: partial docs fill Kotlin data-class defaults', 
       serviceTypeKeys: [],
       isActive: true,
       isDefault: false,
+      archived: false,
+      archivedAt: '',
       photoShowcaseEnabled: true,
       checklistEnabled: true,
       petMoodEnabled: false,
@@ -131,6 +133,11 @@ describe('pickInitialTemplate', () => {
   it('is null for an empty list (caller then seeds a fresh draft)', () => {
     expect(pickInitialTemplate([])).toBeNull();
   });
+
+  it('#1591: never opens on an archived template, even the default', () => {
+    const list = [t({ _id: 'gone', isDefault: true, archived: true }), t({ _id: 'b' })];
+    expect(pickInitialTemplate(list)?._id).toBe('b');
+  });
 });
 /**
  * `pickTemplateForService` is the rule a NEW KinTale draft is scaffolded by, so
@@ -157,6 +164,13 @@ describe('pickTemplateForService', () => {
       t({ _id: 'fallback', isDefault: true }),
     ];
     expect(pickTemplateForService(list, 'Dog Walk')._id).toBe('fallback');
+  });
+  it('#1591: never picks an archived template, neither on a service match nor as the default', () => {
+    const list = [
+      t({ _id: 'archived-walk', archived: true, serviceTypeKeys: ['Dog Walk'] }),
+      t({ _id: 'archived-default', archived: true, isDefault: true }),
+    ];
+    expect(pickTemplateForService(list, 'Dog Walk')).toBe(DEFAULT_KINTALE_TEMPLATE);
   });
   it('falls back to the flagged default when no service type matches', () => {
     const list = [t({ _id: 'walk', serviceTypeKeys: ['Dog Walk'] }), t({ _id: 'std', isDefault: true })];

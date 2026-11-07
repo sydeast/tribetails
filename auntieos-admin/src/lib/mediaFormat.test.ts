@@ -16,6 +16,8 @@ import {
   mediaGpsStripState,
   taggedKinNames,
   taggableKin,
+  groupKinByHousehold,
+  UNKNOWN_HOUSEHOLD_LABEL,
   type TaggableKin,
   UNATTACHED_KINFOLK_ID,
   GALLERY_FILTER_DEFAULT,
@@ -344,6 +346,54 @@ describe('taggableKin (the same scope rule the saveMediaTags callable enforces)'
 
   it('offers nothing when the household has no kin, rather than falling back to everyone', () => {
     expect(taggableKin({ kinfolkId: 'fam-empty' }, roster)).toEqual([]);
+  });
+});
+describe('groupKinByHousehold (#1604: the whole-roster tag list says whose pet is whose)', () => {
+  const labels = new Map([
+    ['fam1', 'Halbrook'],
+    ['fam2', 'Alvarez'],
+  ]);
+  const labelFor = (id: string) => labels.get(id);
+  it('groups kin under their household, households and kin sorted by name', () => {
+    const groups = groupKinByHousehold(
+      [
+        kin({ _id: 'k1', name: 'Waddles', kinfolkId: 'fam1' }),
+        kin({ _id: 'k2', name: 'biscuit', kinfolkId: 'fam2' }),
+        kin({ _id: 'k3', name: 'Archie', kinfolkId: 'fam1' }),
+      ],
+      labelFor,
+    );
+    expect(groups.map((g) => g.label)).toEqual(['Alvarez', 'Halbrook']);
+    expect(groups[1]?.kin.map((k) => k._id)).toEqual(['k3', 'k1']);
+  });
+  it('keeps two pets with the same name apart, one under each family', () => {
+    const groups = groupKinByHousehold(
+      [
+        kin({ _id: 'a', name: 'Biscuit', kinfolkId: 'fam1' }),
+        kin({ _id: 'b', name: 'Biscuit', kinfolkId: 'fam2' }),
+      ],
+      labelFor,
+    );
+    expect(groups.map((g) => [g.label, g.kin.map((k) => k._id)])).toEqual([
+      ['Alvarez', ['b']],
+      ['Halbrook', ['a']],
+    ]);
+  });
+  it('files kin with no household, or one that does not resolve, last under a plain word, never a raw id', () => {
+    const groups = groupKinByHousehold(
+      [
+        kin({ _id: 'k1', name: 'Orphan', kinfolkId: '' }),
+        kin({ _id: 'k2', name: 'Lost', kinfolkId: 'fam-gone' }),
+        kin({ _id: 'k3', name: 'Waddles', kinfolkId: 'fam1' }),
+      ],
+      labelFor,
+    );
+    expect(groups[0]?.label).toBe('Halbrook');
+    expect(groups.slice(1).map((g) => g.label)).toEqual([UNKNOWN_HOUSEHOLD_LABEL, UNKNOWN_HOUSEHOLD_LABEL]);
+    expect(JSON.stringify(groups.map((g) => g.label))).not.toContain('fam-gone');
+  });
+  it('returns nothing for an empty roster', () => {
+    expect(groupKinByHousehold([], labelFor)).toEqual([]);
   });
 });
 describe('mediaGpsStripState (#593, the normalisation point for the async video strip)', () => {

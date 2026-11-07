@@ -21,7 +21,7 @@ import {
 import { InvoiceDayArg } from '../lib/invoiceDay';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
-import { INVOICE_NUMBER_COUNTER_PATH, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
+import { invoiceNumberTaken, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
 import { InvoiceIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
@@ -298,7 +298,6 @@ export async function createInvoiceHandler(
   // already spent a number on an invoice it was not going to write, and a
   // consumed sequence value cannot be returned: the numbering would say two
   // invoices were issued where one was, permanently.
-  const counterRef = firestore.doc(INVOICE_NUMBER_COUNTER_PATH);
   const written = await firestore.runTransaction(async (tx) => {
     // Every read before every write, Firestore's rule and the guard's order.
     if (args.idempotencyKey !== undefined) {
@@ -309,10 +308,17 @@ export async function createInvoiceHandler(
         return null;
       }
     }
+    // #1609: a typed number is refused when another invoice already holds it,
+    // and a minted one steps over any such number, so no two share one.
+    const typedNumber = (args.invoiceNumber ?? '').trim();
+    if (typedNumber !== '' && (await invoiceNumberTaken(firestore, typedNumber, null, tx))) {
+      throw new HttpsError(
+        'already-exists',
+        `Invoice number ${typedNumber} is already used by another invoice. Leave it blank to get the next number.`,
+      );
+    }
     const invoiceNumber =
-      (args.invoiceNumber ?? '').trim() === ''
-        ? await mintInvoiceNumberInTransaction(tx, counterRef, args.date)
-        : args.invoiceNumber!.trim();
+      typedNumber === '' ? await mintInvoiceNumberInTransaction(tx, firestore) : typedNumber;
     const doc = { ...docBase, invoiceNumber };
     // The state stamp (ADR-0002), IN THE SAME WRITE as the money it describes.
     // Spread AFTER the caller's fields: it canonicalizes `status` to the

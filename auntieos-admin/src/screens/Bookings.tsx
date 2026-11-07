@@ -7,6 +7,7 @@ import {
   bookingState,
   bookingStateInfo,
   initialsFor,
+  isBookingInFlight,
   EMPTY_BOOKING_CATALOG,
   type BookingCatalog,
   type BookingState,
@@ -38,6 +39,7 @@ import type {
 } from '../contracts/bookingContracts.generated';
 import {
   planBulkAction,
+  bulkActionsFor,
   mergeBulkResults,
   chunkEnvelopeIds,
   bulkOutcomeSummary,
@@ -47,6 +49,7 @@ import {
 } from '../lib/bookingBulk';
 import {
   planBulkReschedule,
+  rescheduleApplies,
   bulkRescheduleSummary,
   type BulkRescheduleOutcome,
   type RescheduleTarget,
@@ -55,6 +58,8 @@ import { BulkRescheduleDialog } from '../components/BulkRescheduleDialog';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { navKicker } from '../lib/nav';
+import { isOverdueSession } from '../lib/sessionFormat';
+import { localDateIso } from '../lib/invoiceFormat';
 import './Bookings.css';
 
 /**
@@ -129,7 +134,10 @@ const SECTIONS: readonly SectionDef[] = [
   {
     key: 'scheduled',
     label: 'Scheduled',
-    test: (s) => s === 'scheduled',
+    // #1578: a visit the Auntie is on her way to, at, or has just left is
+    // still on the books until it is completed or cancelled, so it stays here
+    // rather than falling into History as an unknown status.
+    test: (s) => s === 'scheduled' || isBookingInFlight(s),
     emptyHint: 'Nothing on the books. A request moves here once you approve it.',
     // #699: a to-do list reads soonest first. `BOOKINGS_QUERY` orders by
     // `createdAt` (the one field every row genuinely carries), so the streamed
@@ -165,6 +173,10 @@ const BOOKING_STATE_TONE: Record<BookingState, DenTone> = {
   draft: 'error',
   pending: 'orange',
   scheduled: 'teal',
+  // #1578: the in-visit pills Auntie Time wears (`SESSION_STATE_TONE`).
+  onMyWay: 'orange',
+  arrived: 'teal',
+  departed: 'purple',
   completed: 'purple',
   cancelled: 'muted',
   unknown: 'warning',
@@ -406,6 +418,8 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
   // Select is on, so the ordinary read of this list is not a wall of controls.
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  // #1607: bumped after this screen files a request, so the waiting count moves now, not on reload.
+  const [requestsRefresh, setRequestsRefresh] = useState(0);
   // The bar's own confirm step. The mock fires straight from the bar; a bulk
   // CANCEL is not undoable and the per-row surface asks first, so this asks too
   // rather than making "many at once" the one path with no second thought.
@@ -577,6 +591,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
 
   function handleCreated(result: CreateMultiDateBookingRequestResult) {
     setShowCreate(false);
+    setRequestsRefresh((n) => n + 1);
     setCreateNotice(
       `Booking request created: ${result.visitCount} visit${result.visitCount === 1 ? '' : 's'} submitted for approval. ` +
         `It enters Visit requests and appears in this list once approved.`,
@@ -596,6 +611,9 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
    * both report the same `aria-pressed`, so there is no way for one to say
    * Select is on while the other says it is off.
    */
+  // #1607: the picked rows' states, so the bulk bar offers only what fits them.
+  const selectedStates: BookingState[] =
+    rows.status === 'ready' ? rows.data.filter((r) => selectedIds.has(r._id)).map((r) => bookingState(r)) : [];
   const selectToggle = (
     <GhostButton
       label="Select"
@@ -642,12 +660,9 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         kicker={navKicker('bookings')}
         title="Bookings"
         subtitle="Pending requests and scheduled visits"
-        trailing={
-          <>
-            {selectToggle}
-            <PrimaryButton label="New booking" onClick={() => setShowCreate(true)} />
-          </>
-        }
+        // #1607: ONE Select, on the list toolbar right above the rows it picks
+        // (#701's reason). Two buttons doing the same thing read as two modes.
+        trailing={<PrimaryButton label="New booking" onClick={() => setShowCreate(true)} />}
       />
 
       {createNotice !== null && (
@@ -665,7 +680,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           compact banner rather than an open list of request cards, because the
           mock puts the three status sections directly under the heading and a
           queue that is usually empty was pushing the first one to y=580. */}
-      <VisitRequestsSection />
+      <VisitRequestsSection refreshKey={requestsRefresh} />
       {/* #1408: the other household request waiting on the office. */}
       <KinRemovalRequestsSection />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}
@@ -727,6 +742,8 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
       {selecting && selectedIds.size > 0 && (
         <BulkBar
           count={selectedIds.size}
+          actions={bulkActionsFor(selectedStates)}
+          canReschedule={selectedStates.some(rescheduleApplies)}
           confirming={confirmAction}
           running={running}
           onAsk={setConfirmAction}
@@ -943,6 +960,10 @@ function bulkConfirmCopy(action: BatchBookingAction, count: number): string {
 
 interface BulkBarProps {
   count: number;
+  /** #1607: only the transitions that apply to at least one picked row. */
+  actions: readonly BatchBookingAction[];
+  /** #1607: whether any picked row can be moved at all. */
+  canReschedule: boolean;
   confirming: BatchBookingAction | null;
   running: boolean;
   onAsk: (action: BatchBookingAction) => void;
@@ -978,6 +999,8 @@ interface BulkBarProps {
  */
 function BulkBar({
   count,
+  actions,
+  canReschedule,
   confirming,
   running,
   onAsk,
@@ -994,14 +1017,14 @@ function BulkBar({
       <span className="bookings__bulkbar-sep" />
       {confirming === null ? (
         <>
-          {BULK_ACTIONS.map(({ action, label }) =>
+          {BULK_ACTIONS.filter(({ action }) => actions.includes(action)).map(({ action, label }) =>
             action === 'APPROVE' ? (
               <PrimaryButton key={action} label={label} onClick={() => onAsk(action)} />
             ) : (
               <GhostButton key={action} label={label} onClick={() => onAsk(action)} />
             ),
           )}
-          <GhostButton label="Reschedule" onClick={onReschedule} disabled={running} />
+          {canReschedule && <GhostButton label="Reschedule" onClick={onReschedule} disabled={running} />}
           <span className="bookings__bulkbar-sep" />
           <GhostButton label="Deselect all" onClick={onClear} />
         </>
@@ -1167,6 +1190,11 @@ const CARD_ACTIONS: Record<BookingState, readonly { kind: BookingActionKind; lab
     { kind: 'reject', label: 'Reject' },
   ],
   scheduled: [{ kind: 'cancel', label: 'Cancel' }],
+  // #1578: a visit in flight can still be completed or called off; the card
+  // offers Cancel, the sheet offers both, the same as a scheduled one.
+  onMyWay: [{ kind: 'cancel', label: 'Cancel' }],
+  arrived: [{ kind: 'cancel', label: 'Cancel' }],
+  departed: [{ kind: 'cancel', label: 'Cancel' }],
   completed: [],
   cancelled: [],
   unknown: [],
@@ -1237,6 +1265,10 @@ function BookingRow({
         <span className="bookings__row-name">{displayName}</span>
         <span className="bookings__row-meta">{meta}</span>
         <StatusPill label={info.chipLabel} tone={BOOKING_STATE_TONE[state]} />
+        {/* #1607: the same overdue Auntie Time's Overdue group lists. */}
+        {state === 'scheduled' && isOverdueSession(entry, localDateIso(new Date())) && (
+          <StatusPill label="OVERDUE" tone="error" />
+        )}
         {notePreview.trim() !== '' && (
           <span className="bookings__row-note">Note: {notePreview.slice(0, 120)}</span>
         )}

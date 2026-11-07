@@ -180,6 +180,34 @@ describe('getMyBookingsHandler', () => {
     expect(dto.startTimeMs).toBe(future);
   });
 
+  it('#1628: never hands the household the session\'s admin-internal note', async () => {
+    const future = Date.now() + 3 * 3600_000;
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      collectionGroupDocs: { kinCares: [] },
+      queryDocs: {
+        kin_care_sessions: [
+          {
+            id: 'sess-adhoc',
+            data: {
+              kinfolkId: '3',
+              status: 'SCHEDULED',
+              serviceType: 'visit_60',
+              startTime: new Date(future).toISOString(),
+              notes: '[Office note 2026-11-05] Key is under the blue pot',
+            },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res: any = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const dto = res.upcoming.find((b: any) => b.id === 'sess-adhoc');
+    expect(dto).toBeTruthy();
+    expect(dto.notes).toBeNull();
+    expect(JSON.stringify(res)).not.toContain('blue pot');
+  });
   it('does not double-show a kin_care_session already linked to a booking', async () => {
     const future = Date.now() + 3 * 3600_000;
     const ctx = buildDbMock({

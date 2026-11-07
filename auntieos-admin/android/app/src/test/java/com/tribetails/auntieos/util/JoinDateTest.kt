@@ -89,6 +89,18 @@ class JoinDateTest {
         assertFalse(isJoinDateInRange("2025-02-30", today))
     }
 
+    /** #1602: every profile's join line has one shape. */
+    @Test
+    fun theProfileLineFormatsASoundDayAndFlagsTheRest() {
+        val today = java.time.LocalDate.parse("2026-11-06")
+        assertTrue(profileJoinLine("2026-01-04", today)!!.startsWith("Joined "))
+        assertTrue(profileJoinDateIsSound("2026-01-04", today))
+        assertEquals(JOIN_DATE_NEEDS_FIXING, profileJoinLine("March 5", today))
+        assertEquals(JOIN_DATE_NEEDS_FIXING, profileJoinLine("1900-01-15", today))
+        assertFalse(profileJoinDateIsSound("2099-06-01", today))
+        assertNull(profileJoinLine("  ", today))
+    }
+
     @Test
     fun theFieldSaysWhyAndBlankMayBeSaved() {
         val today = java.time.LocalDate.parse("2026-11-06")

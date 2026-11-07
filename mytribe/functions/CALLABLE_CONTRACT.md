@@ -299,6 +299,12 @@ must say "next reconcile pass", never "instantly".
   into a Dossier or Kin411 is NOT unmerged; the handler's audit payload records
   that, and every client's delete confirm must state it before committing.
 
+### getKinTaleTemplateUsage
+- req `{ templateId: string /* 1..200 */ }`
+- res `{ templateId: string, exists: boolean, name: string, isDefault: boolean, isActive: boolean, archived: boolean, kintaleCount: number, otherActiveTemplateCount: number }`
+- Read only, owner-only. `kintaleCount` counts `kin_care_reports` docs whose `templateId` is this id (sent and draft). The built-in default has no doc and no id on a report, so it is never counted. `otherActiveTemplateCount` leaves out archived templates.
+- #1591 (operator ruling 2026-11-05, "both"): Remove archives a template (`archived: true`, `archivedAt`; restorable, hidden from the list and from new KinTales). Deleting for good happens only from the archive, and every client's delete-for-good confirm reads this count first. `firestore.rules` refuses deleting a `kintale_templates` doc that is not archived.
+
 ## Invoices (admin-gated; the W2-1 pair also admits a scoped test admin, see each section's GATE line)
 
 All three write the FLAT top-level `invoices` collection, the same one the
@@ -1382,6 +1388,10 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     verification link flips the Firebase user record, but a token minted earlier
     still carries `email_verified: false` for up to an hour, so a plain retry is
     refused again and reads as a broken verification link.
+  - #1586: the repo now carries an `invite.verify-email` copy in the seed corpus,
+    which Template Import loads into `emailTemplates` like any other. Until it is
+    loaded, the send throws `email template missing`, as every `sendFromTemplate`
+    key does; there is no repo-copy fallback, so a deleted template stops the send.
   - Needs `SMTP2GO_API_KEY` + `EMAIL_FROM` (already created, already bound to the
     other invite functions) and the `invite.verify-email` document in the
     Firestore `emailTemplates` collection. The operator edits email templates in
@@ -2681,6 +2691,45 @@ callable is the enforcement.
 - Write side is `triageOrphanReport` (ASSIGN, DUPLICATE, ARCHIVE), which both
   clients share.
 
+### deleteKinTaleReportDraft (#1631, owner only)
+- req `{ reportId: string }`, the bare `kin_care_reports` doc id (a slash is
+  `invalid-argument`).
+- res `{ ok: true, reportId }`.
+- Deletes one unsent KinTale draft. Refuses, as `failed-precondition`, the same
+  rows `purgeOldDrafts` refuses: a status other than DRAFT, any `sentAt`, and an
+  untriaged migration orphan (`isUntriagedOrphan`, shared with the purge). A
+  missing doc is `not-found`. Read and deleted in one transaction.
+- Media and comments are not cascaded. Audited as
+  `KINTALE_REPORT_DRAFT_DELETED`. Not in `AUNTIE_ALLOWED_CALLABLES`
+  (destructive). Admin web, Android and the desktop console all call it.
+
+## Generated KinTale drafts (#1563, staff)
+
+`src/admin/kinTaleDrafts.ts`. A `generated_drafts` doc is a KinTale draft
+(ruling D-2026-08-04). Admin web, Android and the desktop console all call
+these two; none of them writes the send itself.
+
+| Callable | Input | Output | Gate |
+|---|---|---|---|
+| `publishGeneratedDraft` | `{ draftId, bodyCopy, title? }` | `{ ok, reportId, alreadyPublished }` | admin or Auntie |
+| `deleteGeneratedDraft` | `{ draftId }` | `{ ok, draftId }` | admin only (destructive) |
+
+- `draftId` is the BARE document id. The admin web list namespaces draft rows
+  as `generated_drafts/<id>`; a slash in `draftId` is `invalid-argument`.
+- Publish writes `kin_care_reports/{new}` with `status: 'SENT'`,
+  `sentAt: <now ISO>`, `sentVia: 'pending'`, `sessionId: ''` and
+  `sourceDraftId`, and stamps the draft `status: 'published'`,
+  `publishedReportId`, `publishedAt`, `approvedAt`, `approvedBy` and the edited
+  `generatedCopy`, in one transaction. `onKinTaleCreate` then announces
+  `kintale.published` (behind `householdNotificationsLive`) and the portal
+  lists it.
+- Idempotent on `publishedReportId`: a repeat call returns the first report's
+  id with `alreadyPublished: true` and writes nothing.
+- Refusals: `not-found` (no draft), `failed-precondition` (no household on the
+  draft, or the household doc is gone), `invalid-argument` (blank body).
+- Delete refuses a published draft (`failed-precondition`). Both write an
+  audit entry: `KINTALE_DRAFT_PUBLISHED`, `KINTALE_DRAFT_DELETED`.
+
 ## Notifications inbox (recipient or admin)
 
 The flat top-level `notifications` collection, written only by
@@ -3057,6 +3106,17 @@ the callable originally took.
 - Four counted facts, none derived from another by subtraction, so a screen
   rendering them is never showing arithmetic dressed as data.
 
+### previewMarketingBlastCopy (net-new 2026-11-05, #1587)
+- req `{ key: <same enum>, data?: Record<string, unknown> }`
+- res `{ ok: true, subject: string, text: string, html: string | null, usedFallback: boolean, fields: Array<{ name: string, source: 'automatic'|'provided'|'missing' }> }`
+- Writes nothing and takes no audience. Renders the campaign's `emailTemplates/{key}`
+  with the same `renderEmailParts` the sender uses, against `data` plus the business
+  tokens the pipeline fills itself, so the preview cannot disagree with the inbox.
+- `fields` names every merge field the template uses. `automatic` is filled by the
+  pipeline for every send, `provided` has a non-blank value in `data`, `missing` is
+  named by the template and supplied by nothing (a send would render it blank).
+- A template document that does not exist is not an error: the sender falls back to
+  generic wording, and so does this, with `usedFallback: true`.
 ### listMarketingBlasts (net-new 2026-09-12)
 - req `{ limit?: number /* 1-200, default 100 */ }`
 - res `{ ok: true, blasts: Array<{ id, key, title, fireAtMs, status: 'scheduled'|'sent'|'cancelled', audienceDescription, matched, noLinkedAccount, dispatched, suppressed, failed, cancelledAtMs: number|null, createdAtMs }> }`

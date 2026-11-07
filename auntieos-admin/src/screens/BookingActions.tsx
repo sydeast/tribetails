@@ -8,9 +8,12 @@ import {
   rescheduleBooking,
 } from '../api/bookingsWrite';
 import { bookingState, bookingStateInfo, bookingWhen, type BookingState } from '../lib/bookingFormat';
+import { completeRefusal } from '../lib/completeRule';
+import { useArrivalRule } from '../lib/useArrivalRule';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
 import { overridableScheduleRefusal, overrideHint } from '../api/scheduleWrite';
+import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
@@ -153,6 +156,12 @@ function actionsFor(state: BookingState): ActionDef[] {
     case 'pending':
       return [APPROVE, REJECT];
     case 'scheduled':
+    // #1578: the server completes or cancels a visit from any in-visit state
+    // (`ALLOWED_FROM` in bookingTransitions.ts), and Auntie Time and Android
+    // both offer the two, so a Departed visit is no longer stuck here.
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
       return [COMPLETE, CANCEL];
     case 'completed':
     case 'cancelled':
@@ -261,6 +270,12 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
     }
     if (new Date(endTime).getTime() <= new Date(startTime).getTime()) {
       setError('End time must be after the start time.');
+      return;
+    }
+    // #1574: a visit is never moved into the past; say so before sending.
+    const pastRefusal = rescheduleIntoPastRefusal(startTime, Date.now());
+    if (pastRefusal !== null) {
+      setError(pastRefusal);
       return;
     }
     setBusy(true);
@@ -450,6 +465,8 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   const [confirming, setConfirming] = useState<ActionDef | null>(
     () => actions.find((a) => a.kind === initialAction) ?? null,
   );
+  // #1608: Mark Completed checks the operator's arrival rule before it asks.
+  const arrivalRule = useArrivalRule();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // #1145: the override an Approve refusal offers, or null. Cleared once taken,
@@ -457,6 +474,14 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
   const kinfolkName = entry.kinfolkName ?? '';
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
+
+  /** Pose [action]'s question, unless the arrival rule already answers it (#1608). */
+  function ask(action: ActionDef) {
+    setRetry(null);
+    const refusal = action.kind === 'complete' ? completeRefusal(arrivalRule, entry) : null;
+    setError(refusal);
+    if (refusal === null) setConfirming(action);
+  }
 
   async function run(action: ActionDef, override: 'visit' | 'busy' | null = null) {
     if (busy) return;
@@ -494,19 +519,13 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
               <PrimaryButton
                 key={action.kind}
                 label={action.label}
-                onClick={() => {
-                  setError(null);
-                  setConfirming(action);
-                }}
+                onClick={() => ask(action)}
               />
             ) : (
               <GhostButton
                 key={action.kind}
                 label={action.label}
-                onClick={() => {
-                  setError(null);
-                  setConfirming(action);
-                }}
+                onClick={() => ask(action)}
               />
             ),
           )}

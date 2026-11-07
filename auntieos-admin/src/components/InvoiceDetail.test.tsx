@@ -60,6 +60,7 @@ const {
   unarchiveInvoice,
   retryInvoiceCheckoutClose,
   linkInvoiceSessions,
+  previewInvoiceNotice,
   useCollection,
 } = vi.hoisted(() => ({
   sendInvoiceReminder: vi.fn(),
@@ -75,6 +76,7 @@ const {
   unarchiveInvoice: vi.fn(),
   retryInvoiceCheckoutClose: vi.fn(),
   linkInvoiceSessions: vi.fn(),
+  previewInvoiceNotice: vi.fn(),
   useCollection: vi.fn(),
 }));
 // The Link visits editor (#1245) streams the household's visits.
@@ -97,6 +99,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   unarchiveInvoice,
   retryInvoiceCheckoutClose,
   linkInvoiceSessions,
+  previewInvoiceNotice,
 }));
 
 // #1567: the server re-read after a send got no answer.
@@ -262,6 +265,18 @@ function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
 beforeEach(() => {
   readInvoiceSendMarks.mockReset();
   sendInvoiceReminder.mockReset();
+  // #1609: the confirm's who-and-how line. Never left to reach the network.
+  previewInvoiceNotice.mockReset().mockResolvedValue({
+    ok: true,
+    key: 'invoice.reminder',
+    hasRecipient: true,
+    recipientName: 'Robin Wren',
+    email: { on: true, address: 'catch@hanasamku.com' },
+    sms: { on: false, address: '' },
+    push: { on: false },
+    disabled: null,
+    householdGateLive: true,
+  });
   markInvoicePaid.mockReset();
   // #1511: both answer whether the household's copy reached them in the app only.
   generateReceipt.mockReset().mockResolvedValue({ appOnly: false });
@@ -442,6 +457,14 @@ describe('InvoiceDetail', () => {
     });
   });
 
+  it('#1570 flags a stored due date that names no day, and reads an imported month-name one as a date', () => {
+    const { unmount } = render(<InvoiceDetail invoice={entry({ dueDate: '07/14/2026' })} onClose={vi.fn()} />);
+    expect(screen.getByText(/not a date this app can read, so it is never counted overdue/)).toBeInTheDocument();
+    unmount();
+    render(<InvoiceDetail invoice={entry({ dueDate: 'July 14, 2020' })} onClose={vi.fn()} />);
+    expect(screen.queryByText(/not a date this app can read/)).toBeNull();
+    expect(screen.getByText('OVERDUE')).toBeInTheDocument();
+  });
   it('sends a draft through reviewAndSendDraftInvoice, behind the same confirm step', async () => {
     reviewAndSendDraftInvoice.mockResolvedValue({ appOnly: false });
     render(
@@ -483,6 +506,31 @@ describe('InvoiceDetail', () => {
     expect(
       await screen.findByText(/reviewAndSendDraftInvoice failed:.*missing: total/i),
     ).toBeInTheDocument();
+  });
+
+  it('#1609: the reminder confirm names the person and the channel before the press', async () => {
+    render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    expect(
+      await screen.findByText(
+        'Goes to Robin Wren by email to catch@hanasamku.com, and in their notifications list.',
+      ),
+    ).toBeInTheDocument();
+    expect(previewInvoiceNotice).toHaveBeenCalledWith('inv1', 'reminder');
+    expect(sendInvoiceReminder).not.toHaveBeenCalled();
+  });
+  it('#1609: the confirm says so when household notices are paused, and when the check fails', async () => {
+    previewInvoiceNotice.mockResolvedValueOnce({ ...(await previewInvoiceNotice()), householdGateLive: false });
+    const { unmount } = render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    expect(
+      await screen.findByText('Household notices are paused before launch, so Robin Wren will not hear about this yet.'),
+    ).toBeInTheDocument();
+    unmount();
+    previewInvoiceNotice.mockRejectedValueOnce(new Error('Admin claim required.'));
+    render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    expect(await screen.findByText("Couldn't check who this reaches: Admin claim required.")).toBeInTheDocument();
   });
 
   /**
@@ -957,10 +1005,11 @@ describe('InvoiceDetail editing', () => {
     // $40 invoice to $0 because somebody corrected its due date.
     render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-    await userEvent.type(screen.getByLabelText('Invoice terms'), 'Net 30');
+    // #1609: terms are the picker now.
+    await userEvent.selectOptions(screen.getByLabelText('Invoice terms'), 'net_30');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
-    expect(updateInvoice).toHaveBeenCalledWith('inv1', { terms: 'Net 30' });
+    expect(updateInvoice).toHaveBeenCalledWith('inv1', { termsCode: 'net_30' });
   });
   it('refuses an empty patch instead of writing an audit entry for nothing', async () => {
     render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
@@ -1005,7 +1054,8 @@ describe('InvoiceDetail editing', () => {
     );
     render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-    await userEvent.type(screen.getByLabelText('Invoice terms'), 'Net 30');
+    // #1609: terms are the picker now.
+    await userEvent.selectOptions(screen.getByLabelText('Invoice terms'), 'net_30');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     expect(await screen.findByText(/line items and discounts are locked/i)).toBeInTheDocument();
   });
@@ -1051,6 +1101,33 @@ describe('InvoiceDetail editing the household, client, address and discount note
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
     expect(updateInvoice).toHaveBeenCalledWith('inv1', { address: '12 Elm St' });
+  });
+  it('#1609: terms are the New invoice picker, sent as a code, and its due date is left to the server', async () => {
+    render(<InvoiceDetail invoice={entry({ terms: 'Net 14 (typed)', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    const terms = screen.getByLabelText('Invoice terms');
+    expect(terms.tagName).toBe('SELECT');
+    expect(terms).toHaveValue('kept');
+    expect(screen.getByRole('option', { name: 'As stored: Net 14 (typed)' })).toBeInTheDocument();
+    await userEvent.selectOptions(terms, 'net_30');
+    expect(screen.getByLabelText('Invoice due date')).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
+    expect(updateInvoice).toHaveBeenCalledWith('inv1', { termsCode: 'net_30' });
+  });
+  it('#1609: a cleared number is refused beside Save, before any round trip', async () => {
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    await userEvent.clear(screen.getByLabelText('Invoice number'));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    const banner = await screen.findByText('An invoice needs a number. Type one, or put the old one back.');
+    expect(updateInvoice).not.toHaveBeenCalled();
+    // Placed after the fields, directly above Save, not at the top of the form.
+    const save = screen.getByRole('button', { name: /save changes/i });
+    expect(banner.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      screen.getByLabelText('Invoice address').compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
   it('sends an emptied field as an empty string: clearing a wrong address is an edit', async () => {
     render(<InvoiceDetail invoice={entry({ address: '12 Elm St' })} onClose={vi.fn()} />);
@@ -2280,7 +2357,7 @@ describe('payment history columns', () => {
    * document-wide search for that string cannot distinguish them.
    */
   async function amountCellText(): Promise<string> {
-    return ledgerCellText(3);
+    return ledgerCellText(1);
   }
   /**
    * The BALANCE cell, located the same way and for the same reason: a real
@@ -2288,7 +2365,7 @@ describe('payment history columns', () => {
    * a document-wide text search cannot tell apart.
    */
   async function balanceCellText(): Promise<string> {
-    return ledgerCellText(7);
+    return ledgerCellText(5);
   }
   /** One cell of the single ledger row, by column index. */
   async function ledgerCellText(column: number): Promise<string> {
