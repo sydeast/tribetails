@@ -23,6 +23,7 @@ vi.mock('../api/tribalIntelWrite', () => ({
 }));
 
 import { TribalIntel } from './TribalIntel';
+import { TRIBAL_INTEL_EMPTY_COPY } from '../lib/tribalIntelFormat';
 
 /** Roster rows the target picker streams alongside the Tribal Intel list. */
 const ROSTER: Record<string, unknown[]> = {
@@ -251,6 +252,24 @@ describe('TribalIntel screen', () => {
     expect(screen.getByText(/no tribal intel yet/i)).toBeInTheDocument();
   });
 
+  it('#1616: the empty state describes notes, not training materials or guides', () => {
+    mockTribalIntel({ status: 'ready', data: [] });
+    render(<TribalIntel />);
+    expect(screen.getByText(TRIBAL_INTEL_EMPTY_COPY)).toBeInTheDocument();
+    expect(screen.queryByText(/training|guides|uploaded/i)).toBeNull();
+  });
+  it('#1616: no search tooltip while there is no search box', () => {
+    mockTribalIntel({ status: 'ready', data: [] });
+    render(<TribalIntel />);
+    expect(screen.queryByLabelText(/search tribal intel/i)).toBeNull();
+    expect(screen.queryByText(/search across titles/i)).toBeNull();
+  });
+  it('#1616: the search tooltip is there once the search box is', () => {
+    mockTribalIntel({ status: 'ready', data: [entry({})] });
+    render(<TribalIntel />);
+    expect(screen.getByLabelText(/search tribal intel/i)).toBeInTheDocument();
+    expect(screen.getByText(/search across titles/i)).toBeInTheDocument();
+  });
   it('the search box narrows the visible rows by title, content, or comm. type', async () => {
     mockTribalIntel({
       status: 'ready',
