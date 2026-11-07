@@ -153,7 +153,9 @@
   min-width: 0;
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: 5.5rem 1.7fr 1.1fr auto auto;
+  /* #1609: 8.5rem holds "#INV-2027-0001" at body-sm mono; at 5.5rem the
+     year-style number ran into the household name. */
+  grid-template-columns: 8.5rem 1.7fr 1.1fr auto auto;
   align-items: center;
   gap: var(--space-4);
   text-align: left;
@@ -183,6 +185,14 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* #1609: an invoice with no number says so in words, not "#(none)". */
+.invoices__row-number--missing {
+  font-family: var(--font-hanken);
+  font-style: italic;
 }
 
 .invoices__row-who {

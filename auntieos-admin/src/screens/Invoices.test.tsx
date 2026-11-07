@@ -74,6 +74,7 @@ const {
   getInvoiceLedger,
   listUninvoicedSessions,
   setSessionDoNotInvoice,
+  previewInvoiceNotice,
 } = vi.hoisted(() => ({
   createInvoice: vi.fn(),
   createQuote: vi.fn(),
@@ -88,6 +89,7 @@ const {
   // chosen (#408), so this screen's tests answer that read too.
   listUninvoicedSessions: vi.fn(),
   setSessionDoNotInvoice: vi.fn(),
+  previewInvoiceNotice: vi.fn(),
 }));
 vi.mock('../api/invoicesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/invoicesWrite')>()),
@@ -100,6 +102,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   getInvoiceLedger,
   listUninvoicedSessions,
   setSessionDoNotInvoice,
+  previewInvoiceNotice,
 }));
 
 import { Invoices } from './Invoices';
@@ -227,6 +230,17 @@ beforeEach(() => {
     truncated: false,
   });
   setSessionDoNotInvoice.mockReset();
+  previewInvoiceNotice.mockReset().mockResolvedValue({
+    ok: true,
+    key: 'invoice.reminder',
+    hasRecipient: true,
+    recipientName: 'Robin Wren',
+    email: { on: true, address: 'catch@hanasamku.com' },
+    sms: { on: false, address: '' },
+    push: { on: false },
+    disabled: null,
+    householdGateLive: true,
+  });
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
   generateReceipt.mockReset();
@@ -1435,5 +1449,64 @@ describe('Invoices row, declined-quote marker', () => {
     render(<Invoices />);
     expect(screen.queryByText('DECLINED')).toBeNull();
     expect(screen.getByText('OPEN')).toBeInTheDocument();
+  });
+});
+
+/** #1609: the walk's list minors. */
+describe('#1609 invoices list', () => {
+  function dayAgo(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  it('lists the loaded rows newest first, whatever order the page arrived in', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'old', invoiceNumber: 'OLD', date: dayAgo(5) }),
+        entry({ _id: 'new', invoiceNumber: 'NEW', date: dayAgo(0) }),
+        entry({ _id: 'mid', invoiceNumber: 'MID', date: dayAgo(2) }),
+      ]),
+    );
+    render(<Invoices />);
+    const numbers = Array.from(document.querySelectorAll('.invoices__row-number')).map((n) => n.textContent);
+    expect(numbers).toEqual(['#NEW', '#MID', '#OLD']);
+  });
+  it('leaves an unsent draft and a quote out of the Billed total, and says so', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'o', invoiceNumber: '1018', total: 40 }),
+        entry({ _id: 'd', invoiceNumber: '1020', status: 'draft', total: 25 }),
+        entry({ _id: 'q', invoiceNumber: '1021', status: 'quote', total: 90 }),
+      ]),
+    );
+    render(<Invoices />);
+    const billed = screen.getByText('Billed total').closest('.den-stat, button.den-stat--button') as HTMLElement;
+    expect(within(billed).getByText('$40.00')).toBeInTheDocument();
+    expect(screen.getByText(/Billed total leaves out 2 unsent drafts or quotes\./)).toBeInTheDocument();
+  });
+  it('under Only archived, calls the rows left out not archived, and never "the archive"', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'live', invoiceNumber: 'LIVE' }),
+        entry({ _id: 'gone', invoiceNumber: 'GONE', archivedAt: fakeTs('2026-07-20T00:00:00Z') }),
+      ]),
+    );
+    render(<Invoices />);
+    await userEvent.selectOptions(screen.getByLabelText('Archived'), 'only');
+    expect(screen.getByText(/1 invoice not archived excluded/)).toBeInTheDocument();
+    expect(screen.queryByText(/archived invoice excluded/)).toBeNull();
+    expect(screen.queryByText(/in the archive/)).toBeNull();
+  });
+  it('shows "No number" in words for an invoice without one, and the full year-style number', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: '' }),
+        entry({ _id: 'b', invoiceNumber: 'INV-2027-0001' }),
+      ]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('No number')).toBeInTheDocument();
+    expect(screen.queryByText('#(none)')).toBeNull();
+    expect(screen.getByText('#INV-2027-0001')).toBeInTheDocument();
   });
 });

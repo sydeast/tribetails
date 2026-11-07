@@ -414,6 +414,16 @@ class AdminDataViewModel(
         }
     }
 
+    /**
+     * #1609: the sentence the row confirm shows, naming who a reminder
+     * ("reminder") or a draft send ("reviewSend") reaches and how.
+     */
+    suspend fun invoiceNoticePreviewSentence(invoiceId: String, action: String): String =
+        invoiceRepository.previewInvoiceNotice(invoiceId, action).fold(
+            onSuccess = { com.tribetails.auntieos.domain.noticePreviewSentence(it) },
+            onFailure = { "Couldn't check who this reaches: ${it.message ?: "the check failed"}" },
+        )
+
     fun loadInvoices() {
         viewModelScope.launch {
             _isLoading.value = true

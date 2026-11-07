@@ -50,6 +50,7 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.lastReminderLabel
+import com.tribetails.auntieos.web.data.linkPickerCancelled
 import com.tribetails.auntieos.web.data.linkPickerOnOtherInvoice
 import com.tribetails.auntieos.web.data.toggleLinkPick
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
@@ -497,12 +498,9 @@ private fun InvoiceDetailBody(
                 enabled = !receiptLoading && !reminderLoading,
                 leading = { Icon(Lucide.ReceiptText, contentDescription = null, modifier = Modifier.size(14.dp)) },
             )
-            // #871: offered only for a stored open bill, the rule the server
-            // enforces, so a cancelled invoice or a quote never shows the button.
-            if (InvoiceAction.SEND_REMINDER in actions) GhostButton(
-                label   = if (reminderLoading) "Sending..." else "Send reminder",
-                onClick = {
-                    if (receiptLoading || reminderLoading) return@GhostButton
+            var askReminder by remember { mutableStateOf(false) }
+            fun sendReminderNow() {
+                    if (receiptLoading || reminderLoading) return
                     reminderLoading = true
                     scope.launch {
                         when (val r = client.sendInvoiceReminder(invoice._id)) {
@@ -522,6 +520,27 @@ private fun InvoiceDetailBody(
                         }
                         reminderLoading = false
                     }
+                }
+            // #871: offered only for a stored open bill, the rule the server
+            // enforces, so a cancelled invoice or a quote never shows the button.
+            // #1609: the button opens a confirm naming who the reminder reaches.
+            if (askReminder) {
+                SendConfirmDialog(
+                    client = client,
+                    invoiceId = invoice._id,
+                    send = HouseholdSend.REMINDER,
+                    onConfirm = {
+                        askReminder = false
+                        sendReminderNow()
+                    },
+                    onDismiss = { askReminder = false },
+                )
+            }
+            if (InvoiceAction.SEND_REMINDER in actions) GhostButton(
+                label   = if (reminderLoading) "Sending..." else "Send reminder",
+                onClick = {
+                    if (receiptLoading || reminderLoading) return@GhostButton
+                    askReminder = true
                 },
                 enabled = !receiptLoading && !reminderLoading,
                 leading = { Icon(Lucide.MessageSquare, contentDescription = null, modifier = Modifier.size(14.dp)) },
@@ -1020,14 +1039,17 @@ private fun LinkSessionsDialog(
                             // #1254: shown, not hidden, and not tickable:
                             // another invoice already bills it.
                             val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
+                            // #1609: a cancelled visit is not billable.
+                            val cancelled = linkPickerCancelled(session, storedIds)
                             val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel" +
-                                if (elsewhere) " · on another invoice" else ""
+                                (if (elsewhere) " · on another invoice" else "") +
+                                (if (cancelled) " · cancelled, not billable" else "")
                             AuntieChip(
                                 label    = chipLabel,
                                 selected = session._id in pendingIds,
                                 tone     = AuntieChipTone.Orange,
                                 onClick  = { onToggle(session._id) },
-                                enabled  = !elsewhere && !saveLoading,
+                                enabled  = !elsewhere && !cancelled && !saveLoading,
                             )
                         }
                     }

@@ -90,6 +90,8 @@ export interface InvoiceEntry {
   discount?: string;
   /** The payment terms in words. Absent on invoices created without any. */
   terms?: string;
+  /** The structured terms code (`lib/invoiceTerms.ts`), when the terms came from the picker. */
+  termsCode?: string;
   invoiceNumber: string;
   date: string;
   dueDate: string;

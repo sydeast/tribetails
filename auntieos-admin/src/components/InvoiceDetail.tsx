@@ -37,9 +37,11 @@ import {
   archiveInvoice,
   unarchiveInvoice,
   retryInvoiceCheckoutClose,
+  previewInvoiceNotice,
 } from '../api/invoicesWrite';
 import type {
   GetInvoiceLedgerResult,
+  PreviewInvoiceNoticeResult,
   UpdateInvoiceArgsPatch,
 } from '../contracts/invoiceContracts.generated';
 import { InvoiceLedgerPanels } from './InvoiceLedger';
@@ -55,6 +57,8 @@ import { centsToInputDollars, normalizeMoneyText } from '../lib/invoiceMoneyInpu
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
+import { invoiceTermsDefs, parseInvoiceTermsCode, type InvoiceTermsCode } from '../lib/invoiceTerms';
+import { noticePreviewSentence } from '../lib/invoiceNoticePreview';
 import { phaseOfError } from '../lib/offlineWrite';
 import {
   mintInvoicePaymentIdempotencyKey,
@@ -576,12 +580,25 @@ const INVOICE_HEADER_TEXT_LIMITS = {
   discount: { label: 'Discount note', max: 200 },
 } as const;
 
+/** #1609: the edit picker's option for terms that carry no code. */
+const KEPT_TERMS = 'kept';
+/** #1609: true when the picked terms will set the due date on save, so the field is not typed. */
+function termsSetDueDate(editing: { termsChoice: string }, invoice: { termsCode?: string }): boolean {
+  const initial = parseInvoiceTermsCode(invoice.termsCode) ?? KEPT_TERMS;
+  return editing.termsChoice !== initial && editing.termsChoice !== KEPT_TERMS && editing.termsChoice !== 'custom';
+}
 /** The metadata and money fields, mid-edit. Text, because a half-typed field is not a number. */
 interface EditDraft {
   invoiceNumber: string;
   date: string;
   dueDate: string;
   terms: string;
+  /**
+   * #1609: the terms as the SAME picker New invoice uses. A code, or
+   * `KEPT_TERMS` for an invoice whose terms have no code (typed by hand, or
+   * imported), which stays exactly as stored until a code is picked.
+   */
+  termsChoice: InvoiceTermsCode | typeof KEPT_TERMS;
   /** The household name, the client, the billing address and the legacy discount text (#1198). */
   kinfolkName: string;
   client: string;
@@ -823,6 +840,36 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const meta =
     pending && allowed.includes(pending) ? ACTIONS.find((a) => a.key === pending) : undefined;
 
+  // #1609: the confirm for a household send names who it reaches and how,
+  // from the same recipient, prefs and gate the send itself uses.
+  const previewAction = meta?.key === 'reminder' || meta?.key === 'reviewSend' ? meta.key : null;
+  const [noticePreview, setNoticePreview] = useState<
+    | { action: string; kind: 'ready'; result: PreviewInvoiceNoticeResult }
+    | { action: string; kind: 'error'; message: string }
+    | null
+  >(null);
+  useEffect(() => {
+    if (previewAction === null) {
+      setNoticePreview(null);
+      return;
+    }
+    let live = true;
+    setNoticePreview(null);
+    previewInvoiceNotice(invoice._id, previewAction).then(
+      (result) => live && setNoticePreview({ action: previewAction, kind: 'ready', result }),
+      (err: unknown) =>
+        live &&
+        setNoticePreview({
+          action: previewAction,
+          kind: 'error',
+          message: err instanceof Error ? err.message : 'the check failed',
+        }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [previewAction, invoice._id]);
+
   // The stored itemization. NULL means never itemized, which is not the same as
   // an empty list and must not be rendered as an empty items table: a heading
   // over no rows reads as "nothing was billed".
@@ -952,6 +999,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       date: invoice.date,
       dueDate: invoice.dueDate,
       terms: invoice.terms ?? '',
+      termsChoice: parseInvoiceTermsCode(invoice.termsCode) ?? KEPT_TERMS,
       kinfolkName: invoice.kinfolkName ?? '',
       client: invoice.client ?? '',
       address: invoice.address ?? '',
@@ -973,10 +1021,22 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     // Only CHANGED fields go in the patch. Echoing an unchanged value back would
     // still stamp `updatedAt` and write an audit entry describing an edit that
     // did not happen.
+    // #1609: a cleared number is caught here, beside Save, before the server's
+    // refusal could surface as a raw banner at the top of the form.
+    if (editing.invoiceNumber.trim() === '') {
+      setEditError('An invoice needs a number. Type one, or put the old one back.');
+      return;
+    }
     if (editing.invoiceNumber !== invoice.invoiceNumber) patch.invoiceNumber = editing.invoiceNumber.trim();
     if (editing.date !== invoice.date) patch.date = editing.date.trim();
-    if (editing.dueDate !== invoice.dueDate) patch.dueDate = editing.dueDate.trim();
-    if (editing.terms !== (invoice.terms ?? '')) patch.terms = editing.terms;
+    // #1609: terms are a code from the picker. A non-custom code works out its
+    // own due date on the server, so the due date is sent only for custom
+    // terms or when the terms were left alone.
+    const initialChoice = parseInvoiceTermsCode(invoice.termsCode) ?? KEPT_TERMS;
+    const termsChanged = editing.termsChoice !== initialChoice && editing.termsChoice !== KEPT_TERMS;
+    if (termsChanged) patch.termsCode = editing.termsChoice as InvoiceTermsCode;
+    const dueDateFromTerms = termsChanged && editing.termsChoice !== 'custom';
+    if (!dueDateFromTerms && editing.dueDate !== invoice.dueDate) patch.dueDate = editing.dueDate.trim();
     // #1198: the four descriptive fields, compared against the SAME `?? ''`
     // baseline the form was seeded from, so a field the doc never had does not
     // read as changed when the operator left it empty. Sent as typed, like
@@ -1442,7 +1502,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   }, [busy, onClose]);
 
   return (
-    <Dialog title={`Invoice #${invoice.invoiceNumber || '(none)'}`} onClose={handleDialogClose}>
+    <Dialog
+      title={invoice.invoiceNumber.trim() === '' ? 'Invoice with no number' : `Invoice #${invoice.invoiceNumber}`}
+      onClose={handleDialogClose}
+    >
       <div className="invoice-detail">
         <div className="invoice-detail__summary">
           <span className="invoice-detail__household">{household}</span>
@@ -1632,11 +1695,6 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
 
         {editing !== null ? (
           <div className="invoice-detail__edit">
-            {editError && (
-              <Banner tone="error" title="Can't save">
-                {editError}
-              </Banner>
-            )}
             {!editing.moneyEditable && (
               <Banner tone="warning" title="Money is locked">
                 A payment has already been recorded against this invoice, so its line items and
@@ -1677,19 +1735,35 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   className="invoice-detail__field-input"
                   value={editing.dueDate}
                   onChange={(e) => setEditing({ ...editing, dueDate: e.target.value })}
-                  disabled={busy}
+                  // #1609: picked terms other than custom set the due date.
+                  disabled={busy || termsSetDueDate(editing, invoice)}
                   aria-label="Invoice due date"
+                  title={termsSetDueDate(editing, invoice) ? 'Worked out from the terms when you save' : undefined}
                 />
               </label>
               <label className="invoice-detail__field">
                 <span className="invoice-detail__field-label">Terms</span>
-                <input
+                {/* #1609: the same choices as New invoice, not free text. */}
+                <select
                   className="invoice-detail__field-input"
-                  value={editing.terms}
-                  onChange={(e) => setEditing({ ...editing, terms: e.target.value })}
+                  value={editing.termsChoice}
+                  onChange={(e) =>
+                    setEditing({ ...editing, termsChoice: e.target.value as EditDraft['termsChoice'] })
+                  }
                   disabled={busy}
                   aria-label="Invoice terms"
-                />
+                >
+                  {parseInvoiceTermsCode(invoice.termsCode) === null && (
+                    <option value={KEPT_TERMS}>
+                      {(invoice.terms ?? '').trim() === '' ? 'Not set' : `As stored: ${(invoice.terms ?? '').trim()}`}
+                    </option>
+                  )}
+                  {invoiceTermsDefs().map((def) => (
+                    <option key={def.code} value={def.code}>
+                      {def.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="invoice-detail__field">
                 <span className="invoice-detail__field-label">Household</span>
@@ -1753,6 +1827,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               />
             )}
 
+            {/* #1609: beside Save, where the eye is when it is pressed. At the
+                top of the form it sat out of view of the button. */}
+            {editError && (
+              <Banner tone="error" title="Can't save">
+                {editError}
+              </Banner>
+            )}
             <div className="invoice-detail__confirm-actions">
               <GhostButton label="Cancel" onClick={() => !busy && setEditing(null)} disabled={busy} />
               <PrimaryButton
@@ -1839,6 +1920,16 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         ) : meta ? (
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">{meta.confirmCopy}</p>
+            {/* #1609: which person, and which channel, before the press. */}
+            {(meta.key === 'reminder' || meta.key === 'reviewSend') && (
+              <p className="invoice-detail__confirm-copy" role="status" data-testid="notice-preview">
+                {noticePreview === null
+                  ? 'Checking who this reaches…'
+                  : noticePreview.kind === 'error'
+                    ? `Couldn't check who this reaches: ${noticePreview.message}`
+                    : noticePreviewSentence(noticePreview.result)}
+              </p>
+            )}
             {meta.key === 'markPaid' && (
               <div className="invoice-detail__confirm-fields">
                 {/* UNCHANGED, and still the first field. It is what comes off

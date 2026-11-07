@@ -122,12 +122,29 @@ internal fun archivedAllows(mode: ArchivedMode, invoice: Invoice): Boolean = whe
  * archived invoices it never read, so a bare number would read as a fact about
  * the books.
  */
-internal fun invoiceListSubtitle(visible: Int, inScope: Int, archivedHidden: Int): String {
+internal fun invoiceListSubtitle(
+    visible: Int,
+    inScope: Int,
+    archivedHidden: Int,
+    mode: ArchivedMode = ArchivedMode.Hide,
+): String {
     val base = "$visible of $inScope shown. Tap a row to open the invoice."
     if (archivedHidden <= 0) return base
     val plural = if (archivedHidden == 1) "" else "s"
-    return "$base $archivedHidden archived invoice$plural hidden, counted within the invoices loaded here."
+    // #1609: under Only archived the hidden rows are the ones NOT archived.
+    val what = if (mode == ArchivedMode.Only) "invoice$plural not archived" else "archived invoice$plural"
+    return "$base $archivedHidden $what hidden, counted within the invoices loaded here."
 }
+/**
+ * #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
+ * estimate the household has not agreed to, so neither counts toward Billed
+ * total. Same rule as admin web's `isUnbilledState`. Pure; tested.
+ */
+internal fun invoiceBilledTotal(invoices: List<Invoice>): Double =
+    invoices.filter {
+        val state = invoiceStateOrNull(it)
+        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE
+    }.sumOf { it.total }
 /**
  * Den filter tabs. The same seven tabs, labels and order as the admin web
  * (`FILTERS` in src/screens/Invoices.tsx) and the desktop console; the three
@@ -315,6 +332,8 @@ fun InvoicesScreen(
     // Archived invoices are HIDDEN by default, matching the web. Three states:
     // hide them, show them alongside, show only them.
     var archived by remember { mutableStateOf(ArchivedMode.Hide) }
+    /** #1609: the row send waiting on its confirm, and which send it is. */
+    var rowSendConfirm by remember { mutableStateOf<Pair<Invoice, String>?>(null) }
     var showComposer by remember { mutableStateOf(false) }
     // ONE COMPOSER, ONE BUTTON (#408). A quote is an invoice in QUOTE status, so
     // the kind is a field inside the dialog rather than a second CTA the operator
@@ -450,7 +469,7 @@ fun InvoicesScreen(
                         item {
                             DenPanel(
                                 title = "Invoices",
-                                detail = invoiceListSubtitle(visible.size, inScope.size, archivedHidden),
+                                detail = invoiceListSubtitle(visible.size, inScope.size, archivedHidden, archived),
                             ) {
                                 if (visible.isEmpty()) {
                                     AuntieEmptyState(
@@ -465,8 +484,9 @@ fun InvoicesScreen(
                                         todayIso = todayIso,
                                         onOpenDetail = onOpenDetail,
                                         onReceipt = { viewModel.generateReceipt(it.id) },
-                                        onSendReminder = { viewModel.sendInvoiceReminder(it.id) },
-                                        onSendDraft = { viewModel.reviewAndSendDraftInvoice(it) },
+                                        // #1609: both confirm first, naming who the send reaches.
+                                        onSendReminder = { rowSendConfirm = it to "reminder" },
+                                        onSendDraft = { rowSendConfirm = it to "reviewSend" },
                                         remindingIds = remindingIds,
                                     )
                                 }
@@ -475,6 +495,36 @@ fun InvoicesScreen(
                     }
                 }
             }
+        }
+    }
+
+    // #1609: the row's household sends confirm first, naming the person and channel.
+    rowSendConfirm?.let { (invoice, action) ->
+        var preview by remember(invoice.id, action) { mutableStateOf<String?>(null) }
+        LaunchedEffect(invoice.id, action) {
+            preview = viewModel.invoiceNoticePreviewSentence(invoice.id, action)
+        }
+        com.tribetails.auntieos.ui.components.AuntieDialog(
+            visible   = true,
+            title     = if (action == "reminder") "Send a payment reminder?" else "Send this draft?",
+            onDismiss = { rowSendConfirm = null },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { rowSendConfirm = null })
+                PrimaryButton(
+                    label   = if (action == "reminder") "Send reminder" else "Review and send",
+                    onClick = {
+                        rowSendConfirm = null
+                        if (action == "reminder") viewModel.sendInvoiceReminder(invoice.id)
+                        else viewModel.reviewAndSendDraftInvoice(invoice)
+                    },
+                )
+            },
+        ) {
+            androidx.compose.material3.Text(
+                text  = preview ?: "Checking who this reaches…",
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textPrimary,
+            )
         }
     }
 
@@ -542,7 +592,7 @@ private fun HeaderCtas(onNewInvoice: () -> Unit) {
 private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
     val outstanding = invoices.filter { invoiceIsOutstanding(it) }
     val outstandingTotal = outstanding.sumOf { it.amountDue }
-    val billedTotal = invoices.sumOf { it.total }
+    val billedTotal = invoiceBilledTotal(invoices)
     val overdueInvoices = invoices.filter { invoiceIsOverdue(it, todayIso) }
     val overdueCount = overdueInvoices.size
 
@@ -571,7 +621,7 @@ private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
         StatCard(
             label = "Billed total",
             value = formatMoney(billedTotal),
-            trend = "all invoices on the books",
+            trend = "sent invoices on the books",
             tone = AuntieStatusTone.Teal,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -771,7 +821,7 @@ private fun InvoiceRow(
                     color = c.textDim,
                 )
                 Text(
-                    text = "#${invoice.invoiceNumber.ifBlank { "(none)" }}",
+                    text = invoiceNumberLabel(invoice.invoiceNumber),
                     style = AuntieTheme.typography.mono.copy(fontWeight = FontWeight.Medium),
                     color = c.textPrimary,
                 )
@@ -903,3 +953,7 @@ private fun EmptyState() {
         icon = Lucide.ReceiptText,
     )
 }
+
+/** #1609: the row's number, or "No number" in words rather than "#(none)". */
+internal fun invoiceNumberLabel(number: String): String =
+    if (number.isBlank()) "No number" else "#${number.trim()}"

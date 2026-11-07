@@ -476,6 +476,8 @@ data class Invoice(
     var address: String = "",
     var date: String = "",
     var terms: String = "",
+    /** #1609: the structured terms code when the terms came from the picker, else "". */
+    var termsCode: String = "",
     var dueDate: String = "",
     var discount: String = "",
     var total: Double = 0.0,
