@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DEFAULT_COVERAGE_RULES, todayIso } from '../lib/coveragePackage';
 
 const getBusinessSettings = vi.fn();
@@ -226,5 +227,84 @@ describe('CoveragePackageBuilder tiers (issue #694)', () => {
     });
     render(<CoveragePackageBuilder />);
     expect(await packageNames()).toEqual(['Rex week', 'Lean', 'Balance', 'Premium']);
+  });
+});
+
+describe('CoveragePackageBuilder undo and duplicates (issue #1605)', () => {
+  const quote = (over: Record<string, unknown> = {}) =>
+    storeQuote({
+      clientName: 'Rex',
+      startDate: '2026-12-01',
+      endDate: '2026-12-03',
+      overnightDurationId: '',
+      rules: DEFAULT_COVERAGE_RULES,
+      packages: [
+        { id: 'a', name: 'Alpha', visits: [{ id: 'va', time: 540, durationId: '30Minute', label: 'Morning' }] },
+        { id: 'b', name: 'Beta', visits: [] },
+      ],
+      tiersSeeded: true,
+      ...over,
+    });
+  it('gives a deleted package back, in its place, with Undo', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    expect(await packageNames()).toEqual(['Alpha', 'Beta']);
+    await user.click(screen.getAllByRole('button', { name: 'Delete package' })[0]!);
+    expect(await packageNames()).toEqual(['Beta']);
+    expect(screen.getByText('Deleted package "Alpha".')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(await packageNames()).toEqual(['Alpha', 'Beta']);
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+  it('gives a removed visit back at the same spot', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    await user.click(screen.getByRole('button', { name: 'Remove visit' }));
+    expect(screen.queryByDisplayValue('Morning')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByDisplayValue('Morning')).toBeTruthy();
+  });
+  it('puts the whole quote back after Start new quote', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    await user.click(screen.getByRole('button', { name: 'Start new quote' }));
+    expect((screen.getByLabelText(/client \(optional\)/i) as HTMLInputElement).value).toBe('');
+    expect(await packageNames()).toEqual(['Lean', 'Balance', 'Premium']);
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect((screen.getByLabelText(/client \(optional\)/i) as HTMLInputElement).value).toBe('Rex');
+    expect(await packageNames()).toEqual(['Alpha', 'Beta']);
+    expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('2026-12-01');
+  });
+  it('names each duplicate differently', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const dup = () => screen.getAllByRole('button', { name: 'Duplicate package' })[0]!;
+    await user.click(dup());
+    await user.click(dup());
+    const names = await packageNames();
+    expect(names).toEqual(['Alpha', 'Beta', 'Alpha copy', 'Alpha copy 2']);
+    expect(new Set(names).size).toBe(names.length);
+  });
+  it('shows CUSTOMIZED only once the day differs from the template', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    await user.click(screen.getAllByRole('button', { name: 'View day-by-day' })[0]!);
+    await user.click((await screen.findAllByRole('button', { name: 'Customize this day' }))[0]!);
+    // Forked but untouched: the editor is open, the badge is not.
+    expect(screen.queryByText('Customized')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Reset to template' }).length).toBeGreaterThan(0);
+    const editor = document.querySelector('.cpb__dayEditor') as HTMLElement;
+    const label = within(editor).getByDisplayValue('Morning');
+    await user.type(label, 'x');
+    expect(screen.getByText('Customized')).toBeTruthy();
   });
 });

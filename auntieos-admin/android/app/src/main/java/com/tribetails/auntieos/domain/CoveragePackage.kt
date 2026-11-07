@@ -140,6 +140,8 @@ data class PricedDayRow(
     val dayIndex: Int,
     val items: List<PricedItem>,
     val customized: Boolean,
+    /** True only when the day's own list differs from the template (#1605); `customized` alone just means an editable copy exists. */
+    val changed: Boolean,
     val canOvernight: Boolean,
     val isOvernight: Boolean,
     val overnightCost: Double,
@@ -574,6 +576,30 @@ fun gapWarnings(visits: List<Visit>, wakeStart: String, wakeEnd: String, maxGapH
     return out
 }
 
+/**
+ * Whether a day's own visit list differs from the package template (#1605).
+ * "Customize this day" forks the template into an editable copy; until something
+ * changes that copy is the template, so the day is not customized yet. Ids are
+ * ignored (the fork mints fresh ones). Mirrors `dayDiffersFromTemplate` on the web.
+ */
+fun dayDiffersFromTemplate(pkg: Package, dayIndex: Int): Boolean {
+    val own = pkg.dayOverrides[dayIndex] ?: return false
+    fun sig(list: List<Visit>) = list.map { "${it.time}|${it.durationId}|${it.label}" }.sorted()
+    return sig(own) != sig(pkg.visits)
+}
+/**
+ * A name for a duplicate that no other package carries (#1605): "Lean copy", then
+ * "Lean copy 2". Duplicating a copy extends the original's name instead of stacking
+ * another " copy" on it. Mirrors `uniqueCopyName` on the web.
+ */
+fun uniqueCopyName(name: String, existing: List<String>): String {
+    val base = name.replace(Regex(" copy( \\d+)?$"), "")
+    val first = "$base copy"
+    if (first !in existing) return first
+    var n = 2
+    while ("$first $n" in existing) n++
+    return "$first $n"
+}
 /** Price a whole package across the stay. */
 fun pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
     val rows = mutableListOf<PricedDayRow>()
@@ -588,6 +614,7 @@ fun pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
                 dayIndex = i,
                 items = items,
                 customized = pkg.dayOverrides.containsKey(i),
+                changed = dayDiffersFromTemplate(pkg, i),
                 canOvernight = canOvernight,
                 isOvernight = isOvernight,
                 overnightCost = overnightCost,

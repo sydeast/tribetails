@@ -10,6 +10,8 @@ import {
   gapWarnings,
   minutesToTime,
   normalizePackage,
+  dayDiffersFromTemplate,
+  uniqueCopyName,
   packagesFromPatterns,
   priceDay,
   pricePackage,
@@ -318,5 +320,39 @@ describe('quoteText', () => {
     expect(text).toContain('Balance · 2 days');
     expect(text).toContain('Lunch (45-min visit)');
     expect(text).toContain('Total');
+  });
+});
+
+describe('dayDiffersFromTemplate (#1605)', () => {
+  const visit = (id: string, time: number, label = 'Check-in') => ({ id, time, durationId: 'd1', label });
+  const base = normalizePackage({ id: 'p', name: 'P', visits: [visit('a', 540), visit('b', 720)] });
+  it('is false with no day copy', () => {
+    expect(dayDiffersFromTemplate(base, 0)).toBe(false);
+  });
+  it('is false for a fresh fork, whatever ids it minted', () => {
+    const forked = { ...base, dayOverrides: { 0: [visit('x', 720), visit('y', 540)] } };
+    expect(dayDiffersFromTemplate(forked, 0)).toBe(false);
+  });
+  it('is true once a time, length, label or count changes', () => {
+    expect(dayDiffersFromTemplate({ ...base, dayOverrides: { 0: [visit('x', 540), visit('y', 780)] } }, 0)).toBe(true);
+    expect(dayDiffersFromTemplate({ ...base, dayOverrides: { 0: [visit('x', 540, 'Walk'), visit('y', 720)] } }, 0)).toBe(true);
+    expect(dayDiffersFromTemplate({ ...base, dayOverrides: { 0: [visit('x', 540)] } }, 0)).toBe(true);
+  });
+  it('feeds the priced row', () => {
+    const forked = { ...base, dayOverrides: { 0: base.visits.map((v) => ({ ...v, id: `n${v.id}` })) } };
+    const row = pricePackage(forked, { days: 1, nights: 0, durations: DURATIONS, overnightDuration: undefined }).rows[0]!;
+    expect(row.customized).toBe(true);
+    expect(row.changed).toBe(false);
+  });
+});
+describe('uniqueCopyName (#1605)', () => {
+  it('adds copy, then numbers further copies', () => {
+    expect(uniqueCopyName('Lean', ['Lean'])).toBe('Lean copy');
+    expect(uniqueCopyName('Lean', ['Lean', 'Lean copy'])).toBe('Lean copy 2');
+    expect(uniqueCopyName('Lean', ['Lean', 'Lean copy', 'Lean copy 2'])).toBe('Lean copy 3');
+  });
+  it('copying a copy extends the original name instead of stacking', () => {
+    expect(uniqueCopyName('Lean copy', ['Lean', 'Lean copy'])).toBe('Lean copy 2');
+    expect(uniqueCopyName('Lean copy 2', ['Lean', 'Lean copy', 'Lean copy 2'])).toBe('Lean copy 3');
   });
 });
