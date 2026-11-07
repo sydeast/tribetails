@@ -17,6 +17,10 @@ import { call } from '../lib/fns';
  */
 export interface StaffMember {
   uid: string;
+  /**
+   * The name to show. Since #1564 the server fills a staff record with no name
+   * from the sign-in account's display name, then an email.
+   */
   displayName: string | null;
   email: string | null;
 }
@@ -45,6 +49,38 @@ export async function listStaff(): Promise<StaffMember[]> {
       displayName: str(row.displayName),
       email: str(row.email),
     }));
+}
+
+/**
+ * uid -> the label `staffLabel` gives, for screens that hold a staff uid and
+ * must show a person (#1564: the Gallery's uploader line showed a raw uid).
+ */
+export function staffNamesByUid(staff: readonly StaffMember[]): Map<string, string> {
+  return new Map(staff.map((m) => [m.uid, staffLabel(m)]));
+}
+
+let staffNamesOnce: Promise<Map<string, string>> | null = null;
+
+/**
+ * The staff names, read once per page load and shared by every caller. A
+ * failed read resolves to an empty map (and is retried on the next call), so a
+ * screen that only wants nicer labels never fails over it.
+ */
+export function loadStaffNames(): Promise<Map<string, string>> {
+  if (staffNamesOnce === null) {
+    staffNamesOnce = listStaff()
+      .then(staffNamesByUid)
+      .catch(() => {
+        staffNamesOnce = null;
+        return new Map<string, string>();
+      });
+  }
+  return staffNamesOnce;
+}
+
+/** Test seam: forget the cached read. */
+export function resetStaffNamesForTest(): void {
+  staffNamesOnce = null;
 }
 
 /** The picker label: display name, then email, then the uid. Never blank, so

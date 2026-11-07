@@ -32,7 +32,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -60,10 +62,25 @@ import kotlinx.coroutines.launch
  * the same strings; the admin gate line comes up from the repository so the
  * three read as one.
  */
-private const val MISSING_MSG = "Email and password are required."
+private const val MISSING_EMAIL_MSG = "Enter your email."
+private const val MISSING_PASSWORD_MSG = "Enter your password."
 private const val RESET_NEEDS_EMAIL_MSG = "Type your email above first."
 private const val RESET_SENT_MSG = "Reset link sent. Check your inbox."
 
+/**
+ * What each field has to say about itself (#1600). A null is a field that is
+ * fine. Shown under the field in a line the form always reserves, replacing the
+ * one banner that named both fields and highlighted neither.
+ */
+internal data class SignInFieldErrors(val email: String? = null, val password: String? = null) {
+    val any: Boolean get() = email != null || password != null
+}
+internal fun signInFieldErrors(email: String, password: String): SignInFieldErrors = SignInFieldErrors(
+    email = if (email.isBlank()) MISSING_EMAIL_MSG else null,
+    password = if (password.isEmpty()) MISSING_PASSWORD_MSG else null,
+)
+internal fun resetEmailFieldError(email: String): String? =
+    if (email.isBlank()) RESET_NEEDS_EMAIL_MSG else null
 /**
  * Sign in, laid out as the mock draws it (#755): the paw mark in a glass disc,
  * the wordmark, then one glass card holding the greeting, two bottom-rule
@@ -83,6 +100,7 @@ fun AdminLoginScreen(
     var resetting   by remember { mutableStateOf(false) }
     var error       by remember { mutableStateOf<String?>(null) }
     var resetSent   by remember { mutableStateOf(false) }
+    var fieldErrors by remember { mutableStateOf(SignInFieldErrors()) }
 
     /**
      * Issue #573: why the operator is looking at this screen, when they did not
@@ -105,8 +123,10 @@ fun AdminLoginScreen(
 
     fun submit() {
         if (loading || resetting) return
-        if (email.isBlank() || password.isBlank()) {
-            error = MISSING_MSG
+        val missing = signInFieldErrors(email, password)
+        fieldErrors = missing
+        if (missing.any) {
+            error = null
             return
         }
         error = null
@@ -125,8 +145,10 @@ fun AdminLoginScreen(
     // same, so the modal this used to open is gone.
     fun resetPassword() {
         if (loading || resetting) return
-        if (email.isBlank()) {
-            error = RESET_NEEDS_EMAIL_MSG
+        val needsEmail = resetEmailFieldError(email)
+        fieldErrors = SignInFieldErrors(email = needsEmail)
+        if (needsEmail != null) {
+            error = null
             return
         }
         error = null
@@ -222,28 +244,42 @@ fun AdminLoginScreen(
                             // platform's own ImeAction.Next behaviour, which moves
                             // focus to the next focusable, and the password input is
                             // the next one in layout order.
-                            BottomBorderField(
-                                value         = email,
-                                onValueChange = { email = it },
-                                label         = "Email",
-                                placeholder   = "you@auntieos.com",
-                                modifier      = Modifier.fillMaxWidth(),
-                                keyboardType  = KeyboardType.Email,
-                                imeAction     = ImeAction.Next,
-                                fieldModifier = Modifier.semantics {
-                                    contentType = ContentType.EmailAddress + ContentType.Username
-                                },
-                            )
-                            AuntiePasswordField(
-                                value           = password,
-                                onValueChange   = { password = it },
-                                label           = "Password",
-                                placeholder     = "••••••••",
-                                modifier        = Modifier.fillMaxWidth(),
-                                imeAction       = ImeAction.Done,
-                                keyboardActions = KeyboardActions(onDone = { submit() }),
-                                fieldModifier   = Modifier.semantics { contentType = ContentType.Password },
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                BottomBorderField(
+                                    value         = email,
+                                    onValueChange = {
+                                        email = it
+                                        if (fieldErrors.email != null) fieldErrors = fieldErrors.copy(email = null)
+                                    },
+                                    label         = "Email",
+                                    placeholder   = "you@auntieos.com",
+                                    modifier      = Modifier.fillMaxWidth(),
+                                    isError       = fieldErrors.email != null,
+                                    keyboardType  = KeyboardType.Email,
+                                    imeAction     = ImeAction.Next,
+                                    fieldModifier = Modifier.semantics {
+                                        contentType = ContentType.EmailAddress + ContentType.Username
+                                    },
+                                )
+                                SignInFieldErrorLine(fieldErrors.email)
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                AuntiePasswordField(
+                                    value           = password,
+                                    onValueChange   = {
+                                        password = it
+                                        if (fieldErrors.password != null) fieldErrors = fieldErrors.copy(password = null)
+                                    },
+                                    label           = "Password",
+                                    placeholder     = "••••••••",
+                                    modifier        = Modifier.fillMaxWidth(),
+                                    isError         = fieldErrors.password != null,
+                                    imeAction       = ImeAction.Done,
+                                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                                    fieldModifier   = Modifier.semantics { contentType = ContentType.Password },
+                                )
+                                SignInFieldErrorLine(fieldErrors.password)
+                            }
 
                             Spacer(Modifier.height(2.dp))
 
@@ -280,4 +316,20 @@ fun AdminLoginScreen(
             }
         }
     }
+}
+
+/**
+ * The line under a sign-in field. Always laid out at one line's height, empty
+ * or not, so a refusal changes text and colour and never the form's height.
+ */
+@Composable
+private fun SignInFieldErrorLine(message: String?) {
+    Text(
+        text = message.orEmpty(),
+        style = AuntieTheme.typography.bodySmall,
+        color = AuntieTheme.colors.error,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 18.dp).semantics {
+            if (message != null) liveRegion = LiveRegionMode.Polite
+        },
+    )
 }

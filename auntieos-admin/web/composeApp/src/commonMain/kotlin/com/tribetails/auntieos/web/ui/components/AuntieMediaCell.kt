@@ -84,6 +84,9 @@ fun AuntieMediaCell(
     isAddTile: Boolean = false,
     onAdd: (() -> Unit)? = null,
     glyphs: MediaCellGlyphs = MediaCellGlyphs(),
+    // #1564: uid -> name for the uploader line (from listStaff), so the caption
+    // names a person instead of a uid. Empty keeps the stored value as before.
+    uploaderNames: Map<String, String> = emptyMap(),
 ) {
     if (isAddTile) {
         AddTile(modifier = modifier, onAdd = onAdd, glyph = glyphs.add)
@@ -201,7 +204,7 @@ fun AuntieMediaCell(
             // Meta line: real uploadedAt (ISO date prefix) · uploadedBy (spec 28
             // item 3). Fake/blank parts are omitted, never printed (fail loud over
             // fake): a blank or placeholder "auntie" author drops out entirely.
-            val meta = mediaMetaLine(media.uploadedAt, media.uploadedBy)
+            val meta = mediaMetaLine(media.uploadedAt, media.uploadedBy, uploaderNames)
             if (meta.isNotBlank()) {
                 Text(
                     text = meta,
@@ -223,11 +226,17 @@ fun AuntieMediaCell(
  * or placeholder "auntie" [uploadedBy] is omitted rather than shown as a real
  * author. Returns "" when nothing real remains. Pure; unit-tested.
  */
-internal fun mediaMetaLine(uploadedAt: String, uploadedBy: String): String {
+internal fun mediaMetaLine(
+    uploadedAt: String,
+    uploadedBy: String,
+    uploaderNames: Map<String, String> = emptyMap(),
+): String {
     val date = uploadedAt.trim().take(10)
         .takeIf { it.length == 10 && it[4] == '-' && it[7] == '-' }
         .orEmpty()
-    val author = uploadedBy.trim()
+    val stored = uploadedBy.trim()
+    // #1564: uploads store the uploader's uid; show their name when staff has one.
+    val author = (uploaderNames[stored] ?: stored)
         .takeIf { it.isNotBlank() && !it.equals("auntie", ignoreCase = true) }
         .orEmpty()
     return listOf(date, author).filter { it.isNotBlank() }.joinToString(" · ")
