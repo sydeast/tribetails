@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.data.model.TimeBlockDefinition
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarViewMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -414,5 +415,82 @@ class BusinessRulesPanelsTest {
         assertTrue("a rebuild writes far more than the edited field", changes.size > 1)
         assertEquals("", changes["venmoHandle"])
         assertEquals("", changes["calendarSyncId"])
+    }
+
+    // ── ISSUE #1612: a new block, and an overlap shown on its rows ──────────
+
+    /** Operator ruling: the app never picks a block's hours. It used to open at 09:00, on top of Midday. */
+    @Test
+    fun `a new block opens with no start and no end time`() {
+        val added = newTimeBlockRow(listOf("midday"))
+        assertEquals("", added.startTime)
+        assertEquals("", added.endTime)
+        assertEquals("", added.label)
+        assertTrue(added.active)
+        assertTrue(added.id.isNotBlank() && added.id != "midday")
+    }
+
+    @Test
+    fun `a start typed into a row with no end runs it for the default block length`() {
+        val blank = newTimeBlockRow(emptyList())
+        assertEquals("19:00", blank.withStartTime("16:00", 3).endTime)
+        // Half typed: nothing is filled until the start is a real time.
+        assertEquals("", blank.withStartTime("16:0", 3).endTime)
+        // An end the operator already gave is never overwritten.
+        assertEquals("20:00", blank.copy(endTime = "20:00").withStartTime("16:00", 3).endTime)
+    }
+
+    @Test
+    fun `an overlap is flagged on both rows while the new one has no name yet`() {
+        val rows = listOf(row(), row(id = "block-2", label = "", start = "09:00", end = "13:00"))
+        assertEquals(listOf(listOf("a block with no name yet"), listOf("Midday")), blockOverlaps(rows))
+        // The banner still stops at the missing name; the rows carry the clash.
+        assertEquals("Every block needs a name.", timeBlockError(rows))
+    }
+
+    @Test
+    fun `a long block is flagged against every block it covers, not only its neighbour`() {
+        val rows = listOf(
+            row(id = "day", label = "All day", start = "08:00", end = "18:00"),
+            row(id = "am", label = "Morning", start = "09:00", end = "10:00"),
+            row(id = "pm", label = "Afternoon", start = "14:00", end = "15:00"),
+        )
+        assertEquals(
+            listOf(listOf("Morning", "Afternoon"), listOf("All day"), listOf("All day")),
+            blockOverlaps(rows),
+        )
+    }
+
+    @Test
+    fun `touching ends, switched-off rows and rows with no times yet are not overlaps`() {
+        val rows = listOf(
+            row(),
+            row(id = "eve", label = "Evening", start = "15:00", end = "19:00"),
+            row(id = "parked", label = "Parked", start = "12:00", end = "13:00", active = false),
+            row(id = "blank", label = "", start = "", end = ""),
+        )
+        assertEquals(listOf(emptyList<String>(), emptyList(), emptyList(), emptyList()), blockOverlaps(rows))
+    }
+
+    @Test
+    fun `the overlap note names every clashing block`() {
+        assertEquals("Overlaps Midday.", overlapNote(listOf("Midday")))
+        assertEquals("Overlaps Morning and Midday.", overlapNote(listOf("Morning", "Midday")))
+        assertEquals("Overlaps A, B and C.", overlapNote(listOf("A", "B", "C")))
+    }
+
+    // ── ISSUE #1612: the copy says one thing about the reminder ─────────────
+
+    @Test
+    fun `booking rules and notifications state the same reminder timing`() {
+        assertEquals("Remind kinfolk 24 to 48 hours before a visit", VISIT_REMINDER_TOGGLE_TITLE)
+        assertTrue(VISIT_REMINDER_NOTE.contains("$VISIT_REMINDER_TIMING each visit"))
+        assertFalse(VISIT_REMINDER_TOGGLE_DESCRIPTION.contains("day before"))
+    }
+
+    @Test
+    fun `the arrival radius note names the switch it depends on`() {
+        assertTrue(ARRIVAL_RADIUS_NOTE.startsWith("Only applies while Verify arrival and departure by location is on."))
+        assertFalse(ARRIVAL_RADIUS_NOTE.contains("switch above"))
     }
 }

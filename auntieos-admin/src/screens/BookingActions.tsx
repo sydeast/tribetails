@@ -154,6 +154,12 @@ function actionsFor(state: BookingState): ActionDef[] {
     case 'pending':
       return [APPROVE, REJECT];
     case 'scheduled':
+    // #1578: the server completes or cancels a visit from any in-visit state
+    // (`ALLOWED_FROM` in bookingTransitions.ts), and Auntie Time and Android
+    // both offer the two, so a Departed visit is no longer stuck here.
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
       return [COMPLETE, CANCEL];
     case 'completed':
     case 'cancelled':

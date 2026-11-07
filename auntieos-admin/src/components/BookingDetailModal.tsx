@@ -76,7 +76,8 @@ export interface BookingDetailModalProps {
    * A caller-owned panel of status transitions, rendered directly under the
    * booking facts. Bookings.tsx passes `BookingStatusActions` (Approve /
    * Reject / Cancel / Mark Completed on the flat `kin_care_sessions` row);
-   * Schedule.tsx omits it, and then nothing renders in that slot.
+   * Schedule.tsx passes the same panel (#1576). A caller that omits it gets
+   * nothing in that slot.
    *
    * A SLOT rather than a `showActions` flag, and rather than importing the
    * write surface here, because this component deliberately knows nothing

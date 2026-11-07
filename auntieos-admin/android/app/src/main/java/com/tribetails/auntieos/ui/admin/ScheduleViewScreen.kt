@@ -968,6 +968,8 @@ private fun ScheduleViewScreenContent(
                 onDismiss    = { viewModel.selectBooking(null) },
                 onApprove    = { viewModel.approveBooking(booking) },
                 onCancel     = { viewModel.cancelBooking(booking) },
+                // #1576: the same Mark Completed web Bookings offers beside Cancel.
+                onMarkCompleted = { viewModel.markBookingCompleted(booking) },
                 onArchive    = { reason -> viewModel.archiveBooking(booking.id, reason) },
                 onUnarchive  = { viewModel.unarchiveBooking(booking.id) },
                 onSaveNotes  = { newNotes, newSpecial ->
@@ -2696,6 +2698,8 @@ fun BookingDetailsDialog(
     onDismiss: () -> Unit,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
+    /** #1576: shown for a scheduled (ACCEPTED) visit only; null hides it. */
+    onMarkCompleted: (() -> Unit)? = null,
     onArchive: (reason: String) -> Unit = {},
     onUnarchive: () -> Unit = {},
     onSaveNotes: (notes: String, specialInstructions: String) -> Unit = { _, _ -> },
@@ -2712,6 +2716,8 @@ fun BookingDetailsDialog(
     var notes              by remember(booking.id) { mutableStateOf(booking.notes) }
     var specialInstructions by remember(booking.id) { mutableStateOf(booking.specialInstructions) }
     var showArchiveDialog  by remember { mutableStateOf(false) }
+    // #1576: asked first, as on the web; a completed visit cannot be reopened.
+    var confirmComplete    by remember(booking.id) { mutableStateOf(false) }
     var archiveReason      by remember { mutableStateOf("") }
     // Reschedule prefill from the current start (wires Stage-1 rescheduleBooking, §A.9).
     var reDate by remember(booking.id) { mutableStateOf(booking.startDateTime.take(10)) }
@@ -2836,6 +2842,10 @@ fun BookingDetailsDialog(
                         AuntieTextBtn(onClick = onCancel, contentColor = AuntieTheme.colors.error) {
                             Text("Cancel Booking")
                         }
+                        if (onMarkCompleted != null && booking.status == BookingStatus.ACCEPTED) {
+                            Spacer(Modifier.width(4.dp))
+                            AuntieTextBtn(onClick = { confirmComplete = true }) { Text("Mark Completed") }
+                        }
                     }
                     Spacer(Modifier.width(4.dp))
                     AuntieTextBtn(onClick = onDismiss) { Text("Close") }
@@ -2848,6 +2858,20 @@ fun BookingDetailsDialog(
         }
     }
 
+    if (confirmComplete && onMarkCompleted != null) {
+        AuntieModal(
+            onDismissRequest = { confirmComplete = false },
+            title            = "Mark this visit completed?",
+            confirmButton    = {
+                AuntieTextBtn(onClick = { confirmComplete = false; onMarkCompleted() }) { Text("Yes, mark it completed") }
+            },
+            dismissButton    = {
+                AuntieTextBtn(onClick = { confirmComplete = false }) { Text("Keep it") }
+            },
+        ) {
+            Text("${booking.kinfolkName.ifBlank { "This household" }}'s visit will be marked Completed and leave the scheduled list.")
+        }
+    }
     if (showArchiveDialog) {
         AuntieModal(
             onDismissRequest = { showArchiveDialog = false; archiveReason = "" },

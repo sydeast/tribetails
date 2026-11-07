@@ -75,7 +75,7 @@ function drafts(pairs: Record<string, RescheduleDraft>): Map<string, RescheduleD
 describe('rescheduleApplies', () => {
   it('offers a new time only for a visit that is on the books', () => {
     expect(rescheduleApplies('scheduled')).toBe(true);
-    for (const state of ['draft', 'pending', 'completed', 'cancelled', 'unknown'] as const) {
+    for (const state of ['draft', 'pending', 'onMyWay', 'arrived', 'departed', 'completed', 'cancelled', 'unknown'] as const) {
       expect(rescheduleApplies(state)).toBe(false);
     }
   });

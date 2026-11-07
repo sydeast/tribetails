@@ -55,6 +55,7 @@ import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChipGroup
+import com.tribetails.auntieos.ui.components.AuntieDialog
 import com.tribetails.auntieos.ui.components.AuntieEmailPreviewCard
 import com.tribetails.auntieos.ui.components.MergePreview
 import com.tribetails.auntieos.ui.components.AuntieEntityRow
@@ -361,6 +362,18 @@ private fun ComposePanel(
                 return@Column
             }
 
+            // ── #1563: a stored draft opened from KinTales or Home ─────────────
+            if (state.draftLoading) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dims.space2)) {
+                    AuntieSpinner()
+                    Text("Opening the draft…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
+            state.draftLoadError?.let { msg ->
+                AuntieBanner(tone = AuntieBannerTone.Error, title = "Draft did not open", icon = Lucide.TriangleAlert) {
+                    Text(text = msg, style = AuntieTheme.typography.bodyMedium, color = c.error)
+                }
+            }
             // ── Message type (spec 19 item 1) ─────────────────────────────────
             // Chips, not a dropdown: four options that change what the whole rest
             // of the form means should be visible at once, and this matches the
@@ -469,11 +482,30 @@ private fun ComposePanel(
                 }
 
                 // ── Approve bar (backed send-path: approveDraft) ───────────────
+                // #1563: a KinTale sends to the household's portal, so it asks
+                // first, like every other send that reaches a real household.
+                val isKinTale = state.commType == "visit_report"
+                val sent = state.publishedReportId != null
+                var confirmSend by remember { mutableStateOf(false) }
+                var confirmDelete by remember { mutableStateOf(false) }
+                if (sent && state.publishedBefore) {
+                    Text(
+                        text = "This KinTale was already sent to ${state.selectedKinfolk?.displayName ?: state.generatedKinfolkName.ifBlank { "the household" }}.",
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textDim,
+                    )
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                     PrimaryButton(
-                        label = if (state.savedDraftId != null) "Approved" else "Approve draft",
-                        onClick = viewModel::approveDraft,
-                        enabled = state.draftId != null && state.savedDraftId == null && !state.isSaving && !state.isGenerating,
+                        label = when {
+                            sent -> "Sent"
+                            state.savedDraftId != null -> "Approved"
+                            isKinTale -> "Approve and send"
+                            else -> "Approve draft"
+                        },
+                        onClick = { if (isKinTale) confirmSend = true else viewModel.approveDraft() },
+                        enabled = state.draftId != null && state.savedDraftId == null && !sent &&
+                            !state.isSaving && !state.isGenerating && !state.isDeletingDraft,
                         loading = state.isSaving,
                         leading = {
                             Icon(
@@ -488,6 +520,62 @@ private fun ComposePanel(
                         text = "approving promotes the draft in Firestore, then logs it to the audit trail. Nothing runs unless the write lands",
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
+                    )
+                    if (state.draftId != null && !sent && state.savedDraftId == null) {
+                        GhostButton(
+                            label = if (state.isDeletingDraft) "Deleting…" else "Delete draft",
+                            onClick = { confirmDelete = true },
+                            enabled = !state.isSaving && !state.isGenerating && !state.isDeletingDraft,
+                        )
+                    }
+                }
+                AuntieDialog(
+                    visible = confirmSend,
+                    title = "Send this KinTale?",
+                    onDismiss = { if (!state.isSaving) confirmSend = false },
+                    footer = {
+                        GhostButton(label = "Cancel", onClick = { confirmSend = false }, enabled = !state.isSaving)
+                        PrimaryButton(
+                            label = "Send now",
+                            onClick = {
+                                confirmSend = false
+                                viewModel.approveDraft()
+                            },
+                            enabled = !state.isSaving,
+                        )
+                    },
+                ) {
+                    Text(
+                        text = "To: ${state.selectedKinfolk?.displayName ?: state.generatedKinfolkName.ifBlank { "nobody" }}",
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textPrimary,
+                    )
+                    Text(text = "Channel: KinTale, on their portal", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                    Text(
+                        text = "This reaches a real household right now. It is not undoable.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+                AuntieDialog(
+                    visible = confirmDelete,
+                    title = "Delete this draft?",
+                    onDismiss = { confirmDelete = false },
+                    footer = {
+                        GhostButton(label = "Cancel", onClick = { confirmDelete = false })
+                        PrimaryButton(
+                            label = "Delete",
+                            onClick = {
+                                confirmDelete = false
+                                viewModel.deleteDraft()
+                            },
+                        )
+                    },
+                ) {
+                    Text(
+                        text = "It has not been sent. Deleting it cannot be undone.",
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textPrimary,
                     )
                 }
             }

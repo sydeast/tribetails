@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   draftBody,
+  draftIdFromListRowId,
+  isPublishedDraft,
   draftCreatedAt,
   draftHousehold,
   draftKinfolkId,
@@ -129,6 +131,14 @@ describe('a draft as a list row', () => {
     expect(rows.map((r) => r._id)).toEqual(['same', 'generated_drafts/same']);
   });
 
+  it('#1563: leaves out a draft already sent as a report; the report is its row', () => {
+    const rows = kinTaleListRows([report({ _id: 'r7' })], [draft({ _id: 'd7', publishedReportId: 'r7' }), draft({ _id: 'd8' })], {
+      startIso: null,
+    });
+    expect(rows.map((r) => r._id)).toEqual(['r7', 'generated_drafts/d8']);
+    expect(isPublishedDraft(draft({ publishedReportId: 'r7' }))).toBe(true);
+    expect(isPublishedDraft(draft())).toBe(false);
+  });
   it('leaves sentVia ABSENT, so a draft never shows the misleading "imported" pip', () => {
     expect(rowFromDraft(draft()).sentVia).toBeUndefined();
   });
@@ -259,5 +269,22 @@ describe('kinTaleListRows, the whole join', () => {
       startIso: '2026-01-01T00:00:00.000Z',
     });
     expect(rows.map((r) => r.source)).toEqual(['kin_care_reports']);
+  });
+});
+
+/**
+ * #1563: the list hands a row's `_id` to `onSelect`, and a draft row's is
+ * namespaced. Handed to the report detail it read "No KinTale found with id
+ * generated_drafts/...". This is the check every router of a selection makes.
+ */
+describe('draftIdFromListRowId', () => {
+  it('strips the namespace off a draft row id', () => {
+    expect(draftIdFromListRowId(rowFromDraft(draft({ _id: 'abc' }))._id)).toBe('abc');
+  });
+  it('is null for a report id, which the detail screen opens as it is', () => {
+    expect(draftIdFromListRowId('tale-42')).toBeNull();
+  });
+  it('is null for a bare prefix with no id after it', () => {
+    expect(draftIdFromListRowId('generated_drafts/')).toBeNull();
   });
 });
