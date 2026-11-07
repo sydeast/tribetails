@@ -107,6 +107,16 @@ export interface NotificationEntry {
   targetType?: string | undefined; // '' | 'booking' | 'invoice' | 'kintale' | 'kinfolk'
   targetId?: string | undefined;
   /**
+   * #1647: how a `kincare.requested` request ended, stamped onto its rows by
+   * the server (`onBookingEnvelopeResolve`) once the request leaves
+   * `requested`: 'booked' | 'declined' | 'cancelled'. Absent while the request
+   * is still waiting, and on every other key. A plain string because a stored
+   * row is not bound by what the writer intends; read it through
+   * `requestOutcomeLabel` in lib/notificationActions.ts.
+   */
+  requestResolution?: string | undefined;
+  requestResolvedAt?: FsTimeLike;
+  /**
    * The emitter's free-form merge bag, written verbatim by dispatcher.ts as
    * `data: args.data`. Typed `unknown` on purpose: it is whatever the calling
    * function passed to `enqueueNotification`, with no schema, so declaring

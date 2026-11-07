@@ -150,6 +150,13 @@ function factValue(label: string): HTMLElement {
   return dd as HTMLElement;
 }
 
+describe('BookingDetailModal: the request note on a booked visit (#1579)', () => {
+  it('shows the household’s request note, which approval carries as kinfolkNotes', () => {
+    open({ kinfolkNotes: 'QA- booking request test, safe to cancel', notes: '' });
+    expect(factValue('From the household')).toHaveTextContent('QA- booking request test, safe to cancel');
+    expect(screen.queryByText('Office note')).not.toBeInTheDocument();
+  });
+});
 describe('BookingDetailModal fact rows', () => {
   it('is a real dialog, not a styled div', () => {
     open();
@@ -163,7 +170,9 @@ describe('BookingDetailModal fact rows', () => {
     expect(factValue('Duration')).toHaveTextContent('1 hr 30 min');
     expect(factValue('When')).toHaveTextContent('Thu, Jul 16 at 2:00 PM');
     expect(factValue('Status')).toHaveTextContent('SCHEDULED');
-    expect(factValue('Booking notes')).toHaveTextContent('Side gate is sticky.');
+    // #1580: the session's own notes text is the first row of the internal-notes list now, not a fact.
+    expect(screen.queryByText('Office note')).not.toBeInTheDocument();
+    expect(factValue('From the household')).toHaveTextContent('None on the request');
     await waitFor(() => expect(factValue('Address')).toHaveTextContent('412 Mockingbird Ln'));
     expect(getKinfolkProfile).toHaveBeenCalledWith('kf1');
   });

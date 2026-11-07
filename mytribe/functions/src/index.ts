@@ -685,6 +685,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // failure mode is an operator's day being wrong. Issue #397.
   onKinCareSessionCalendarSync: () => require('./triggers/onKinCareSessionCalendarSync'),
   onBookingEnvelopeCreate: () => require('./triggers/onBookingEnvelopeCreate'),
+  // #1647: stamps a request's `kincare.requested` rows once the request is
+  // booked or declined, so no client offers Approve/Deny on an answered request.
+  onBookingEnvelopeResolve: () => require('./triggers/onBookingEnvelopeResolve'),
   onFamilyKinWrite: () => require('./triggers/onFamilyKinWrite'),
   onFlatKinWrite: () => require('./triggers/onFlatKinWrite'),
   onFamilyProfileWrite: () => require('./triggers/onFamilyProfileWrite'),

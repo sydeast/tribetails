@@ -14,7 +14,6 @@ import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { serviceDurationsReader, storedVisitEndIso } from './approveBookingSeriesCore';
 import { validateResponse } from '../lib/callableResponse';
 import { householdNamesFor } from '../lib/householdNames';
-import { RESCHEDULE_ASK_PASSED_MESSAGE, RESCHEDULE_IN_PAST_CODE } from '../lib/pastVisit';
 
 /**
  * The office's half of the kinfolk reschedule ask (issue #399, item 2).
@@ -163,6 +162,9 @@ export async function resolveBookingRescheduleRequestHandler(
   // past proposal), but it may have passed while the ask waited. Accepting it
   // now would move the visit into the past, which stays blocked.
   if (newStart.toMillis() < Date.now()) {
+    // Loaded on the refusal path only, not at file scope (#1714): see
+    // coldStartImportGraph.test.ts.
+    const { RESCHEDULE_ASK_PASSED_MESSAGE, RESCHEDULE_IN_PAST_CODE } = await import('../lib/pastVisit.js');
     throw new HttpsError('failed-precondition', RESCHEDULE_ASK_PASSED_MESSAGE, {
       code: RESCHEDULE_IN_PAST_CODE,
     });

@@ -227,6 +227,7 @@ export interface CreateMultiDateBookingRequestArgs {
   idempotencyKey?: string;
   kinIds?: string[];
   notes?: string;
+  staffNotes?: string;
   pattern?: 'individual' | 'weekly';
   weeklyDays?: number[];
   visits: CreateMultiDateBookingRequestArgsVisit[];

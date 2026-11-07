@@ -98,6 +98,20 @@ export function NotificationQuickActions({
         </>
       ) : null}
 
+      {/* #1647: an answered request says how it ended instead of offering a
+          decision nobody can make any more. */}
+      {actions.outcome !== null ? (
+        <span
+          className={
+            actions.outcome === 'Booked'
+              ? 'notif-row__outcome notif-row__outcome--booked'
+              : 'notif-row__outcome'
+          }
+        >
+          {actions.outcome}
+        </span>
+      ) : null}
+
       {/* Navigation is never disabled by a pending write: leaving the screen
           never races it, and a stuck call should not trap the operator on this
           row. */}
