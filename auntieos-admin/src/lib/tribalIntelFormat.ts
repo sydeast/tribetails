@@ -421,3 +421,15 @@ export function reconcileStateInfo(state: ReconcileState): ReconcileStateInfo {
       return { label: 'Unknown', chipLabel: 'UNKNOWN', cssClass: 'unknown' };
   }
 }
+
+/**
+ * #1616: the page subtitle and the empty-state line describe what this screen
+ * holds: notes Auntie writes about a household, a kinfolk or a pet, which the
+ * nightly reconcile folds into the dossier and the 411. They used to talk about
+ * "training materials and guides", which this screen has never had. Android
+ * and the desktop console carry the same two strings.
+ */
+export const TRIBAL_INTEL_SUBTITLE =
+  'Notes about a household, a person or a pet, written for the dossier and the 411.';
+export const TRIBAL_INTEL_EMPTY_COPY =
+  'No Tribal Intel yet. Notes about a household, a person or a pet appear here once you add them.';

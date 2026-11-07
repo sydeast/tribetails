@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   NAV,
+  navKicker,
   NOTIFICATION_GATE_REDIRECT,
   parseHash,
   railEntries,
@@ -245,5 +246,16 @@ describe('screenTitle', () => {
     for (const e of railEntries()) {
       expect(screenTitle(`/${e.slug}`), `no title for ${e.slug}`).toBe(e.title);
     }
+  });
+});
+describe('navKicker (#1598)', () => {
+  it('files each screen under the rail section the sidebar shows', () => {
+    expect(navKicker('sessions')).toBe('Care Ops · Auntie Time');
+    expect(navKicker('communicate')).toBe('Care Ops · Communicate');
+    expect(navKicker('schedule')).toBe('Care Ops · Schedule');
+    expect(navKicker('bookings')).toBe('Care Ops · Bookings');
+    expect(navKicker('invoices')).toBe('Care Ops · Invoices');
+    expect(navKicker('marketingBlasts')).toBe('Care Ops · Marketing blasts');
+    expect(navKicker('directory')).toBe('The Den · Directory');
   });
 });

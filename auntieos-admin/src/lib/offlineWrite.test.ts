@@ -49,6 +49,17 @@ describe('phaseOfError', () => {
   });
 
   /**
+   * #1567: a callable that got no answer in time was away, so its outcome is
+   * unknown, never "failed". Matched by name (fns.ts imports this module);
+   * fns.test.ts pins the real class against this branch.
+   */
+  it('reads a callable timeout as outcome-unknown', () => {
+    const timeout = new Error('reviewAndSendDraftInvoice got no answer');
+    timeout.name = 'CallableTimeoutError';
+    expect(phaseOfError(timeout)).toBe('unknown');
+  });
+
+  /**
    * The latch. The classes carry the verdict, so a payment whose fate is
    * unknown does not quietly become "it failed, try again" the moment the
    * signal returns — which would be a re-send prompt for a callable that

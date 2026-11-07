@@ -147,7 +147,8 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
-.needs-triage__option--selected {
+.needs-triage__option--selected,
+.needs-triage__option.needs-triage__option--selected:hover {
   border-color: var(--color-primary);
   background: var(--color-surface);
 }
