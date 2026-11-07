@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DEFAULT_COVERAGE_RULES, todayIso } from '../lib/coveragePackage';
 
 const getBusinessSettings = vi.fn();
@@ -226,5 +227,70 @@ describe('CoveragePackageBuilder tiers (issue #694)', () => {
     });
     render(<CoveragePackageBuilder />);
     expect(await packageNames()).toEqual(['Rex week', 'Lean', 'Balance', 'Premium']);
+  });
+});
+
+describe('CoveragePackageBuilder Max gap (issue #1582)', () => {
+  const GAP_LABEL = 'Max gap between visits (hrs)';
+  const storedGap = (): number => JSON.parse(window.localStorage.getItem('tt-coverage-quote-v1')!).rules.maxGapHours;
+  it('refuses a minus sign with a message beside the field and reprices nothing', async () => {
+    const user = userEvent.setup();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const field = (await screen.findByLabelText(GAP_LABEL)) as HTMLInputElement;
+    expect(field.value).toBe('6');
+    await user.clear(field);
+    await user.type(field, '-5');
+    // What was typed stays typed: it is refused, not rewritten into 15.
+    expect(field.value).toBe('-5');
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/minus sign is not allowed/i);
+    expect(alert.textContent).toMatch(/Prices still use 6h/);
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    await waitFor(() => expect(storedGap()).toBe(6));
+  });
+  it('refuses an empty field and a gap under one hour', async () => {
+    const user = userEvent.setup();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const field = (await screen.findByLabelText(GAP_LABEL)) as HTMLInputElement;
+    await user.clear(field);
+    expect(screen.getByRole('alert').textContent).toMatch(/Enter the longest gap/);
+    await user.type(field, '0');
+    expect(screen.getByRole('alert').textContent).toMatch(/at least 1 hour/);
+    await user.type(field, '.5');
+    expect(screen.getByRole('alert').textContent).toMatch(/at least 1 hour/);
+    // Every keystroke was refused, so the rule never moved off 6.
+    await waitFor(() => expect(storedGap()).toBe(6));
+  });
+  it('takes a valid entry, clears the message and uses it', async () => {
+    const user = userEvent.setup();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const field = (await screen.findByLabelText(GAP_LABEL)) as HTMLInputElement;
+    await user.clear(field);
+    await user.type(field, '4.5');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(storedGap()).toBe(4.5));
+    // No upper bound: a long gap is the operator's call.
+    await user.clear(field);
+    await user.type(field, '30');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(storedGap()).toBe(30));
+  });
+  it('shows a stored unreadable max gap with its message and prices at the default', async () => {
+    storeQuote({
+      clientName: '', startDate: '', endDate: '', overnightDurationId: '',
+      rules: { wakeStart: '07:00', wakeEnd: '22:00', maxGapHours: -5, pinnedTimes: [] },
+      packages: [], tiersSeeded: true,
+    });
+    render(<CoveragePackageBuilder />);
+    const field = (await screen.findByLabelText(GAP_LABEL)) as HTMLInputElement;
+    // Shown as stored, never quietly swapped: the message says what prices use.
+    expect(field.value).toBe('-5');
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/minus sign is not allowed/i);
+    expect(alert.textContent).toMatch(/Prices still use 6h/);
+    await waitFor(() => expect(storedGap()).toBe(6));
   });
 });
