@@ -386,6 +386,27 @@ describe('KinfolkEdit: secrets', () => {
   });
 });
 
+/**
+ * #1602: saving with errors showed a banner at the top of the page, off
+ * screen, and nothing near the button. The problem is now said under the Save
+ * row and the first field that needs fixing takes focus.
+ */
+describe('KinfolkEdit: a refused save is said where the operator is looking (#1602)', () => {
+  it('puts the message beside Save and focuses the first field to fix', async () => {
+    mount();
+    const first = await screen.findByLabelText('First name');
+    await userEvent.clear(first);
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    const message = await screen.findByText(/Some details still need fixing/);
+    const actions = document.querySelector('.kfedit__actions') as HTMLElement;
+    // The message follows the Save row in the document, not the page heading.
+    expect(actions.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(message.closest('.kfedit__save-error')).not.toBeNull();
+    await waitFor(() => expect(first).toHaveFocus());
+  });
+});
+
 describe('KinfolkEdit: blur validation', () => {
   it('reveals a required-field error on blur, before any save attempt', async () => {
     mount();

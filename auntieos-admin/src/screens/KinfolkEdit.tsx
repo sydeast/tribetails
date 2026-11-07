@@ -399,7 +399,13 @@ export function KinfolkEdit({
     // problems shows all three at once rather than one per attempt.
     setAttempted(true);
     if (Object.keys(errors).length > 0) {
-      setError('Some details still need fixing. The fields below say which.');
+      // #1602: said beside Save (below), and the first field that needs fixing
+      // takes focus, which scrolls it into view. The banner at the top of the
+      // page was off screen when Save was pressed.
+      setError('Some details still need fixing. The highlighted fields say which.');
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('[data-screen="kinfolk-edit"] [aria-invalid="true"]')?.focus();
+      });
       return;
     }
 
@@ -495,19 +501,13 @@ export function KinfolkEdit({
   }
 
   return (
-    <div className="screen">
+    <div className="screen" data-screen="kinfolk-edit">
       <DenScreenHeading
         kicker="The Den · Directory"
         title={`Edit ${kinfolkName || kinfolkId}`}
         subtitle="Contact, access, and vet details for this household."
         trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={leaveHeld} />}
       />
-
-      {error !== null && (
-        <Banner tone="error" title="That didn't save" onDismiss={() => setError(null)}>
-          {error}
-        </Banner>
-      )}
 
       <AsyncRegion
         state={loaded}
@@ -731,6 +731,18 @@ export function KinfolkEdit({
                   />
                 </div>
               </div>
+              {/* #1602: what stopped the save, where the operator is looking:
+                  beside the button that was just pressed. */}
+              {error !== null && (
+                <Banner
+                  tone="error"
+                  title="That didn't save"
+                  onDismiss={() => setError(null)}
+                  className="kfedit__save-error"
+                >
+                  {error}
+                </Banner>
+              )}
             </>
           )
         }

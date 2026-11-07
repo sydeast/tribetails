@@ -49,6 +49,12 @@
   color: var(--color-text-primary);
 }
 
+/* #1570: a stored due date that names no day. */
+.invoice-detail__due-unreadable {
+  color: var(--color-error);
+  font-size: var(--type-body-sm-size);
+}
+
 .invoice-detail__actions {
   display: flex;
   flex-wrap: wrap;

@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.directory
 
+import com.tribetails.auntieos.util.profileJoinDateIsSound
+import com.tribetails.auntieos.util.profileJoinLine
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import android.content.Intent
@@ -43,7 +45,6 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.UPCOMING_HORIZON_DAYS
 import com.tribetails.auntieos.domain.feedCountMeta
-import com.tribetails.auntieos.domain.freeTextDateLabel
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.domain.kinfolkInvoiceFeedLabel
 import com.tribetails.auntieos.domain.tenureLabel
@@ -74,6 +75,8 @@ fun KinfolkProfileScreen(
     val state by viewModel.profileState.collectAsState()
     // #14: portal invite state + Toast feedback on each outcome.
     val inviteBusy by viewModel.inviteBusy.collectAsState()
+    // #1602: the ask before the invite goes out.
+    var confirmPortalInvite by remember { mutableStateOf(false) }
     val inviteMessage by viewModel.inviteMessage.collectAsState()
     // Phase 2: dossier household-notes clear feedback (success + fail-loud).
     val clearMessage by viewModel.clearMessage.collectAsState()
@@ -257,10 +260,11 @@ fun KinfolkProfileScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        // #1602: asks first and names the address, never one click.
                         PrimaryButton(
                             label   = if (inviteBusy) "Sending…" else "Invite to portal",
-                            onClick = { viewModel.inviteKinfolkToPortal(kinfolk.id, kinfolk.displayName) },
-                            enabled = !inviteBusy && kinfolk.email.isNotBlank(),
+                            onClick = { confirmPortalInvite = true },
+                            enabled = !inviteBusy && portalInviteBlocker(kinfolk.email, null) == null,
                             loading = inviteBusy,
                             modifier = Modifier.weight(1f),
                         )
@@ -272,6 +276,17 @@ fun KinfolkProfileScreen(
                             enabled = !isSynthesizing,
                             onClick = { viewModel.synthesizeProfile(kinfolk.id) },
                             modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (confirmPortalInvite) {
+                        PortalInviteConfirmDialog(
+                            householdName = kinfolk.displayName,
+                            email = kinfolk.email,
+                            onConfirm = {
+                                confirmPortalInvite = false
+                                viewModel.inviteKinfolkToPortal(kinfolk.id, kinfolk.displayName)
+                            },
+                            onDismiss = { confirmPortalInvite = false },
                         )
                     }
                 }
@@ -431,15 +446,14 @@ private fun ProfileHero(
 ) {
     val c = AuntieTheme.colors
     val initials = kinfolk.displayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").uppercase()
-    // WHEN THEY JOINED, spelled for the operator rather than left as
-    // stored. `freeTextDateLabel` formats what it can read and prints
-    // the rest exactly as stored, so a legacy free-text join date never
-    // renders as an error and never becomes a different date.
-    val joined = freeTextDateLabel(kinfolk.joinDate)
-    // The tenure chip is ABSENT when the stored join date is not one
-    // anybody can read, rather than a fabricated "0 months". Same rule,
-    // same branches, as the React admin's hero.
-    val tenure = tenureLabel(kinfolk.joinDate, java.time.LocalDate.now())
+    // WHEN THEY JOINED, spelled for the operator rather than left as stored.
+    // #1602: one shape for every household. A readable day from 2025
+    // through today reads "Joined <date>" and earns the tenure chip;
+    // anything else (old free text, 1900, 2099) says it needs fixing and
+    // gets no chip. Same branches as the React admin's hero.
+    val today = java.time.LocalDate.now()
+    val joinLine = profileJoinLine(kinfolk.joinDate, today)
+    val tenure = if (profileJoinDateIsSound(kinfolk.joinDate, today)) tenureLabel(kinfolk.joinDate, today) else null
     val active = kinfolk.status.trim().equals("active", ignoreCase = true)
     val context = LocalContext.current
     DenScreenHeading(
@@ -449,7 +463,7 @@ private fun ProfileHero(
             DenCrumb(kinfolk.displayName),
         ),
         title = kinfolk.displayName,
-        detail = if (joined.isNotBlank()) "Joined $joined" else null,
+        detail = joinLine,
         modifier = Modifier.fillMaxWidth(),
         leading = {
             AuntieAvatar(
@@ -553,32 +567,42 @@ internal fun FieldRows(vararg fields: Field) {
  * CONTACT FIRST under the hero (#679): the household's own facts, the service
  * address folded in (an address is a way to reach the household the same as a
  * phone number is). K2 (A8): "Preferred contact" is not read here, per the
- * operator; the model field is kept.
+ * operator; the model field is kept. #1602: nor is "Best time to reach" (Fix
+ * Backlog 4.8/4.9), same as the admin web.
  */
 @Composable
 private fun ContactPanel(kinfolk: Kinfolk) {
     DenPanel(title = "Contact") {
         val any = listOf(
             kinfolk.phoneNumber, kinfolk.secondaryPhone, kinfolk.email, kinfolk.secondaryEmail,
-            kinfolk.bestTimeToContact, kinfolk.serviceAddress,
+            kinfolk.serviceAddress,
         ).any { it.isNotBlank() }
         if (!any) {
             EmptyHint("No contact details on file.")
         } else {
-            val balance = kinfolk.outstandingBalance.takeIf { it.isNotBlank() && it != "0.00" }?.let { "$$it" }.orEmpty()
-            FieldRows(
-                Field("Phone", kinfolk.phoneNumber, mono = true),
-                Field("Email", kinfolk.email),
-                Field("Secondary phone", kinfolk.secondaryPhone, mono = true),
-                Field("Secondary email", kinfolk.secondaryEmail),
-                Field("Best time to reach", kinfolk.bestTimeToContact),
-                // #685 (parity with the React admin): the address opens Google
-                // Maps directions, the same destination URL the web Fact renders.
-                Field("Service address", kinfolk.serviceAddress, directions = true),
-                Field("Outstanding balance", balance, mono = true),
-            )
+            FieldRows(*contactFields(kinfolk).toTypedArray())
         }
     }
+}
+
+/**
+ * The Contact panel's rows, in order. Pure, so the rows the operator ordered
+ * off the profile are pinned by a test: Preferred contact (K2) and, since
+ * #1602, Best time to reach (Fix Backlog 4.8/4.9). Both fields stay on the
+ * record.
+ */
+internal fun contactFields(kinfolk: Kinfolk): List<Field> {
+    val balance = kinfolk.outstandingBalance.takeIf { it.isNotBlank() && it != "0.00" }?.let { "$$it" }.orEmpty()
+    return listOf(
+        Field("Phone", kinfolk.phoneNumber, mono = true),
+        Field("Email", kinfolk.email),
+        Field("Secondary phone", kinfolk.secondaryPhone, mono = true),
+        Field("Secondary email", kinfolk.secondaryEmail),
+        // #685 (parity with the React admin): the address opens Google
+        // Maps directions, the same destination URL the web Fact renders.
+        Field("Service address", kinfolk.serviceAddress, directions = true),
+        Field("Outstanding balance", balance, mono = true),
+    )
 }
 
 /**

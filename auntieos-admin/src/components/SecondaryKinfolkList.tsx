@@ -38,8 +38,15 @@ function errText(err: unknown, fallback: string): string {
 export function SecondaryKinfolkList({
   kinfolkId,
   reloadKey,
+  onCountChange,
 }: {
   kinfolkId: string;
+  /**
+   * #1602: how many people this list shows once it has read them, or null
+   * while unknown. The panel's "N secondary" count and its empty sentence
+   * include these people; before, a secondary added here left both reading 0.
+   */
+  onCountChange?: (count: number | null) => void;
   /**
    * Bump this from the parent to refetch (#1018): `removeMember` on an
    * ACTIVE secondary can move their person record back here, and this list
@@ -128,6 +135,10 @@ export function SecondaryKinfolkList({
   };
 
   const rows = people.status === 'ready' ? people.data.filter((p) => p.access !== 'ACTIVE') : [];
+  const shownCount = people.status === 'ready' ? rows.length : null;
+  useEffect(() => {
+    onCountChange?.(shownCount);
+  }, [onCountChange, shownCount]);
 
   return (
     <div className="skin" data-testid="secondary-kinfolk">

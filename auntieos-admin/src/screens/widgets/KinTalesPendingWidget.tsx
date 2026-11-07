@@ -8,8 +8,11 @@ import { useDraftsStream } from './homeData';
 import './widgets.css';
 
 interface KinTalesPendingWidgetProps {
-  /** Opens Communicate, where a draft is reviewed and sent. */
-  onReviewTales: () => void;
+  /**
+   * Opens Communicate, where a draft is reviewed and sent, on the draft with
+   * this `generated_drafts` id, or on a blank form when null (#1563).
+   */
+  onReviewTales: (draftId: string | null) => void;
 }
 
 /**
@@ -26,6 +29,11 @@ interface KinTalesPendingWidgetProps {
  * spec's item-6 fix: the household name appears ONCE, in the meta line. The old
  * Compose row printed it as both the subtitle and the meta, which is how the
  * live screenshot came to read "visit report / Sara / GENERATED · Sara".
+ *
+ * EVERY ROW OPENS ITS DRAFT, and the button opens the newest one (#1563). Both
+ * used to lead nowhere useful: the rows were static, and the button opened a
+ * blank Communicate form with no draft loaded, so a draft counted here could
+ * never be reviewed or sent.
  */
 export function KinTalesPendingWidget({ onReviewTales }: KinTalesPendingWidgetProps) {
   const drafts = useDraftsStream();
@@ -48,7 +56,7 @@ export function KinTalesPendingWidget({ onReviewTales }: KinTalesPendingWidgetPr
         empty={
           <>
             <EmptyHint>All caught up, no drafts waiting.</EmptyHint>
-            <PrimaryButton label="Review and send tales" onClick={onReviewTales} />
+            <PrimaryButton label="Review and send tales" onClick={() => onReviewTales(null)} />
           </>
         }
       >
@@ -58,17 +66,24 @@ export function KinTalesPendingWidget({ onReviewTales }: KinTalesPendingWidgetPr
               {rows.map((row, i) => (
                 // The mark's tone cycles over three, matching the phone's
                 // `index % 3`, so a stack of four rows reads as four rows.
-                <li key={row.id} className="tale-row" data-mark={i % 3}>
-                  <span className="tale-row__mark" aria-hidden="true" />
-                  <span className="tale-row__body">
-                    <span className="tale-row__title">{row.title}</span>
-                    <span className="tale-row__blurb">{row.blurb}</span>
-                    <span className="tale-row__meta">{row.meta}</span>
-                  </span>
+                <li key={row.id} className="tale-row__item">
+                  <button
+                    type="button"
+                    className="tale-row tale-row--open"
+                    data-mark={i % 3}
+                    onClick={() => onReviewTales(row.id)}
+                  >
+                    <span className="tale-row__mark" aria-hidden="true" />
+                    <span className="tale-row__body">
+                      <span className="tale-row__title">{row.title}</span>
+                      <span className="tale-row__blurb">{row.blurb}</span>
+                      <span className="tale-row__meta">{row.meta}</span>
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
-            <PrimaryButton label="Review and send tales" onClick={onReviewTales} />
+            <PrimaryButton label="Review and send tales" onClick={() => onReviewTales(rows[0]?.id ?? null)} />
           </div>
         )}
       </AsyncRegion>
