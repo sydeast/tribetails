@@ -424,6 +424,7 @@ class KinCareRepository(
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
+        recordAsCompleted: Boolean = false,
         /**
          * #1630: the `enhanced_bookings` id this visit is the approval of. The
          * server derives the booking record's ids from it, so approving the
@@ -431,7 +432,6 @@ class KinCareRepository(
          * and stores it on the session as `enhancedBookingId`.
          */
         enhancedBookingId: String? = null,
-        recordAsCompleted: Boolean = false,
     ): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
