@@ -339,6 +339,23 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
     expect(screen.getByRole('tab', { name: 'Business hours' })).not.toHaveClass('settings__nav-item--active');
   });
 
+  it('#1597: moving through the nav with the arrow keys leaves exactly one section highlighted', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Business profile' }));
+    await userEvent.keyboard('{ArrowDown}');
+
+    const tablist = screen.getByRole('tablist', { name: /settings sections/i });
+    const highlighted = within(tablist)
+      .getAllByRole('tab')
+      .filter((t) => t.classList.contains('settings__nav-item--active'));
+    expect(highlighted).toHaveLength(1);
+    expect(highlighted[0]).toHaveFocus();
+    expect(highlighted[0]).not.toHaveAccessibleName('Business profile');
+  });
+
   it('titles the toggle panel Scheduling and draws the mock rows, in the mock order, each with its note', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);

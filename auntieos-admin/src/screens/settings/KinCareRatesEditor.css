@@ -51,7 +51,8 @@
 .kinCareRates__sortButton:hover {
   color: var(--color-text-primary);
 }
-.kinCareRates__sortButton[aria-pressed='true'] {
+.kinCareRates__sortButton[aria-pressed='true'],
+.kinCareRates__sortButton[aria-pressed='true']:hover {
   color: var(--color-background);
   background: var(--color-text-primary);
   border-color: transparent;

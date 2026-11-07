@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, type LinkProps } from '@tanstack/react-router';
 import { type ResolvedScalar } from '../lib/async';
 import './DenScreenKit.css';
@@ -103,6 +103,36 @@ function CrumbStep({ crumb }: { crumb: Crumb }) {
 
 // ── subtitle tooltip ────────────────────────────────────────────────────────
 
+/** The gap a tooltip keeps from either edge of the window, in px. */
+const TIP_EDGE_GUTTER_PX = 8;
+/** The gap between the info button and the tip hanging under it, in px. */
+const TIP_OFFSET_PX = 6;
+
+/**
+ * Where an open tip's left edge goes so the whole tip stays inside the window
+ * (#1596). The tip hangs from its button's left edge, so a button near the
+ * right edge (Schedule's "Today" panel) pushed it past the window and added a
+ * horizontal scrollbar. A tip wider than the window keeps its left edge in view.
+ */
+export function tipLeftPx(anchorLeft: number, tipWidth: number, viewportWidth: number): number {
+  const maxLeft = viewportWidth - TIP_EDGE_GUTTER_PX - tipWidth;
+  return Math.round(Math.max(TIP_EDGE_GUTTER_PX, Math.min(anchorLeft, maxLeft)));
+}
+
+/** `showPopover` where the browser has it; jsdom and older engines do not. */
+function canPopover(el: HTMLElement): el is HTMLElement & { showPopover(): void; hidePopover(): void } {
+  return typeof (el as { showPopover?: unknown }).showPopover === 'function';
+}
+
+/**
+ * Whether this engine has the popover API at all. The `popover` attribute is
+ * only written where it does: an engine that knows the attribute but not the
+ * call would hide the tip for good.
+ */
+function popoverSupported(): boolean {
+  return typeof HTMLElement !== 'undefined' && typeof (HTMLElement.prototype as { showPopover?: unknown }).showPopover === 'function';
+}
+
 /**
  * The info affordance that replaced the subtitle line.
  *
@@ -124,6 +154,15 @@ function CrumbStep({ crumb }: { crumb: Crumb }) {
  * `bodyClassName` carries `.den-panel-subtitle` / `.den-heading-subtitle`
  * through to the tip body: screen stylesheets target those names, and what
  * changed here is where the text sits, not what it is.
+ *
+ * #1596: an open tip is shown as a manual popover, in the browser's top layer.
+ * Positioned in place it sat inside whatever stacking context its panel made
+ * (the entrance animations leave a transform), so the next panel's text and
+ * chips painted over it, and it could run off the right edge of the window.
+ * In the top layer it is above everything, placed from the button's rect and
+ * kept inside the window. It stays in the same DOM spot, so `aria-describedby`
+ * and the tests that find it inside its panel are unchanged. Without popover
+ * support it falls back to the old absolute placement.
  */
 function KitTooltip({
   id,
@@ -135,6 +174,50 @@ function KitTooltip({
   bodyClassName: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLSpanElement>(null);
+
+  // Before paint: lift the tip into the top layer, measure it, place it.
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const button = buttonRef.current;
+    if (body === null || button === null || !canPopover(body)) return undefined;
+    if (!open) {
+      setPlace(null);
+      return undefined;
+    }
+    try {
+      body.showPopover();
+    } catch {
+      return undefined;
+    }
+    const anchor = button.getBoundingClientRect();
+    const viewport = document.documentElement.clientWidth || window.innerWidth;
+    setPlace({
+      top: Math.round(anchor.bottom + TIP_OFFSET_PX),
+      left: tipLeftPx(anchor.left, body.getBoundingClientRect().width, viewport),
+    });
+    return () => {
+      try {
+        body.hidePopover();
+      } catch {
+        // Already closed.
+      }
+    };
+  }, [open]);
+
+  // A placed tip is fixed to the window, so a scroll would leave it behind.
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -150,6 +233,7 @@ function KitTooltip({
   return (
     <span className="kit-tip">
       <button
+        ref={buttonRef}
         type="button"
         className="kit-tip-button"
         aria-label="About this section"
@@ -163,7 +247,15 @@ function KitTooltip({
       >
         <span aria-hidden="true">i</span>
       </button>
-      <span id={id} role="tooltip" className={`kit-tip-body ${bodyClassName}`} hidden={!open}>
+      <span
+        ref={bodyRef}
+        id={id}
+        role="tooltip"
+        className={`kit-tip-body ${bodyClassName}`}
+        hidden={!open}
+        popover={popoverSupported() ? 'manual' : undefined}
+        style={place === null ? undefined : { top: `${place.top}px`, left: `${place.left}px` }}
+      >
         {text}
       </span>
     </span>

@@ -1724,16 +1724,28 @@ class FirestoreClient {
         bookingTransition(bookingId, visitId, "REJECT")
     suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         bookingTransition(bookingId, visitId, "CANCEL")
+
+    /**
+     * #1617: Mark Completed on one `kin_care_sessions` row, through
+     * transitionBookingStatus. The rules refuse a client write of COMPLETED or
+     * `completedAt`, so this callable is the only way a visit is completed, and
+     * its refusal (the operator's arrival rule, an illegal transition) comes
+     * back as the Err message.
+     */
+    suspend fun completeKinCare(sessionId: String, completedAt: String): WriteResult<Unit> =
+        bookingTransition(sessionId, null, "COMPLETE", completedAt = completedAt)
     private suspend fun bookingTransition(
         bookingId: String,
         visitId: String?,
         action: String,
         override: ScheduleOverride? = null,
+        completedAt: String? = null,
     ): WriteResult<Unit> {
         if (visitId.isNullOrBlank()) {
             val payload = buildJsonObject {
                 put("sessionId", JsonPrimitive(bookingId))
                 put("action", JsonPrimitive(action))
+                if (!completedAt.isNullOrBlank()) put("completedAt", JsonPrimitive(completedAt))
                 // #1145: APPROVE checks the visit's window. The flag goes only when the operator chose it.
                 when (override) {
                     ScheduleOverride.BUSY -> put("overrideBusyConflict", JsonPrimitive(true))
