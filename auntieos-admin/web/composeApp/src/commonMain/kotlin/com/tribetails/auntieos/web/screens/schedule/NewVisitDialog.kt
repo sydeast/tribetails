@@ -48,6 +48,8 @@ import com.tribetails.auntieos.web.ui.components.ReadStatusBanner
 import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 private val FALLBACK_SERVICE_TYPES = listOf("Drop-In", "Dog Walking", "Pet Sitting", "Overnight", "Daycare", "Other")
 
@@ -56,13 +58,21 @@ private val FALLBACK_SERVICE_TYPES = listOf("Drop-In", "Dog Walking", "Pet Sitti
  * callable (§A.9): unlike the Bookings create flow (which files a request needing
  * approval), this puts a SCHEDULED visit straight on the calendar. Fail-loud on any
  * write error; never fabricates a kinfolk/service.
+ *
+ * #1574, operator ruling 2026-11-05: a past-dated visit is allowed only as
+ * already Completed, never Scheduled. A window that has ended turns the button
+ * into "Record completed visit" and sends `recordAsCompleted`; one under way can
+ * be neither and says so. Same split as the web dialog and the server.
  */
+@OptIn(ExperimentalTime::class)
 @Composable
 fun NewVisitDialog(
     client: FirestoreClient,
     localZone: TimeZone,
     onDismiss: () -> Unit,
     onCreated: () -> Unit,
+    /** Now, in epoch ms. A parameter so a test can stand at a known instant. */
+    nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     val c = AuntieTheme.colors
     val scope = rememberReportingScope()
@@ -89,8 +99,13 @@ fun NewVisitDialog(
     var error by remember { mutableStateOf<String?>(null) }
 
     val durationMinutes = durationText.toIntOrNull() ?: 0
+    // #1574: read on every recomposition, so the button changes the moment the
+    // typed window crosses into the past. Null while the date or time is incomplete.
+    val draftTiming = buildRescheduleTimes(date, time, durationMinutes, localZone)
+        ?.let { timingOf(it, localZone, nowMs()) }
     val canCreate = selectedKinfolk != null && serviceType.isNotBlank() &&
-        date.length == 10 && time.length == 5 && durationMinutes > 0
+        date.length == 10 && time.length == 5 && durationMinutes > 0 &&
+        draftTiming != VisitWindowTiming.UNDERWAY
 
     Box(
         modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
@@ -161,6 +176,15 @@ fun NewVisitDialog(
                     }
                 }
 
+                when (draftTiming) {
+                    VisitWindowTiming.ENDED -> AuntieBanner(tone = AuntieBannerTone.Info, title = "Already happened") {
+                        Text(RECORD_COMPLETED_HINT, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    }
+                    VisitWindowTiming.UNDERWAY ->
+                        Text(VISIT_UNDERWAY_MESSAGE, style = AuntieTheme.typography.bodySmall, color = c.error)
+                    else -> Unit
+                }
+
                 error?.let { err ->
                     AuntieBanner(tone = AuntieBannerTone.Error, title = "Couldn't schedule the visit") {
                         Text(err, style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -168,13 +192,20 @@ fun NewVisitDialog(
                 }
 
                 PrimaryButton(
-                    label = if (creating) "Scheduling" else "Schedule visit",
+                    label = when {
+                        draftTiming == VisitWindowTiming.ENDED -> if (creating) "Recording" else "Record completed visit"
+                        creating -> "Scheduling"
+                        else -> "Schedule visit"
+                    },
                     enabled = canCreate && !creating,
                     onClick = {
                         val kf = selectedKinfolk
                         val times = buildRescheduleTimes(date, time, durationMinutes, localZone)
+                        val sendTiming = times?.let { timingOf(it, localZone, nowMs()) }
                         if (kf == null || times == null) {
                             error = "Pick a kinfolk and enter a valid date (YYYY-MM-DD), time (HH:MM), and duration."
+                        } else if (sendTiming == VisitWindowTiming.UNDERWAY) {
+                            error = VISIT_UNDERWAY_MESSAGE
                         } else {
                             scope.launch {
                                 creating = true
@@ -187,6 +218,7 @@ fun NewVisitDialog(
                                     endTime = times.second,
                                     serviceDurationMinutes = durationMinutes,
                                     notes = notes.trim(),
+                                    recordAsCompleted = sendTiming == VisitWindowTiming.ENDED,
                                 )
                                 creating = false
                                 when (r) {

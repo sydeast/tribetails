@@ -402,6 +402,18 @@ describe('onBookingsWrite: the per-visit confirm after #536', () => {
     });
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
+  // #1574: a backdated New visit is CREATED completed. The ruling: it must not
+  // fire any household notice.
+  it('sends nothing for a past visit recorded as completed by createKinCareSession', async () => {
+    await run(undefined, {
+      status: 'completed',
+      assignedAuntieUid: null,
+      scheduledByOffice: true,
+      seriesApprovedAt: '__TS__',
+      startTime: { toMillis: () => Date.parse(SEP4) },
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
   it('STILL fires for a visit confirmed on its own (batchUpdateBookings, Android)', async () => {
     await run({ status: 'requested' }, { status: 'confirmed', startTime: { toMillis: () => Date.parse(SEP4) } });
 

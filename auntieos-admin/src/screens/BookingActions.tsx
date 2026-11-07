@@ -13,6 +13,7 @@ import { useArrivalRule } from '../lib/useArrivalRule';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
 import { overridableScheduleRefusal, overrideHint } from '../api/scheduleWrite';
+import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
@@ -269,6 +270,12 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
     }
     if (new Date(endTime).getTime() <= new Date(startTime).getTime()) {
       setError('End time must be after the start time.');
+      return;
+    }
+    // #1574: a visit is never moved into the past; say so before sending.
+    const pastRefusal = rescheduleIntoPastRefusal(startTime, Date.now());
+    if (pastRefusal !== null) {
+      setError(pastRefusal);
       return;
     }
     setBusy(true);
