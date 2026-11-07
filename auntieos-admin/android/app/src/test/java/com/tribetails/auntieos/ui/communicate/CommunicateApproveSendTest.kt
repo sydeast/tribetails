@@ -129,14 +129,16 @@ class CommunicateApproveSendTest {
         assertNull(vm.uiState.value.savedDraftId)
     }
 
-    @Test fun `a KinTale approve sends nothing and needs no confirm`() = runTest(testDispatcher) {
+    @Test fun `a KinTale approve takes the #1563 portal path, never an email or text`() = runTest(testDispatcher) {
+        coEvery { repo.publishGeneratedDraft(any(), any(), any()) } returns Result.success("r1")
         val vm = draftFor("visit_report")
 
         vm.requestApprove()
         advanceUntilIdle()
 
         assertFalse(vm.uiState.value.approveConfirmOpen)
-        assertEquals("d1", vm.uiState.value.savedDraftId)
+        assertEquals("r1", vm.uiState.value.publishedReportId)
+        coVerify(exactly = 1) { repo.publishGeneratedDraft("d1", any(), any()) }
         coVerify(exactly = 0) { repo.sendExternalMessage(any(), any(), any(), any(), any(), any()) }
     }
 
