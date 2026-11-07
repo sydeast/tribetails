@@ -139,6 +139,37 @@ describe('call', () => {
  * sites. These assert the two halves of that seam: every failure is offered to
  * the classifier, and every success re-arms it.
  */
+describe('call, the operator copy of a refusal (#1592)', () => {
+  it('shows a plain sentence, not "updateInvoice validation failed [400]", and keeps code and details', async () => {
+    const details = { validationErrors: [{ path: 'lineItems.0.unitPrice', message: 'Expected number' }] };
+    httpsCallable.mockReturnValue(() =>
+      Promise.reject(
+        Object.assign(new FirebaseError('functions/invalid-argument', 'updateInvoice validation failed [400]'), {
+          details,
+        }),
+      ),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const err = (await call('updateInvoice', {}).catch((e: unknown) => e)) as FirebaseError & { details?: unknown };
+    expect(err).toBeInstanceOf(FirebaseError);
+    expect(err.code).toBe('functions/invalid-argument');
+    expect(err.details).toBe(details);
+    expect(err.message).toBe('Something in this form was not accepted. Check what you entered and try again.');
+    expect(err.message).not.toMatch(/updateInvoice|\[400\]/);
+    // The raw text is kept for triage.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('updateInvoice validation failed [400]'));
+    warn.mockRestore();
+  });
+
+  it('keeps a server sentence written for the operator, minus the status', async () => {
+    httpsCallable.mockReturnValue(() =>
+      Promise.reject(new FirebaseError('functions/invalid-argument', 'Pick a join date from 2025 on. [400]')),
+    );
+    const err = (await call('updateKinfolk', {}).catch((e: unknown) => e)) as FirebaseError;
+    expect(err.message).toBe('Pick a join date from 2025 on.');
+  });
+});
+
 describe('call, revoked-session reaction', () => {
   it('offers a failed callable to the classifier, then rethrows unchanged', async () => {
     rejectWith('functions/unauthenticated');
