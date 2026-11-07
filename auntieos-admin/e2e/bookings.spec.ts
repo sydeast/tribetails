@@ -45,7 +45,7 @@ test('the three status sections count the real rows they hold', async ({ page })
   // casing in them ('SCHEDULED', 'completed', 'CANCELLED'). The count lives in
   // the section's own heading chip now, not a stat card above the list
   // (#704).
-  const pending = page.getByRole('group', { name: /^Pending approval/ });
+  const pending = page.getByRole('group', { name: /^Visit requests/ });
   const scheduled = page.getByRole('group', { name: /^Scheduled/ });
   const history = page.getByRole('group', { name: /^History/ });
 
@@ -105,7 +105,7 @@ test('the empty-section copy names what the section is waiting for', async ({ pa
   // that proves the empty case: it keeps its heading and its own honest
   // count, and says what it is waiting for instead of an empty panel with no
   // explanation.
-  const pending = page.getByRole('group', { name: /^Pending approval/ });
+  const pending = page.getByRole('group', { name: /^Visit requests/ });
   await expect(pending.locator('.bookings__section-count')).toHaveText('0');
   await expect(pending.locator('li')).toHaveCount(0);
   await expect(pending.getByText('Nothing is waiting on a reply.')).toBeVisible();

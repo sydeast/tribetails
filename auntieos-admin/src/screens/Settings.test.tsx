@@ -322,6 +322,21 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
     expect(screen.getByRole('tab', { name: 'Business hours' })).not.toHaveClass('settings__nav-item--active');
   });
 
+  it('#1594: opening a section reports it to the route, and the route opens it again on reload or Back', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    const onSectionChange = vi.fn();
+    const { rerender } = render(<Settings onSectionChange={onSectionChange} />);
+    await screen.findByLabelText('Business name');
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Business hours' }));
+    expect(onSectionChange).toHaveBeenLastCalledWith('businessHours');
+
+    // The URL says Booking rules (a reload of a bookmark, or Back): the screen follows.
+    rerender(<Settings initialSection="bookingRules" onSectionChange={onSectionChange} />);
+    expect(screen.getByRole('tab', { name: 'Booking rules' })).toHaveClass('settings__nav-item--active');
+    expect(screen.getByRole('tab', { name: 'Business hours' })).not.toHaveClass('settings__nav-item--active');
+  });
+
   it('#1597: moving through the nav with the arrow keys leaves exactly one section highlighted', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
