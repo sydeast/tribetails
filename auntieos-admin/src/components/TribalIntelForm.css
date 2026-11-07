@@ -119,7 +119,8 @@
 .tribal-form__chip:hover {
   background: var(--color-surface-2);
 }
-.tribal-form__chip--active {
+.tribal-form__chip--active,
+.tribal-form__chip.tribal-form__chip--active:hover {
   background: var(--color-text-primary);
   color: var(--color-background);
   border-color: transparent;
