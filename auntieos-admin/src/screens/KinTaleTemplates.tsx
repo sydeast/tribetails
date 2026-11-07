@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { linkOptions } from '@tanstack/react-router';
 import { useCollection } from '../lib/firestore';
+import { useAdminAccess } from '../lib/access';
 import { type Async } from '../lib/async';
 import {
   KINTALE_TEMPLATES_QUERY,
@@ -143,6 +144,14 @@ type EditorTarget = { seed: KinTaleTemplate; isNew: boolean };
 
 export function KinTaleTemplates() {
   const stream = useCollection<Record<string, unknown>>(KINTALE_TEMPLATES_QUERY);
+  // #1707: `kintale_templates` writes are `isOwner()` in the rules, and so is
+  // the checklist bank's save callable. An Auntie (caretaker) or a test admin
+  // reads the templates but every write would be refused, so the screen is
+  // read-only for anyone but the owner: no New template, Remove, Restore,
+  // Delete for good, and no editor (whose only exit is Save template). Null
+  // access (still resolving, or the #812 degraded entry) offers nothing yet.
+  const access = useAdminAccess();
+  const canEdit = access?.status === 'admin';
   const templates: KinTaleTemplate[] =
     stream.status === 'ready' ? stream.data.map(decodeKinTaleTemplate) : [];
   // #1591: an archived template is out of the list and out of new KinTales;
@@ -295,6 +304,8 @@ export function KinTaleTemplates() {
           <>
             <TemplatePicker
               templates={liveTemplates}
+              canEdit={canEdit}
+              ownerOnlyNote={access !== null && !canEdit}
               selectedId={selectedId}
               onSelect={selectTemplate}
               onAddNew={startNewTemplate}
@@ -306,6 +317,7 @@ export function KinTaleTemplates() {
             {archivedTemplates.length > 0 && (
               <ArchivePanel
                 templates={archivedTemplates}
+                canEdit={canEdit}
                 onRestore={(tpl) => void handleRestore(tpl)}
                 onDelete={(tpl) => {
                   setBanner(null);
@@ -317,7 +329,7 @@ export function KinTaleTemplates() {
         )}
       </AsyncRegion>
 
-      {removing && (
+      {canEdit && removing && (
         <RemoveTemplateDialog
           template={removing}
           onClose={() => setRemoving(null)}
@@ -328,7 +340,7 @@ export function KinTaleTemplates() {
           }}
         />
       )}
-      {deleting && (
+      {canEdit && deleting && (
         <DeleteTemplateDialog
           template={deleting}
           onClose={() => setDeleting(null)}
@@ -339,7 +351,7 @@ export function KinTaleTemplates() {
         />
       )}
 
-      {editing && (
+      {canEdit && editing && (
         /*
           Keyed by what it is editing, so picking a different template mounts a
           FRESH wizard seeded from that row instead of leaving the previous
@@ -365,6 +377,10 @@ export function KinTaleTemplates() {
 
 interface TemplatePickerProps {
   templates: readonly KinTaleTemplate[];
+  /** #1707: false for anyone the rules refuse a template write (not the owner). */
+  canEdit: boolean;
+  /** #1707: say why there are no controls, once access is known. */
+  ownerOnlyNote: boolean;
   selectedId: string | null;
   onSelect: (tpl: KinTaleTemplate) => void;
   onAddNew: () => void;
@@ -376,18 +392,43 @@ function templateLabel(tpl: { name: string }): string {
   return tpl.name.trim() || 'Untitled template';
 }
 
-function TemplatePicker({ templates, selectedId, onSelect, onAddNew, onRemove }: TemplatePickerProps) {
+function TemplatePicker({
+  templates,
+  canEdit,
+  ownerOnlyNote,
+  selectedId,
+  onSelect,
+  onAddNew,
+  onRemove,
+}: TemplatePickerProps) {
   return (
     <DenPanel
       title="Templates"
-      subtitle="Pick one to edit, or start a new one."
-      trailing={<GhostButton label="New template" onClick={onAddNew} />}
+      subtitle={canEdit ? 'Pick one to edit, or start a new one.' : undefined}
+      trailing={canEdit ? <GhostButton label="New template" onClick={onAddNew} /> : undefined}
     >
+      {ownerOnlyNote && <EmptyHint>Only the owner can change KinTale templates.</EmptyHint>}
       {templates.length === 0 ? (
         <EmptyHint>
-          No templates saved yet. &ldquo;New template&rdquo; starts from the built-in default, ready to save
-          as your first.
+          {canEdit ? (
+            <>
+              No templates saved yet. &ldquo;New template&rdquo; starts from the built-in default, ready to
+              save as your first.
+            </>
+          ) : (
+            'No templates saved yet.'
+          )}
         </EmptyHint>
+      ) : !canEdit ? (
+        <ul className="ktt__picker">
+          {templates.map((tpl) => (
+            <li key={tpl._id} className="ktt__picker-item ktt__archive-row">
+              <span className="ktt__picker-name">{templateLabel(tpl)}</span>
+              {tpl.isDefault && <StatusPill label="Default" tone="orange" size="compact" />}
+              {!tpl.isActive && <StatusPill label="Inactive" tone="muted" size="compact" />}
+            </li>
+          ))}
+        </ul>
       ) : (
         <ul className="ktt__picker">
           {templates.map((tpl) => {
@@ -425,6 +466,8 @@ function TemplatePicker({ templates, selectedId, onSelect, onAddNew, onRemove }:
 
 interface ArchivePanelProps {
   templates: readonly KinTaleTemplate[];
+  /** #1707: the owner restores and deletes; anyone else sees the names only. */
+  canEdit: boolean;
   onRestore: (tpl: KinTaleTemplate) => void;
   onDelete: (tpl: KinTaleTemplate) => void;
 }
@@ -434,19 +477,27 @@ interface ArchivePanelProps {
  * which is the only place a template is ever deleted (operator ruling,
  * 2026-11-05 docket).
  */
-function ArchivePanel({ templates, onRestore, onDelete }: ArchivePanelProps) {
+function ArchivePanel({ templates, canEdit, onRestore, onDelete }: ArchivePanelProps) {
   return (
     <DenPanel title="Archive" meta={String(templates.length)}>
       <ul className="ktt__picker">
         {templates.map((tpl) => (
           <li key={tpl._id} className="ktt__picker-item ktt__archive-row">
             <span className="ktt__picker-name">{templateLabel(tpl)}</span>
-            <GhostButton label="Restore" ariaLabel={`Restore ${templateLabel(tpl)}`} onClick={() => onRestore(tpl)} />
-            <GhostButton
-              label="Delete for good"
-              ariaLabel={`Delete ${templateLabel(tpl)} for good`}
-              onClick={() => onDelete(tpl)}
-            />
+            {canEdit && (
+              <>
+                <GhostButton
+                  label="Restore"
+                  ariaLabel={`Restore ${templateLabel(tpl)}`}
+                  onClick={() => onRestore(tpl)}
+                />
+                <GhostButton
+                  label="Delete for good"
+                  ariaLabel={`Delete ${templateLabel(tpl)} for good`}
+                  onClick={() => onDelete(tpl)}
+                />
+              </>
+            )}
           </li>
         ))}
       </ul>
