@@ -39,6 +39,7 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.emergencyContactsOf
 import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.domain.readableVisitNotes
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
 import com.tribetails.auntieos.data.contracts.ListVisitInternalNotesResult
@@ -1160,7 +1161,8 @@ private fun BookingNotesSection(
                             FactRow(
                                 Lucide.NotebookPen,
                                 internalNoteLabel(note, zone),
-                                note.body,
+                                // #1592: the visit record's own text carries ISO stamps.
+                                if (note.source == "visitRecord") readableVisitNotes(note.body, zone) else note.body,
                                 multiline = true,
                             )
                         }
