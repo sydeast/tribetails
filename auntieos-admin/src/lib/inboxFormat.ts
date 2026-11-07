@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
-import { dayKey, formatWhen, machineWhen, type FsTime } from './time';
+import { dayKey, formatClock, machineWhen, type FsTime } from './time';
 import { sessionDayLabel, localDateIso } from './sessionFormat';
 import { DEFAULTS, KEY_INBOX_WAITING_SECTIONS } from './featureFlagsCatalog';
 
@@ -63,15 +63,12 @@ export function threadDayKey(ms: number): string {
 }
 
 /**
- * LOCAL `HH:mm` clock time for a thread's `lastMessageAtMs`. Reuses
- * `formatWhen`'s `MM-DD HH:mm` in full and takes only the time half
- * (`.slice(6)`), matching sessionFormat.ts's `sessionClock`: the row's day
- * group header already carries the day, so repeating it per-row would be
- * noise, not a second AO-18 check.
+ * LOCAL `HH:mm` clock time for a thread's `lastMessageAtMs`, through
+ * `formatClock` (#1599), matching sessionFormat.ts's `sessionClock`: the
+ * row's day group header already carries the day.
  */
 export function threadClock(ms: number): string {
-  const full = formatWhen(threadTimeOf(ms));
-  return full === '(no time)' ? full : full.slice(6);
+  return formatClock(threadTimeOf(ms));
 }
 
 /** Machine-readable local datetime for a row's `<time dateTime={…}>` attribute (the Notifications.tsx `machineWhen` convention). */

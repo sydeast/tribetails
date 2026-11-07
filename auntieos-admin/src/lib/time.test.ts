@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { Timestamp } from 'firebase/firestore';
-import { tsToDate, dayKey, formatWhen, formatWhenFull, machineWhen } from './time';
+import { tsToDate, dayKey, formatClock, formatWhen, formatWhenFull, machineWhen } from './time';
+
+/** A fixed 'now' in 2026, so the same-year cases do not turn over on Jan 1. */
+const NOW_2026 = new Date(2026, 10, 6, 12, 0);
 
 /** A fake Firestore Timestamp wrapping a real (local) Date. */
 function ts(d: Date): Timestamp {
@@ -23,8 +26,16 @@ describe('lib/time (local, AO-18)', () => {
   });
 
   it('formatWhen renders local MM-DD HH:mm', () => {
-    expect(formatWhen(ts(new Date(2026, 6, 16, 9, 3)))).toBe('07-16 09:03');
-    expect(formatWhen(ts(new Date(2026, 11, 1, 23, 59)))).toBe('12-01 23:59');
+    expect(formatWhen(ts(new Date(2026, 6, 16, 9, 3)), NOW_2026)).toBe('07-16 09:03');
+    expect(formatWhen(ts(new Date(2026, 11, 1, 23, 59)), NOW_2026)).toBe('12-01 23:59');
+  });
+  it('#1599: formatWhen leads with the year when it is not the current year', () => {
+    expect(formatWhen(ts(new Date(2025, 8, 3, 14, 2)), NOW_2026)).toBe('2025-09-03 14:02');
+    expect(formatWhen(ts(new Date(2027, 0, 2, 8, 0)), NOW_2026)).toBe('2027-01-02 08:00');
+  });
+  it('#1599: formatClock is the time alone, whatever the year', () => {
+    expect(formatClock(ts(new Date(2025, 8, 3, 14, 2)))).toBe('14:02');
+    expect(formatClock(null)).toBe('(no time)');
   });
 
   it('machineWhen is a local ISO-ish datetime for <time dateTime>', () => {
@@ -47,9 +58,9 @@ describe('lib/time (local, AO-18)', () => {
   // error boundary blanked the whole Notifications page.
   it('reads an ISO string, epoch millis and a Date as the same instant as a Timestamp', () => {
     const d = new Date(2026, 6, 16, 9, 3);
-    expect(formatWhen(d.toISOString())).toBe('07-16 09:03');
-    expect(formatWhen(d.getTime())).toBe('07-16 09:03');
-    expect(formatWhen(d)).toBe('07-16 09:03');
+    expect(formatWhen(d.toISOString(), NOW_2026)).toBe('07-16 09:03');
+    expect(formatWhen(d.getTime(), NOW_2026)).toBe('07-16 09:03');
+    expect(formatWhen(d, NOW_2026)).toBe('07-16 09:03');
     expect(dayKey(d.toISOString())).toBe('2026-07-16');
     expect(machineWhen(d.getTime())).toBe('2026-07-16T09:03');
     expect(formatWhenFull(d)).toBe('2026-07-16 09:03');
