@@ -93,10 +93,18 @@ class AuntieTimeWindowTest {
         assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-07-06T09:00:00Z"), today))
     }
 
+    // #1704: one definition of overdue with web, whose Auntie Time also reads
+    // SCHEDULED visits older than its thirty-day window.
     @Test
-    fun `overdue visibility reaches back thirty days, and stops just past it`() {
+    fun `a scheduled visit stays visible however long ago its slot passed`() {
         assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-06-16T09:00:00Z"), today))
-        assertFalse(isVisibleOnAuntieTime(session(startTime = "2026-06-15T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-06-15T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-03-01T09:00:00Z"), today))
+    }
+    @Test
+    fun `an unrecognized status keeps the thirty-day reach, as web reads it only inside its window`() {
+        assertTrue(isVisibleOnAuntieTime(session(status = "ON_HOLD", startTime = "2026-06-16T09:00:00Z"), today))
+        assertFalse(isVisibleOnAuntieTime(session(status = "ON_HOLD", startTime = "2026-06-15T09:00:00Z"), today))
     }
 
     @Test
@@ -124,14 +132,15 @@ class AuntieTimeWindowTest {
             session(id = "b", startTime = "2026-07-01T09:00:00Z"),
             // yesterday is Upcoming, not Overdue
             session(id = "c", startTime = "2026-07-15T09:00:00Z"),
-            // past the thirty-day reach: not on the board, so not counted
+            // #1704: older than the thirty-day window is still Overdue, and counted
             session(id = "d", startTime = "2026-06-01T09:00:00Z"),
+            session(id = "h", startTime = "2026-03-01T09:00:00Z"),
             // booking queue and wrapped rows are never Overdue
             session(id = "e", startTime = "2026-07-01T09:00:00Z", status = "PENDING"),
             session(id = "f", startTime = "2026-07-01T09:00:00Z", status = "COMPLETED", completedAt = "2026-07-01T14:00:00Z"),
             session(id = "g", startTime = "2026-07-20T09:00:00Z"),
         )
-        assertEquals(2, overdueOnAuntieTime(sessions, today))
+        assertEquals(4, overdueOnAuntieTime(sessions, today))
         assertEquals(0, overdueOnAuntieTime(emptyList(), today))
     }
     @Test
