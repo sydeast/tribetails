@@ -408,6 +408,13 @@ export async function transitionBookingStatusHandler(
   // readable start has no window to check and is approved as before.
   if (decision.to === 'SCHEDULED') {
     try {
+      // #1702: a request that waited until its time went by would go on the
+      // calendar SCHEDULED in the past. Checked first, as `rescheduleBooking`
+      // does, so a time that can never be written is not reported as a clash.
+      // `lib/pastVisit` is loaded here, not at file scope (#1714): see
+      // coldStartImportGraph.test.ts.
+      const { assertApprovalStartAhead, businessTimeZoneReader } = await import('../lib/pastVisit.js');
+      await assertApprovalStartAhead(toIso(prev?.startTime), Date.now(), businessTimeZoneReader());
       await guardApprovalWindow({ uid, sessionId: args.sessionId, session: prev ?? {}, args });
     } catch (err) {
       const details = (err as { details?: { code?: unknown } }).details;

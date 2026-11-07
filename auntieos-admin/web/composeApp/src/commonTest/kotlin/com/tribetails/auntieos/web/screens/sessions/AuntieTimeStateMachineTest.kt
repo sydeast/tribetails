@@ -270,12 +270,16 @@ class AuntieTimeStateMachineTest {
         assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-08-05T09:00:00Z"), today))
     }
 
+    // #1704: one definition of overdue with web, whose Auntie Time also reads the
+    // SCHEDULED visits older than its 30-day window (`overdueBeforeWindowQuery`).
     @Test
-    fun `SCHEDULED reaches back 30 days as Overdue and stops at 31`() {
+    fun `SCHEDULED stays on the board as Overdue however long ago its slot passed`() {
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-07-20T09:00:00Z"), today))
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"), today))
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-06-21T09:00:00Z"), today))
-        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-06-20T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-06-20T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-03-01T09:00:00Z"), today))
+        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = ""), today))
     }
     @Test
     fun `isOverdueScheduled is false exactly one day late and true two days late`() {
@@ -294,8 +298,10 @@ class AuntieTimeStateMachineTest {
             session(id = "e", status = "ARRIVED",   startTime = "2026-07-01T09:00:00Z"),
             session(id = "f", status = "PENDING",   startTime = "2026-07-01T09:00:00Z"),
             session(id = "g", status = "SCHEDULED", startTime = "2026-07-22T09:00:00Z"),
+            // #1704: older than the 30-day window is still Overdue, and counted
+            session(id = "h", status = "SCHEDULED", startTime = "2026-02-01T09:00:00Z"),
         )
-        assertEquals(2, overdueOnAuntieTime(rows, today))
+        assertEquals(4, overdueOnAuntieTime(rows, today))
         assertEquals(0, overdueOnAuntieTime(emptyList(), today))
     }
 
@@ -349,10 +355,11 @@ class AuntieTimeStateMachineTest {
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-30T09:00:00Z"), nye))
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2027-01-14T09:00:00Z"), nye))
         assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2027-01-15T09:00:00Z"), nye))
-        // Dec 29 is Overdue now (#1590), still on the board; 31 days back is not.
+        // Dec 29 is Overdue now (#1590), still on the board, and since #1704 so is
+        // anything older: there is no 30-day floor any more.
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-29T09:00:00Z"), nye))
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-01T09:00:00Z"), nye))
-        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-11-30T09:00:00Z"), nye))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-11-30T09:00:00Z"), nye))
     }
 
     @Test

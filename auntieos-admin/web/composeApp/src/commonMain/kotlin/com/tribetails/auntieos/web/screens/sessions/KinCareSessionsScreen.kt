@@ -967,7 +967,7 @@ internal fun gpsEffectFor(patch: Map<String, String>): GpsEffect =
  * Day-of window filter for the Auntie Time list, given [today] as "YYYY-MM-DD".
  *
  *   in flight (ON_MY_WAY / ARRIVED / DEPARTED) -> always visible, any date
- *   SCHEDULED                                  -> today - [OVERDUE_WINDOW_DAYS] .. today + 14 days
+ *   SCHEDULED                                  -> any past date .. today + 14 days
  *   COMPLETED / CANCELLED                      -> yesterday onward
  *   anything else (DRAFT / PENDING / REJECTED)  -> hidden BY DESIGN (AO-60)
  *
@@ -977,6 +977,10 @@ internal fun gpsEffectFor(patch: Map<String, String>): GpsEffect =
  * The SCHEDULED lower bound used to be yesterday, so a visit that missed its
  * slot by more than a day vanished from the board (#702 fixed web and Android;
  * #1590 brings this console level, because Home now links to the Overdue group).
+ * #1590 still capped it at 30 days back; #1704 drops the cap, because
+ * web's Auntie Time also reads every SCHEDULED visit older than its window
+ * (`overdueBeforeWindowQuery`, #1607's one definition of overdue), so a July visit
+ * nobody closed out is Overdue here and in Home's Today's Pack count too.
  */
 internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Boolean {
     val status    = session.status.uppercase()
@@ -985,13 +989,11 @@ internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Bool
     val cutoff    = dateAddDays(today, 14)
     return when {
         status in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> true
-        status == "SCHEDULED"                               -> date in dateSubDays(today, OVERDUE_WINDOW_DAYS)..cutoff
+        status == "SCHEDULED"                               -> date.length == 10 && date <= cutoff
         status in setOf("COMPLETED", "CANCELLED")           -> date >= yesterday
         else                                                -> false
     }
 }
-/** How far back a SCHEDULED visit stays on the board once its slot has passed. */
-internal const val OVERDUE_WINDOW_DAYS = 30
 /**
  * A SCHEDULED visit whose slot passed more than a day ago (#702): yesterday is
  * still "today's run sheet", the day before is a problem to close out.
