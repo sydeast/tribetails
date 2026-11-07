@@ -1144,8 +1144,11 @@ class FirestoreClient {
         entityId: String,
         entityType: String,
         max: Int = 10,
+        // #1588: the household of a "kin" upload, stamped as `kinfolkId` so Tag kin
+        // scopes to it. Blank for every other target.
+        kinfolkId: String = "",
     ): WriteResult<List<MediaFile>> =
-        platformPickAndUploadMedia(entityId, entityType, max)
+        platformPickAndUploadMedia(entityId, entityType, max, kinfolkId)
 
     /**
      * ISSUE #577: server-bound delete, through the `deleteMediaFile` callable,
@@ -1460,6 +1463,13 @@ class FirestoreClient {
      * stamps) are refused with a message naming markInvoicePaid /
      * recordPayment / updateInvoice, and every refusal surfaces verbatim.
      */
+    /**
+     * #1567: one invoice's send marks, read from the server, for [checkedSend].
+     * Null when the read fails or the invoice is gone; the caller says it cannot
+     * tell rather than guessing either way.
+     */
+    suspend fun invoiceSendMarks(invoiceId: String): SendMarks? =
+        runCatchingCancellable { platformInvoiceDocPlain(invoiceId)?.let { sendMarksOf(it) } }.getOrNull()
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<SendAck> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)
         val payload = buildJsonObject {
@@ -2594,6 +2604,8 @@ internal expect fun platformCallsStream():      Flow<FirestoreResult<List<CallLo
 internal expect fun platformSmsStream():        Flow<FirestoreResult<List<SmsMessage>>>
 internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailMessage>>>
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
+/** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
+internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>
@@ -2665,7 +2677,7 @@ internal expect suspend fun platformUploadMedia(entityId: String, entityType: St
 
 // Run-4 #4b: multi-file variant for general/business/gallery media. wasm picks up to
 // [max] files and writes one media_files doc each; jvm is the mobile-only stub.
-internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>>
+internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int, kinfolkId: String): WriteResult<List<MediaFile>>
 internal expect fun platformAllMediaStream(): Flow<FirestoreResult<List<MediaFile>>>
 internal expect fun platformMediaForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<MediaFile>>>
 internal expect suspend fun platformUpdateMediaTags(mediaId: String, taggedKinIds: List<String>): WriteResult<Unit>

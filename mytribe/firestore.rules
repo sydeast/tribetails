@@ -175,6 +175,26 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(caretakerMoneyKeys());
     }
 
+    // #1584. Operator ruling, 2026-11-05 docket: a household join date runs
+    // "from the year the business started, 2025, up to today". Blank is "not
+    // recorded". A write that leaves `joinDate` as it was passes whatever it
+    // holds, so an old record stays editable; only a changed value is checked.
+    // Today is the server's clock plus 14 hours, the widest time zone offset, so
+    // an operator's own "today" is never refused for being ahead of UTC. The
+    // admin web, Android and desktop clients hold today to the operator's local
+    // date (`lib/joinDate.ts`, `util/JoinDate.kt`, `directory/JoinDate.kt`).
+    function joinDateInRange(v) {
+      return v is string && (v == ''
+        || (v.matches('^20[0-9]{2}-[0-9]{2}-[0-9]{2}$')
+            && v >= '2025-01-01'
+            && timestamp.date(int(v.split('-')[0]), int(v.split('-')[1]), int(v.split('-')[2]))
+               <= request.time + duration.value(14, 'h')));
+    }
+    function joinDateOkOnUpdate() {
+      return request.resource.data.get('joinDate', '') == resource.data.get('joinDate', '')
+          || joinDateInRange(request.resource.data.get('joinDate', ''));
+    }
+
     function diffOnly(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -571,13 +591,15 @@ service cloud.firestore {
       // household information the ruling explicitly grants. The exposure is
       // named in the spec, and the fix for it is a projecting read path, not a
       // rule that cannot be written.
-      allow update: if ((isOwner() || (isTestAdmin() && kinfolkId == testScope()))
+      // #1584: every branch holds a changed `joinDate` to 2025 through today.
+      allow update: if joinDateOkOnUpdate() && (
+                       ((isOwner() || (isTestAdmin() && kinfolkId == testScope()))
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(emergencyContactKeys()))
                     || (isCaretaker()
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(emergencyContactKeys())
                         && caretakerMoneyUnchanged())
                     || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId
-                        && onlyAllowedKinfolkFields());
+                        && onlyAllowedKinfolkFields()));
       allow delete: if isOwner()
                     || (isTestAdmin() && kinfolkId == testScope());
     }

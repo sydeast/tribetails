@@ -83,6 +83,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieSaveBar
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.DynamicFormFields
 import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.AuntieDatePickerDialog
 import com.tribetails.auntieos.web.ui.components.GlassSurface
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
@@ -234,6 +235,9 @@ fun KinfolkEditScreen(
     }
     var internalNotes  by remember(kinfolkId) { mutableStateOf("") }
     var referral       by remember(kinfolkId) { mutableStateOf("") }
+    // #1584: the join date is edited here too (persisted fields must be editable).
+    var joinDate       by remember(kinfolkId) { mutableStateOf("") }
+    var showJoinDatePicker by remember(kinfolkId) { mutableStateOf(false) }
     var vetName        by remember(kinfolkId) { mutableStateOf("") }
     var vetPhone       by remember(kinfolkId) { mutableStateOf("") }
     var vetAddress     by remember(kinfolkId) { mutableStateOf("") }
@@ -287,6 +291,7 @@ fun KinfolkEditScreen(
             ecBaseline     = ecDrafts
             internalNotes  = existing.internalNotes
             referral       = existing.referralSource
+            joinDate       = existing.joinDate
             vetName        = existing.vetClinicName
             vetPhone       = existing.vetClinicPhone
             vetAddress     = existing.vetClinicAddress
@@ -363,6 +368,7 @@ fun KinfolkEditScreen(
         // every kinfolk write (kinfolkWriteJson); contacts go through the callable.
         internalNotes            = internalNotes,
         referralSource           = keepStoredUnlessEdited(referral, base.referralSource),
+        joinDate                 = keepStoredUnlessEdited(joinDate, base.joinDate),
         vetClinicName            = keepStoredUnlessEdited(vetName, base.vetClinicName),
         vetClinicPhone           = keepStoredUnlessEdited(vetPhone, base.vetClinicPhone),
         vetClinicAddress         = keepStoredUnlessEdited(vetAddress, base.vetClinicAddress),
@@ -431,9 +437,12 @@ fun KinfolkEditScreen(
     // server's own messages.
     val serviceAddrError = serviceAddr.isBlank()
     val vetPhoneError  = vetPhone.isNotBlank() && !isValidPhone(vetPhone)
+    // #1584: 2025 through today.
+    val today = remember { localToday() }
+    val joinDateError = joinDateRangeError(joinDate, (loaded ?: existing)?.joinDate.orEmpty(), today)
     val canSave = !firstNameError && !lastNameError && !phoneError && !emailError &&
         !secondaryPhoneError && !secondaryEmailError && !serviceAddrError &&
-        !vetPhoneError
+        !vetPhoneError && joinDateError == null
 
     // #829: household fields lock while a save is in flight and, on Add, once the
     // household exists and only its Emergency Contact is left to retry.
@@ -968,7 +977,22 @@ fun KinfolkEditScreen(
             MultilineField(internalNotes, { unlessLocked { internalNotes = it } }, label = "Internal notes", placeholder = "Anything that doesn't belong on the dossier yet", minLines = 4)
             Spacer(Modifier.height(16.dp))
             BottomBorderField(referral, { referral = it }, label = "Referral source", enabled = householdFieldsEnabled, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(16.dp))
+            JoinDateField(
+                value = joinDate,
+                error = joinDateError,
+                enabled = householdFieldsEnabled,
+                onOpen = { showJoinDatePicker = true },
+                onClear = { joinDate = "" },
+            )
         }
+        AuntieDatePickerDialog(
+            visible = showJoinDatePicker,
+            selectedDate = isoDayOrNull(joinDate.trim())?.takeIf { isJoinDateInRange(it.toString(), today) },
+            today = today,
+            onPick = { joinDate = it.toString(); showJoinDatePicker = false },
+            onDismiss = { showJoinDatePicker = false },
+        )
 
         // ── 06 · Custom fields (admin-authored KINFOLK form_schemas, Phase 14) ─
         // Only shown when a KINFOLK schema exists or a load failed; an empty panel
@@ -1444,5 +1468,41 @@ internal suspend fun runKinfolkPhotoUploadPipeline(
                 }
             }
         }
+    }
+}
+
+/**
+ * #1584: the household join date, picked from a calendar and checked against
+ * 2025 through today. A stored value the console cannot read is shown as is.
+ */
+@Composable
+private fun JoinDateField(
+    value: String,
+    error: String?,
+    enabled: Boolean,
+    onOpen: () -> Unit,
+    onClear: () -> Unit,
+) {
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Join date", style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(AuntieTheme.dims.borderHairline, if (error != null) c.error else c.border, RoundedCornerShape(8.dp))
+                    .clickable(enabled = enabled, onClick = onOpen)
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+            ) {
+                Text(
+                    text = value.ifBlank { "Pick a date" },
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = if (value.isBlank()) c.textDim else c.textPrimary,
+                )
+            }
+            if (value.isNotBlank()) GhostButton(label = "Clear", onClick = onClear, enabled = enabled)
+        }
+        error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.error) }
     }
 }

@@ -598,11 +598,17 @@ private fun MemberBlock(
                 // The mock's `.contact`: mono and dim. The uid is what this
                 // screen has where the mock shows an email and a phone; the
                 // name above is the email.
-                Text(
-                    text = member.uid,
-                    style = AuntieTheme.typography.mono.copy(fontSize = 12.5.sp),
-                    color = c.textDim,
-                )
+                // #1589: the email, never the database id. When the email is
+                // already the heading (nothing names the person) it is not
+                // printed twice.
+                val email = member.invitedEmail?.takeIf { it.isNotBlank() && it != member.label }
+                if (email != null) {
+                    Text(
+                        text = email,
+                        style = AuntieTheme.typography.mono.copy(fontSize = 12.5.sp),
+                        color = c.textDim,
+                    )
+                }
                 val label = member.secondaryLabel?.trim().orEmpty()
                 if (member.role == MembersRepository.MemberRole.SECONDARY && label.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))

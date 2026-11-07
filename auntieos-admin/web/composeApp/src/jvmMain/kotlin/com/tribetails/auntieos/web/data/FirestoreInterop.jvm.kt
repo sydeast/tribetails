@@ -278,6 +278,10 @@ internal actual fun platformInvoicesStream(): Flow<FirestoreResult<List<Invoice>
     JvmFirestoreFixtures.invoices?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<Invoice>("invoices") }
 
+// #1567: a fixture run has no server to re-read, so it answers null and the
+// screen says it cannot tell, which is the honest answer there too.
+internal actual suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject? =
+    if (JvmFirestoreFixtures.invoices != null) null else JvmFirestoreRest.getDocPlain("invoices", invoiceId)
 internal actual fun platformActivityStream(): Flow<FirestoreResult<List<ActivityLogEntry>>> =
     JvmFirestoreFixtures.activity?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<ActivityLogEntry>("activity_log") }
@@ -542,10 +546,17 @@ internal actual suspend fun platformPickAndUploadKinTaleMedia(sessionId: String,
 // client deletes on media_files outright.
 internal actual suspend fun platformUploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String): WriteResult<MediaFile> =
     JvmMediaUpload.upload(entityId, entityType, bytes, mimeType)
-// Run-4 #4b: bulk multi-file picker is mobile/web-only on desktop (same as the
-// KinTale multi path); single uploads still route through JvmMediaUpload above.
-internal actual suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>> =
-    stubWriteResult("Bulk media upload is mobile-only")
+// Run-4 #4b: the multi-file picker is mobile-only on desktop, but the desktop
+// console is the fallback for the web app, so the Gallery's Upload must work
+// here. It picks ONE file through the Swing chooser (JvmMediaUpload), the same
+// pipeline the single uploads use, instead of reporting "mobile-only" (#1588).
+// An empty chooser result comes back as "No file selected", which the Gallery
+// reads as a cancelled upload.
+internal actual suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int, kinfolkId: String): WriteResult<List<MediaFile>> =
+    when (val r = JvmMediaUpload.upload(entityId, entityType, byteArrayOf(), "", kinfolkId)) {
+        is WriteResult.Ok -> WriteResult.Ok(listOf(r.value))
+        is WriteResult.Err -> r
+    }
 internal actual suspend fun platformCreateKinTaleTemplate(template: KinTaleTemplate): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kintale_templates", jsonOut.encodeToString(template))) }
 // ISSUE #616. This was patchFields("kintale_templates", id, {"deleted": true}), a

@@ -65,4 +65,22 @@ class GalleryFiltersTest {
         val kin = listOf(Kin(id = "1", kinfolkId = "k1"), Kin(id = "2", kinfolkId = "k2"))
         assertEquals(listOf("1"), taggableKin(media("x", "k1"), kin).map { it.id })
     }
+
+    // #1588: the Upload dialog's kin picker.
+    private fun pet(id: String, name: String, kinfolk: String, status: String = "active") =
+        Kin(id = id, name = name, kinfolkId = kinfolk, status = status)
+    @Test fun uploadableKinIsOnlyTheChosenHouseholdsActiveKinByName() {
+        val roster = listOf(
+            pet("p1", "gravy", "k1"),
+            pet("p2", "Biscuit", "k1"),
+            pet("p3", "Old Boy", "k1", status = "archived"),
+            pet("p4", "Mochi", "k2"),
+        )
+        assertEquals(listOf("p2", "p1"), uploadableKin(roster, "k1").map { it.id })
+        assertEquals(listOf("p4"), uploadableKin(roster, "k2").map { it.id })
+    }
+    @Test fun uploadableKinOffersNothingUntilAHouseholdIsChosen() {
+        assertEquals(emptyList<Kin>(), uploadableKin(listOf(pet("p1", "Gravy", "k1")), ""))
+        assertEquals(emptyList<Kin>(), uploadableKin(listOf(pet("p1", "Gravy", "k1")), "  "))
+    }
 }
