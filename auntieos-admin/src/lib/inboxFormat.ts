@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
-import { dayKey, formatWhen, machineWhen, type FsTime } from './time';
+import { dayKey, formatClock, machineWhen, type FsTime } from './time';
 import { sessionDayLabel, localDateIso } from './sessionFormat';
 import { DEFAULTS, KEY_INBOX_WAITING_SECTIONS } from './featureFlagsCatalog';
 
@@ -63,15 +63,12 @@ export function threadDayKey(ms: number): string {
 }
 
 /**
- * LOCAL `HH:mm` clock time for a thread's `lastMessageAtMs`. Reuses
- * `formatWhen`'s `MM-DD HH:mm` in full and takes only the time half
- * (`.slice(6)`), matching sessionFormat.ts's `sessionClock`: the row's day
- * group header already carries the day, so repeating it per-row would be
- * noise, not a second AO-18 check.
+ * LOCAL `HH:mm` clock time for a thread's `lastMessageAtMs`, through
+ * `formatClock` (#1599), matching sessionFormat.ts's `sessionClock`: the
+ * row's day group header already carries the day.
  */
 export function threadClock(ms: number): string {
-  const full = formatWhen(threadTimeOf(ms));
-  return full === '(no time)' ? full : full.slice(6);
+  return formatClock(threadTimeOf(ms));
 }
 
 /** Machine-readable local datetime for a row's `<time dateTime={…}>` attribute (the Notifications.tsx `machineWhen` convention). */
@@ -241,6 +238,13 @@ export interface ThreadSection<T> {
  * The two sections in the order they are worked: threads WAITING on a reply
  * first, then the ones already answered.
  *
+ * WAITING MEANS THE LAST MESSAGE CAME FROM THE HOUSEHOLD (`threadAwaitsReply`).
+ * It is not the read state. This used to split on `unreadForAdmin`, so opening
+ * a thread, which clears that flag server-side, moved a message that still
+ * needed an answer into "Answered" the moment it was read (#1572). Read and
+ * answered are two facts: the Unread filter chip and the "N unread" badge keep
+ * asking the first, this section asks the second.
+ *
  * WHY BOTH SECTIONS ALWAYS COME BACK, empty or not. An operator opening the
  * Inbox is asking "is anyone waiting on me". A missing "Waiting on a reply"
  * header answers nothing: it looks the same as a list that has not finished
@@ -251,19 +255,14 @@ export interface ThreadSection<T> {
  * day grouping inside each section, so the AO-18 local-day fix still decides
  * every date header. Nothing here reads a timestamp at all, which is why the
  * ordering within a section is left entirely to that function.
- *
- * The split delegates to `threadReadState`, the same enumerated classifier the
- * "N unread" badge (`unreadThreadCount`) and the Unread filter chip use, so the
- * three surfaces can never disagree about one row. `unreadForAdmin` is a
- * STORED BOOLEAN (`api/inbox.ts`), never a count.
  */
-export function groupThreadsByWaiting<T extends { unreadForAdmin: boolean }>(
+export function groupThreadsByWaiting<T extends { unreadForAdmin: boolean; lastSenderRole: string }>(
   threads: readonly T[],
 ): ThreadSection<T>[] {
   const waiting: T[] = [];
   const answered: T[] = [];
   for (const t of threads) {
-    if (threadReadState(t.unreadForAdmin) === 'unread') waiting.push(t);
+    if (threadAwaitsReply(t)) waiting.push(t);
     else answered.push(t);
   }
   return [
@@ -271,7 +270,24 @@ export function groupThreadsByWaiting<T extends { unreadForAdmin: boolean }>(
     { key: 'answered', label: 'Answered', threads: answered },
   ];
 }
-
+/**
+ * True when the household spoke last and Auntie has not written back.
+ *
+ * Positive match on `lastSenderRole`, never "not auntie": a thread summary
+ * written before that field existed (`'unknown'`) cannot say who spoke last, so
+ * it falls back to the stored unread flag, the only signal it has. Anything
+ * else would either invent a reply that never happened or bury a message.
+ */
+export function threadAwaitsReply(t: { unreadForAdmin: boolean; lastSenderRole: string }): boolean {
+  switch (threadSender(t.lastSenderRole)) {
+    case 'kinfolk':
+      return true;
+    case 'auntie':
+      return false;
+    case 'unknown':
+      return threadReadState(t.unreadForAdmin) === 'unread';
+  }
+}
 // ── arrangement (the A/B flag's one decision) ────────────────────────────
 
 /**

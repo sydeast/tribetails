@@ -32,6 +32,9 @@ import { useEffect, useRef, useState } from 'react';
  *                 it a callable rejects with `CallableTimeoutError` and the
  *                 error path takes over, so an escalation offered later than
  *                 this would never be seen.
+ *                 (#1567: the sends and slow callables in
+ *                 `LONG_RUNNING_CALLABLES` get 70_000ms instead; 10s is still
+ *                 the first point a wait is worth remarking on.)
  *
  * 10s sits above the worst measured healthy cold start (9.4s) by a margin, and
  * leaves the other 10s of the callable budget for the operator to actually read

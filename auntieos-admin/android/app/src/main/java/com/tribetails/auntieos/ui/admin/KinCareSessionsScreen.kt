@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
+import com.tribetails.auntieos.domain.addressLooksIncomplete
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -252,9 +254,9 @@ fun KinCareSessionsScreen(
                     // windows" framing (spec 13 item 1 / spec 14): the route map (§A.10)
                     // renders below on the in-flight card; the phases cover the rest.
                     DenScreenHeading(
-                        kicker = "The Den · Auntie Time",
+                        kicker = "Care Ops · Auntie Time",
                         title = "🐾 Auntie Time",
-                        subtitle = "Day-of view. Clock in, clock out, every Kin Care in flight.",
+                        subtitle = "Day-of view. Clock in, clock out, every KinCare in flight.",
                     )
                     Spacer(Modifier.height(16.dp))
 
@@ -265,7 +267,7 @@ fun KinCareSessionsScreen(
                         loadError != null -> {
                             AuntieBanner(
                                 tone = AuntieBannerTone.Error,
-                                title = "Could not load your Kin Cares",
+                                title = "Could not load your KinCares",
                                 icon = Lucide.TriangleAlert,
                             ) {
                                 Text(
@@ -606,6 +608,14 @@ private fun KinCareCard(
             // ---- Address chip (clickable → maps) ----
             if (address.isNotBlank()) {
                 AddressChip(address = address, context = context)
+            }
+            // #1602: "18605" was all the walk's chip said, with no hint.
+            if (addressLooksIncomplete(address)) {
+                Text(
+                    INCOMPLETE_ADDRESS_HINT,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.warning,
+                )
             }
 
             // ---- One-line notes preview (kinfolk-facing first, internal fallback) ----

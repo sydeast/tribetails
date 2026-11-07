@@ -42,10 +42,15 @@ import './Invites.css';
  * the pills. There is no panel around the sections because the mock draws
  * none.
  *
- * OUTSTANDING IS THE DEFAULT because it is the question. It means PENDING,
- * EMAIL_SENT and EXPIRED: an expired invite is still somebody who never
- * accepted, and it is the row most likely to need a second send. REVOKED is
- * not outstanding: that one was a decision already taken.
+ * OUTSTANDING IS THE DEFAULT because it is the question, and since #1603 it
+ * means the invites still waiting on somebody: PENDING and EMAIL_SENT. An
+ * expired invite can no longer be accepted, so it has its own Expired filter
+ * rather than filling Outstanding (the 2026-11-05 walk found Outstanding (3)
+ * holding nothing but expired rows). REVOKED is not outstanding either.
+ *
+ * NO INVITE BUTTON HERE. Operator ruling, 2026-11-05 docket: "no button on
+ * the Invites screen. Invite from the kinfolk profile." Each row opens the
+ * invite; the household link opens the household.
  *
  * `effectiveStatus`, NEVER `status`, decides which chip and which section a
  * row lands in. `expireStaleInvites` sweeps at 02:00 America/New_York, so a
@@ -63,7 +68,7 @@ import './Invites.css';
  * facts and only one of them is good news.
  */
 
-export type InviteFilterKey = 'outstanding' | 'accepted' | 'revoked' | 'all';
+export type InviteFilterKey = 'outstanding' | 'accepted' | 'expired' | 'revoked' | 'all';
 
 interface InviteFilter {
   readonly key: InviteFilterKey;
@@ -73,8 +78,10 @@ interface InviteFilter {
 
 /** Order is the order rendered. Outstanding is first because it is the default. */
 export const INVITE_FILTERS: readonly InviteFilter[] = [
-  { key: 'outstanding', label: 'Outstanding', statuses: ['PENDING', 'EMAIL_SENT', 'EXPIRED'] },
+  // #1603: waiting on somebody. An expired invite cannot be accepted any more.
+  { key: 'outstanding', label: 'Outstanding', statuses: ['PENDING', 'EMAIL_SENT'] },
   { key: 'accepted', label: 'Accepted', statuses: ['ACCEPTED'] },
+  { key: 'expired', label: 'Expired', statuses: ['EXPIRED'] },
   { key: 'revoked', label: 'Revoked', statuses: ['REVOKED'] },
   { key: 'all', label: 'All', statuses: 'all' },
 ];

@@ -99,7 +99,12 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   linkInvoiceSessions,
 }));
 
+// #1567: the server re-read after a send got no answer.
+const { readInvoiceSendMarks } = vi.hoisted(() => ({ readInvoiceSendMarks: vi.fn() }));
+vi.mock('../api/invoiceSendCheck', () => ({ readInvoiceSendMarks }));
 import { InvoiceDetail, paymentSplit, parseOptionalMoney } from './InvoiceDetail';
+import { CallableTimeoutError } from '../lib/fns';
+import { sendMarksOf } from '../lib/invoiceSendCheck';
 import { formatUsd } from '../lib/invoiceFormat';
 import { formatReminderTime, type ReminderOutcome } from '../lib/invoiceReminder';
 
@@ -255,6 +260,7 @@ function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
 }
 
 beforeEach(() => {
+  readInvoiceSendMarks.mockReset();
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
   // #1511: both answer whether the household's copy reached them in the app only.
@@ -436,6 +442,14 @@ describe('InvoiceDetail', () => {
     });
   });
 
+  it('#1570 flags a stored due date that names no day, and reads an imported month-name one as a date', () => {
+    const { unmount } = render(<InvoiceDetail invoice={entry({ dueDate: '07/14/2026' })} onClose={vi.fn()} />);
+    expect(screen.getByText(/not a date this app can read, so it is never counted overdue/)).toBeInTheDocument();
+    unmount();
+    render(<InvoiceDetail invoice={entry({ dueDate: 'July 14, 2020' })} onClose={vi.fn()} />);
+    expect(screen.queryByText(/not a date this app can read/)).toBeNull();
+    expect(screen.getByText('OVERDUE')).toBeInTheDocument();
+  });
   it('sends a draft through reviewAndSendDraftInvoice, behind the same confirm step', async () => {
     reviewAndSendDraftInvoice.mockResolvedValue({ appOnly: false });
     render(
@@ -479,6 +493,59 @@ describe('InvoiceDetail', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * #1567: the walk's send. The call got no answer, the server sent the invoice
+   * anyway, and the panel said "Action failed". Now it re-reads the invoice and
+   * reports what the server did.
+   */
+  describe('a send that got no answer (#1567)', () => {
+    async function pressSend(id: string) {
+      render(<InvoiceDetail invoice={entry({ _id: id, status: 'draft', total: 40, amountDue: 40 })} onClose={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    }
+    it('reports the draft as sent when the re-read shows it open', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'open' }));
+      await pressSend('inv-late');
+      expect(
+        await screen.findByText('Draft sent. The answer came late, so this was confirmed by re-reading the invoice.'),
+      ).toBeInTheDocument();
+      expect(readInvoiceSendMarks).toHaveBeenCalledWith('inv-late');
+      expect(screen.queryByText('Action failed')).toBeNull();
+    });
+    it('says not sent, and why, when the re-read still shows a draft', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'draft' }));
+      await pressSend('inv-lost');
+      expect(await screen.findByText(/did not answer within 70 seconds\. The invoice is still a draft/)).toBeInTheDocument();
+      expect(screen.getByText('Not sent')).toBeInTheDocument();
+      expect(screen.queryByText('Action failed')).toBeNull();
+    });
+    it('says it cannot tell when the re-read fails too', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(null);
+      await pressSend('inv-dark');
+      expect(await screen.findByText(/no way to tell from here whether the draft went/)).toBeInTheDocument();
+      expect(screen.getByText('No answer')).toBeInTheDocument();
+    });
+    it('confirms a reminder by its stamp moving', async () => {
+      sendInvoiceReminder.mockRejectedValue(new CallableTimeoutError('sendInvoiceReminder'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'open', reminderNotifiedAtMs: 5 }));
+      render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+      expect(
+        await screen.findByText('Reminder sent. The answer came late, so this was confirmed by re-reading the invoice.'),
+      ).toBeInTheDocument();
+    });
+    it('leaves a real refusal alone: no re-read, the server sentence stands', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new Error('Invoice is not a draft; nothing to send.'));
+      await pressSend('inv-refused');
+      expect(await screen.findByText(/reviewAndSendDraftInvoice failed:.*not a draft/)).toBeInTheDocument();
+      expect(readInvoiceSendMarks).not.toHaveBeenCalled();
+    });
+  });
   it('gates Send reminder behind an inline confirm before calling the callable', async () => {
     render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
@@ -1191,6 +1258,44 @@ describe('the payments panel', () => {
     expect(
       await screen.findByText(/The ledger shows money this balance does not/i),
     ).toBeInTheDocument();
+  });
+  it('#1568: says nothing about "no payment" when the payment exists only in history (invoice #1018)', async () => {
+    // $10.29 card payment in the root ledger, nothing in the settlement rows.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 12750,
+        amountDueCents: 11750,
+        ledgerPayments: [ledgerPayment({ amountCents: 1029, tipCents: 0, recordedBy: null })],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 127.5, amountDue: 117.5 })} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Payment history/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No payment has been recorded/i)).toBeNull();
+    expect(screen.queryByText(/Use Record payment below to log one/i)).toBeNull();
+    // No settlement table either: there is nothing in it to total.
+    expect(screen.queryByText('Collected')).toBeNull();
+  });
+  it('#1568: a PAID invoice with only migrated history shows its caveat and no empty sentence (invoice #1010)', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 4000,
+        amountDueCents: 0,
+        ledgerPayments: [ledgerPayment({ tipCents: 500, reconciles: false, tipBasis: 'unknown' })],
+      }),
+    );
+    render(
+      <InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, editScope: 'none' })} onClose={vi.fn()} />,
+    );
+    expect(await screen.findByText(/Some of these rows cannot be reconciled/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No payment has been recorded/i)).toBeNull();
+  });
+  it('#1568: with no rows anywhere and nothing owed, drops the "nothing has come off" clause', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 4000, amountDueCents: 0 }));
+    render(
+      <InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, editScope: 'none' })} onClose={vi.fn()} />,
+    );
+    expect(await screen.findByText(/No payment has been recorded against this invoice\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing has come off its balance/i)).toBeNull();
   });
   it('fails loud on a refused read, verbatim, and offers a retry', async () => {
     getInvoiceLedger.mockRejectedValueOnce(new Error('Invoice not found.'));

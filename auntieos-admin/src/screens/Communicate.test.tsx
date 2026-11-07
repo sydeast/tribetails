@@ -324,10 +324,10 @@ describe('Communicate screen', () => {
     it('keeps the one heading, "Talk to your kinfolk", across both modes', async () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      expect(screen.getByText('The Den · Communicate')).toBeInTheDocument();
+      expect(screen.getByText('Care Ops · Communicate')).toBeInTheDocument();
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Talk to your kinfolk');
       await userEvent.click(screen.getByRole('tab', { name: 'Broadcast' }));
-      expect(screen.getByText('The Den · Communicate')).toBeInTheDocument();
+      expect(screen.getByText('Care Ops · Communicate')).toBeInTheDocument();
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Talk to your kinfolk');
       expect(screen.queryByText(/many homes/)).toBeNull();
     });

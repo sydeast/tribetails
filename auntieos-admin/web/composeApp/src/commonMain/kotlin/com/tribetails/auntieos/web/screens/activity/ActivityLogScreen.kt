@@ -27,6 +27,7 @@ import com.composables.icons.lucide.CalendarPlus
 import com.composables.icons.lucide.Flag
 import com.composables.icons.lucide.History
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Receipt
 import com.composables.icons.lucide.Settings2
 import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.TriangleAlert
@@ -38,6 +39,8 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import com.tribetails.auntieos.web.screens.booking.NewBookingMath
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -91,23 +94,13 @@ private enum class ActivityFilter(val label: String) {
     Bookings("Bookings"),
     KinTales("KinTales"),
     Notifications("Notifications"),
+    Billing("Billing"),
     Admin("Admin"),
 }
 
 private fun ActivityFilter.matches(actionType: String): Boolean {
     if (this == ActivityFilter.All) return true
-    val a = actionType.uppercase()
-    return when (this) {
-        ActivityFilter.All           -> true
-        ActivityFilter.Auth          -> a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT")
-        ActivityFilter.Bookings      -> a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")
-        ActivityFilter.KinTales      -> a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")
-        ActivityFilter.Notifications -> a.contains("NOTIFICATION") || a.contains("NOTIF")
-        ActivityFilter.Admin         -> a.startsWith("ADMIN") || a.contains("TRIAGE") ||
-            a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")
-    }
+    return activityCategoryOf(actionType)?.name == name
 }
 
 private fun ActivityFilter.chipTone(): AuntieChipTone = when (this) {
@@ -116,6 +109,7 @@ private fun ActivityFilter.chipTone(): AuntieChipTone = when (this) {
     ActivityFilter.Bookings      -> AuntieChipTone.Orange
     ActivityFilter.KinTales      -> AuntieChipTone.Accent
     ActivityFilter.Notifications -> AuntieChipTone.Teal
+    ActivityFilter.Billing       -> AuntieChipTone.Orange
     ActivityFilter.Admin         -> AuntieChipTone.Orange
 }
 
@@ -127,6 +121,11 @@ fun ActivityLogScreen() {
 
     var filter by remember { mutableStateOf(ActivityFilter.All) }
     var query by remember { mutableStateOf("") }
+    // The business's clock (#1585): America/Chicago until the settings read lands or if it fails.
+    val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val zone = remember(settingsState) {
+        NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone)
+    }
 
     // Live hash-chain integrity: call the verifyActivityLogChain admin callable on
     // load (and on Re-verify). The server walks the SHA-256 chain and returns the
@@ -194,6 +193,7 @@ fun ActivityLogScreen() {
                     all        = all,
                     filter     = filter,
                     query      = query,
+                    zone       = zone,
                     onRowClick = { selectedEntry = it },
                 )
             }
@@ -201,7 +201,7 @@ fun ActivityLogScreen() {
     }
 
     selectedEntry?.let { entry ->
-        ActivityDetailModal(entry = entry, onDismiss = { selectedEntry = null })
+        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null })
     }
 }
 
@@ -210,6 +210,7 @@ private fun LogPanel(
     all: List<ActivityLogEntry>,
     filter: ActivityFilter,
     query: String,
+    zone: TimeZone,
     onRowClick: (ActivityLogEntry) -> Unit,
 ) {
     DenPanel(
@@ -277,9 +278,11 @@ private fun LogPanel(
         }
 
         // Stable insertion-ordered grouping; capped list is already newest-first.
-        val todayKey = nowIso().take(10)
+        // Days are the BUSINESS's (#1585): a 9:34 pm Chicago event stamped 02:34Z belongs
+        // to the day before, and "Today" is Chicago's today.
+        val todayKey = activityWhen(nowIso(), zone)?.dayKey ?: nowIso().take(10)
         val yesterdayKey = isoDateMinusOneDay(todayKey)
-        val grouped = visible.groupBy { it.timestamp.take(10) }
+        val grouped = visible.groupBy { activityWhen(it.timestamp, zone)?.dayKey ?: it.timestamp.take(10) }
 
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             grouped.forEach { (dateIso, entries) ->
@@ -287,7 +290,7 @@ private fun LogPanel(
                     label = relativeDayLabel(dateIso, todayKey, yesterdayKey),
                     count = entries.size,
                 )
-                entries.forEach { entry -> ActivityRow(entry, onClick = { onRowClick(entry) }) }
+                entries.forEach { entry -> ActivityRow(entry, zone = zone, onClick = { onRowClick(entry) }) }
             }
         }
     }
@@ -457,7 +460,7 @@ internal fun seqHashLabel(seq: Int?, entryHash: String): String? {
 }
 
 @Composable
-internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
+internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit, zone: TimeZone = NewBookingMath.businessTimeZone(null)) {
     val c = AuntieTheme.colors
     val isFailure = entry.status.equals("FAILURE", ignoreCase = true) ||
         entry.status.equals("ERROR", ignoreCase = true)
@@ -472,7 +475,7 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text  = shortTime(entry.timestamp),
+            text  = shortTime(entry.timestamp, zone),
             style = AuntieTheme.typography.mono,
             color = c.textFaint,
             modifier = Modifier.width(54.dp),
@@ -539,7 +542,7 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
  * on the model; no fabricated data, no dead deep-link.
  */
 @Composable
-private fun ActivityDetailModal(entry: ActivityLogEntry, onDismiss: () -> Unit) {
+private fun ActivityDetailModal(entry: ActivityLogEntry, zone: TimeZone, onDismiss: () -> Unit) {
     val target = listOf(entry.targetCollection, entry.targetId).filter { it.isNotBlank() }.joinToString("/")
     AuntieDialog(
         visible = true,
@@ -550,6 +553,11 @@ private fun ActivityDetailModal(entry: ActivityLogEntry, onDismiss: () -> Unit) 
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             AuntieKeyValueRow(label = "When", value = entry.timestamp.ifBlank { "-" }, valueMono = true)
+            // The stored stamp is UTC; the row reads in the business zone (#1585). Both
+            // are shown so the two can be reconciled without doing the sum.
+            activityWhen(entry.timestamp, zone)?.let {
+                AuntieKeyValueRow(label = "Business time", value = "${it.dayKey} ${it.clock}", valueMono = true)
+            }
             AuntieKeyValueRow(label = "Action", value = entry.actionType.ifBlank { "-" }, valueMono = true)
             AuntieKeyValueRow(label = "Status", value = entry.status.ifBlank { "-" })
             AuntieKeyValueRow(label = "Actor", value = entry.actorId.ifBlank { "-" }, valueMono = true)
@@ -631,18 +639,14 @@ private fun rowContext(entry: ActivityLogEntry): String {
     return parts.joinToString(" · ")
 }
 
-private fun categoryTone(actionType: String): AuntieStatusTone {
-    val a = actionType.uppercase()
-    return when {
-        a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT") -> AuntieStatusTone.Purple
-        a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")                    -> AuntieStatusTone.Orange
-        a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")                     -> AuntieStatusTone.Success
-        a.contains("NOTIFICATION") || a.contains("NOTIF")                   -> AuntieStatusTone.Teal
-        a.startsWith("ADMIN") || a.contains("TRIAGE")                       -> AuntieStatusTone.Error
-        else                                                                -> AuntieStatusTone.Neutral
-    }
+private fun categoryTone(actionType: String): AuntieStatusTone = when (activityCategoryOf(actionType)) {
+    ActivityCategory.Auth          -> AuntieStatusTone.Purple
+    ActivityCategory.Bookings      -> AuntieStatusTone.Orange
+    ActivityCategory.KinTales      -> AuntieStatusTone.Success
+    ActivityCategory.Notifications -> AuntieStatusTone.Teal
+    ActivityCategory.Billing       -> AuntieStatusTone.Warning
+    ActivityCategory.Admin         -> AuntieStatusTone.Error
+    null                           -> AuntieStatusTone.Neutral
 }
 
 private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
@@ -659,16 +663,14 @@ private fun actionIcon(actionType: String, status: String): ImageVector {
         return Lucide.TriangleAlert
     }
     val a = actionType.uppercase()
-    return when {
-        a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT") -> Lucide.UserCheck
-        a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")         -> Lucide.Settings2
-        a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")                    -> Lucide.CalendarPlus
-        a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")                     -> Lucide.History
-        a.contains("NOTIFICATION") || a.contains("NOTIF")                   -> Lucide.Bell
-        a.startsWith("ADMIN") || a.contains("TRIAGE")                       -> Lucide.Flag
-        else                                                                -> Lucide.Activity
+    return when (activityCategoryOf(actionType)) {
+        ActivityCategory.Auth          -> Lucide.UserCheck
+        ActivityCategory.Bookings      -> Lucide.CalendarPlus
+        ActivityCategory.KinTales      -> Lucide.History
+        ActivityCategory.Notifications -> Lucide.Bell
+        ActivityCategory.Billing       -> Lucide.Receipt
+        ActivityCategory.Admin         -> if (a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")) Lucide.Settings2 else Lucide.Flag
+        null                           -> Lucide.Activity
     }
 }
 
@@ -701,9 +703,8 @@ private fun prettyDate(iso: String): String = runCatchingCancellable {
     "$month $day"
 }.getOrDefault(iso.ifBlank { "Undated" })
 
-private fun shortTime(iso: String): String =
-    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso.ifBlank { "--:--" } }
-        .getOrDefault(iso.ifBlank { "--:--" })
+private fun shortTime(iso: String, zone: TimeZone): String =
+    activityWhen(iso, zone)?.clock ?: iso.ifBlank { "--:--" }
 
 /**
  * Decrements an ISO date key (yyyy-MM-dd) by one day for the "Yesterday" label.

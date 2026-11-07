@@ -52,6 +52,13 @@ describe('bulkActionApplies (the lifecycle guard, positively enumerated)', () =>
     expect(bulkActionApplies('scheduled', 'REJECT')).toBe(false);
   });
 
+  it('#1578: lets a visit under way be cancelled, and refuses to approve or reject it', () => {
+    for (const state of ['onMyWay', 'arrived', 'departed'] as const) {
+      expect(bulkActionApplies(state, 'CANCEL')).toBe(true);
+      expect(bulkActionApplies(state, 'APPROVE')).toBe(false);
+      expect(bulkActionApplies(state, 'REJECT')).toBe(false);
+    }
+  });
   it('refuses every action on a terminal or unrecognized booking', () => {
     for (const state of ['completed', 'cancelled', 'unknown'] as const) {
       expect(bulkActionApplies(state, 'APPROVE')).toBe(false);
