@@ -27,6 +27,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -118,8 +121,11 @@ fun KinTaleLogsScreen(
     // collection it never managed to read. The screen's own empty state over a
     // failed read is a separate, pre-existing gap and is untouched here.
     val loadError by viewModel.error.collectAsState()
-    var searchQuery by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf(ReportSort.Newest) }
+    // #1594: the search and the sort survive opening a KinTale and coming Back.
+    // Plain `remember` state is dropped when this destination leaves the screen.
+    val listFilter = rememberKinTaleListFilter()
+    var searchQuery by listFilter::search
+    var sortMode by listFilter::sort
     var activeSheet by remember { mutableStateOf<TriageSheet?>(null) }
 
     LaunchedEffect(Unit) {
@@ -1045,3 +1051,25 @@ internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
     }.getOrDefault(iso)
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+
+/**
+ * #1594: the KinTale list's search and sort, kept across opening a KinTale.
+ * The list is its own back-stack destination, and Navigation drops plain
+ * `remember` state when a destination leaves the screen, so Back used to land
+ * on an unfiltered, re-sorted list. Saveable state is restored on Back.
+ */
+internal class KinTaleListFilter(search: String = "", sort: ReportSort = ReportSort.Newest) {
+    var search by mutableStateOf(search)
+    var sort by mutableStateOf(sort)
+
+    companion object {
+        val Saver: Saver<KinTaleListFilter, Any> = listSaver(
+            save = { listOf(it.search, it.sort.name) },
+            restore = { KinTaleListFilter(it[0], ReportSort.valueOf(it[1])) },
+        )
+    }
+}
+
+@Composable
+internal fun rememberKinTaleListFilter(): KinTaleListFilter =
+    rememberSaveable(saver = KinTaleListFilter.Saver) { KinTaleListFilter() }

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -97,6 +98,7 @@ import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieIconBtn
 import com.tribetails.auntieos.ui.components.AuntieTextBtn
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
+import com.tribetails.auntieos.ui.components.DenInfoTip
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
@@ -353,7 +355,12 @@ fun CoveragePackageScreen(
                         }
                     }
 
-                    Text("Pinned visits — this client's non-negotiables. New blank packages start with these.", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    // #1595: a label and a tip, not a label with its explanation run on.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(PINNED_VISITS_LABEL, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Spacer(Modifier.width(6.dp))
+                        DenInfoTip(PINNED_VISITS_TIP)
+                    }
                     rules.pinnedTimes.forEach { p ->
                         Row(modifier = Modifier.fillMaxWidth().background(c.surface, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(p.label, style = AuntieTheme.typography.titleSmall, color = c.textPrimary, modifier = Modifier.weight(2f))
@@ -789,3 +796,9 @@ private fun printQuote(context: Context, clientName: String, quote: String) {
     }
     webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
 }
+
+/** #1595: the pinned-visits label, with its explanation moved to [PINNED_VISITS_TIP]. Same words as web. */
+internal const val PINNED_VISITS_LABEL = "Pinned visits"
+
+/** #1595: the pinned-visits info tip. It used to run on after the label as standing copy. */
+internal const val PINNED_VISITS_TIP = "This client's non-negotiables. New blank packages start with these."

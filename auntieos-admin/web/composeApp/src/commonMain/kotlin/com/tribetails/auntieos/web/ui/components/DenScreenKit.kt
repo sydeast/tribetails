@@ -218,6 +218,10 @@ fun DenPanel(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    // #1595: a VALUE under the title (a count, a date), shown in plain sight.
+    // An explanation goes on [subtitle], which is the info tip; Android's
+    // DenPanel and web's `detail` draw the same split.
+    detail: String? = null,
     cornerRadius: Dp = 18.dp,
     contentPadding: Dp = 20.dp,
     // #12/#13 (2026-06-08): opt-in collapsible panel. When true the header is
@@ -257,6 +261,10 @@ fun DenPanel(
                             Spacer(Modifier.width(6.dp))
                             AuntieInfoTip(subtitle)
                         }
+                    }
+                    if (detail != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                 }
                 if (trailing != null) trailing()

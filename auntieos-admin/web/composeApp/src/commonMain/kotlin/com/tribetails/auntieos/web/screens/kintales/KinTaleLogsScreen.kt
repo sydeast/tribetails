@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -118,6 +119,12 @@ fun KinTaleLogsScreen(
      * draft Home counted could not be found on this screen.
      */
     onOpenDraft: (GeneratedDraft) -> Unit = {},
+    /**
+     * #1594: the list's search and sort. App holds it above the list, because
+     * opening a KinTale swaps the list out and a `remember` inside it would come
+     * back empty on Back.
+     */
+    listFilter: KinTaleListFilter = remember { KinTaleListFilter() },
 ) {
     var showTemplates by remember { mutableStateOf(false) }
     if (showTemplates) {
@@ -141,8 +148,8 @@ fun KinTaleLogsScreen(
     var toastKind by remember { mutableStateOf(ToastKind.Success) }
     var pendingReportId by remember { mutableStateOf<String?>(null) }
 
-    var search by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf(ReportSort.Newest) }
+    var search by listFilter::search
+    var sortMode by listFilter::sort
 
     ScreenScaffold {
         DenScreenHeading(
@@ -948,8 +955,26 @@ private fun sortKey(r: KinCareReport): String = sequenceOf(
 ).firstOrNull { it.isNotBlank() } ?: ""
 
 // KT1: operator-chosen ordering for the KinTales list (organizes the Sent bucket).
-internal enum class ReportSort(val label: String) {
+// Public since #1594, because App holds the list's chosen sort in KinTaleListFilter.
+enum class ReportSort(val label: String) {
     Newest("Newest"), Oldest("Oldest"), Kinfolk("Kinfolk A–Z"), Service("Service type"),
+}
+
+/**
+ * #1594: the KinTale list's search and sort, held by App above the list. A
+ * KinTale opened from the list replaces it on screen, so state kept inside the
+ * list was gone on Back and the operator landed on an unfiltered list.
+ */
+@Stable
+class KinTaleListFilter(search: String = "", sort: ReportSort = ReportSort.Newest) {
+    var search by mutableStateOf(search)
+    var sort by mutableStateOf(sort)
+
+    /** Back to an unfiltered list, newest first. */
+    fun reset() {
+        search = ""
+        sort = ReportSort.Newest
+    }
 }
 
 internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<KinCareReport> = when (mode) {

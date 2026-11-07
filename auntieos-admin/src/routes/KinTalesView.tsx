@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useSearch } from '@tanstack/react-router';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useRouter, useSearch } from '@tanstack/react-router';
 import { KinTales } from '../screens/KinTales';
 import { isDateRangeKey } from '../components/ListToolbar';
 import { KinTaleCompose } from '../screens/KinTaleCompose';
@@ -43,10 +43,24 @@ export function KinTalesView() {
   //     where Auntie Time's "Complete KinTale" button routes (#703). That visit
   //     is departed and the write-up is the next thing owed on it, so landing
   //     the operator on the list to hunt for it would be the wrong screen.
-  // Initial state only, so closing either one returns to the list rather than
-  // bouncing back off a stale URL.
+  // Closing either one drops the param, so the list does not bounce back off a
+  // stale URL.
+  //
+  // #1594: `?range=` is the list's window, written as the operator picks one
+  // (replacing the entry, so Back leaves KinTales rather than replaying every
+  // window tried). A report opened from the list PUSHES `?kinTaleId=` beside
+  // it, so the detail is an address of its own and Back returns to the list.
+  // Close pops that entry when this mount pushed it, and otherwise (opened cold
+  // from a link or a reload) replaces it with the list in the same window. The
+  // list remounts on Close and reads its window from the URL, which is how the
+  // filter survives instead of resetting to Last 7 days.
   const { kinTaleId, sessionId, range } = useSearch({ from: '/admin/kintales' });
   const navigate = useNavigate();
+  const router = useRouter();
+  const listRange = isDateRangeKey(range) ? range : undefined;
+  const rangeSearch = listRange !== undefined ? { range: listRange } : {};
+  // Set while a detail this mount pushed is open.
+  const pushedDetail = useRef(false);
   // A draft named in the URL goes to Communicate before anything renders here.
   const linkedDraftId = kinTaleId ? draftIdFromListRowId(kinTaleId) : null;
   useEffect(() => {
@@ -58,14 +72,38 @@ export function KinTalesView() {
     return { kind: 'list' };
   });
 
+  // The URL moving under the view (browser Back or Forward) moves the view.
+  // Only a CHANGE of `kinTaleId` counts, so a view that set its own mode, and
+  // the URL it wrote, are never second-guessed.
+  const seenKinTaleId = useRef(kinTaleId);
+  useEffect(() => {
+    if (seenKinTaleId.current === kinTaleId) return;
+    seenKinTaleId.current = kinTaleId;
+    if (kinTaleId && draftIdFromListRowId(kinTaleId) === null) {
+      setMode({ kind: 'detail', kinTaleId });
+    } else if (!kinTaleId) {
+      pushedDetail.current = false;
+      setMode((m) => (m.kind === 'detail' ? { kind: 'list' } : m));
+    }
+  }, [kinTaleId]);
+
   /**
-   * Back to the list, and drop the entry param on the way out. Without clearing
-   * it the URL keeps naming a report or a visit the operator has closed, and a
-   * reload would reopen it.
+   * Back to the list in the window it was in, and drop the entry param on the
+   * way out. Without clearing it the URL keeps naming a report or a visit the
+   * operator has closed, and a reload would reopen it.
    */
   function closeToList() {
     setMode({ kind: 'list' });
-    if (kinTaleId || sessionId) void navigate({ to: '/kintales', search: {} });
+    if (pushedDetail.current) {
+      pushedDetail.current = false;
+      seenKinTaleId.current = undefined;
+      router.history.back();
+      return;
+    }
+    if (kinTaleId || sessionId) {
+      seenKinTaleId.current = undefined;
+      void navigate({ to: '/kintales', search: rangeSearch, replace: true });
+    }
   }
 
   if (linkedDraftId !== null) return <LoadingRow label="Opening the draft…" />;
@@ -101,8 +139,12 @@ export function KinTalesView() {
           return;
         }
         setMode({ kind: 'detail', kinTaleId: id });
+        pushedDetail.current = true;
+        seenKinTaleId.current = id;
+        void navigate({ to: '/kintales', search: { ...rangeSearch, kinTaleId: id } });
       }}
-      {...(isDateRangeKey(range) ? { initialRange: range } : {})}
+      onRangeChange={(next) => void navigate({ to: '/kintales', search: { range: next }, replace: true })}
+      {...(listRange !== undefined ? { initialRange: listRange } : {})}
     />
   );
 }
