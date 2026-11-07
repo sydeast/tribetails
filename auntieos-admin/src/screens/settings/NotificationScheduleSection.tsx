@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { BusinessSettings } from '../../api/settings';
-import { DenPanel } from '../../components/DenScreenKit';
+import { DenPanel, InfoTip } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
@@ -183,7 +183,10 @@ export function NotificationScheduleSection({ data, onSave }: NotificationSchedu
         <span className="settingsEdit__groupHeading">Sending</span>
         <ul className="settingsEdit__toggleList">
           <li className="settingsEdit__toggleRow">
-            <span className="settingsEdit__toggleLabel">Send notices to households</span>
+            <span className="settingsEdit__toggleLabel">
+              Send notices to households{' '}
+              <InfoTip text="Off, every notice bound for a household is held back and nothing is sent. Your own alerts and the daily digest still reach you." />
+            </span>
             <Toggle
               label="Toggle household notifications"
               checked={draft.householdNotificationsLive}
@@ -192,14 +195,13 @@ export function NotificationScheduleSection({ data, onSave }: NotificationSchedu
             />
           </li>
         </ul>
-        <p className="settingsEdit__hint">
-          Off, every notice bound for a household is held back and nothing is sent. Your own alerts
-          and the daily digest still reach you.
-        </p>
       </div>
 
       <div className="settingsEdit__subsection">
-        <span className="settingsEdit__groupHeading">Daily jobs</span>
+        <span className="settingsEdit__groupHeading">
+          Daily jobs{' '}
+          <InfoTip text={`Visit reminders are not on a clock: they go out ${VISIT_REMINDER_TIMING} each visit. Turn them on or off under Booking rules.`} />
+        </span>
         <div className="settingsEdit__fields">
           <div className="settingsEdit__fieldGroup">
             <label className="settingsEdit__field">
@@ -249,10 +251,6 @@ export function NotificationScheduleSection({ data, onSave }: NotificationSchedu
             notification. Visit reminders go out relative to the visit, not at a
             time of day, so there is no hour to set for them and the switch that
             does govern them lives elsewhere. */}
-        <p className="settingsEdit__hint">
-          Visit reminders are not on a clock: they go out {VISIT_REMINDER_TIMING} each visit. Turn
-          them on or off under Booking rules.
-        </p>
       </div>
 
       <div className="settingsEdit__saveRow">
