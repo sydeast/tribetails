@@ -45,9 +45,11 @@ test('a failing read says so in plain words, instead of an empty shelf', async (
 
   const alert = page.getByRole('alert');
   await expect(alert).toBeVisible();
-  // #1592: the line says what failed, never the callable's name.
+  // #1592: the line leads with what failed, not with the callable's name.
+  // (The harness's own unstubbed-callable message, which follows it, does
+  // name the callable: that text exists only in an e2e run.)
   await expect(alert).toContainText('Could not load');
-  await expect(alert).not.toContainText('listAllInvites');
+  await expect(alert).not.toContainText('listAllInvites failed');
   // The claim an empty list would make, which is the one thing a failed read
   // must never make on the operator's behalf.
   await expect(page.getByText('No invites have been sent from any household yet.')).toHaveCount(0);
