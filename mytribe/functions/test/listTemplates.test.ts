@@ -172,3 +172,23 @@ describe('listTemplateBindings', () => {
     ).rejects.toThrow();
   });
 });
+describe('listTemplates total (#1614)', () => {
+  it('returns the whole bank size alongside a bounded page', async () => {
+    mocks.dbFn.mockReturnValue(
+      seed([
+        { id: 'a', data: { subject: 'S', body: 'B' } },
+        { id: 'b', data: { subject: 'S', body: 'B' } },
+        { id: 'c', data: { subject: 'S', body: 'B' } },
+      ]),
+    );
+    const res = await listTemplatesHandler(req({ limit: 2 }));
+    expect(res.templates).toHaveLength(2);
+    expect(res.nextCursor).toBe('b');
+    expect(res.total).toBe(3);
+  });
+  it('an unbounded read reports its own length as the total', async () => {
+    mocks.dbFn.mockReturnValue(seed([{ id: 'a', data: { subject: 'S', body: 'B' } }]));
+    const res = await listTemplatesHandler(req());
+    expect(res.total).toBe(1);
+  });
+});

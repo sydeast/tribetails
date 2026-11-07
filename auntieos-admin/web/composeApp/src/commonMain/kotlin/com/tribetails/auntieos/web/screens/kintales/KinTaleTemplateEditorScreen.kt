@@ -169,7 +169,9 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                 // No templates exist in Firestore yet - seed the editor with the
                 // built-in default so Auntie can save her first one.
                 selectedId = ""
-                draft = DefaultKinTaleTemplate.template.copy(_id = "")
+                // #1614: the built-in's description describes the fallback, not
+                // the operator's first template.
+                draft = DefaultKinTaleTemplate.template.copy(_id = "", description = "")
                 loaded = null
             }
             dirty = false
@@ -252,6 +254,7 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                 draft = DefaultKinTaleTemplate.template.copy(
                     _id = "",
                     name = "New template",
+                    description = "",
                     isDefault = false,
                 )
                 loaded = null

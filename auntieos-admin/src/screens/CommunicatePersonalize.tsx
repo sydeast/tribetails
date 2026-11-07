@@ -1,7 +1,7 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useId, useState } from 'react';
-import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import {
   PERSONALIZE_MESSAGE_TYPES,
   PERSONALIZE_TONES,
@@ -60,7 +60,7 @@ const SUBJECT_MAX = 500;
  * first, because it reaches a real household and is not undoable.
  */
 export function CommunicatePersonalize() {
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
 
   const [form, setForm] = useState<PersonalizeFormState>({
     messageType: DEFAULT_MESSAGE_TYPE,
@@ -466,8 +466,8 @@ export function CommunicatePersonalize() {
                     />
                   </div>
                   <p className="personalize__note">
-                    Approving promotes the draft in Firestore and logs it to the audit trail. Nothing goes out until
-                    that write succeeds.
+                    Approving saves this draft and records it in the activity log. Nothing goes out until that save
+                    succeeds.
                   </p>
                 </div>
               </DenPanel>

@@ -592,8 +592,7 @@ function BasicSettingsStep({
         />
       </label>
       <p className="ktt__note">
-        No default on purpose: a canned message here invited sending it unedited. Auntie writes it fresh
-        each time.
+        Left empty on a new template. Anything typed here opens the recap's note; Auntie can still change it for each visit.
       </p>
 
       <div className="ktt__field">

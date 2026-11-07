@@ -109,11 +109,45 @@ describe('SignIn, the mock structure', () => {
     expect(screen.getByRole('button', { name: 'Forgot password?' })).toHaveClass('auntie-btn--ghost');
     expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
   });
-  it('refuses an empty submit with the mock line, before Firebase is asked', async () => {
+  it('refuses an empty submit per field, highlights both, and puts no banner on the form (#1600)', async () => {
     render(<SignIn />);
     fireEvent.click(screen.getByRole('button', { name: 'Jump back in!' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Email and password are required.');
+    expect(await screen.findByText('Enter your email.')).toBeInTheDocument();
+    expect(screen.getByText('Enter your password.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Password')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Email').closest('.signin__input')).toHaveAttribute('data-invalid', 'true');
+    // No banner means nothing above the form to push it down.
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('Email and password are required.')).toBeNull();
+    // First refused field takes focus.
+    expect(screen.getByLabelText('Email')).toHaveFocus();
     expect(signIn).not.toHaveBeenCalled();
+  });
+  it('names only the field that is empty', async () => {
+    render(<SignIn />);
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'auntie@tribetails.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Jump back in!' }));
+    expect(await screen.findByText('Enter your password.')).toBeInTheDocument();
+    expect(screen.queryByText('Enter your email.')).toBeNull();
+    expect(screen.getByLabelText('Email')).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByLabelText('Password')).toHaveFocus();
+  });
+  it('clears a field message the moment that field is edited', async () => {
+    render(<SignIn />);
+    fireEvent.click(screen.getByRole('button', { name: 'Jump back in!' }));
+    await screen.findByText('Enter your email.');
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a' } });
+    expect(screen.queryByText('Enter your email.')).toBeNull();
+    expect(screen.getByText('Enter your password.')).toBeInTheDocument();
+  });
+  it('always lays out the message line under each field, so a refusal moves nothing', async () => {
+    render(<SignIn />);
+    const lines = () => document.querySelectorAll('.signin__fielderr');
+    expect(lines()).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Jump back in!' }));
+    await screen.findByText('Enter your email.');
+    expect(lines()).toHaveLength(2);
   });
   it('sends the reset to the typed email and says so in the mock words', async () => {
     render(<SignIn />);
@@ -127,7 +161,8 @@ describe('SignIn, the mock structure', () => {
   it('asks for the email first when the reset has nowhere to go', async () => {
     render(<SignIn />);
     fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Type your email above first.');
+    expect(await screen.findByText('Type your email above first.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
     expect(sendReset).not.toHaveBeenCalled();
   });
   it('shows a refused reset as an error, in the words the auth layer gave', async () => {

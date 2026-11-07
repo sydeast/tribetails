@@ -1,3 +1,4 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { SCHEDULE_SESSIONS_QUERY, SCHEDULE_BUSY_SLOTS_QUERY, type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
@@ -34,7 +35,7 @@ import {
 import { getBusinessSettings } from '../api/settings';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { businessInstantMs, businessTodayIso, sessionsByBusinessDay } from '../lib/businessZoneTime';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import { rescheduleBooking } from '../api/bookingsWrite';
 import {
   deleteBlockedTimeSlot,
@@ -64,6 +65,7 @@ import { BookingDetailModal } from '../components/BookingDetailModal';
 import { BlockTimeDialog } from '../components/BlockTimeDialog';
 import { NewVisitDialog } from '../components/NewVisitDialog';
 import { ScheduleWeekGrid, type ScheduleDrop } from '../components/ScheduleWeekGrid';
+import { navKicker } from '../lib/nav';
 import './Schedule.css';
 
 const VIEW_MODES: readonly { key: ScheduleViewMode; label: string }[] = [
@@ -276,7 +278,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
   // The household list for the New visit dialog. Directory already streams this
   // collection for its own tab; this is Schedule's own bounded listener, the
   // same one-listener-per-screen rule `SCHEDULE_SESSIONS_QUERY` follows.
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   const households = useMemo(
     () =>
       kinfolkState.status === 'ready'
@@ -416,10 +418,10 @@ export function Schedule({ onSelect }: ScheduleProps) {
        * visit"; the mock has only the one button and is amended for that too.
        */}
       <DenScreenHeading
-        kicker="The Den · Schedule"
+        kicker={navKicker('schedule')}
         title="Schedule"
         accentTail={`${view}.`}
-        subtitle="Every Kin Care visit on the books, from the latest 300, with Google Calendar busy windows and your own blocked time laid over them."
+        subtitle="Every KinCare visit on the books, from the latest 300, with Google Calendar busy windows and your own blocked time laid over them."
         className="schedule__heading"
         trailing={
           <div className="schedule__actions">
@@ -519,7 +521,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                */}
               <DenPanel
                 title={sessionDayLabel(selected, todayIso)}
-                subtitle="Kin Care visits on this day."
+                subtitle="KinCare visits on this day."
                 className="schedule__agenda-panel"
                 collapsible
               >
@@ -529,7 +531,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   </Banner>
                 )}
                 {selectedSessions.length === 0 && selectedBusy.length === 0 ? (
-                  <EmptyHint>No Kin Care sessions on this day.</EmptyHint>
+                  <EmptyHint>No KinCare sessions on this day.</EmptyHint>
                 ) : (
                   <ul className="schedule__agenda-list">
                     {selectedSessions.map((entry) => (

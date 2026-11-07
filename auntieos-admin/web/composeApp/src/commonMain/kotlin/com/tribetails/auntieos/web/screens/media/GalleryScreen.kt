@@ -91,6 +91,8 @@ fun GalleryScreen() {
     val allKinfolk = (kinfolkResult as? FirestoreResult.Data)?.value ?: emptyList()
     val kinById = remember(allKin) { allKin.associateBy { it._id } }
     val kinfolkLabel = remember(allKinfolk) { allKinfolk.associate { it._id to kinfolkDisplayName(it) } }
+    // #1564: the uploader line names a person, not the uid an upload stores.
+    val uploaderNames = rememberUploaderNames(client)
 
     var filter by remember { mutableStateOf(GalleryFilter()) }
     var selected by remember { mutableStateOf<MediaFile?>(null) }
@@ -215,6 +217,7 @@ fun GalleryScreen() {
                                 onClick = { selected = m },
                                 showCaption = true,
                                 glyphs = glyphs,
+                                uploaderNames = uploaderNames,
                             )
                         }
                     }

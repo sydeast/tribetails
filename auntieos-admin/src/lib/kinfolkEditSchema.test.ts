@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { localIsoToday } from './joinDate';
 import {
   isValidEmail,
   isValidPhone,
@@ -165,7 +166,15 @@ describe('validateKinfolkEdit', () => {
     expect(validateKinfolkEdit(form({ joinDate: 'sometime in the spring' })).joinDate).toBeDefined();
   });
 
+  /** #1584. Operator ruling, 2026-11-05 docket: 2025 through today. */
+  it('#1584: refuses a join date before 2025 or after today', () => {
+    expect(validateKinfolkEdit(form({ joinDate: '1900-01-15' })).joinDate).toBe('Pick a join date from 2025 through today.');
+    expect(validateKinfolkEdit(form({ joinDate: '2024-12-31' })).joinDate).toBe('Pick a join date from 2025 through today.');
+    expect(validateKinfolkEdit(form({ joinDate: '2099-06-01' })).joinDate).toBe('Pick a join date from 2025 through today.');
+    expect(validateKinfolkEdit(form({ joinDate: '2025-01-01' }))).toEqual({});
+    expect(validateKinfolkEdit(form({ joinDate: localIsoToday() }))).toEqual({});
+  });
   it('rejects a well shaped day that never happened', () => {
-    expect(validateKinfolkEdit(form({ joinDate: '2026-02-30' })).joinDate).toBeDefined();
+    expect(validateKinfolkEdit(form({ joinDate: '2026-02-30' })).joinDate).toBe('Pick a join date from the calendar.');
   });
 });

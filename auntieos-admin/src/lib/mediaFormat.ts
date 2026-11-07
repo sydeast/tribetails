@@ -125,9 +125,18 @@ export function mediaLocalMonth(uploadedAt: string): string | null {
   return day === '' ? null : day.slice(0, 7);
 }
 
-export function mediaMetaLine(uploadedAt: string, uploadedBy: string): string {
+export function mediaMetaLine(
+  uploadedAt: string,
+  uploadedBy: string,
+  /**
+   * #1564: `uploadedBy` is the uploader's uid. A uid the staff list knows is
+   * shown as that person's name; anything else is shown as stored.
+   */
+  staffNames: ReadonlyMap<string, string> = new Map(),
+): string {
   const date = mediaLocalDay(uploadedAt);
-  const author = str(uploadedBy).trim();
+  const stored = str(uploadedBy).trim();
+  const author = staffNames.get(stored) ?? stored;
   const realAuthor = author !== '' && author.toLowerCase() !== 'auntie' ? author : '';
   return [date, realAuthor].filter((s) => s !== '').join(' · ');
 }
