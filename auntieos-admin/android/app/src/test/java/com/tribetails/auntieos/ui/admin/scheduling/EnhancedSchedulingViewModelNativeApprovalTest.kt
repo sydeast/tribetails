@@ -21,6 +21,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
@@ -78,11 +79,14 @@ class EnhancedSchedulingViewModelNativeApprovalTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = EnhancedSchedulingViewModel(
+    /** #1702: a fixed clock ahead of [booking]'s start, so approval is not judged on the real date. */
+    private val beforeTheVisit = java.time.Clock.fixed(java.time.Instant.parse("2026-11-01T15:00:00Z"), java.time.ZoneOffset.UTC)
+    private fun buildViewModel(clock: java.time.Clock = beforeTheVisit) = EnhancedSchedulingViewModel(
         bookingRepository = bookingRepo,
         serviceRepository = serviceRepo,
         auntieRepository = auntieRepo,
         kinCareRepository = kinCareRepo,
+        clock = clock,
     )
 
     private fun booking() = EnhancedBooking(
@@ -124,6 +128,20 @@ class EnhancedSchedulingViewModelNativeApprovalTest {
         val vm = buildViewModel()
         vm.approveBooking(booking())
 
+        coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any<KinCareSession>()) }
+    }
+
+    // #1702: operator ruling for #1574, a past-dated visit only as already
+    // Completed, never Scheduled. The booking used to flip to approved and only
+    // its session was refused; now nothing is written.
+    @Test
+    fun `a booking whose start has passed is refused before anything is written`() = runTest(testDispatcher) {
+        val afterTheVisit = java.time.Clock.fixed(java.time.Instant.parse("2026-12-02T18:00:00Z"), java.time.ZoneOffset.UTC)
+        val vm = buildViewModel(afterTheVisit)
+        vm.approveBooking(booking())
+        assertEquals(com.tribetails.auntieos.domain.APPROVE_IN_PAST_MESSAGE, vm.state.value.errorMessage)
+        coVerify(exactly = 0) { bookingRepo.updateBooking(any()) }
         coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any<KinCareSession>()) }
     }

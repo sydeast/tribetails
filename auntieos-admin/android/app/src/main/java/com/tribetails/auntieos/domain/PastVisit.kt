@@ -28,6 +28,9 @@ const val VISIT_UNDERWAY_MESSAGE =
     "That visit would already be under way. Pick a start still ahead to schedule it, or record it as completed once it has ended."
 const val RESCHEDULE_IN_PAST_MESSAGE =
     "That time has already passed. A visit can only be moved to a time still ahead."
+/** #1702: approving puts the visit on the calendar SCHEDULED, so a start gone by is refused. */
+const val APPROVE_IN_PAST_MESSAGE =
+    "The time this request asked for has already passed, so it cannot go on the calendar. Decline it, or move the visit to a time still ahead, then approve it."
 const val RECORD_COMPLETED_HINT =
     "This time has already passed, so the visit is recorded as completed. The household is not notified."
 
@@ -57,6 +60,18 @@ fun rescheduleIntoPastRefusal(startWallClock: String, now: LocalDateTime): Strin
     return if (start.isBefore(now)) RESCHEDULE_IN_PAST_MESSAGE else null
 }
 
+/**
+ * #1702: the approval pre-check, the server's `assertApprovalStartAhead`. A
+ * native booking's approval writes `enhanced_bookings` before the server is
+ * asked for the session, so a start already gone by is refused here first:
+ * otherwise the booking flipped to approved and only its session was refused.
+ * An unreadable start is left to the caller.
+ */
+fun approveIntoPastRefusal(startWallClock: String, now: LocalDateTime): String? {
+    val start = runCatching { LocalDateTime.parse(startWallClock, DateTimeFormatter.ISO_LOCAL_DATE_TIME) }.getOrNull()
+        ?: return null
+    return if (start.isBefore(now)) APPROVE_IN_PAST_MESSAGE else null
+}
 /** A wall clock on [zone] as the UTC-suffixed ISO the web's New visit sends, so a recorded visit sorts like every other row. */
 fun wallClockToUtcIso(date: LocalDate, time: LocalTime, zone: ZoneId): String =
     LocalDateTime.of(date, time).atZone(zone).toInstant().toString()

@@ -46,6 +46,7 @@ export const VISIT_IN_PAST_CODE = 'visit_in_past';
 export const VISIT_UNDERWAY_CODE = 'visit_underway';
 export const COMPLETED_NOT_OVER_CODE = 'completed_visit_not_over';
 export const RESCHEDULE_IN_PAST_CODE = 'reschedule_in_past';
+export const APPROVE_IN_PAST_CODE = 'approve_in_past';
 
 export const VISIT_IN_PAST_MESSAGE =
   'That time has already passed. A visit in the past can only be recorded as completed.';
@@ -57,6 +58,13 @@ export const RESCHEDULE_IN_PAST_MESSAGE =
   'That time has already passed. A visit can only be moved to a time still ahead.';
 export const RESCHEDULE_ASK_PASSED_MESSAGE =
   'The time this household asked for has already passed. Decline the ask, then move the visit to a time still ahead.';
+/**
+ * #1702: approving puts the visit on the calendar as SCHEDULED, so a request
+ * that waited until its time went by would land in the past. Refused the way a
+ * move into the past is.
+ */
+export const APPROVE_IN_PAST_MESSAGE =
+  'The time this request asked for has already passed, so it cannot go on the calendar. Decline it, or move the visit to a time still ahead, then approve it.';
 
 /**
  * Which of the three windows `[startMs, endMs)` is at `nowMs`. A start exactly
@@ -163,6 +171,24 @@ export async function newVisitStatusFor(args: {
   return 'SCHEDULED';
 }
 
+/**
+ * #1702: the approval gate, for `transitionBookingStatus` APPROVE and
+ * `approveBookingSeriesCore`. The visit's start must still be ahead: a start
+ * already gone by would be written SCHEDULED in the past, which the #1574
+ * ruling forbids ("allowed only as already completed ... never Scheduled").
+ * Start only, as a reschedule is: a visit under way is past its start too.
+ * An unreadable start is left to the caller, which never invents a time.
+ */
+export async function assertApprovalStartAhead(
+  startTime: string,
+  nowMs: number,
+  timeZone: TimeZoneReader,
+): Promise<void> {
+  const start = await versusNow(startTime, nowMs, timeZone);
+  if (start !== null && start < 0) {
+    throw new HttpsError('failed-precondition', APPROVE_IN_PAST_MESSAGE, { code: APPROVE_IN_PAST_CODE });
+  }
+}
 /**
  * `rescheduleBooking`'s gate (Schedule drag, detail sheet, Bookings, bulk, and
  * Android's moves): the new start must still be ahead. The accept branch of

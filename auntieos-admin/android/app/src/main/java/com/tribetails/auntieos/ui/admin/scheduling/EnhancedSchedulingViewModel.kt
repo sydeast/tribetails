@@ -1274,6 +1274,17 @@ class EnhancedSchedulingViewModel(
         booking: EnhancedBooking,
         incoming: com.tribetails.auntieos.data.repository.IncomingKinCare? = null,
     ) {
+        // #1702: a booking whose start has gone by would go on the calendar
+        // SCHEDULED in the past (operator ruling for #1574: a past visit only
+        // as already Completed). Refused before the booking is written, since
+        // the server refuses its session only after that write has landed.
+        // An already approved booking puts nothing new on the calendar here.
+        if (booking.status != BookingStatus.ACCEPTED) {
+            com.tribetails.auntieos.domain.approveIntoPastRefusal(booking.startDateTime, businessNow())?.let {
+                _state.value = _state.value.copy(errorMessage = it)
+                return
+            }
+        }
         viewModelScope.launch {
             val approved = booking.copy(
                 status = BookingStatus.ACCEPTED,

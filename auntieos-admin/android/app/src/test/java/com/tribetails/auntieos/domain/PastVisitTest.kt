@@ -46,6 +46,12 @@ class PastVisitTest {
     }
 
     @Test
+    fun `an approval whose start has passed is refused with the server sentence (#1702)`() {
+        assertEquals(APPROVE_IN_PAST_MESSAGE, approveIntoPastRefusal("2026-06-02T11:59:00", now))
+        assertNull(approveIntoPastRefusal("2026-06-02T12:00:00", now))
+        assertNull(approveIntoPastRefusal("whenever", now))
+    }
+    @Test
     fun `a business wall clock becomes the UTC instant the web sends`() {
         assertEquals(
             "2026-05-20T14:00:00Z",
@@ -61,7 +67,7 @@ class PastVisitTest {
         val server = File(dir ?: error("repo root not found"), "mytribe/functions/src/lib/pastVisit.ts")
         assertTrue("server module missing at ${server.absolutePath}", server.isFile)
         val flat = server.readText().replace(Regex("\\s*\\n\\s*"), " ")
-        for (sentence in listOf(RESCHEDULE_IN_PAST_MESSAGE, VISIT_UNDERWAY_MESSAGE)) {
+        for (sentence in listOf(RESCHEDULE_IN_PAST_MESSAGE, VISIT_UNDERWAY_MESSAGE, APPROVE_IN_PAST_MESSAGE)) {
             assertTrue("server does not send: $sentence", flat.contains("'$sentence'"))
         }
     }
