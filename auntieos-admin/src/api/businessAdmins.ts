@@ -19,8 +19,12 @@ import { arr, str } from '../lib/coerce';
 
 export interface BusinessAdminMember {
   uid: string;
-  /** From `staff/{uid}`. Null when there is no staff record, or it carries no name. */
+  /**
+   * The name to show: `staff/{uid}`'s, else (#1564) the sign-in account's
+   * display name, else an email. Null only when none of those exists.
+   */
   displayName: string | null;
+  /** The staff record's email. Not where business email goes; see `businessEmail`. */
   email: string | null;
   /**
    * False when this uid has no `staff/{uid}` document. Not an error: an
@@ -42,6 +46,12 @@ export interface BusinessAdminRoster {
   rosterPath: string;
   /** Why nobody is on it, when nobody is. Null when there are members. */
   reason: string | null;
+  /**
+   * #1564: where every business email goes, `businessEmail` in business
+   * settings (operator ruling, 2026-11-05 docket). '' when unset: business
+   * emails are skipped until it is filled.
+   */
+  businessEmail: string;
 }
 
 interface RawMember {
@@ -57,6 +67,7 @@ interface RawRoster {
   source?: string;
   rosterPath?: string;
   reason?: string | null;
+  businessEmail?: string;
 }
 
 function nullableStr(v: unknown): string | null {
@@ -87,5 +98,6 @@ export async function listBusinessAdmins(): Promise<BusinessAdminRoster> {
     source: decodeSource(raw.source),
     rosterPath: str(raw.rosterPath) || 'businessSettings/admins.uids',
     reason: nullableStr(raw.reason),
+    businessEmail: str(raw.businessEmail).trim(),
   };
 }

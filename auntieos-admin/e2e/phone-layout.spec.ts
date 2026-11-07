@@ -116,7 +116,7 @@ interface Screen {
 const SCREENS: readonly Screen[] = [
   {
     slug: 'invoices',
-    kicker: 'The Den · Invoices',
+    kicker: 'Care Ops · Invoices',
     row: '.invoices__row-main',
     identity: '.invoices__row-who',
   },
@@ -125,13 +125,13 @@ const SCREENS: readonly Screen[] = [
   // identity, and the column inside it that has to keep room to ellipsise.
   {
     slug: 'sessions',
-    kicker: 'The Den · Auntie Time',
+    kicker: 'Care Ops · Auntie Time',
     row: '.sessions__card-head',
     identity: '.sessions__card-id',
   },
   {
     slug: 'schedule',
-    kicker: 'The Den · Schedule',
+    kicker: 'Care Ops · Schedule',
     row: '.schedule__row-main',
     identity: '.schedule__row-who',
   },
@@ -207,7 +207,7 @@ for (const screen of SCREENS) {
  * row is still ON SCREEN, not merely not-overflowing.
  */
 test('an invoice row still shows its number, who, how much and its status', async ({ page }) => {
-  await openScreen(page, 'invoices', 'The Den · Invoices');
+  await openScreen(page, 'invoices', 'Care Ops · Invoices');
 
   const row = page.locator('.invoices__row-main').first();
   await expect(row).toBeVisible();
@@ -243,7 +243,7 @@ test('an invoice row still shows its number, who, how much and its status', asyn
  * `assertOverlayFits` forbids the very overflow a scroll box exists to allow.
  */
 test('the invoice detail overlay, its line items and its editor fit at 390px', async ({ page }) => {
-  await openScreen(page, 'invoices', 'The Den · Invoices');
+  await openScreen(page, 'invoices', 'Care Ops · Invoices');
   await expect(page.locator('.invoices__row-main').first()).toBeVisible();
   await page.locator('.invoices__row-main').first().click();
 
@@ -444,7 +444,7 @@ test('the invoice ledger tables span their panel at 390px, and only Payment Hist
     }),
   });
 
-  await openScreen(page, 'invoices', 'The Den · Invoices');
+  await openScreen(page, 'invoices', 'Care Ops · Invoices');
   await expect(page.locator('.invoices__row-main').first()).toBeVisible();
   await page.locator('.invoices__row-main').first().click();
   await expect(page.getByRole('dialog')).toBeVisible();

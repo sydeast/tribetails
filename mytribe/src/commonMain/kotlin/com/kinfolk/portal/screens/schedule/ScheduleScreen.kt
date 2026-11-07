@@ -208,7 +208,7 @@ fun ScheduleScreen(
                             SectLabel("VISIT REPLAYS")
                             replayCandidates.forEach { v ->
                                 Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                                    Text(v.serviceLabel ?: "Kin Care Visit", style = type.heritageTitle)
+                                    Text(v.serviceLabel ?: "KinCare Visit", style = type.heritageTitle)
                                     Text((v.departedAtIso ?: v.startTimeIso).orEmpty(), style = type.sansLabel)
                                     com.kinfolk.portal.components.RouteMap(
                                         route           = v.gpsRoute,

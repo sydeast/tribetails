@@ -587,7 +587,7 @@ class AdminDataViewModel(
                 loadKinCareSessions()
                 onResult(null)
             }.onFailure { t ->
-                _error.value = t.message ?: "Failed to update Kin Care"
+                _error.value = t.message ?: "Failed to update KinCare"
                 onResult(t)
             }
         }
@@ -616,7 +616,7 @@ class AdminDataViewModel(
                 loadKinCareSessions()
                 onResult(null)
             }.onFailure { t ->
-                _error.value = t.message ?: "Failed to update Kin Care"
+                _error.value = t.message ?: "Failed to update KinCare"
                 onResult(t)
             }
         }

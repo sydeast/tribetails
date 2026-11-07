@@ -361,7 +361,7 @@ describe('KinTaleCompose: NEW from a given sessionId', () => {
   it('shows an honest not-found message for an unknown sessionId, never a silent blank', async () => {
     mockStreams({ sessions: { status: 'ready', data: [] } });
     render(<KinTaleCompose sessionId="ghost" onClose={vi.fn()} />);
-    expect(await screen.findByText(/no kin care session found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no kincare session found/i)).toBeInTheDocument();
   });
 });
 

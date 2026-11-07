@@ -301,7 +301,7 @@ fun InvoicesScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Invoices",
+            kicker     = "Care Ops · Invoices",
             title      = "Getting",
             accentTail = "paid.",
             trailing   = {
