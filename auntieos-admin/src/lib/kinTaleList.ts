@@ -133,6 +133,30 @@ export function draftStatusAsKinTaleStatus(status: string): string {
   }
 }
 
+/**
+ * #1563: true once `publishGeneratedDraft` has sent this draft as a
+ * `kin_care_reports` doc. The household has that report now and the list shows
+ * it under Sent, so the draft it came from is not a second row.
+ */
+export function isPublishedDraft(draft: GeneratedDraftRow): boolean {
+  return str(draft.publishedReportId).trim() !== '';
+}
+/** The prefix `rowFromDraft` puts on a draft row's `_id`. */
+export const DRAFT_ROW_PREFIX = 'generated_drafts/';
+/**
+ * #1563: the bare `generated_drafts` doc id behind a list row id, or null when
+ * the id names a `kin_care_reports` doc.
+ *
+ * The KinTales list hands every row's `_id` to its `onSelect`, and a draft
+ * row's is namespaced. Handing that to the report detail, which searches
+ * `kin_care_reports`, is how every draft opened to "No KinTale found with id
+ * generated_drafts/...". Whoever routes a selection asks this first.
+ */
+export function draftIdFromListRowId(id: string): string | null {
+  if (!id.startsWith(DRAFT_ROW_PREFIX)) return null;
+  const bare = id.slice(DRAFT_ROW_PREFIX.length).trim();
+  return bare === '' ? null : bare;
+}
 // ── the two adapters ───────────────────────────────────────────────────────
 
 /** A `kin_care_reports` row, tagged with where it came from. No field is rewritten. */
@@ -159,7 +183,7 @@ export function rowFromReport(entry: KinTaleEntry): KinTaleListRow {
 export function rowFromDraft(draft: GeneratedDraftRow): KinTaleListRow {
   const type = draftTypeLabel(draft);
   return {
-    _id: `generated_drafts/${draft._id}`,
+    _id: `${DRAFT_ROW_PREFIX}${draft._id}`,
     source: 'generated_drafts',
     kinfolkId: draftKinfolkId(draft),
     kinfolkName: draftHousehold(draft),
@@ -273,7 +297,8 @@ export function mergeByCreatedDesc(
 /**
  * The list the KinTales screen renders: the loaded page of `kin_care_reports`
  * plus every loaded `generated_drafts` doc that falls in the same window and
- * household, newest first.
+ * household, newest first. A draft already sent as a report is left out; the
+ * report is its row (#1563).
  */
 export function kinTaleListRows(
   reports: readonly KinTaleEntry[],
@@ -282,6 +307,8 @@ export function kinTaleListRows(
 ): KinTaleListRow[] {
   return mergeByCreatedDesc(
     reports.map(rowFromReport),
-    draftsInWindow(drafts, options).map(rowFromDraft),
+    draftsInWindow(drafts, options)
+      .filter((d) => !isPublishedDraft(d))
+      .map(rowFromDraft),
   );
 }

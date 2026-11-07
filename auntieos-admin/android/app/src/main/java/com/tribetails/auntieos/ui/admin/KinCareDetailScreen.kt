@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
+import com.tribetails.auntieos.domain.addressLooksIncomplete
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import android.content.Intent
@@ -854,6 +856,14 @@ private fun AddressBlock(address: String) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(address, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+        // #1602: the walk's visit read "18605" with no hint it was incomplete.
+        if (addressLooksIncomplete(address)) {
+            Text(
+                INCOMPLETE_ADDRESS_HINT,
+                style = AuntieTheme.typography.labelSmall,
+                color = AuntieTheme.colors.warning,
+            )
+        }
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(999.dp))

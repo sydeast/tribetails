@@ -45,6 +45,7 @@ deleteAudienceSegment
 deleteBlockedTimeSlot
 deleteBusinessNotificationOverride
 deleteFormSchema
+deleteGeneratedDraft
 deleteKin
 deleteMediaFile
 deleteTemplate
@@ -198,6 +199,7 @@ previewEmailTemplate
 previewMarketingBlastAudience
 provisionBusinessAdmins
 provisionTribe
+publishGeneratedDraft
 purgeOldDrafts
 purgeOldVisitRoutes
 pushVisitsToGoogleCalendar

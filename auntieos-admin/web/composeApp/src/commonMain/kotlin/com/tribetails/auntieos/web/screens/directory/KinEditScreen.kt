@@ -37,6 +37,8 @@ import com.tribetails.auntieos.web.data.CloudFormSchemaRepository
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.FormSchema
+import com.tribetails.auntieos.web.data.validateKinAge
+import com.tribetails.auntieos.web.data.validateKinWeight
 import com.tribetails.auntieos.web.data.FormSchemaSummary
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
 import com.tribetails.auntieos.web.data.Kin
@@ -242,8 +244,13 @@ fun KinEditScreen(
         formValues            = formValues.toMap(),
     )
 
+    // #1583: age and weight are numbers. A value left as it loaded passes even if
+    // it is old free text, so a record with a bad legacy value stays editable.
+    val ageError    = validateKinAge(age, (loaded ?: existing)?.age)
+    val weightError = validateKinWeight(weight, (loaded ?: existing)?.weight)
     // item 3: Name + Species + Gender are all required.
-    val canSave = name.isNotBlank() && species.isNotBlank() && sex.isNotBlank()
+    val canSave = name.isNotBlank() && species.isNotBlank() && sex.isNotBlank() &&
+        ageError == null && weightError == null
     val c = AuntieTheme.colors
 
     fun doSave() {
@@ -400,7 +407,7 @@ fun KinEditScreen(
             }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                BottomBorderField(age,    { age    = it }, label = "Age",    modifier = Modifier.weight(1f))
+                BottomBorderField(age,    { age    = it }, label = "Age",    modifier = Modifier.weight(1f), keyboardType = KeyboardType.Decimal, errorMessage = ageError)
                 // item 3: relabel "Sex" -> "Gender" (model key `sex` kept to avoid a
                 // schema migration); controlled dropdown; required.
                 AuntieSelectField(
@@ -411,7 +418,7 @@ fun KinEditScreen(
                     required = true,
                     modifier = Modifier.weight(1f),
                 )
-                BottomBorderField(weight, { weight = it }, label = "Weight", modifier = Modifier.weight(1f), keyboardType = KeyboardType.Decimal)
+                BottomBorderField(weight, { weight = it }, label = "Weight", modifier = Modifier.weight(1f), errorMessage = weightError)
             }
             Spacer(Modifier.height(14.dp))
             BottomBorderField(colorMarkings, { colorMarkings = it }, label = "Color & markings", modifier = Modifier.fillMaxWidth())

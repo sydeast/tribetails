@@ -120,7 +120,13 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'message', label: 'Inbox replies', test: (c) => c === 'message' },
 ];
 
-export function Communicate() {
+export interface CommunicateProps {
+  /** #1563: a `generated_drafts` id to open in Personalize for review, from KinTales or Home. */
+  draftId?: string | undefined;
+  /** Opens a sent KinTale; passed through to Personalize's success banner. */
+  onOpenKinTale?: ((reportId: string) => void) | undefined;
+}
+export function Communicate({ draftId, onOpenKinTale }: CommunicateProps = {}) {
   const [mode, setMode] = useState<Mode>('personalize');
 
   const { getTabProps } = useRovingTabs({
@@ -162,7 +168,7 @@ export function Communicate() {
         {/* The compose surfaces mount per mode rather than hide with CSS, so a
             surface's in-flight state (a draft, a confirm) belongs to the visit
             that started it. */}
-        {mode === 'personalize' && <CommunicatePersonalize />}
+        {mode === 'personalize' && <CommunicatePersonalize draftId={draftId} onOpenKinTale={onOpenKinTale} />}
         {mode === 'broadcast' && <CommunicateCompose />}
         {/* Mounted once, outside the mode switch, so a half-written external
             message survives flipping Personalize to Broadcast; it belongs to

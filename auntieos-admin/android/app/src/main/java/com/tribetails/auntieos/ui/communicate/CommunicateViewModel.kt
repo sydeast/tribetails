@@ -18,6 +18,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import com.tribetails.auntieos.util.rethrowIfCancellation
 
+/**
+ * #1563: the composer type a stored draft's `communication_type` selects. Blank
+ * or unknown reads as a KinTale, which is what Home already calls such a row.
+ * Pure; tested.
+ */
+internal fun commTypeOfDraft(raw: String): String {
+    val t = raw.trim().lowercase()
+    return if (t in KNOWN_COMM_TYPES) t else "visit_report"
+}
+private val KNOWN_COMM_TYPES = setOf("email", "sms", "push", "social_post", "blog_post", "general", "visit_report")
 /** Blog/social are recipient-less (spec 19 item 2); everything else needs a recipient. Pure; tested. */
 internal fun needsRecipient(commType: String): Boolean =
     commType != "blog_post" && commType != "social_post"
@@ -98,6 +108,17 @@ data class CommunicateUiState(
     // Approval
     val isSaving: Boolean = false,
     val savedDraftId: String? = null,
+    // #1563: a stored `generated_drafts` doc opened from KinTales or Home.
+    val draftLoading: Boolean = false,
+    val draftLoadError: String? = null,
+    /** The opened draft's household, held until the kinfolk list has loaded to resolve it. */
+    val pendingKinfolkId: String? = null,
+    /** The KinTale a send produced, or the one an opened draft was already sent as. */
+    val publishedReportId: String? = null,
+    /** True when the opened draft had been sent before this screen opened it. */
+    val publishedBefore: Boolean = false,
+    val isDeletingDraft: Boolean = false,
+    val draftDeleted: Boolean = false,
 
     // External send (one-off email/SMS to an arbitrary recipient, not a kinfolk).
     val externalChannel: ExternalChannel = ExternalChannel.Email,
@@ -218,6 +239,13 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
             repo.getKinfolk().onSuccess { list ->
                 AuntieLog.d("Loaded ${list.size} kinfolk for communication")
                 _uiState.value = _uiState.value.copy(kinfolkList = list, kinfolkLoading = false)
+                // #1563: a draft opened before the list arrived names its household now.
+                _uiState.value.pendingKinfolkId?.let { id ->
+                    list.find { it.id == id }?.let { found ->
+                        _uiState.value = _uiState.value.copy(pendingKinfolkId = null)
+                        selectKinfolk(found)
+                    }
+                }
             }.onFailure { e ->
                 AuntieLog.e("Failed to load kinfolk for communication", e)
                 _uiState.value = _uiState.value.copy(kinfolkLoading = false, error = "Could not load Kinfolk")
@@ -405,7 +433,10 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     generatedKinfolkName  = result.kinfolkName,
                     generatedCommType     = result.communicationType,
                     generatedModel        = result.model,
-                    savedDraftId          = null
+                    savedDraftId          = null,
+                    publishedReportId     = null,
+                    publishedBefore       = false,
+                    draftDeleted          = false,
                 )
             }.onFailure { e ->
                 AuntieLog.e("Content generation failed", e)
@@ -417,8 +448,127 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
     }
 
+    /**
+     * #1563: open a stored `generated_drafts` doc for review: its type, its
+     * household, its title and its copy, ready to edit and send, or to delete.
+     * KinTales > Drafts and Home's "KinTales pending" land here. Before this a
+     * draft could only be one this screen had just generated, so every stored
+     * draft was stranded.
+     */
+    fun loadDraft(draftId: String) {
+        if (draftId.isBlank()) return
+        _uiState.value = _uiState.value.copy(
+            draftLoading = true,
+            draftLoadError = null,
+            draftDeleted = false,
+            error = null,
+            successMessage = null,
+        )
+        viewModelScope.launch {
+            repo.getGeneratedDraft(draftId).onSuccess { draft ->
+                if (draft == null) {
+                    _uiState.value = _uiState.value.copy(
+                        draftLoading = false,
+                        draftLoadError = "This draft is no longer here. It may have been deleted.",
+                    )
+                    return@onSuccess
+                }
+                val type = commTypeOfDraft(draft.communicationType)
+                val kinfolkId = draft.kinfolkId.orEmpty()
+                val household = _uiState.value.kinfolkList.find { it.id == kinfolkId }
+                _uiState.value = _uiState.value.copy(
+                    draftLoading         = false,
+                    commType             = type,
+                    subject              = draft.generatedTitle,
+                    generatedCopy        = draft.generatedCopy,
+                    draftId              = draft.id,
+                    kinfolkId            = kinfolkId.ifBlank { null },
+                    generatedKinfolkName = draft.kinfolkName.orEmpty(),
+                    generatedCommType    = type,
+                    generatedModel       = draft.model,
+                    savedDraftId         = null,
+                    publishedReportId    = draft.publishedReportId.ifBlank { null },
+                    publishedBefore      = draft.isPublished,
+                    pendingKinfolkId     = if (household == null && kinfolkId.isNotBlank()) kinfolkId else null,
+                )
+                if (household != null) selectKinfolk(household)
+            }.onFailure { e ->
+                _uiState.value = _uiState.value.copy(
+                    draftLoading = false,
+                    draftLoadError = e.message ?: "The draft could not be opened.",
+                )
+            }
+        }
+    }
+    /**
+     * #1563: send a KinTale draft to its household's portal. The server writes
+     * the SENT `kin_care_reports` doc and marks the draft sent in one go, and
+     * answers a repeat with the first report, so a second tap cannot send twice.
+     */
+    fun sendKinTaleDraft() {
+        val state = _uiState.value
+        val draftId = state.draftId ?: run {
+            _uiState.value = state.copy(error = "This draft was not saved, so there is nothing to send. Regenerate and try again.")
+            return
+        }
+        if (state.generatedCopy.isBlank()) {
+            _uiState.value = state.copy(error = "The KinTale is empty. Write something before sending it.")
+            return
+        }
+        if (state.isSaving) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            repo.publishGeneratedDraft(draftId, state.generatedCopy, state.subject)
+                .onSuccess { reportId ->
+                    val who = state.selectedKinfolk?.displayName?.ifBlank { null }
+                        ?: state.generatedKinfolkName.ifBlank { "the household" }
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false,
+                        publishedReportId = reportId,
+                        publishedBefore = false,
+                        successMessage = "Sent to $who. It is on their portal now.",
+                    )
+                }
+                .onFailure { e ->
+                    _uiState.value = _uiState.value.copy(isSaving = false, error = e.message ?: "Send failed")
+                }
+        }
+    }
+    /** #1563: delete the open, unsent draft. The server refuses one already sent. */
+    fun deleteDraft() {
+        val state = _uiState.value
+        val draftId = state.draftId ?: return
+        if (state.isDeletingDraft) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDeletingDraft = true, error = null)
+            repo.deleteGeneratedDraft(draftId)
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(
+                        isDeletingDraft = false,
+                        draftDeleted = true,
+                        generatedCopy = "",
+                        draftId = null,
+                        kinfolkId = null,
+                        generatedKinfolkName = "",
+                        generatedCommType = "",
+                        generatedModel = "",
+                        savedDraftId = null,
+                        publishedReportId = null,
+                        successMessage = "Draft deleted.",
+                    )
+                }
+                .onFailure { e ->
+                    _uiState.value = _uiState.value.copy(isDeletingDraft = false, error = e.message ?: "Delete failed")
+                }
+        }
+    }
     fun approveDraft() {
         val state = _uiState.value
+        // #1563: approving a KinTale sends it. It used to stamp the draft and reach nobody.
+        if (state.commType == "visit_report") {
+            sendKinTaleDraft()
+            return
+        }
         val draftId = state.draftId ?: run {
             AuntieLog.w("Approval attempted without draft ID")
             _uiState.value = state.copy(error = "No draft to save.")
