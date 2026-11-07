@@ -47,6 +47,7 @@
  * the conservative `open`. `legacyEvidenceWanted` says which documents are worth
  * the extra read, so no caller pays for it on an ordinary invoice.
  */
+import { invoiceDayOf } from './invoiceDay';
 import { invoiceStateOf, quoteAcceptanceOf, type InvoiceState } from './invoiceEditPolicy';
 import { isArchived } from './invoiceArchive';
 import { invoiceTotalCentsOf } from './invoiceMath';
@@ -135,14 +136,15 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * The invoice's due day as `YYYY-MM-DD`, or null. Writers stamp `dueDate`
  * (lib/invoiceDay.ts pins it to that shape); `invoiceDueDate` is read as the
- * legacy spelling. A longer ISO string contributes its day prefix, the same
- * reading every admin client applies, so the server and the chips agree.
+ * legacy spelling. A longer ISO string contributes its day prefix, and an
+ * imported month-name date ("July 14, 2026") is read as its day (#1570), the
+ * same reading every admin client applies, so the server and the chips agree.
  */
 export function invoiceDueDayOf(doc: ChaseDoc): string | null {
   for (const raw of [doc.dueDate, doc.invoiceDueDate]) {
-    if (typeof raw !== 'string') continue;
-    const day = raw.trim().slice(0, 10);
-    if (DAY_RE.test(day)) return day;
+    // #1570: the imported "July 14, 2026" form is read too (lib/invoiceDay.ts).
+    const day = invoiceDayOf(raw);
+    if (day !== null) return day;
   }
   return null;
 }

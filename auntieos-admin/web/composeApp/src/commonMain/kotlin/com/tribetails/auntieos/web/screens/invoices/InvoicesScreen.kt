@@ -387,7 +387,7 @@ fun InvoicesScreen(
                     Spacer(Modifier.height(AuntieTheme.dims.space4))
 
                     val sorted = s.value.sortedByDescending {
-                        isoDatePrefixOrNull(it.date) ?: isoDatePrefixOrNull(it.dueDate) ?: ""
+                        invoiceDayOrNull(it.date) ?: invoiceDayOrNull(it.dueDate) ?: ""
                     }
                     val visible = sorted.filter {
                         invoiceMatchesFilter(it, filter, todayIso) &&
@@ -540,6 +540,26 @@ private fun NewInvoiceCta(onClick: () -> Unit) {
     }
 }
 
+/** #1570: open invoices whose due date names no day; none of them can be counted overdue. */
+internal fun unreadableDueOpenCount(invoices: List<Invoice>): Int =
+    invoices.count { invoiceStateOrNull(it) == InvoiceState.OPEN && isUnreadableDueDate(it.dueDate) }
+/**
+ * The Overdue card's line: the worst overdue invoice and its days past, and
+ * (#1570) how many open invoices carry a due date that cannot be read, because
+ * "all clear" over an invoice the console could not date is the silent skip.
+ */
+internal fun overdueCaptionFor(invoices: List<Invoice>, todayIso: String): String {
+    val worst = invoices.filter { invoiceIsOverdue(it, todayIso) }.maxByOrNull { daysOverdue(it, todayIso) ?: 0 }
+    val worstLine = worst?.let {
+        val who = it.kinfolkName.ifBlank { it.client.ifBlank { "a kinfolk" } }
+        val days = daysOverdue(it, todayIso)
+        if (days != null) "$who, $days days past" else who
+    }
+    val unreadable = unreadableDueOpenCount(invoices)
+    if (unreadable == 0) return worstLine ?: "all clear"
+    val count = if (unreadable == 1) "1 open invoice has a due date" else "$unreadable open invoices have due dates"
+    return (worstLine?.let { "$it. " } ?: "") + "$count that cannot be read"
+}
 @Composable
 private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
     val outstanding = invoices.filter { invoiceIsOutstanding(it) }
@@ -548,17 +568,8 @@ private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
     val overdueInvoices = invoices.filter { invoiceIsOverdue(it, todayIso) }
     val overdueCount = overdueInvoices.size
 
-    // Name the worst-overdue invoice + its days-past for the Overdue card subline
-    // (mockup intent), computed from real fields only.
-    val worstOverdue = overdueInvoices.maxByOrNull { daysOverdue(it, todayIso) ?: 0 }
-    val overdueCaption = when {
-        worstOverdue == null -> "all clear"
-        else -> {
-            val who = worstOverdue.kinfolkName.ifBlank { worstOverdue.client.ifBlank { "a kinfolk" } }
-            val days = daysOverdue(worstOverdue, todayIso)
-            if (days != null) "$who, $days days past" else who
-        }
-    }
+    val overdueCaption = overdueCaptionFor(invoices, todayIso)
+    val unreadableDue = unreadableDueOpenCount(invoices)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -587,7 +598,7 @@ private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
             label    = "Overdue",
             value    = "$overdueCount",
             trend    = overdueCaption,
-            tone     = if (overdueCount > 0) AuntieStatusTone.Error else AuntieStatusTone.Muted,
+            tone     = if (overdueCount > 0 || unreadableDue > 0) AuntieStatusTone.Error else AuntieStatusTone.Muted,
             feature  = overdueCount > 0,
             modifier = Modifier.weight(1f),
         )
@@ -703,9 +714,14 @@ internal fun invoiceRowActionOrNull(invoice: Invoice): InvoiceAction? {
 internal fun invoiceRowDateLine(invoice: Invoice, todayIso: String): String {
     val state = invoiceStateOrNull(invoice)
     val days = daysOverdue(invoice, todayIso)
+    // #1570: a due date that names no day is said, quoted, where the due date
+    // would be, so the operator sees what is stored instead of a silent skip.
+    val dueUnreadable = isUnreadableDueDate(invoice.dueDate) &&
+        (state == InvoiceState.OPEN || invoice.date.isBlank())
     return when {
         state == InvoiceState.QUOTE -> "quote"
         state == InvoiceState.DRAFT -> "draft"
+        dueUnreadable -> "due date cannot be read: \"${invoice.dueDate.trim()}\""
         days != null -> "$days day${if (days == 1) "" else "s"} overdue"
         state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate, todayIso)}"
         invoice.date.isNotBlank() ->

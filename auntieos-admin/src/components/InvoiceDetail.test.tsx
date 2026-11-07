@@ -442,6 +442,14 @@ describe('InvoiceDetail', () => {
     });
   });
 
+  it('#1570 flags a stored due date that names no day, and reads an imported month-name one as a date', () => {
+    const { unmount } = render(<InvoiceDetail invoice={entry({ dueDate: '07/14/2026' })} onClose={vi.fn()} />);
+    expect(screen.getByText(/not a date this app can read, so it is never counted overdue/)).toBeInTheDocument();
+    unmount();
+    render(<InvoiceDetail invoice={entry({ dueDate: 'July 14, 2020' })} onClose={vi.fn()} />);
+    expect(screen.queryByText(/not a date this app can read/)).toBeNull();
+    expect(screen.getByText('OVERDUE')).toBeInTheDocument();
+  });
   it('sends a draft through reviewAndSendDraftInvoice, behind the same confirm step', async () => {
     reviewAndSendDraftInvoice.mockResolvedValue({ appOnly: false });
     render(

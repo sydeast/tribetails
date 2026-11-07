@@ -179,6 +179,64 @@ export function isoDatePrefixOrNull(raw: string): string | null {
   return candidate;
 }
 
+const MONTH_NAME_DAY = /^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/;
+const MONTH_NAMES = [
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december',
+] as const;
+function monthIndexOf(name: string): number {
+  const n = name.toLowerCase();
+  const exact = MONTH_NAMES.indexOf(n as (typeof MONTH_NAMES)[number]);
+  if (exact >= 0) return exact;
+  if (n.length !== 3) return -1;
+  return MONTH_NAMES.findIndex((m) => m.startsWith(n));
+}
+/**
+ * #1570: which day a stored invoice `date`/`dueDate` names, as `YYYY-MM-DD`,
+ * or null when it names none.
+ *
+ * [isoDatePrefixOrNull] alone read only the `YYYY-MM-DD` shape, so an invoice
+ * loaded from the old system with `dueDate: "July 14, 2026"` was never overdue:
+ * the walk's `#1018`, OPEN and four months past due, left the Overdue tile at 0.
+ * This reads that form too: an English month name (full or three letters), a
+ * day, an optional comma and a four-digit year, checked against the calendar.
+ * A numeric date like `07/14/2026` stays unreadable, because it names two
+ * different days depending on who typed it.
+ *
+ * The server's `mytribe/functions/src/lib/invoiceDay.ts#invoiceDayOf` is the
+ * same rule with the same fixtures, so the chips and the overdue notice agree.
+ */
+export function invoiceDayOrNull(raw: string): string | null {
+  const iso = isoDatePrefixOrNull(raw);
+  if (iso !== null) return iso;
+  const named = MONTH_NAME_DAY.exec(raw.trim());
+  if (named === null) return null;
+  const year = Number(named[3]);
+  const month = monthIndexOf(named[1] ?? '');
+  const day = Number(named[2]);
+  if (month < 0 || day < 1 || day > 31) return null;
+  const d = new Date(Date.UTC(year, month, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month || d.getUTCDate() !== day) return null;
+  return d.toISOString().slice(0, 10);
+}
+/**
+ * #1570: true when an invoice HAS a due date and it names no day. Such an
+ * invoice can never be counted overdue, so the screens flag it on the row and
+ * count it beside the Overdue figure instead of leaving it out silently.
+ */
+export function isUnreadableDueDate(raw: string): boolean {
+  return raw.trim() !== '' && invoiceDayOrNull(raw) === null;
+}
 /**
  * "May 21" for a parseable date, or the raw string verbatim when it isn't
  * (fail-loud: show what's stored). Pass `refIso` (a local YYYY-MM-DD, e.g.
@@ -187,7 +245,7 @@ export function isoDatePrefixOrNull(raw: string): string | null {
  * never silently reads as this year. Omit `refIso` for the bare month/day.
  */
 export function humanizeDate(raw: string, refIso?: string): string {
-  const iso = isoDatePrefixOrNull(raw);
+  const iso = invoiceDayOrNull(raw);
   if (!iso) return raw.trim();
   const month = Number(iso.slice(5, 7));
   const day = Number(iso.slice(8, 10));
@@ -210,7 +268,7 @@ export function humanizeDate(raw: string, refIso?: string): string {
  */
 export function isInvoiceOverdue(state: InvoiceState | null, dueDate: string, todayIso: string): boolean {
   if (state !== 'open') return false;
-  const due = isoDatePrefixOrNull(dueDate);
+  const due = invoiceDayOrNull(dueDate);
   if (due === null) return false;
   return due < todayIso;
 }
@@ -237,7 +295,7 @@ export function invoiceDaysOverdue(
   todayIso: string,
 ): number | null {
   if (!isInvoiceOverdue(state, dueDate, todayIso)) return null;
-  const due = isoDatePrefixOrNull(dueDate);
+  const due = invoiceDayOrNull(dueDate);
   if (due === null) return null;
   const dueMs = Date.parse(`${due}T00:00:00Z`);
   const todayMs = Date.parse(`${todayIso}T00:00:00Z`);
