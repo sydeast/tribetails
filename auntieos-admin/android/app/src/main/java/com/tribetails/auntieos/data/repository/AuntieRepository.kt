@@ -1543,7 +1543,9 @@ class AuntieRepository(
      * little wider than three so a run of decided drafts does not empty it.
      */
     suspend fun getRecentDrafts(): Result<List<Draft>> = getGeneratedDrafts(limit = 10)
-        .map { drafts -> drafts.filter { it.isUnsent }.take(3) }
+        // #1629: the same rule as the count beside it (pendingDraftCountOf), so a
+        // content-less shell is neither a row nor counted.
+        .map { drafts -> drafts.filter { it.isUnsent && it.generatedCopy.isNotBlank() }.take(3) }
         .onFailure { AuntieLog.e("Failed to get recent drafts", it) }
     /**
      * #1563: the newest [limit] `generated_drafts` docs that have NOT been sent,
@@ -1628,18 +1630,16 @@ class AuntieRepository(
         scoped.scopedCount("kin")
     }.onFailure { AuntieLog.e("Failed to get kin count", it) }
 
-    suspend fun getPendingDraftCount(): Result<Int> = runCatchingCancellable {
-        authGate.ensureAuthenticated()
-        scoped.scopedCount(
-            "generated_drafts",
-            field = "kinfolk_id",
-            // Stage-0I sandbox: scope to this tribe (kinfolk_id == testScope) and count
-            // 'pending' client-side to avoid a composite (kinfolk_id, status) index. An
-            // unfiltered read is denied by rules for a test admin.
-            sandbox = { snap -> snap.documents.count { it.getString("status") == "pending" } },
-            unscoped = { whereEqualTo("status", "pending") },
-        )
-    }.onFailure { AuntieLog.e("Failed to get pending draft count", it) }
+    /**
+     * Home's "KinTales to review". #1629: counted from the same read and the same
+     * rule as the "KinTales pending" rows ([pendingDraftCountOf]), the way the
+     * web stat row does. It used to be a server-side count of
+     * `status == "pending"`, so a generate.js draft (`generated`, snake_case
+     * copy) could never be counted.
+     */
+    suspend fun getPendingDraftCount(): Result<Int> = getGeneratedDrafts()
+        .map { pendingDraftCountOf(it) }
+        .onFailure { AuntieLog.e("Failed to get pending draft count", it) }
 
     // Business/Operational Settings
     suspend fun getBusinessSettings(): Result<BusinessSettings> = runCatchingCancellable {
