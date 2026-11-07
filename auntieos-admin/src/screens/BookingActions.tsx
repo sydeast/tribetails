@@ -265,7 +265,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       return;
     }
     // #1574: a visit is never moved into the past; say so before sending.
-    const pastRefusal = rescheduleIntoPastRefusal(new Date(startTime).toISOString(), Date.now());
+    const pastRefusal = rescheduleIntoPastRefusal(startTime, Date.now());
     if (pastRefusal !== null) {
       setError(pastRefusal);
       return;
