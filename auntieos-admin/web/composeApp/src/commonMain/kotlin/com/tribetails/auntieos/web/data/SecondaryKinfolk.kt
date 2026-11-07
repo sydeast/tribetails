@@ -29,6 +29,19 @@ data class SecondaryPersonDraft(
 const val SECONDARY_KINFOLK_NAME_MAX = 80
 /** The server's refusal, word for word. */
 const val SECONDARY_KINFOLK_NAME_REQUIRED = "A secondary kinfolk needs a name."
+const val SECONDARY_PHONE_INVALID = "Enter a 10-digit phone number, or leave it blank."
+const val SECONDARY_EMAIL_INVALID = "Enter an email like name@example.com, or leave it blank."
+/**
+ * The server's checks on a secondary kinfolk, made before the save (#1593), so
+ * a bad phone or email is refused at once instead of after the round trip. The
+ * first problem wins, in the form's order. The server keeps its own checks.
+ */
+fun secondaryKinfolkDraftError(draft: SecondaryPersonDraft): String? = when {
+    draft.name.isBlank() -> SECONDARY_KINFOLK_NAME_REQUIRED
+    draft.phone.isNotBlank() && !com.tribetails.auntieos.web.util.isValidPhone(draft.phone) -> SECONDARY_PHONE_INVALID
+    draft.email.isNotBlank() && !com.tribetails.auntieos.web.util.isValidEmail(draft.email) -> SECONDARY_EMAIL_INVALID
+    else -> null
+}
 /** The state label on a person row. */
 fun personAccessLabel(access: PersonAccess): String = when (access) {
     PersonAccess.NONE -> "No portal access"

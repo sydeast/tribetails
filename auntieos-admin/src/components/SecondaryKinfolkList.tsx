@@ -13,6 +13,7 @@ import { Banner } from './Banner';
 import { GhostButton, PrimaryButton } from './Buttons';
 import { ErrorHint, StatusPill } from './DenScreenKit';
 import { Dialog } from './Dialog';
+import { secondaryKinfolkFieldErrors, type SecondaryKinfolkFieldErrors } from '../lib/secondaryKinfolkCheck';
 import './SecondaryKinfolkList.css';
 
 const EMPTY: SecondaryKinfolkDraft = { name: '', phone: '', email: '' };
@@ -50,6 +51,7 @@ export function SecondaryKinfolkList({
   const [editing, setEditing] = useState<{ personId?: string; draft: SecondaryKinfolkDraft } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<SecondaryKinfolkFieldErrors>({});
   const [removeTarget, setRemoveTarget] = useState<SecondaryKinfolk | null>(null);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
@@ -73,6 +75,7 @@ export function SecondaryKinfolkList({
 
   function open(person?: SecondaryKinfolk) {
     setSaveError(null);
+    setFieldErrors({});
     setEditing(
       person === undefined
         ? { draft: { ...EMPTY } }
@@ -82,10 +85,10 @@ export function SecondaryKinfolkList({
 
   async function save() {
     if (editing === null) return;
-    if (editing.draft.name.trim() === '') {
-      setSaveError('A secondary kinfolk needs a name.');
-      return;
-    }
+    // #1593: the server's checks, made here first, each at its own field.
+    const refused = secondaryKinfolkFieldErrors(editing.draft);
+    setFieldErrors(refused);
+    if (Object.keys(refused).length > 0) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -114,8 +117,15 @@ export function SecondaryKinfolkList({
     }
   }
 
-  const set = (patch: Partial<SecondaryKinfolkDraft>) =>
+  const set = (patch: Partial<SecondaryKinfolkDraft>) => {
     setEditing((e) => (e === null ? e : { ...e, draft: { ...e.draft, ...patch } }));
+    // Editing a field clears that field's refusal.
+    setFieldErrors((f) => {
+      const next = { ...f };
+      for (const k of Object.keys(patch) as (keyof SecondaryKinfolkFieldErrors)[]) delete next[k];
+      return next;
+    });
+  };
 
   const rows = people.status === 'ready' ? people.data.filter((p) => p.access !== 'ACTIVE') : [];
 
@@ -165,16 +175,19 @@ export function SecondaryKinfolkList({
           <fieldset className="skin__form" disabled={saving}>
             <label className="skin__field">
               <span className="skin__label">Name</span>
-              <input id="skin-name" type="text" maxLength={80} value={editing.draft.name} onChange={(e) => set({ name: e.target.value })} />
+              <input id="skin-name" type="text" maxLength={80} value={editing.draft.name} onChange={(e) => set({ name: e.target.value })} aria-invalid={fieldErrors.name ? true : undefined} aria-describedby="skin-name-err" />
             </label>
+            <span id="skin-name-err" className="skin__fielderr">{fieldErrors.name ?? ''}</span>
             <label className="skin__field">
               <span className="skin__label">Phone (optional)</span>
-              <input id="skin-phone" type="tel" maxLength={32} value={editing.draft.phone} onChange={(e) => set({ phone: e.target.value })} />
+              <input id="skin-phone" type="tel" maxLength={32} value={editing.draft.phone} onChange={(e) => set({ phone: e.target.value })} aria-invalid={fieldErrors.phone ? true : undefined} aria-describedby="skin-phone-err" />
             </label>
+            <span id="skin-phone-err" className="skin__fielderr">{fieldErrors.phone ?? ''}</span>
             <label className="skin__field">
               <span className="skin__label">Email (optional)</span>
-              <input id="skin-email" type="email" maxLength={254} value={editing.draft.email} onChange={(e) => set({ email: e.target.value })} />
+              <input id="skin-email" type="email" maxLength={254} value={editing.draft.email} onChange={(e) => set({ email: e.target.value })} aria-invalid={fieldErrors.email ? true : undefined} aria-describedby="skin-email-err" />
             </label>
+            <span id="skin-email-err" className="skin__fielderr">{fieldErrors.email ?? ''}</span>
           </fieldset>
           <p className="skin__note">No invite is sent. Only their primary kinfolk can give them portal access.</p>
           {saveError !== null && (

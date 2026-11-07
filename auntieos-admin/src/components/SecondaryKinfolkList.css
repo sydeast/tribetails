@@ -64,6 +64,17 @@
   width: 100%;
   padding: var(--space-3);
 }
+/* #1593: a refused field. The line under it is always laid out, so a refusal
+   changes text, never the dialog's height. */
+.skin__field input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+.skin__fielderr {
+  min-height: 1.25em;
+  font-size: var(--type-label-sm-size);
+  line-height: 1.25;
+  color: var(--color-error);
+}
 .skin__note {
   color: var(--color-text-dim);
   font-size: var(--type-label-sm-size);
