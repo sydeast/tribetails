@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -61,6 +62,23 @@ import com.tribetails.auntieos.web.ui.shaders.meshGradientBackground
 import com.tribetails.auntieos.web.ui.shaders.rememberMeshPointer
 import kotlinx.coroutines.launch
 
+private const val MISSING_EMAIL_MSG = "Enter your email."
+private const val MISSING_PASSWORD_MSG = "Enter your password."
+private const val RESET_NEEDS_EMAIL_MSG = "Type your email above first."
+/**
+ * What each field has to say about itself (#1600). A null is a field that is
+ * fine. Shown under the field in a line the form always reserves, replacing the
+ * one toast that named both fields and highlighted neither.
+ */
+internal data class SignInFieldErrors(val email: String? = null, val password: String? = null) {
+    val any: Boolean get() = email != null || password != null
+}
+internal fun signInFieldErrors(email: String, password: String): SignInFieldErrors = SignInFieldErrors(
+    email = if (email.isBlank()) MISSING_EMAIL_MSG else null,
+    password = if (password.isEmpty()) MISSING_PASSWORD_MSG else null,
+)
+internal fun resetEmailFieldError(email: String): String? =
+    if (email.isBlank()) RESET_NEEDS_EMAIL_MSG else null
 @Composable
 fun SignInScreen(
     auth: AuthClient,
@@ -80,6 +98,7 @@ fun SignInScreen(
     var loading    by remember { mutableStateOf(false) }
     var resetting  by remember { mutableStateOf(false) }
     var toast      by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
+    var fieldErrors by remember { mutableStateOf(SignInFieldErrors()) }
 
     /**
      * Issue #573: why the operator is looking at this screen, when they did not
@@ -110,8 +129,11 @@ fun SignInScreen(
     LaunchedEffect(email, password) { platformSetSignInAutofillValues(email, password) }
 
     fun submit() {
-        if (email.isBlank() || password.isBlank()) {
-            toast = "Email and password are required." to ToastKind.Error
+        val missing = signInFieldErrors(email, password)
+        fieldErrors = missing
+        if (missing.any) {
+            toast = null
+            (if (missing.email != null) emailFocus else passwordFocus).requestFocus()
             return
         }
         loading = true
@@ -143,8 +165,11 @@ fun SignInScreen(
     // the network); it is never about whether the account exists.
     fun resetPassword() {
         if (resetting) return
-        if (email.isBlank()) {
-            toast = "Type your email above first." to ToastKind.Error
+        val needsEmail = resetEmailFieldError(email)
+        fieldErrors = SignInFieldErrors(email = needsEmail)
+        if (needsEmail != null) {
+            toast = null
+            emailFocus.requestFocus()
             return
         }
         resetting = true
@@ -220,9 +245,13 @@ fun SignInScreen(
 
             BottomBorderField(
                 value         = email,
-                onValueChange = { email = it },
+                onValueChange = {
+                    email = it
+                    if (fieldErrors.email != null) fieldErrors = fieldErrors.copy(email = null)
+                },
                 label         = "Email",
                 placeholder   = "you@auntieos.com",
+                isError       = fieldErrors.email != null,
                 keyboardType  = KeyboardType.Email,
                 imeAction     = ImeAction.Next,
                 // 02-sign-in items 2/3: one Tab (and soft-keyboard Next) advance
@@ -231,14 +260,19 @@ fun SignInScreen(
                 nextFocusRequester  = passwordFocus,
                 onImeAction         = { passwordFocus.requestFocus() },
             )
+            SignInFieldErrorLine(fieldErrors.email)
             // Password field with in-field show / hide reveal toggle.
             // The mockup tagged a show/hide control as a SUGGESTION; the Den
             // AuntiePasswordField provides exactly that reveal affordance.
             AuntiePasswordField(
                 value         = password,
-                onValueChange = { password = it },
+                onValueChange = {
+                    password = it
+                    if (fieldErrors.password != null) fieldErrors = fieldErrors.copy(password = null)
+                },
                 label         = "Password",
                 placeholder   = "••••••••",
+                isError       = fieldErrors.password != null,
                 imeAction     = ImeAction.Done,
                 fieldFocusRequester = passwordFocus,
                 modifier      = Modifier.onPreviewKeyEvent { e ->
@@ -247,6 +281,7 @@ fun SignInScreen(
                     } else false
                 },
             )
+            SignInFieldErrorLine(fieldErrors.password)
 
             StatusToast(
                 visible = toast != null,
@@ -277,4 +312,18 @@ fun SignInScreen(
             } }  // close card Column + Box
         }
     }
+}
+
+/**
+ * The line under a sign-in field. Always laid out at one line's height, empty
+ * or not, so a refusal changes text and colour and never the form's height.
+ */
+@Composable
+private fun SignInFieldErrorLine(message: String?) {
+    Text(
+        text = message.orEmpty(),
+        style = AuntieTheme.typography.bodySmall,
+        color = AuntieTheme.colors.error,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 18.dp),
+    )
 }

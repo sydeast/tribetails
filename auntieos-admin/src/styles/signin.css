@@ -154,6 +154,21 @@
 .signin__input:focus-within {
   border-color: var(--color-primary);
 }
+/* A field the last submit refused (#1600). Declared after :focus-within so a
+   refused field stays red while the cursor is in it. */
+.signin__input[data-invalid='true'],
+.signin__input[data-invalid='true']:focus-within {
+  border-color: var(--color-error);
+}
+/* The line under each field is ALWAYS laid out, empty or not, so a refusal
+   changes its text and never the height of the form. */
+.signin__fielderr {
+  margin: 0;
+  min-height: 1.25em;
+  font-size: var(--type-label-sm-size);
+  line-height: 1.25;
+  color: var(--color-error);
+}
 
 .signin__input input {
   flex: 1;

@@ -111,7 +111,8 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.invoices__tab--active {
+.invoices__tab--active,
+.invoices__tab.invoices__tab--active:hover {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-background);
