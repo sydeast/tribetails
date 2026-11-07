@@ -1420,6 +1420,8 @@ internal fun BookingCreateScreen(
                                     notes = kinfolkAdditionalInfo.ifBlank { null },
                                     pattern = if (repeatMode == BookingRepeat.WEEKLY) "weekly" else "individual",
                                     weeklyDays = if (repeatMode == BookingRepeat.WEEKLY) weekdays.sorted() else null,
+                                    // #1626: the admin note used to be dropped on this path.
+                                    staffNotes = adminInternalNotes.ifBlank { null },
                                 )
                             }
                             saving = false

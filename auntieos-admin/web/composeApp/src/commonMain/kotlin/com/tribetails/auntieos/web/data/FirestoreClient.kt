@@ -1905,6 +1905,13 @@ class FirestoreClient {
         weeklyDays: List<Int>? = null,
         kinIds: List<String>? = null,
         /**
+         * #1626: the office's private note (the form's "Admin internal notes").
+         * Sent as `staffNotes`, which the server writes to each visit's
+         * staff-only `internalNotes` thread. [notes] is the household-facing
+         * note, stored on the envelope the portal shows them.
+         */
+        staffNotes: String? = null,
+        /**
          * #644: the id this submission will be stored under, minted once by the
          * caller and reused by every attempt at it. Optional so an older caller
          * still compiles; the server then mints its own id and dedupes nothing,
@@ -1923,6 +1930,7 @@ class FirestoreClient {
             idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
             put("pattern", JsonPrimitive(pattern))
             if (!notes.isNullOrBlank()) put("notes", JsonPrimitive(notes))
+            if (!staffNotes.isNullOrBlank()) put("staffNotes", JsonPrimitive(staffNotes))
             weeklyDays?.let { days -> put("weeklyDays", buildJsonArray { days.forEach { add(JsonPrimitive(it)) } }) }
             kinIds?.let { ids -> put("kinIds", buildJsonArray { ids.forEach { add(JsonPrimitive(it)) } }) }
             put("visits", buildJsonArray {
