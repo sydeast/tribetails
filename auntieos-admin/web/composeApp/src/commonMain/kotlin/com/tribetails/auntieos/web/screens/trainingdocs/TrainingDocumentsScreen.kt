@@ -115,7 +115,7 @@ fun TrainingDocumentsScreen() {
             kicker     = "The Den · Tribal Intel",
             title      = "Tribal",
             accentTail = "Intel.",
-            subtitle   = "Guides and educational resources for care delivery",
+            subtitle   = TRIBAL_INTEL_SUBTITLE,
             trailing   = {
                 if (flags.trainingDocsCreate) {
                     // Backed by the createTrainingDocument admin callable (spec 23).
@@ -438,7 +438,7 @@ private fun DocCard(
 private fun EmptyState() {
     AuntieEmptyState(
         title   = "No Tribal Intel yet",
-        message = "Training materials and guides will appear here once uploaded",
+        message = TRIBAL_INTEL_EMPTY_MESSAGE,
         icon    = Lucide.BookOpen,
         modifier = Modifier.padding(vertical = AuntieTheme.dims.space5),
     )
@@ -631,3 +631,7 @@ private fun AddDocumentForm(
         }
     }
 }
+
+/** #1616: what this screen holds. The same two strings ship on web and Android. */
+internal const val TRIBAL_INTEL_SUBTITLE = "Notes about a household, a person or a pet, written for the dossier and the 411."
+internal const val TRIBAL_INTEL_EMPTY_MESSAGE = "Notes about a household, a person or a pet appear here once you add them."

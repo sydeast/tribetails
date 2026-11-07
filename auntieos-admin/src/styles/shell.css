@@ -114,7 +114,8 @@
   outline-offset: 2px;
 }
 
-.shell__link--active {
+.shell__link--active,
+.shell__link.shell__link--active:hover {
   background: var(--color-accent);
   color: var(--tt-brand-cream);
   font-weight: 600;
@@ -194,7 +195,8 @@
   transition: background var(--dur-fast) ease;
 }
 .shell__account:hover,
-.shell__account--active {
+.shell__account--active,
+.shell__account.shell__account--active:hover {
   background: var(--color-surface-2);
 }
 .shell__account:focus-visible {
