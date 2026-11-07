@@ -33,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -475,7 +476,11 @@ fun AdminSettingsScreen(
     // the ViewModel-held businessSettings is untouched by switching sections, so
     // an edit in one section persists (each panel instant-saves) regardless of
     // where the operator navigates next.
-    var selectedSection by remember { mutableStateOf<SettingsSection?>(null) }
+    //
+    // Saveable (#1594): a rotation, a trip through the system back stack or a
+    // process restore used to reopen the section LIST, losing the operator's
+    // place. The enum is Serializable, so the Bundle holds it as it is.
+    var selectedSection by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AuntieScreenScaffold(
