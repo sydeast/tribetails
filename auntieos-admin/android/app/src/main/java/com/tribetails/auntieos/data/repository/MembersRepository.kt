@@ -478,6 +478,8 @@ internal fun decodeMembers(raw: Map<*, *>?): List<MembersRepository.Member> {
             status = decodeMemberStatus(m["status"]),
             permissions = decodePermissions(m["permissions"]),
             invitedEmail = (m["invitedEmail"] as? String)?.ifBlank { null },
+            // #1589: the server's name for the person, which heads the row.
+            displayName = (m["displayName"] as? String)?.ifBlank { null },
         )
     }
 }
