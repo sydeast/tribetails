@@ -1147,8 +1147,11 @@ class FirestoreClient {
         entityId: String,
         entityType: String,
         max: Int = 10,
+        // #1588: the household of a "kin" upload, stamped as `kinfolkId` so Tag kin
+        // scopes to it. Blank for every other target.
+        kinfolkId: String = "",
     ): WriteResult<List<MediaFile>> =
-        platformPickAndUploadMedia(entityId, entityType, max)
+        platformPickAndUploadMedia(entityId, entityType, max, kinfolkId)
 
     /**
      * ISSUE #577: server-bound delete, through the `deleteMediaFile` callable,
@@ -2616,7 +2619,7 @@ internal expect suspend fun platformUploadMedia(entityId: String, entityType: St
 
 // Run-4 #4b: multi-file variant for general/business/gallery media. wasm picks up to
 // [max] files and writes one media_files doc each; jvm is the mobile-only stub.
-internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>>
+internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int, kinfolkId: String): WriteResult<List<MediaFile>>
 internal expect fun platformAllMediaStream(): Flow<FirestoreResult<List<MediaFile>>>
 internal expect fun platformMediaForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<MediaFile>>>
 internal expect suspend fun platformUpdateMediaTags(mediaId: String, taggedKinIds: List<String>): WriteResult<Unit>
