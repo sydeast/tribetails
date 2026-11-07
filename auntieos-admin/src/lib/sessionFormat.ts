@@ -423,6 +423,15 @@ export function sessionPhase(row: PhaseRow, todayIso: string): SessionPhase | nu
 }
 
 /**
+ * #1607: THE one definition of overdue, shared by Auntie Time's Overdue group
+ * and the Bookings list's OVERDUE pill: a visit still on the books whose day is
+ * more than a day behind today (`sessionPhase`'s own rule, issue #702).
+ */
+export function isOverdueSession(row: PhaseRow, todayIso: string): boolean {
+  return sessionPhase(row, todayIso) === 'overdue';
+}
+
+/**
  * How many rows Auntie Time files under its Overdue heading. Home's Today's
  * Pack reads this, so the number on Home is the number on the board by
  * construction: both call `sessionPhase`, and Home reads the same
@@ -430,7 +439,7 @@ export function sessionPhase(row: PhaseRow, todayIso: string): SessionPhase | nu
  */
 export function overdueSessionCount(rows: readonly PhaseRow[], todayIso: string): number {
   let n = 0;
-  for (const row of rows) if (sessionPhase(row, todayIso) === 'overdue') n += 1;
+  for (const row of rows) if (isOverdueSession(row, todayIso)) n += 1;
   return n;
 }
 /** One phase's rows, still sub-grouped by local day so the day headers survive. */
