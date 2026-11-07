@@ -299,9 +299,41 @@ describe('ScheduleWeekGrid', () => {
     expect(block()).toBeDisabled();
   });
 
-  it('a visit outside the drawn hours is counted and named, never silently dropped', () => {
-    renderGrid([session({ _id: 'early', startTime: bizIso(6, 0), endTime: bizIso(7, 0) })]);
-    expect(screen.getByText(/1 visit outside the 8a to 6p window/)).toBeInTheDocument();
+  /**
+   * #1606: the week reaches every visit. It used to stop at 8a to 6p and hide a
+   * 6:30 visit behind a footer that did not name the day; the grid now grows
+   * in whole hours to include it.
+   */
+  it('a visit before 8a or after 6p gets its own rows instead of a footer line', () => {
+    renderGrid([
+      session({ _id: 'early', startTime: bizIso(6, 0), endTime: bizIso(7, 0) }),
+      session({ _id: 'late', startTime: bizIso(18, 30), endTime: bizIso(19, 0) }),
+    ]);
+    const labels = Array.from(document.querySelectorAll('.schedule-grid__time')).map((el) => el.textContent);
+    expect(labels[0]).toBe('6a');
+    expect(labels[labels.length - 1]).toBe('6p');
+    expect(document.querySelector('[data-session-id="early"]')).not.toBeNull();
+    const late = document.querySelector('[data-session-id="late"]') as HTMLElement;
+    expect(late).not.toBeNull();
+    // 18:30 is 750 minutes below a 6a top edge, at 0.9px a minute.
+    expect(late.style.top).toBe(`${(HOUR_HEIGHT_PX * 750) / 60}px`);
+    expect(screen.queryByText(/outside the/)).toBeNull();
+  });
+
+  it('a week with nothing outside 8a to 6p keeps the 8a to 6p grid', () => {
+    renderGrid([session()]);
+    const labels = Array.from(document.querySelectorAll('.schedule-grid__time')).map((el) => el.textContent);
+    expect(labels).toHaveLength(10);
+    expect(labels[0]).toBe('8a');
+  });
+
+  /** #1606: a half-hour block names its household beside the time, not below it where it was cut off. */
+  it('a short block carries the household on the time line', () => {
+    renderGrid([session({ _id: 'short', startTime: bizIso(9, 0), endTime: bizIso(9, 30) })]);
+    const short = document.querySelector('[data-session-id="short"]') as HTMLElement;
+    expect(short.className).toContain('schedule-grid__block--compact');
+    expect(short).toHaveTextContent('09:00');
+    expect(short.querySelector('.schedule-grid__block-name')?.textContent).not.toBe('');
   });
 
   it('the day headers still pick the agenda day', () => {

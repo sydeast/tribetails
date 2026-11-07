@@ -329,7 +329,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
   }
 
   async function commitDrop(drop: ScheduleDrop, override: 'visit' | 'busy' | null) {
-    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone);
+    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone, drop.window);
     if (times === null) {
       setDropError('That visit could not be moved: its record has no readable start time.');
       return;
@@ -364,7 +364,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
     // A drop that lands back where the visit already was writes nothing: no
     // callable, no audit entry, no "rescheduled" event for a move nobody made.
     const fromDay = businessDayOf(str(drop.session.startTime), businessZone) ?? '';
-    if (isNoOpDrop(drop.session, fromDay, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone)) return;
+    if (isNoOpDrop(drop.session, fromDay, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone, drop.window)) return;
     void commitDrop(drop, null);
   }
 

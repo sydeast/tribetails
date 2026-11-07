@@ -100,7 +100,6 @@ private enum class ScheduleView(val label: String) {
 // the rescheduleBooking callable.
 private const val GRID_START_HOUR = 8
 private const val GRID_END_HOUR = 18           // 6p, exclusive bottom edge
-private const val GRID_HOURS = GRID_END_HOUR - GRID_START_HOUR
 private val HOUR_HEIGHT = 54.dp
 private val GUTTER_WIDTH = 56.dp
 
@@ -573,8 +572,19 @@ private fun WeekCalendar(
     val c = AuntieTheme.colors
     if (days.isEmpty()) return
 
-    val windowStart = GRID_START_HOUR * 60
-    val windowEnd = GRID_END_HOUR * 60
+    // #1606: the week's own hours, 8a to 6p widened to reach every visit in it.
+    // A 6:30 visit used to sit behind a footer line that did not name the day.
+    val gridWindow = weekGridWindow(
+        days.flatMap { day ->
+            sessionsByDate[day.toString()].orEmpty().mapNotNull { sess ->
+                val start = localMinutesOfDay(sess.startTime, localZone) ?: return@mapNotNull null
+                start to visitEndMinute(sess, start, localZone)
+            }
+        },
+    )
+    val gridHours = gridWindow.endHour - gridWindow.startHour
+    val windowStart = gridWindow.startHour * 60
+    val windowEnd = gridWindow.endHour * 60
     var offWindowCount = 0
     var placeableCount = 0
     days.forEach { day ->
@@ -654,14 +664,14 @@ private fun WeekCalendar(
             Row(modifier = Modifier.fillMaxWidth()) {
                 // Time gutter
                 Column(modifier = Modifier.width(GUTTER_WIDTH)) {
-                    repeat(GRID_HOURS) { i ->
+                    repeat(gridHours) { i ->
                         Box(
                             modifier = Modifier
                                 .height(HOUR_HEIGHT)
                                 .fillMaxWidth(),
                         ) {
                             Text(
-                                text = hourLabel(GRID_START_HOUR + i),
+                                text = hourLabel(gridWindow.startHour + i),
                                 style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
                                 color = c.textFaint,
                                 modifier = Modifier
@@ -679,12 +689,12 @@ private fun WeekCalendar(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(HOUR_HEIGHT * GRID_HOURS)
+                            .height(HOUR_HEIGHT * gridHours)
                             .background(if (isToday) c.coral.copy(alpha = 0.05f) else Color.Transparent)
                             .border(AuntieTheme.dims.borderHairline, c.borderSoft),
                     ) {
                         // Hour gridlines
-                        repeat(GRID_HOURS) { i ->
+                        repeat(gridHours) { i ->
                             Box(
                                 modifier = Modifier
                                     .padding(top = HOUR_HEIGHT * (i + 1) - AuntieTheme.dims.borderHairline)
@@ -696,13 +706,14 @@ private fun WeekCalendar(
                         // Busy overlays drawn UNDER the real visits: read-only, no event
                         // detail (hideDetailsFromKinfolk=true and the slot carries no
                         // title), just a generic "Busy" band. Off-window slots drop out.
-                        dayBusy.forEach { slot -> BusyBlock(slot = slot) }
+                        dayBusy.forEach { slot -> BusyBlock(slot = slot, window = gridWindow) }
                         // Event blocks (only in-window sessions are positioned here).
                         // Each is vertically draggable to a new time slot; the drop maps
                         // to rescheduleBooking via rescheduleArgsForDrop.
                         daySessions.forEach { session ->
                             EventBlock(
                                 snapMinutes = snapMinutes,
+                                window = gridWindow,
                                 session = session,
                                 dayIso = day.toString(),
                                 localZone = localZone,
@@ -755,7 +766,7 @@ private fun WeekCalendar(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Text(
-                text = "$offWindowCount visit${if (offWindowCount == 1) "" else "s"} outside the ${hourLabel(GRID_START_HOUR)} to ${hourLabel(GRID_END_HOUR)} window. Open a day below to see all of its visits.",
+                text = "$offWindowCount visit${if (offWindowCount == 1) "" else "s"} outside the ${hourLabel(gridWindow.startHour)} to ${hourLabel(gridWindow.endHour)} window. Open a day below to see all of its visits.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -784,6 +795,7 @@ private fun EventBlock(
     onClick: () -> Unit,
     onReschedule: (RescheduleArgs) -> Unit,
     snapMinutes: Int,
+    window: WeekGridWindow = WeekGridWindow.DEFAULT,
 ) {
     val c = AuntieTheme.colors
     val accent = serviceTint(session.serviceType, session.status)
@@ -791,8 +803,8 @@ private fun EventBlock(
     val startMin = localMinutesOfDay(session.startTime, localZone)
     if (startMin == null) return // unparseable: don't fabricate a position
 
-    val windowStart = GRID_START_HOUR * 60
-    val windowEnd = GRID_END_HOUR * 60
+    val windowStart = window.startHour * 60
+    val windowEnd = window.endHour * 60
     // Off-window: do NOT clamp onto the grid edge (that mispositions the block).
     // Drop it from the grid; the day agenda still lists it.
     if (startMin < windowStart || startMin >= windowEnd) return
@@ -854,17 +866,36 @@ private fun EventBlock(
             .padding(horizontal = 9.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
+        val household = session.kinfolkName.ifBlank { session.serviceType.ifBlank { "KinCare Visit" } }
+        if (blockHeight < COMPACT_BLOCK_HEIGHT) {
+            // #1606: at 30 minutes the stacked time pushed the household out of
+            // the block, so a short visit read as a bare time. One line instead.
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = displayTime(session.startTime, localZone),
+                    style = AuntieTheme.typography.mono.copy(fontSize = 9.5.sp),
+                    color = accent,
+                )
+                Text(
+                    text = household,
+                    style = AuntieTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                    color = c.textPrimary,
+                    maxLines = 1,
+                )
+            }
+        } else {
         Text(
             text = displayTime(session.startTime, localZone),
             style = AuntieTheme.typography.mono.copy(fontSize = 9.5.sp),
             color = accent,
         )
         Text(
-            text = session.kinfolkName.ifBlank { session.serviceType.ifBlank { "KinCare Visit" } },
+            text = household,
             style = AuntieTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
             color = c.textPrimary,
             maxLines = 1,
         )
+        }
         if (blockHeight >= 56.dp && session.serviceType.isNotBlank()) {
             Text(
                 text = session.serviceType,
@@ -885,9 +916,9 @@ private fun EventBlock(
  * the real times; a block wholly outside the window or an unparseable one drops out.
  */
 @Composable
-private fun BusyBlock(slot: BookingTimeSlot) {
+private fun BusyBlock(slot: BookingTimeSlot, window: WeekGridWindow = WeekGridWindow.DEFAULT) {
     val c = AuntieTheme.colors
-    val placement = busyPlacement(slot.startTime, slot.endTime) ?: return
+    val placement = busyPlacement(slot.startTime, slot.endTime, window) ?: return
     val top = HOUR_HEIGHT * (placement.topMinutes / 60f)
     val blockHeight = HOUR_HEIGHT * (placement.heightMinutes / 60f)
 
@@ -1116,9 +1147,13 @@ internal data class BusyPlacement(val topMinutes: Int, val heightMinutes: Int)
  * clamped into view. A missing/zero-length end is given a small visible minimum,
  * clamped so the block never overruns the window bottom.
  */
-internal fun busyPlacement(startHHmm: String, endHHmm: String): BusyPlacement? {
-    val windowStart = GRID_START_HOUR * 60
-    val windowEnd = GRID_END_HOUR * 60
+internal fun busyPlacement(
+    startHHmm: String,
+    endHHmm: String,
+    window: WeekGridWindow = WeekGridWindow.DEFAULT,
+): BusyPlacement? {
+    val windowStart = window.startHour * 60
+    val windowEnd = window.endHour * 60
     val startMin = hhmmToMinutes(startHHmm) ?: return null
     val endMin = hhmmToMinutes(endHHmm)
     // A missing or backwards end gets the small visible minimum, as before.
@@ -1306,3 +1341,37 @@ private fun displayTime(iso: String, zone: TimeZone): String {
         "$hour12:$minute $ampm"
     }.getOrDefault(iso)
 }
+
+/**
+ * #1606: the hours a week draws, `[startHour, endHour)` on the business clock.
+ * 8a to 6p is the floor (the mock's and the web grid's geometry); the week grows
+ * in whole hours to reach every visit, never past midnight either side. Same
+ * rule as the web's `gridWindowFor` (`lib/scheduleGrid.ts`).
+ */
+internal data class WeekGridWindow(val startHour: Int, val endHour: Int) {
+    companion object {
+        val DEFAULT = WeekGridWindow(GRID_START_HOUR, GRID_END_HOUR)
+    }
+}
+
+/** [visits] are (start, end) minute-of-day pairs; a missing or backwards end counts as start + 20 minutes. */
+internal fun weekGridWindow(visits: List<Pair<Int, Int?>>): WeekGridWindow {
+    var startHour = GRID_START_HOUR
+    var endHour = GRID_END_HOUR
+    for ((start, rawEnd) in visits) {
+        val end = if (rawEnd != null && rawEnd > start) rawEnd else start + 20
+        startHour = minOf(startHour, start / 60)
+        endHour = maxOf(endHour, (minOf(end, 24 * 60) + 59) / 60)
+    }
+    val from = maxOf(0, startHour)
+    return WeekGridWindow(from, minOf(24, maxOf(endHour, from + 1)))
+}
+
+/** The visit's end minute: its stated length, else its stored end, else null. */
+private fun visitEndMinute(session: KinCareSession, startMin: Int, zone: TimeZone): Int? = when {
+    session.serviceDurationMinutes > 0 -> startMin + session.serviceDurationMinutes
+    else -> localMinutesOfDay(session.endTime, zone)?.takeIf { it > startMin }
+}
+
+/** #1606: below this a week block puts its time and household on one line. */
+private val COMPACT_BLOCK_HEIGHT = 44.dp

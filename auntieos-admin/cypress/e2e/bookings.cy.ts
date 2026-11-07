@@ -265,14 +265,12 @@ describe('bookings', () => {
       cy.contains('button', 'Select').click();
     });
 
-    // Rendered twice (the page header and this toolbar), one mode: both report
-    // pressed. `:contains()` is a jQuery selector (every match), unlike the
+    // #1607: ONE Select, on this toolbar; the page-heading copy is gone.
+    // `:contains()` is a jQuery selector (every match), unlike the
     // `cy.contains()` command, which yields only the first.
     cy.get('button:contains("Select")')
-      .should('have.length', 2)
-      .each(($btn) => {
-        cy.wrap($btn).should('have.attr', 'aria-pressed', 'true');
-      });
+      .should('have.length', 1)
+      .and('have.attr', 'aria-pressed', 'true');
     cy.get(`input[aria-label*="${SEEDED_BOOKINGS.scheduled.kinfolkName}"]`).should('be.visible');
   });
 });
