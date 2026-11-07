@@ -64,14 +64,14 @@ class ScreenLoadErrorRenderTest {
 
     @Test
     fun kinCareDetail() = runDesktopComposeUiTest {
-        showsLoadError("Couldn't load this Kin Care") {
+        showsLoadError("Couldn't load this KinCare") {
             KinCareDetailScreen(kinCareId = "s1", onBack = {})
         }
     }
 
     @Test
     fun kinTaleCompose() = runDesktopComposeUiTest {
-        showsLoadError("Couldn't load this Kin Care") {
+        showsLoadError("Couldn't load this KinCare") {
             KinTaleComposeScreen(sessionId = "s1", onClose = {})
         }
     }

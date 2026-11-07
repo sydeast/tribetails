@@ -319,7 +319,8 @@
 .notif-chip:hover {
   color: var(--color-text-primary);
 }
-.notif-chip--active {
+.notif-chip--active,
+.notif-chip.notif-chip--active:hover {
   border-color: var(--color-accent);
   color: var(--color-accent);
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);

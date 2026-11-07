@@ -641,7 +641,7 @@ describe('Schedule screen', () => {
     // AsyncRegion itself doesn't treat this as empty (the stream has a row),
     // so the agenda panel renders; it's the LEGEND specifically that must be
     // scoped away, never a stale row for a type entirely outside the view.
-    expect(await screen.findByText('No Kin Care sessions on this day.')).toBeInTheDocument();
+    expect(await screen.findByText('No KinCare sessions on this day.')).toBeInTheDocument();
     expect(screen.queryByLabelText('Service type legend')).toBeNull();
     expect(screen.queryByText('Overnight Stay')).toBeNull();
   });

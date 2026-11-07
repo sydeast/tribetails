@@ -151,7 +151,7 @@ fun TrainingDocumentsScreen(
                         kicker = "The Den · Tribal Intel",
                         title = "Tribal",
                         accentTail = "Intel.",
-                        subtitle = "Guides and educational resources for care delivery",
+                        subtitle = TRIBAL_INTEL_SUBTITLE,
                         trailing = {
                             if (flags.trainingDocsCreate) {
                                 AuntieDashedAddButton(
@@ -308,7 +308,7 @@ fun TrainingDocumentsScreen(
                             title = "No Tribal Intel yet",
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            EmptyHint("Training materials and guides will appear here once uploaded.")
+                            EmptyHint(TRIBAL_INTEL_EMPTY_MESSAGE)
                         }
                     }
                 }

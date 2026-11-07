@@ -106,7 +106,7 @@ function admin(uid: string) {
 }
 
 function roster(members: ReturnType<typeof admin>[]) {
-  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null };
+  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null, businessEmail: '' };
 }
 
 function catalogEntry(key: string): NotificationCatalogEntry {

@@ -168,17 +168,17 @@ fun KinTaleComposeScreen(
             // #867: a failed read shows its error, not a shimmer that never ends.
             (sessions as? FirestoreResult.Error)?.let {
                 SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
-                LoadErrorBanner("Couldn't load this Kin Care", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                LoadErrorBanner("Couldn't load this KinCare", it.message, onRetry = reload::retry, retrying = reload.retrying)
                 return@ScreenScaffold
             }
             // #898: the read answered and this id is not in it (deleted, or a
             // stale link), distinct from still-loading, which used to shimmer forever.
             if (sessions is FirestoreResult.Data) {
                 SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
-                NotFoundNotice("This Kin Care couldn't be found. It may have been removed.", onBack = onClose)
+                NotFoundNotice("This KinCare couldn't be found. It may have been removed.", onBack = onClose)
                 return@ScreenScaffold
             }
-            SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care", icon = Lucide.ClipboardList)
+            SectionHeader(title = "Loading…", subtitle = "Pulling KinCare", icon = Lucide.ClipboardList)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(3) { ShimmerCard(height = 100.dp) }
             }
@@ -341,7 +341,7 @@ private fun KinTaleComposerBody(
         }
         val recipient = kinfolk?.displayName.orEmpty()
         if (recipient.isBlank()) {
-            showToast("This Kin Care has no linked Kinfolk to write to.", ToastKind.Error)
+            showToast("This KinCare has no linked Kinfolk to write to.", ToastKind.Error)
             return
         }
         scope.launch {

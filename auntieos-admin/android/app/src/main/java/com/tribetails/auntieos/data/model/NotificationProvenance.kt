@@ -178,14 +178,40 @@ fun notifReachesBusinessAdmins(entry: NotificationCatalogEntry): Boolean =
  * end.
  */
 fun businessAdminLines(roster: BusinessAdminRoster): List<String> = roster.members.map { member ->
+    // #1564: no per-person address. Every business email goes to the business
+    // contact email (operator ruling, 2026-11-05 docket); [businessEmailLine]
+    // says where.
     val name = member.displayName ?: member.uid
     val parts = buildList {
-        add(member.email ?: "no email on file")
         if (!member.hasStaffRecord) add("no staff record for ${member.uid}")
         if (member.defaultAssignee) add("unassigned visits default to them")
     }
-    "$name (${parts.joinToString("; ")})"
+    if (parts.isEmpty()) name else "$name (${parts.joinToString("; ")})"
 }
+/**
+ * Where a business row's emails go (#1564): the business contact email, or,
+ * while that is blank, nowhere. Same words as the web panel.
+ */
+fun businessEmailLine(roster: BusinessAdminRoster): String =
+    if (roster.businessEmail.isNotBlank()) {
+        "Emails go to the business email, ${roster.businessEmail}."
+    } else {
+        BUSINESS_EMAIL_NOWHERE_LINE
+    }
+
+const val BUSINESS_EMAIL_NOWHERE_LINE =
+    "Business emails have nowhere to go: the business email in Settings > Business is blank, " +
+        "so each one is skipped until it is filled."
+/** The email channel's skip reason when `businessEmail` is blank (#1564). */
+const val BUSINESS_EMAIL_UNSET = "business_email_unset"
+/** The warning beside the Settings email field while it is blank (#1564). Null once filled. */
+fun businessEmailNotice(value: String): String? =
+    if (value.isBlank()) {
+        "Business emails have nowhere to go until this is filled. " +
+            "Every business notification email goes to this address."
+    } else {
+        null
+    }
 /**
  * The caveat above that list, when there is one.
  *
@@ -272,10 +298,11 @@ fun notifDeliveryPhrase(
     )
     "skipped" -> NotifDeliveryPhrase(
         label = "Skipped",
-        detail = if (skipReason.isNullOrBlank()) {
-            "Not sendable on this channel; no reason was recorded."
-        } else {
-            "Not sendable on this channel: $skipReason."
+        detail = when {
+            skipReason.isNullOrBlank() -> "Not sendable on this channel; no reason was recorded."
+            skipReason == BUSINESS_EMAIL_UNSET ->
+                "The business email in Settings > Business was blank, so this email had nowhere to go."
+            else -> "Not sendable on this channel: $skipReason."
         },
         tone = NotifDeliveryTone.Warn,
     )
