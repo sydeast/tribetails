@@ -45,6 +45,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { InvoiceDetail } from '../components/InvoiceDetail';
 import { InvoiceCreate, type InvoiceCreateMode } from './InvoiceCreate';
+import { navKicker } from '../lib/nav';
 import './Invoices.css';
 
 /**
@@ -544,7 +545,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Invoices"
+        kicker={navKicker('invoices')}
         title="Getting"
         accentTail="paid."
         subtitle="Every invoice in the window you choose, by invoice date, newest first."
