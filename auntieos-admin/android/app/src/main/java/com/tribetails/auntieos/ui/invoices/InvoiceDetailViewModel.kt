@@ -124,6 +124,12 @@ data class InvoiceDetailUiState(
     // put back to the operator as an explicit write-off, not an error to bounce
     // off, so the confirm re-renders rather than closing.
     val archivePrompt: Boolean = false,
+    /**
+     * #1609: the confirm before a household send, "reminder" or "reviewSend",
+     * with the sentence naming who it reaches and how (null while it is read).
+     */
+    val sendConfirm: String? = null,
+    val sendConfirmPreview: String? = null,
     val archiveForceOffered: Boolean = false,
     val archiving: Boolean = false,
     // #1113: the open-payment-links "Try again" is in flight.
@@ -527,7 +533,8 @@ class InvoiceDetailViewModel(
             val session = state.availableSessions.firstOrNull { it.id == sessionId }
             val invoice = state.invoice
             if (session != null && invoice != null &&
-                linkPickerOnOtherInvoice(session, invoice.id, invoice.sessionIds)
+                (linkPickerOnOtherInvoice(session, invoice.id, invoice.sessionIds) ||
+                    linkPickerCancelled(session, invoice.sessionIds))
             ) {
                 return
             }
@@ -697,6 +704,38 @@ class InvoiceDetailViewModel(
      * sendInvoiceReminder callable. Fail-loud: server preconditions (already-paid,
      * not-found) surface verbatim in the toast.
      */
+    /**
+     * #1609: open the confirm for a household send and read who it reaches. The
+     * send itself waits for [confirmSend].
+     */
+    fun askSend(action: String) {
+        val invoiceId = _uiState.value.invoice?.id ?: return
+        _uiState.value = _uiState.value.copy(sendConfirm = action, sendConfirmPreview = null)
+        viewModelScope.launch {
+            val sentence = invoiceRepository.previewInvoiceNotice(invoiceId, action).fold(
+                onSuccess = { com.tribetails.auntieos.domain.noticePreviewSentence(it) },
+                onFailure = { "Couldn't check who this reaches: ${it.message ?: "the check failed"}" },
+            )
+            if (_uiState.value.sendConfirm == action) {
+                _uiState.value = _uiState.value.copy(sendConfirmPreview = sentence)
+            }
+        }
+    }
+
+    fun dismissSendConfirm() {
+        _uiState.value = _uiState.value.copy(sendConfirm = null, sendConfirmPreview = null)
+    }
+
+    /** #1609: the confirm's Send. */
+    fun confirmSend() {
+        val action = _uiState.value.sendConfirm ?: return
+        dismissSendConfirm()
+        when (action) {
+            "reminder" -> sendReminder()
+            "reviewSend" -> reviewAndSendDraft()
+        }
+    }
+
     fun sendReminder() {
         val invoiceId = _uiState.value.invoice?.id ?: return
         if (_uiState.value.sendingReminder) return
@@ -1147,6 +1186,17 @@ internal fun linkPickerOnOtherInvoice(
     return claimed.isNotEmpty() && claimed != invoiceId
 }
 
+/**
+ * #1609: a CANCELLED visit is work that did not happen, so the picker shows it
+ * but will not newly tick it, and `linkInvoiceSessions` refuses it with
+ * `session_cancelled`. One already in the stored set stays togglable so it can
+ * be unlinked. Same rule as admin web's InvoiceLinkVisitsEditor. Pure; tested.
+ */
+internal fun linkPickerCancelled(session: KinCareSession, storedIds: Collection<String>): Boolean {
+    if (session.id in storedIds) return false
+    val s = session.status.trim().uppercase()
+    return s == "CANCELLED" || s == "CANCELED"
+}
 /** Payments confidently linked to an invoice via the populated Payment.invoiceId. Pure; tested. */
 internal fun paymentsForInvoice(payments: List<Payment>, invoiceId: String): List<Payment> {
     if (invoiceId.isBlank()) return emptyList()

@@ -210,4 +210,51 @@ class IncomingSeriesTest {
         assertEquals("Fri, Oct 9", nightLabel("2026-10-09"))
         assertEquals("soon", nightLabel("soon"))
     }
+
+    // ── #1577: whose request it is ──────────────────────────────────────────
+    @Test
+    fun decodesTheKinNamesTheVisitCarries() {
+        val decoded = incomingKinCareOf(
+            path = "families/kf1/bookings/b1/kinCares/v1",
+            visitId = "v1",
+            data = mapOf("status" to "requested", "kinNames" to listOf("Rex", "", 7, "Biscuit")),
+        )!!
+        assertEquals(listOf("Rex", "Biscuit"), decoded.kinNames)
+    }
+    @Test
+    fun theCardAndBothConfirmStepsNameTheHousehold() {
+        val series = groupIncomingBySeries(
+            listOf(
+                ikc("b1", "v1", "2026-06-03T09:00:00Z").copy(kinNames = listOf("Rex")),
+                ikc("b1", "v2", "2026-06-10T09:00:00Z"),
+            ),
+        ).single()
+        assertEquals("Jane Doe", series.householdLabel())
+        assertEquals("2 visits · recurring series · Walk · Rex", series.subject())
+        assertEquals("Book this request for Jane Doe", series.approveConfirmTitle())
+        assertEquals("Turn down this request from Jane Doe", series.declineConfirmTitle())
+    }
+    @Test
+    fun aRequestWithNoHouseholdNameSaysSo() {
+        val series = groupIncomingBySeries(listOf(ikc("b1", "v1", "2026-06-03T09:00:00Z").copy(kinfolkName = ""))).single()
+        assertEquals(HOUSEHOLD_NOT_ON_FILE, series.householdLabel())
+        assertEquals("Book this request", series.approveConfirmTitle())
+    }
+    @Test
+    fun theDetailListsEveryVisitOnTheBusinessClock() {
+        val series = groupIncomingBySeries(
+            listOf(
+                ikc("b1", "v1", "2026-06-03T14:00:00Z"),
+                IncomingKinCare(
+                    familyId = "kf1", batchId = "b1", visitId = "v2", kinfolkId = "kf1", kinfolkName = "Jane Doe",
+                    serviceType = "Overnight", startTime = "", status = "requested",
+                    startTimePending = true, requestedDate = "2026-06-12",
+                ),
+            ),
+        ).single()
+        assertEquals(
+            listOf("Wed, Jun 3 at 9:00 AM", "Night of Fri, Jun 12, start time not set · Overnight"),
+            series.visitLines(ZoneId.of("America/Chicago")),
+        )
+    }
 }
