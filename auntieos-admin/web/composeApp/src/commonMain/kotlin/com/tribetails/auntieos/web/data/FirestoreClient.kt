@@ -1463,6 +1463,13 @@ class FirestoreClient {
      * stamps) are refused with a message naming markInvoicePaid /
      * recordPayment / updateInvoice, and every refusal surfaces verbatim.
      */
+    /**
+     * #1567: one invoice's send marks, read from the server, for [checkedSend].
+     * Null when the read fails or the invoice is gone; the caller says it cannot
+     * tell rather than guessing either way.
+     */
+    suspend fun invoiceSendMarks(invoiceId: String): SendMarks? =
+        runCatchingCancellable { platformInvoiceDocPlain(invoiceId)?.let { sendMarksOf(it) } }.getOrNull()
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<SendAck> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)
         val payload = buildJsonObject {
@@ -2557,6 +2564,8 @@ internal expect fun platformCallsStream():      Flow<FirestoreResult<List<CallLo
 internal expect fun platformSmsStream():        Flow<FirestoreResult<List<SmsMessage>>>
 internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailMessage>>>
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
+/** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
+internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>
@@ -2902,6 +2911,13 @@ data class StaffMember(
 }
 
 /**
+ * #1564: uid -> the name the Gallery's uploader line shows (name, else email).
+ * A uid with neither is left out, so the caller keeps whatever it showed before.
+ */
+fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+
+/**
  * Pure decode of the listStaff body `{staff:[{uid, displayName, email}]}`.
  * Lenient: entries without a uid are dropped (a row we can't assign is
  * useless), missing/null name + email decode as null, and an omitted `staff`
@@ -2916,8 +2932,10 @@ internal fun decodeStaffList(dataJson: String): List<StaffMember> =
                 ?: return@mapNotNull null
             StaffMember(
                 uid = uid,
-                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull,
-                email = o["email"]?.jsonPrimitive?.contentOrNull,
+                // A blank name or email is no name or email: the picker falls
+                // through to the next label rather than showing an empty row.
+                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+                email = o["email"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
 

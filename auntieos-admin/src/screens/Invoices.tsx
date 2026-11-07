@@ -1,5 +1,5 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   invoiceDispute,
   invoiceMatchesSearch,
@@ -46,6 +46,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { InvoiceDetail } from '../components/InvoiceDetail';
 import { InvoiceCreate, type InvoiceCreateMode } from './InvoiceCreate';
+import { navKicker } from '../lib/nav';
 import './Invoices.css';
 
 /**
@@ -191,6 +192,24 @@ interface RowView {
   partial: InvoicePartialPayment | null;
 }
 
+/**
+ * #1569: do the page's copy of an invoice and the sheet's live copy say the same
+ * thing? Compared field by field with the keys sorted, so two reads of one
+ * unchanged document agree whatever order their fields arrived in.
+ */
+export function sameDoc(a: unknown, b: unknown): boolean {
+  return stableJson(a) === stableJson(b);
+}
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
+    const rec = v as Record<string, unknown>;
+    // A Firestore Timestamp serializes through its own toJSON; anything else
+    // with one (a Date) is read the same way.
+    if (typeof (rec as { toJSON?: unknown }).toJSON === 'function') return v;
+    return Object.fromEntries(Object.keys(rec).sort().map((k) => [k, rec[k]]));
+  });
+}
 function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
   // Normalize BEFORE anything reads a field. InvoiceEntry is a cast over raw
   // Firestore data, not a guarantee, and real docs ARE missing keys it declares.
@@ -316,7 +335,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // which is what "last 7 days" means to the person reading it.
   const startDay = useMemo(() => rangeStartIso(range, new Date())?.slice(0, 10) ?? null, [range]);
   const spec = useMemo(() => invoicesPageQuery({ startDay, kinfolkId }), [startDay, kinfolkId]);
-  const { state: rows, hasMore, more, loadMore } = usePagedCollection<InvoiceEntry>(spec);
+  const { state: pagedRows, hasMore, more, loadMore, reload } = usePagedCollection<InvoiceEntry>(spec);
 
   // The facet's options come from the household DIRECTORY rather than from the
   // loaded invoices: a facet built from the page can only offer households that
@@ -377,7 +396,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // The by-id document goes through it too: it is the same collection, so it
   // arrives with the same absent fields.
   const selectedRow =
-    selectedId && rows.status === 'ready' ? rows.data.find((r) => r._id === selectedId) : undefined;
+    selectedId && pagedRows.status === 'ready' ? pagedRows.data.find((r) => r._id === selectedId) : undefined;
   const deepLinkedRow =
     deepLinkId !== null && deepLinked.status === 'ready' && deepLinked.data !== null
       ? deepLinked.data
@@ -391,6 +410,29 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
       : undefined;
   const selectedRaw = liveRow ?? selectedRow ?? deepLinkedRow;
   const selected = selectedRaw === undefined ? undefined : normalizeInvoice(selectedRaw);
+  // #1569: THE LIST FOLLOWS WHAT THE SHEET CHANGES. The page is a one-shot read,
+  // so an edit made in the open sheet ($43.00 to $78.50 on the walk) left the
+  // row and the Billed total on the old figure until the operator left the page.
+  // Two halves:
+  //  - while the sheet is open, its live document stands in for its row, so the
+  //    row and every total above it move with the edit, the send or the payment;
+  //  - once anything changed, closing the sheet re-reads the page, which also
+  //    brings in what the live copy cannot place: a new invoice, or one whose
+  //    edit moved it into or out of this window.
+  // An untouched sheet closes without a re-read, so the list keeps its loaded
+  // pages and its place.
+  const [listStale, setListStale] = useState(false);
+  const liveDiffers = liveRow !== undefined && selectedRow !== undefined && !sameDoc(liveRow, selectedRow);
+  useEffect(() => {
+    if (liveDiffers) setListStale(true);
+  }, [liveDiffers]);
+  const rows = useMemo<typeof pagedRows>(
+    () =>
+      liveRow !== undefined && pagedRows.status === 'ready'
+        ? { status: 'ready', data: pagedRows.data.map((r) => (r._id === liveRow._id ? liveRow : r)) }
+        : pagedRows,
+    [pagedRows, liveRow],
+  );
 
   // What the link RESOLVED TO, as one of three states the banner below renders.
   // 'opening' covers the read still being in flight: an unresolved id is not a
@@ -514,7 +556,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Invoices"
+        kicker={navKicker('invoices')}
         title="Getting"
         accentTail="paid."
         subtitle="Every invoice in the window you choose, by invoice date, newest first."
@@ -747,6 +789,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
             setArmedAction(null);
             setCreatedId(null);
             setCreatedNotice(null);
+            // #1569: re-read only when the sheet changed something.
+            if (listStale || liveDiffers) reload();
+            setListStale(false);
           }}
         />
       )}
@@ -765,6 +810,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           onCreated={(invoiceId, sent) => {
             setCreatedId(invoiceId);
             setSelectedId(invoiceId);
+            // #1569: the new invoice joins the list (and its totals) now, not
+            // after a date chip is switched.
+            reload();
             // #1511: only a QUOTE is sent by its create. The composer's invoice
             // is a draft and sends nothing (#1513): `invoice.new` goes out from
             // reviewAndSendDraftInvoice, so `appOnly` is never set for a draft.

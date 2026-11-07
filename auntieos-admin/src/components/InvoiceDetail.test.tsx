@@ -99,7 +99,12 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   linkInvoiceSessions,
 }));
 
+// #1567: the server re-read after a send got no answer.
+const { readInvoiceSendMarks } = vi.hoisted(() => ({ readInvoiceSendMarks: vi.fn() }));
+vi.mock('../api/invoiceSendCheck', () => ({ readInvoiceSendMarks }));
 import { InvoiceDetail, paymentSplit, parseOptionalMoney } from './InvoiceDetail';
+import { CallableTimeoutError } from '../lib/fns';
+import { sendMarksOf } from '../lib/invoiceSendCheck';
 import { formatUsd } from '../lib/invoiceFormat';
 import { formatReminderTime, type ReminderOutcome } from '../lib/invoiceReminder';
 
@@ -255,6 +260,7 @@ function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
 }
 
 beforeEach(() => {
+  readInvoiceSendMarks.mockReset();
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
   // #1511: both answer whether the household's copy reached them in the app only.
@@ -487,6 +493,59 @@ describe('InvoiceDetail', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * #1567: the walk's send. The call got no answer, the server sent the invoice
+   * anyway, and the panel said "Action failed". Now it re-reads the invoice and
+   * reports what the server did.
+   */
+  describe('a send that got no answer (#1567)', () => {
+    async function pressSend(id: string) {
+      render(<InvoiceDetail invoice={entry({ _id: id, status: 'draft', total: 40, amountDue: 40 })} onClose={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    }
+    it('reports the draft as sent when the re-read shows it open', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'open' }));
+      await pressSend('inv-late');
+      expect(
+        await screen.findByText('Draft sent. The answer came late, so this was confirmed by re-reading the invoice.'),
+      ).toBeInTheDocument();
+      expect(readInvoiceSendMarks).toHaveBeenCalledWith('inv-late');
+      expect(screen.queryByText('Action failed')).toBeNull();
+    });
+    it('says not sent, and why, when the re-read still shows a draft', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'draft' }));
+      await pressSend('inv-lost');
+      expect(await screen.findByText(/did not answer within 70 seconds\. The invoice is still a draft/)).toBeInTheDocument();
+      expect(screen.getByText('Not sent')).toBeInTheDocument();
+      expect(screen.queryByText('Action failed')).toBeNull();
+    });
+    it('says it cannot tell when the re-read fails too', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(null);
+      await pressSend('inv-dark');
+      expect(await screen.findByText(/no way to tell from here whether the draft went/)).toBeInTheDocument();
+      expect(screen.getByText('No answer')).toBeInTheDocument();
+    });
+    it('confirms a reminder by its stamp moving', async () => {
+      sendInvoiceReminder.mockRejectedValue(new CallableTimeoutError('sendInvoiceReminder'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'open', reminderNotifiedAtMs: 5 }));
+      render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+      expect(
+        await screen.findByText('Reminder sent. The answer came late, so this was confirmed by re-reading the invoice.'),
+      ).toBeInTheDocument();
+    });
+    it('leaves a real refusal alone: no re-read, the server sentence stands', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new Error('Invoice is not a draft; nothing to send.'));
+      await pressSend('inv-refused');
+      expect(await screen.findByText(/reviewAndSendDraftInvoice failed:.*not a draft/)).toBeInTheDocument();
+      expect(readInvoiceSendMarks).not.toHaveBeenCalled();
+    });
+  });
   it('gates Send reminder behind an inline confirm before calling the callable', async () => {
     render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));

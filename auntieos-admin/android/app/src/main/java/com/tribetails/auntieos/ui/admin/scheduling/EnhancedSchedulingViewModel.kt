@@ -528,7 +528,7 @@ class EnhancedSchedulingViewModel(
                         // Fail-loud: keep any existing list, surface the error — but not in
                         // the sandbox, where the denial is expected (no cross-tenant data).
                         if (!sandbox) _state.value = _state.value.copy(
-                            incomingError = e.message ?: "Couldn't load incoming requests",
+                            incomingError = e.message ?: "Couldn't load visit requests",
                         )
                     }
             }
@@ -2633,7 +2633,7 @@ class EnhancedSchedulingViewModel(
                     newRequestKin = emptyList(),
                     newRequestKinError = null,
                     seriesActionMessage = "Booking request created: ${result.visitCount} visit(s) submitted for approval. " +
-                        "It enters the Incoming-requests queue and appears above once approved.",
+                        "It enters Visit requests and appears above once approved.",
                 )
             }.onFailure { t ->
                 // A busy clash is the only refusal the operator can knowingly
