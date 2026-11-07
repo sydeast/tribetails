@@ -103,6 +103,14 @@ describe('CoveragePackageBuilder visit menu (issue #693)', () => {
     expect(options).toContain('Overnight');
   });
 
+  it('labels Pinned visits plainly and explains it in an info tip (#1595)', async () => {
+    render(<CoveragePackageBuilder />);
+    const explain = await screen.findByText(/this client's non-negotiables/i);
+    expect(explain.closest('[role="tooltip"]')).not.toBeNull();
+    const label = document.querySelector('.cpb__pinnedHeading');
+    expect(label?.firstChild?.textContent?.trim()).toBe('Pinned visits');
+  });
+
   it('says where to set rates when the KinCare list is empty', async () => {
     getBusinessSettings.mockResolvedValue({ serviceRates: {}, serviceDurations: {} });
     render(<CoveragePackageBuilder />);

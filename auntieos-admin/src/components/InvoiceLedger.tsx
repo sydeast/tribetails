@@ -16,6 +16,7 @@ import {
   sessionsWithBrokenBacklink,
 } from '../lib/invoiceLedger';
 import { Banner } from './Banner';
+import { InfoTip } from './DenScreenKit';
 import { GhostButton } from './Buttons';
 import './InvoiceLedger.css';
 
@@ -201,18 +202,14 @@ function PaymentsPanel({
           table collapses to the width of its own text. `.invoice-ledger__scroll`
           carries the rest of that history. */}
       {ledgerPayments.length > 0 && (
-        <p className="invoice-ledger__caption invoice-ledger__explain">
-          What the client actually paid, recorded for the books, and NOT counted in the figures above.
-          A row reads across as amount = applied + tip + balance; the fee is the processor's cut, taken
-          off what reaches the business rather than off the bill.
-        </p>
-      )}
-      {ledgerPayments.length > 0 && (
         <div className="invoice-ledger__scroll">
           <table className="invoice-ledger__table">
-            {/* #1609: the caption names the table; the explanation sits above the
-                scroll box, so it no longer slides sideways with the columns. */}
-            <caption className="invoice-ledger__caption">Payment history</caption>
+            {/* #1609: the caption names the table. #1595: what the table covers
+                is the caption's info tip, not a paragraph standing above it. */}
+            <caption className="invoice-ledger__caption">
+              Payment history{' '}
+              <InfoTip text="What the client actually paid, recorded for the books, and NOT counted in the figures above. A row reads across as amount = applied + tip + balance; the fee is the processor's cut, taken off what reaches the business rather than off the bill." />
+            </caption>
             <thead>
               <tr>
                 {/* #1609: the money first. Amount, Applied to, Tip, Fee and Balance
@@ -379,10 +376,14 @@ function SessionsPanel({ ledger }: { ledger: GetInvoiceLedgerResult }) {
 
   return (
     <section className="invoice-ledger" aria-labelledby="invoice-ledger-sessions">
-      <h3 className="invoice-ledger__heading" id="invoice-ledger-sessions">
-        Linked visits
-      </h3>
-      <p className="invoice-ledger__subtitle">The visits this invoice bills.</p>
+      {/* #1595: the explanation is the heading's info tip, beside it rather
+          than inside it, so the heading's name stays "Linked visits". */}
+      <div className="invoice-ledger__titlerow">
+        <h3 className="invoice-ledger__heading" id="invoice-ledger-sessions">
+          Linked visits
+        </h3>
+        <InfoTip text="The visits this invoice bills." />
+      </div>
 
       {sessions.length === 0 ? (
         <p className="invoice-ledger__empty">

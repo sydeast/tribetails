@@ -22,11 +22,11 @@
   color: var(--color-text-primary);
 }
 
-.invoice-ledger__subtitle {
-  margin: 0;
-  font-family: var(--type-body-sm-family);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-dim);
+/* #1595: a heading and its info tip, side by side. */
+.invoice-ledger__titlerow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 /* An empty panel says so in a sentence. It must never render as a table with a
@@ -69,10 +69,6 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
   padding-bottom: var(--space-2);
-}
-/* #1609: the payment history's explanation, outside its scroll box. */
-.invoice-ledger__explain {
-  margin: 0;
 }
 
 .invoice-ledger__table th {

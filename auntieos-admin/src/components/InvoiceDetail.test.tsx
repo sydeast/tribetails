@@ -1308,7 +1308,12 @@ describe('the payments panel', () => {
       }),
     );
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
-    expect(await screen.findByText(/NOT counted in the figures above/i)).toBeInTheDocument();
+    // #1595: what the history covers is the caption's info tip, not a
+    // paragraph standing above the table.
+    const explain = await screen.findByText(/NOT counted in the figures above/i);
+    expect(explain.closest('[role="tooltip"]')).not.toBeNull();
+    expect(explain.closest('caption')).toHaveTextContent(/^Payment history/);
+    expect(document.querySelector('.invoice-ledger__explain')).toBeNull();
     // The tip is its OWN column now, and the fee beside it. Neither goes
     // anywhere near the balance.
     expect(screen.getByText('Payment history', { exact: false })).toBeInTheDocument();
@@ -1387,6 +1392,16 @@ describe('the linked visits panel', () => {
     expect(screen.getByText('2026-07-10')).toBeInTheDocument();
     expect(screen.getByText('30 min')).toBeInTheDocument();
     expect(screen.getByText('completed')).toBeInTheDocument();
+  });
+  it('explains the panel in the heading\'s info tip, not a line under it (#1595)', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({ sessions: [ledgerSession()] }),
+    );
+    render(<InvoiceDetail invoice={entry({ sessionIds: ['s1'] })} onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Linked visits' })).toBeInTheDocument();
+    const explain = screen.getByText('The visits this invoice bills.');
+    expect(explain.closest('[role="tooltip"]')).not.toBeNull();
+    expect(document.querySelector('.invoice-ledger__subtitle')).toBeNull();
   });
   it('shows a visit with no recorded length as unrecorded, never as 0 min', async () => {
     getInvoiceLedger.mockResolvedValue(
