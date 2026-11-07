@@ -159,4 +159,31 @@ class TransportFailureClassifierTest {
     fun `an IOException with no message is not fcm-unavailable`() {
         assertFalse(isFcmUnavailable(IOException()))
     }
+
+    // ── isSilentSendFailure (#1567) ─────────────────────────────────────
+    private fun functionsError(code: FirebaseFunctionsException.Code, cause: Throwable? = null) =
+        mockk<FirebaseFunctionsException>().also {
+            every { it.code } returns code
+            every { it.cause } returns cause
+        }
+    @Test
+    fun `a server-side deadline is a silent send even with no IO cause`() {
+        // A 504 from the server's own timeout: the handler may have queued the
+        // household's notice before it was stopped, so the outcome is unknown.
+        assertTrue(isSilentSendFailure(functionsError(FirebaseFunctionsException.Code.DEADLINE_EXCEEDED)))
+        assertFalse(isTransportFailure(functionsError(FirebaseFunctionsException.Code.DEADLINE_EXCEEDED)))
+    }
+    @Test
+    fun `a dropped connection or a socket timeout is a silent send`() {
+        assertTrue(isSilentSendFailure(SocketTimeoutException("read timed out")))
+        assertTrue(isSilentSendFailure(java.io.InterruptedIOException("interrupted")))
+        assertTrue(isSilentSendFailure(functionsError(FirebaseFunctionsException.Code.INTERNAL, IOException("reset"))))
+    }
+    @Test
+    fun `a server refusal is not silent, it answered`() {
+        assertFalse(isSilentSendFailure(null))
+        assertFalse(isSilentSendFailure(functionsError(FirebaseFunctionsException.Code.FAILED_PRECONDITION)))
+        assertFalse(isSilentSendFailure(functionsError(FirebaseFunctionsException.Code.INTERNAL)))
+        assertFalse(isSilentSendFailure(IllegalStateException("Invoice is not a draft; nothing to send.")))
+    }
 }

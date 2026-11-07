@@ -627,8 +627,8 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                     </div>
                   )}
                   <p className="personalize__note">
-                    Approving promotes the draft in Firestore and logs it to the audit trail. Nothing goes out until
-                    that write succeeds.
+                    Approving saves this draft and records it in the activity log. Nothing goes out until that save
+                    succeeds.
                   </p>
                 </div>
               </DenPanel>

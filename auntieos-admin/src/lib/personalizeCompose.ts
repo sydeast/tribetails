@@ -274,18 +274,22 @@ export function buildGeneratePayload(
   };
 }
 
-/** The archive's draft-callout detail line: whatever the response actually told us, joined with the archive's separator. */
+/**
+ * The draft callout's detail line: who it is for and what kind of message it
+ * is, joined with the archive's separator. #1592: the model name and the draft
+ * id used to ride along, and the type showed as its key ("visit_report"); the
+ * operator reads neither, so the type is its picker label and the rest is gone.
+ */
 export function draftSubtitle(r: {
   kinfolk_name: string | null;
   communication_type: string;
-  model: string | null;
-  draft_id: string | null;
+  model?: string | null;
+  draft_id?: string | null;
 }): string {
+  const type = PERSONALIZE_MESSAGE_TYPES.find((t) => t.key === r.communication_type)?.label ?? r.communication_type;
   return [
     r.kinfolk_name ? `for ${r.kinfolk_name}` : null,
-    r.communication_type,
-    r.model,
-    r.draft_id ? `draft #${r.draft_id}` : null,
+    type,
   ]
     .filter((p): p is string => p !== null && p !== '')
     .join(' · ');
