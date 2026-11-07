@@ -7,8 +7,8 @@ import { type Async } from '../lib/async';
 import { type KinTaleEntry } from '../api/kinTales';
 import { type Kin } from '../api/directory';
 
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+const { useCollection, useDocById } = vi.hoisted(() => ({ useCollection: vi.fn(), useDocById: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 
 // #1631: the delete callable. The gate (`canDeleteKinTaleDraft`) stays real.
 const { deleteKinTaleReportDraft } = vi.hoisted(() => ({ deleteKinTaleReportDraft: vi.fn() }));
@@ -143,6 +143,9 @@ function mockStreams(opts: {
 
 beforeEach(() => {
   useCollection.mockReset();
+  // The by-id fallback read. Default: no such document, which is what a
+  // missing id resolves to.
+  useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
   getKinTaleComments.mockReset().mockResolvedValue([]);
   addKinTaleComment.mockReset();
   getKinTaleReaction.mockReset().mockResolvedValue({ loved: false, loveCount: 0 });
@@ -165,6 +168,27 @@ describe('KinTaleDetail: report resolution', () => {
     expect(await screen.findByText(/no kintale found/i)).toBeInTheDocument();
   });
 
+  it('#1563: opens a report the 200-row stream does not hold, by reading it by id', async () => {
+    mockStreams({ reports: { status: 'ready', data: [] } });
+    useDocById.mockImplementation((path: string, id: string | null) =>
+      path === 'kin_care_reports' && id === 'old-draft'
+        ? { status: 'ready', data: report({ _id: 'old-draft', title: 'An old draft', status: 'DRAFT' }) }
+        : { status: 'ready', data: null },
+    );
+    render(<KinTaleDetail kinTaleId="old-draft" onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { level: 1, name: 'An old draft' })).toBeInTheDocument();
+    expect(screen.queryByText(/no kintale found/i)).not.toBeInTheDocument();
+  });
+  it('#1563: does not read by id while the stream already holds the report', () => {
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(useDocById).toHaveBeenCalledWith('kin_care_reports', null);
+  });
+  it('#1563: waits on the by-id read rather than claiming not-found early', () => {
+    mockStreams({ reports: { status: 'ready', data: [] } });
+    useDocById.mockReturnValue({ status: 'loading' });
+    render(<KinTaleDetail kinTaleId="old-draft" onClose={vi.fn()} />);
+    expect(screen.queryByText(/no kintale found/i)).not.toBeInTheDocument();
+  });
   it('surfaces a report-stream error, never a false empty', async () => {
     mockStreams({ reports: { status: 'error', message: 'permission-denied' } });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);

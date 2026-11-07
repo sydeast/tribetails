@@ -60,6 +60,7 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.GenerateRequest
 import com.tribetails.auntieos.web.data.GenerateResponse
+import com.tribetails.auntieos.web.data.GeneratedDraft
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kin411
 import com.tribetails.auntieos.web.data.mintBroadcastIdempotencyKey
@@ -76,6 +77,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieChipGroup
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieEmailPreviewCard
 import com.tribetails.auntieos.web.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.web.ui.components.AuntieIconTile
@@ -152,6 +154,19 @@ internal enum class MessageType(val label: String, val type: CommunicationType, 
 internal fun generateRecipient(type: MessageType, recipientName: String): String =
     if (type.needsRecipient) recipientName else ""
 
+/**
+ * #1563: the composer type a stored draft's `communication_type` selects. This
+ * console offers four; blank, unknown and the types it has no chip for read as
+ * a KinTale (Home's own fallback), which is what the operator ruled these
+ * drafts are (D-2026-08-04). Pure; tested.
+ */
+internal fun messageTypeOfDraft(type: String): MessageType = when (type.trim().lowercase()) {
+    "sms" -> MessageType.Text
+    "email" -> MessageType.Email
+    "blog_post" -> MessageType.Blog
+    else -> MessageType.Visit
+}
+
 /** Den compose modes. Only [Personalize] is backend-wired. */
 private enum class ComposeMode(val label: String) {
     Personalize("Personalize"),
@@ -159,7 +174,15 @@ private enum class ComposeMode(val label: String) {
 }
 
 @Composable
-fun CommunicateScreen() {
+fun CommunicateScreen(
+    /**
+     * #1563: a stored `generated_drafts` doc to open for review, send or delete,
+     * from KinTales > Drafts or Home's "KinTales pending". Applied once; then
+     * [onDraftConsumed] lets the caller drop it so a later visit opens blank.
+     */
+    openDraft: GeneratedDraft? = null,
+    onDraftConsumed: () -> Unit = {},
+) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val scope = rememberReportingScope()
@@ -191,9 +214,43 @@ fun CommunicateScreen() {
 
     var toastMsg by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
 
+    // #1563: the KinTale a send produced, or the one an opened draft was already sent as.
+    var sentReportId by remember { mutableStateOf<String?>(null) }
+    var sentBefore by remember { mutableStateOf(false) }
+    var confirmSend by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    var openedHouseholdId by remember { mutableStateOf<String?>(null) }
+
     // Keep editedCopy in sync when a fresh AI result lands.
     LaunchedEffect(result) {
         result?.let { editedCopy = it.generated_copy }
+    }
+
+    // #1563: fill the form from a stored draft, once per draft.
+    LaunchedEffect(openDraft?._id) {
+        val d = openDraft ?: return@LaunchedEffect
+        messageType = messageTypeOfDraft(d.type())
+        subject = d.title()
+        result = GenerateResponse(
+            generated_copy = d.body(),
+            communication_type = d.type().ifBlank { "visit_report" },
+            kinfolk_name = d.household().ifBlank { null },
+            kinfolk_id = d.householdId().ifBlank { null },
+            draft_id = d._id,
+        )
+        sentReportId = d.publishedReportId.ifBlank { null }
+        sentBefore = d.isPublished
+        selectedKinfolk = null
+        openedHouseholdId = d.householdId().ifBlank { null }
+        onDraftConsumed()
+    }
+    // The household resolves once the kinfolk list has landed.
+    LaunchedEffect(openedHouseholdId, kinfolkState) {
+        val id = openedHouseholdId ?: return@LaunchedEffect
+        val list = (kinfolkState as? FirestoreResult.Data)?.value ?: return@LaunchedEffect
+        list.find { it._id == id }?.let { selectedKinfolk = it }
+        openedHouseholdId = null
     }
 
     fun showToast(text: String, kind: ToastKind = ToastKind.Info) { toastMsg = text to kind }
@@ -226,6 +283,8 @@ fun CommunicateScreen() {
                 if (resp.error != null) {
                     showToast("Generate error: ${resp.error}", ToastKind.Error)
                 } else {
+                    sentReportId = null
+                    sentBefore = false
                     result = resp
                     showToast("Draft ready for your review.", ToastKind.Success)
                 }
@@ -239,7 +298,75 @@ fun CommunicateScreen() {
         }
     }
 
+    /**
+     * #1563: send a KinTale draft to its household's portal through the
+     * `publishGeneratedDraft` callable, which writes the SENT report and marks
+     * the draft sent in one go. Approving a KinTale used to stamp the draft and
+     * reach nobody.
+     */
+    fun sendKinTale() {
+        val r = result ?: return
+        val draftId = r.draft_id ?: run {
+            showToast("This draft was not saved, so there is nothing to send. Regenerate and try again.", ToastKind.Error)
+            return
+        }
+        if (editedCopy.isBlank()) {
+            showToast("The KinTale is empty. Write something before sending it.", ToastKind.Error)
+            return
+        }
+        saving = true
+        scope.launch {
+            try {
+                when (val w = firestore.publishGeneratedDraft(draftId, editedCopy, subject)) {
+                    is WriteResult.Ok -> {
+                        sentReportId = w.value
+                        sentBefore = false
+                        val who = selectedKinfolk?.displayName?.ifBlank { null } ?: r.kinfolk_name ?: "the household"
+                        showToast("Sent to $who. It is on their portal now.", ToastKind.Success)
+                    }
+                    is WriteResult.Err -> showToast("Send failed: ${w.message}", ToastKind.Error)
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                showToast("Send failed: ${t.message ?: "unknown error"}", ToastKind.Error)
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    /** #1563: delete the open, unsent draft. The server refuses one already sent. */
+    fun deleteDraft() {
+        val draftId = result?.draft_id ?: return
+        deleting = true
+        scope.launch {
+            try {
+                when (val w = firestore.deleteGeneratedDraft(draftId)) {
+                    is WriteResult.Ok -> {
+                        result = null
+                        editedCopy = ""
+                        sentReportId = null
+                        showToast("Draft deleted.", ToastKind.Success)
+                    }
+                    is WriteResult.Err -> showToast("Delete failed: ${w.message}", ToastKind.Error)
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                showToast("Delete failed: ${t.message ?: "unknown error"}", ToastKind.Error)
+            } finally {
+                deleting = false
+            }
+        }
+    }
+
     fun approveDraft() {
+        // #1563: a KinTale reaches a real household, so it asks first.
+        if (messageType == MessageType.Visit) {
+            confirmSend = true
+            return
+        }
         val r = result ?: return
         val draftId = r.draft_id ?: run {
             showToast(
@@ -359,6 +486,10 @@ fun CommunicateScreen() {
                             onGenerate = ::generate, onApprove = ::approveDraft,
                             firestore = firestore,
                             onToast = { msg, kind -> showToast(msg, kind) },
+                            sent = sentReportId != null,
+                            sentNote = sentNoteFor(sentBefore, sentReportId, selectedKinfolk?.displayName ?: result?.kinfolk_name),
+                            deleting = deleting,
+                            onDelete = { confirmDelete = true },
                         )
                     }
                     Column(
@@ -404,6 +535,10 @@ fun CommunicateScreen() {
                         onGenerate = ::generate, onApprove = ::approveDraft,
                         firestore = firestore,
                         onToast = { msg, kind -> showToast(msg, kind) },
+                        sent = sentReportId != null,
+                        sentNote = sentNoteFor(sentBefore, sentReportId, selectedKinfolk?.displayName ?: result?.kinfolk_name),
+                        deleting = deleting,
+                        onDelete = { confirmDelete = true },
                     )
                     RecipientContextPanel(
                         recipient = selectedKinfolk,
@@ -428,7 +563,66 @@ fun CommunicateScreen() {
             )
         }
     }
+
+    AuntieDialog(
+        visible = confirmSend,
+        title = "Send this KinTale?",
+        onDismiss = { if (!saving) confirmSend = false },
+        footer = {
+            GhostButton(label = "Cancel", onClick = { confirmSend = false }, enabled = !saving)
+            PrimaryButton(
+                label = "Send now",
+                onClick = {
+                    confirmSend = false
+                    sendKinTale()
+                },
+                enabled = !saving,
+            )
+        },
+    ) {
+        Text(
+            text = "To: ${selectedKinfolk?.displayName ?: result?.kinfolk_name ?: "nobody"}",
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+        Text(text = "Channel: KinTale, on their portal", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(
+            text = "This reaches a real household right now. It is not undoable.",
+            style = AuntieTheme.typography.bodySmall,
+            color = c.textDim,
+        )
+    }
+
+    AuntieDialog(
+        visible = confirmDelete,
+        title = "Delete this draft?",
+        onDismiss = { confirmDelete = false },
+        footer = {
+            GhostButton(label = "Cancel", onClick = { confirmDelete = false })
+            PrimaryButton(
+                label = "Delete",
+                onClick = {
+                    confirmDelete = false
+                    deleteDraft()
+                },
+            )
+        },
+    ) {
+        Text(
+            text = "It has not been sent. Deleting it cannot be undone.",
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+    }
 }
+
+/** #1563: the line under a draft that was already sent when it was opened, or null. Pure; tested. */
+internal fun sentNoteFor(sentBefore: Boolean, sentReportId: String?, household: String?): String? =
+    if (sentBefore && sentReportId != null) {
+        "This KinTale was already sent to ${household?.ifBlank { null } ?: "the household"}."
+    } else {
+        null
+    }
 
 private fun Modifier.size14(): Modifier = this.height(14.dp).width(14.dp)
 
@@ -463,6 +657,11 @@ private fun ComposePanel(
     onApprove: () -> Unit,
     firestore: FirestoreClient,
     onToast: (String, ToastKind) -> Unit,
+    // #1563: a sent draft offers no second send and no delete.
+    sent: Boolean = false,
+    sentNote: String? = null,
+    deleting: Boolean = false,
+    onDelete: (() -> Unit)? = null,
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -617,10 +816,14 @@ private fun ComposePanel(
                 horizontalArrangement = Arrangement.spacedBy(dims.space4),
             ) {
                 PrimaryButton(
-                    label = "Approve draft",
+                    label = when {
+                        sent -> "Sent"
+                        messageType == MessageType.Visit -> "Approve and send"
+                        else -> "Approve draft"
+                    },
                     onClick = onApprove,
                     loading = saving,
-                    enabled = result?.draft_id != null,
+                    enabled = result?.draft_id != null && !sent && !deleting,
                     leading = {
                         Icon(
                             imageVector = Lucide.Send,
@@ -635,6 +838,16 @@ private fun ComposePanel(
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
+                if (onDelete != null && result?.draft_id != null && !sent) {
+                    GhostButton(
+                        label = if (deleting) "Deleting…" else "Delete draft",
+                        onClick = onDelete,
+                        enabled = !saving && !deleting,
+                    )
+                }
+            }
+            sentNote?.let {
+                Text(text = it, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
             }
         }
     }

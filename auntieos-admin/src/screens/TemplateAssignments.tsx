@@ -49,6 +49,28 @@ function routingSource(row: CatalogKeyRow): string {
 }
 
 /**
+ * The quiet line under a row whose template is missing (#1586), or null when
+ * there is nothing to say. A send that still goes out says what goes out; a
+ * send that fails gets the loud alert, and this line only says the repo has a
+ * copy Template Import can load.
+ */
+export function missingTemplateNote(row: CatalogKeyRow, templateMissing: boolean): string | null {
+  if (row.whenTemplateMissing === 'unused') {
+    return row.source === 'legacy' ? null : 'Written when it is sent, so no template is used.';
+  }
+  if (!templateMissing) return null;
+  const load = row.inRepoCorpus ? ' Load it from Template Import.' : '';
+  if (row.whenTemplateMissing === 'generic') {
+    return `Not in the bank yet, so this sends generic wording that cannot say what happened.${load}`;
+  }
+  if (row.whenTemplateMissing === 'repoCopy') {
+    return `Not in the bank yet, so this sends the repo copy.${load}`;
+  }
+  // A failing send gets the loud line; this only says where the fix is.
+  return row.inRepoCorpus ? 'The repo has a copy. Load it from Template Import.' : null;
+}
+
+/**
  * Template ASSIGNMENT manager (AO-56), ported from `TemplateAssignmentScreen.kt`:
  * the surface Templates.tsx's own doc comment named as "a wholly separate
  * screen ... not this bank list at all".
@@ -69,8 +91,11 @@ function routingSource(row: CatalogKeyRow): string {
  *
  * So the second panel is the routing table, not the collection: every catalog key,
  * the template that renders it right now, and which of the two put it there. A key
- * whose default template document does not exist is called out loudly, because
- * that key throws `email template missing` on its next send.
+ * whose template document does not exist is called out loudly only when the server
+ * says its send FAILS (`whenTemplateMissing: 'fails'`). #1586: the screen used to say
+ * that of every missing template, and of five such keys on the 2026-11-05 walk only
+ * one could fail. The rest send generic wording or the repo copy, or never read a
+ * template at all, and get a quiet line and the Template Import pointer instead.
  *
  * Two limits the screen states rather than implies:
  *  - An override applies to EMAIL only. `senders/smsChannel.ts` and
@@ -209,7 +234,26 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
     return templates.status === 'ready' && !titleById.has(row.resolvedTemplateId);
   }
 
-  const brokenCount = catalogRows.filter(resolvedTemplateMissing).length;
+  /**
+   * #1586: a missing template only breaks a send when the server says so. The
+   * email channel sends generic wording, a direct send with a repo copy sends
+   * that, and a broadcast never reads a template at all.
+   */
+  function failsOnSend(row: CatalogKeyRow): boolean {
+    return row.whenTemplateMissing === 'fails' && resolvedTemplateMissing(row);
+  }
+
+  /** Missing from the bank, still delivered, and loadable from Template Import. */
+  function awaitingImport(row: CatalogKeyRow): boolean {
+    return (
+      row.inRepoCorpus &&
+      (row.whenTemplateMissing === 'generic' || row.whenTemplateMissing === 'repoCopy') &&
+      resolvedTemplateMissing(row)
+    );
+  }
+
+  const brokenCount = catalogRows.filter(failsOnSend).length;
+  const awaitingImportKeys = catalogRows.filter(awaitingImport).map((r) => r.key);
 
   function resetForm() {
     setEditingKey(null);
@@ -450,12 +494,19 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
                 {rows.length} keys route today. {overrideCount} of them through an override, the
                 rest by name.
                 {brokenCount > 0 &&
-                  ` ${brokenCount === 1 ? '1 key resolves' : `${brokenCount} keys resolve`} to a template document that does not exist and will throw on the next send.`}
+                  ` ${brokenCount === 1 ? '1 key fails' : `${brokenCount} keys fail`} on the next send because the template does not exist.`}
               </p>
+              {awaitingImportKeys.length > 0 && (
+                <p className="tassign__hint" data-testid="tassign-awaiting-import">
+                  Not in the bank yet, still delivered: {awaitingImportKeys.join(', ')}. Load
+                  them from Template Import.
+                </p>
+              )}
               <ul className="tassign__list">
                 {rows.map((row) => {
                   const binding = bindingByKey.get(row.key);
-                  const missing = resolvedTemplateMissing(row);
+                  const missing = failsOnSend(row);
+                  const missingNote = missingTemplateNote(row, resolvedTemplateMissing(row));
                   return (
                     <li key={row.key} className="tassign__row">
                       <div className="tassign__row-main">
@@ -480,6 +531,9 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
                             No emailTemplates/{row.resolvedTemplateId} document. This key throws
                             "email template missing" on its next send.
                           </span>
+                        )}
+                        {missingNote !== null && (
+                          <span className="tassign__row-meta">{missingNote}</span>
                         )}
                       </div>
 

@@ -41,6 +41,27 @@ describe('sendFromTemplate', () => {
     const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
     await expect(sendFromTemplate('missing.key', 'a@b', {})).rejects.toThrow(/template missing/);
   });
+
+  it('#1586: a missing invite.verify-email document throws, even though the repo carries a copy', async () => {
+    // A deleted template is how the operator stops a send (ruling 2026-08-18), so the
+    // repo copy must never go out in its place. Template Import is the way in.
+    tplGet.mockResolvedValue({ exists: false });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    const { SEED_CORPUS } = await import('../src/notifications/seedCorpus.generated');
+    expect(SEED_CORPUS.some((e) => e.key === 'invite.verify-email')).toBe(true);
+    await expect(
+      sendFromTemplate('invite.verify-email', 'catch@hanasamku.com', { verifyUrl: 'https://verify.example/abc' }, undefined, {
+        personRequested: true,
+      }),
+    ).rejects.toThrow(/email template missing/);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+  it('#1586: a stored invite.verify-email document is what goes out', async () => {
+    tplGet.mockResolvedValue({ exists: true, data: () => ({ subject: 'Operator subject', body: 'B {{verifyUrl}}', html: null }) });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.verify-email', 'catch@hanasamku.com', {}, undefined, { personRequested: true });
+    expect((sendMock.mock.calls[0]![0] as { subjectTemplate: string }).subjectTemplate).toBe('Operator subject');
+  });
 });
 
 /**
