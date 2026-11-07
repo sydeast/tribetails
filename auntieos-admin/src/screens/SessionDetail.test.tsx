@@ -258,11 +258,11 @@ describe('SessionDetail', () => {
    */
   it('says the session is not on file when the read settled on nothing', () => {
     render(<SessionDetail entry={null} onBack={vi.fn()} />);
-    expect(screen.getByText(/no Kin Care session is on file under this id/i)).toBeInTheDocument();
+    expect(screen.getByText(/no KinCare session is on file under this id/i)).toBeInTheDocument();
   });
   it('says it is still looking while the by-id read is in flight, not that the session is gone', () => {
     render(<SessionDetail entry={null} read={{ status: 'loading' }} onBack={vi.fn()} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Looking this Kin Care session up…');
+    expect(screen.getByRole('status')).toHaveTextContent('Looking this KinCare session up…');
     expect(screen.queryByText(/not on file/i)).toBeNull();
   });
   it('surfaces a failed by-id read with its message and a retry, never as a missing session', async () => {
@@ -507,7 +507,7 @@ describe('SessionDetail: editing the visit', () => {
     await userEvent.type(minutes, '45');
     await userEvent.click(screen.getByRole('button', { name: /save details/i }));
     expect(updateKinCareSession).toHaveBeenCalledWith('sess1', { serviceDurationMinutes: 45 });
-    expect(await screen.findByText(/saved: serviceDurationMinutes/i)).toBeInTheDocument();
+    expect(await screen.findByText(/saved: visit length\./i)).toBeInTheDocument();
   });
   it('refuses an out-of-range visit length before it reaches the server', async () => {
     render(<SessionDetail entry={entry({ serviceDurationMinutes: 30 })} onBack={vi.fn()} />);
@@ -647,7 +647,7 @@ describe('SessionDetail: GPS', () => {
     expect(screen.getByText(/waiting for the first gps ping/i)).toBeInTheDocument();
     unmount();
     render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
-    expect(screen.getByText('No GPS breadcrumbs were recorded for this Kin Care.')).toBeInTheDocument();
+    expect(screen.getByText('No GPS breadcrumbs were recorded for this KinCare.')).toBeInTheDocument();
   });
   // #772: the sheet must not leave a denied browser "waiting for the first
   // ping" from a field app that is not running. The tracker's status decides
@@ -688,7 +688,7 @@ describe('SessionDetail: GPS', () => {
   it('names a finished visit with no breadcrumbs and no summary as never tracked', () => {
     render(<SessionDetail entry={entry({ status: 'COMPLETED', completedAt: '2026-07-16T18:00:00Z' })} onBack={vi.fn()} />);
     expect(
-      screen.getByText('No GPS breadcrumbs were recorded for this Kin Care because it was never tracked.'),
+      screen.getByText('No GPS breadcrumbs were recorded for this KinCare because it was never tracked.'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/retention window/i)).toBeNull();
     expect(screen.queryByRole('img', { name: /visit route/i })).toBeNull();
@@ -708,7 +708,7 @@ describe('SessionDetail: GPS', () => {
       />,
     );
     expect(
-      screen.getByText('A GPS summary was saved for this Kin Care, but it has no route points to draw.'),
+      screen.getByText('A GPS summary was saved for this KinCare, but it has no route points to draw.'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/never tracked/i)).toBeNull();
     expect(screen.queryByRole('img', { name: /visit route/i })).toBeNull();
@@ -720,13 +720,13 @@ describe('SessionDetail: GPS', () => {
   it('says tracking has not started on a scheduled visit, not never tracked', () => {
     const { unmount } = render(<SessionDetail entry={entry({ status: 'SCHEDULED' })} onBack={vi.fn()} />);
     expect(
-      screen.getByText('Tracking starts once an Auntie clocks in for this Kin Care.'),
+      screen.getByText('Tracking starts once an Auntie clocks in for this KinCare.'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/never tracked/i)).toBeNull();
     unmount();
     render(<SessionDetail entry={entry({ status: 'ON_MY_WAY' })} onBack={vi.fn()} />);
     expect(
-      screen.getByText('Tracking starts once an Auntie clocks in for this Kin Care.'),
+      screen.getByText('Tracking starts once an Auntie clocks in for this KinCare.'),
     ).toBeInTheDocument();
   });
   // A dead subscription and an unmoved Auntie render identically if the caller

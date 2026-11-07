@@ -78,6 +78,7 @@ function render(ui: ReactElement) {
 function member(over: Partial<HouseholdMember> = {}): HouseholdMember {
   return {
     uid: 'u1',
+    displayName: null,
     secondaryLabel: 'Spouse',
     role: 'SECONDARY',
     status: 'ACTIVE',
@@ -292,6 +293,8 @@ describe('HouseholdMembers PRIMARY entitlements are not switches', () => {
     // The sentence moved into the Primary contact panel's tooltip (#758): it
     // is in the DOM for the accessible description, hidden until hovered.
     expect(await screen.findByText(/Held by role, not by setting/)).toBeInTheDocument();
+    // #1592: the tip says what the operator can do, not how the server decides.
+    expect(screen.queryByText(/the server reads the role/)).toBeNull();
     // The mock's `.cbar` chip stands where the six "Granted" rows stood: one
     // capsule that reads as state rather than as six controls.
     const row = (await screen.findByText('loretta@example.com')).closest('li');
@@ -689,15 +692,15 @@ describe('HouseholdMembers breadcrumbs', () => {
     );
   });
 
-  // Pre-existing: the /household-members/{id} route passes no name, so a cold
-  // deep link genuinely has only the id to show. Showing it is honest; showing
-  // a placeholder household name would not be.
-  it('falls back to the id when the household name has not been passed down', async () => {
+  // #1589: the route reads the household and passes its name; if none reaches
+  // the screen it says "This household", never the database id.
+  it('#1589: says "This household", never the id, when no name was passed down', async () => {
     api.listHouseholdMembers.mockResolvedValue([member()]);
     api.listHouseholdInvites.mockResolvedValue([invite()]);
     render(<HouseholdMembers kinfolkId="fam1" onBack={() => {}} />);
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
-    expect(within(nav).getByRole('link', { name: 'fam1' })).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: 'This household' })).toBeInTheDocument();
+    expect(within(nav).queryByText('fam1')).toBeNull();
   });
 });
 
@@ -777,22 +780,22 @@ describe('HouseholdMembers mock structure', () => {
     expect(screen.queryByText(/Hand the primary role/)).toBeNull();
   });
 
-  it('draws each member as the mock block: circle, name, compact capsules, the uid in mono', async () => {
-    mount({ members: [primary(), member()] });
-    const row = (await screen.findByText('marcus@example.com')).closest('li') as HTMLElement;
+  it('draws each member as the mock block: circle, name, compact capsules, the email in mono, never the uid (#1589)', async () => {
+    mount({ members: [primary(), member({ displayName: 'Marcus Webb' })] });
+    const row = (await screen.findByText('Marcus Webb')).closest('li') as HTMLElement;
     expect(row).toHaveClass('hmembers__member');
     expect(row).toHaveAttribute('data-role', 'secondary');
-    expect(within(row).getByRole('img', { name: 'marcus@example.com' })).toHaveTextContent('M');
+    expect(within(row).getByRole('img', { name: 'Marcus Webb' })).toHaveTextContent('M');
     const role = within(row).getByText('Secondary');
     expect(role).toHaveClass('den-statuspill', 'den-statuspill--compact');
     expect(role).toHaveAttribute('data-tone', 'teal');
     expect(within(row).getByText('Active')).toHaveAttribute('data-tone', 'teal');
-    expect(within(row).getByText('u1')).toHaveClass('hmembers__member-contact');
+    expect(within(row).getByText('marcus@example.com')).toHaveClass('hmembers__member-contact');
+    expect(within(row).queryByText('u1')).toBeNull();
     // The label, read-only: `updateMemberLabel` is PRIMARY-only on the server.
     expect(within(row).getByText('secondaryLabel')).toHaveClass('hmembers__labeled');
     expect(within(row).getByText('Spouse')).toHaveClass('hmembers__labelval');
     expect(within(row).queryByRole('textbox')).toBeNull();
-
     const prow = (await screen.findByText('lost@example.com')).closest('li') as HTMLElement;
     expect(within(prow).getByText('Primary')).toHaveAttribute('data-tone', 'purple');
     expect(within(prow).queryByText('secondaryLabel')).toBeNull();
@@ -891,14 +894,13 @@ describe('HouseholdMembers Back', () => {
     expect(routerHistory.back).not.toHaveBeenCalled();
   });
 
-  // The `/household-members/{id}` route passes no name, so a cold deep link has
-  // only the id. The button shows it, matching the trail step directly above it
-  // under the same ruling: the id is honest and a stand-in household name is not.
-  it('shows the id in the fallback label when no name was passed down', async () => {
+  // #1589: the route now reads the household and passes its name. If no name
+  // reaches the screen it says "This household", never the database id.
+  it('#1589: never puts the id in the fallback label when no name was passed down', async () => {
     api.listHouseholdMembers.mockResolvedValue([member()]);
     api.listHouseholdInvites.mockResolvedValue([invite()]);
     render(<HouseholdMembers kinfolkId="fam1" onBack={vi.fn()} />);
-    expect(await screen.findByRole('button', { name: 'Back to fam1' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Back to This household' })).toBeInTheDocument();
   });
 
   it('steps back through history, under a plain label, when the operator walked here', async () => {

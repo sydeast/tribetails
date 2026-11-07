@@ -146,7 +146,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
             verticalArrangement = Arrangement.spacedBy(dims.space5),
         ) {
             DenScreenHeading(
-                kicker = "The Den",
+                kicker = "Care Ops · Marketing blasts",
                 title = "Marketing",
                 accentTail = "blasts",
                 subtitle = "A blast is scheduled. Communicate's broadcast sends immediately.",

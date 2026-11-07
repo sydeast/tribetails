@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isIsoDate } from './joinDate';
+import { isIsoDate, isJoinDateInRange, JOIN_DATE_RANGE_MESSAGE } from './joinDate';
 
 /**
  * Validation for the Kinfolk (household) editor.
@@ -121,7 +121,13 @@ export const kinfolkEditSchema = z.object({
    */
   joinDate: z
     .string()
-    .refine((v) => v.trim() === '' || isIsoDate(v.trim()), { message: 'Pick a join date from the calendar.' }),
+    .refine((v) => v.trim() === '' || isIsoDate(v.trim()), { message: 'Pick a join date from the calendar.' })
+    // #1584 (operator ruling, 2026-11-05 docket): 2025 through today. Checked
+    // only once the value is a real day, so a malformed one gets the message
+    // above and not this one too.
+    .refine((v) => v.trim() === '' || !isIsoDate(v.trim()) || isJoinDateInRange(v.trim()), {
+      message: JOIN_DATE_RANGE_MESSAGE,
+    }),
 
   secondaryPhone: z
     .string()

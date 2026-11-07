@@ -276,7 +276,7 @@ export const conditionAttributeCatalog: readonly ConditionAttribute[] = [
   { key: 'checklist', label: 'Care checklist' },
   { key: 'reactive', label: 'Reactive' },
   { key: 'spayedNeutered', label: 'Spayed / neutered' },
-  { key: 'officeNotes', label: 'Office notes' },
+  { key: 'officeNotes', label: "Auntie's notes" },
   { key: 'colorMarkings', label: 'Color / markings' },
 ];
 

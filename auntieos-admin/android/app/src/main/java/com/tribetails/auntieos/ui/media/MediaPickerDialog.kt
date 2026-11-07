@@ -51,6 +51,8 @@ fun MediaPickerDialog(
     entityId: String,
     entityType: MediaEntityType,
     entityName: String,
+    /** #1588: the household of a KIN upload, stamped on the saved row. Blank for every other target. */
+    kinfolkId: String = "",
     onDismiss: () -> Unit,
     onMediaUploaded: (List<String>) -> Unit,
     viewModel: MediaUploadViewModel
@@ -108,6 +110,7 @@ fun MediaPickerDialog(
                             uris = state.selectedUris,
                             entityId = entityId,
                             entityType = entityType,
+                            kinfolkId = kinfolkId,
                             onProgress = { progress ->
                                 state = state.copy(uploadProgress = progress)
                             },
