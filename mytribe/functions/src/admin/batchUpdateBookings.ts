@@ -11,7 +11,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
-import { approveBookingSeriesCore, toIso } from './approveBookingSeriesCore';
+import { approveBookingSeriesCore, linkedSessionId, toIso } from './approveBookingSeriesCore';
 
 /**
  * Stage 2 tail: apply ONE booking transition to many individual visits at once.
@@ -166,16 +166,17 @@ export async function batchUpdateBookingsHandler(
   const remaining = requestedIds.filter((id) => !enhancedById.has(id));
   const kinCareById = new Map<
     string,
-    { ref: FirebaseFirestore.DocumentReference; status: string; startTimePending: boolean }
+    { ref: FirebaseFirestore.DocumentReference; status: string; startTimePending: boolean; sessionId: string }
   >();
   if (remaining.length > 0) {
     const cgSnap = await db().collectionGroup('kinCares').get();
     for (const d of cgSnap.docs) {
-      const data = d.data() as { status?: string; startTimePending?: unknown };
+      const data = d.data() as { status?: string; startTimePending?: unknown; sessionId?: unknown };
       kinCareById.set(d.id, {
         ref: d.ref,
         status: data.status ?? 'requested',
         startTimePending: data.startTimePending === true,
+        sessionId: linkedSessionId(d.id, data.sessionId),
       });
     }
   }
@@ -236,7 +237,7 @@ export async function batchUpdateBookingsHandler(
         // mirror honest. Confirmed with NO session is the damage the old flip
         // left behind, and goes through the core, which creates it.
         const sessionSnap = hit.status === kinCareWanted
-          ? await db().collection('kin_care_sessions').doc(`vis_${id}`).get()
+          ? await db().collection('kin_care_sessions').doc(hit.sessionId).get()
           : null;
         if (sessionSnap?.exists) {
           updated += 1;
@@ -260,7 +261,7 @@ export async function batchUpdateBookingsHandler(
       // CANCEL path already does: only when the paired session doc exists (a
       // still-pending request that was never approved has none, and the
       // deterministic id is `vis_{visitId}`, minted by approveBookingSeriesCore).
-      const sessionRef = db().collection('kin_care_sessions').doc(`vis_${id}`);
+      const sessionRef = db().collection('kin_care_sessions').doc(hit.sessionId);
       const sessionSnap = await sessionRef.get();
       if (sessionSnap.exists) {
         await sessionRef.set(

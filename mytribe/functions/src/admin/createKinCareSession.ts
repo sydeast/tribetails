@@ -12,7 +12,6 @@ import { materializeKinRoster, resolveKinfolkDisplayName } from '../lib/kinRoste
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
-import type { BookingCommunication } from '../portal/requestBooking';
 
 /**
  * 1E §A.9: server-bound creation of a kin_care_sessions doc (scheduleNewVisit).
@@ -241,73 +240,30 @@ export async function createKinCareSessionHandler(
   const endTs = Number.isFinite(endMs) ? Timestamp.fromMillis(endMs) : null;
 
   const batch = firestore.batch();
-  batch.set(parentRef, {
-    familyId: args.kinfolkId,
-    requestBatchId: batchId,
-    visitIds: [visitId],
-    // #1574: a backdated record is completed from birth, on the household's
-    // copy as on the office's. Neither booking trigger sends anything for it:
-    // `onBookingEnvelopeCreate` answers only an envelope created `requested`,
-    // and `onBookingsWrite` on a visit created `completed` reaches no dispatch
-    // (no assignee, no ask, and no status branch for `completed`).
-    envelopeStatus: backdated ? 'completed' : 'confirmed',
-    requestedByUid: uid,
-    // Marks the record as the office's own, so nobody reads it as a household
-    // request that was approved.
-    scheduledByOffice: true,
-    pattern: 'individual',
-    weeklyDays: null,
-    serviceId: null,
-    serviceName: args.serviceType,
-    kinIds,
-    kinNames,
-    notes: null,
-    billing: null,
-    // `COMMUNICATION_DEFAULT` (portal/requestBooking.ts), spelled out so this
-    // function does not load the portal callable's module at cold start.
-    communication: { emailConfirmation: false, timeVisibility: false } satisfies BookingCommunication,
-    visitCount: 1,
-    confirmedCount: backdated ? 0 : 1,
-    completedCount: backdated ? 1 : 0,
-    cancelledCount: 0,
-    firstStartTime: startTs,
-    lastStartTime: startTs,
-    targetType: 'KIN',
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-  });
-  batch.set(visitRef, {
+  // #1726: the record's two documents come from `officeBookingRecordDocs`, the
+  // shape `transitionBookingStatus` also writes when it approves a session that
+  // has no record. #1574: a backdated record is completed from birth there too;
+  // neither booking trigger sends anything for it (`onBookingEnvelopeCreate`
+  // answers only an envelope created `requested`, and `onBookingsWrite` on a
+  // visit created `completed` reaches no dispatch).
+  // Loaded here, not at file scope (#1714): see coldStartImportGraph.test.ts.
+  const { officeBookingRecordDocs } = await import('../lib/officeBookingRecord.js');
+  const record = officeBookingRecordDocs({
+    kinfolkId: args.kinfolkId,
+    uid,
     batchId,
-    familyId: args.kinfolkId,
-    status: backdated ? 'completed' : 'confirmed',
-    ...(backdated && { completedAt: endTs }),
-    visitProgress: null,
-    serviceId: null,
-    serviceName: args.serviceType,
+    visitId,
+    sessionId: ref.id,
     serviceType: args.serviceType,
-    priceCents: null,
-    timeBlockId: null,
-    timeBlockLabel: null,
-    title: args.serviceType,
-    startTime: startTs,
-    endTime: endTs,
-    startTimePending: false,
-    requestedDate: null,
+    startTs,
+    endTs,
     kinIds,
     kinNames,
-    assignedAuntieUid: null,
-    auntieDisplayName: null,
-    auntieAvatarUrl: null,
-    // The household's own note slot. Empty: the office's note is on the session.
-    notes: null,
-    requestedByUid: uid,
-    sourceBookingId: visitId,
-    sessionId: ref.id,
-    scheduledByOffice: true,
-    seriesApprovedAt: FieldValue.serverTimestamp(),
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
+    backdated,
+    householdNote: null,
   });
+  batch.set(parentRef, record.envelope);
+  batch.set(visitRef, record.visit);
   batch.set(ref, {
     kinfolkId: args.kinfolkId,
     kinfolkName,

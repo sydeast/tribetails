@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -157,10 +157,10 @@ async function guardApprovalWindow(opts: {
   sessionId: string;
   session: { startTime?: unknown; endTime?: unknown; serviceId?: unknown; serviceDurationMinutes?: unknown };
   args: z.infer<typeof Args>;
-}): Promise<void> {
+}): Promise<{ startMs: number; endMs: number | null } | null> {
   const startIso = toIso(opts.session.startTime);
   const startMs = Date.parse(startIso);
-  if (!Number.isFinite(startMs)) return;
+  if (!Number.isFinite(startMs)) return null;
   let endMs: number | null = null;
   const endIso = await storedVisitEndIso(
     startIso,
@@ -191,6 +191,7 @@ async function guardApprovalWindow(opts: {
     attempt: 'approve',
     auditContext: { sessionId: opts.sessionId },
   });
+  return { startMs, endMs };
 }
 export async function transitionBookingStatusHandler(
   req: CallableRequest<unknown>,
@@ -243,6 +244,11 @@ export async function transitionBookingStatusHandler(
         kinfolkId?: unknown;
         kinCareBatchId?: unknown;
         kinCareVisitId?: unknown;
+        // #1726: what a booking record minted at approval carries over.
+        serviceType?: unknown;
+        kinIds?: unknown;
+        kinfolkNotes?: unknown;
+        sourceBookingId?: unknown;
       }
     | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });
@@ -406,6 +412,7 @@ export async function transitionBookingStatusHandler(
   // and same semantics as `rescheduleBooking`: the closed day cannot be
   // overridden, the busy block and the other visit can. A session with no
   // readable start has no window to check and is approved as before.
+  let approvedWindow: { startMs: number; endMs: number | null } | null = null;
   if (decision.to === 'SCHEDULED') {
     try {
       // #1702: a request that waited until its time went by would go on the
@@ -415,7 +422,7 @@ export async function transitionBookingStatusHandler(
       // coldStartImportGraph.test.ts.
       const { assertApprovalStartAhead, businessTimeZoneReader } = await import('../lib/pastVisit.js');
       await assertApprovalStartAhead(toIso(prev?.startTime), Date.now(), businessTimeZoneReader());
-      await guardApprovalWindow({ uid, sessionId: args.sessionId, session: prev ?? {}, args });
+      approvedWindow = await guardApprovalWindow({ uid, sessionId: args.sessionId, session: prev ?? {}, args });
     } catch (err) {
       const details = (err as { details?: { code?: unknown } }).details;
       if (err instanceof HttpsError && err.code === 'failed-precondition') {
@@ -452,12 +459,26 @@ export async function transitionBookingStatusHandler(
   // reached Recent. `batchUpdateBookings` has always mirrored this way; this is
   // the single-row path every admin client's Cancel / Mark Completed uses.
   const mirror = await visitMirrorFor(prev, args.action);
-  if (mirror === null) {
+  // #1726: an approval that puts a visit on the calendar with no booking record
+  // behind it writes that record in the same batch, so the visit can be given an
+  // Auntie and notes on every client.
+  const record =
+    decision.to === 'SCHEDULED' && approvedWindow !== null
+      ? await recordForUnlinkedSession(args.sessionId, uid, prev, approvedWindow)
+      : null;
+  if (record !== null) Object.assign(patch, record.sessionLink);
+  if (mirror === null && record === null) {
     await ref.set(patch, { merge: true });
   } else {
     const batch = db().batch();
     batch.set(ref, patch, { merge: true });
-    batch.set(mirror.ref, { status: mirror.status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    if (mirror !== null) {
+      batch.set(mirror.ref, { status: mirror.status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
+    if (record !== null) {
+      batch.set(record.envelopeRef, record.envelope);
+      batch.set(record.visitRef, record.visit);
+    }
     await batch.commit();
   }
 
@@ -480,6 +501,8 @@ export async function transitionBookingStatusHandler(
       changed: true,
       // #1627: the household's copy moved too (null when the session has none).
       visitMirrored: mirror?.status ?? null,
+      // #1726: the booking record this approval wrote for a session that had none.
+      bookingRecordCreated: record === null ? null : { batchId: record.batchId, visitId: record.visitId },
       // The reason TEXT is stored on the session's own notes; the audit records
       // only that one was supplied, so the trail carries no free-text the
       // operator may have put a household detail into.
@@ -561,6 +584,102 @@ async function visitMirrorFor(
   return { ref: visitRef, status };
 }
 
+/**
+ * #1726: the booking record an APPROVE writes for a session that has none.
+ *
+ * The desktop console's Save draft writes a DRAFT session straight to
+ * `kin_care_sessions`, the way Android's draft is an `enhanced_bookings` doc
+ * with no record. #1630 gave Android's draft its record at approval, through
+ * `createKinCareSession`; this does the same for a session approved here,
+ * from any client, with the same two documents (`officeBookingRecordDocs`).
+ * An older one-visit request written the same way (before #1674) is covered
+ * by the same rule.
+ *
+ * Null, and the approval goes ahead as before, when the session is already
+ * linked, names no household, or has no readable start (the guards had no
+ * window to check, and a visit with no time is not one a household can see).
+ *
+ * The ids derive from the session id (`ses_{sessionId}`), so a retry of an
+ * approval that failed after this read writes the same documents rather than a
+ * second record. The visit keeps the session's own id as `sessionId`: an
+ * existing document cannot be renamed to `vis_{visitId}`.
+ */
+async function recordForUnlinkedSession(
+  sessionId: string,
+  uid: string,
+  prev:
+    | {
+        kinfolkId?: unknown;
+        kinCareBatchId?: unknown;
+        kinCareVisitId?: unknown;
+        serviceType?: unknown;
+        kinIds?: unknown;
+        kinfolkNotes?: unknown;
+        sourceBookingId?: unknown;
+      }
+    | undefined,
+  window: { startMs: number; endMs: number | null },
+): Promise<{
+  batchId: string;
+  visitId: string;
+  envelopeRef: FirebaseFirestore.DocumentReference;
+  visitRef: FirebaseFirestore.DocumentReference;
+  envelope: Record<string, unknown>;
+  visit: Record<string, unknown>;
+  sessionLink: Record<string, unknown>;
+} | null> {
+  const kinfolkId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
+  const linkedBatch = typeof prev?.kinCareBatchId === 'string' ? prev.kinCareBatchId.trim() : '';
+  const linkedVisit = typeof prev?.kinCareVisitId === 'string' ? prev.kinCareVisitId.trim() : '';
+  if (kinfolkId === '' || linkedBatch !== '' || linkedVisit !== '') return null;
+  // Loaded here, not at file scope: only an unlinked approval needs them. See
+  // coldStartImportGraph.test.ts.
+  const [{ officeBookingRecordDocs }, { materializeKinRoster }] = await Promise.all([
+    import('../lib/officeBookingRecord.js'),
+    import('../lib/kinRoster.js'),
+  ]);
+  const stated = Array.isArray(prev?.kinIds) ? prev.kinIds.filter((k): k is string => typeof k === 'string') : [];
+  const { kinIds, kinNames } = await materializeKinRoster(kinfolkId, stated);
+  const serviceType = typeof prev?.serviceType === 'string' ? prev.serviceType : '';
+  const householdNote = typeof prev?.kinfolkNotes === 'string' && prev.kinfolkNotes.trim() !== '' ? prev.kinfolkNotes : null;
+  const batchId = `ses_${sessionId}`;
+  const visitId = batchId;
+  const envelopeRef = db().doc(`families/${kinfolkId}/bookings/${batchId}`);
+  const visitRef = envelopeRef.collection('kinCares').doc(visitId);
+  const { envelope, visit } = officeBookingRecordDocs({
+    kinfolkId,
+    uid,
+    batchId,
+    visitId,
+    sessionId,
+    serviceType,
+    startTs: Timestamp.fromMillis(window.startMs),
+    endTs: window.endMs !== null && window.endMs > window.startMs ? Timestamp.fromMillis(window.endMs) : null,
+    kinIds,
+    kinNames,
+    backdated: false,
+    householdNote,
+  });
+  return {
+    batchId,
+    visitId,
+    envelopeRef,
+    visitRef,
+    envelope,
+    visit,
+    sessionLink: {
+      kinCareBatchId: batchId,
+      kinCareVisitId: visitId,
+      // Kept when the session already names where it came from: Android's
+      // linked-session lookup reads it.
+      ...(typeof prev?.sourceBookingId === 'string' && prev.sourceBookingId.trim() !== ''
+        ? {}
+        : { sourceBookingId: visitId }),
+      kinIds,
+      kinNames,
+    },
+  };
+}
 export const transitionBookingStatus = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('transitionBookingStatus', transitionBookingStatusHandler),

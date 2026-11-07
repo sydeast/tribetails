@@ -1036,9 +1036,9 @@ internal fun BookingCreateScreen(
     var adminInternalNotes    by remember { mutableStateOf("") }
     var saving          by remember { mutableStateOf(false) }
 
-    // AO-25: multi-date / recurring request. SINGLE keeps the original one-visit
-    // createBooking path; MULTI/WEEKLY route Submit to createMultiDateBookingRequest
-    // (the envelope model / Incoming-requests queue). startDate is visit 1 (MULTI)
+    // AO-25: multi-date / recurring request. Since #1674 every mode routes Submit
+    // to createMultiDateBookingRequest (the envelope model / Incoming-requests
+    // queue), and since #1726 Save draft writes one draft per visit. startDate is visit 1 (MULTI)
     // or the recurrence start (WEEKLY); startTime is the shared time.
     var repeatMode         by remember { mutableStateOf(BookingRepeat.SINGLE) }
     var extraDates         by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -1196,9 +1196,8 @@ internal fun BookingCreateScreen(
             // ── Date & time ─────────────────────────────────────────────────────
             // SUGGESTION (mockup): non-consecutive multi-date calendar + Time Block
             // chips + recurring options + optional specific-start-time with a
-            // kinfolk-facing disclaimer. requestBooking supports visits[]+pattern
-            // server-side, but createBooking/buildSession is single-date/time, so the
-            // real fields stay single-date until the multi-date callable is wired.
+            // kinfolk-facing disclaimer. The repeat modes below expand to concrete
+            // visits (buildStartTimesMs) for both Submit and Save draft.
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 // #1: calendar-style date picker (tap to open) instead of a typed field.
                 Column(modifier = Modifier.weight(1f)) {
@@ -1391,16 +1390,23 @@ internal fun BookingCreateScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 GhostButton(label = "Cancel", onClick = onBack, modifier = Modifier.weight(1f))
+                // #1726: one draft per visit the form names, every repeat mode, so
+                // it needs the same visits Submit does; approving one writes its
+                // booking record. The notes ride on the draft (see saveDraft).
                 GhostButton(
                     label   = "Save draft",
-                    enabled = hasKinfolk && hasService && !saving,
+                    enabled = canSubmit && !saving,
                     onClick = {
                         scope.launch {
                             saving = true
-                            vm.createBooking(
-                                booking = buildSession(selectedKinfolk!!, serviceType, startDate, startTime, kinfolkAdditionalInfo, "DRAFT", bookingFormValues.toMap()),
-                                kinfolkFacingNote = kinfolkAdditionalInfo,
-                                adminInternalNote = adminInternalNotes,
+                            vm.saveDraft(
+                                kinfolkId = selectedKinfolk!!._id,
+                                kinfolkName = selectedKinfolk!!.displayName,
+                                serviceType = serviceType,
+                                visitStartsMs = requestVisits,
+                                kinfolkNote = kinfolkAdditionalInfo,
+                                staffNote = adminInternalNotes,
+                                formValues = bookingFormValues.toMap(),
                             )
                             saving = false
                             if (vm.errorMessage == null) onBack()
@@ -1434,24 +1440,6 @@ internal fun BookingCreateScreen(
         }
     }
 }
-
-private fun buildSession(
-    kf: Kinfolk,
-    serviceType: String,
-    date: String,
-    time: String,
-    notes: String,
-    status: String,
-    formValues: Map<String, String> = emptyMap(),
-) = KinCareSession(
-    kinfolkId   = kf._id,
-    kinfolkName = kf.displayName,
-    serviceType = serviceType,
-    startTime   = if (date.isBlank()) "" else "${date}T${time.ifBlank { "00:00" }}:00",
-    notes       = notes,
-    status      = status,
-    formValues  = formValues,
-)
 
 /** Two-letter monogram for the avatar, derived from a kinfolk display name. */
 private fun initialsFor(name: String): String {

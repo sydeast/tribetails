@@ -284,6 +284,72 @@ class BookingViewModel(
         )
     }
 
+    /**
+     * #1726: New booking's "Save draft". One DRAFT `kin_care_sessions` row per
+     * visit the form names, so Several dates and Weekly keep every date (the
+     * old path kept only the first). Approving a draft writes its booking record
+     * (`transitionBookingStatus`, the #1630 shape Android's draft has), so the
+     * approved visit can be given an Auntie and notes.
+     *
+     * The two notes ride on the row rather than going to `addBookingNote` /
+     * `addInternalBookingNote`: a draft has no booking record for them to land
+     * on, and on this console those calls are stubs ("note save deferred"). The
+     * household's note is `kinfolkNotes`, which the approval copies onto the
+     * record; the office's note is the session's own `notes`, where
+     * `createKinCareSession` keeps it too.
+     *
+     * Returns how many drafts were saved. A failure names how many did not.
+     */
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    suspend fun saveDraft(
+        kinfolkId: String,
+        kinfolkName: String,
+        serviceType: String,
+        visitStartsMs: List<Long>,
+        kinfolkNote: String,
+        staffNote: String,
+        formValues: Map<String, String> = emptyMap(),
+    ): Int {
+        errorMessage = null
+        if (serviceType.isBlank()) {
+            errorMessage = "Save draft failed: pick a KinCare type."
+            return 0
+        }
+        if (visitStartsMs.isEmpty()) {
+            errorMessage = "Pick a date for the visit."
+            return 0
+        }
+        var saved = 0
+        val failures = mutableListOf<String>()
+        for (startMs in visitStartsMs) {
+            val draft = KinCareSession(
+                kinfolkId = kinfolkId,
+                kinfolkName = kinfolkName,
+                serviceType = serviceType,
+                startTime = kotlin.time.Instant.fromEpochMilliseconds(startMs).toString(),
+                notes = staffNote.trim(),
+                kinfolkNotes = kinfolkNote.trim(),
+                status = "DRAFT",
+                formValues = formValues,
+            )
+            when (val r = dataSource.createBooking(draft)) {
+                is WriteResult.Ok -> {
+                    saved += 1
+                    audit(
+                        actionType = "CREATE_BOOKING",
+                        description = "Created DRAFT booking for ${kinfolkName.ifBlank { kinfolkId }} ($serviceType)",
+                        targetId = r.value,
+                    )
+                }
+                is WriteResult.Err -> failures += r.message
+            }
+        }
+        if (failures.isNotEmpty()) {
+            errorMessage = "Save draft failed for ${failures.size} of ${visitStartsMs.size} visit(s): ${failures.first()}"
+        }
+        return saved
+    }
+
     /** #644: the submission signature this key was minted for, and the key. */
     private var pendingRequestKey: Pair<String, String>? = null
 
