@@ -1251,6 +1251,44 @@ describe('the payments panel', () => {
       await screen.findByText(/The ledger shows money this balance does not/i),
     ).toBeInTheDocument();
   });
+  it('#1568: says nothing about "no payment" when the payment exists only in history (invoice #1018)', async () => {
+    // $10.29 card payment in the root ledger, nothing in the settlement rows.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 12750,
+        amountDueCents: 11750,
+        ledgerPayments: [ledgerPayment({ amountCents: 1029, tipCents: 0, recordedBy: null })],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 127.5, amountDue: 117.5 })} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Payment history/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No payment has been recorded/i)).toBeNull();
+    expect(screen.queryByText(/Use Record payment below to log one/i)).toBeNull();
+    // No settlement table either: there is nothing in it to total.
+    expect(screen.queryByText('Collected')).toBeNull();
+  });
+  it('#1568: a PAID invoice with only migrated history shows its caveat and no empty sentence (invoice #1010)', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 4000,
+        amountDueCents: 0,
+        ledgerPayments: [ledgerPayment({ tipCents: 500, reconciles: false, tipBasis: 'unknown' })],
+      }),
+    );
+    render(
+      <InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, editScope: 'none' })} onClose={vi.fn()} />,
+    );
+    expect(await screen.findByText(/Some of these rows cannot be reconciled/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No payment has been recorded/i)).toBeNull();
+  });
+  it('#1568: with no rows anywhere and nothing owed, drops the "nothing has come off" clause', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 4000, amountDueCents: 0 }));
+    render(
+      <InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, editScope: 'none' })} onClose={vi.fn()} />,
+    );
+    expect(await screen.findByText(/No payment has been recorded against this invoice\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing has come off its balance/i)).toBeNull();
+  });
   it('fails loud on a refused read, verbatim, and offers a retry', async () => {
     getInvoiceLedger.mockRejectedValueOnce(new Error('Invoice not found.'));
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);

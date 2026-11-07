@@ -246,6 +246,13 @@ class AdminDataViewModel(
     // §A.8: Business-Settings time blocks for the Auntie-Time "Evening block" labels.
     // Unified settings (2026-06-05): timeBlocks now live on business_settings,
     // read via the injected AuntieRepository.
+    /**
+     * `business_settings.timeZone` for screens that read stored instants on the business's
+     * clock (#1585). Blank until read and on a failed read; `businessZone(...)` turns blank
+     * into America/Chicago, the server's own default.
+     */
+    private val _businessTimeZone = MutableStateFlow("")
+    val businessTimeZone: StateFlow<String> = _businessTimeZone.asStateFlow()
     private val _timeBlocks = MutableStateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>>(emptyList())
     val timeBlocks: StateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>> = _timeBlocks.asStateFlow()
 
@@ -551,6 +558,11 @@ class AdminDataViewModel(
     ).firstOrNull { !it.isNullOrBlank() } ?: ""
 
     fun loadActivityLog() {
+        // The zone read does not hold the log back: rows draw on the default zone and
+        // re-read when it lands.
+        viewModelScope.launch {
+            runCatchingCancellable { repository.getBusinessSettings().onSuccess { _businessTimeZone.value = it.timeZone } }
+        }
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
