@@ -82,6 +82,7 @@ import { Args as ScheduleMarketingBlastArgs } from '../src/admin/scheduleMarketi
 import { TrainingDocumentArgs as CreateTrainingDocumentArgs } from '../src/admin/createTrainingDocument';
 import { UpdateTrainingDocumentArgs } from '../src/admin/updateTrainingDocument';
 import { DeleteTrainingDocumentArgs } from '../src/admin/deleteTrainingDocument';
+import { GetKinTaleTemplateUsageArgs } from '../src/admin/getKinTaleTemplateUsage';
 // Not a request shape: the SHARED REJECTION both booking-note callables throw.
 // See the error-surface guard at the foot of this file.
 import {
@@ -287,6 +288,7 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
   deleteTrainingDocument: { schema: DeleteTrainingDocumentArgs, keys: ['docId'] },
+  getKinTaleTemplateUsage: { schema: GetKinTaleTemplateUsageArgs, keys: ['templateId'] },
 
   // Shared vet catalog. `isEmergency` was added 2026-07-25 for the AuntieOS
   // picker; it is optional, so every legacy portal payload (the four fields

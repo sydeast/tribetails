@@ -66,6 +66,13 @@ vi.mock('../lib/visitTracking', () => ({
   endVisitTracking: vi.fn(),
   stopVisitTracking: vi.fn(),
 }));
+/**
+ * #1608: the operator's arrival-and-departure rule, as the board reads it.
+ * Mocked at the hook so no case reaches Firestore; null (unknown) by default,
+ * which is the "let the server decide" path every older case was written for.
+ */
+const { useArrivalRule } = vi.hoisted(() => ({ useArrivalRule: vi.fn<() => boolean | null>(() => null) }));
+vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
 import { Sessions } from './Sessions';
 
 /**
@@ -642,6 +649,44 @@ describe('Auntie Time: the card runs the visit', () => {
       expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
     );
     expect(patchVisitLifecycle).not.toHaveBeenCalled();
+  });
+
+  // #1608: the rule is checked before the confirm, not 18 s after it.
+  it('says what is missing instead of asking, when the rule refuses the Complete', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }));
+    expect(
+      await screen.findByText(/This visit has no arrival and departure recorded, and your settings require both/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /yes, mark it completed/i })).not.toBeInTheDocument();
+    expect(transitionBookingStatus).not.toHaveBeenCalled();
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('asks as before when the rule is off', async () => {
+    useArrivalRule.mockReturnValue(false);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await act(/^Complete$/, /yes, mark it completed/i);
+    expect(transitionBookingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
+    );
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('asks as before when the rule is on and both steps are stamped', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({
+      status: 'ON_MY_WAY',
+      startTime: at(0, 9),
+      arrivedAt: at(0, 9, 5),
+      departedAt: at(0, 9, 35),
+    });
+    await act(/^Complete$/, /yes, mark it completed/i);
+    expect(transitionBookingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
+    );
+    useArrivalRule.mockReturnValue(null);
   });
 
   it('refreshes the page after a write that changed the document, so the card stops lying', async () => {

@@ -135,6 +135,8 @@ export function decodeKinTaleTemplate(raw: unknown): KinTaleTemplate {
     serviceTypeKeys: readStringArray(o, 'serviceTypeKeys'),
     isActive: readBool(o, 'isActive', true),
     isDefault: readBool(o, 'isDefault', false),
+    archived: readBool(o, 'archived', false),
+    archivedAt: readString(o, 'archivedAt'),
 
     photoShowcaseEnabled: readBool(o, 'photoShowcaseEnabled', true),
     checklistEnabled: readBool(o, 'checklistEnabled', true),
@@ -158,7 +160,8 @@ export function decodeKinTaleTemplate(raw: unknown): KinTaleTemplate {
  * `data.firstOrNull { it.isDefault } ?: data.firstOrNull()`.
  */
 export function pickInitialTemplate(list: readonly KinTaleTemplate[]): KinTaleTemplate | null {
-  return list.find((t) => t.isDefault) ?? list[0] ?? null;
+  const live = list.filter((t) => t.archived !== true);
+  return live.find((t) => t.isDefault) ?? live[0] ?? null;
 }
 
 /**
@@ -189,7 +192,8 @@ export function pickTemplateForService(
   list: readonly KinTaleTemplate[],
   serviceType: string,
 ): KinTaleTemplate {
-  const active = list.filter((t) => t.isActive);
+  // #1591: an archived template is never picked for a new KinTale.
+  const active = list.filter((t) => t.isActive && t.archived !== true);
   const needle = serviceType.toLowerCase().trim();
   const match =
     needle === ''
