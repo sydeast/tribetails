@@ -25,6 +25,7 @@ import { str } from '../lib/coerce';
 import { Banner } from './Banner';
 import { GhostButton, PrimaryButton } from './Buttons';
 import { GlassSurface } from './GlassSurface';
+import { InfoTip } from './DenScreenKit';
 import './TribalIntelForm.css';
 
 interface TribalIntelFormProps {
@@ -187,12 +188,10 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
 
   return (
     <GlassSurface className="tribal-form">
-      <h3 className="tribal-form__title">{editing === null ? 'New Tribal Intel' : 'Edit Tribal Intel'}</h3>
-      <p className="tribal-form__blurb">
-        Saved intel is queued for the next reconcile pass, then folded into the household dossier and the pet
-        411. Attachments are cited as provenance only. The summarizer reads their file names and links, never
-        the contents of an image.
-      </p>
+      <h3 className="tribal-form__title">
+        {editing === null ? 'New Tribal Intel' : 'Edit Tribal Intel'}{' '}
+        <InfoTip text="Saved notes are folded into the household's dossier and the pet's 411 overnight. Attachments are listed as sources: only their names and links are read, never what an image shows." />
+      </h3>
 
       {failure !== null && (
         <Banner tone="error" title="Could not save" className="tribal-form__banner">

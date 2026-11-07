@@ -25,6 +25,8 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.SubmitVetClinicResult
 import com.tribetails.auntieos.data.model.VetClinicsSnapshot
+import com.tribetails.auntieos.domain.validateKinAge
+import com.tribetails.auntieos.domain.validateKinWeight
 import com.tribetails.auntieos.domain.horizonIso
 import com.tribetails.auntieos.domain.recentTalesFor
 import com.tribetails.auntieos.domain.upcomingVisitsFor
@@ -402,6 +404,10 @@ data class EditKinfolkUiState(
     val duplicateAddNotice: String? = null,
 )
 
+/** #1583: why an age / weight on the pet form is refused, or null for each that passes. */
+data class KinMeasureErrors(val age: String? = null, val weight: String? = null) {
+    val first: String? get() = age ?: weight
+}
 data class AddKinUiState(
     val kinfolkId: String = "",
     val name: String = "",
@@ -1744,6 +1750,15 @@ class DirectoryViewModel(
     fun updateKinFeedingFrequency(value: String) { _addKinState.value = _addKinState.value.copy(feedingFrequency = value) }
     fun updateKinPottyRoutine(value: String) { _addKinState.value = _addKinState.value.copy(pottyRoutine = value) }
 
+    /**
+     * The edit form's age / weight problems. A value left as it loaded is never a
+     * problem, even when it is old free text (#1583), so the baseline is the
+     * loaded pet.
+     */
+    fun editKinMeasureErrors(state: EditKinUiState): KinMeasureErrors = KinMeasureErrors(
+        age = validateKinAge(state.age, loadedKin?.age),
+        weight = validateKinWeight(state.weight, loadedKin?.weight),
+    )
     fun saveKin() {
         val state = _addKinState.value
         if (state.name.isBlank() || state.kinfolkId.isBlank()) return
@@ -1931,6 +1946,13 @@ class DirectoryViewModel(
             return
         }
 
+        // #1583: age and weight are numbers. A value left as loaded passes even if
+        // it is old free text, so a record with a bad legacy value stays editable.
+        val measureError = editKinMeasureErrors(state).first
+        if (measureError != null) {
+            _editKinState.value = state.copy(error = measureError)
+            return
+        }
         val updatedKin = buildKinFromEditState(state)
         val changes = kinFieldChanges(baseline, updatedKin)
         if (changes.isEmpty()) {
