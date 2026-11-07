@@ -2890,6 +2890,13 @@ data class StaffMember(
 }
 
 /**
+ * #1564: uid -> the name the Gallery's uploader line shows (name, else email).
+ * A uid with neither is left out, so the caller keeps whatever it showed before.
+ */
+fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+
+/**
  * Pure decode of the listStaff body `{staff:[{uid, displayName, email}]}`.
  * Lenient: entries without a uid are dropped (a row we can't assign is
  * useless), missing/null name + email decode as null, and an omitted `staff`
@@ -2904,8 +2911,10 @@ internal fun decodeStaffList(dataJson: String): List<StaffMember> =
                 ?: return@mapNotNull null
             StaffMember(
                 uid = uid,
-                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull,
-                email = o["email"]?.jsonPrimitive?.contentOrNull,
+                // A blank name or email is no name or email: the picker falls
+                // through to the next label rather than showing an empty row.
+                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+                email = o["email"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
 

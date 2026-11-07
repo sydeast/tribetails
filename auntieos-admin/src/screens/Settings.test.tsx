@@ -224,6 +224,23 @@ describe('Settings — section nav shell', () => {
     expect(screen.queryByLabelText('Business name')).not.toBeInTheDocument();
   });
 
+  /**
+   * #1564. Operator ruling, 2026-11-05 docket: every business email goes to
+   * `businessEmail`; while it is blank, Settings says they have nowhere to go.
+   */
+  it('#1564: says business emails have nowhere to go while the business email is blank', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(screen.getByText(/Business emails have nowhere to go until this is filled/)).toBeInTheDocument();
+  });
+
+  it('#1564: drops the warning once a business email is stored', async () => {
+    getBusinessSettings.mockResolvedValue({ ...DEFAULT_BUSINESS_SETTINGS, businessEmail: 'pawsome@hanasamku.com' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(screen.queryByText(/Business emails have nowhere to go/)).not.toBeInTheDocument();
+  });
   it('offers Retry on a failed load and re-fetches on click', async () => {
     getBusinessSettings.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
