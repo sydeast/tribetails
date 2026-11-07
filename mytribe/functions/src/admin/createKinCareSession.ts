@@ -89,6 +89,22 @@ const Args = z.object({
    * one was taken. See `lib/visitOverlapConflict.ts`.
    */
   overrideVisitConflict: z.boolean().optional(),
+  /**
+   * #1630: the Android admin's own booking (`enhanced_bookings/{id}`) this visit
+   * is the approval of. Optional; absent for Schedule > New visit.
+   *
+   * With it the record ids are DETERMINISTIC (`enh_{id}`), so approving the same
+   * booking twice lands on the same three documents instead of two visits: the
+   * second call returns the visit the first one wrote and writes nothing. The
+   * id is stored on the session as `enhancedBookingId`, which is what Android's
+   * linked-session lookup and cancel cascade now read.
+   */
+  enhancedBookingId: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[A-Za-z0-9_-]+$/, 'enhancedBookingId must be a Firestore document id')
+    .optional(),
 });
 
 /**
@@ -126,6 +142,24 @@ export async function createKinCareSessionHandler(
       });
     }
     throw err;
+  }
+
+  // #1630: an approval already turned into a visit is answered with that visit,
+  // BEFORE the guards: the overlap guard would otherwise read the visit this
+  // same booking already made and refuse the retry as a clash with itself.
+  const enhancedId = args.enhancedBookingId ?? null;
+  if (enhancedId !== null) {
+    const existing = await db().collection('kin_care_sessions').doc(`vis_enh_${enhancedId}`).get();
+    if (existing.exists) {
+      logEvent({
+        severity: 'info',
+        function: 'createKinCareSession',
+        event: 'admin.kinCareSession.alreadyCreated',
+        uid,
+        extra: { sessionId: existing.id, enhancedBookingId: enhancedId },
+      });
+      return { ok: true, sessionId: existing.id };
+    }
   }
 
   await guardBookingBusyConflict({
@@ -167,9 +201,11 @@ export async function createKinCareSessionHandler(
   // both, in ONE batch so no reader ever sees a session pointing at a visit that
   // is not there (or the reverse). See the header.
   const firestore = db();
-  const parentRef = firestore.collection('families').doc(args.kinfolkId).collection('bookings').doc();
+  // #1630: deterministic for an Android booking's approval (see Args), minted otherwise.
+  const bookings = firestore.collection('families').doc(args.kinfolkId).collection('bookings');
+  const parentRef = enhancedId !== null ? bookings.doc(`enh_${enhancedId}`) : bookings.doc();
   const batchId = parentRef.id;
-  const visitRef = parentRef.collection('kinCares').doc();
+  const visitRef = enhancedId !== null ? parentRef.collection('kinCares').doc(`enh_${enhancedId}`) : parentRef.collection('kinCares').doc();
   const visitId = visitRef.id;
   const ref = firestore.collection('kin_care_sessions').doc(`vis_${visitId}`);
   const startMs = Date.parse(args.startTime);
@@ -256,6 +292,8 @@ export async function createKinCareSessionHandler(
     sourceBookingId: visitId,
     kinCareBatchId: batchId,
     kinCareVisitId: visitId,
+    // #1630: the Android booking this visit approves, or absent.
+    ...(enhancedId !== null ? { enhancedBookingId: enhancedId } : {}),
     createdAt: FieldValue.serverTimestamp(),
     createdBy: uid,
     updatedAt: FieldValue.serverTimestamp(),
@@ -275,6 +313,7 @@ export async function createKinCareSessionHandler(
       visitId,
       serviceType: args.serviceType,
       startTime: args.startTime,
+      enhancedBookingId: enhancedId,
     },
   });
 
