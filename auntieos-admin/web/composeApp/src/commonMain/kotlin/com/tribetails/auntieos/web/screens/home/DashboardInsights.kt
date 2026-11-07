@@ -440,3 +440,13 @@ fun isDraftAwaitingReview(status: String): Boolean =
         "generated", "pending", "" -> true
         else -> false
     }
+/**
+ * The Today's Pack overdue line (#1590): "6 overdue visits to close out in
+ * Auntie Time". Null when nothing is overdue, so the card says nothing rather
+ * than "0 overdue". Same words as the web admin and the phone.
+ */
+fun todaysPackOverdueLabel(count: Int): String? = when {
+    count <= 0 -> null
+    count == 1 -> "1 overdue visit to close out in Auntie Time"
+    else -> "$count overdue visits to close out in Auntie Time"
+}

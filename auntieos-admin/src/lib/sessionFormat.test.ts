@@ -11,6 +11,7 @@ import {
   isSessionActive,
   groupSessionsByDay,
   groupSessionsByPhase,
+  overdueSessionCount,
   sessionsWindowBounds,
   localDateIso,
   type SessionSort,
@@ -451,5 +452,25 @@ describe('sessionsWindowBounds: the bounded fetch range', () => {
   });
   it('rolls over a year boundary correctly', () => {
     expect(sessionsWindowBounds('2026-01-05')).toEqual({ from: '2025-12-06', to: '2026-01-20' });
+  });
+});
+describe('overdueSessionCount: the number Home shows is the Overdue heading on the board (#1590)', () => {
+  const TODAY = '2026-07-16';
+  const day = (offset: number): string => new Date(2026, 6, 16 + offset, 12).toISOString();
+  const rows = [
+    { startTime: day(-2), status: 'SCHEDULED' },
+    { startTime: day(-10), status: 'SCHEDULED' },
+    { startTime: day(-1), status: 'SCHEDULED' },
+    { startTime: day(-10), status: 'COMPLETED', completedAt: day(-10) },
+    { startTime: day(-10), status: 'PENDING' },
+    { startTime: day(1), status: 'SCHEDULED' },
+  ];
+  it('counts exactly the rows groupSessionsByPhase puts under Overdue', () => {
+    const board = groupSessionsByPhase(rows, TODAY).find((g) => g.phase === 'overdue');
+    expect(board?.count).toBe(2);
+    expect(overdueSessionCount(rows, TODAY)).toBe(board?.count);
+  });
+  it('is zero for an empty book', () => {
+    expect(overdueSessionCount([], TODAY)).toBe(0);
   });
 });

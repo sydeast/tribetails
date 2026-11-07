@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.ui.branding.brandIdentity
+import com.tribetails.auntieos.ui.admin.overdueOnAuntieTime
 import com.tribetails.auntieos.ui.branding.homeHeading
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
@@ -341,8 +342,23 @@ fun HomeScreen(
                                 subtitle = "Your visit run for the day.",
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
+                                // #1590: late work belongs on the card that opens the day. The
+                                // count is Auntie Time's own Overdue rule over the same session
+                                // list, so it matches the heading the row opens.
+                                val overdueCount = if (state.gapsLoaded && !state.isLoading) {
+                                    overdueOnAuntieTime(state.allSessions, java.time.LocalDate.now().toString())
+                                } else 0
+                                val overdueLabel = todaysPackOverdueLabel(overdueCount)
+                                if (!state.isLoading && !state.gapsLoaded) {
+                                    EmptyHint("Couldn't check for overdue visits.", error = true)
+                                }
+                                if (overdueLabel != null) {
+                                    TodaysPackOverdueRow(overdueLabel, onNavigateToAuntieTime)
+                                }
                                 when {
                                     state.isLoading -> EmptyHint("Loading today's visits…")
+                                    state.todayVisits.isEmpty() && overdueLabel != null ->
+                                        EmptyHint("Nothing else on the books today.")
                                     state.todayVisits.isEmpty() ->
                                         EmptyHint("Nothing on the books today. Enjoy the quiet.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1084,6 +1100,30 @@ private fun statusColor(status: VisitStatus): Color = when (status) {
     VisitStatus.DEPARTED -> AuntieTheme.colors.success
     VisitStatus.COMPLETED -> AuntieTheme.colors.success
     VisitStatus.CANCELLED -> AuntieTheme.colors.error
+}
+
+/**
+ * The Today's Pack overdue line: a real button, because it navigates to Auntie
+ * Time, where the same visits sit under the Overdue heading.
+ */
+@Composable
+internal fun TodaysPackOverdueRow(label: String, onClick: () -> Unit) {
+    val c = AuntieTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, c.warning, RoundedCornerShape(12.dp))
+            .background(c.warning.copy(alpha = 0.12f))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Lucide.CalendarClock, contentDescription = null, tint = c.warning, modifier = Modifier.size(18.dp))
+        Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+    }
 }
 
 /**

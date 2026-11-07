@@ -409,4 +409,11 @@ class DashboardInsightsTest {
         assertTrue(!isDraftAwaitingReview("approved"))
         assertTrue(!isDraftAwaitingReview("mystery"))
     }
+    // ── Today's Pack overdue line (#1590) ────────────────────────────────────
+    @Test
+    fun `todaysPackOverdueLabel is silent at zero and counts in words otherwise`() {
+        assertNull(todaysPackOverdueLabel(0))
+        assertEquals("1 overdue visit to close out in Auntie Time", todaysPackOverdueLabel(1))
+        assertEquals("6 overdue visits to close out in Auntie Time", todaysPackOverdueLabel(6))
+    }
 }
