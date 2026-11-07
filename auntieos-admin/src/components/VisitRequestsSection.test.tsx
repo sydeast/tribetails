@@ -684,6 +684,22 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     expect(screen.getByRole('button', { name: 'Book it' })).toBeEnabled();
   });
 
+  it('#1702: a request whose time has passed shows the server sentence and offers no Approve anyway', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    const sentence =
+      'The time this request asked for has already passed, so it cannot go on the calendar. Decline it, or move the visit to a time still ahead, then approve it.';
+    approveBookingRequest.mockRejectedValue(
+      Object.assign(new Error(sentence), { code: 'functions/failed-precondition', details: { code: 'approve_in_past' } }),
+    );
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+    expect(await screen.findByText(sentence)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
+    // Decline stays open to the operator, as the sentence says.
+    expect(screen.getByRole('button', { name: 'Book it' })).toBeEnabled();
+  });
   it('submits a decline with no note, since the office does not owe a reason (#700)', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     declineBookingRequest.mockResolvedValue({

@@ -17,7 +17,8 @@ import org.junit.Test
  */
 class NotificationRequestResolutionTest {
 
-    private fun request(resolution: String = "", data: Map<String, Any?> = emptyMap()) = NotificationEntry(
+    // #1675: a request row always names its household (onBookingEnvelopeCreate).
+    private fun request(resolution: String = "", data: Map<String, Any?> = mapOf("kinfolkId" to "kf1")) = NotificationEntry(
         id = "n1",
         key = "kincare.requested",
         targetType = "booking",

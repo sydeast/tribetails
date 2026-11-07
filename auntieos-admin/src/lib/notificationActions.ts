@@ -131,10 +131,11 @@ export interface NotificationActionSet {
   /** Destination for "Open", or null when there is nothing to open. */
   open: NotificationRoute | null;
   /**
-   * The RAW envelope visit id for Approve/Deny, or '' when this is not a
-   * booking notification. Underived on purpose: those callables act on
-   * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`, so the
-   * `vis_` form `open` carries would be the wrong id here.
+   * The waiting request's envelope id (`batchId`) for Approve/Deny, or '' when
+   * this row is not a request still waiting on a decision. With the row's
+   * household (`notificationKinfolkId`) it names
+   * `families/{kinfolkId}/bookings/{batchId}`, what `manageBookingSeries`
+   * answers (#1675).
    */
   bookingId: string;
   /** Destination for "Create quote", or null when no household is identifiable. */
@@ -190,8 +191,13 @@ const QUOTE_DENIED_KEY = 'quote.denied';
  * naming a household offered Create quote, regardless of what the event was or
  * what had already happened to it. Narrowed per event below.
  *
- * APPROVE/DENY calls `batchUpdateBookings` with APPROVE/REJECT, and that is
- * only the right callable for a FRESH request: `kincare.reschedule.requested`
+ * APPROVE/DENY answers the whole request through `manageBookingSeries`
+ * (#1675), the call Bookings > Review makes. The row's `targetId` is the
+ * request's envelope id (`batchId`, written by `onBookingEnvelopeCreate`), and
+ * `batchUpdateBookings`, which these buttons used to call, only knows visit
+ * ids, so every press came back not-found. It needs the household too, so a row
+ * that names none offers no Approve/Deny. Only a FRESH request takes this
+ * path: `kincare.reschedule.requested`
  * resolves through `resolveBookingRescheduleRequest`, and
  * `kincare.cancel.requested` resolves through the #438 accept/decline path.
  * Offering Approve/Deny on either would fire the wrong callable at the entity.
@@ -221,14 +227,18 @@ export function applicableNotificationActions(entry: NotificationEntry): Notific
   const key = str(entry.key).trim();
   const outcome = requestOutcomeLabel(entry);
 
+  const kinfolkId = notificationKinfolkId(entry);
   const isPendingBookingRequest =
-    key === PENDING_BOOKING_REQUEST_KEY && outcome === null && type === 'booking' && targetId !== '';
+    key === PENDING_BOOKING_REQUEST_KEY &&
+    outcome === null &&
+    type === 'booking' &&
+    targetId !== '' &&
+    kinfolkId !== '';
 
   const hasInvoiceReference = type === 'invoice' || str(rec(entry.data)['invoiceId']).trim() !== '';
   const isQuoteDenial = key === QUOTE_DENIED_KEY;
   const isUninvoicedBookingRequest =
     key === PENDING_BOOKING_REQUEST_KEY && outcome === null && !hasInvoiceReference;
-  const kinfolkId = notificationKinfolkId(entry);
   const quoteEligible = kinfolkId !== '' && (isQuoteDenial || isUninvoicedBookingRequest);
 
   return {

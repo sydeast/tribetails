@@ -1,5 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
+
+// #1702: approval refuses a visit whose start has already passed. These
+// fixtures date their visits from June 2026 on, so the clock stands before
+// them; the past-start refusal itself is tested in approveIntoPast.test.ts.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));

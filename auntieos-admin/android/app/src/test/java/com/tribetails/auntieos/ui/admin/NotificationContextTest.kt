@@ -102,8 +102,17 @@ class NotificationContextTest {
     // `lib/notificationActions.test.ts` table exactly.
 
     @Test fun `approve-deny offers only on a still-pending booking request`() {
-        val pending = NotificationEntry(id = "n1", key = "kincare.requested", targetType = "booking", targetId = "bk-1")
+        val pending = NotificationEntry(
+            id = "n1", key = "kincare.requested", targetType = "booking", targetId = "req_1",
+            data = mapOf("kinfolkId" to "kf-9"),
+        )
         assertTrue(applicableNotificationActions(pending).canApproveDeny)
+    }
+    // #1675: Approve/Deny answer the request through manageBookingSeries, which
+    // needs the household as well as the request id.
+    @Test fun `approve-deny is withheld from a waiting request that names no household`() {
+        val anonymous = NotificationEntry(id = "n1", key = "kincare.requested", targetType = "booking", targetId = "req_1")
+        assertFalse(applicableNotificationActions(anonymous).canApproveDeny)
     }
 
     @Test fun `approve-deny is withheld from a reschedule or cancellation ask`() {

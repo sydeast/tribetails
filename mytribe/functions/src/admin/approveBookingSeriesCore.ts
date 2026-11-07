@@ -301,6 +301,50 @@ export function serviceDurationsReader(): () => Promise<unknown> {
       .then((s) => (s.data() as Record<string, unknown> | undefined)?.['serviceDurations']));
 }
 
+/**
+ * #1702: every visit this approval would book must still start ahead. A
+ * household request that sat in the queue until its date went by was approved
+ * straight into the past as SCHEDULED; the #1574 ruling allows a past visit
+ * only as already Completed. Thrown as one `HttpsError` before any write, so
+ * `manageBookingSeries` hands the sentence to the client and
+ * `batchUpdateBookings` copies it onto every selected id, rather than the visit
+ * counting as a nameless failure inside the loop.
+ *
+ * Skipped: a visit called off, or already confirmed (a re-approve of a booked
+ * request moves nothing). A night awaiting its start is judged by the start the
+ * operator chose for it here. `lib/pastVisit` is loaded on use, not at file
+ * scope (#1714): see coldStartImportGraph.test.ts.
+ */
+async function assertSeriesStartsAhead(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[],
+  startTimes: Record<string, number> | undefined,
+): Promise<void> {
+  const starts: Array<{ id: string; start: string }> = [];
+  for (const d of docs) {
+    const data = d.data() as Record<string, unknown>;
+    if (isCalledOff(data) || data['status'] === 'confirmed') continue;
+    const chosen = data['startTimePending'] === true ? startTimes?.[d.id] : undefined;
+    const start =
+      typeof chosen === 'number' && Number.isFinite(chosen) ? new Date(chosen).toISOString() : toIso(data['startTime']);
+    if (start) starts.push({ id: d.id, start });
+  }
+  if (starts.length === 0) return;
+  const { assertApprovalStartAhead, businessTimeZoneReader } = await import('../lib/pastVisit.js');
+  const nowMs = Date.now();
+  const timeZone = businessTimeZoneReader();
+  for (const { id, start } of starts) {
+    try {
+      await assertApprovalStartAhead(start, nowMs, timeZone);
+    } catch (err) {
+      // A retry after a partial failure: this visit's session was already
+      // written by an earlier pass, so approving again books nothing new.
+      // Read only on this refusal path.
+      const session = await db().collection('kin_care_sessions').doc(`vis_${id}`).get();
+      if (session.exists) continue;
+      throw err;
+    }
+  }
+}
 export async function approveBookingSeriesCore(opts: {
   kinfolkId: string;
   batchId: string;
@@ -345,6 +389,10 @@ export async function approveBookingSeriesCore(opts: {
   const childSnap = await parentRef.collection('kinCares').get();
   const childIds = childSnap.docs.map((d) => d.id);
 
+  // #1702: throws, before any write, when a visit this approval would put on
+  // the calendar starts in the past. First, as `rescheduleBooking` orders it,
+  // so a time that can never be written is not reported as a busy clash.
+  await assertSeriesStartsAhead(childSnap.docs, opts.startTimes);
   // #1098: throws, before any write, unless every visit awaiting a start time
   // has a usable one. Visits that already have a time are not touched by it.
   const startTimeSet = await resolvePendingStartTimes({

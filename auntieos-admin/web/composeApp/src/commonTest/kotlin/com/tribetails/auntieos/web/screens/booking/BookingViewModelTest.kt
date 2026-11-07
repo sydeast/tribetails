@@ -103,6 +103,21 @@ class BookingViewModelTest {
         assertEquals("SCHEDULED", result.value.single { it._id == "b6" }.status)
         assertTrue(ds.loggedActivity.any { it.actionType == "APPROVE_BOOKING" })
     }
+    // #1702: the server refuses approving a visit whose start has passed (operator
+    // ruling for #1574: a past visit only as already Completed). Its sentence
+    // reaches the screen, and there is no "Approve anyway" past it.
+    @Test
+    fun aStartThatHasPassedShowsTheServerSentenceAndOffersNothing() = runTest {
+        val ds = FakeAuntieDataSource()
+        ds.emitSessions(FirestoreResult.Data(listOf(session("b8"))))
+        val sentence = "The time this request asked for has already passed, so it cannot go on the calendar. " +
+            "Decline it, or move the visit to a time still ahead, then approve it."
+        ds.setApproveBookingError("b8", sentence, "approve_in_past")
+        val vm = BookingViewModel(ds)
+        vm.approveBooking("b8")
+        assertEquals("Approve failed: $sentence", vm.errorMessage)
+        assertNull(vm.approveConflict)
+    }
     @Test
     fun aClosedDayShowsTheMessageAndOffersNothing() = runTest {
         val ds = FakeAuntieDataSource()

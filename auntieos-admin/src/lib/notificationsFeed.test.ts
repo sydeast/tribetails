@@ -222,7 +222,7 @@ describe('actionableNotificationCount', () => {
   it('counts rows whose quick actions offer a decision (a pending booking request)', () => {
     expect(
       actionableNotificationCount([
-        entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'b1' }),
+        entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } }),
         entry({ _id: 'b', targetType: 'invoice', targetId: 'i1' }),
       ]),
     ).toBe(1);
@@ -242,6 +242,7 @@ describe('actionableNotificationCount', () => {
           key: 'kincare.requested',
           targetType: 'booking',
           targetId: 'b1',
+          data: { kinfolkId: 'kf1' },
           readAt: ts('2026-07-16T10:00:00Z'),
         }),
       ]),
@@ -265,6 +266,7 @@ describe('actionableNotificationCount', () => {
           key: 'kincare.requested',
           targetType: 'booking',
           targetId: 'b1',
+          data: { kinfolkId: 'kf1' },
           archivedAt: ts('2026-07-16T10:00:00Z'),
         }),
       ]),
@@ -276,9 +278,9 @@ describe('actionableNotificationCount', () => {
   // #1647, the walk: 20 requests waiting, one booked from Bookings > Review,
   // and the count stayed at 20.
   it('drops a request once the server stamps it booked or declined', () => {
-    const waiting = entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'req_1' });
-    const booked = entry({ _id: 'b', key: 'kincare.requested', targetType: 'booking', targetId: 'req_2', requestResolution: 'booked' });
-    const declined = entry({ _id: 'c', key: 'kincare.requested', targetType: 'booking', targetId: 'req_3', requestResolution: 'declined' });
+    const waiting = entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } });
+    const booked = entry({ _id: 'b', key: 'kincare.requested', targetType: 'booking', targetId: 'req_2', data: { kinfolkId: 'kf1' }, requestResolution: 'booked' });
+    const declined = entry({ _id: 'c', key: 'kincare.requested', targetType: 'booking', targetId: 'req_3', data: { kinfolkId: 'kf1' }, requestResolution: 'declined' });
     expect(actionableNotificationCount([waiting, booked, declined])).toBe(1);
   });
 });
