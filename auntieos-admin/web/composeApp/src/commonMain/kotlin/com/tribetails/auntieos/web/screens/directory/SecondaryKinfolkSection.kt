@@ -25,6 +25,7 @@ import com.tribetails.auntieos.web.data.SecondaryPerson
 import com.tribetails.auntieos.web.data.SecondaryPersonDraft
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.personAccessLabel
+import com.tribetails.auntieos.web.data.secondaryKinfolkDraftError
 import com.tribetails.auntieos.web.data.toDraft
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
@@ -80,6 +81,12 @@ fun SecondaryKinfolkSection(client: FirestoreClient, kinfolkId: String, househol
             onChange = { if (!saving) { draft = it; saveError = null } },
             onCancel = { if (!saving) draft = null },
             onSave = {
+                // #1593: refused here first, not after the server's round trip.
+                val refusal = secondaryKinfolkDraftError(d)
+                if (refusal != null) {
+                    saveError = refusal
+                    return@SecondaryKinfolkDialog
+                }
                 saving = true
                 saveError = null
                 scope.launch {

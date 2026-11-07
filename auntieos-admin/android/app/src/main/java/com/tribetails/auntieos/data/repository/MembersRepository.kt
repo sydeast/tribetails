@@ -94,10 +94,18 @@ class MembersRepository(
         val status: MemberStatus,
         val permissions: MemberPermissions,
         val invitedEmail: String?,
+        /** The person's name as the server resolved it (#1589). Null when nothing names them. */
+        val displayName: String? = null,
     ) {
-        /** Never blank: email, then label, then the uid. */
+        /** Never blank and never a database id: name, then email, then the label, then [UNNAMED_MEMBER]. */
         val label: String
-            get() = invitedEmail?.ifBlank { null } ?: secondaryLabel?.ifBlank { null } ?: uid
+            get() = displayName?.ifBlank { null }
+                ?: invitedEmail?.ifBlank { null }
+                ?: secondaryLabel?.ifBlank { null }
+                ?: UNNAMED_MEMBER
+        companion object {
+            const val UNNAMED_MEMBER = "Unnamed member"
+        }
     }
 
     /** `access` on a secondary kinfolk person record (2026-09-27 Q3). */
@@ -470,6 +478,8 @@ internal fun decodeMembers(raw: Map<*, *>?): List<MembersRepository.Member> {
             status = decodeMemberStatus(m["status"]),
             permissions = decodePermissions(m["permissions"]),
             invitedEmail = (m["invitedEmail"] as? String)?.ifBlank { null },
+            // #1589: the server's name for the person, which heads the row.
+            displayName = (m["displayName"] as? String)?.ifBlank { null },
         )
     }
 }

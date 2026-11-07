@@ -1,5 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.completeRefusal
+import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
+import com.tribetails.auntieos.domain.addressLooksIncomplete
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -166,6 +169,8 @@ fun KinCareSessionsScreen(
     val scope = rememberCoroutineScope()
     // §A.8: time-block label (e.g. "Evening block"), always on, resolved from Business-Settings blocks.
     val timeBlocks by viewModel.timeBlocks.collectAsState()
+    // #1608: the operator's arrival rule, so Complete can answer before it is sent.
+    val arrivalRule by viewModel.arrivalRule.collectAsState()
     val timeBlockLabelFor: (com.tribetails.auntieos.data.model.KinCareSession) -> String? = { s ->
         com.tribetails.auntieos.domain.resolveTimeBlock(s.startTime, timeBlocks)?.label
     }
@@ -225,7 +230,18 @@ fun KinCareSessionsScreen(
      */
     val transitionFn: (String, BookingTransitionAction, String, String) -> Unit =
         { id, action, completedAt, msg ->
-            viewModel.transitionBookingStatus(id, action, completedAt = completedAt) { err ->
+            // #1608: a Complete the server is certain to refuse is not sent. The
+            // operator reads the same sentence now instead of after the round trip.
+            val refusal = if (action == BookingTransitionAction.COMPLETE) {
+                sessions.firstOrNull { it.id == id }?.let { completeRefusal(arrivalRule, it) }
+            } else {
+                null
+            }
+            if (refusal != null) {
+                toastMessage = "Couldn't complete: $refusal"
+                toastKind = ToastKind.Error
+                toastVisible = true
+            } else viewModel.transitionBookingStatus(id, action, completedAt = completedAt) { err ->
                 scope.launch {
                     toastMessage = err?.let { "Couldn't update: ${it.message}" } ?: msg
                     toastKind = if (err != null) ToastKind.Error else ToastKind.Success
@@ -261,9 +277,9 @@ fun KinCareSessionsScreen(
                     // windows" framing (spec 13 item 1 / spec 14): the route map (§A.10)
                     // renders below on the in-flight card; the phases cover the rest.
                     DenScreenHeading(
-                        kicker = "The Den · Auntie Time",
+                        kicker = "Care Ops · Auntie Time",
                         title = "🐾 Auntie Time",
-                        subtitle = "Day-of view. Clock in, clock out, every Kin Care in flight.",
+                        subtitle = "Day-of view. Clock in, clock out, every KinCare in flight.",
                     )
                     Spacer(Modifier.height(16.dp))
 
@@ -274,7 +290,7 @@ fun KinCareSessionsScreen(
                         loadError != null -> {
                             AuntieBanner(
                                 tone = AuntieBannerTone.Error,
-                                title = "Could not load your Kin Cares",
+                                title = "Could not load your KinCares",
                                 icon = Lucide.TriangleAlert,
                             ) {
                                 Text(
@@ -621,6 +637,14 @@ private fun KinCareCard(
             // ---- Address chip (clickable → maps) ----
             if (address.isNotBlank()) {
                 AddressChip(address = address, context = context)
+            }
+            // #1602: "18605" was all the walk's chip said, with no hint.
+            if (addressLooksIncomplete(address)) {
+                Text(
+                    INCOMPLETE_ADDRESS_HINT,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.warning,
+                )
             }
 
             // ---- One-line notes preview (kinfolk-facing first, internal fallback) ----

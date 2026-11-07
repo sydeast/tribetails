@@ -6,6 +6,7 @@ import {
   NOTIFICATION_KEY_ALIASES,
 } from '../functions/src/notifications/catalog';
 import { parsePushTxt } from '../functions/src/notifications/templateParsers';
+import { DIRECT_SEND_KEYS } from '../functions/src/notifications/catalogKeys';
 
 interface Args {
   dryRun: boolean;
@@ -88,6 +89,9 @@ async function main(): Promise<void> {
   // deleted out from under an operator-authored binding that still points at
   // the old id.
   const aliasKeys = new Set(Object.keys(NOTIFICATION_KEY_ALIASES));
+  // #1586: a direct-send key (sent by `sendFromTemplate` outside the catalog,
+  // e.g. invite.verify-email) may carry a corpus directory too.
+  const directSendKeys = new Set(DIRECT_SEND_KEYS.map((d) => d.key));
 
   const dirNames = readdirSync(seedsRoot).filter((n) =>
     statSync(join(seedsRoot, n)).isDirectory(),
@@ -98,7 +102,7 @@ async function main(): Promise<void> {
   const skippedKeys: string[] = [];
 
   for (const dirName of dirNames) {
-    if (!catalogKeys.has(dirName) && !aliasKeys.has(dirName)) {
+    if (!catalogKeys.has(dirName) && !aliasKeys.has(dirName) && !directSendKeys.has(dirName)) {
       throw new Error(`seedNotificationTemplates: dir ${dirName} is not a catalog key`);
     }
     if (args.onlyKey && dirName !== args.onlyKey) continue;

@@ -29,6 +29,8 @@ import { DenScreenHeading, DenPanel, EmptyHint, ServicePill, StatusPill } from '
 import { kinTaleWhen } from '../lib/kinTaleFormat';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { DeleteKinTaleDraftButton } from '../components/DeleteKinTaleDraftButton';
+import { canDeleteKinTaleDraft } from '../api/kinTaleReportDraftDelete';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
 import { GenerateButton, type GeneratedDraft } from '../components/GenerateButton';
@@ -582,6 +584,15 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    * not contain. Scaffolding is gated for the same reason in the hydration
    * effect above; this closes the read side of it.
    */
+  // #1631: the stored row behind this draft, once it has been saved. Delete is
+  // offered only for a saved, unsent draft the server would let go.
+  const storedRow =
+    draft?._id && reports.status === 'ready' ? reports.data.find((r) => r._id === draft._id) : undefined;
+  const deleteTarget =
+    storedRow !== undefined && canDeleteKinTaleDraft(storedRow)
+      ? { reportId: storedRow._id, household: storedRow.kinfolkName ?? draft?.kinfolkName ?? '' }
+      : null;
+
   const formProps = draft && templatesSettled
     ? {
         draft,
@@ -605,6 +616,8 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         onOpenSendConfirm: () => setConfirmSend(true),
         onCancelSendConfirm: () => setConfirmSend(false),
         onConfirmSend: () => void handleConfirmSend(),
+        deleteTarget,
+        onDeleted: onClose,
       }
     : null;
 
@@ -653,11 +666,11 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     return (
       <div className="screen kintale-compose">
         {heading}
-        <AsyncRegion state={sessions} what="the Kin Care session" isEmpty={() => false} empty={null}>
+        <AsyncRegion state={sessions} what="the KinCare session" isEmpty={() => false} empty={null}>
           {(data) => {
             const found = data.find((s) => s._id === effectiveSessionId);
             if (!found) {
-              return <EmptyHint>No Kin Care session found with id &ldquo;{effectiveSessionId}&rdquo;.</EmptyHint>;
+              return <EmptyHint>No KinCare session found with id &ldquo;{effectiveSessionId}&rdquo;.</EmptyHint>;
             }
             return formProps ? (
               <>
@@ -722,7 +735,7 @@ function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
   const scoped = kinfolkId !== undefined && kinfolkId !== '';
   return (
     <DenPanel
-      title="Pick a Kin Care session"
+      title="Pick a KinCare session"
       subtitle={
         scoped
           ? "This household's visits that have already happened."
@@ -731,7 +744,7 @@ function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
     >
       <AsyncRegion
         state={sessions}
-        what="Kin Care sessions"
+        what="KinCare sessions"
         isEmpty={(data) => pickableSessions(data, kinfolkId).length === 0}
         empty={
           <EmptyHint>
@@ -785,6 +798,9 @@ interface ComposeFormProps {
   onOpenSendConfirm: () => void;
   onCancelSendConfirm: () => void;
   onConfirmSend: () => void;
+  /** #1631: the saved, unsent draft Delete removes, or null when there is none to offer. */
+  deleteTarget: { reportId: string; household: string } | null;
+  onDeleted: () => void;
 }
 
 function ComposeForm({
@@ -808,6 +824,8 @@ function ComposeForm({
   onOpenSendConfirm,
   onCancelSendConfirm,
   onConfirmSend,
+  deleteTarget,
+  onDeleted,
 }: ComposeFormProps) {
   const contentReady = hasKinTaleContent(draft);
   const sendLabel = kinTaleSendLabel(draft.kinfolkName);
@@ -960,6 +978,14 @@ function ComposeForm({
 
         <div className="kintale-compose__actions">
           <GhostButton label={isSaving ? 'Saving…' : 'Save draft'} onClick={onSaveDraft} disabled={isSaving || isSending} />
+          {deleteTarget !== null && (
+            <DeleteKinTaleDraftButton
+              reportId={deleteTarget.reportId}
+              household={deleteTarget.household}
+              onDeleted={onDeleted}
+              disabled={isSaving || isSending}
+            />
+          )}
           <PrimaryButton
             label={isSending ? 'Sending…' : sendLabel}
             onClick={onOpenSendConfirm}

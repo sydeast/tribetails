@@ -116,18 +116,18 @@ fun KinCareDetailScreen(
         if (session == null) {
             // #867: a failed read shows its error, not a shimmer that never ends.
             (sessions as? FirestoreResult.Error)?.let {
-                SectionHeader(title = "Kin Care", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
-                LoadErrorBanner("Couldn't load this Kin Care", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                SectionHeader(title = "KinCare", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
+                LoadErrorBanner("Couldn't load this KinCare", it.message, onRetry = reload::retry, retrying = reload.retrying)
                 return@ScreenScaffold
             }
             // #898: the read answered and this id is not in it (deleted, or a
             // stale link), distinct from still-loading, which used to shimmer forever.
             if (sessions is FirestoreResult.Data) {
-                SectionHeader(title = "Kin Care", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
-                NotFoundNotice("This Kin Care couldn't be found. It may have been removed.", onBack = onBack)
+                SectionHeader(title = "KinCare", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
+                NotFoundNotice("This KinCare couldn't be found. It may have been removed.", onBack = onBack)
                 return@ScreenScaffold
             }
-            SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care detail", icon = Lucide.PawPrint)
+            SectionHeader(title = "Loading…", subtitle = "Pulling KinCare detail", icon = Lucide.PawPrint)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(4) { ShimmerCard(height = 72.dp) }
             }
@@ -136,7 +136,7 @@ fun KinCareDetailScreen(
 
         // ---- Breadcrumb trail: Schedule / <window> / <kinfolk> ----
         SectionHeader(
-            title    = session.kinfolkName.ifBlank { "Kin Care" },
+            title    = session.kinfolkName.ifBlank { "KinCare" },
             subtitle = listOfNotNull(
                 session.serviceType.takeIf { it.isNotBlank() },
                 sessionWindowFor(session),
@@ -186,7 +186,7 @@ fun KinCareDetailScreen(
             if (session.kinfolkNotes.isNotBlank()) {
                 AuntieNoteCallout(text = session.kinfolkNotes, dashed = false, italic = false)
             } else {
-                AuntieNoteCallout(text = "No kinfolk-facing note for this Kin Care.", dashed = true, italic = true)
+                AuntieNoteCallout(text = "No kinfolk-facing note for this KinCare.", dashed = true, italic = true)
             }
             Spacer(Modifier.height(10.dp))
             // Cutoff hint mirrors the booking-notes "editable until 3h before visit" rule.
@@ -206,7 +206,8 @@ fun KinCareDetailScreen(
             session.serviceType.takeIf { it.isNotBlank() }?.let {
                 AuntieKeyValueRow(label = "Service", value = it)
             }
-            session.serviceDurationMinutes.takeIf { it > 0 }?.let {
+            // #1581: a stored 0 falls back to the visit's own window.
+            shownVisitLengthMinutes(session.serviceDurationMinutes, session.startTime, session.endTime)?.let {
                 AuntieKeyValueRow(label = "Duration", value = "$it min")
             }
             AuntieKeyValueRow(label = "Window", value = sessionWindowFor(session))
@@ -317,7 +318,7 @@ fun KinCareDetailScreen(
             PanelHeading("KinTales sent", Lucide.NotebookPen)
             Spacer(Modifier.height(6.dp))
             if (sessionReports.isEmpty()) {
-                EmptyHint("No KinTales sent yet during this Kin Care.")
+                EmptyHint("No KinTales sent yet during this KinCare.")
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     sessionReports.forEach { r -> KinTaleSnippet(r) }
@@ -418,7 +419,7 @@ private fun KinPhotos(kinIds: List<String>, kinById: Map<String, Kin>) {
 }
 
 private fun heroTitle(s: KinCareSession): String {
-    val name = s.kinfolkName.ifBlank { "Kin Care" }
+    val name = s.kinfolkName.ifBlank { "KinCare" }
     return if (s.serviceType.isNotBlank()) "$name · ${s.serviceType}" else name
 }
 
@@ -766,6 +767,10 @@ private fun AddressBlock(address: String) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(address, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        // #1602: the walk's visit read "18605" with no hint it was incomplete.
+        if (addressLooksIncomplete(address)) {
+            Text(INCOMPLETE_ADDRESS_HINT, style = AuntieTheme.typography.labelSmall, color = c.warning)
+        }
         GhostButton(label = "Open in Maps", onClick = { openInMaps(address) })
     }
 }

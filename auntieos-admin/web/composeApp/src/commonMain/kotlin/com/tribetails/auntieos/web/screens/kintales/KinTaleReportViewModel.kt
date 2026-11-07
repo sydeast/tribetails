@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.tribetails.auntieos.web.data.AuntieDataSource
+import com.tribetails.auntieos.web.data.canDeleteAsDraft
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareReport
@@ -77,6 +78,12 @@ class KinTaleReportViewModel(
         private set
 
     var error: String? by mutableStateOf(null)
+        private set
+
+    /** #1631: an unsent draft's delete in flight, and done (the screen leaves). */
+    var isDeleting: Boolean by mutableStateOf(false)
+        private set
+    var justDeleted: Boolean by mutableStateOf(false)
         private set
 
     /** Live report for this session. Never `.first()`; the screen collects it. */
@@ -206,6 +213,35 @@ class KinTaleReportViewModel(
                     isSending = false
                     error = "Send failed: ${result.message}"
                 }
+            }
+        }
+    }
+
+    /**
+     * #1631: delete [liveReport], an unsent draft, through the server, which
+     * refuses a sent one. Only offered where [canDeleteAsDraft] holds; checked
+     * again here so a stale tap cannot send a refused request.
+     */
+    fun deleteDraft(liveReport: KinCareReport) {
+        if (isDeleting || isSending) return
+        if (!liveReport.canDeleteAsDraft()) {
+            error = "Only a saved, unsent draft can be deleted."
+            return
+        }
+        isDeleting = true
+        scope.launch {
+            try {
+                when (val r = dataSource.deleteReportDraft(liveReport._id)) {
+                    is WriteResult.Ok -> {
+                        bodyDraft = null
+                        titleDraft = null
+                        error = null
+                        justDeleted = true
+                    }
+                    is WriteResult.Err -> error = "Delete failed: ${r.message}"
+                }
+            } finally {
+                isDeleting = false
             }
         }
     }

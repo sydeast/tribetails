@@ -246,3 +246,10 @@
     max-width: none;
   }
 }
+
+/* #1602: under the hero when the household's address is too thin to drive to. */
+.sdetail__addr-hint {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-warning);
+}

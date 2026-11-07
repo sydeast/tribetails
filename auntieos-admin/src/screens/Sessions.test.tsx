@@ -66,6 +66,13 @@ vi.mock('../lib/visitTracking', () => ({
   endVisitTracking: vi.fn(),
   stopVisitTracking: vi.fn(),
 }));
+/**
+ * #1608: the operator's arrival-and-departure rule, as the board reads it.
+ * Mocked at the hook so no case reaches Firestore; null (unknown) by default,
+ * which is the "let the server decide" path every older case was written for.
+ */
+const { useArrivalRule } = vi.hoisted(() => ({ useArrivalRule: vi.fn<() => boolean | null>(() => null) }));
+vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
 import { Sessions } from './Sessions';
 
 /**
@@ -487,6 +494,24 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(card.querySelector('.sessions__addr')).toBeNull();
   });
 
+  /** #1602: the walk's chip read "18605" and nothing said it was incomplete. */
+  it('#1602: says an address is incomplete when it is only a number', () => {
+    usePagedCollection.mockReturnValue(paged([populated]));
+    directory([{ _id: 'kf-wren', serviceAddress: '18605' }], kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).getByText('18605', { exact: false })).toBeInTheDocument();
+    expect(within(card).getByRole('note')).toHaveTextContent('This address looks incomplete');
+  });
+
+  it('#1602: gives no hint for a full address', () => {
+    usePagedCollection.mockReturnValue(paged([populated]));
+    directory([{ _id: 'kf-wren', serviceAddress: '82 Creekside Ln, Austin TX' }], kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).queryByText(/looks incomplete/)).toBeNull();
+  });
+
   it('claims a live GPS route only while ARRIVED, never on a departed visit', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ _id: 'gone', kinfolkName: 'Clocked Out', status: 'DEPARTED', startTime: at(0, 8) })]),
@@ -598,6 +623,44 @@ describe('Auntie Time: the card runs the visit', () => {
       expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
     );
     expect(patchVisitLifecycle).not.toHaveBeenCalled();
+  });
+
+  // #1608: the rule is checked before the confirm, not 18 s after it.
+  it('says what is missing instead of asking, when the rule refuses the Complete', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }));
+    expect(
+      await screen.findByText(/This visit has no arrival and departure recorded, and your settings require both/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /yes, mark it completed/i })).not.toBeInTheDocument();
+    expect(transitionBookingStatus).not.toHaveBeenCalled();
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('asks as before when the rule is off', async () => {
+    useArrivalRule.mockReturnValue(false);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await act(/^Complete$/, /yes, mark it completed/i);
+    expect(transitionBookingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
+    );
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('asks as before when the rule is on and both steps are stamped', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({
+      status: 'ON_MY_WAY',
+      startTime: at(0, 9),
+      arrivedAt: at(0, 9, 5),
+      departedAt: at(0, 9, 35),
+    });
+    await act(/^Complete$/, /yes, mark it completed/i);
+    expect(transitionBookingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
+    );
+    useArrivalRule.mockReturnValue(null);
   });
 
   it('refreshes the page after a write that changed the document, so the card stops lying', async () => {
@@ -870,7 +933,7 @@ describe('Auntie Time: the Archive', () => {
     usePagedCollection.mockReturnValue(paged([]));
     renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
-    expect(screen.getByText('No Kin Cares in this range.')).toBeInTheDocument();
+    expect(screen.getByText('No KinCares in this range.')).toBeInTheDocument();
   });
 });
 
@@ -1000,9 +1063,9 @@ describe('Auntie Time: a failed FIRST page is not a failed LATER page', () => {
     expect(screen.getByText('Still Here')).toBeInTheDocument();
     expect(document.querySelectorAll('.sessions__card')).toHaveLength(1);
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Couldn’t load more Kin Care sessions. deadline-exceeded');
+    expect(alert).toHaveTextContent('Couldn’t load more KinCare sessions. deadline-exceeded');
     expect(alert).toHaveTextContent('The 1 already loaded are unaffected');
-    expect(screen.queryByText('Kin Care sessions unavailable while the load is failing.')).toBeNull();
+    expect(screen.queryByText('KinCare sessions unavailable while the load is failing.')).toBeNull();
   });
 
   it('retries the failed page from where it stopped, not from the top', async () => {

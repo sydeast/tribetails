@@ -82,6 +82,7 @@ import com.tribetails.auntieos.web.platform.launchSms
 import com.tribetails.auntieos.web.platform.launchTel
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import androidx.compose.runtime.rememberCoroutineScope
@@ -168,6 +169,8 @@ fun KinfolkProfileScreen(
     // via the inviteKinfolkToPortal callable). Fail-loud toast on every outcome.
     val scope = rememberReportingScope()
     var inviteBusy by remember { mutableStateOf(false) }
+    // #1602: the ask before the invite goes out.
+    var confirmPortalInvite by remember { mutableStateOf(false) }
     // #1271: true while a household tag write is unanswered. Holds the header's
     // Back so the screen is not left with the write in flight.
     var tagsSaving by remember { mutableStateOf(false) }
@@ -394,11 +397,34 @@ fun KinfolkProfileScreen(
                 icon = Lucide.Phone,
                 tone = AuntieStatusTone.Teal,
                 trailing = {
+                    // #1602: asks first and names the address, never one click.
                     GhostButton(
                         label = if (inviteBusy) "Sending" else "Invite to portal",
                         enabled = !inviteBusy && kinfolk.email.isNotBlank(),
-                        onClick = { sendPortalInvite() },
+                        onClick = { confirmPortalInvite = true },
                     )
+                    AuntieDialog(
+                        visible = confirmPortalInvite,
+                        title = "Invite to portal",
+                        onDismiss = { confirmPortalInvite = false },
+                        maxWidth = 440.dp,
+                        footer = {
+                            GhostButton(label = "Cancel", onClick = { confirmPortalInvite = false })
+                            PrimaryButton(
+                                label = "Send invite",
+                                onClick = {
+                                    confirmPortalInvite = false
+                                    sendPortalInvite()
+                                },
+                            )
+                        },
+                    ) {
+                        Text(
+                            portalInviteConfirmText(kinfolk.displayName, kinfolk.email),
+                            style = AuntieTheme.typography.bodyMedium,
+                            color = AuntieTheme.colors.textPrimary,
+                        )
+                    }
                 },
             ) {
                 FactRow(label = "Phone",           value = kinfolk.phoneNumber, mono = true)
@@ -706,7 +732,12 @@ private fun initialsFor(k: Kinfolk): String {
 /** Hero subtitle: "the {lastName}s · {address} · kinfolk since {joinDate}". */
 private fun heroWhere(k: Kinfolk): String {
     val household = k.lastName.takeIf { it.isNotBlank() }?.let { householdLabel(it) }
-    val since = k.joinDate.takeIf { it.isNotBlank() }?.let { "kinfolk since $it" }
+    // #1602: one shape for every household: a sound day is formatted, anything
+    // else stored says it needs fixing, blank says nothing.
+    val since = when {
+        k.joinDate.isBlank() -> null
+        else -> profileJoinDateLabel(k.joinDate, localToday())?.let { "kinfolk since $it" } ?: JOIN_DATE_NEEDS_FIXING
+    }
     return listOfNotNull(household, k.serviceAddress.takeIf { it.isNotBlank() }, since)
         .joinToString(" · ")
 }
@@ -770,8 +801,9 @@ private fun ProfileHero(
                         tone = statusTone,
                         mono = true,
                     )
-                    // Tenure chip only when we actually have a join date to read from.
-                    kinfolk.joinDate.takeIf { it.isNotBlank() }?.let { join ->
+                    // Tenure chip only for a join date the console can stand
+                    // behind (#1602): a readable day from 2025 through today.
+                    profileJoinDateLabel(kinfolk.joinDate, localToday())?.let { join ->
                         AuntieChip(
                             label = "since $join",
                             tone = AuntieChipTone.Purple,
@@ -1136,3 +1168,16 @@ private fun EmptyKin(message: String) {
         Text(message, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
     }
 }
+
+/** `INVITE_TTL_DAYS` in `mytribe/functions/src/lib/schema.ts`. */
+internal const val PORTAL_INVITE_TTL_DAYS = 14
+
+/**
+ * #1602: what the confirm says before a portal invite goes out. It names the
+ * address that will be mailed, because the invite used to fire on one click
+ * with no recipient shown. Same words as the admin web and Android. Pure.
+ */
+internal fun portalInviteConfirmText(householdName: String, email: String): String =
+    "Send ${householdName.trim().ifBlank { "this household" }}'s portal claim link to ${email.trim()}? " +
+        "The link expires in $PORTAL_INVITE_TTL_DAYS days, and whoever opens it becomes the primary " +
+        "for this household."

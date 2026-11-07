@@ -62,9 +62,11 @@ import { LoadingRow } from '../components/LoadingRow';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { BookingDetailModal } from '../components/BookingDetailModal';
+import { BookingStatusActions } from './BookingActions';
 import { BlockTimeDialog } from '../components/BlockTimeDialog';
 import { NewVisitDialog } from '../components/NewVisitDialog';
 import { ScheduleWeekGrid, type ScheduleDrop } from '../components/ScheduleWeekGrid';
+import { navKicker } from '../lib/nav';
 import './Schedule.css';
 
 const VIEW_MODES: readonly { key: ScheduleViewMode; label: string }[] = [
@@ -417,10 +419,10 @@ export function Schedule({ onSelect }: ScheduleProps) {
        * visit"; the mock has only the one button and is amended for that too.
        */}
       <DenScreenHeading
-        kicker="The Den · Schedule"
+        kicker={navKicker('schedule')}
         title="Schedule"
         accentTail={`${view}.`}
-        subtitle="Every Kin Care visit on the books, from the latest 300, with Google Calendar busy windows and your own blocked time laid over them."
+        subtitle="Every KinCare visit on the books, from the latest 300, with Google Calendar busy windows and your own blocked time laid over them."
         className="schedule__heading"
         trailing={
           <div className="schedule__actions">
@@ -520,7 +522,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                */}
               <DenPanel
                 title={sessionDayLabel(selected, todayIso)}
-                subtitle="Kin Care visits on this day."
+                subtitle="KinCare visits on this day."
                 className="schedule__agenda-panel"
                 collapsible
               >
@@ -530,7 +532,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   </Banner>
                 )}
                 {selectedSessions.length === 0 && selectedBusy.length === 0 ? (
-                  <EmptyHint>No Kin Care sessions on this day.</EmptyHint>
+                  <EmptyHint>No KinCare sessions on this day.</EmptyHint>
                 ) : (
                   <ul className="schedule__agenda-list">
                     {selectedSessions.map((entry) => (
@@ -616,6 +618,19 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   entry={openSession}
                   businessZone={businessZone}
                   onClose={() => setOpenSessionId(null)}
+                  // #1576: the same Actions panel Bookings composes into this
+                  // sheet (Mark Completed / Cancel on a scheduled visit,
+                  // Approve / Reject on a request), so a visit opened from the
+                  // calendar can be closed out where it was found. One
+                  // `actionsFor` map decides what is offered, in BookingActions.
+                  // `createdAt` is the Bookings list's sort key and nothing the
+                  // panel reads; the calendar's row does not carry it.
+                  actions={
+                    <BookingStatusActions
+                      entry={{ ...openSession, createdAt: null }}
+                      onDone={() => setOpenSessionId(null)}
+                    />
+                  }
                   onOpenKinfolk={(kinfolkId) =>
                     void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
                   }

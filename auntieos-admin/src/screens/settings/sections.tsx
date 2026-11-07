@@ -92,6 +92,11 @@ export interface TextFieldSpec {
    * typing instead of as a rules error after the click.
    */
   validate?: (value: string) => string | null;
+  /**
+   * #1564: a warning beside the field for a value that may be saved but leaves
+   * something not working, or null. Never blocks Save.
+   */
+  notice?: (value: string) => string | null;
 }
 
 /**
@@ -113,6 +118,27 @@ export function textFieldErrors(
   return errors;
 }
 
+/**
+ * #1564. Operator ruling, 2026-11-05 docket: every business email goes to the
+ * business contact email, and while it is blank each one is skipped. Shown
+ * beside the field so the operator learns it here, not from a missing email.
+ */
+export function businessEmailNotice(value: string): string | null {
+  return value.trim() === ''
+    ? 'Business emails have nowhere to go until this is filled. Every business notification email goes to this address.'
+    : null;
+}
+
+/** The warning line under a field, when its `notice` has one for the value. */
+export function FieldNotice({ spec, value }: { spec: TextFieldSpec; value: string }) {
+  const message = spec.notice?.(value) ?? null;
+  if (message === null) return null;
+  return (
+    <span id={`${spec.key}-notice`} className="settingsEdit__hint settingsEdit__hint--warn" role="status">
+      {message}
+    </span>
+  );
+}
 /** The refusal line under a field, when `textFieldErrors` has one for it. */
 export function FieldErrorNote({ fieldKey, message }: { fieldKey: StringFieldKey; message: string | undefined }) {
   if (message === undefined) return null;
@@ -136,7 +162,8 @@ export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
   // and says "Enter the business name." beside the field, on open too when the
   // stored value is blank; `firestore.rules` refuses the write regardless.
   { key: 'businessName', label: 'Business name', required: true, validate: businessNameError },
-  { key: 'businessEmail', label: 'Email', type: 'email' },
+  // #1564: every business email goes here; blank means they go nowhere.
+  { key: 'businessEmail', label: 'Email', type: 'email', notice: businessEmailNotice },
   { key: 'businessPhone', label: 'Phone', type: 'tel' },
   { key: 'businessAddress', label: 'Address' },
   // #1410: blank until the operator publishes a policy; the email footer and
@@ -282,6 +309,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
               </span>
             ) : null}
             <FieldErrorNote fieldKey={f.key} message={fieldErrors[f.key]} />
+            <FieldNotice spec={f} value={values[f.key] ?? ''} />
           </div>
         ))}
       </div>

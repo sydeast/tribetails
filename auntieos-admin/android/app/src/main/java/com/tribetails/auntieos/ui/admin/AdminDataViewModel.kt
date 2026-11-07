@@ -1,5 +1,12 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.SEND_BUDGET_SECONDS
+import com.tribetails.auntieos.domain.SendCheckAction
+import com.tribetails.auntieos.domain.SendMarks
+import com.tribetails.auntieos.domain.SilenceKind
+import com.tribetails.auntieos.domain.sendMarksOf
+import com.tribetails.auntieos.domain.sendOutcomeAfterSilence
+import com.tribetails.auntieos.util.isSilentSendFailure
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
@@ -248,11 +255,22 @@ class AdminDataViewModel(
     val businessTimeZone: StateFlow<String> = _businessTimeZone.asStateFlow()
     private val _timeBlocks = MutableStateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>>(emptyList())
     val timeBlocks: StateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>> = _timeBlocks.asStateFlow()
+    // #1608: "Verify arrival and departure", read raw (absent is off). Null until read.
+    private val _arrivalRule = MutableStateFlow<Boolean?>(null)
+    val arrivalRule: StateFlow<Boolean?> = _arrivalRule.asStateFlow()
 
     // KinTale (visit recap report) Management
     private val _kinCareReports = MutableStateFlow<List<KinCareReport>>(emptyList())
     val kinCareReports: StateFlow<List<KinCareReport>> = _kinCareReports.asStateFlow()
 
+    // #1563: the KinTales list's other half. A KinTale in draft state is a
+    // `generated_drafts` doc (ruling D-2026-08-04), and this list never read
+    // them, so a draft Home counted could not be found here at all. Only the
+    // unsent ones are listed; see [unsentGeneratedDrafts].
+    private val _generatedDrafts = MutableStateFlow<List<Draft>>(emptyList())
+    val generatedDrafts: StateFlow<List<Draft>> = _generatedDrafts.asStateFlow()
+    private val _generatedDraftsError = MutableStateFlow<String?>(null)
+    val generatedDraftsError: StateFlow<String?> = _generatedDraftsError.asStateFlow()
     // Kinfolk list - populated on demand by orphan triage flow so the
     // "Assign Kinfolk" picker has live data without loading the directory
     // every time the logs screen opens.
@@ -526,6 +544,9 @@ class AdminDataViewModel(
             // absence/no-Firebase just means no block labels). Wrapped so a missing
             // FirebaseApp in tests can't crash.
             runCatchingCancellable { repository.getBusinessSettings().onSuccess { _timeBlocks.value = it.timeBlocks } }
+            // #1608: the arrival rule, so Complete can say what is missing before
+            // it is sent. A failed read leaves it null and the server decides.
+            runCatchingCancellable { repository.getArrivalRuleRequired().onSuccess { _arrivalRule.value = it } }
 
             _isLoading.value = false
         }
@@ -546,6 +567,17 @@ class AdminDataViewModel(
         }
     }
 
+    /** #1563: load the unsent generated drafts for the KinTales list's Drafts bucket. */
+    fun loadGeneratedDrafts() {
+        viewModelScope.launch {
+            _generatedDraftsError.value = null
+            repository.getGeneratedDrafts().onSuccess { drafts ->
+                _generatedDrafts.value = unsentGeneratedDrafts(drafts)
+            }.onFailure { throwable ->
+                _generatedDraftsError.value = throwable.message ?: "Failed to load drafts"
+            }
+        }
+    }
     private fun sortKey(r: KinCareReport): String = sequenceOf(
         r.sentAt, r.updatedAt, r.visitDate, r.createdAt,
     ).firstOrNull { !it.isNullOrBlank() } ?: ""
@@ -580,7 +612,7 @@ class AdminDataViewModel(
                 loadKinCareSessions()
                 onResult(null)
             }.onFailure { t ->
-                _error.value = t.message ?: "Failed to update Kin Care"
+                _error.value = t.message ?: "Failed to update KinCare"
                 onResult(t)
             }
         }
@@ -609,7 +641,7 @@ class AdminDataViewModel(
                 loadKinCareSessions()
                 onResult(null)
             }.onFailure { t ->
-                _error.value = t.message ?: "Failed to update Kin Care"
+                _error.value = t.message ?: "Failed to update KinCare"
                 onResult(t)
             }
         }
@@ -772,6 +804,9 @@ class AdminDataViewModel(
     fun generateReceipt(invoiceId: String) {
         viewModelScope.launch {
             _isLoading.value = true
+            // #1567: the model carries no receipt stamp, so the "before" is read
+            // from the server, for the case where the send goes silent.
+            val before = invoiceRepository.readInvoiceSendMarks(invoiceId)
             invoiceRepository.generateReceipt(invoiceId).onSuccess { result ->
                 loadInvoices() // Refresh to reflect receiptIssuedAt
                 // #1511: honest about where the notice went. A missing flag (an
@@ -779,6 +814,11 @@ class AdminDataViewModel(
                 _invoiceActionMessage.value =
                     com.tribetails.auntieos.domain.receiptGeneratedMessage(result.appOnly == true)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.RECEIPT, before, invoiceId)
+                    _isLoading.value = false
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to generate receipt"
                 _isLoading.value = false
             }
@@ -793,6 +833,22 @@ class AdminDataViewModel(
     val invoiceActionMessage: StateFlow<String?> = _invoiceActionMessage.asStateFlow()
 
     fun clearInvoiceActionMessage() { _invoiceActionMessage.value = null }
+    /**
+     * #1567: a row send got no answer. Re-reads the invoice from the server and
+     * reports what it shows (domain/InvoiceSendCheck.kt): a landed send is the
+     * confirmation line and refreshes the list; anything else is the error line,
+     * worded as "not sent" or "cannot tell", never "failed".
+     */
+    private suspend fun reportAfterSilence(action: SendCheckAction, before: SendMarks?, invoiceId: String) {
+        val after = invoiceRepository.readInvoiceSendMarks(invoiceId)
+        val outcome = sendOutcomeAfterSilence(action, SEND_BUDGET_SECONDS, before, after)
+        if (outcome.kind == SilenceKind.SENT) {
+            loadInvoices()
+            _invoiceActionMessage.value = outcome.message
+        } else {
+            _error.value = outcome.message
+        }
+    }
 
     /**
      * Stage 2 tail: send an on-demand payment reminder for an invoice via the
@@ -811,6 +867,8 @@ class AdminDataViewModel(
         if (invoiceId.isBlank()) return
         if (invoiceId in _remindingInvoiceIds.value) return
         _remindingInvoiceIds.value = _remindingInvoiceIds.value + invoiceId
+        // #1567: the reminder stamp as it stood at the press.
+        val before = _invoices.value.firstOrNull { it.id == invoiceId }?.let { sendMarksOf(it) }
         viewModelScope.launch {
             invoiceRepository.sendInvoiceReminder(invoiceId).onSuccess { outcome ->
                 if (outcome.sent) {
@@ -838,6 +896,10 @@ class AdminDataViewModel(
                 }
                 _invoiceActionMessage.value = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.REMINDER, before, invoiceId)
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to send reminder"
             }
             _remindingInvoiceIds.value = _remindingInvoiceIds.value - invoiceId
@@ -855,6 +917,8 @@ class AdminDataViewModel(
             _error.value = "This invoice has no client (kinfolk) on record, so it cannot be sent."
             return
         }
+        // #1567: the status as it stood at the press.
+        val before = sendMarksOf(invoice)
         viewModelScope.launch {
             invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId).onSuccess { sent ->
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -869,6 +933,10 @@ class AdminDataViewModel(
                 // #1511: as for the receipt above.
                 _invoiceActionMessage.value = com.tribetails.auntieos.domain.draftSentMessage(sent.appOnly == true)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.REVIEW_SEND, before, invoice.id)
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to send draft"
             }
         }
@@ -1207,3 +1275,15 @@ internal fun bulkArchiveSummary(requested: Int, archived: Int): String = when {
  */
 internal fun isNotificationUnread(entry: com.tribetails.auntieos.data.admin.NotificationEntry): Boolean =
     entry.readAt.isNullOrBlank()
+
+/**
+ * #1563: the generated drafts the KinTales list files under Drafts: not yet sent
+ * as a KinTale, and still in a status that means nobody has signed it off
+ * (`generated` from generate.js, `pending` from the n8n era, or blank). The
+ * same positive match the web list makes (`draftStatusAsKinTaleStatus`). Newest
+ * first. Pure; tested.
+ */
+internal fun unsentGeneratedDrafts(drafts: List<Draft>): List<Draft> =
+    drafts
+        .filter { it.isUnsent }
+        .sortedByDescending { it.createdOn }

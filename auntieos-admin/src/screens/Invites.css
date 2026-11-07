@@ -162,6 +162,9 @@
 }
 
 .invites__household {
+  /* #1603: above the card-wide invite link, so the household stays its own click. */
+  position: relative;
+  z-index: 1;
   color: var(--color-text-primary);
   text-decoration: none;
   /* A long "(household not found: …)" marker must wrap inside the row rather
@@ -193,6 +196,19 @@
 .invites__email-link {
   color: inherit;
   text-decoration: none;
+}
+/* #1603: the whole row opens the invite. The address link's hit area is
+   stretched over the card, so a click anywhere but the household link lands
+   on the invite, and keyboard and screen reader users still meet one link. */
+.invites__email-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.invites__card {
+  position: relative;
+  cursor: pointer;
 }
 
 .invites__email-link:hover,

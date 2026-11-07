@@ -385,11 +385,11 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
               />
             </label>
             <span id="arrivalRadius-hint" className="settingsEdit__hint">
-              Only applies while the switch above is on. An arrival recorded further than this from
-              the household stops the visit being marked complete. An arrival with no usable
-              location still goes through, and is recorded as unverified: no signal, location
-              turned off, an address we cannot place on the map, or the desktop console, which has
-              no GPS.
+              Only applies while Verify arrival and departure by location is on. An arrival
+              recorded further than this from the household stops the visit being marked complete.
+              An arrival with no usable location still goes through, and is recorded as
+              unverified: no signal, location turned off, an address we cannot place on the map, or
+              the desktop console, which has no GPS.
             </span>
           </div>
           <div className="settingsEdit__fieldGroup">

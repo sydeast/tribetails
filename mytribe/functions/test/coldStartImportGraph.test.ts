@@ -132,8 +132,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * than a dispatcher export because every callable test mocks the dispatcher
  * whole. Measured at 423 after merging onto #1316, inside the 430
  * already allowed, so the bound did not move.
+ *
+ * 440 since #1580 (main had reached 429): that change adds
+ * `admin/listVisitInternalNotes.ts`, the visit's one internal-notes list, and
+ * `lib/visitNotes.ts`, the path and target resolution it shares with
+ * `addInternalBookingNote`. Two modules whose imports are all already
+ * resident; not a structural change.
  */
-const MAX_OWN_EAGER_MODULES = 430;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;

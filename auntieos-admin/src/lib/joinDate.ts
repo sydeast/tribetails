@@ -30,6 +30,29 @@
  */
 
 const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * #1584. Operator ruling, 2026-11-05 docket: join dates run "from the year the
+ * business started, 2025, up to today". Earlier and future dates are refused.
+ * Mirrored by Android and desktop `JoinDate.kt` and by `joinDateInRange` in
+ * `mytribe/firestore.rules`; change them together.
+ */
+export const JOIN_DATE_FIRST_DAY = '2025-01-01';
+export const JOIN_DATE_RANGE_MESSAGE = 'Pick a join date from 2025 through today.';
+/** Today's date in the browser's own time zone, as `YYYY-MM-DD`. */
+export function localIsoToday(now: Date = new Date()): string {
+  const y = String(now.getFullYear()).padStart(4, '0');
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * True for an ISO day from 2025-01-01 through [today] inclusive. ISO days
+ * compare correctly as strings, so no Date is built.
+ */
+export function isJoinDateInRange(iso: string, today: string = localIsoToday()): boolean {
+  return isIsoDate(iso) && iso >= JOIN_DATE_FIRST_DAY && iso <= today;
+}
 
 /** True for a `YYYY-MM-DD` string that names a day that actually exists. */
 export function isIsoDate(raw: string): boolean {
@@ -64,6 +87,33 @@ function isoDayPrefix(raw: string): string | null {
   if (trimmed.length === 10) return head;
   const next = trimmed.charAt(10);
   return next === 'T' || next === ' ' ? head : null;
+}
+
+/**
+ * #1602: what a household profile says about its join date, the same shape for
+ * every household. The walk found one profile reading "Jun 1" with a tenure
+ * badge and another reading a stored "March 5" with none, because a value
+ * `formatJoinDate` cannot read was printed as stored. Now a readable day from
+ * 2025 through today is formatted and earns the tenure badge; anything else
+ * (unreadable text, 1900, 2099) says it needs fixing and gets no badge.
+ * Blank says nothing.
+ */
+export type ProfileJoinDate =
+  | { kind: 'none' }
+  | { kind: 'joined'; label: string }
+  | { kind: 'needsFixing'; label: string };
+
+export const JOIN_DATE_NEEDS_FIXING = 'Join date needs fixing: pick it in Edit';
+
+export function profileJoinDate(
+  raw: string,
+  today: string = localIsoToday(),
+  locale?: string | string[],
+): ProfileJoinDate {
+  if (raw.trim() === '') return { kind: 'none' };
+  const day = isoDayPrefix(raw);
+  if (day === null || !isJoinDateInRange(day, today)) return { kind: 'needsFixing', label: JOIN_DATE_NEEDS_FIXING };
+  return { kind: 'joined', label: `Joined ${formatJoinDate(day, locale)}` };
 }
 
 export interface JoinDateForEdit {

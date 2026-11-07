@@ -45,7 +45,9 @@ deleteAudienceSegment
 deleteBlockedTimeSlot
 deleteBusinessNotificationOverride
 deleteFormSchema
+deleteGeneratedDraft
 deleteKin
+deleteKinTaleReportDraft
 deleteMediaFile
 deleteTemplate
 deleteTrainingDocument
@@ -78,6 +80,7 @@ getInvitePreview
 getInvoiceLedger
 getKinTaleComments
 getKinTaleReaction
+getKinTaleTemplateUsage
 getLocalWeather
 getMyAccess
 getMyAccount
@@ -198,6 +201,7 @@ previewEmailTemplate
 previewMarketingBlastAudience
 provisionBusinessAdmins
 provisionTribe
+publishGeneratedDraft
 purgeOldDrafts
 purgeOldVisitRoutes
 pushVisitsToGoogleCalendar

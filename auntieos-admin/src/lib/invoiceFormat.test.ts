@@ -5,6 +5,8 @@ import {
   humanizeDate,
   invoiceStateInfo,
   isInvoiceOverdue,
+  invoiceDayOrNull,
+  isUnreadableDueDate,
   invoiceActionsFor,
   invoiceDaysOverdue,
   invoicePartialPayment,
@@ -110,6 +112,45 @@ describe('isoDatePrefixOrNull', () => {
   });
 });
 
+/**
+ * #1570: the walk's #1018 was OPEN with dueDate "July 14, 2026" and never read
+ * as overdue. Same fixtures as mytribe/functions/test/invoiceDayOf.test.ts.
+ */
+describe('invoiceDayOrNull (#1570)', () => {
+  it('reads a stored day and an ISO instant by their day prefix', () => {
+    expect(invoiceDayOrNull('2026-07-14')).toBe('2026-07-14');
+    expect(invoiceDayOrNull(' 2026-07-14T23:59:00.000Z ')).toBe('2026-07-14');
+  });
+  it('reads the imported month-name form, full or short, comma or not', () => {
+    expect(invoiceDayOrNull('July 14, 2026')).toBe('2026-07-14');
+    expect(invoiceDayOrNull('Jul 14 2026')).toBe('2026-07-14');
+    expect(invoiceDayOrNull('jul 4, 2026')).toBe('2026-07-04');
+    // The backfill script refuses the dotted short form, so the readers do too.
+    expect(invoiceDayOrNull('Jul. 4, 2026')).toBeNull();
+    expect(invoiceDayOrNull('September 1, 2025')).toBe('2025-09-01');
+    expect(invoiceDayOrNull('Sep 1, 2025')).toBe('2025-09-01');
+  });
+  it('refuses a day that does not exist, and every ambiguous or non-date text', () => {
+    expect(invoiceDayOrNull('February 30, 2026')).toBeNull();
+    expect(invoiceDayOrNull('Jun 31, 2026')).toBeNull();
+    expect(invoiceDayOrNull('07/14/2026')).toBeNull();
+    expect(invoiceDayOrNull('14/07/2026')).toBeNull();
+    expect(invoiceDayOrNull('Net 14')).toBeNull();
+    expect(invoiceDayOrNull('Ju 14, 2026')).toBeNull();
+    expect(invoiceDayOrNull('')).toBeNull();
+  });
+  it('counts the walk invoice overdue, 114 days past on the walk day', () => {
+    expect(isInvoiceOverdue('open', 'July 14, 2026', '2026-11-05')).toBe(true);
+    expect(invoiceDaysOverdue('open', 'July 14, 2026', '2026-11-05')).toBe(114);
+    expect(humanizeDate('July 14, 2026', '2026-11-05')).toBe('Jul 14');
+  });
+  it('calls a present due date that names no day unreadable, and a blank one not', () => {
+    expect(isUnreadableDueDate('07/14/2026')).toBe(true);
+    expect(isUnreadableDueDate('Net 14')).toBe(true);
+    expect(isUnreadableDueDate('July 14, 2026')).toBe(false);
+    expect(isUnreadableDueDate('  ')).toBe(false);
+  });
+});
 describe('humanizeDate', () => {
   it('formats a parseable date without zero-padding the day', () => {
     expect(humanizeDate('2026-06-02T12:00:00Z')).toBe('Jun 2');

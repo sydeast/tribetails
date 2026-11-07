@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
+import com.tribetails.auntieos.domain.addressLooksIncomplete
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import android.content.Intent
@@ -185,7 +187,7 @@ fun KinCareDetailScreen(
                     // `ready + null`.
                     if (!isKinCarePermissionDenied(err)) {
                         loadError = err.message
-                            ?: "Couldn't load this Kin Care. Check your connection and try again."
+                            ?: "Couldn't load this KinCare. Check your connection and try again."
                     }
                 }
             loading = false
@@ -194,7 +196,7 @@ fun KinCareDetailScreen(
 
     val s = session
     AuntieScreenScaffold(
-        title = s?.kinfolkName?.ifBlank { "Kin Care" } ?: "Loading…",
+        title = s?.kinfolkName?.ifBlank { "KinCare" } ?: "Loading…",
         onBack = onBack,
     ) {
         if (loading) {
@@ -234,7 +236,7 @@ fun KinCareDetailScreen(
                 // unavailable" dialog carries. Also covers the sandbox
                 // permission-denied case folded in above.
                 Text(
-                    "This Kin Care isn't available to open. A visit gets its own record " +
+                    "This KinCare isn't available to open. A visit gets its own record " +
                         "only once the request is approved, so a request still waiting on " +
                         "you has none yet. Otherwise it may have been cancelled or removed.",
                     color = AuntieTheme.colors.textDim,
@@ -258,7 +260,7 @@ fun KinCareDetailScreen(
             val kinLabel = orderedIds
                 .mapNotNull { kinById[it]?.name?.takeIf { n -> n.isNotBlank() } }
                 .joinToString(" & ")
-            val household = s.kinfolkName.ifBlank { "Kin Care" }
+            val household = s.kinfolkName.ifBlank { "KinCare" }
             val heroTitle = listOf(kinLabel, s.serviceType)
                 .filter { it.isNotBlank() }
                 .joinToString(" · ")
@@ -271,7 +273,7 @@ fun KinCareDetailScreen(
 
             item {
                 DenScreenHeading(
-                    kicker = "The Den · Auntie Time",
+                    kicker = "Care Ops · Auntie Time",
                     // The crumb IS the way back, the same trail the web detail
                     // draws: the rail's name for the board, then the Kin.
                     crumbs = listOf(
@@ -361,11 +363,11 @@ fun KinCareDetailScreen(
                     if (!isActive && !hasRoute) {
                         EmptyHint(
                             if (notYetStarted) {
-                                "Tracking starts once an Auntie clocks in for this Kin Care."
+                                "Tracking starts once an Auntie clocks in for this KinCare."
                             } else if (s.gpsSummary != null) {
-                                "A GPS summary was saved for this Kin Care, but it has no route to view."
+                                "A GPS summary was saved for this KinCare, but it has no route to view."
                             } else {
-                                "No GPS breadcrumbs were recorded for this Kin Care because it was never tracked."
+                                "No GPS breadcrumbs were recorded for this KinCare because it was never tracked."
                             }
                         )
                     }
@@ -388,15 +390,16 @@ fun KinCareDetailScreen(
             item {
                 DetailSection("Details") {
                     DetailFieldRow("Service", s.serviceType)
-                    DetailFieldRow(
-                        "Visit length",
-                        if (s.serviceDurationMinutes > 0) "${s.serviceDurationMinutes} min" else "",
+                    // #1581: a stored 0 falls back to the visit's own window.
+                    val lengthMinutes = com.tribetails.auntieos.domain.shownVisitLengthMinutes(
+                        s.serviceDurationMinutes, s.startTime, s.endTime,
                     )
+                    DetailFieldRow("Visit length", lengthMinutes?.let { "$it min" } ?: "")
                     // Present only once the visit has been billed, the same
                     // rule as the board's "Invoice linked" chip: an unbilled
                     // visit is the normal state of a visit, not a gap.
                     DetailFieldRow("Invoice", if (s.invoiceId.isNotBlank()) "Linked" else "")
-                    if (s.serviceType.isBlank() && s.serviceDurationMinutes <= 0 && s.invoiceId.isBlank()) {
+                    if (s.serviceType.isBlank() && lengthMinutes == null && s.invoiceId.isBlank()) {
                         EmptyHint("No service, length or invoice on this record yet.")
                     }
                 }
@@ -462,7 +465,7 @@ fun KinCareDetailScreen(
                 item {
                     DetailSection("Kin in this care") {
                         if (kinById.isEmpty() && fourOnes.isEmpty()) {
-                            EmptyHint("No Kin records linked to this Kin Care.")
+                            EmptyHint("No Kin records linked to this KinCare.")
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 orderedIds.forEach { kid ->
@@ -477,7 +480,7 @@ fun KinCareDetailScreen(
             item {
                 DetailSection("KinTales sent") {
                     if (reports.isEmpty()) {
-                        EmptyHint("No KinTales sent yet during this Kin Care.")
+                        EmptyHint("No KinTales sent yet during this KinCare.")
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             reports.forEach { r -> KinTaleSnippet(r) }
@@ -856,6 +859,14 @@ private fun AddressBlock(address: String) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(address, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+        // #1602: the walk's visit read "18605" with no hint it was incomplete.
+        if (addressLooksIncomplete(address)) {
+            Text(
+                INCOMPLETE_ADDRESS_HINT,
+                style = AuntieTheme.typography.labelSmall,
+                color = AuntieTheme.colors.warning,
+            )
+        }
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(999.dp))

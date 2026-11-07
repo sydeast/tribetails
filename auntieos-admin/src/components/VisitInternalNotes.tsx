@@ -8,6 +8,7 @@ import type { ListVisitInternalNotesResult, ListVisitInternalNotesResultNote } f
 import { Banner } from './Banner';
 import { GhostButton, PrimaryButton } from './Buttons';
 import { DenPanel, EmptyHint } from './DenScreenKit';
+import { readableVisitNotes } from '../lib/sessionLifecycle';
 import './VisitInternalNotes.css';
 
 /**
@@ -131,7 +132,10 @@ export function VisitInternalNotes({ target, businessZone, headingLevel = 3, cla
           <ul className="vin__list" aria-label="Internal notes">
             {state.data.notes.map((note) => (
               <li key={note.id} className="vin__note" data-visibility={note.visibility}>
-                <span className="vin__body">{note.body}</span>
+                <span className="vin__body">
+                  {/* #1592: the visit record's stamps read on the business clock. */}
+                  {note.source === 'visitRecord' ? readableVisitNotes(note.body, businessZone) : note.body}
+                </span>
                 <span className="vin__meta">
                   {note.visibility === 'adminOnly' && <span className="vin__badge">Admin only</span>}
                   <span>{noteByline(note)}</span>
