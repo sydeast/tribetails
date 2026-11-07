@@ -105,6 +105,16 @@ export function bulkActionApplies(state: BookingState, action: BatchBookingActio
   }
 }
 
+/**
+ * #1607: the bulk actions worth offering for a selection: each one that applies
+ * to at least one picked row, in the bar's own order. Approve and Reject on a
+ * selection of scheduled visits were two buttons that could only ever skip.
+ */
+export function bulkActionsFor(states: readonly BookingState[]): BatchBookingAction[] {
+  const order: BatchBookingAction[] = ['APPROVE', 'REJECT', 'CANCEL'];
+  return order.filter((action) => states.some((s) => bulkActionApplies(s, action)));
+}
+
 /** Why a row cannot take this action, in the operator's words rather than a state name. */
 function skipReason(state: BookingState, action: BatchBookingAction): string {
   const verb = action === 'APPROVE' ? 'approved' : action === 'REJECT' ? 'rejected' : 'cancelled';

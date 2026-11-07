@@ -79,7 +79,9 @@ class LinkSessionsOtherInvoiceTest {
         assertTrue(screen.isFile, "screen source not found from ${File(".").absolutePath}")
         val t = screen.readText()
         assertTrue("linkPickerOnOtherInvoice(session, invoiceId, storedIds)" in t)
-        assertTrue("enabled  = !elsewhere && !saveLoading" in t)
+        // #1609: a cancelled visit is not tickable either.
+        assertTrue("enabled  = !elsewhere && !cancelled && !saveLoading" in t)
+        assertTrue("linkPickerCancelled(session, storedIds)" in t)
         assertTrue("toggleLinkPick(pendingIds, sid, allSessions, invoice._id, invoice.sessionIds)" in t)
         assertTrue("\" · on another invoice\"" in t)
     }

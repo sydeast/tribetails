@@ -1474,6 +1474,22 @@ class FirestoreClient {
      * went out; that is an Ok, not an Err, because the household has been
      * reminded. See [decodeReminderOutcome] for the pre-#832 response rule.
      */
+    /**
+     * #1609: who a reminder ("reminder") or a draft send ("reviewSend") will
+     * reach, and by which channel, read before the operator confirms it.
+     */
+    suspend fun previewInvoiceNotice(invoiceId: String, action: String): WriteResult<InvoiceNoticePreview> {
+        val payload = buildJsonObject {
+            put("invoiceId", JsonPrimitive(invoiceId))
+            put("action", JsonPrimitive(action))
+        }
+        return when (val r = platformInvokeCallable("previewInvoiceNotice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeInvoiceNoticePreview(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     suspend fun sendInvoiceReminder(
         invoiceId: String,
         nowMs: Long = reminderNowMs(),
@@ -1719,6 +1735,13 @@ class FirestoreClient {
 
     // ---- Business settings ----
     fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> = platformBusinessSettingsStream()
+
+    /**
+     * #1608: is "Verify arrival and departure" on, read the way the server reads
+     * it? Off the raw document: only an explicit `true` counts, while
+     * [BusinessSettings] defaults the field to `true` for the Settings editor.
+     */
+    suspend fun arrivalRuleRequired(): WriteResult<Boolean> = platformArrivalRuleRequired()
     suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> = platformSaveBusinessSettings(settings)
 
     // ---- Tag vocabulary writes ----
@@ -1813,7 +1836,13 @@ class FirestoreClient {
     // ---- Care-ops session callables (1E §A.9) + series approve/cancel (1G) ----
     private val callableJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id. */
+    /**
+     * 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id.
+     *
+     * #1574: [recordAsCompleted] writes down a visit whose window has already
+     * ended, as COMPLETED; the server refuses it for a window that has not, and
+     * refuses a past window without it. Sent only when true.
+     */
     suspend fun createKinCareSession(
         kinfolkId: String,
         kinIds: List<String>,
@@ -1822,6 +1851,7 @@ class FirestoreClient {
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
+        recordAsCompleted: Boolean = false,
     ): WriteResult<String> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
@@ -1831,6 +1861,7 @@ class FirestoreClient {
             put("endTime", JsonPrimitive(endTime))
             put("serviceDurationMinutes", JsonPrimitive(serviceDurationMinutes))
             put("notes", JsonPrimitive(notes))
+            if (recordAsCompleted) put("recordAsCompleted", JsonPrimitive(true))
         }
         return when (val r = platformInvokeCallable("createKinCareSession", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
@@ -1857,6 +1888,13 @@ class FirestoreClient {
         weeklyDays: List<Int>? = null,
         kinIds: List<String>? = null,
         /**
+         * #1626: the office's private note (the form's "Admin internal notes").
+         * Sent as `staffNotes`, which the server writes to each visit's
+         * staff-only `internalNotes` thread. [notes] is the household-facing
+         * note, stored on the envelope the portal shows them.
+         */
+        staffNotes: String? = null,
+        /**
          * #644: the id this submission will be stored under, minted once by the
          * caller and reused by every attempt at it. Optional so an older caller
          * still compiles; the server then mints its own id and dedupes nothing,
@@ -1875,6 +1913,7 @@ class FirestoreClient {
             idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
             put("pattern", JsonPrimitive(pattern))
             if (!notes.isNullOrBlank()) put("notes", JsonPrimitive(notes))
+            if (!staffNotes.isNullOrBlank()) put("staffNotes", JsonPrimitive(staffNotes))
             weeklyDays?.let { days -> put("weeklyDays", buildJsonArray { days.forEach { add(JsonPrimitive(it)) } }) }
             kinIds?.let { ids -> put("kinIds", buildJsonArray { ids.forEach { add(JsonPrimitive(it)) } }) }
             put("visits", buildJsonArray {
@@ -2735,6 +2774,7 @@ internal expect fun platformBookingTimeSlotsStream(): Flow<FirestoreResult<List<
 internal expect suspend fun platformRecordPayment(payment: Payment, idempotencyKey: String?): WriteResult<String>
 
 internal expect fun platformBusinessSettingsStream(): Flow<FirestoreResult<BusinessSettings>>
+internal expect suspend fun platformArrivalRuleRequired(): WriteResult<Boolean>
 internal expect suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit>
 
 internal expect fun platformBookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>>
@@ -3818,6 +3858,8 @@ data class Invoice(
     val address: String = "",
     val date: String = "",
     val terms: String = "",
+    /** #1609: the structured terms code when the terms came from the picker, else "". */
+    val termsCode: String = "",
     val dueDate: String = "",
     val discount: String = "",
     val total: Double = 0.0,
@@ -4290,7 +4332,9 @@ data class BusinessSettings(
     // ---- GPS / tracking ----
     val enableGPSTrackingForAllVisits: Boolean = true,
     val enablePhotoLocationTagging: Boolean = true,
-    val requireArrivalDepartureVerification: Boolean = true,
+    // #1620: absent means OFF, the server's reading (`=== true` in
+    // functions/src/lib/arrivalVerification.ts).
+    val requireArrivalDepartureVerification: Boolean = false,
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value. 150 m matches ARRIVAL_RADIUS_DEFAULT_METERS on the server, which

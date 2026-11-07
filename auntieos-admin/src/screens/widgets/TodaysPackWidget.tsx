@@ -1,12 +1,13 @@
 import { useMemo } from 'react';
-import { DenPanel, EmptyHint, ServicePill } from '../../components/DenScreenKit';
+import { DenPanel, EmptyHint, ErrorHint, ServicePill } from '../../components/DenScreenKit';
 import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { GhostButton } from '../../components/Buttons';
 import { sessionClock, sessionHousehold, sessionState, sessionStateInfo } from '../../lib/sessionFormat';
 import { str } from '../../lib/coerce';
 import { todayPack, type TodayPack } from '../../lib/dashboardInsights';
-import { useSessionsStream, useTodayIso } from './homeData';
+import { overdueSessionCount } from '../../lib/sessionFormat';
+import { useSessionsStream, useSessionsWindowStream, useTodayIso } from './homeData';
 import './widgets.css';
 
 interface TodaysPackWidgetProps {
@@ -30,6 +31,13 @@ interface TodaysPackWidgetProps {
  * every row and in the footer button below. The counts, the order, the statuses
  * and the notes on this card are the same data the phone shows.
  *
+ * LATE WORK IS ON THIS CARD (#1590). The run is today's visits only, so a
+ * Home that said "Nothing on the books today" while Auntie Time listed six
+ * Overdue hid the day's most urgent work. The overdue line below reads the
+ * Auntie Time window (`useSessionsWindowStream`) and counts with the board's
+ * own `sessionPhase`, so the number and the link agree with the Overdue
+ * heading it opens.
+ *
  * "Today" is the operator's LOCAL day (`useTodayIso`), and the run is every
  * status including cancellations, matching android's day query, so the headline
  * count here and the stat tile above it can never disagree.
@@ -37,6 +45,11 @@ interface TodaysPackWidgetProps {
 export function TodaysPackWidget({ onOpenSessions }: TodaysPackWidgetProps) {
   const sessions = useSessionsStream();
   const todayIso = useTodayIso();
+  const lateWindow = useSessionsWindowStream(todayIso);
+  const overdue = useMemo(
+    () => (lateWindow.status === 'ready' ? overdueSessionCount(lateWindow.data, todayIso) : null),
+    [lateWindow, todayIso],
+  );
 
   const pack = useMemo(
     () => (sessions.status === 'ready' ? todayPack(sessions.data, todayIso) : null),
@@ -48,11 +61,12 @@ export function TodaysPackWidget({ onOpenSessions }: TodaysPackWidgetProps) {
       <AsyncRegion
         state={sessions}
         what="today's visits"
-        isEmpty={() => pack !== null && pack.visits.length === 0}
+        isEmpty={() => pack !== null && pack.visits.length === 0 && overdue === 0}
         loading={<LoadingRow label="Loading today&rsquo;s visits…" className="den-hint" />}
         empty={
           <>
             <EmptyHint>Nothing on the books today. Enjoy the quiet.</EmptyHint>
+            <OverdueNote window={lateWindow} overdue={overdue} onOpenSessions={onOpenSessions} />
             <GhostButton label="Open Auntie Time" onClick={onOpenSessions} />
           </>
         }
@@ -60,6 +74,10 @@ export function TodaysPackWidget({ onOpenSessions }: TodaysPackWidgetProps) {
         {() => (
           <div className="dash-widget">
             <PackHeadline pack={pack} />
+            <OverdueNote window={lateWindow} overdue={overdue} onOpenSessions={onOpenSessions} />
+            {pack !== null && pack.visits.length === 0 && (
+              <EmptyHint>Nothing else on the books today.</EmptyHint>
+            )}
             <ul className="dash-widget__list">
               {(pack?.visits ?? []).map((visit) => {
                 const state = sessionState(str(visit.status));
@@ -99,5 +117,33 @@ function PackHeadline({ pack }: { pack: TodayPack | null }) {
         visit{n === 1 ? '' : 's'} · {pack.done} done, {pack.onTheWay} on the way
       </span>
     </p>
+  );
+}
+
+/**
+ * The overdue line: a count that opens Auntie Time, where the same visits sit
+ * under the Overdue heading. Silent when the window read is still loading or
+ * reads zero; a failed read says so rather than implying nothing is late.
+ */
+function OverdueNote({
+  window: lateWindow,
+  overdue,
+  onOpenSessions,
+}: {
+  window: ReturnType<typeof useSessionsWindowStream>;
+  overdue: number | null;
+  onOpenSessions: () => void;
+}) {
+  if (lateWindow.status === 'error') {
+    return <ErrorHint>{`Couldn't check for overdue visits: ${lateWindow.message}`}</ErrorHint>;
+  }
+  if (overdue === null || overdue === 0) return null;
+  return (
+    <button type="button" className="pack-overdue" onClick={onOpenSessions}>
+      <span className="pack-overdue__count">{overdue}</span>
+      <span className="pack-overdue__label">
+        overdue visit{overdue === 1 ? '' : 's'} to close out in Auntie Time
+      </span>
+    </button>
   );
 }

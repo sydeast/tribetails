@@ -950,7 +950,9 @@ describe('NewBookingDialog steps 4 and 5: invoice options and review', () => {
     await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
     const arg = createMultiDateBookingRequest.mock.calls[0]![0];
     expect(arg.communication).toEqual({ emailConfirmation: true, timeVisibility: false });
-    expect(arg.notes).toBe('Gate code 1234');
+    // #1626: private, so it travels as staffNotes and never as the household-visible notes.
+    expect(arg.staffNotes).toBe('Gate code 1234');
+    expect(arg.notes).toBeUndefined();
   });
 
   it('an Edit link on Review goes back to the step that owns that answer', async () => {

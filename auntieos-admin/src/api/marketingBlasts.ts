@@ -118,6 +118,60 @@ function num(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
+// ── copy preview (#1587) ────────────────────────────────────────────────────
+/** Who fills a merge field: the pipeline for every send, the blast's own data, or nobody yet. */
+export type MergeFieldSource = 'automatic' | 'provided' | 'missing';
+export interface MergeFieldStatus {
+  name: string;
+  source: MergeFieldSource;
+}
+/**
+ * What `previewMarketingBlastCopy` returns: the campaign's email as the send
+ * would render it, plus every merge field its template names and whether
+ * something supplies it. `usedFallback` means no template is authored yet and
+ * the generic wording is what would go out.
+ */
+export interface BlastCopyPreview {
+  subject: string;
+  text: string;
+  html: string | null;
+  usedFallback: boolean;
+  fields: MergeFieldStatus[];
+}
+interface CopyPreviewResponse {
+  ok: true;
+  subject?: string;
+  text?: string;
+  html?: string | null;
+  usedFallback?: boolean;
+  fields?: Array<{ name?: unknown; source?: unknown }>;
+}
+const FIELD_SOURCES: readonly MergeFieldSource[] = ['automatic', 'provided', 'missing'];
+/**
+ * Asks the server to render the campaign's copy against the merge values typed
+ * so far. A field row the server sent in a shape this client does not know is
+ * dropped rather than guessed at; the server always sends all three keys.
+ */
+export async function previewBlastCopy(key: MarketingKey, data: Record<string, unknown>): Promise<BlastCopyPreview> {
+  const res = await call<{ key: MarketingKey; data: Record<string, unknown> }, CopyPreviewResponse>(
+    'previewMarketingBlastCopy',
+    { key, data },
+  );
+  const fields: MergeFieldStatus[] = [];
+  for (const f of res.fields ?? []) {
+    if (typeof f.name !== 'string' || f.name === '') continue;
+    const source = FIELD_SOURCES.find((s) => s === f.source);
+    if (source === undefined) continue;
+    fields.push({ name: f.name, source });
+  }
+  return {
+    subject: typeof res.subject === 'string' ? res.subject : '',
+    text: typeof res.text === 'string' ? res.text : '',
+    html: typeof res.html === 'string' ? res.html : null,
+    usedFallback: res.usedFallback === true,
+    fields,
+  };
+}
 export async function previewBlastAudience(key: MarketingKey, audience: BlastAudience): Promise<BlastReach> {
   const res = await call<{ key: MarketingKey } & BlastAudience, PreviewResponse>(
     'previewMarketingBlastAudience',

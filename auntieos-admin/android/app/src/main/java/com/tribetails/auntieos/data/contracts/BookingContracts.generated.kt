@@ -30,6 +30,7 @@ data class RescheduleRequestDto(
     val kinfolkId: String,
     val batchId: String,
     val visitId: String,
+    val kinfolkName: String?,
     val title: String?,
     val serviceType: String?,
     val kinNames: List<String>,
@@ -52,6 +53,7 @@ internal fun decodeRescheduleRequestDto(raw: Map<String, Any?>?): RescheduleRequ
         kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
         batchId = (raw?.get("batchId") as? String).orEmpty(),
         visitId = (raw?.get("visitId") as? String).orEmpty(),
+        kinfolkName = raw?.get("kinfolkName") as? String,
         title = raw?.get("title") as? String,
         serviceType = raw?.get("serviceType") as? String,
         kinNames = (raw?.get("kinNames") as? List<*>).orEmpty().mapNotNull { it as? String },
@@ -69,6 +71,7 @@ data class CancelRequestDto(
     val kinfolkId: String,
     val batchId: String,
     val visitId: String,
+    val kinfolkName: String?,
     val title: String?,
     val serviceType: String?,
     val kinNames: List<String>,
@@ -89,6 +92,7 @@ internal fun decodeCancelRequestDto(raw: Map<String, Any?>?): CancelRequestDto =
         kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
         batchId = (raw?.get("batchId") as? String).orEmpty(),
         visitId = (raw?.get("visitId") as? String).orEmpty(),
+        kinfolkName = raw?.get("kinfolkName") as? String,
         title = raw?.get("title") as? String,
         serviceType = raw?.get("serviceType") as? String,
         kinNames = (raw?.get("kinNames") as? List<*>).orEmpty().mapNotNull { it as? String },
@@ -364,6 +368,8 @@ data class CreateMultiDateBookingRequestArgs(
     val kinIds: List<String>? = null,
     /** Optional: omitted from the payload when null. */
     val notes: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val staffNotes: String? = null,
     /**
      * One of `individual`, `weekly`.
      * Optional: omitted from the payload when null.
@@ -388,6 +394,7 @@ data class CreateMultiDateBookingRequestArgs(
         if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
         if (kinIds != null) put("kinIds", kinIds)
         if (notes != null) put("notes", notes)
+        if (staffNotes != null) put("staffNotes", staffNotes)
         if (pattern != null) put("pattern", pattern)
         if (weeklyDays != null) put("weeklyDays", weeklyDays)
         put("visits", visits.map { it.toPayload() })

@@ -132,8 +132,23 @@ const ALLOWED_EAGER_PACKAGES = [
  * than a dispatcher export because every callable test mocks the dispatcher
  * whole. Measured at 423 after merging onto #1316, inside the 430
  * already allowed, so the bound did not move.
+ *
+ * 440 since #1577 (main had reached 431): that change adds
+ * `lib/householdNames.ts`, the one read of `families/{id}.displayName` that
+ * `listRescheduleRequests` and `listCancelRequests` share so a visit request
+ * names its household. One module whose imports are already resident; not a
+ * structural change.
+ *
+ * #1714: main reached 432 when #1679, #1682 and #1689 merged one after another,
+ * each having passed alone. They added `admin/previewInvoiceNotice.ts`,
+ * `lib/pastVisit.ts` and `admin/marketingCopy.ts`. The first is a FUNCTIONS
+ * entry, so it is in this graph by construction. The other two, and
+ * `lib/stripVideoLocationJob.ts` with the two modules only it imports, now load
+ * with `await import()` inside the handlers that use them. Measured at 428
+ * after merging onto #1577 (433 without this change), so the bound did not
+ * move.
  */
-const MAX_OWN_EAGER_MODULES = 430;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;

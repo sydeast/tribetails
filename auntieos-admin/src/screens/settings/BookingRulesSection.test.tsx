@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_BUSINESS_SETTINGS, type BusinessSettings } from '../../api/settings';
+import { DEFAULT_BUSINESS_SETTINGS, mergeBusinessSettings, type BusinessSettings } from '../../api/settings';
 import { BookingRulesSection, bookingRulesPatch } from './BookingRulesSection';
 import { VisitsTrackingSection, visitsTrackingPatch } from './VisitsTrackingSection';
 import { NotificationScheduleSection } from './NotificationScheduleSection';
@@ -339,10 +339,22 @@ describe('VisitsTrackingSection', () => {
 
     expect(onSave.mock.calls[0]?.[0]).toMatchObject({
       enablePhotoLocationTagging: false,
-      requireArrivalDepartureVerification: false,
+      // #1620: the default is OFF, so the click turns it on.
+      requireArrivalDepartureVerification: true,
       allowClientLocationSharing: false,
       saveRoutesForDays: 365,
     });
+  });
+  it('shows Verify arrival and departure OFF when the document has no such key, as the server reads it (#1620)', async () => {
+    const user = userEvent.setup();
+    // A document written before the switch existed: no requireArrivalDepartureVerification key.
+    render(<VisitsTrackingSection data={mergeBusinessSettings({ businessName: 'Tribe Tails' })} onSave={onSave} />);
+    const toggle = screen.getByRole('switch', { name: 'Toggle arrival and departure verification' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    // Saving another field never turns the rule on behind the operator's back.
+    await user.click(screen.getByRole('switch', { name: 'Toggle kinfolk location sharing' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({ requireArrivalDepartureVerification: false });
   });
 
   /** #582: the threshold under the arrival switch, editable on this surface too. */

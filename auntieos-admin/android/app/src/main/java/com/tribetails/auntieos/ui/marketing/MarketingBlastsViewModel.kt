@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.marketing
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.mintBlastIdempotencyKey
@@ -37,14 +38,25 @@ data class MarketingBlastsUiState(
     // Compose
     val campaignKey: MarketingKey = MarketingKey.Newsletter,
     val title: String = "",
-    val mergeFields: List<MergeFieldRow> = listOf(MergeFieldRow()),
+    /**
+     * #1587: the values for the fields the campaign's template names. Which fields
+     * exist comes from [copy], so there is no free-form token box.
+     */
+    val fieldValues: Map<String, String> = emptyMap(),
+    val copy: BlastCopyPreview? = null,
+    val copyLoading: Boolean = true,
+    val copyError: String? = null,
 
     // Audience
     val mode: AudienceMode = AudienceMode.Criteria,
     val criteria: BroadcastCriteria = BroadcastCriteria(),
     val statusesText: String = "",
     val tagsText: String = "",
-    val uidsText: String = "",
+    /** #1587: accounts are picked by name from the household roster, never typed. `null` roster means not loaded. */
+    val kinfolk: List<Kinfolk>? = null,
+    val kinfolkError: String? = null,
+    val pickedUids: List<String> = emptyList(),
+    val accountSearch: String = "",
     val segments: List<AudienceSegment> = emptyList(),
     val segmentsError: String? = null,
     val selectedSegmentId: String? = null,
@@ -79,7 +91,14 @@ data class MarketingBlastsUiState(
     /** #823. Manual re-read presses while a campaign was still queueing. See [refreshes]. */
     val listRefreshes: Int = 0,
 ) {
-    val explicitUids: List<String> get() = parseUidList(uidsText)
+    val explicitUids: List<String> get() = pickedUids
+    val pickable: PickableAccounts get() = pickableAccounts(kinfolk.orEmpty())
+    /** The fields the operator is asked for: everything the template names that the pipeline does not fill itself. */
+    val fieldNames: List<String>
+        get() = copy?.fields.orEmpty().filter { it.source != MergeFieldSource.Automatic }.map { it.name }
+    val missingFields: List<String>
+        get() = copy?.fields.orEmpty().filter { it.source == MergeFieldSource.Missing }.map { it.name }
+    val mergeData: Map<String, Any?> get() = fieldValuesToData(fieldValues, fieldNames)
     val zone: ZoneId get() = businessZone(businessTimeZone)
     val fireAtMs: Long? get() = fireAtMsFrom(sendDate, sendTime, zone)
     val audience: BlastAudience? get() = blastAudience(mode, selectedSegmentId, criteria, explicitUids)
@@ -106,8 +125,12 @@ data class MarketingBlastsUiState(
      */
     val refreshes: Int get() = listRefreshes
 
-    fun blocker(nowMs: Long): String? = blastBlocker(audience, fireAtMs, nowMs, reach?.reachable)
+    fun blocker(nowMs: Long): String? =
+        blastBlocker(audience, fireAtMs, nowMs, reach?.reachable, missingFields)
 }
+
+/** #1587: how long typing pauses before the email preview is re-read. */
+internal const val COPY_DEBOUNCE_MS = 300L
 
 class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel() {
 
@@ -137,6 +160,44 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
         loadSegments()
         loadBlasts()
         loadBusinessZone()
+        loadKinfolk()
+        refreshCopy()
+    }
+    /** The household roster behind Pick accounts (#1587). A failed read is said, never shown as an empty picker. */
+    fun loadKinfolk() {
+        viewModelScope.launch {
+            repo.getKinfolk().fold(
+                onSuccess = { rows -> update { it.copy(kinfolk = rows, kinfolkError = null) } },
+                onFailure = { e ->
+                    AuntieLog.e("getKinfolk failed", e)
+                    update { it.copy(kinfolkError = "Couldn't load the households: ${e.message ?: "unknown error"}") }
+                },
+            )
+        }
+    }
+    /**
+     * Re-reads the copy the operator is about to send (#1587) for the current
+     * campaign and field values. The screen calls it after a short pause, so a value
+     * typed is one read and not one per keystroke; the previous copy stays up
+     * while the next loads, with [MarketingBlastsUiState.copyLoading] set.
+     */
+    fun refreshCopy() {
+        update { it.copy(copyLoading = true) }
+        copyJob?.cancel()
+        copyJob = viewModelScope.launch {
+            val state = _uiState.value
+            repo.previewMarketingBlastCopy(state.campaignKey, state.mergeData).fold(
+                onSuccess = { copy -> update { it.copy(copy = copy, copyError = null, copyLoading = false) } },
+                onFailure = { e ->
+                    update {
+                        it.copy(
+                            copyError = "The email preview failed: ${blastErrorText(e.message ?: "Preview failed")}",
+                            copyLoading = false,
+                        )
+                    }
+                },
+            )
+        }
     }
 
     private fun loadBusinessZone() {
@@ -171,9 +232,9 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
         s.criteria.toString(),
         s.statusesText,
         s.tagsText,
-        s.uidsText,
+        s.pickedUids.joinToString(","),
         s.selectedSegmentId.orEmpty(),
-        s.mergeFields.toString(),
+        s.fieldValues.toString(),
         s.sendDate,
         s.sendTime,
     ).joinToString("\u001F") // a separator no typed field can contain
@@ -182,11 +243,20 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
         update { block(it).copy(reach = null, previewError = null) }
     }
 
-    fun setCampaignKey(key: MarketingKey) = audienceChanged { it.copy(campaignKey = key) }
+    fun setCampaignKey(key: MarketingKey) {
+        audienceChanged { it.copy(campaignKey = key) }
+        refreshCopy()
+    }
+
+    private var copyJob: kotlinx.coroutines.Job? = null
+    private var copyDebounce: kotlinx.coroutines.Job? = null
     fun setTitle(text: String) = update { it.copy(title = text) }
     fun setMode(mode: AudienceMode) = audienceChanged { it.copy(mode = mode) }
     fun setSelectedSegment(id: String?) = audienceChanged { it.copy(selectedSegmentId = id) }
-    fun setUidsText(text: String) = audienceChanged { it.copy(uidsText = text) }
+    fun toggleAccount(uid: String) = audienceChanged {
+        it.copy(pickedUids = if (uid in it.pickedUids) it.pickedUids - uid else it.pickedUids + uid)
+    }
+    fun setAccountSearch(text: String) = update { it.copy(accountSearch = text) }
 
     fun setCriteriaKind(kind: SegmentKind) = audienceChanged {
         it.copy(criteria = it.criteria.copy(kind = kind))
@@ -207,16 +277,15 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
     fun setSendDate(date: String) = update { it.copy(sendDate = date) }
     fun setSendTime(time: String) = update { it.copy(sendTime = time) }
 
-    fun setMergeFieldKey(index: Int, key: String) = update { s ->
-        s.copy(mergeFields = s.mergeFields.mapIndexed { i, r -> if (i == index) r.copy(key = key) else r })
+    /** A typed value re-reads the copy after a short pause: one read per pause, not per keystroke. */
+    fun setFieldValue(name: String, value: String) {
+        update { it.copy(fieldValues = it.fieldValues + (name to value), copyLoading = true) }
+        copyDebounce?.cancel()
+        copyDebounce = viewModelScope.launch {
+            kotlinx.coroutines.delay(COPY_DEBOUNCE_MS)
+            refreshCopy()
+        }
     }
-
-    fun setMergeFieldValue(index: Int, value: String) = update { s ->
-        s.copy(mergeFields = s.mergeFields.mapIndexed { i, r -> if (i == index) r.copy(value = value) else r })
-    }
-
-    fun addMergeField() = update { it.copy(mergeFields = it.mergeFields + MergeFieldRow()) }
-
     fun openConfirm() = update { it.copy(confirmOpen = true, scheduleError = null, notice = null) }
     fun closeConfirm() = update { it.copy(confirmOpen = false) }
     fun clearNotice() = update { it.copy(notice = null) }
@@ -309,7 +378,7 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
                 key = state.campaignKey,
                 fireAtMs = fireAtMs,
                 audience = audience,
-                data = mergeFieldsToData(state.mergeFields),
+                data = state.mergeData,
                 title = state.title,
                 idempotencyKey = key,
             ).fold(

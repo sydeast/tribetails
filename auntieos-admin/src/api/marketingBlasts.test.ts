@@ -8,6 +8,7 @@ import {
   cancelMarketingBlast,
   listMarketingBlasts,
   previewBlastAudience,
+  previewBlastCopy,
   scheduleBlast,
 } from './marketingBlasts';
 
@@ -276,5 +277,56 @@ describe('cancelMarketingBlast', () => {
     callMock.mockReset();
     callMock.mockRejectedValue(new Error('already_fired'));
     await expect(cancelMarketingBlast('b1')).rejects.toThrow('already_fired');
+  });
+});
+
+describe('previewBlastCopy (#1587)', () => {
+  it('asks the server to render the campaign against the typed values', async () => {
+    callMock.mockReset();
+    callMock.mockResolvedValue({ ok: true, subject: 'S', text: 'T', html: null, usedFallback: false, fields: [] });
+    await previewBlastCopy('survey.event', { link: 'https://x.test' });
+    expect(callMock).toHaveBeenCalledWith('previewMarketingBlastCopy', {
+      key: 'survey.event',
+      data: { link: 'https://x.test' },
+    });
+  });
+
+  it('reads the subject, text, fallback flag and field statuses', async () => {
+    callMock.mockReset();
+    callMock.mockResolvedValue({
+      ok: true,
+      subject: 'A little news',
+      text: 'Hello',
+      html: '<p>Hello</p>',
+      usedFallback: true,
+      fields: [
+        { name: 'business', source: 'automatic' },
+        { name: 'link', source: 'missing' },
+      ],
+    });
+    expect(await previewBlastCopy('newsletter.announcement', {})).toEqual({
+      subject: 'A little news',
+      text: 'Hello',
+      html: '<p>Hello</p>',
+      usedFallback: true,
+      fields: [
+        { name: 'business', source: 'automatic' },
+        { name: 'link', source: 'missing' },
+      ],
+    });
+  });
+
+  it('drops a field row it does not understand instead of guessing at it', async () => {
+    callMock.mockReset();
+    callMock.mockResolvedValue({
+      ok: true,
+      subject: 'S',
+      text: 'T',
+      fields: [{ name: 'a', source: 'later' }, { name: '', source: 'missing' }, { source: 'missing' }, { name: 'b', source: 'provided' }],
+    });
+    const out = await previewBlastCopy('marketing.optin', {});
+    expect(out.fields).toEqual([{ name: 'b', source: 'provided' }]);
+    expect(out.html).toBeNull();
+    expect(out.usedFallback).toBe(false);
   });
 });
