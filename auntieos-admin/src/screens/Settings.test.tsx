@@ -1137,7 +1137,10 @@ describe('Settings: Integrations is a report, and its Google row opens Calendar 
 
     // Only the row with a flow of its own carries a control, in the foot.
     expect(within(google).getByRole('button', { name: 'Open Google Calendar settings' })).toBeInTheDocument();
-    expect(within(stripe).queryByRole('button')).not.toBeInTheDocument();
+    // #1595: the purpose line is the name's info tip now, so its button is the only other one.
+    expect(within(stripe).queryAllByRole('button').filter((b) => b.getAttribute('aria-label') !== 'About this section')).toHaveLength(0);
+    expect(within(stripe).getByRole('tooltip', { hidden: true })).toHaveTextContent('Card payments on invoices.');
+    expect(stripe.querySelector('.integrations__purpose')).toBeNull();
 
     // The panel header owns the report's stamp and the re-check.
     const integrationsPanel = panelOwning(google);
