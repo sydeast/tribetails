@@ -1982,6 +1982,105 @@ internal fun decodeReviewAndSendDraftInvoiceResult(raw: Map<String, Any?>?): Rev
         appOnly = raw?.get("appOnly") as? Boolean,
     )
 
+// ---------- previewInvoiceNotice ----------
+
+/** Request payload for the `previewInvoiceNotice` callable. */
+data class PreviewInvoiceNoticeArgs(
+    val invoiceId: String,
+    /** One of `reminder`, `reviewSend`. */
+    val action: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+        put("action", action)
+    }
+}
+
+/** Nested in the `previewInvoiceNotice` contract. */
+data class PreviewInvoiceNoticeResultEmail(
+    val on: Boolean,
+    val address: String,
+)
+
+/**
+ * Fail-soft decode of `PreviewInvoiceNoticeResultEmail` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodePreviewInvoiceNoticeResultEmail(raw: Map<String, Any?>?): PreviewInvoiceNoticeResultEmail =
+    PreviewInvoiceNoticeResultEmail(
+        on = raw?.get("on") as? Boolean ?: false,
+        address = (raw?.get("address") as? String).orEmpty(),
+    )
+
+/** Nested in the `previewInvoiceNotice` contract. */
+data class PreviewInvoiceNoticeResultSms(
+    val on: Boolean,
+    val address: String,
+)
+
+/**
+ * Fail-soft decode of `PreviewInvoiceNoticeResultSms` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodePreviewInvoiceNoticeResultSms(raw: Map<String, Any?>?): PreviewInvoiceNoticeResultSms =
+    PreviewInvoiceNoticeResultSms(
+        on = raw?.get("on") as? Boolean ?: false,
+        address = (raw?.get("address") as? String).orEmpty(),
+    )
+
+/** Nested in the `previewInvoiceNotice` contract. */
+data class PreviewInvoiceNoticeResultPush(
+    val on: Boolean,
+)
+
+/**
+ * Fail-soft decode of `PreviewInvoiceNoticeResultPush` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodePreviewInvoiceNoticeResultPush(raw: Map<String, Any?>?): PreviewInvoiceNoticeResultPush =
+    PreviewInvoiceNoticeResultPush(
+        on = raw?.get("on") as? Boolean ?: false,
+    )
+
+/** Response from the `previewInvoiceNotice` callable. */
+data class PreviewInvoiceNoticeResult(
+    val ok: Boolean,
+    val key: String,
+    val hasRecipient: Boolean,
+    val recipientName: String,
+    val email: PreviewInvoiceNoticeResultEmail,
+    val sms: PreviewInvoiceNoticeResultSms,
+    val push: PreviewInvoiceNoticeResultPush,
+    /** One of `operator`, `marketing`, or null when the payload omits it. */
+    val disabled: String?,
+    val householdGateLive: Boolean,
+)
+
+/**
+ * Fail-soft decode of `PreviewInvoiceNoticeResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodePreviewInvoiceNoticeResult(raw: Map<String, Any?>?): PreviewInvoiceNoticeResult =
+    PreviewInvoiceNoticeResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        key = (raw?.get("key") as? String).orEmpty(),
+        hasRecipient = raw?.get("hasRecipient") as? Boolean ?: false,
+        recipientName = (raw?.get("recipientName") as? String).orEmpty(),
+        email = decodePreviewInvoiceNoticeResultEmail(contractRawMap(raw?.get("email"))),
+        sms = decodePreviewInvoiceNoticeResultSms(contractRawMap(raw?.get("sms"))),
+        push = decodePreviewInvoiceNoticeResultPush(contractRawMap(raw?.get("push"))),
+        disabled = raw?.get("disabled") as? String,
+        householdGateLive = raw?.get("householdGateLive") as? Boolean ?: false,
+    )
+
 // ---------- sendInvoiceReminder ----------
 
 /** Request payload for the `sendInvoiceReminder` callable. */

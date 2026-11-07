@@ -986,6 +986,54 @@ export interface ReviewAndSendDraftInvoiceResult {
   appOnly?: boolean;
 }
 
+// ---------- previewInvoiceNotice ----------
+
+/**
+ * Request payload for the `previewInvoiceNotice` callable.
+ */
+export interface PreviewInvoiceNoticeArgs {
+  invoiceId: string;
+  action: 'reminder' | 'reviewSend';
+}
+
+/**
+ * Nested in the `previewInvoiceNotice` contract.
+ */
+export interface PreviewInvoiceNoticeResultEmail {
+  on: boolean;
+  address: string;
+}
+
+/**
+ * Nested in the `previewInvoiceNotice` contract.
+ */
+export interface PreviewInvoiceNoticeResultSms {
+  on: boolean;
+  address: string;
+}
+
+/**
+ * Nested in the `previewInvoiceNotice` contract.
+ */
+export interface PreviewInvoiceNoticeResultPush {
+  on: boolean;
+}
+
+/**
+ * Response from the `previewInvoiceNotice` callable.
+ */
+export interface PreviewInvoiceNoticeResult {
+  ok: true;
+  key: string;
+  hasRecipient: boolean;
+  recipientName: string;
+  email: PreviewInvoiceNoticeResultEmail;
+  sms: PreviewInvoiceNoticeResultSms;
+  push: PreviewInvoiceNoticeResultPush;
+  disabled: 'operator' | 'marketing' | null;
+  householdGateLive: boolean;
+}
+
 // ---------- sendInvoiceReminder ----------
 
 /**

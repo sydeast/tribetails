@@ -1474,6 +1474,22 @@ class FirestoreClient {
      * went out; that is an Ok, not an Err, because the household has been
      * reminded. See [decodeReminderOutcome] for the pre-#832 response rule.
      */
+    /**
+     * #1609: who a reminder ("reminder") or a draft send ("reviewSend") will
+     * reach, and by which channel, read before the operator confirms it.
+     */
+    suspend fun previewInvoiceNotice(invoiceId: String, action: String): WriteResult<InvoiceNoticePreview> {
+        val payload = buildJsonObject {
+            put("invoiceId", JsonPrimitive(invoiceId))
+            put("action", JsonPrimitive(action))
+        }
+        return when (val r = platformInvokeCallable("previewInvoiceNotice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeInvoiceNoticePreview(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     suspend fun sendInvoiceReminder(
         invoiceId: String,
         nowMs: Long = reminderNowMs(),
@@ -3834,6 +3850,8 @@ data class Invoice(
     val address: String = "",
     val date: String = "",
     val terms: String = "",
+    /** #1609: the structured terms code when the terms came from the picker, else "". */
+    val termsCode: String = "",
     val dueDate: String = "",
     val discount: String = "",
     val total: Double = 0.0,
