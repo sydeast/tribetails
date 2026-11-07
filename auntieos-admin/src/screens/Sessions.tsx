@@ -1,6 +1,7 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useMemo, useState } from 'react';
 import { sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
-import { KIN_QUERY, KINFOLK_QUERY, type Kin, type Kinfolk } from '../api/directory';
+import { KIN_QUERY, type Kin } from '../api/directory';
 import { transitionBookingStatus } from '../api/bookingsWrite';
 import {
   sessionState,
@@ -174,7 +175,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
    * the photo circles. Never a placeholder address and never a stock face, which
    * is the same rule `Avatar` already applies to a broken photo url.
    */
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   const kinState = useCollection<Kin>(KIN_QUERY);
   const addressById = useMemo(() => {
     const map = new Map<string, string>();

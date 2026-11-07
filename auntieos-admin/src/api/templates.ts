@@ -94,6 +94,8 @@ export interface TemplatesPage {
   templates: TemplateSummary[];
   /** The id to pass as `startAfter` for the next page, or null when exhausted. */
   nextCursor: string | null;
+  /** #1614: the whole bank's size, or null from a server that predates it. */
+  total: number | null;
 }
 
 export interface ListTemplatesPageArgs {
@@ -111,11 +113,15 @@ export interface ListTemplatesPageArgs {
  * passed, which is exactly what `listTemplates` above relies on.
  */
 export async function listTemplatesPage(args: ListTemplatesPageArgs): Promise<TemplatesPage> {
-  const res = await call<ListTemplatesPageArgs, { templates?: TemplateSummary[]; nextCursor?: string | null }>(
+  const res = await call<ListTemplatesPageArgs, { templates?: TemplateSummary[]; nextCursor?: string | null; total?: number }>(
     'listTemplates',
     args,
   );
-  return { templates: res.templates ?? [], nextCursor: res.nextCursor ?? null };
+  return {
+    templates: res.templates ?? [],
+    nextCursor: res.nextCursor ?? null,
+    total: typeof res.total === 'number' ? res.total : null,
+  };
 }
 
 /**

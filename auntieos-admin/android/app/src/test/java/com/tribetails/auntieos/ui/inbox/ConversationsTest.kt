@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.inbox
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -92,15 +93,36 @@ class ConversationsTest {
         assertTrue(sections.all { it.threads.isEmpty() })
     }
 
-    @Test fun groupThreadsByWaitingAgreesWithTheBadgeCount() {
+    @Test fun aReadThreadNobodyAnsweredStaysWaiting() {
+        // #1572: opening a thread clears unreadForAdmin; the household is still waiting.
+        val opened = ConversationSummary("t", "T", "", 1, "kinfolk", false, 1)
+        val sections = groupThreadsByWaiting(listOf(opened))
+        assertEquals(listOf("t"), sections[0].threads.map { it.kinfolkId })
+        assertTrue(sections[1].threads.isEmpty())
+    }
+    @Test fun openingAThreadDoesNotMoveItBetweenSections() {
+        val before = groupThreadsByWaiting(listOf(ConversationSummary("t", "T", "", 1, "kinfolk", true, 1)))
+        val after = groupThreadsByWaiting(listOf(ConversationSummary("t", "T", "", 1, "kinfolk", false, 1)))
+        assertEquals(before.map { s -> s.threads.map { it.kinfolkId } }, after.map { s -> s.threads.map { it.kinfolkId } })
+    }
+    @Test fun aThreadMovesToAnsweredOnlyWhenAuntieSpokeLast() {
+        val sections = groupThreadsByWaiting(listOf(ConversationSummary("t", "T", "", 1, "auntie", false, 1)))
+        assertTrue(sections[0].threads.isEmpty())
+        assertEquals(listOf("t"), sections[1].threads.map { it.kinfolkId })
+    }
+    @Test fun anUnknownSenderFallsBackToTheUnreadFlag() {
+        assertTrue(threadAwaitsReply(ConversationSummary("a", "A", "", 1, "", true, 1)))
+        assertFalse(threadAwaitsReply(ConversationSummary("b", "B", "", 1, "", false, 1)))
+    }
+    @Test fun waitingIsNotTheUnreadCount() {
         val list = listOf(
             ConversationSummary("a", "A", "", 1, "kinfolk", true, 1),
             ConversationSummary("b", "B", "", 1, "auntie", false, 1),
-            ConversationSummary("c", "C", "", 1, "kinfolk", true, 1),
+            ConversationSummary("c", "C", "", 1, "kinfolk", false, 1),
         )
-        assertEquals(unreadConversationCount(list), groupThreadsByWaiting(list)[0].threads.size)
+        assertEquals(1, unreadConversationCount(list))
+        assertEquals(listOf("a", "c"), groupThreadsByWaiting(list)[0].threads.map { it.kinfolkId })
     }
-
     // ── the arrangement A/B flag (auntieos.inbox.waitingSections) ────────────
     //
     // ON is the sectioning above. OFF is the arrangement that preceded it HERE:
