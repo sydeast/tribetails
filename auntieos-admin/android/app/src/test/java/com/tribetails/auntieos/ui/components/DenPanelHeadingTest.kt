@@ -109,15 +109,15 @@ class DenPanelHeadingTest {
                 DenScreenHeading(
                     kicker = "The Den · Schedule",
                     title = "Schedule",
-                    subtitle = "Every Kin Care visit on the books.",
+                    subtitle = "Every KinCare visit on the books.",
                     detail = "Sep 1 to Sep 7",
                 )
             }
         }
 
         rule.onNodeWithText("Sep 1 to Sep 7").assertIsDisplayed()
-        rule.onNodeWithText("Every Kin Care visit on the books.").assertDoesNotExist()
-        rule.onNodeWithContentDescription("Every Kin Care visit on the books.").assertIsDisplayed()
+        rule.onNodeWithText("Every KinCare visit on the books.").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Every KinCare visit on the books.").assertIsDisplayed()
     }
 
     @Test

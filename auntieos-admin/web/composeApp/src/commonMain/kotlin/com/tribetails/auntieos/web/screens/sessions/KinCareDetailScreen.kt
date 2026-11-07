@@ -111,18 +111,18 @@ fun KinCareDetailScreen(
         if (session == null) {
             // #867: a failed read shows its error, not a shimmer that never ends.
             (sessions as? FirestoreResult.Error)?.let {
-                SectionHeader(title = "Kin Care", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
-                LoadErrorBanner("Couldn't load this Kin Care", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                SectionHeader(title = "KinCare", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
+                LoadErrorBanner("Couldn't load this KinCare", it.message, onRetry = reload::retry, retrying = reload.retrying)
                 return@ScreenScaffold
             }
             // #898: the read answered and this id is not in it (deleted, or a
             // stale link), distinct from still-loading, which used to shimmer forever.
             if (sessions is FirestoreResult.Data) {
-                SectionHeader(title = "Kin Care", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
-                NotFoundNotice("This Kin Care couldn't be found. It may have been removed.", onBack = onBack)
+                SectionHeader(title = "KinCare", subtitle = "", icon = Lucide.PawPrint, onBack = onBack)
+                NotFoundNotice("This KinCare couldn't be found. It may have been removed.", onBack = onBack)
                 return@ScreenScaffold
             }
-            SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care detail", icon = Lucide.PawPrint)
+            SectionHeader(title = "Loading…", subtitle = "Pulling KinCare detail", icon = Lucide.PawPrint)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(4) { ShimmerCard(height = 72.dp) }
             }
@@ -131,7 +131,7 @@ fun KinCareDetailScreen(
 
         // ---- Breadcrumb trail: Schedule / <window> / <kinfolk> ----
         SectionHeader(
-            title    = session.kinfolkName.ifBlank { "Kin Care" },
+            title    = session.kinfolkName.ifBlank { "KinCare" },
             subtitle = listOfNotNull(
                 session.serviceType.takeIf { it.isNotBlank() },
                 sessionWindowFor(session),
@@ -181,7 +181,7 @@ fun KinCareDetailScreen(
             if (session.kinfolkNotes.isNotBlank()) {
                 AuntieNoteCallout(text = session.kinfolkNotes, dashed = false, italic = false)
             } else {
-                AuntieNoteCallout(text = "No kinfolk-facing note for this Kin Care.", dashed = true, italic = true)
+                AuntieNoteCallout(text = "No kinfolk-facing note for this KinCare.", dashed = true, italic = true)
             }
             Spacer(Modifier.height(10.dp))
             // Cutoff hint mirrors the booking-notes "editable until 3h before visit" rule.
@@ -200,7 +200,7 @@ fun KinCareDetailScreen(
             if (session.notes.isNotBlank()) {
                 AuntieNoteCallout(text = session.notes, dashed = false, italic = false)
             } else {
-                AuntieNoteCallout(text = "No admin-internal note for this Kin Care.", dashed = true, italic = true)
+                AuntieNoteCallout(text = "No admin-internal note for this KinCare.", dashed = true, italic = true)
             }
             Spacer(Modifier.height(8.dp))
             EmptyHint("Only you see this. Edit anytime.")
@@ -325,7 +325,7 @@ fun KinCareDetailScreen(
             PanelHeading("KinTales sent", Lucide.NotebookPen)
             Spacer(Modifier.height(6.dp))
             if (sessionReports.isEmpty()) {
-                EmptyHint("No KinTales sent yet during this Kin Care.")
+                EmptyHint("No KinTales sent yet during this KinCare.")
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     sessionReports.forEach { r -> KinTaleSnippet(r) }
@@ -426,7 +426,7 @@ private fun KinPhotos(kinIds: List<String>, kinById: Map<String, Kin>) {
 }
 
 private fun heroTitle(s: KinCareSession): String {
-    val name = s.kinfolkName.ifBlank { "Kin Care" }
+    val name = s.kinfolkName.ifBlank { "KinCare" }
     return if (s.serviceType.isNotBlank()) "$name · ${s.serviceType}" else name
 }
 

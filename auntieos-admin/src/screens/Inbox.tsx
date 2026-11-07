@@ -143,16 +143,6 @@ const FILTERS: readonly FilterDef[] = [
 ];
 
 /**
- * Which read state each waiting/answered section holds, so the filter chips and
- * the sections agree by construction rather than through a second hand-written
- * mapping that could drift from `groupThreadsByWaiting`.
- */
-const SECTION_READ_STATE: Record<'waiting' | 'answered', ThreadReadState> = {
-  waiting: 'unread',
-  answered: 'read',
-};
-
-/**
  * What the bulk "Mark all read" write is doing right now.
  *
  * There is deliberately no optimistic branch. The nav rail's badge reads the
@@ -457,7 +447,10 @@ export function Inbox({ onSelectThread }: InboxProps) {
             const sections =
               arrangement === 'waitingSections'
                 ? groupThreadsByWaiting(visible).filter(
-                    (s) => s.threads.length > 0 || activeFilter.test(SECTION_READ_STATE[s.key]),
+                    // Sections no longer map to a read state (a read thread can
+                    // still be waiting), so an empty one is drawn only on "All",
+                    // where "Nothing is waiting on a reply" is a true statement.
+                    (s) => s.threads.length > 0 || activeFilter.key === 'all',
                   )
                 : [];
 

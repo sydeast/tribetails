@@ -37,6 +37,7 @@ import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.joinDateForEdit
+import com.tribetails.auntieos.util.joinDateRangeError
 import com.tribetails.auntieos.util.SortOption
 import com.tribetails.auntieos.data.model.updatedAtIso
 import kotlinx.coroutines.async
@@ -1441,6 +1442,11 @@ class DirectoryViewModel(
             _editKinfolkState.value = state.copy(
                 error = "Reopen this household before saving: its saved copy was never loaded."
             )
+            return
+        }
+        // #1584 (operator ruling, 2026-11-05 docket): 2025 through today.
+        joinDateRangeError(state.joinDate)?.let { message ->
+            _editKinfolkState.value = state.copy(error = message)
             return
         }
 

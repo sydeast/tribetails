@@ -51,8 +51,8 @@ describe('resolveRecipients', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await resolveRecipients(def('businessAdmins'), { key: 't.k', data: {} });
     expect(res).toEqual([
-      { uid: 'admin1', collection: 'staff' },
-      { uid: 'admin2', collection: 'staff' },
+      { uid: 'admin1', collection: 'staff', businessRoster: true },
+      { uid: 'admin2', collection: 'staff', businessRoster: true },
     ]);
   });
 

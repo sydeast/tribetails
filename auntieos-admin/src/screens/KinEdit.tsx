@@ -391,14 +391,14 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                 </fieldset>
               </DenPanel>
 
-              <DenPanel title="Office notes" subtitle="Staff-only.">
+              <DenPanel title="Auntie's notes" subtitle="Staff-only.">
                 <fieldset disabled={busy}>
                   <textarea
                     className="kedit__input kedit__textarea"
                     value={form.officeNotes}
                     onChange={(e) => set('officeNotes', e.target.value)}
                     rows={3}
-                    aria-label="Office notes"
+                    aria-label="Auntie's notes"
                   />
                 </fieldset>
               </DenPanel>

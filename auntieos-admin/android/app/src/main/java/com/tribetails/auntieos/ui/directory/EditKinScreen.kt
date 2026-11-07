@@ -371,7 +371,7 @@ fun EditKinScreen(
                             AuntieField(
                                 value = state.officeNotes,
                                 onValueChange = viewModel::updateEditKinOfficeNotes,
-                                label = "Office Notes",
+                                label = "Auntie's notes",
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = false,
                                 minLines = 2,

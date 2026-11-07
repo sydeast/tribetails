@@ -159,6 +159,18 @@ describe('KinEdit', () => {
     await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
     expect(updateKin.mock.calls[0]![1].age).toBe('5');
   });
+
+  /**
+   * #1598 (operator ruling, 2026-11-05 docket): the pet's officeNotes box is
+   * "Auntie's notes", the same name the pet page uses. "Office notes" reads as
+   * admin-only, and every staff role reads this field.
+   */
+  it("#1598: the pet notes box is Auntie's notes, never Office notes", async () => {
+    getKin.mockResolvedValue(kin({ officeNotes: 'Treats in the blue tin.' }));
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    expect(await screen.findByLabelText("Auntie's notes")).toHaveValue('Treats in the blue tin.');
+    expect(screen.queryByText('Office notes')).toBeNull();
+  });
   it('blocks save on a blank name', async () => {
     getKin.mockResolvedValue(kin());
     render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);

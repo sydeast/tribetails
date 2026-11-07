@@ -43,7 +43,7 @@ function row(over: Partial<FormSchemaSummary>): FormSchemaSummary {
 beforeEach(() => {
   listFormSchemas.mockReset();
   listBusinessAdmins.mockReset();
-  listBusinessAdmins.mockResolvedValue({ members: [], source: 'roster', rosterPath: '', reason: null });
+  listBusinessAdmins.mockResolvedValue({ members: [], source: 'roster', rosterPath: '', reason: null, businessEmail: '' });
 });
 describe('FormSchemasView (#1615)', () => {
   it('reads the list again after the editor saves and keeps the confirmation on screen', async () => {
