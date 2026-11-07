@@ -251,12 +251,17 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
 
 interface KinCardProps {
   kin: Kin;
+  /**
+   * #1602: the household the kin belongs to, shown on the card so two kin
+   * with the same name can be told apart. Absent while households load.
+   */
+  householdName?: string;
   /** Absent until a kin route is wired: the card then renders STATIC, never a no-op button. */
   onClick?: () => void;
 }
 
 /** Kin (pet) card for the Kin tab. Mirrors KinfolkCard's frame, no pet-chip row. */
-function KinCard({ kin, onClick }: KinCardProps) {
+function KinCard({ kin, householdName, onClick }: KinCardProps) {
   // str() on every part: an absent species/breed/age is `undefined`, which
   // survives the `!== ''` filter and would join as "undefined · undefined".
   const age = str(kin.age);
@@ -284,6 +289,11 @@ function KinCard({ kin, onClick }: KinCardProps) {
 
         <span className="directory__card-footer">
           <span className="directory__card-contact">
+            {householdName !== undefined && householdName !== '' && (
+              <span className="directory__card-contact-item" data-testid="kin-card-household">
+                {householdName}
+              </span>
+            )}
             {str(kin.sex) !== '' && (
               <span className="directory__card-contact-item">{str(kin.sex)}</span>
             )}
@@ -792,6 +802,7 @@ export function Directory({
                   <KinCard
                     key={k._id}
                     kin={k}
+                    {...(householdOf(k) !== undefined ? { householdName: householdOf(k)!.name } : {})}
                     onClick={() => {
                       if (onSelectKin) {
                         onSelectKin(k._id);

@@ -774,6 +774,10 @@ private fun AddressBlock(address: String) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(address, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        // #1602: the walk's visit read "18605" with no hint it was incomplete.
+        if (addressLooksIncomplete(address)) {
+            Text(INCOMPLETE_ADDRESS_HINT, style = AuntieTheme.typography.labelSmall, color = c.warning)
+        }
         GhostButton(label = "Open in Maps", onClick = { openInMaps(address) })
     }
 }

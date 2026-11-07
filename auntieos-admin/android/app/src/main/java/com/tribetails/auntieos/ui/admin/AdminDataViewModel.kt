@@ -263,6 +263,14 @@ class AdminDataViewModel(
     private val _kinCareReports = MutableStateFlow<List<KinCareReport>>(emptyList())
     val kinCareReports: StateFlow<List<KinCareReport>> = _kinCareReports.asStateFlow()
 
+    // #1563: the KinTales list's other half. A KinTale in draft state is a
+    // `generated_drafts` doc (ruling D-2026-08-04), and this list never read
+    // them, so a draft Home counted could not be found here at all. Only the
+    // unsent ones are listed; see [unsentGeneratedDrafts].
+    private val _generatedDrafts = MutableStateFlow<List<Draft>>(emptyList())
+    val generatedDrafts: StateFlow<List<Draft>> = _generatedDrafts.asStateFlow()
+    private val _generatedDraftsError = MutableStateFlow<String?>(null)
+    val generatedDraftsError: StateFlow<String?> = _generatedDraftsError.asStateFlow()
     // Kinfolk list - populated on demand by orphan triage flow so the
     // "Assign Kinfolk" picker has live data without loading the directory
     // every time the logs screen opens.
@@ -559,6 +567,17 @@ class AdminDataViewModel(
         }
     }
 
+    /** #1563: load the unsent generated drafts for the KinTales list's Drafts bucket. */
+    fun loadGeneratedDrafts() {
+        viewModelScope.launch {
+            _generatedDraftsError.value = null
+            repository.getGeneratedDrafts().onSuccess { drafts ->
+                _generatedDrafts.value = unsentGeneratedDrafts(drafts)
+            }.onFailure { throwable ->
+                _generatedDraftsError.value = throwable.message ?: "Failed to load drafts"
+            }
+        }
+    }
     private fun sortKey(r: KinCareReport): String = sequenceOf(
         r.sentAt, r.updatedAt, r.visitDate, r.createdAt,
     ).firstOrNull { !it.isNullOrBlank() } ?: ""
@@ -1256,3 +1275,15 @@ internal fun bulkArchiveSummary(requested: Int, archived: Int): String = when {
  */
 internal fun isNotificationUnread(entry: com.tribetails.auntieos.data.admin.NotificationEntry): Boolean =
     entry.readAt.isNullOrBlank()
+
+/**
+ * #1563: the generated drafts the KinTales list files under Drafts: not yet sent
+ * as a KinTale, and still in a status that means nobody has signed it off
+ * (`generated` from generate.js, `pending` from the n8n era, or blank). The
+ * same positive match the web list makes (`draftStatusAsKinTaleStatus`). Newest
+ * first. Pure; tested.
+ */
+internal fun unsentGeneratedDrafts(drafts: List<Draft>): List<Draft> =
+    drafts
+        .filter { it.isUnsent }
+        .sortedByDescending { it.createdOn }

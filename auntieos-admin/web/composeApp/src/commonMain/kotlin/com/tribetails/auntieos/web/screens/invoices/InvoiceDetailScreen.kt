@@ -569,7 +569,17 @@ private fun InvoiceDetailBody(
             Column {
                 DetailRow("Client",   invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
-                DetailRow("Due date", invoice.dueDate.ifBlank { "-" })
+                // #1570: a stored due date that names no day is never counted
+                // overdue, so the row says so beside it.
+                DetailRow(
+                    "Due date",
+                    when {
+                        invoice.dueDate.isBlank() -> "-"
+                        isUnreadableDueDate(invoice.dueDate) ->
+                            "${invoice.dueDate.trim()} (not a date this app can read, so it is never counted overdue)"
+                        else -> invoice.dueDate
+                    },
+                )
                 DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
