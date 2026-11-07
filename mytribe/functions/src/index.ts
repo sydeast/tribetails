@@ -606,6 +606,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   listChecklistBank: () => require('./admin/checklistBank'),
   saveChecklistBankItem: () => require('./admin/checklistBank'),
   triageOrphanReport: () => require('./admin/triageOrphanReport'),
+  // #1631: delete an unsent kin_care_reports draft (owner only).
+  deleteKinTaleReportDraft: () => require('./admin/deleteKinTaleReportDraft'),
   // B2: the "Needs triage" read side. Web has no Firestore path to this list
   // that stays correct as the collection grows past KINTALES_QUERY's 200-row
   // cap; see listOrphanReports.ts for why a dedicated callable, not a filter.

@@ -983,6 +983,20 @@ class FirestoreClient {
         reason: String,
     ): WriteResult<Unit> = platformArchiveOrphanReportAsBadData(reportId, reason)
 
+    /**
+     * #1631: delete one unsent KinTale report draft through the
+     * `deleteKinTaleReportDraft` callable, which refuses a SENT row, a row with
+     * a `sentAt` and an untriaged orphan (the `purgeOldDrafts` conditions) and
+     * audits the delete. Owner only.
+     */
+    suspend fun deleteKinTaleReportDraft(reportId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("reportId", JsonPrimitive(reportId.trim())) }
+        return when (val r = platformInvokeCallable("deleteKinTaleReportDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
     fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> =
         kotlinx.coroutines.flow.flow {
             reportsStream().collect { res ->
@@ -3481,6 +3495,18 @@ data class KinCareReport(
 fun KinCareReport.isUntriagedOrphan(): Boolean =
     kinfolkId.isBlank() && triageStatus.isBlank() &&
     sentVia in setOf("legacy_orphan", "legacy_visit_logs")
+
+/**
+ * #1631: whether this report may offer Delete. A saved (has an id), unsent
+ * draft: status DRAFT, no `sentAt`, not an untriaged orphan. The server's three
+ * refusals, so the control never appears where it can only be refused. Pure;
+ * tested.
+ */
+fun KinCareReport.canDeleteAsDraft(): Boolean =
+    _id.isNotBlank() &&
+        status.trim().uppercase() == "DRAFT" &&
+        sentAt.isBlank() &&
+        !isUntriagedOrphan()
 
 // --- Comms log models - one per channel, all written to Firestore by the
 // inbound pipeline and consumed by the four log screens. Field shape mirrors

@@ -50,6 +50,9 @@ data class KinTaleUiState(
     val hasUnsavedChanges: Boolean = false,
     val error: String? = null,
     val sentSuccessfully: Boolean = false,
+    // #1631: deleting an unsent draft. [deletedSuccessfully] pops the screen.
+    val isDeleting: Boolean = false,
+    val deletedSuccessfully: Boolean = false,
     // Phase 14: admin-authored KINTALE form_schemas (appliesTo == KINTALE), DISTINCT
     // from the template-driven fieldResponses. Answers live on report.formValues.
     val kinTaleSchemas: List<FormSchema> = emptyList(),
@@ -680,6 +683,41 @@ class KinTaleReportViewModel(
             uploadedMedia = _uiState.value.uploadedMedia.filter { it.id != mediaId }
         )
         persistDraft()
+    }
+
+    /**
+     * #1631: delete this unsent draft through the server, which refuses a sent
+     * one. Nothing local is written first: an edit made since the last save is
+     * thrown away with the draft, which is what the confirm says.
+     */
+    fun deleteDraft() {
+        val state = _uiState.value
+        if (state.isDeleting || state.isSending) return
+        val report = state.report
+        if (!report.canDeleteAsDraft()) {
+            _uiState.value = state.copy(error = "Only a saved, unsent draft can be deleted.")
+            return
+        }
+        // A pending autosave would write the draft back after the delete.
+        autosaveJob?.cancel()
+        autosaveJob = null
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDeleting = true, error = null)
+            kinCareRepository.deleteKinTaleReportDraft(report.id)
+                .onSuccess {
+                    // Nothing may write the deleted doc back: persistDraft and the
+                    // autosave both refuse once the doc is known not to be there.
+                    reportBaseline = null
+                    reportExistsOnServer = false
+                    _uiState.value = _uiState.value.copy(isDeleting = false, deletedSuccessfully = true)
+                }
+                .onFailure { e ->
+                    _uiState.value = _uiState.value.copy(
+                        isDeleting = false,
+                        error = e.message ?: "Delete failed",
+                    )
+                }
+        }
     }
 
     fun send() {

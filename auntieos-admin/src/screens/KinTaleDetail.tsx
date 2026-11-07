@@ -51,6 +51,8 @@ import {
 import { AsyncRegion } from '../components/AsyncRegion';
 import { LoadingRow } from '../components/LoadingRow';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { DeleteKinTaleDraftButton } from '../components/DeleteKinTaleDraftButton';
+import { canDeleteKinTaleDraft } from '../api/kinTaleReportDraftDelete';
 import { Banner } from '../components/Banner';
 import './KinTaleDetail.css';
 
@@ -107,6 +109,11 @@ export interface KinTaleDetailProps {
    * convention: no live no-op).
    */
   onEdit?: (kinTaleId: string) => void;
+  /**
+   * #1631: called once an unsent draft has been deleted. Omit to offer no
+   * Delete at all (the same no-live-no-op rule as `onEdit`).
+   */
+  onDeleted?: () => void;
   onClose: () => void;
 }
 
@@ -132,7 +139,7 @@ function railWhen(iso: string): string {
   return formatWhenFull(kinTaleTimeOf(iso)) ?? 'Not recorded';
 }
 
-export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps) {
+export function KinTaleDetail({ kinTaleId, onEdit, onDeleted, onClose }: KinTaleDetailProps) {
   const reports = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const kin = useCollection<Kin>(KIN_QUERY);
   // Third bounded stream, and the same one `KinTaleCompose.tsx` already opens
@@ -159,6 +166,7 @@ export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps
           templateRows={templateRows}
           onClose={onClose}
           {...(onEdit ? { onEdit } : {})}
+          {...(onDeleted ? { onDeleted } : {})}
         />
       </div>
     );
@@ -189,12 +197,13 @@ interface KinTaleDetailBodyProps {
   /** Raw `kintale_templates` docs; decoded here, see `moods` below. */
   templateRows: Async<Record<string, unknown>[]>;
   onEdit?: (kinTaleId: string) => void;
+  onDeleted?: () => void;
   onClose: () => void;
 }
 
 type DetailBanner = { tone: 'error' | 'success'; text: string };
 
-function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onClose }: KinTaleDetailBodyProps) {
+function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClose }: KinTaleDetailBodyProps) {
   // Every read off `entry` is defaulted. KinTaleEntry is a CAST over raw
   // Firestore data, not a validation of it: `title` is absent on 89 of the 92
   // live kin_care_reports, and reading one blind throws through React's error
@@ -544,6 +553,15 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onClose }: KinTal
         trailing={
           <div className="kintale-detail__actions">
             {onEdit ? <GhostButton label="Edit" onClick={() => onEdit(entry._id)} /> : null}
+            {/* #1631: an unsent draft can be deleted. Only where the server
+                would allow it, so the control is never a refusal. */}
+            {onDeleted && canDeleteKinTaleDraft(entry) ? (
+              <DeleteKinTaleDraftButton
+                reportId={entry._id}
+                household={entry.kinfolkName ?? ''}
+                onDeleted={onDeleted}
+              />
+            ) : null}
             <GhostButton label="Close" onClick={onClose} />
           </div>
         }

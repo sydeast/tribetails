@@ -931,6 +931,21 @@ class KinCareRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to archive orphan report $reportId", it) }
 
+    /**
+     * #1631: delete one unsent KinTale report draft through the
+     * `deleteKinTaleReportDraft` callable. The server refuses a SENT row, a row
+     * with a `sentAt` and an untriaged migration orphan (the `purgeOldDrafts`
+     * conditions), inside one transaction, and audits the delete. Owner only.
+     */
+    suspend fun deleteKinTaleReportDraft(reportId: String): Result<Unit> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(reportId.isNotBlank()) { "reportId required" }
+        functions.getHttpsCallable("deleteKinTaleReportDraft")
+            .call(mapOf("reportId" to reportId))
+            .awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to delete KinTale draft $reportId", it) }
+
     // ───────────────────────────────────────────────────────────────────────
     // KinTale share link (view-as-kinfolk). Mints a scrubbed, kinfolk-facing
     // share of a SENT KinTale via the deployed `createShareLink` onCall callable.

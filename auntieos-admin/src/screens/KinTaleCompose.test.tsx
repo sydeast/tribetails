@@ -20,6 +20,13 @@ function render(ui: React.ReactElement) {
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
+// #1631: the delete callable. The gate (`canDeleteKinTaleDraft`) stays real.
+const { deleteKinTaleReportDraft } = vi.hoisted(() => ({ deleteKinTaleReportDraft: vi.fn() }));
+vi.mock('../api/kinTaleReportDraftDelete', async (orig) => ({
+  ...(await orig<typeof import('../api/kinTaleReportDraftDelete')>()),
+  deleteKinTaleReportDraft,
+}));
+
 const { saveKinTaleDraft, sendKinTale } = vi.hoisted(() => ({
   saveKinTaleDraft: vi.fn(),
   sendKinTale: vi.fn(),
@@ -916,5 +923,40 @@ describe('L20 · GPS block', () => {
     });
     render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
     expect(await screen.findByText('Visit route')).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1631: the composer could save and send a report draft but never delete it.
+ * A saved, unsent draft now carries Delete draft; a brand-new one, never saved,
+ * does not.
+ */
+describe('KinTaleCompose: Delete draft (#1631)', () => {
+  beforeEach(() => {
+    deleteKinTaleReportDraft.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('deletes a saved draft after the confirm and closes the composer', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report()] } });
+    const onClose = vi.fn();
+    render(<KinTaleCompose kinTaleId="tale1" onClose={onClose} />);
+    await user.click(await screen.findByRole('button', { name: 'Delete draft' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Delete this draft?' })).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(deleteKinTaleReportDraft).toHaveBeenCalledWith('tale1');
+  });
+
+  it('offers no Delete on a new draft that has never been saved', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({})] } });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+  });
+
+  it('offers no Delete while editing a sent KinTale', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ status: 'SENT', sentAt: '2026-07-16T16:00:00.000Z' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
   });
 });

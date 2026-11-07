@@ -46,6 +46,7 @@ deleteBlockedTimeSlot
 deleteBusinessNotificationOverride
 deleteFormSchema
 deleteKin
+deleteKinTaleReportDraft
 deleteMediaFile
 deleteTemplate
 deleteTrainingDocument

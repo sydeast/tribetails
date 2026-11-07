@@ -68,6 +68,7 @@ export function KinTalesView() {
       <KinTaleDetail
         kinTaleId={mode.kinTaleId}
         onEdit={(id) => setMode({ kind: 'compose', kinTaleId: id })}
+        onDeleted={closeToList}
         onClose={closeToList}
       />
     );
