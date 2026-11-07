@@ -1133,6 +1133,14 @@ private fun BusinessProfilePanel(
                         value = businessEmail, onValueChange = onBusinessEmail,
                         label = "Business Email", modifier = Modifier.fillMaxWidth(),
                     )
+                    // #1564: every business email goes to this address.
+                    businessEmailNotice(businessEmail)?.let { notice ->
+                        Text(
+                            notice,
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.warning,
+                        )
+                    }
                     BottomBorderField(
                         value = businessPhone, onValueChange = onBusinessPhone,
                         label = "Business Phone", modifier = Modifier.fillMaxWidth(),

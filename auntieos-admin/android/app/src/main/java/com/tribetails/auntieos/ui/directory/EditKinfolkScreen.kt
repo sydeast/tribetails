@@ -16,6 +16,7 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.*
@@ -24,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.AuntieOSApp
 import androidx.compose.ui.graphics.SolidColor
@@ -40,7 +42,9 @@ import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.util.emailOkOrBlank
 import com.tribetails.auntieos.util.formatJoinDate
+import com.tribetails.auntieos.util.isJoinDateInRange
 import com.tribetails.auntieos.util.isValidPhone
+import com.tribetails.auntieos.util.joinDateRangeError
 import com.tribetails.auntieos.util.phoneOkOrBlank
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -504,6 +508,15 @@ fun EditKinfolkScreen(
                                     color = AuntieTheme.colors.textDim,
                                 )
                             }
+                            // #1584: 2025 through today, said beside the field.
+                            joinDateRangeError(state.joinDate)?.let { message ->
+                                Text(
+                                    message,
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.error,
+                                    modifier = Modifier.testTag("join-date-error"),
+                                )
+                            }
                         }
                     }
                 }
@@ -597,7 +610,8 @@ fun EditKinfolkScreen(
                         enabled   = state.firstName.isNotBlank() && isValidPhone(state.phoneNumber) &&
                             phoneOkOrBlank(state.secondaryPhone) &&
                             emailOkOrBlank(state.email) && emailOkOrBlank(state.secondaryEmail) &&
-                            state.serviceAddress.isNotBlank()
+                            state.serviceAddress.isNotBlank() &&
+                            joinDateRangeError(state.joinDate) == null
                     )
                 }
             }
@@ -695,9 +709,19 @@ private fun JoinDatePickerDialog(current: String, onDismiss: () -> Unit, onPick:
     // UTC throughout, in and out: the picker's millis are a UTC midnight, so
     // reading them back in the device zone is what slides a date to the day
     // before. Same convention as NewBookingRequestDialog and CoveragePackage.
-    val initial = runCatching { LocalDate.parse(current) }.getOrNull() ?: LocalDate.now()
+    // #1584: only 2025 through today can be picked, so a stored day outside
+    // that opens on today (the picker refuses an initial year outside its range).
+    val today = LocalDate.now()
+    val initial = runCatching { LocalDate.parse(current) }.getOrNull()
+        ?.takeIf { isJoinDateInRange(it.toString(), today) } ?: today
     val pickerState = rememberDatePickerState(
         initialSelectedDateMillis = initial.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli(),
+        yearRange = 2025..today.year,
+        selectableDates = object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                isJoinDateInRange(Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneId.of("UTC")).toLocalDate().toString(), today)
+            override fun isSelectableYear(year: Int): Boolean = year in 2025..today.year
+        },
     )
     DatePickerDialog(
         onDismissRequest = onDismiss,

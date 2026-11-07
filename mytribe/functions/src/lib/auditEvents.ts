@@ -243,6 +243,15 @@ export const AUDIT_EVENTS = {
   TRIAGE_ORPHAN_REPORT_DUPLICATE: 'TRIAGE_ORPHAN_REPORT_DUPLICATE',
   TRIAGE_ORPHAN_REPORT_ARCHIVE: 'TRIAGE_ORPHAN_REPORT_ARCHIVE',
 
+  // #1631: an unsent `kin_care_reports` draft deleted by hand
+  // (deleteKinTaleReportDraft), not by the purgeOldDrafts retention job.
+  KINTALE_REPORT_DRAFT_DELETED: 'KINTALE_REPORT_DRAFT_DELETED',
+  // #1563: a `generated_drafts` KinTale sent to its household as a
+  // `kin_care_reports` doc (publishGeneratedDraft), and an unsent one deleted
+  // (deleteGeneratedDraft).
+  KINTALE_DRAFT_PUBLISHED: 'KINTALE_DRAFT_PUBLISHED',
+  KINTALE_DRAFT_DELETED: 'KINTALE_DRAFT_DELETED',
+
   ERROR_RULE_DENY: 'ERROR_RULE_DENY',
   ERROR_FUNCTION_FAILURE: 'ERROR_FUNCTION_FAILURE',
 

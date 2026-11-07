@@ -100,21 +100,36 @@ data class ThreadSection(
 )
 
 /**
+ * True when the household spoke last and Auntie has not written back.
+ *
+ * Positive match on [ConversationSummary.lastSenderRole], never "not auntie".
+ * A summary written before that field existed cannot say who spoke last, so it
+ * falls back to the stored unread flag, the only signal it has. Mirrors
+ * `threadAwaitsReply` in the React admin's src/lib/inboxFormat.ts.
+ */
+fun threadAwaitsReply(t: ConversationSummary): Boolean = when (t.lastSenderRole.trim().lowercase()) {
+    "kinfolk" -> true
+    "auntie" -> false
+    else -> t.unreadForAdmin
+}
+/**
  * Splits threads into waiting-first, answered-second. Pure, and deliberately
  * order-preserving within a section: the server already returns the list newest
  * first, and re-sorting here would put this function in disagreement with it.
  *
- * `unreadForAdmin` is a stored BOOLEAN (decoded as `== true` above), never a
- * count, so the split is a plain partition with no arithmetic in it.
+ * WAITING MEANS THE LAST MESSAGE CAME FROM THE HOUSEHOLD ([threadAwaitsReply]),
+ * not that the thread is unread. Opening a thread clears the unread flag
+ * server-side, and splitting on that flag moved a message that still needed an
+ * answer into "Answered" the moment it was read (#1572). The unread dot and the
+ * "Mark all read" count keep asking the read question; this asks who spoke last.
  */
 fun groupThreadsByWaiting(list: List<ConversationSummary>): List<ThreadSection> {
-    val (waiting, answered) = list.partition { it.unreadForAdmin }
+    val (waiting, answered) = list.partition { threadAwaitsReply(it) }
     return listOf(
         ThreadSection(ThreadSectionKey.WAITING, "Waiting on a reply", waiting),
         ThreadSection(ThreadSectionKey.ANSWERED, "Answered", answered),
     )
 }
-
 /**
  * The thread list's shape under whichever arrangement the operator's
  * `auntieos.inbox.waitingSections` flag has selected.

@@ -74,7 +74,14 @@ class MediaUploadManager(
          * master switch are both on. See [com.tribetails.auntieos.media.PhotoLocationTagging].
          */
         location: com.tribetails.auntieos.data.model.GeoLocation? = null,
-        onProgress: (UploadProgress) -> Unit = {}
+        onProgress: (UploadProgress) -> Unit = {},
+        /**
+         * #1588: the household a KIN upload belongs to. A KINFOLK upload's household
+         * is its entityId, and company media has none, so this matters only for a
+         * pet: stamped as `kinfolkId` so Tag kin scopes to that household instead of
+         * offering every kin on file. Last and defaulted so no existing caller moves.
+         */
+        kinfolkId: String = "",
     ): Result<MediaFile> = withContext(Dispatchers.IO) {
         var localFile: LocalUploadFile? = null
         try {
@@ -104,7 +111,7 @@ class MediaUploadManager(
                 // #3 (2026-06-08): stamp kinfolkId so the gallery scopes kin-tagging to
                 // the owning household. When the entity IS a household, entityId is the
                 // kinfolkId. Parity with web platformUploadMedia.
-                kinfolkId = if (entityType == MediaEntityType.KINFOLK) entityId else "",
+                kinfolkId = mediaKinfolkIdFor(entityType, entityId, kinfolkId),
                 fileName = uploadResult.publicId?.substringAfterLast('/')?.ifBlank { desiredFileName } ?: desiredFileName,
                 originalFileName = localFile.originalFileName,
                 fileType = mediaType,
@@ -479,3 +486,18 @@ class MediaUploadManager(
         }
     }
 }
+/**
+ * The household stamped on a new `media_files` row (#1588).
+ *
+ * A KINFOLK upload IS the household, so its entityId is the answer. A KIN upload
+ * carries its household separately, because the entityId is the pet. Anything
+ * else (company media, a visit log, an avatar) has none, and BLANK here means the
+ * repository leaves the key off the document rather than writing `''`, the
+ * equality-on-empty-string Firestore trap `MediaUploadManager` documents.
+ */
+internal fun mediaKinfolkIdFor(entityType: MediaEntityType, entityId: String, kinfolkId: String): String =
+    when (entityType) {
+        MediaEntityType.KINFOLK -> entityId
+        MediaEntityType.KIN -> kinfolkId.trim()
+        else -> ""
+    }

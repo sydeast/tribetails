@@ -64,10 +64,12 @@ import com.tribetails.auntieos.web.data.KinTaleMediaConfig
 import com.tribetails.auntieos.web.data.KinTaleTemplate
 import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.canDeleteAsDraft
 import com.tribetails.auntieos.web.data.responseKey
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.screens.sessions.RouteMap
 import com.tribetails.auntieos.web.theme.AuntieTheme
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -168,17 +170,17 @@ fun KinTaleComposeScreen(
             // #867: a failed read shows its error, not a shimmer that never ends.
             (sessions as? FirestoreResult.Error)?.let {
                 SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
-                LoadErrorBanner("Couldn't load this Kin Care", it.message, onRetry = reload::retry, retrying = reload.retrying)
+                LoadErrorBanner("Couldn't load this KinCare", it.message, onRetry = reload::retry, retrying = reload.retrying)
                 return@ScreenScaffold
             }
             // #898: the read answered and this id is not in it (deleted, or a
             // stale link), distinct from still-loading, which used to shimmer forever.
             if (sessions is FirestoreResult.Data) {
                 SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
-                NotFoundNotice("This Kin Care couldn't be found. It may have been removed.", onBack = onClose)
+                NotFoundNotice("This KinCare couldn't be found. It may have been removed.", onBack = onClose)
                 return@ScreenScaffold
             }
-            SectionHeader(title = "Loading…", subtitle = "Pulling Kin Care", icon = Lucide.ClipboardList)
+            SectionHeader(title = "Loading…", subtitle = "Pulling KinCare", icon = Lucide.ClipboardList)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(3) { ShimmerCard(height = 100.dp) }
             }
@@ -341,7 +343,7 @@ private fun KinTaleComposerBody(
         }
         val recipient = kinfolk?.displayName.orEmpty()
         if (recipient.isBlank()) {
-            showToast("This Kin Care has no linked Kinfolk to write to.", ToastKind.Error)
+            showToast("This KinCare has no linked Kinfolk to write to.", ToastKind.Error)
             return
         }
         scope.launch {
@@ -421,6 +423,28 @@ private fun KinTaleComposerBody(
         }
     }
 
+    // #1631: once this tale has been saved it is a stored draft, and it can be deleted.
+    var confirmDelete by remember { mutableStateOf(false) }
+    var isDeleting by remember { mutableStateOf(false) }
+    fun onDelete() {
+        val id = report._id
+        if (id.isBlank() || isDeleting) return
+        isDeleting = true
+        scope.launch {
+            when (val r = client.deleteKinTaleReportDraft(id)) {
+                is WriteResult.Ok -> {
+                    isDeleting = false
+                    routeToast.show("Draft deleted.", ToastKind.Success)
+                    onClose()
+                }
+                is WriteResult.Err -> {
+                    isDeleting = false
+                    showToast("Couldn't delete: ${r.message}", ToastKind.Error)
+                }
+            }
+        }
+    }
+
     val isDirty = hasContent(report)
 
     ScreenScaffold {
@@ -432,7 +456,31 @@ private fun KinTaleComposerBody(
             isDirty   = isDirty,
             onClose   = onClose,
             onSend    = ::onSend,
+            canDelete = report.canDeleteAsDraft(),
+            isDeleting = isDeleting,
+            onDelete  = { confirmDelete = true },
         )
+        AuntieDialog(
+            visible = confirmDelete,
+            title = "Delete this draft?",
+            onDismiss = { confirmDelete = false },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { confirmDelete = false })
+                PrimaryButton(
+                    label = "Delete",
+                    onClick = {
+                        confirmDelete = false
+                        onDelete()
+                    },
+                )
+            },
+        ) {
+            Text(
+                text = deleteDraftConfirmText(session.kinfolkName),
+                style = AuntieTheme.typography.bodyMedium,
+                color = AuntieTheme.colors.textPrimary,
+            )
+        }
 
         StatusToast(
             visible   = toastVis,
@@ -674,6 +722,9 @@ private fun ComposerHeaderBar(
     isDirty: Boolean,
     onClose: () -> Unit,
     onSend: () -> Unit,
+    canDelete: Boolean = false,
+    isDeleting: Boolean = false,
+    onDelete: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -700,6 +751,13 @@ private fun ComposerHeaderBar(
             label   = "Close",
             onClick = onClose,
         )
+        if (canDelete) {
+            GhostButton(
+                label   = if (isDeleting) "Deleting…" else "Delete draft",
+                onClick = onDelete,
+                enabled = !isSending && !isDeleting,
+            )
+        }
         PrimaryButton(
             label   = if (isSending) "Sending…" else kinTaleSendLabel(session.kinfolkName),
             onClick = onSend,

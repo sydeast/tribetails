@@ -335,6 +335,17 @@ class FakeAuntieDataSource(
     /** Receipt id the fake stamps onto the SENT report (simulates first dispatchId). */
     var sendDeliveryReceiptId: String = "n8n_fake_123"
 
+    /** #1631: ids [deleteReportDraft] was called with; a set [deleteReportDraftError] fails it. */
+    val deletedReportDrafts = mutableListOf<String>()
+    var deleteReportDraftError: String? = null
+    override suspend fun deleteReportDraft(reportId: String): WriteResult<Unit> {
+        deletedReportDrafts += reportId
+        deleteReportDraftError?.let { return WriteResult.Err(it) }
+        val current = _reports.value
+        if (current is FirestoreResult.Data) _reports.value = FirestoreResult.Data(current.value.filterNot { it._id == reportId })
+        return WriteResult.Ok(Unit)
+    }
+
     override suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit> {
         lastSendReport = report
         lastSendSession = session

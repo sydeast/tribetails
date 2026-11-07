@@ -931,6 +931,21 @@ class KinCareRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to archive orphan report $reportId", it) }
 
+    /**
+     * #1631: delete one unsent KinTale report draft through the
+     * `deleteKinTaleReportDraft` callable. The server refuses a SENT row, a row
+     * with a `sentAt` and an untriaged migration orphan (the `purgeOldDrafts`
+     * conditions), inside one transaction, and audits the delete. Owner only.
+     */
+    suspend fun deleteKinTaleReportDraft(reportId: String): Result<Unit> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(reportId.isNotBlank()) { "reportId required" }
+        functions.getHttpsCallable("deleteKinTaleReportDraft")
+            .call(mapOf("reportId" to reportId))
+            .awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to delete KinTale draft $reportId", it) }
+
     // ───────────────────────────────────────────────────────────────────────
     // KinTale share link (view-as-kinfolk). Mints a scrubbed, kinfolk-facing
     // share of a SENT KinTale via the deployed `createShareLink` onCall callable.
@@ -1059,7 +1074,17 @@ internal fun decodeListStaff(raw: Map<*, *>?): List<StaffMember> =
                 email = m["email"] as? String,
             )
         }
-        .sortedBy { (it.displayName ?: it.uid).lowercase() }
+        .sortedBy { it.label.lowercase() }
+
+/**
+ * #1564: uid -> the name the Gallery shows for an uploader (name, else email).
+ * A staff member with neither is left out, so their uid line stays as it was.
+ */
+internal fun staffNamesByUid(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { member ->
+        val name = member.displayName?.ifBlank { null } ?: member.email?.ifBlank { null }
+        name?.let { member.uid to it }
+    }.toMap()
 
 /**
  * Pure encode of the assignAuntie callable payload. The backend schema is

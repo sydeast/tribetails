@@ -29,6 +29,7 @@ describe('listHouseholdMembers', () => {
       members: [
         {
           uid: 'u1',
+          displayName: 'Marcus Webb',
           secondaryLabel: 'Spouse',
           role: 'SECONDARY',
           status: 'ACTIVE',
@@ -48,6 +49,7 @@ describe('listHouseholdMembers', () => {
     await expect(listHouseholdMembers('fam1')).resolves.toEqual([
       {
         uid: 'u1',
+        displayName: 'Marcus Webb',
         secondaryLabel: 'Spouse',
         role: 'SECONDARY',
         status: 'ACTIVE',
@@ -304,6 +306,7 @@ describe('display helpers', () => {
   it('labels a member by email, then label, then uid, never blank', () => {
     const base = {
       uid: 'u1',
+      displayName: null,
       role: 'SECONDARY' as const,
       status: 'ACTIVE' as const,
       permissions: {
@@ -317,7 +320,9 @@ describe('display helpers', () => {
     };
     expect(memberLabel({ ...base, secondaryLabel: 'Spouse', invitedEmail: 'a@b.com' })).toBe('a@b.com');
     expect(memberLabel({ ...base, secondaryLabel: 'Spouse', invitedEmail: null })).toBe('Spouse');
-    expect(memberLabel({ ...base, secondaryLabel: null, invitedEmail: null })).toBe('u1');
+    // #1589: never the database id.
+    expect(memberLabel({ ...base, secondaryLabel: null, invitedEmail: null })).toBe('Unnamed member');
+    expect(memberLabel({ ...base, displayName: 'Dre East', secondaryLabel: 'Spouse', invitedEmail: 'a@b.com' })).toBe('Dre East');
   });
 
   it('tones invite statuses in the mock tints, so revoked and expired never read as live', () => {

@@ -75,4 +75,38 @@ class JoinDateTest {
         assertEquals("!!!", formatJoinDate("!!!"))
         assertNull(joinDateForEdit("2026-07-24").note)
     }
+
+    /** #1584. Operator ruling, 2026-11-05 docket: 2025 through today. */
+    @Test
+    fun joinDatesRunFrom2025ThroughToday() {
+        val today = java.time.LocalDate.parse("2026-11-06")
+        assertTrue(isJoinDateInRange("2025-01-01", today))
+        assertTrue(isJoinDateInRange("2026-11-06", today))
+        assertFalse(isJoinDateInRange("2024-12-31", today))
+        assertFalse(isJoinDateInRange("2026-11-07", today))
+        assertFalse(isJoinDateInRange("1900-01-15", today))
+        assertFalse(isJoinDateInRange("2099-06-01", today))
+        assertFalse(isJoinDateInRange("2025-02-30", today))
+    }
+
+    /** #1602: every profile's join line has one shape. */
+    @Test
+    fun theProfileLineFormatsASoundDayAndFlagsTheRest() {
+        val today = java.time.LocalDate.parse("2026-11-06")
+        assertTrue(profileJoinLine("2026-01-04", today)!!.startsWith("Joined "))
+        assertTrue(profileJoinDateIsSound("2026-01-04", today))
+        assertEquals(JOIN_DATE_NEEDS_FIXING, profileJoinLine("March 5", today))
+        assertEquals(JOIN_DATE_NEEDS_FIXING, profileJoinLine("1900-01-15", today))
+        assertFalse(profileJoinDateIsSound("2099-06-01", today))
+        assertNull(profileJoinLine("  ", today))
+    }
+
+    @Test
+    fun theFieldSaysWhyAndBlankMayBeSaved() {
+        val today = java.time.LocalDate.parse("2026-11-06")
+        assertEquals("Pick a join date from 2025 through today.", joinDateRangeError("1900-01-15", today))
+        assertEquals("Pick a join date from 2025 through today.", joinDateRangeError("2099-06-01", today))
+        assertNull(joinDateRangeError("", today))
+        assertNull(joinDateRangeError("2026-01-04", today))
+    }
 }
