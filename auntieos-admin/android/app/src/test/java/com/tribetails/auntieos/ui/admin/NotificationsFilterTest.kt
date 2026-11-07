@@ -28,4 +28,15 @@ class NotificationsFilterTest {
     @Test
     fun categoryFilterMatchesCategory() =
         assertEquals(listOf("n1", "n3"), notificationsForFilter(all, "booking").map { it.id })
+
+    // #1611: Select all picks what the active chip shows, not the whole feed.
+    @Test
+    fun selectAllUnderUnreadSkipsReadRows() =
+        assertEquals(setOf("n1", "n3"), selectAllTargets(all, NOTIF_UNREAD_FILTER))
+    @Test
+    fun selectAllUnderACategoryStaysInIt() =
+        assertEquals(setOf("n2"), selectAllTargets(all, "payment"))
+    @Test
+    fun selectAllUnderAllTakesEverything() =
+        assertEquals(setOf("n1", "n2", "n3"), selectAllTargets(all, null))
 }

@@ -580,6 +580,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   listAudienceSegments: () => require('./admin/audienceSegments'),
   deleteAudienceSegment: () => require('./admin/audienceSegments'),
   broadcastMessage: () => require('./admin/broadcastMessage'),
+  previewBroadcastAudience: () => require('./admin/previewBroadcastAudience'),
   // #823. Watching and stopping a broadcast whose fan-out outlived its callable.
   getBroadcastProgress: () => require('./admin/broadcastProgress'),
   stopBroadcast: () => require('./admin/broadcastProgress'),
@@ -587,6 +588,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   getConversationThread: () => require('./admin/conversations'),
   replyToConversation: () => require('./admin/conversations'),
   markConversationRead: () => require('./admin/conversations'),
+  markConversationUnread: () => require('./admin/conversations'),
   markAllThreadsRead: () => require('./admin/markAllThreadsRead'),
   getRecordingAudio: () => require('./admin/getRecordingAudio'),
   sendKinfolkMessage: () => require('./portal/sendKinfolkMessage'),

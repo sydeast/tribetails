@@ -103,7 +103,7 @@ const MODES: readonly ModeDef[] = [
   },
 ];
 
-type FilterKey = 'all' | 'email' | 'sms' | 'push';
+type FilterKey = 'all' | 'email' | 'sms' | 'push' | 'broadcast' | 'message';
 
 interface FilterDef {
   key: FilterKey;
@@ -116,6 +116,8 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'email', label: 'Email', test: (c) => c === 'email' },
   { key: 'sms', label: 'Text', test: (c) => c === 'sms' },
   { key: 'push', label: 'Push', test: (c) => c === 'push' },
+  { key: 'broadcast', label: 'Broadcasts', test: (c) => c === 'broadcast' },
+  { key: 'message', label: 'Inbox replies', test: (c) => c === 'message' },
 ];
 
 export interface CommunicateProps {
@@ -247,7 +249,7 @@ function RecentSends() {
         loading={<LoadingRow label="Loading recent sends…" className="communicate__hint" />}
         empty={
           <EmptyHint>
-            No external sends yet. Sends from Communicate show here with delivery and open counts.
+            Nothing sent yet. Emails, texts, broadcasts and Inbox replies show here, newest first.
           </EmptyHint>
         }
       >
@@ -307,6 +309,13 @@ interface SendRowProps {
   row: RecentSend;
 }
 
+/** "12 kinfolk · Email, Text" for a broadcast row (#1610). Pure. */
+export function broadcastSummaryLine(row: RecentSend): string {
+  const who = `${String(row.recipientCount ?? 0)} kinfolk`;
+  const via = (row.channels ?? []).map((c) => channelLabel(c)).join(', ');
+  return via !== '' ? `${who} · ${via}` : who;
+}
+
 function SendRow({ row }: SendRowProps) {
   const counts = sendCountsOf(row.counts);
   const state = sendStateOf(counts, row.channel);
@@ -323,7 +332,12 @@ function SendRow({ row }: SendRowProps) {
           {channelLabel(row.channel)} · {recipient}
         </span>
         {subject !== '' ? <span className="communicate__row-subject">{subject}</span> : null}
-        <span className="communicate__row-summary">{engagementSummary(row.channel, counts)}</span>
+        {row.kind === 'reply' && row.preview ? <span className="communicate__row-subject">{row.preview}</span> : null}
+        <span className="communicate__row-summary">
+          {row.kind === 'broadcast'
+            ? broadcastSummaryLine(row)
+            : engagementSummary(row.channel, counts)}
+        </span>
       </span>
       <span className="communicate__row-side">
         <time className="communicate__row-time" dateTime={sendMachineTime(row.sentAtMs)}>

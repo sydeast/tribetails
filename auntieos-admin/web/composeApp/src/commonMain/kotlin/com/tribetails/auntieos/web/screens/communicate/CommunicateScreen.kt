@@ -75,9 +75,9 @@ import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieChip
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieChipGroup
-import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieEmailPreviewCard
 import com.tribetails.auntieos.web.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.web.ui.components.AuntieIconTile
@@ -90,7 +90,6 @@ import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.DenScreenHeading
 import com.tribetails.auntieos.web.ui.components.EmptyHint
-import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.MultilineField
@@ -227,7 +226,13 @@ fun CommunicateScreen(
 
     // Keep editedCopy in sync when a fresh AI result lands.
     LaunchedEffect(result) {
-        result?.let { editedCopy = it.generated_copy }
+        // #1610: one subject. A "Subject:" line the generator wrote leaves the
+        // body, and fills the Subject field only when the operator left it blank.
+        result?.let {
+            val split = splitSubjectLine(it.generated_copy)
+            editedCopy = split.body
+            if (subject.isBlank() && split.subject.isNotBlank()) subject = split.subject
+        }
     }
 
     // #1563: fill the form from a stored draft, once per draft.
@@ -1077,11 +1082,34 @@ private fun BroadcastForm(
         }
     }
 
-    fun send() {
-        errorText = null
+    // #1610: Review opens a confirm that asks the server how many kinfolk the
+    // audience reaches, counted the way the send counts them.
+    var confirmOpen by remember { mutableStateOf(false) }
+    var reach by remember { mutableStateOf<WriteResult<BroadcastAudiencePreview>?>(null) }
+
+    fun problem(): String? {
         val criteria = if (selectedSegmentId == null) adhocCriteria() else null
         val effectiveCriteria = criteria ?: segments.firstOrNull { it.id == selectedSegmentId }?.criteria ?: BroadcastCriteria()
-        val blocker = tagCapProblem() ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
+        return tagCapProblem()
+            ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
+            ?: mergeFieldBlocker(subject, body)
+    }
+
+    fun review() {
+        errorText = null
+        val blocker = problem()
+        if (blocker != null) { errorText = blocker; errorIsTimeout = false; onToast(blocker, ToastKind.Error); return }
+        confirmOpen = true
+        reach = null
+        val criteria = if (selectedSegmentId == null) adhocCriteria() else null
+        scope.launch { reach = firestore.previewBroadcastAudience(selectedSegmentId, criteria) }
+    }
+
+    fun send() {
+        confirmOpen = false
+        errorText = null
+        val criteria = if (selectedSegmentId == null) adhocCriteria() else null
+        val blocker = problem()
         if (blocker != null) { errorText = blocker; errorIsTimeout = false; onToast(blocker, ToastKind.Error); return }
         sending = true
         val signature = broadcastSignature(selectedSegmentId, kind, statusesText, selectedTags, tagMatch, channels, subject, body)
@@ -1157,13 +1185,19 @@ private fun BroadcastForm(
                 label = { it.label },
             )
             if (kind == SegmentKind.Status) {
-                BottomBorderField(
-                    value = statusesText,
-                    onValueChange = { statusesText = it },
-                    label = "Statuses",
-                    placeholder = "active, prospect",
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // #1610: picked from the Directory's statuses, never typed.
+                FieldLabel("Statuses")
+                val picked = statusesText.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                Row(horizontalArrangement = Arrangement.spacedBy(dims.space2)) {
+                    BROADCAST_STATUS_OPTIONS.forEach { st ->
+                        AuntieChip(
+                            label = st.replaceFirstChar { it.uppercase() },
+                            selected = st in picked,
+                            onClick = { statusesText = toggleBroadcastStatus(statusesText, st, st !in picked) },
+                            tone = AuntieChipTone.Teal,
+                        )
+                    }
+                }
             }
             if (kind == SegmentKind.Tags) {
                 FieldLabel("Household tags")
@@ -1335,9 +1369,53 @@ private fun BroadcastForm(
             }
         }
 
+        mergeFieldBlocker(subject, body)?.let { msg ->
+            Text(text = msg, style = AuntieTheme.typography.bodySmall, color = c.error)
+        }
+        Text(
+            text = "{{firstName}}, {{lastName}}, {{kinfolkName}} and {{business}} are filled per household on every channel. " +
+                "A household with no first name on file reads \"$KINFOLK_NAME_STAND_IN\".",
+            style = AuntieTheme.typography.bodySmall,
+            color = c.textDim,
+        )
+
+        AuntieDialog(
+            visible = confirmOpen,
+            title = "Send this broadcast?",
+            onDismiss = { confirmOpen = false },
+            maxWidth = 520.dp,
+            footer = {
+                GhostButton(label = "Cancel", onClick = { confirmOpen = false }, enabled = !sending)
+                PrimaryButton(label = "Send now", onClick = ::send, enabled = !sending, loading = sending)
+            },
+        ) {
+            Text(
+                text = "Channels: ${channels.joinToString(", ") { it.label }}",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            subject.trim().takeIf { it.isNotEmpty() }?.let {
+                Text(text = "Subject: $it", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+            Text(
+                text = when (val r = reach) {
+                    null -> "Counting who this reaches…"
+                    is WriteResult.Ok -> reachLine(r.value)
+                    is WriteResult.Err -> "The count did not load (${r.message}). The send still reports who it reached."
+                },
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+            )
+            Text(
+                text = "This goes out right now. A household that switched a channel off does not get it there; the result shows who was reached.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
+
         PrimaryButton(
-            label = "Send broadcast",
-            onClick = ::send,
+            label = "Review broadcast",
+            onClick = ::review,
             loading = sending,
             leading = {
                 Icon(Lucide.Megaphone, contentDescription = null, tint = c.background, modifier = Modifier.size14())
@@ -2130,7 +2208,7 @@ private fun RecentPanel(
             }
             is RecentSendsUi.Loaded -> if (s.items.isEmpty()) {
                 Text(
-                    text = "No external sends yet. Sends from Communicate show here with delivery and open counts.",
+                    text = "Nothing sent yet. Emails, texts, broadcasts and Inbox replies show here, newest first.",
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textDim,
                 )
@@ -2146,8 +2224,12 @@ private fun RecentPanel(
                             snd.subject?.takeIf { it.isNotBlank() }?.let { subj ->
                                 Text(subj, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             }
+                            // #1610: an Inbox reply shows what was written.
+                            snd.preview?.takeIf { snd.kind == "reply" }?.let { p ->
+                                Text(p, style = AuntieTheme.typography.bodySmall, color = c.textDim, maxLines = 2)
+                            }
                             Text(
-                                text = engagementSummary(snd.channel, snd.counts),
+                                text = if (snd.kind == "broadcast") broadcastSummaryLine(snd) else engagementSummary(snd.channel, snd.counts),
                                 style = AuntieTheme.typography.bodySmall,
                                 color = c.textDim,
                             )

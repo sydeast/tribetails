@@ -619,6 +619,23 @@ class FirestoreClient {
         }
     }
 
+    /** #1610: how many households a broadcast audience reaches, before the send. Writes nothing. */
+    suspend fun previewBroadcastAudience(
+        segmentId: String?,
+        criteria: com.tribetails.auntieos.web.screens.communicate.BroadcastCriteria?,
+    ): WriteResult<com.tribetails.auntieos.web.screens.communicate.BroadcastAudiencePreview> {
+        val payload = buildJsonObject {
+            if (!segmentId.isNullOrBlank()) put("segmentId", JsonPrimitive(segmentId))
+            if (criteria != null) put("criteria", com.tribetails.auntieos.web.screens.communicate.criteriaToJson(criteria))
+        }
+        return when (val r = platformInvokeCallable("previewBroadcastAudience", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeBroadcastAudiencePreview(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "audience count decode failed") }
+        }
+    }
+
     suspend fun broadcastMessage(
         segmentId: String?,
         criteria: com.tribetails.auntieos.web.screens.communicate.BroadcastCriteria?,
@@ -721,6 +738,15 @@ class FirestoreClient {
     suspend fun markConversationRead(kinfolkId: String): WriteResult<Unit> {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
         return when (val r = platformInvokeCallable("markConversationRead", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
+    /** #1611: puts one thread back in the unread pile (admin flag only; read receipts stay). */
+    suspend fun markConversationUnread(kinfolkId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("markConversationUnread", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> WriteResult.Ok(Unit)
         }
