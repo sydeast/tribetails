@@ -335,7 +335,7 @@ describe('TemplateAssignments picker and writes', () => {
     await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_ok');
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-    expect(await screen.findByText(/assignTemplate failed:.*not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save:.*not found/i)).toBeInTheDocument();
   });
 
   it('repeats the server sentence verbatim when the key is refused', async () => {
@@ -359,12 +359,12 @@ describe('TemplateAssignments picker and writes', () => {
   it('surfaces a bindings load failure fail-loud rather than an empty state', async () => {
     listTemplateBindings.mockRejectedValue(new Error('permission-denied'));
     render(<TemplateAssignments onClose={vi.fn()} />);
-    expect(await screen.findByText(/listTemplateBindings failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*permission-denied/i)).toBeInTheDocument();
   });
 
   it('surfaces a catalog-keys load failure instead of an empty routing table', async () => {
     listCatalogKeys.mockRejectedValue(new Error('permission-denied'));
     render(<TemplateAssignments onClose={vi.fn()} />);
-    expect(await screen.findByText(/listCatalogKeys failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*permission-denied/i)).toBeInTheDocument();
   });
 });

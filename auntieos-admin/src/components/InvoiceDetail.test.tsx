@@ -504,7 +504,7 @@ describe('InvoiceDetail', () => {
     await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
     expect(
-      await screen.findByText(/reviewAndSendDraftInvoice failed:.*missing: total/i),
+      await screen.findByText(/Could not send:.*missing: total/i),
     ).toBeInTheDocument();
   });
 
@@ -582,7 +582,7 @@ describe('InvoiceDetail', () => {
     it('leaves a real refusal alone: no re-read, the server sentence stands', async () => {
       reviewAndSendDraftInvoice.mockRejectedValue(new Error('Invoice is not a draft; nothing to send.'));
       await pressSend('inv-refused');
-      expect(await screen.findByText(/reviewAndSendDraftInvoice failed:.*not a draft/)).toBeInTheDocument();
+      expect(await screen.findByText(/Could not send:.*not a draft/)).toBeInTheDocument();
       expect(readInvoiceSendMarks).not.toHaveBeenCalled();
     });
   });
@@ -885,7 +885,7 @@ describe('InvoiceDetail', () => {
     render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
-    expect(await screen.findByText(/sendInvoiceReminder failed:.*already paid/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not send:.*already paid/i)).toBeInTheDocument();
   });
 
   it('AO-12 regression guard: a stored credit stamp renders CREDIT, never PAID', () => {
@@ -1369,7 +1369,7 @@ describe('the payments panel', () => {
   it('fails loud on a refused read, verbatim, and offers a retry', async () => {
     getInvoiceLedger.mockRejectedValueOnce(new Error('Invoice not found.'));
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
-    expect(await screen.findByText(/getInvoiceLedger failed: Invoice not found\./i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: Invoice not found\./i)).toBeInTheDocument();
     // Not "there are no payments". The distinction is the whole point.
     expect(screen.queryByText(/No payment has been recorded/i)).toBeNull();
     getInvoiceLedger.mockResolvedValue(ledgerResult());
@@ -1571,7 +1571,7 @@ describe('recording a payment writes both the settlement and the ledger row', ()
     getInvoiceLedger.mockRejectedValue(new Error('unavailable'));
     markInvoicePaid.mockResolvedValue(settledResult());
     render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
-    await screen.findByText(/getInvoiceLedger failed/i);
+    await screen.findByText(/Could not load/i);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
@@ -1591,7 +1591,7 @@ describe('recording a payment writes both the settlement and the ledger row', ()
   it('does NOT call recordPayment when markInvoicePaid refused: no payment happened', async () => {
     markInvoicePaid.mockRejectedValueOnce(new Error('Invoice is already settled.'));
     await recordTwenty();
-    expect(await screen.findByText(/markInvoicePaid failed: Invoice is already settled\./i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save: Invoice is already settled\./i)).toBeInTheDocument();
     expect(recordPayment).not.toHaveBeenCalled();
   });
   it('reloads the ledger after a payment, so the panel is not describing the invoice as it was', async () => {
@@ -1651,7 +1651,7 @@ describe('InvoiceDetail initialAction', () => {
     sendInvoiceReminder.mockRejectedValue(new Error('permission-denied'));
     render(<InvoiceDetail invoice={entry()} initialAction="reminder" onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
-    expect(await screen.findByText(/sendInvoiceReminder failed: permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not send: permission-denied/i)).toBeInTheDocument();
   });
   it('IGNORES an action the stored state does not permit, falling back to the action list', () => {
     // The list armed "reminder" off an open invoice; by the time this renders,
@@ -3258,7 +3258,7 @@ describe('InvoiceDetail Download PDF', () => {
     vi.spyOn(window, 'open').mockReturnValue(win);
     render(<InvoiceDetail invoice={entry({ status: 'open' })} onClose={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Download PDF' }));
-    expect(await screen.findByText(/generateInvoicePdf failed: invoice_pdf_render_failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not create: invoice_pdf_render_failed/)).toBeInTheDocument();
     expect(win.close).toHaveBeenCalledTimes(1);
     expect(win.location.href).toBe('');
     expect(screen.getByRole('button', { name: 'Download PDF' })).toBeEnabled();
@@ -3323,7 +3323,7 @@ describe('Link visits (#1245)', () => {
     await user.click(within(editor).getByRole('checkbox', { name: /Walk two/ }));
     await user.click(within(editor).getByRole('button', { name: 'Save' }));
     expect(
-      await within(editor).findByText('linkInvoiceSessions failed: This invoice is outside your test sandbox.'),
+      await within(editor).findByText('Could not save: This invoice is outside your test sandbox.'),
     ).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Link visits' })).toBeInTheDocument();
     expect(getInvoiceLedger).toHaveBeenCalledTimes(1);

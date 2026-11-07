@@ -59,6 +59,6 @@ describe('RouteOptimizerWidget', () => {
   it('fails loud (names the callable) when optimize rejects', async () => {
     optimizeRoute.mockRejectedValue(new Error('MAPBOX_TOKEN missing'));
     render(<RouteOptimizerWidget />);
-    expect(await screen.findByText(/optimizeRoute:.*failed:.*MAPBOX_TOKEN missing/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*MAPBOX_TOKEN missing/i)).toBeInTheDocument();
   });
 });

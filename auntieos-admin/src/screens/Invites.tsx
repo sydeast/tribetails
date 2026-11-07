@@ -252,7 +252,7 @@ export function Invites() {
         if (live) {
           setInvites({
             status: 'error',
-            message: `listAllInvites failed: ${errText(err, 'Load failed')}`,
+            message: `Could not load: ${errText(err, 'Load failed')}`,
             retry: load,
           });
         }

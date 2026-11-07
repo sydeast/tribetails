@@ -191,7 +191,7 @@ function AssignOrphanDialog({ report, kinfolk, onClose, onAssigned }: AssignOrph
     } catch (err) {
       setSaving(false);
       setError(
-        `assignKinfolkToOrphanReport failed: ${err instanceof Error ? err.message : 'Assign failed'}`,
+        `Could not save: ${err instanceof Error ? err.message : 'Assign failed'}`,
       );
     }
   }
@@ -305,7 +305,7 @@ function MarkDuplicateDialog({ report, candidates, onClose, onMarked }: MarkDupl
     } catch (err) {
       setSaving(false);
       setError(
-        `markOrphanReportAsDuplicate failed: ${err instanceof Error ? err.message : 'Mark duplicate failed'}`,
+        `Could not save: ${err instanceof Error ? err.message : 'Mark duplicate failed'}`,
       );
     }
   }
@@ -408,7 +408,7 @@ function ArchiveOrphanDialog({ report, onClose, onArchived }: ArchiveOrphanDialo
     } catch (err) {
       setSaving(false);
       setError(
-        `archiveOrphanReportAsBadData failed: ${err instanceof Error ? err.message : 'Archive failed'}`,
+        `Could not archive: ${err instanceof Error ? err.message : 'Archive failed'}`,
       );
     }
   }

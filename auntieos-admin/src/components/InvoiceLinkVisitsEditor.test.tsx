@@ -204,7 +204,7 @@ describe('InvoiceLinkVisitsEditor', () => {
     await user.click(box('s2'));
     await user.click(saveButton());
 
-    expect(await screen.findByText('linkInvoiceSessions failed: Session(s) not found: s2.')).toBeInTheDocument();
+    expect(await screen.findByText('Could not save: Session(s) not found: s2.')).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled();
     expect(screen.getByRole('region', { name: 'Link visits' })).toBeInTheDocument();
     expect(box('s1').checked).toBe(true);

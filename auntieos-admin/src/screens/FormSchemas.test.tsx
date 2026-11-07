@@ -347,14 +347,14 @@ describe('FormSchemas screen', () => {
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
     listFormSchemas.mockRejectedValue(new Error('permission-denied'));
     render(<FormSchemas />);
-    expect(await screen.findByText(/listFormSchemas failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.queryByText(/no schemas yet/i)).toBeNull();
   });
 
   it('retries the load on demand', async () => {
     listFormSchemas.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([schema({})]);
     render(<FormSchemas />);
-    await screen.findByText(/listFormSchemas failed/i);
+    await screen.findByText(/Could not load/i);
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('Tribe Profile')).toBeInTheDocument();
     expect(listFormSchemas).toHaveBeenCalledTimes(2);
@@ -481,7 +481,7 @@ describe('FormSchemas screen', () => {
     await screen.findByText('Tribe Profile');
     await userEvent.click(screen.getByRole('button', { name: /delete tribe profile/i }));
     await userEvent.click(screen.getByRole('button', { name: /delete schema/i }));
-    expect(await screen.findByText(/deleteFormSchema failed:.*not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not delete:.*not found/i)).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 

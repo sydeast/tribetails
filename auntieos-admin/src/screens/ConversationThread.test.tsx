@@ -89,14 +89,14 @@ describe('ConversationThread', () => {
     await userEvent.type(screen.getByLabelText(/reply to this household/i), 'test');
     await userEvent.click(screen.getByRole('button', { name: /send reply/i }));
 
-    expect(await screen.findByText(/replyToConversation failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not send:.*permission-denied/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/reply to this household/i)).toHaveValue('test');
   });
 
   it('surfaces a load failure fail-loud, not an empty state', async () => {
     getConversationThread.mockRejectedValue(new Error('deadline-exceeded'));
     render(<ConversationThread kinfolkId="k1" kinfolkName="Alvarez" onBack={vi.fn()} />);
-    expect(await screen.findByText(/getConversationThread failed:.*deadline-exceeded/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*deadline-exceeded/i)).toBeInTheDocument();
   });
 
   it('calls onBack from the Back control', async () => {
@@ -163,7 +163,7 @@ describe('ConversationThread reply guards', () => {
     render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={onBack} />);
     await screen.findByText('hello');
     await userEvent.click(screen.getByRole('button', { name: 'Mark unread' }));
-    expect(await screen.findByText(/markConversationUnread failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save: permission-denied/)).toBeInTheDocument();
     expect(onBack).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Mark unread' })).toBeEnabled();
   });

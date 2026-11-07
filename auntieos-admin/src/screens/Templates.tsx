@@ -330,7 +330,7 @@ export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }:
           live &&
           setTemplates({
             status: 'error',
-            message: `listTemplates failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );
@@ -358,7 +358,7 @@ export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }:
       .catch((err: unknown) => {
         setLoadingMore(false);
         setLoadMoreError(
-          `listTemplates failed: ${err instanceof Error ? err.message : 'Load more failed'}`,
+          `Could not load: ${err instanceof Error ? err.message : 'Load more failed'}`,
         );
       });
   }, [nextCursor, loadingMore]);
@@ -373,7 +373,7 @@ export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }:
           live &&
           setCategories({
             status: 'error',
-            message: `listCategories failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadCategories,
           }),
       );

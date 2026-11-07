@@ -252,7 +252,7 @@ describe('NotificationGate screen', () => {
     const sms = await screen.findByRole('switch', { name: /via SMS for Business/i });
     await userEvent.click(sms);
 
-    expect(await screen.findByText(/saveBusinessNotificationOverride failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save/i)).toBeInTheDocument();
     expect(await screen.findByText(/nope/i)).toBeInTheDocument();
     // initial load + reload-on-failure
     await waitFor(() => expect(getNotificationMatrix).toHaveBeenCalledTimes(2));

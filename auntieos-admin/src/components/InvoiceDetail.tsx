@@ -60,6 +60,7 @@ import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
 import { invoiceTermsDefs, parseInvoiceTermsCode, type InvoiceTermsCode } from '../lib/invoiceTerms';
 import { noticePreviewSentence } from '../lib/invoiceNoticePreview';
+import { failedToLead } from '../lib/callableErrorText';
 import { phaseOfError } from '../lib/offlineWrite';
 import { readInvoiceSendMarks } from '../api/invoiceSendCheck';
 import { sendMarksOf, sendOutcomeAfterSilence, type SendCheckAction } from '../lib/invoiceSendCheck';
@@ -74,7 +75,7 @@ import './InvoiceDetail.css';
  * What this panel says when a money action fails (#807).
  *
  * THE SENTENCE THAT MATTERS IS WHICH OF THREE THINGS HAPPENED, and until now
- * all three read the same: "markInvoicePaid failed: internal". The SDK reports
+ * all three read the same: "Could not save: internal". The SDK reports
  * `functions/internal` for every transport failure, so that one string covered
  * "never left the device", "we cannot tell", and a genuine server refusal —
  * and on this panel those call for different actions:
@@ -102,7 +103,7 @@ import './InvoiceDetail.css';
  *   failed   the server answered. Its own sentence is the useful one.
  *
  * The offline classes carry their whole sentence, so the callable-name prefix
- * is dropped for them: "markInvoicePaid failed: This device is offline…" reads
+ * is dropped for them: "Could not save: This device is offline…" reads
  * as a bug in the app rather than a fact about the phone.
  */
 export function invoiceActionError(caught: unknown, callableName: string): string {
@@ -112,7 +113,7 @@ export function invoiceActionError(caught: unknown, callableName: string): strin
   if (phase === 'unknown') {
     return `${message} Press the same button again WITHOUT changing anything: this payment carries a key that makes a second attempt land on the same record. Changing a figure first would make it a different payment.`;
   }
-  return `${callableName} failed: ${message}`;
+  return `${failedToLead(callableName)}: ${message}`;
 }
 
 /**
@@ -948,7 +949,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // messages name the invoice and the reason, and rewording one here would
         // lose the part that says what to do next.
         setLedgerError(
-          `getInvoiceLedger failed: ${caught instanceof Error ? caught.message : 'Load failed'}`,
+          `Could not load: ${caught instanceof Error ? caught.message : 'Load failed'}`,
         );
         setLedgerLoading(false);
       });
@@ -1098,7 +1099,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       // sentence written for the operator (money locked by a recorded payment,
       // a discount larger than its line), and rewording them here would lose
       // exactly the part that says what to do next.
-      setEditError(`updateInvoice failed: ${caught instanceof Error ? caught.message : 'Save failed'}`);
+      setEditError(`Could not save: ${caught instanceof Error ? caught.message : 'Save failed'}`);
     }
   }
 
@@ -1166,7 +1167,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     } catch (caught) {
       setBusy(false);
       setActionError(
-        `retryInvoiceCheckoutClose failed: ${caught instanceof Error ? caught.message : 'Retry failed'}`,
+        `Could not retry: ${caught instanceof Error ? caught.message : 'Retry failed'}`,
       );
     }
   }
@@ -1205,7 +1206,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       if (win && !win.closed) win.close();
       setPdfBusy(false);
       setActionError(
-        `generateInvoicePdf failed: ${caught instanceof Error ? caught.message : 'PDF failed'}`,
+        `Could not create: ${caught instanceof Error ? caught.message : 'PDF failed'}`,
       );
     }
   }
@@ -1241,7 +1242,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       // do next (give it a new due date, send a reminder instead), and
       // paraphrasing it here would throw that away.
       setActionError(
-        `resendQuote failed: ${caught instanceof Error ? caught.message : 'Resend failed'}`,
+        `Could not send: ${caught instanceof Error ? caught.message : 'Resend failed'}`,
       );
     }
   }
@@ -1489,7 +1490,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           } catch (caught) {
             incomplete = true;
             ledgerNote = ` The payment ledger row did not save (${
-              caught instanceof Error ? caught.message : 'recordPayment failed'
+              caught instanceof Error ? caught.message : 'The payment was not recorded.'
             }), so this payment will not appear on the Payments screen. The invoice itself is correct.`;
             // #866: the confirmation rides on this call, and since #866 nothing
             // else sends one for a payment recorded here.

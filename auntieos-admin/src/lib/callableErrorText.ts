@@ -67,3 +67,29 @@ export function plainCallableMessage(code: string, message: string): string {
   if (!forDeveloper) return text;
   return PLAIN_BY_CODE[bare] ?? CALLABLE_FALLBACK_TEXT;
 }
+
+/** The verb a callable's name starts with, as the operator would say it failed. */
+const FAILED_TO: Record<string, string> = {
+  get: 'Could not load', list: 'Could not load', load: 'Could not load', fetch: 'Could not load', read: 'Could not load',
+  preview: 'Could not show the preview',
+  save: 'Could not save', update: 'Could not save', set: 'Could not save', adjust: 'Could not save',
+  assign: 'Could not save', unassign: 'Could not save', link: 'Could not save', log: 'Could not save',
+  mark: 'Could not save', submit: 'Could not save', record: 'Could not save',
+  delete: 'Could not delete', remove: 'Could not remove',
+  create: 'Could not create', generate: 'Could not create',
+  archive: 'Could not archive', unarchive: 'Could not restore', restore: 'Could not restore',
+  approve: 'Could not approve', reject: 'Could not decline', complete: 'Could not complete',
+  cancel: 'Could not cancel', schedule: 'Could not schedule', reschedule: 'Could not reschedule',
+  send: 'Could not send', resend: 'Could not send', reply: 'Could not send', review: 'Could not send',
+  retry: 'Could not retry',
+};
+
+/**
+ * #1592: the lead of an error line that used to start with a function name
+ * ("markInvoicePaid failed: ..."). "Could not save", "Could not load" and so on,
+ * read off the verb the name starts with; the name itself is never shown.
+ */
+export function failedToLead(callableOrAction: string): string {
+  const verb = /^[a-z]+/.exec(callableOrAction)?.[0] ?? '';
+  return FAILED_TO[verb] ?? 'That did not go through';
+}

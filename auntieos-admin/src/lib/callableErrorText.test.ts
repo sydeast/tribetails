@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CALLABLE_FALLBACK_TEXT, plainCallableMessage } from './callableErrorText';
+import { CALLABLE_FALLBACK_TEXT, failedToLead, plainCallableMessage } from './callableErrorText';
 
 /** #1592: the walk's three examples, and what must survive the rule untouched. */
 describe('plainCallableMessage', () => {
@@ -40,5 +40,16 @@ describe('plainCallableMessage', () => {
   it('keeps the machine tokens screens match on', () => {
     expect(plainCallableMessage('functions/failed-precondition', 'no_recipients [400]')).toBe('no_recipients');
     expect(plainCallableMessage('functions/failed-precondition', 'recipient_opted_out')).toBe('recipient_opted_out');
+  });
+});
+
+describe('failedToLead', () => {
+  it('reads the verb off a callable name and never shows the name', () => {
+    expect(failedToLead('markInvoicePaid')).toBe('Could not save');
+    expect(failedToLead('listBookings')).toBe('Could not load');
+    expect(failedToLead('reviewAndSendDraftInvoice')).toBe('Could not send');
+    expect(failedToLead('approve')).toBe('Could not approve');
+    expect(failedToLead('reject')).toBe('Could not decline');
+    expect(failedToLead('frobnicateThing')).toBe('That did not go through');
   });
 });

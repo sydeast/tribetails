@@ -86,7 +86,7 @@ describe('QueuedWritesBanner', () => {
 describe('invoiceActionError', () => {
   it('gives a refused call its own sentence, with no callable name in front', () => {
     const line = invoiceActionError(new OfflineCallError('markInvoicePaid'), 'markInvoicePaid');
-    expect(line).not.toMatch(/markInvoicePaid failed/);
+    expect(line).not.toMatch(/Could not save/);
     expect(line).toMatch(/was not sent/i);
     expect(line).toMatch(/Nothing has changed/i);
   });
@@ -116,6 +116,6 @@ describe('invoiceActionError', () => {
 
   it('lets the server keep its own words when the server answered', () => {
     const line = invoiceActionError(new Error('invoice_already_settled'), 'markInvoicePaid');
-    expect(line).toBe('markInvoicePaid failed: invoice_already_settled');
+    expect(line).toBe('Could not save: invoice_already_settled');
   });
 });

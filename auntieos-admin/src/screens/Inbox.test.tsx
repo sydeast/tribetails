@@ -206,14 +206,14 @@ describe('Inbox screen', () => {
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
     listConversations.mockRejectedValueOnce(new Error('permission-denied'));
     render(<Inbox />);
-    expect(await screen.findByText(/listConversations failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.queryByText(/no messages yet/i)).toBeNull();
   });
 
   it('retries the load on demand via AsyncRegion', async () => {
     listConversations.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([thread({})]);
     render(<Inbox />);
-    await screen.findByText(/listConversations failed/i);
+    await screen.findByText(/Could not load/i);
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('The Alvarez Household')).toBeInTheDocument();
     expect(listConversations).toHaveBeenCalledTimes(2);
@@ -525,7 +525,7 @@ describe('Inbox arrangement flag (auntieos.inbox.waitingSections)', () => {
   // is not a safe "off" for this flag, it is the other layout, so a failed read
   // falls back to the catalog default and the operator sees today's Inbox.
   it('falls back to the shipped sections when the flag read fails, and still lists the threads', async () => {
-    getFeatureFlags.mockRejectedValue(new Error('getFeatureFlags failed'));
+    getFeatureFlags.mockRejectedValue(new Error('Could not load'));
     listConversations.mockResolvedValue([
       thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
     ]);

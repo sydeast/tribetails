@@ -320,7 +320,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
           live &&
           setComments({
             status: 'error',
-            message: `getKinTaleComments failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadComments,
           }),
       );
@@ -380,7 +380,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
           live &&
           setReaction({
             status: 'error',
-            message: `getKinTaleReaction failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadReaction,
           }),
       );
@@ -431,7 +431,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
           live &&
           setMedia({
             status: 'error',
-            message: `getMyKinTaleMedia failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadMedia,
           }),
       );

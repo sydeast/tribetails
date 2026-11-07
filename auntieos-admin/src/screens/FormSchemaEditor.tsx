@@ -355,7 +355,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       })
       .catch((err: unknown) => {
         if (!live) return;
-        setLoadError(`getFormSchema failed: ${err instanceof Error ? err.message : 'Load failed'}`);
+        setLoadError(`Could not load: ${err instanceof Error ? err.message : 'Load failed'}`);
         setLoading(false);
       });
     return () => {
@@ -472,7 +472,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       onSaved(res.id);
     } catch (err) {
       setSaving(false);
-      setSaveError(`saveFormSchema failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setSaveError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
   }
 

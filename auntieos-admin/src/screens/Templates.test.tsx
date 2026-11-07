@@ -243,7 +243,7 @@ describe('Templates screen', () => {
     listTemplates.mockRejectedValue(new Error('permission-denied'));
     render(<Templates />);
     expect(
-      await screen.findByText(/listTemplates failed: permission-denied/, { selector: '.async-error-detail' }),
+      await screen.findByText(/Could not load: permission-denied/, { selector: '.async-error-detail' }),
     ).toBeInTheDocument();
     expect(screen.queryByText(TEMPLATE_BANK_EMPTY_COPY)).toBeNull();
   });
@@ -251,7 +251,7 @@ describe('Templates screen', () => {
   it('retries the load on demand', async () => {
     listTemplates.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([tpl({})]);
     render(<Templates />);
-    await screen.findByText(/listTemplates failed/i, { selector: '.async-error-detail' });
+    await screen.findByText(/Could not load/i, { selector: '.async-error-detail' });
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
     expect(listTemplates).toHaveBeenCalledTimes(2);
@@ -725,7 +725,7 @@ describe('Templates screen: I8 pagination', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /load more/i }));
 
-    expect(await screen.findByText(/listTemplates failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.getByText('Alpha')).toBeInTheDocument();
   });
 });
@@ -792,7 +792,7 @@ describe('Templates screen: an empty list that says which fact it means', () => 
     render(<Templates />);
     await screen.findByText('Alpha');
     await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'x');
-    expect(await screen.findByText(/listTemplates failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(listTemplates).toHaveBeenCalledTimes(2);
   });
   it('#1614: a key wraps at its separators, not mid-word', async () => {
@@ -888,7 +888,7 @@ describe('Templates screen: the mock\'s Ctrl-K search shortcut', () => {
     // browser's own shortcut in exchange for nothing.
     listTemplates.mockRejectedValue(new Error('permission-denied'));
     render(<Templates />);
-    await screen.findByText(/listTemplates failed: permission-denied/, { selector: '.async-error-detail' });
+    await screen.findByText(/Could not load: permission-denied/, { selector: '.async-error-detail' });
     await userEvent.keyboard('{Control>}k{/Control}');
     expect(screen.queryByLabelText(/search templates by title or key/i)).toBeNull();
   });
