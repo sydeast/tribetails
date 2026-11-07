@@ -370,7 +370,7 @@ fun InvoicesScreen(
             ) {
                 item {
                     DenScreenHeading(
-                        kicker = "The Den · Invoices",
+                        kicker = "Care Ops · Invoices",
                         title = "Getting",
                         accentTail = "paid.",
                         trailing = {

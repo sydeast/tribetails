@@ -292,6 +292,8 @@ describe('HouseholdMembers PRIMARY entitlements are not switches', () => {
     // The sentence moved into the Primary contact panel's tooltip (#758): it
     // is in the DOM for the accessible description, hidden until hovered.
     expect(await screen.findByText(/Held by role, not by setting/)).toBeInTheDocument();
+    // #1592: the tip says what the operator can do, not how the server decides.
+    expect(screen.queryByText(/the server reads the role/)).toBeNull();
     // The mock's `.cbar` chip stands where the six "Granted" rows stood: one
     // capsule that reads as state rather than as six controls.
     const row = (await screen.findByText('loretta@example.com')).closest('li');

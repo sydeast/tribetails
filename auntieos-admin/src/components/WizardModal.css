@@ -86,7 +86,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-.wiz__rail-step--current {
+.wiz__rail-step--current,
+.wiz__rail-step.wiz__rail-step--current:hover {
   border-color: var(--color-primary);
   color: var(--color-text-primary);
   font-weight: 600;

@@ -334,6 +334,7 @@ const CATEGORY_FILTERS: readonly (readonly [ActivityCategory, string])[] = [
   ['bookings', 'Bookings'],
   ['kintales', 'KinTales'],
   ['notifications', 'Notifications'],
+  ['billing', 'Billing'],
   ['admin', 'Admin'],
 ];
 
@@ -444,6 +445,7 @@ const CATEGORY_TILE: Record<Exclude<ActivityCategory, 'all'>, { glyph: string; t
   bookings: { glyph: '◷', tone: 'orange' },
   kintales: { glyph: '✎', tone: 'success' },
   notifications: { glyph: '▣', tone: 'teal' },
+  billing: { glyph: '$', tone: 'warning' },
   admin: { glyph: '⚑', tone: 'error' },
 };
 

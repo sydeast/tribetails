@@ -219,7 +219,7 @@ fun InvoiceDetailScreen(
         ) {
             item {
                 DenScreenHeading(
-                    kicker     = "Invoices · The Den",
+                    kicker     = "Care Ops · Invoices",
                     title      = "Invoice",
                     accentTail = "Detail.",
                     subtitle   = "Full billing record.",

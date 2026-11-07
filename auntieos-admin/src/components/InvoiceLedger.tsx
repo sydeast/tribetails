@@ -8,6 +8,7 @@ import {
   ledgerRowCaveat,
   paymentDayLabel,
   paymentMethodLabel,
+  paymentsPanelIsEmpty,
   paymentsTotalCents,
   sessionDayLabel,
   sessionServiceLabel,
@@ -124,12 +125,19 @@ function PaymentsPanel({
         Payments
       </h3>
 
-      {payments.length === 0 ? (
+      {/* #1568: the empty sentence only when NEITHER list has a row. With
+          history rows alone, the history table below is the truth and there is
+          no settlement table to show. On a zero balance the "nothing has come
+          off" clause is dropped: a settled bill with no rows anywhere is a
+          migrated label, and the clause would contradict its $0.00 due. */}
+      {paymentsPanelIsEmpty(ledger) ? (
         <p className="invoice-ledger__empty">
-          No payment has been recorded against this invoice, so nothing has come off its balance.
+          {ledger.amountDueCents > 0
+            ? 'No payment has been recorded against this invoice, so nothing has come off its balance.'
+            : 'No payment has been recorded against this invoice.'}
           {canRecordPayment && ' Use Record payment below to log one.'}
         </p>
-      ) : (
+      ) : payments.length === 0 ? null : (
         <table className="invoice-ledger__table">
           <caption className="invoice-ledger__caption">
             What settled this invoice. Its balance is calculated from these and nothing else.

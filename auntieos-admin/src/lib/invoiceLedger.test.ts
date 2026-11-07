@@ -7,6 +7,7 @@ import {
   ledgerRowTotalCents,
   paymentDayLabel,
   paymentMethodLabel,
+  paymentsPanelIsEmpty,
   paymentsTotalCents,
   sessionDayLabel,
   sessionServiceLabel,
@@ -273,5 +274,16 @@ describe('ledgerRowCaveat: the rows that cannot be made to add up', () => {
     );
     expect(caveat).toMatch(/could not be read/i);
     expect(caveat).not.toMatch(/migrated without its processor fee/i);
+  });
+});
+describe('#1568 paymentsPanelIsEmpty', () => {
+  it('is empty only when neither list has a row', () => {
+    expect(paymentsPanelIsEmpty({ payments: [], ledgerPayments: [] })).toBe(true);
+  });
+  it('is not empty when the payment exists only in the history (invoice #1018)', () => {
+    expect(paymentsPanelIsEmpty({ payments: [], ledgerPayments: [{}] })).toBe(false);
+  });
+  it('is not empty when the payment exists only as a settlement row', () => {
+    expect(paymentsPanelIsEmpty({ payments: [{}], ledgerPayments: [] })).toBe(false);
   });
 });
