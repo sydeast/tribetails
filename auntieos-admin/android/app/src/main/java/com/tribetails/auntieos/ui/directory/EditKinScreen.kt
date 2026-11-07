@@ -2,6 +2,8 @@ package com.tribetails.auntieos.ui.directory
 
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,6 +27,7 @@ fun EditKinScreen(
     onBack: () -> Unit
 ) {
     val state by viewModel.editKinState.collectAsState()
+    val measureErrors = viewModel.editKinMeasureErrors(state)
     val breedBank by viewModel.breedBank.collectAsState()
     val breedBankFailed by viewModel.breedBankFailed.collectAsState()
     val context = LocalContext.current
@@ -162,6 +165,8 @@ fun EditKinScreen(
                                     onValueChange = viewModel::updateEditKinAge,
                                     label = "Age",
                                     modifier = Modifier.weight(1f),
+                                    isError = measureErrors.age != null,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 )
 
                                 AuntieDropdownField(
@@ -185,6 +190,7 @@ fun EditKinScreen(
                                     onValueChange = viewModel::updateEditKinWeight,
                                     label = "Weight",
                                     modifier = Modifier.weight(1f),
+                                    isError = measureErrors.weight != null,
                                 )
 
                                 AuntieField(
@@ -193,6 +199,10 @@ fun EditKinScreen(
                                     label = "Color/Markings",
                                     modifier = Modifier.weight(1f),
                                 )
+                            }
+                            // #1583: the reason, under the row, as soon as a value is refused.
+                            measureErrors.first?.let {
+                                Text(text = it, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.error)
                             }
 
                             Row(

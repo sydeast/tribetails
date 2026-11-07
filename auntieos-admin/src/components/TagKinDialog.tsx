@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { saveMediaTags, mediaTagsErrorMessage, MAX_TAGGED_KIN } from '../api/mediaTags';
-import { mediaCaption, mediaTaggedKinIds, taggableKin } from '../lib/mediaFormat';
+import { groupKinByHousehold, mediaCaption, mediaTaggedKinIds, taggableKin } from '../lib/mediaFormat';
 import { str } from '../lib/coerce';
 import { type MediaFile } from '../api/gallery';
 import { type Kin } from '../api/directory';
@@ -12,6 +12,13 @@ export interface TagKinDialogProps {
   media: MediaFile;
   /** The full kin roster. Narrowed to the file's household here, not by the caller, so the rule lives in one place. */
   allKin: Kin[];
+  /**
+   * Household display names by id (#1604). Used to put a household heading over
+   * each group when the file has no household and the whole roster is offered,
+   * and to name the household when the file has one. Safely omitted: a household
+   * that does not resolve reads "Household unavailable", never a raw id.
+   */
+  householdLabels?: Map<string, string>;
   /** True while the roster stream is still resolving: an empty list then is "not loaded yet", not "no kin". */
   kinLoading: boolean;
   /** Non-null when the roster stream FAILED. An empty list then is unknown, and the dialog says so instead of claiming the household has no kin. */
@@ -51,6 +58,7 @@ export interface TagKinDialogProps {
 export function TagKinDialog({
   media,
   allKin,
+  householdLabels,
   kinLoading,
   kinError,
   onClose,
@@ -62,6 +70,8 @@ export function TagKinDialog({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const caption = mediaCaption(media);
+  const mediaHouseholdId = str(media.kinfolkId).trim();
+  const mediaHousehold = mediaHouseholdId === '' ? '' : (householdLabels?.get(mediaHouseholdId) ?? '');
   const overLimit = picked.length > MAX_TAGGED_KIN;
 
   function toggle(kinId: string) {
@@ -102,6 +112,7 @@ export function TagKinDialog({
     >
       <div className="tag-kin">
         {caption !== '' && <p className="tag-kin__caption">{caption}</p>}
+        {mediaHousehold !== '' && <p className="tag-kin__caption">Household: {mediaHousehold}</p>}
 
         <PickerBody
           options={options}
@@ -110,7 +121,8 @@ export function TagKinDialog({
           disabled={saving}
           kinLoading={kinLoading}
           kinError={kinError}
-          scopedToHousehold={str(media.kinfolkId).trim() !== ''}
+          scopedToHousehold={mediaHouseholdId !== ''}
+          householdLabels={householdLabels}
         />
 
         {overLimit && (
@@ -137,6 +149,7 @@ interface PickerBodyProps {
   kinLoading: boolean;
   kinError: string | null;
   scopedToHousehold: boolean;
+  householdLabels: Map<string, string> | undefined;
 }
 
 /**
@@ -153,6 +166,7 @@ function PickerBody({
   kinLoading,
   kinError,
   scopedToHousehold,
+  householdLabels,
 }: PickerBodyProps) {
   if (kinLoading) {
     return (
@@ -180,31 +194,44 @@ function PickerBody({
     );
   }
 
+  // A file with a household offers that household's kin, so one flat list is
+  // unambiguous. A file with none offers the whole roster (#1604): group it
+  // under each household's name so two pets called Biscuit can be told apart.
+  const groups = scopedToHousehold
+    ? [{ kinfolkId: '', label: '', kin: options }]
+    : groupKinByHousehold(options, (id) => householdLabels?.get(id));
   return (
     <fieldset className="tag-kin__fields" disabled={disabled}>
       <legend className="tag-kin__legend">Kin in this photo</legend>
-      <ul className="tag-kin__list">
-        {options.map((kin) => {
-          const name = str(kin.name).trim() !== '' ? str(kin.name).trim() : 'Unnamed';
-          const sub = [str(kin.species).trim(), str(kin.breed).trim()].filter((s) => s !== '').join(' · ');
-          return (
-            <li key={kin._id} className="tag-kin__row">
-              <label className="tag-kin__option">
-                <input
-                  type="checkbox"
-                  className="tag-kin__checkbox"
-                  checked={picked.includes(kin._id)}
-                  onChange={() => onToggle(kin._id)}
-                />
-                <span className="tag-kin__names">
-                  <span className="tag-kin__name">{name}</span>
-                  {sub !== '' && <span className="tag-kin__sub">{sub}</span>}
-                </span>
-              </label>
-            </li>
-          );
-        })}
-      </ul>
+      <div className={scopedToHousehold ? undefined : 'tag-kin__scroll'}>
+        {groups.map((group) => (
+          <section key={group.kinfolkId} className="tag-kin__group">
+            {!scopedToHousehold && <h3 className="tag-kin__household">{group.label}</h3>}
+            <ul className="tag-kin__list">
+              {group.kin.map((kin) => {
+                const name = str(kin.name).trim() !== '' ? str(kin.name).trim() : 'Unnamed';
+                const sub = [str(kin.species).trim(), str(kin.breed).trim()].filter((s) => s !== '').join(' · ');
+                return (
+                  <li key={kin._id} className="tag-kin__row">
+                    <label className="tag-kin__option">
+                      <input
+                        type="checkbox"
+                        className="tag-kin__checkbox"
+                        checked={picked.includes(kin._id)}
+                        onChange={() => onToggle(kin._id)}
+                      />
+                      <span className="tag-kin__names">
+                        <span className="tag-kin__name">{name}</span>
+                        {sub !== '' && <span className="tag-kin__sub">{sub}</span>}
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
     </fieldset>
   );
 }

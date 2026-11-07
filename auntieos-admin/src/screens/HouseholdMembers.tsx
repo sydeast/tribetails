@@ -924,7 +924,8 @@ export function inviteMetaLine(invite: HouseholdInvite): string {
   if (invite.effectiveStatus === 'REVOKED') {
     const revoked = formatInviteDate(invite.revokedAt);
     if (revoked !== null) parts.push(`revoked ${revoked}`);
-  } else {
+  } else if (invite.effectiveStatus !== 'ACCEPTED') {
+    // #1603: an accepted invite is spent, so its expiry date says nothing.
     const expires = formatInviteDate(invite.expiresAt);
     if (expires !== null) {
       parts.push(invite.effectiveStatus === 'EXPIRED' ? `expired ${expires}` : `expires ${expires}`);
