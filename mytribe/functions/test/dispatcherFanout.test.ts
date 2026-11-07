@@ -53,8 +53,42 @@ describe('enqueueNotification fan-out (audience:both)', () => {
       .sort();
     expect(notifIds).toHaveLength(3);
     // Id-matched, which is the whole basis of the split: the work order is
-    // findable from the notification and vice versa without a query.
-    expect(dispatchIds).toEqual(notifIds);
+    // findable from the notification and vice versa without a query. #1564:
+    // the second admin's copy is email-only here and the business email has
+    // already gone with the first admin's copy, so it is a record with no
+    // work order; every work order still matches a notification.
+    expect(dispatchIds).toHaveLength(2);
+    expect(dispatchIds.every((id) => notifIds.includes(id))).toBe(true);
+  });
+
+  /**
+   * #1564. Operator ruling, 2026-11-05 docket: every business email goes to
+   * the business contact email. Two admins on the roster must not mean two
+   * copies of one email in that inbox.
+   */
+  it('#1564: one business email per event however many admins are on the roster', async () => {
+    const ctx = buildDbMock({
+      docs: { 'businessSettings/admins': { uids: ['admin1', 'admin2', 'admin3'] } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const ids = await enqueueNotification({
+      key: 'kincare.booking.confirm',
+      recipientUid: 'kinUid',
+      data: { bookingId: 'b1', kinfolkId: 'kfId' },
+    });
+    // Every admin still gets the record behind the bell.
+    expect(ids).toHaveLength(4);
+    const inbox = ctx.writes.filter((w) => w.path.startsWith('notifications/'));
+    const orders = ctx.writes.filter((w) => w.path.startsWith('notificationDispatch/'));
+    const emailOrdersFor = (uid: string) =>
+      orders.filter((w) => w.data.recipientUid === uid && (w.data.channels as string[]).includes('email'));
+    // The household keeps its own email; the business gets exactly one.
+    expect(emailOrdersFor('kinUid')).toHaveLength(1);
+    const businessEmailOrders = orders.filter(
+      (w) => w.data.recipientUid !== 'kinUid' && (w.data.channels as string[]).includes('email'),
+    );
+    expect(businessEmailOrders).toHaveLength(1);
+    expect(inbox.filter((w) => w.data.recipientUid !== 'kinUid')).toHaveLength(3);
   });
 
   /**

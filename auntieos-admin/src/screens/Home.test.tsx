@@ -30,8 +30,8 @@ vi.mock('./widgets/TodaysPackWidget', () => ({
   ),
 }));
 vi.mock('./widgets/KinTalesPendingWidget', () => ({
-  KinTalesPendingWidget: ({ onReviewTales }: { onReviewTales: () => void }) => (
-    <button type="button" onClick={onReviewTales}>
+  KinTalesPendingWidget: ({ onReviewTales }: { onReviewTales: (draftId: string | null) => void }) => (
+    <button type="button" onClick={() => onReviewTales(null)}>
       kintales body
     </button>
   ),

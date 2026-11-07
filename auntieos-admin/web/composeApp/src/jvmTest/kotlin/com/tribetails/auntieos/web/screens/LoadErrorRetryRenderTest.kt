@@ -81,14 +81,14 @@ class LoadErrorRetryRenderTest {
 
     @Test
     fun kinCareDetail() = runDesktopComposeUiTest {
-        retryRecovers("Couldn't load this Kin Care", { JvmFirestoreFixtures.sessions = listOf(KinCareSession(_id = "s1")) }) {
+        retryRecovers("Couldn't load this KinCare", { JvmFirestoreFixtures.sessions = listOf(KinCareSession(_id = "s1")) }) {
             KinCareDetailScreen(kinCareId = "s1", onBack = {})
         }
     }
 
     @Test
     fun kinTaleCompose() = runDesktopComposeUiTest {
-        retryRecovers("Couldn't load this Kin Care", { JvmFirestoreFixtures.sessions = listOf(KinCareSession(_id = "s1")) }) {
+        retryRecovers("Couldn't load this KinCare", { JvmFirestoreFixtures.sessions = listOf(KinCareSession(_id = "s1")) }) {
             KinTaleComposeScreen(sessionId = "s1", onClose = {})
         }
     }

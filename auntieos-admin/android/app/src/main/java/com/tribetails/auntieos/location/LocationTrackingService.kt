@@ -467,7 +467,7 @@ class LocationTrackingService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Tracking Kin Care Visit")
+            .setContentTitle("Tracking KinCare Visit")
             .setContentText("Recording route for client transparency")
             .setSmallIcon(R.drawable.ic_location_on)
             .setOngoing(true)

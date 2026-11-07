@@ -239,6 +239,10 @@ export async function transitionBookingStatusHandler(
         endTime?: unknown;
         serviceId?: unknown;
         serviceDurationMinutes?: unknown;
+        // #1627: the household's copy of this visit, when it has one.
+        kinfolkId?: unknown;
+        kinCareBatchId?: unknown;
+        kinCareVisitId?: unknown;
       }
     | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });
@@ -434,7 +438,21 @@ export async function transitionBookingStatusHandler(
     patch.notes = appendCancellationNote(prev?.notes, reason);
   }
 
-  await ref.set(patch, { merge: true });
+  // #1627: CANCEL and COMPLETE also move the household's copy of the visit
+  // (`families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`), in the same
+  // batch. The portal reads that copy, so before this a visit the office
+  // cancelled stayed in the household's Upcoming list and a completed one never
+  // reached Recent. `batchUpdateBookings` has always mirrored this way; this is
+  // the single-row path every admin client's Cancel / Mark Completed uses.
+  const mirror = await visitMirrorFor(prev, args.action);
+  if (mirror === null) {
+    await ref.set(patch, { merge: true });
+  } else {
+    const batch = db().batch();
+    batch.set(ref, patch, { merge: true });
+    batch.set(mirror.ref, { status: mirror.status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    await batch.commit();
+  }
 
   await writeAuditEntry({
     event: AUDIT_EVENTS.BOOKING_STATUS_TRANSITION,
@@ -453,6 +471,8 @@ export async function transitionBookingStatusHandler(
       from: decision.from,
       to: decision.to,
       changed: true,
+      // #1627: the household's copy moved too (null when the session has none).
+      visitMirrored: mirror?.status ?? null,
       // The reason TEXT is stored on the session's own notes; the audit records
       // only that one was supplied, so the trail carries no free-text the
       // operator may have put a household detail into.
@@ -489,6 +509,49 @@ export async function transitionBookingStatusHandler(
     status: decision.to,
     changed: true,
   });
+}
+
+/**
+ * The kinCares status an action mirrors to, for the actions that move the household's copy.
+ *
+ * Keyed on the ACTION, not the target status: REJECT also lands on CANCELLED,
+ * but a declined request is not a cancelled visit (#533). Mirroring it as
+ * `cancelled` without the decline stamp would make `onBookingsWrite` tell the
+ * household "your visit was cancelled" about a visit that was never on their
+ * schedule. Declines go through `manageBookingSeries`, which stamps
+ * `requestDeclinedAt` and sends the true message once per request.
+ */
+export function visitMirrorStatus(action: BookingAction): 'cancelled' | 'completed' | null {
+  if (action === 'CANCEL') return 'cancelled';
+  if (action === 'COMPLETE') return 'completed';
+  return null;
+}
+
+/**
+ * #1627: the household's copy of this visit to move, or null.
+ *
+ * Null when the action is not CANCEL or COMPLETE, when the session
+ * has no booking record (an older ad-hoc visit), when that record is gone, or
+ * when it already reads as finished. The last two matter: a merge `set` on a
+ * missing doc would CREATE a stray visit, and rewriting a cancelled copy as
+ * completed (or back) would contradict an answer the household already has.
+ */
+async function visitMirrorFor(
+  prev: { kinfolkId?: unknown; kinCareBatchId?: unknown; kinCareVisitId?: unknown } | undefined,
+  action: BookingAction,
+): Promise<{ ref: FirebaseFirestore.DocumentReference; status: 'cancelled' | 'completed' } | null> {
+  const status = visitMirrorStatus(action);
+  if (status === null) return null;
+  const kinfolkId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
+  const batchId = typeof prev?.kinCareBatchId === 'string' ? prev.kinCareBatchId.trim() : '';
+  const visitId = typeof prev?.kinCareVisitId === 'string' ? prev.kinCareVisitId.trim() : '';
+  if (kinfolkId === '' || batchId === '' || visitId === '') return null;
+  const visitRef = db().doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`);
+  const visit = await visitRef.get();
+  if (!visit.exists) return null;
+  const current = (visit.data() as { status?: unknown } | undefined)?.status;
+  if (current === 'cancelled' || current === 'completed') return null;
+  return { ref: visitRef, status };
 }
 
 export const transitionBookingStatus = onCall(

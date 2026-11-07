@@ -64,6 +64,8 @@ vi.mock('./KinView', () => ({
 // Firestore of their own, each covered by its own suite. Unmocked here they
 // went to production (#1138), so each is answered at its api seam, the way
 // KinfolkProfile.test.tsx and AddKinDialog.test.tsx answer them.
+// #1603: the profile's Invite to portal reads listMembers; its own suite covers it.
+vi.mock('../components/PortalInviteButton', () => ({ PortalInviteButton: () => null }));
 vi.mock('../api/accountCredit', () => ({
   getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'kf1', accountBalanceCents: 0, credits: [], uses: [] }),
   giveAccountCredit: vi.fn(),
@@ -377,6 +379,28 @@ describe('Directory screen, Kin tab', () => {
   async function openKinTab() {
     await userEvent.click(screen.getByRole('tab', { name: /^kin(\s|·|$)/i }));
   }
+
+  /** #1602: two kin named Mia could not be told apart; each card names its household. */
+  it('#1602: each kin card names its household', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Dre', lastName: 'East' }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Rae', lastName: 'Wren' }),
+      ],
+    };
+    kinAsync = {
+      status: 'ready',
+      data: [kinRow({ _id: 'a', name: 'Mia', kinfolkId: 'kf1' }), kinRow({ _id: 'b', name: 'Mia', kinfolkId: 'kf2' })],
+    };
+    render(<Directory />);
+    await openKinTab();
+    const households = screen.getAllByTestId('kin-card-household').map((el) => el.textContent);
+    expect(households).toHaveLength(2);
+    expect(new Set(households).size).toBe(2);
+    expect(households.join(' ')).toMatch(/East/);
+    expect(households.join(' ')).toMatch(/Wren/);
+  });
 
   it('renders every active kin as a standalone card', async () => {
     kinAsync = {

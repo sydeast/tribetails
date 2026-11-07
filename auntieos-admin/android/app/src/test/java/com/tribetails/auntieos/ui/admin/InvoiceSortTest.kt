@@ -30,18 +30,20 @@ class InvoiceSortTest {
     }
 
     /**
-     * A month-name date is UNPLACEABLE here, and says so, rather than being
-     * given a position it cannot justify. This client does not parse legacy
-     * spellings. The backfill (mytribe/scripts/backfillInvoiceDateIso.ts) turns
-     * them into days server-side, and creation can no longer make new ones.
+     * #1570: a month-name date is placed by the day it names, the same grammar
+     * the backfill (mytribe/scripts/backfillInvoiceDateIso.ts) rewrites, because
+     * the current import produces it. A numeric date names two different days,
+     * so it stays unplaceable and sorts last.
      */
     @Test
-    fun aMonthNameDateIsRefusedRatherThanRanked() {
-        assertNull(invoiceSortDayOrNull(inv("legacy", "Feb 12, 2026")))
-        val out = invoicesByDateDesc(listOf(inv("legacy", "Feb 12, 2026"), inv("dated", "2026-01-01")))
-        assertEquals(listOf("dated", "legacy"), out.map { it.id })
+    fun aMonthNameDateIsPlacedByTheDayItNames() {
+        assertEquals(true, invoiceSortDayOrNull(inv("legacy", "Feb 12, 2026")) != null)
+        val out = invoicesByDateDesc(listOf(inv("dated", "2026-01-01"), inv("legacy", "Feb 12, 2026")))
+        assertEquals(listOf("legacy", "dated"), out.map { it.id })
+        assertNull(invoiceSortDayOrNull(inv("numeric", "02/12/2026")))
+        val withNumeric = invoicesByDateDesc(listOf(inv("numeric", "02/12/2026"), inv("dated", "2026-01-01")))
+        assertEquals(listOf("dated", "numeric"), withNumeric.map { it.id })
     }
-
     /**
      * THE OTHER HALF OF THE BUG, and the one that actually reordered the list.
      * The old shape test never checked that the eight non-dash characters were

@@ -2,6 +2,10 @@ package com.tribetails.auntieos.ui.directory
 
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import com.tribetails.auntieos.domain.validateKinAge
+import com.tribetails.auntieos.domain.validateKinWeight
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Text
@@ -121,6 +125,8 @@ fun AddKinScreen(
                                 onValueChange = viewModel::updateKinAge,
                                 label = "Age",
                                 modifier = Modifier.weight(1f),
+                                isError = validateKinAge(state.age) != null,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             )
 
                             AuntieDropdownField(
@@ -138,7 +144,12 @@ fun AddKinScreen(
                                 onValueChange = viewModel::updateKinWeight,
                                 label = "Weight",
                                 modifier = Modifier.weight(1f),
+                                isError = validateKinWeight(state.weight) != null,
                             )
+                        }
+                        // #1583: the reason, under the row, as soon as a value is refused.
+                        (validateKinAge(state.age) ?: validateKinWeight(state.weight))?.let {
+                            Text(text = it, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.error)
                         }
                     }
                 }

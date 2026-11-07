@@ -74,15 +74,17 @@ describe('the chip tables', () => {
     expect(noRecipient.sort()).toEqual(['blog_post', 'social_post'].sort());
   });
 
-  it('marks the two types this screen can actually deliver, and how', () => {
+  it('marks the three types this screen can actually deliver, and how', () => {
     expect(messageTypeDef('sms').deliverable).toBe('sms');
     expect(messageTypeDef('email').deliverable).toBe('email');
+    // #1563: a KinTale goes to the household's portal through
+    // publishGeneratedDraft. It was `false`, and approving one reached nobody.
+    expect(messageTypeDef('visit_report').deliverable).toBe('kintale');
     // Push is a copy FORMAT here. sendExternalMessage speaks email and sms only
     // and there is no 1:1 push callable, so approving a push draft promotes and
     // audits it and sends nothing. Claiming otherwise would be a button that
     // cannot deliver.
     expect(messageTypeDef('push').deliverable).toBe(false);
-    expect(messageTypeDef('visit_report').deliverable).toBe(false);
     expect(messageTypeDef('blog_post').deliverable).toBe(false);
     expect(messageTypeDef('social_post').deliverable).toBe(false);
     expect(messageTypeDef('general').deliverable).toBe(false);
@@ -222,8 +224,13 @@ describe('approveBlocker', () => {
     );
   });
 
-  it('lets a KinTale report through with no contact method, because approving it delivers nothing', () => {
+  it('lets a KinTale through with no contact method: it goes to the portal, not a phone or inbox', () => {
     expect(approveBlocker(form(), kf({ email: '', phoneNumber: '' }), 'd1', 'copy')).toBeNull();
+  });
+  it('#1563: refuses a KinTale with no household, since there is nobody to send it to', () => {
+    expect(approveBlocker(form({ recipientId: '' }), undefined, 'd1', 'copy')).toBe(
+      'This KinTale is not addressed to a household. Choose one before sending.',
+    );
   });
 
   it('passes a deliverable email with a subject and an address', () => {
@@ -293,13 +300,13 @@ describe('buildGeneratePayload', () => {
 });
 
 describe('draftSubtitle', () => {
-  it('names the pieces the archive named, joined the archive way', () => {
+  it('#1592: names who it is for and the message type by its label, never the model or the draft id', () => {
     expect(draftSubtitle({ kinfolk_name: 'Dana Reyes', communication_type: 'visit_report', model: 'claude-sonnet-4-5', draft_id: 'd7' })).toBe(
-      'for Dana Reyes · visit_report · claude-sonnet-4-5 · draft #d7',
+      'for Dana Reyes · KinTale',
     );
   });
 
   it('drops the pieces that are missing instead of printing null', () => {
-    expect(draftSubtitle({ kinfolk_name: null, communication_type: 'blog_post', model: null, draft_id: null })).toBe('blog_post');
+    expect(draftSubtitle({ kinfolk_name: null, communication_type: 'blog_post', model: null, draft_id: null })).toBe('Blog');
   });
 });

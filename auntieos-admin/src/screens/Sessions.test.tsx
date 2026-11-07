@@ -487,6 +487,24 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(card.querySelector('.sessions__addr')).toBeNull();
   });
 
+  /** #1602: the walk's chip read "18605" and nothing said it was incomplete. */
+  it('#1602: says an address is incomplete when it is only a number', () => {
+    usePagedCollection.mockReturnValue(paged([populated]));
+    directory([{ _id: 'kf-wren', serviceAddress: '18605' }], kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).getByText('18605', { exact: false })).toBeInTheDocument();
+    expect(within(card).getByRole('note')).toHaveTextContent('This address looks incomplete');
+  });
+
+  it('#1602: gives no hint for a full address', () => {
+    usePagedCollection.mockReturnValue(paged([populated]));
+    directory([{ _id: 'kf-wren', serviceAddress: '82 Creekside Ln, Austin TX' }], kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).queryByText(/looks incomplete/)).toBeNull();
+  });
+
   it('claims a live GPS route only while ARRIVED, never on a departed visit', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ _id: 'gone', kinfolkName: 'Clocked Out', status: 'DEPARTED', startTime: at(0, 8) })]),
@@ -870,7 +888,7 @@ describe('Auntie Time: the Archive', () => {
     usePagedCollection.mockReturnValue(paged([]));
     renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
-    expect(screen.getByText('No Kin Cares in this range.')).toBeInTheDocument();
+    expect(screen.getByText('No KinCares in this range.')).toBeInTheDocument();
   });
 });
 
@@ -1000,9 +1018,9 @@ describe('Auntie Time: a failed FIRST page is not a failed LATER page', () => {
     expect(screen.getByText('Still Here')).toBeInTheDocument();
     expect(document.querySelectorAll('.sessions__card')).toHaveLength(1);
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Couldn’t load more Kin Care sessions. deadline-exceeded');
+    expect(alert).toHaveTextContent('Couldn’t load more KinCare sessions. deadline-exceeded');
     expect(alert).toHaveTextContent('The 1 already loaded are unaffected');
-    expect(screen.queryByText('Kin Care sessions unavailable while the load is failing.')).toBeNull();
+    expect(screen.queryByText('KinCare sessions unavailable while the load is failing.')).toBeNull();
   });
 
   it('retries the failed page from where it stopped, not from the top', async () => {

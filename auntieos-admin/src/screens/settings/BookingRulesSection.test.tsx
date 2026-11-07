@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_BUSINESS_SETTINGS, type BusinessSettings } from '../../api/settings';
 import { BookingRulesSection, bookingRulesPatch } from './BookingRulesSection';
 import { VisitsTrackingSection, visitsTrackingPatch } from './VisitsTrackingSection';
+import { NotificationScheduleSection } from './NotificationScheduleSection';
+import { VISIT_REMINDER_TIMING } from '../../lib/businessOperations';
 
 /**
  * ISSUE #519. Each case here names a field the three admin clients decoded and
@@ -97,7 +99,7 @@ describe('BookingRulesSection', () => {
     const user = userEvent.setup();
     render(<BookingRulesSection data={settings()} onSave={onSave} />);
 
-    await user.click(screen.getByRole('switch', { name: 'Toggle the 24-hour visit reminder' }));
+    await user.click(screen.getByRole('switch', { name: 'Toggle the visit reminder' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onSave.mock.calls[0]?.[0]).toMatchObject({ enableAutoReminder24h: false });
@@ -110,7 +112,7 @@ describe('BookingRulesSection', () => {
         onSave={onSave}
       />,
     );
-    expect(screen.getByRole('switch', { name: 'Toggle the 24-hour visit reminder' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Toggle the visit reminder' })).toBeChecked();
   });
 
   it('saves an edited time block, with the name trimmed', async () => {
@@ -422,5 +424,68 @@ describe('VisitsTrackingSection', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.getByText(/On-my-way choices/)).toBeInTheDocument();
     expect(onSave).not.toHaveBeenCalled();
+  });
+});
+
+// ── ISSUE #1612 ─────────────────────────────────────────────────────────────
+describe('BookingRulesSection, adding a block (#1612)', () => {
+  // Operator ruling: the app never picks a block's hours. A new row used to
+  // arrive as 09:00 to 13:00, on top of Midday, with nothing saying so.
+  it('opens a new block with no start or end time', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    await user.click(screen.getByRole('button', { name: 'Add a block' }));
+    expect(screen.getByLabelText('Block start time')).toHaveValue('');
+    expect(screen.getByLabelText('Block end time')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('runs the new block for the default block length from the start the operator gives it', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings({ defaultTimeBlockDurationHours: 3 })} onSave={onSave} />);
+    await user.click(screen.getByRole('button', { name: 'Add a block' }));
+    fireEvent.change(screen.getByLabelText('Block start time'), { target: { value: '16:00' } });
+    expect(screen.getByLabelText('Block end time')).toHaveValue('19:00');
+  });
+
+  it('shows an overlap on both clashing rows while the new one is still unnamed', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    await user.click(screen.getByRole('button', { name: 'Add a block' }));
+    fireEvent.change(screen.getByLabelText('Block start time'), { target: { value: '09:00' } });
+    fireEvent.change(screen.getByLabelText('Block end time'), { target: { value: '13:00' } });
+    expect(screen.getByText('Overlaps Midday.')).toBeInTheDocument();
+    expect(screen.getByText('Overlaps a block with no name yet.')).toBeInTheDocument();
+  });
+
+  it('says nothing about overlap once the clash is gone', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    await user.click(screen.getByRole('button', { name: 'Add a block' }));
+    fireEvent.change(screen.getByLabelText('Block start time'), { target: { value: '15:00' } });
+    fireEvent.change(screen.getByLabelText('Block end time'), { target: { value: '19:00' } });
+    expect(screen.queryByText(/^Overlaps /)).not.toBeInTheDocument();
+  });
+});
+
+describe('visit reminder timing reads the same in both sections (#1612)', () => {
+  it('states one timing under Booking rules and under Notifications', () => {
+    const { unmount } = render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    expect(screen.getByText(`Remind kinfolk ${VISIT_REMINDER_TIMING} a visit`)).toBeInTheDocument();
+    unmount();
+    render(<NotificationScheduleSection data={settings()} onSave={onSave} />);
+    expect(screen.getByText(new RegExp(`go out ${VISIT_REMINDER_TIMING} each visit`))).toBeInTheDocument();
+  });
+});
+
+describe('VisitsTrackingSection, the arrival radius note (#1612)', () => {
+  // The note sits under "Let kinfolk see visit locations" on this screen, so
+  // "the switch above" pointed at the wrong switch.
+  it('names the switch the radius depends on', () => {
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+    expect(
+      screen.getByText(/Only applies while Verify arrival and departure by location is on\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/the switch above/)).not.toBeInTheDocument();
   });
 });
