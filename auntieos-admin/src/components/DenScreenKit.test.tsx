@@ -42,6 +42,7 @@ import {
   StatCard,
   StatusPill,
   serviceTone,
+  tipLeftPx,
 } from './DenScreenKit';
 import { asyncScalar, type Async, type ResolvedScalar } from '../lib/async';
 
@@ -271,6 +272,45 @@ describe('DenScreenHeading', () => {
       'aria-describedby',
       tip.id,
     );
+  });
+
+  it('#1596: an open tip goes to the top layer, placed under its button and inside the window', async () => {
+    const show = vi.fn();
+    const hide = vi.fn();
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    proto.showPopover = show;
+    proto.hidePopover = hide;
+    try {
+      render(<DenScreenHeading kicker="k" title="Today" subtitle="Visits on this day." />);
+      const button = screen.getByRole('button', { name: 'About this section' });
+      const tip = screen.getByText('Visits on this day.');
+      // The button sits 20px from the right edge of a 1000px window; the tip is 260px wide.
+      button.getBoundingClientRect = () => new DOMRect(980, 100, 16, 16);
+      tip.getBoundingClientRect = () => new DOMRect(0, 0, 260, 40);
+      Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1000 });
+
+      await userEvent.hover(button);
+
+      expect(show).toHaveBeenCalledTimes(1);
+      expect(tip).toHaveAttribute('popover', 'manual');
+      expect(tip.style.top).toBe('122px');
+      // 1000 - 8 gutter - 260 wide: the right edge lands 8px inside the window.
+      expect(tip.style.left).toBe('732px');
+
+      await userEvent.unhover(button);
+      expect(hide).toHaveBeenCalled();
+    } finally {
+      delete proto.showPopover;
+      delete proto.hidePopover;
+      Reflect.deleteProperty(document.documentElement, 'clientWidth');
+    }
+  });
+
+  it('#1596: tipLeftPx keeps the tip inside the window on both sides', () => {
+    expect(tipLeftPx(100, 260, 1000)).toBe(100);
+    expect(tipLeftPx(980, 260, 1000)).toBe(732);
+    // Wider than the window: the left edge stays in view.
+    expect(tipLeftPx(50, 1200, 1000)).toBe(8);
   });
 
   it('keeps the tooltip mounted while it is closed, or the description points at nothing', () => {

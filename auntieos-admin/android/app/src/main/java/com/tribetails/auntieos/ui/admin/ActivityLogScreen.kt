@@ -57,9 +57,10 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.GlassSurface
 import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieModal
-import com.tribetails.auntieos.ui.components.formatTime
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import java.time.LocalDate
+import java.time.ZoneId
+import com.tribetails.auntieos.data.model.businessZone
 
 /**
  * Activity log (hash-chain audit trail) in the Den aesthetic, drawn to
@@ -123,6 +124,9 @@ fun ActivityLogScreen(
 ) {
     val entries   by viewModel.activityLog.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    // The business's clock (#1585): America/Chicago until the settings read lands or if it fails.
+    val zoneId by viewModel.businessTimeZone.collectAsState()
+    val zone = remember(zoneId) { businessZone(zoneId) }
     val chainVerify by viewModel.chainVerify.collectAsState()
 
     // Verify on arrival as well as on demand: the mock's badge reads "Chain
@@ -140,7 +144,7 @@ fun ActivityLogScreen(
     var selectedEntry by remember { mutableStateOf<ActivityLogEntry?>(null) }
 
     selectedEntry?.let { entry ->
-        ActivityDetailModal(entry = entry, onDismiss = { selectedEntry = null })
+        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null })
     }
 
     AuntieScreenScaffold(title = "Activity Log", onBack = onBack) {
@@ -193,6 +197,7 @@ fun ActivityLogScreen(
                     isLoading          = isLoading,
                     filter             = filter,
                     query              = query,
+                    zone               = zone,
                     onRowClick         = { selectedEntry = it },
                 )
             }
@@ -206,6 +211,7 @@ private fun LogPanel(
     isLoading: Boolean,
     filter: ActivityFilter,
     query: String,
+    zone: ZoneId,
     onRowClick: (ActivityLogEntry) -> Unit,
 ) {
     // The mock's `.log`: one glass panel with no title, rows running edge to
@@ -262,13 +268,15 @@ private fun LogPanel(
             }
 
             // Stable insertion-ordered grouping; list is already newest-first.
-            val todayKey = LocalDate.now().toString()
+            // Days are the BUSINESS's (#1585): a 9:34 pm Chicago event stamped 02:34Z
+            // belongs to the day before, and "Today" is Chicago's today.
+            val todayKey = LocalDate.now(zone).toString()
             val yesterdayKey = isoDateMinusOneDay(todayKey)
-            val grouped = visible.groupBy { it.timestamp.take(10) }
+            val grouped = visible.groupBy { activityWhen(it.timestamp, zone)?.dayKey ?: it.timestamp.take(10) }
 
             grouped.forEach { (dateIso, dayEntries) ->
                 DaySeparator(label = relativeDayLabel(dateIso, todayKey, yesterdayKey))
-                dayEntries.forEach { entry -> ActivityRow(entry, onClick = { onRowClick(entry) }) }
+                dayEntries.forEach { entry -> ActivityRow(entry, zone = zone, onClick = { onRowClick(entry) }) }
             }
         }
     }
@@ -455,7 +463,7 @@ private fun DaySeparator(label: String) {
  * build's opened row field for field.
  */
 @Composable
-private fun ActivityDetailModal(entry: ActivityLogEntry, onDismiss: () -> Unit) {
+private fun ActivityDetailModal(entry: ActivityLogEntry, zone: ZoneId, onDismiss: () -> Unit) {
     val payload = activityPayloadRows(entry)
     val chain = activityChainRows(entry)
     AuntieModal(
@@ -464,7 +472,7 @@ private fun ActivityDetailModal(entry: ActivityLogEntry, onDismiss: () -> Unit) 
         confirmButton = { GhostButton(label = "Close", onClick = onDismiss) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            activityDetailRows(entry).forEach { (label, value) -> DetailKv(label, value) }
+            activityDetailRows(entry, zone).forEach { (label, value) -> DetailKv(label, value) }
 
             DetailSectionHeading("What happened")
             if (payload.isEmpty()) {
@@ -546,12 +554,18 @@ private fun DetailKv(label: String, value: String, mono: Boolean = false) {
  * is routinely the question when reconciling against a provider's logs.
  * Pure; unit-tested.
  */
-internal fun activityDetailRows(entry: ActivityLogEntry): List<Pair<String, String>> {
+internal fun activityDetailRows(
+    entry: ActivityLogEntry,
+    zone: ZoneId = businessZone(null),
+): List<Pair<String, String>> {
     val rows = mutableListOf<Pair<String, String>>()
     fun add(label: String, value: String) {
         if (value.isNotBlank()) rows += label to value.trim()
     }
     add("When", entry.timestamp)
+    // The stored stamp is UTC; the row reads in the business zone (#1585). Both
+    // are shown so the two can be reconciled without doing the sum.
+    activityWhen(entry.timestamp, zone)?.let { add("Business time", "${it.dayKey} ${it.clock}") }
     add("Action", entry.actionType)
     add("Status", entry.status)
     add("Severity", entry.severity)
@@ -641,7 +655,7 @@ internal fun activityPayloadRows(entry: ActivityLogEntry): List<Pair<String, Str
  * seq would be; it never wears a made-up seal.
  */
 @Composable
-internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
+internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit, zone: ZoneId = businessZone(null)) {
     val c = AuntieTheme.colors
     val isFailure = entry.status.equals("FAILURE", ignoreCase = true) ||
         entry.status.equals("ERROR", ignoreCase = true)
@@ -658,7 +672,7 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text     = shortTime(entry.timestamp),
+                    text     = shortTime(entry.timestamp, zone),
                     style    = AuntieTheme.typography.mono.copy(fontSize = 11.5.sp),
                     color    = c.textDim,
                     modifier = Modifier.width(54.dp),
@@ -859,9 +873,8 @@ private fun prettyDate(iso: String): String = runCatching {
     "$month $day"
 }.getOrDefault(iso.ifBlank { "Undated" })
 
-private fun shortTime(iso: String): String =
-    runCatching { if (iso.length >= 16) formatTime(iso) else iso.ifBlank { "--:--" } }
-        .getOrDefault(iso.ifBlank { "--:--" })
+private fun shortTime(iso: String, zone: ZoneId): String =
+    activityWhen(iso, zone)?.clock ?: iso.ifBlank { "--:--" }
 
 /**
  * Decrements an ISO date key (yyyy-MM-dd) by one day for the "Yesterday" label.
