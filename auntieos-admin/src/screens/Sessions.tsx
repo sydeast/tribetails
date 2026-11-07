@@ -27,6 +27,7 @@ import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
 import { directionsHref } from '../lib/directions';
+import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressCompleteness';
 import { DenScreenHeading, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
 import { AsyncLoading } from '../components/AsyncRegion';
 import { LoadingRow } from '../components/LoadingRow';
@@ -548,6 +549,12 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
         <a className="sessions__addr" href={directionsHref(address)} target="_blank" rel="noopener">
           📍 {address}
         </a>
+      )}
+      {/* #1602: "18605" was all the walk's chip said, with no hint. */}
+      {addressLooksIncomplete(address) && (
+        <p className="sessions__addr-hint" role="note">
+          {INCOMPLETE_ADDRESS_HINT}
+        </p>
       )}
       {note !== '' && <p className="sessions__note">{note}</p>}
       {str(entry.invoiceId).trim() !== '' && <p className="sessions__invoice">Invoice linked</p>}

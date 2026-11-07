@@ -497,12 +497,31 @@ class HouseholdMembersViewModelTest {
         assertTrue(portalInviteMessage("wat", "the Walls").startsWith("No invite sent"))
     }
 
-    @Test fun `the panel note counts secondaries, and only once the roster read lands`() {
+    @Test fun `the panel note counts secondaries, and only once both reads land`() {
         assertNull(secondaryMeta(HouseholdMembersUiState(), 0))
+        assertNull(secondaryMeta(HouseholdMembersUiState(membersLoaded = true), 1))
         assertEquals(
             "1 of role: SECONDARY",
-            secondaryMeta(HouseholdMembersUiState(membersLoaded = true), 1),
+            secondaryMeta(HouseholdMembersUiState(membersLoaded = true, peopleLoaded = true), 1),
         )
+    }
+
+    /**
+     * #1602: the walk added a secondary with no portal account and the panel
+     * still read 0, even after reload. Those people count; an ACTIVE person is
+     * already a member row and is not counted twice.
+     */
+    @Test fun `the panel note counts secondaries added with no portal account`() {
+        val state = HouseholdMembersUiState(
+            membersLoaded = true,
+            peopleLoaded = true,
+            people = listOf(
+                MembersRepository.SecondaryPerson("p1", "Rae East", null, null, MembersRepository.PersonAccess.NONE, null),
+                MembersRepository.SecondaryPerson("p2", "Jo Park", null, null, MembersRepository.PersonAccess.INVITED, null),
+                MembersRepository.SecondaryPerson("p3", "Ann Doe", null, null, MembersRepository.PersonAccess.ACTIVE, "u9"),
+            ),
+        )
+        assertEquals("3 of role: SECONDARY", secondaryMeta(state, 1))
     }
 
     // ── secondary kinfolk person records (2026-09-27 Q3) ────────────────────

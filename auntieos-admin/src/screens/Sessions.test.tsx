@@ -513,6 +513,24 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(card.querySelector('.sessions__addr')).toBeNull();
   });
 
+  /** #1602: the walk's chip read "18605" and nothing said it was incomplete. */
+  it('#1602: says an address is incomplete when it is only a number', () => {
+    usePagedCollection.mockReturnValue(paged([populated]));
+    directory([{ _id: 'kf-wren', serviceAddress: '18605' }], kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).getByText('18605', { exact: false })).toBeInTheDocument();
+    expect(within(card).getByRole('note')).toHaveTextContent('This address looks incomplete');
+  });
+
+  it('#1602: gives no hint for a full address', () => {
+    usePagedCollection.mockReturnValue(paged([populated]));
+    directory([{ _id: 'kf-wren', serviceAddress: '82 Creekside Ln, Austin TX' }], kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).queryByText(/looks incomplete/)).toBeNull();
+  });
+
   it('claims a live GPS route only while ARRIVED, never on a departed visit', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ _id: 'gone', kinfolkName: 'Clocked Out', status: 'DEPARTED', startTime: at(0, 8) })]),

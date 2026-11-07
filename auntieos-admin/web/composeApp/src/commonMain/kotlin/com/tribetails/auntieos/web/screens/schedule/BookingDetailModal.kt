@@ -53,6 +53,7 @@ import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ServicePill
 import com.tribetails.auntieos.web.ui.components.ToastKind
+import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.ui.components.serviceTone
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
@@ -116,6 +117,10 @@ fun BookingDetailModal(
     var reschedError by remember { mutableStateOf<String?>(null) }
     // #1154: the refused move and the override its refusal offers; null offer means the message stands alone.
     var reschedRetry by remember { mutableStateOf<RescheduleAttempt?>(null) }
+    // #1576: the Actions panel's write in flight, and the server's refusal when it says no.
+    var transitioning by remember(session._id) { mutableStateOf(false) }
+    var transitionError by remember(session._id) { mutableStateOf<String?>(null) }
+    var confirming by remember(session._id) { mutableStateOf<ScheduleSheetAction?>(null) }
 
     // Assigned Auntie (assignAuntie callable). Only envelope visits carry the
     // batch/visit ids the callable needs; legacy flat sessions hide the row.
@@ -358,6 +363,70 @@ fun BookingDetailModal(
                             }
                             assignError?.let { err ->
                                 AuntieBanner(tone = AuntieBannerTone.Error, title = "Couldn't change the Auntie") {
+                                    Text(err, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Actions (#1576) ──
+                // The same transitions Bookings offers, all through
+                // transitionBookingStatus: Mark Completed / Cancel on a visit on
+                // the books (scheduled or in the field), Approve / Reject on a
+                // request. Nothing on a closed visit.
+                val sheetActions = scheduleSheetActions(session.status)
+                if (sheetActions.isNotEmpty()) {
+                    DenPanel(title = "Actions") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val name = session.kinfolkName.ifBlank { "Unnamed" }
+                            val pending = confirming
+                            if (pending == null) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    sheetActions.forEachIndexed { i, action ->
+                                        // Asked first, as on the web: every one of these is final.
+                                        val onClick: () -> Unit = { transitionError = null; confirming = action }
+                                        if (i == 0) {
+                                            PrimaryButton(label = action.label, enabled = !transitioning, onClick = onClick)
+                                        } else {
+                                            GhostButton(label = action.label, enabled = !transitioning, onClick = onClick)
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(scheduleSheetConfirmBody(pending, name), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    PrimaryButton(
+                                        label = if (transitioning) "Saving" else scheduleSheetConfirmLabel(pending),
+                                        enabled = !transitioning,
+                                        onClick = {
+                                            scope.launch {
+                                                transitioning = true
+                                                transitionError = null
+                                                val r = when (pending) {
+                                                    ScheduleSheetAction.MarkCompleted -> client.completeKinCare(session._id, nowIso())
+                                                    ScheduleSheetAction.Cancel -> client.cancelBooking(session._id)
+                                                    ScheduleSheetAction.Approve -> client.approveBooking(session._id)
+                                                    ScheduleSheetAction.Reject -> client.rejectBooking(session._id)
+                                                }
+                                                transitioning = false
+                                                confirming = null
+                                                when (r) {
+                                                    is WriteResult.Ok -> {
+                                                        routeToast.show(scheduleSheetActionToast(pending, name), ToastKind.Success)
+                                                        onDismiss()
+                                                    }
+                                                    // The server's own sentence: a refused Complete names what is missing.
+                                                    is WriteResult.Err -> transitionError = r.message
+                                                }
+                                            }
+                                        },
+                                    )
+                                    GhostButton(label = "Keep it", enabled = !transitioning, onClick = { confirming = null })
+                                }
+                            }
+                            transitionError?.let { err ->
+                                AuntieBanner(tone = AuntieBannerTone.Error, title = "Couldn't change this visit") {
                                     Text(err, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                                 }
                             }
@@ -668,4 +737,48 @@ internal fun bookingNoteAuthorLabel(note: BookingNote, staff: List<StaffMember>?
     "admin" -> staff?.firstOrNull { it.uid == note.authorUid && note.authorUid.isNotBlank() }?.pickerLabel ?: "Staff"
     "kinfolk" -> "Kinfolk"
     else -> "Unknown"
+}
+
+/** #1576: one transition the Schedule's visit sheet offers. The first in a list is the primary button. */
+internal enum class ScheduleSheetAction(val label: String) {
+    MarkCompleted("Mark Completed"),
+    Cancel("Cancel"),
+    Approve("Approve"),
+    Reject("Reject"),
+}
+
+/**
+ * #1576: what the visit sheet offers, by status: the web's `actionsFor` in
+ * `BookingActions.tsx`. A visit on the books (SCHEDULED, or in the field:
+ * ON_MY_WAY / ARRIVED / DEPARTED, which the server completes or cancels from)
+ * gets Mark Completed and Cancel; a request (PENDING, or no status yet) gets
+ * Approve and Reject (DRAFT or PENDING); a closed or unrecognised status gets
+ * nothing, since an action against a status this app does not know would be a guess.
+ */
+internal fun scheduleSheetActions(status: String): List<ScheduleSheetAction> = when (status.trim().uppercase()) {
+    "SCHEDULED", "ON_MY_WAY", "ARRIVED", "DEPARTED" -> listOf(ScheduleSheetAction.MarkCompleted, ScheduleSheetAction.Cancel)
+    "DRAFT", "PENDING" -> listOf(ScheduleSheetAction.Approve, ScheduleSheetAction.Reject)
+    else -> emptyList()
+}
+
+/** The question asked before a transition is sent. Same sentences as the web's `confirmBody`. */
+internal fun scheduleSheetConfirmBody(action: ScheduleSheetAction, name: String): String = when (action) {
+    ScheduleSheetAction.MarkCompleted -> "$name's visit will be marked Completed and leave the scheduled list."
+    ScheduleSheetAction.Cancel -> "$name's visit will be cancelled. This cannot be undone."
+    ScheduleSheetAction.Approve -> "$name's request will move to Scheduled and appear on the calendar."
+    ScheduleSheetAction.Reject -> "$name's request will be cancelled. This cannot be undone."
+}
+/** The confirm button. Same words as the web's `confirmLabel`. */
+internal fun scheduleSheetConfirmLabel(action: ScheduleSheetAction): String = when (action) {
+    ScheduleSheetAction.MarkCompleted -> "Yes, mark it completed"
+    ScheduleSheetAction.Cancel -> "Yes, cancel the visit"
+    ScheduleSheetAction.Approve -> "Yes, approve it"
+    ScheduleSheetAction.Reject -> "Yes, reject it"
+}
+/** The toast after a transition lands. Same sentences as the web's `confirmedToast`. */
+internal fun scheduleSheetActionToast(action: ScheduleSheetAction, name: String): String = when (action) {
+    ScheduleSheetAction.MarkCompleted -> "$name's visit is marked Completed."
+    ScheduleSheetAction.Cancel -> "$name's visit is cancelled."
+    ScheduleSheetAction.Approve -> "$name's request is now Scheduled."
+    ScheduleSheetAction.Reject -> "$name's request is cancelled."
 }
