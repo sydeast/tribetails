@@ -1074,7 +1074,6 @@ class InvoiceDetailViewModel(
                 }
         }
     }
-    /** Re-fetch the invoice into state without flipping the loading shimmer. */
     /**
      * #1567: a send got no answer. Re-reads the invoice from the server and
      * says what it shows, never "couldn't send" (domain/InvoiceSendCheck.kt).
@@ -1087,6 +1086,7 @@ class InvoiceDetailViewModel(
         val after = invoiceRepository.readInvoiceSendMarks(invoiceId)
         return sendOutcomeAfterSilence(action, SEND_BUDGET_SECONDS, before, after)
     }
+    /** Re-fetch the invoice into state without flipping the loading shimmer. */
     private fun reloadInvoiceQuietly(invoiceId: String) {
         viewModelScope.launch {
             invoiceRepository.getInvoiceById(invoiceId)
