@@ -153,8 +153,19 @@ const ALLOWED_EAGER_PACKAGES = [
  * resolution it shares with `addInternalBookingNote`. Two modules whose
  * imports are all already resident, inside the 440 already allowed, so the
  * bound did not move.
+ *
+ * 433 since #1718 (was 440, which #1577 set while main was over 430). #1716
+ * brought main back to 428 and #1718 asked for 430, but by the time it was
+ * built main had reached 433: three new FUNCTIONS entries,
+ * `admin/getRecordingAudio.ts`, `admin/listVisitInternalNotes.ts` and
+ * `triggers/onBookingEnvelopeResolve.ts`, which are in this graph by
+ * construction, and two helpers, `lib/visitNotes.ts` and
+ * `notifications/requestResolution.ts`, whose imports are already resident.
+ * 430 is not reachable without moving modules out of the graph, so the bound
+ * sits at the measured count with no slack: the next eager module has to be
+ * looked at.
  */
-const MAX_OWN_EAGER_MODULES = 440;
+const MAX_OWN_EAGER_MODULES = 433;
 
 interface Edge {
   spec: string;
