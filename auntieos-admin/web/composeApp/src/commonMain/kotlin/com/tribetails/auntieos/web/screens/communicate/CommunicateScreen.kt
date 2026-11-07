@@ -248,19 +248,6 @@ fun CommunicateScreen() {
         return r.kinfolk_id?.let { id -> list.firstOrNull { it._id == id } } ?: selectedKinfolk
     }
 
-    /** The Approve button: a Text or Email approve is checked, then confirmed (#1625). */
-    fun requestApprove() {
-        val r = result ?: return
-        if (saving) return
-        val channel = approveDeliveryChannel(messageType)
-        val blocker = approveSendBlocker(channel, approveRecipient(r), subject, editedCopy)
-        if (blocker != null) {
-            showToast(blocker, ToastKind.Error)
-            return
-        }
-        if (channel != null) approveConfirmOpen = true else approveDraft()
-    }
-
     fun approveDraft() {
         approveConfirmOpen = false
         val r = result ?: return
@@ -327,6 +314,19 @@ fun CommunicateScreen() {
                 saving = false
             }
         }
+    }
+
+    /** The Approve button: a Text or Email approve is checked, then confirmed (#1625). */
+    fun requestApprove() {
+        val r = result ?: return
+        if (saving) return
+        val channel = approveDeliveryChannel(messageType)
+        val blocker = approveSendBlocker(channel, approveRecipient(r), subject, editedCopy)
+        if (blocker != null) {
+            showToast(blocker, ToastKind.Error)
+            return
+        }
+        if (channel != null) approveConfirmOpen = true else approveDraft()
     }
 
     fun applyTemplate(t: KinTaleTemplate) {
