@@ -398,12 +398,12 @@ class InvoiceDetailLedgerColumnsTest {
         // The toast is transient; the panel is not. Left alone, the empty hint
         // below states as a fact about the invoice what is really a fact about
         // the network.
-        mount(Result.failure(RuntimeException("getInvoiceLedger failed: unavailable")))
+        mount(Result.failure(RuntimeException("Could not load: unavailable")))
         rule.onNodeWithText("No payment recorded against this invoice", substring = true)
             .assertDoesNotExist()
         // The panel says it, and says it verbatim. The transient toast carries
         // the same words, hence the count rather than a single node.
-        rule.onAllNodesWithText("getInvoiceLedger failed: unavailable", substring = true)
+        rule.onAllNodesWithText("Could not load: unavailable", substring = true)
             .assertCountEquals(2)
         // And it says which kind of nothing this is.
         rule.onNodeWithText("because the read failed", substring = true).assertExists()

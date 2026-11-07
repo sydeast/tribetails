@@ -60,7 +60,7 @@ fun SecondaryKinfolkSection(client: FirestoreClient, kinfolkId: String, househol
     LaunchedEffect(kinfolkId, generation) {
         when (val r = client.listSecondaryKinfolk(kinfolkId)) {
             is WriteResult.Ok -> { people = r.value; loadError = null }
-            is WriteResult.Err -> loadError = "listSecondaryKinfolk failed: ${r.message}"
+            is WriteResult.Err -> loadError = "Could not load: ${r.message}"
         }
     }
 

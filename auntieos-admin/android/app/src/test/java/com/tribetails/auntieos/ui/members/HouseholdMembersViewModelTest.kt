@@ -206,7 +206,7 @@ class HouseholdMembersViewModelTest {
         vm.revokeInvite(invite()); advanceUntilIdle()
 
         val s = vm.uiState.value
-        assertTrue(s.revokeError!!.contains("revokeInvite failed for jane@example.com"))
+        assertTrue(s.revokeError!!.contains("Could not cancel the invite for jane@example.com"))
         assertTrue(s.revokeError.contains("invite not found"))
         assertNull(s.revokingInviteId)
         // Not reloaded: the list on screen is still correct.
@@ -229,7 +229,7 @@ class HouseholdMembersViewModelTest {
 
             val s = vm.uiState.value
             assertFalse(s.members.single().permissions.billingFull)
-            assertTrue(s.permissionError!!.contains("setMemberPermissions failed for marcus@example.com"))
+            assertTrue(s.permissionError!!.contains("Could not save the access for marcus@example.com"))
             assertTrue(s.permissionError.contains("Admin claim required"))
             assertNull(s.savingPermission)
         }
@@ -272,7 +272,7 @@ class HouseholdMembersViewModelTest {
         advanceUntilIdle()
 
         assertFalse(closed)
-        assertTrue(vm.uiState.value.removeError!!.contains("removeMember failed"))
+        assertTrue(vm.uiState.value.removeError!!.contains("Could not remove"))
         assertNull(vm.uiState.value.removingUid)
     }
 
@@ -287,7 +287,7 @@ class HouseholdMembersViewModelTest {
             vm.load(); advanceUntilIdle()
 
             val s = vm.uiState.value
-            assertTrue(s.membersError!!.contains("listMembers failed"))
+            assertTrue(s.membersError!!.contains("Could not load"))
             assertTrue(s.membersError.contains("Admin claim required"))
             // membersLoaded stays false, so the screen shows the failure rather
             // than "nobody has claimed this household".
@@ -307,7 +307,7 @@ class HouseholdMembersViewModelTest {
         val s = vm.uiState.value
         assertEquals(1, s.members.size)
         assertTrue(s.membersLoaded)
-        assertTrue(s.invitesError!!.contains("listInvites failed"))
+        assertTrue(s.invitesError!!.contains("Could not load"))
         assertFalse(s.invitesLoaded)
     }
 
@@ -543,7 +543,7 @@ class HouseholdMembersViewModelTest {
         val vm = vm()
         vm.load(); advanceUntilIdle()
         val s = vm.uiState.value
-        assertTrue(s.peopleError!!.contains("listSecondaryKinfolk failed"))
+        assertTrue(s.peopleError!!.contains("Could not load"))
         assertFalse(s.peopleLoaded)
         // The roster is independent and did load.
         assertTrue(s.membersLoaded)

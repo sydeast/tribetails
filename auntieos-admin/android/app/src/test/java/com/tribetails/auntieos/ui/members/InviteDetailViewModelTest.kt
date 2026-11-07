@@ -58,14 +58,14 @@ class InviteDetailViewModelTest {
         val vm = InviteDetailViewModel("rq_1", repo)
 
         vm.load()
-        assertEquals("getInvite failed: No invite with that id.", vm.uiState.value.error)
+        assertEquals("Could not load: No invite with that id.", vm.uiState.value.error)
         assertNull(vm.uiState.value.invite)
 
         vm.load()
         assertNotNull(vm.uiState.value.invite)
 
         vm.load()
-        assertEquals("getInvite failed: offline", vm.uiState.value.error)
+        assertEquals("Could not load: offline", vm.uiState.value.error)
         assertNotNull(vm.uiState.value.invite)
     }
 

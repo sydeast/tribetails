@@ -289,7 +289,7 @@ private fun InvoiceDetailBody(
             when (val r = client.linkInvoiceSessions(invoice._id, newIds)) {
                 is WriteResult.Err -> {
                     saveLoading = false
-                    linkSessionsError = "linkInvoiceSessions failed: ${r.message}"
+                    linkSessionsError = "Could not save: ${r.message}"
                 }
                 is WriteResult.Ok -> {
                     saveLoading = false
@@ -329,7 +329,7 @@ private fun InvoiceDetailBody(
                 }
                 is WriteResult.Err -> {
                     savingInvoiceEdit = false
-                    invoiceEditError = "updateInvoice failed: ${r.message}"
+                    invoiceEditError = "Could not save: ${r.message}"
                 }
             }
         }
