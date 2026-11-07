@@ -64,7 +64,8 @@
   outline: var(--border-emphasis) solid var(--color-primary);
   outline-offset: 2px;
 }
-.inbox__tab--active {
+.inbox__tab--active,
+.inbox__tab.inbox__tab--active:hover {
   background: color-mix(in srgb, var(--tt-kinfolk-orange) 12%, transparent);
   border-color: var(--color-primary);
   color: var(--color-primary);
