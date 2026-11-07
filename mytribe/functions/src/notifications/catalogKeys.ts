@@ -4,6 +4,7 @@ import {
   RETIRED_NOTIFICATION_KEYS,
   canonicalNotificationKey,
 } from './catalog';
+import { SEED_CORPUS } from './seedCorpus.generated';
 import type { Audience, Category } from './types';
 
 /**
@@ -70,6 +71,50 @@ export const DIRECT_SEND_KEYS: readonly DirectSendKey[] = Object.freeze([
 export type CatalogKeySource = 'catalog' | 'direct-send' | 'legacy';
 
 /**
+ * What a send of this key does when its email template document does not exist
+ * (#1586). The Assignments screen used to say every such key would throw, and
+ * only one of five actually did.
+ *
+ *  - `fails`     the send throws. Every direct send (`sendFromTemplate` never
+ *                falls back, so a deleted template stops the send).
+ *  - `repoCopy`  the repo's seed copy goes out instead. Only the external
+ *                password reset row (`auth/requestPasswordReset.ts`).
+ *  - `generic`   the dispatcher's email channel sends generic wording
+ *                (notifications/fallbackTemplate.ts). Delivered, but it cannot
+ *                say what happened.
+ *  - `unused`    the sender never looks a template up (it composes the message
+ *                itself), or nothing sends the key at all.
+ */
+export type MissingTemplateEffect = 'fails' | 'repoCopy' | 'generic' | 'unused';
+
+/**
+ * Catalog keys whose sender composes the email itself and never reads a
+ * template. `broadcast.message`: admin/broadcastMessage.ts sends the operator's
+ * own words; the catalog row exists for gating (see its comment in catalog.ts).
+ */
+export const TEMPLATELESS_CATALOG_KEYS: ReadonlySet<string> = new Set(['broadcast.message']);
+
+/** Template ids the repo carries a copy of, which Template Import can load. */
+function seedCorpusKeys(): Set<string> {
+  return new Set(SEED_CORPUS.map((e) => e.key));
+}
+
+/** See [MissingTemplateEffect]. Pure, so the table is tested directly. */
+export function missingTemplateEffect(
+  key: string,
+  source: CatalogKeySource,
+  hasRepoCopy: boolean,
+): MissingTemplateEffect {
+  if (source === 'legacy') return 'unused';
+  if (source === 'direct-send') return 'fails';
+  if (TEMPLATELESS_CATALOG_KEYS.has(key)) return 'unused';
+  // An external row (auth.password.reset) is sent by its own trigger, which
+  // falls back to the repo copy and never to generic wording.
+  if (NOTIFICATION_CATALOG[key]?.external === true) return hasRepoCopy ? 'repoCopy' : 'fails';
+  return 'generic';
+}
+
+/**
  * One row of the catalog-key list. `defaultTemplateId` is what
  * `resolveTemplateId` falls back to when no binding exists (the key itself for
  * direct-send and legacy keys; `templates.email` for a catalog row).
@@ -89,6 +134,10 @@ export interface CatalogKeyRow {
   bound: boolean;
   /** What dispatch sends for this key right now (binding if active, else default). */
   resolvedTemplateId: string;
+  /** What a send does when the resolved template document is missing (#1586). */
+  whenTemplateMissing: MissingTemplateEffect;
+  /** Whether the repo carries a copy of this key that Template Import can load. */
+  inRepoCorpus: boolean;
 }
 
 /** The template id `resolveTemplateId` falls back to for a catalog key. */
@@ -179,6 +228,7 @@ export function buildCatalogKeyRows(
 ): CatalogKeyRow[] {
   const rows: CatalogKeyRow[] = [];
   const seen = new Set<string>();
+  const corpus = seedCorpusKeys();
 
   const push = (
     key: string,
@@ -200,6 +250,8 @@ export function buildCatalogKeyRows(
       hasDefaultTemplate: templateIds.has(defaultTemplateId),
       bound: boundKeys.has(key),
       resolvedTemplateId: activeBindings.get(key) ?? defaultTemplateId,
+      whenTemplateMissing: missingTemplateEffect(key, source, corpus.has(key)),
+      inRepoCorpus: corpus.has(key),
     });
   };
 
