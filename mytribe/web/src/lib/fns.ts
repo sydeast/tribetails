@@ -12,12 +12,63 @@ import { noteSessionAlive, reactToCallableError } from './revokedSession';
  * error ever surfaces. 20s is generous for a Firestore-backed callable and
  * short enough that a hang becomes a visible, retryable error.
  */
-const CALLABLE_TIMEOUT_MS = 20_000;
+export const CALLABLE_TIMEOUT_MS = 20_000;
 
+/**
+ * #1567: the budget for a callable that does slow work while the household
+ * waits: an email sent inline, a Stripe call, a PDF, the writing helper. 70s
+ * is the Functions SDK's own default, which the Android apps run with.
+ *
+ * A cold start on this project has been measured at 20.8s before a handler
+ * ran at all (`reviewAndSendDraftInvoice`, 2026-11-05). At 20s a call like
+ * that is cut off and reported while the server goes on to finish it, so a
+ * card is saved or an invite sent while the screen says otherwise. 70s is
+ * longer than the server's own 60s function timeout, so when it runs out the
+ * server has finished or stopped.
+ *
+ * Twin of `auntieos-admin/src/lib/fns.ts`'s list; `fns.test.ts` checks every
+ * name is a real server export.
+ */
+export const LONG_CALLABLE_TIMEOUT_MS = 70_000;
+
+export const LONG_RUNNING_CALLABLES: ReadonlySet<string> = new Set([
+  // Email sent inline.
+  'requestPasswordReset',
+  'acceptInvite',
+  'addSecondaryContact',
+  // The AI writing helper.
+  'generate',
+  // A PDF rendered and uploaded inline.
+  'getMyInvoicePdf',
+  // Stripe, inline.
+  'payInvoice',
+  'createBillingSetupSession',
+  'syncMyPaymentMethod',
+  'removeMyPaymentMethod',
+]);
+
+/** The client budget for [name], in milliseconds. */
+export function callableTimeoutMs(name: string): number {
+  return LONG_RUNNING_CALLABLES.has(name) ? LONG_CALLABLE_TIMEOUT_MS : CALLABLE_TIMEOUT_MS;
+}
+
+/**
+ * The call got no answer inside its budget. #1567: not a failure, so the
+ * sentence never says it is; the server may have finished after the client
+ * stopped listening.
+ */
 export class CallableTimeoutError extends Error {
-  constructor(name: string) {
-    super(`${name} took too long to respond. Check your connection and try again.`);
+  readonly callableName: string;
+  readonly seconds: number;
+  constructor(name: string, timeoutMs: number = callableTimeoutMs(name)) {
+    const seconds = Math.round(timeoutMs / 1000);
+    super(
+      `${name} got no answer from Tribe Tails within ${seconds} seconds, so it may still have gone through. ` +
+        'Check before trying again.',
+    );
     this.name = 'CallableTimeoutError';
+    this.callableName = name;
+    this.seconds = seconds;
   }
 }
 
@@ -44,8 +95,8 @@ export class CallableTimeoutError extends Error {
 export interface CallOptions {
   /**
    * Retry ONCE on `functions/internal`, and only that code. A deadline is left
-   * alone deliberately: the 20s timeout exists so a hang becomes a visible,
-   * operator-driven retry, and quietly doubling the wait would undo it.
+   * alone deliberately: the timeout exists so a hang becomes a visible,
+   * operator-driven decision, and quietly doubling the wait would undo it.
    */
   idempotent?: boolean;
   /**
@@ -67,7 +118,8 @@ export async function call<TReq, TRes>(
   payload: TReq,
   options: CallOptions = {},
 ): Promise<TRes> {
-  const fn = httpsCallable<TReq, TRes>(functions, name, { timeout: CALLABLE_TIMEOUT_MS });
+  const timeoutMs = callableTimeoutMs(name);
+  const fn = httpsCallable<TReq, TRes>(functions, name, { timeout: timeoutMs });
   let retriedInternal = false;
   for (;;) {
     try {
@@ -79,7 +131,7 @@ export async function call<TReq, TRes>(
       return result.data;
     } catch (err) {
       if (err instanceof FirebaseError && err.code === 'functions/deadline-exceeded') {
-        throw new CallableTimeoutError(name);
+        throw new CallableTimeoutError(name, timeoutMs);
       }
       // #644: the retry, placed before `reactToCallableError` below, because a
       // session that is merely being retried has not been revoked.

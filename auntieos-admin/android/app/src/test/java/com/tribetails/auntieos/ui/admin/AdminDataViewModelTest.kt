@@ -45,6 +45,9 @@ class AdminDataViewModelTest {
         mockRepo = mockk()
         mockInvoiceRepo = mockk()
         mockKinCareRepo = mockk()
+        // #1567: receipt sends read the invoice's stamp first. Tests that care
+        // about the re-read override this.
+        coEvery { mockInvoiceRepo.readInvoiceSendMarks(any()) } returns null
     }
 
     @After
@@ -876,6 +879,45 @@ class AdminDataViewModelTest {
         assertNull(vm.error.value)
     }
 
+    // ── #1567: a row send that got no answer is re-read, never reported as failed ──
+    @Test
+    fun `#1567 a silent draft send that landed confirms it and refreshes the list`() = runTest(testDispatcher) {
+        val draft = TestFixtures.invoice1.copy(id = "inv-d", kinfolkId = "fam1", status = "draft")
+        coEvery { mockInvoiceRepo.reviewAndSendDraftInvoice("inv-d", "fam1") } returns Result.failure(
+            io.mockk.mockk<com.google.firebase.functions.FirebaseFunctionsException>(relaxed = true).also {
+                io.mockk.every { it.code } returns com.google.firebase.functions.FirebaseFunctionsException.Code.DEADLINE_EXCEEDED
+            },
+        )
+        coEvery { mockInvoiceRepo.readInvoiceSendMarks("inv-d") } returns
+            com.tribetails.auntieos.domain.SendMarks("open", null, null, null)
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+        val vm = buildViewModel()
+        vm.reviewAndSendDraftInvoice(draft)
+        advanceUntilIdle()
+        assertEquals(
+            "Draft sent. The answer came late, so this was confirmed by re-reading the invoice.",
+            vm.invoiceActionMessage.value,
+        )
+        assertNull(vm.error.value)
+        coVerify(exactly = 1) { mockInvoiceRepo.getInvoices() }
+    }
+    @Test
+    fun `#1567 a silent draft send that did not land says not sent, never failed`() = runTest(testDispatcher) {
+        val draft = TestFixtures.invoice1.copy(id = "inv-d", kinfolkId = "fam1", status = "draft")
+        coEvery { mockInvoiceRepo.reviewAndSendDraftInvoice("inv-d", "fam1") } returns Result.failure(
+            java.net.SocketTimeoutException("timeout"),
+        )
+        coEvery { mockInvoiceRepo.readInvoiceSendMarks("inv-d") } returns
+            com.tribetails.auntieos.domain.SendMarks("draft", null, null, null)
+        val vm = buildViewModel()
+        vm.reviewAndSendDraftInvoice(draft)
+        advanceUntilIdle()
+        assertEquals(
+            "Tribe Tails did not answer within 70 seconds. The invoice is still a draft, so it has not gone out. Send it again.",
+            vm.error.value,
+        )
+        assertNull(vm.invoiceActionMessage.value)
+    }
     @Test
     fun `#1511 reviewAndSendDraftInvoice says when the invoice reached the household in the app only`() = runTest(testDispatcher) {
         val draft = TestFixtures.invoice1.copy(id = "inv-d", kinfolkId = "fam1", status = "draft")
