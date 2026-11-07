@@ -61,6 +61,8 @@ import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.data.model.MediaType
 import com.tribetails.auntieos.domain.GalleryFilter
+import com.tribetails.auntieos.domain.KinHouseholdGroup
+import com.tribetails.auntieos.domain.groupKinByHousehold
 import com.tribetails.auntieos.domain.filterGalleryMedia
 import com.tribetails.auntieos.domain.galleryFileTypes
 import com.tribetails.auntieos.domain.galleryHasUnattachedMedia
@@ -325,6 +327,7 @@ fun GalleryBody(
         TagKinDialog(
             media = media,
             kin = taggableKin(media, state.kin),
+            householdLabels = state.kinfolk.associate { it.id to it.displayName },
             onDismiss = { selected = null },
             onSave = { ids -> viewModel.saveTags(media.id, ids) { ok -> if (ok) selected = null } },
         )
@@ -829,6 +832,8 @@ private fun GalleryTile(
 private fun TagKinDialog(
     media: MediaFile,
     kin: List<Kin>,
+    /** Household display names by id (#1604): the headings over a whole-roster list, and the household named on a scoped one. */
+    householdLabels: Map<String, String>,
     onDismiss: () -> Unit,
     onSave: (List<String>) -> Unit,
 ) {
@@ -839,38 +844,60 @@ private fun TagKinDialog(
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("Tag kin in this photo", style = AuntieTheme.typography.titleLarge, color = c.textPrimary)
                 Spacer(Modifier.height(12.dp))
+                val scoped = media.kinfolkId.isNotBlank()
+                if (scoped) {
+                    householdLabels[media.kinfolkId]?.takeIf { it.isNotBlank() }?.let {
+                        Text("Household: $it", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
                 if (kin.isEmpty()) {
                     Text("No kin on this household to tag.", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
                 } else {
+                    // A file with a household offers that household's kin: one flat list is
+                    // unambiguous. A file with none offers the whole roster (#1604), so group
+                    // it under each household's name to tell same-named pets apart.
+                    val groups = if (scoped) listOf(KinHouseholdGroup("", "", kin))
+                    else groupKinByHousehold(kin) { householdLabels[it] }
                     Column(
                         modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        kin.forEach { k ->
-                            val on = picked.contains(k.id)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable { if (on) picked.remove(k.id) else picked.add(k.id) }
-                                    .padding(vertical = 8.dp, horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                Box(
+                        groups.forEach { group ->
+                            if (!scoped) {
+                                Text(
+                                    group.label,
+                                    style = AuntieTheme.typography.labelMedium,
+                                    color = c.textDim,
+                                    modifier = Modifier.padding(top = 8.dp, start = 6.dp),
+                                )
+                            }
+                            group.kin.forEach { k ->
+                                val on = picked.contains(k.id)
+                                Row(
                                     modifier = Modifier
-                                        .size(20.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(if (on) c.kinfolkOrange else c.surface2)
-                                        .border(0.5.dp, if (on) c.kinfolkOrange else c.border, RoundedCornerShape(6.dp)),
-                                    contentAlignment = Alignment.Center,
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { if (on) picked.remove(k.id) else picked.add(k.id) }
+                                        .padding(vertical = 8.dp, horizontal = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    if (on) Icon(Lucide.Check, contentDescription = null, tint = c.background, modifier = Modifier.size(13.dp))
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(k.name.ifBlank { "Unnamed" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                                    val sub = listOf(k.species, k.breed).filter { it.isNotBlank() }.joinToString(" · ")
-                                    if (sub.isNotBlank()) Text(sub, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (on) c.kinfolkOrange else c.surface2)
+                                            .border(0.5.dp, if (on) c.kinfolkOrange else c.border, RoundedCornerShape(6.dp)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        if (on) Icon(Lucide.Check, contentDescription = null, tint = c.background, modifier = Modifier.size(13.dp))
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(k.name.ifBlank { "Unnamed" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                        val sub = listOf(k.species, k.breed).filter { it.isNotBlank() }.joinToString(" · ")
+                                        if (sub.isNotBlank()) Text(sub, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                    }
                                 }
                             }
                         }

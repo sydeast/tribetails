@@ -95,3 +95,24 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-error);
 }
+
+/* #1604. A file with no household offers the whole roster, grouped under each
+   household's name. The scroll cap moves from each group's list to the wrapper,
+   so a long roster scrolls as one column instead of each family scrolling alone. */
+.tag-kin__scroll {
+  max-height: 20rem;
+  overflow-y: auto;
+}
+.tag-kin__scroll .tag-kin__list {
+  max-height: none;
+  overflow-y: visible;
+}
+.tag-kin__household {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-label-sm-size);
+  font-weight: 600;
+  color: var(--color-text-dim);
+}
+.tag-kin__group:first-child .tag-kin__household {
+  margin-top: var(--space-2);
+}

@@ -516,10 +516,8 @@ function VeterinarySection({
       {leftovers.length > 0 && (
         <Banner tone="warning" title="Older vet notes are still on this record">
           <p>
-            These were typed before the vet was chosen from the shared bank. They are not used
-            anywhere and are not kept up to date. The migration moves anything the record is
-            missing; whatever is left below can be cleared once you have copied out anything worth
-            keeping.
+            Typed before the vet came from the shared bank, and no longer used. Copy out anything
+            worth keeping, then clear them.
           </p>
           <LeftoverFacts leftovers={leftovers} record={record} />
           <GhostButton label="Clear old vet notes" onClick={() => setConfirming(true)} />

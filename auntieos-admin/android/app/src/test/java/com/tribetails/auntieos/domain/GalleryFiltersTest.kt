@@ -66,6 +66,28 @@ class GalleryFiltersTest {
         assertEquals(listOf("1"), taggableKin(media("x", "k1"), kin).map { it.id })
     }
 
+    // #1604: the whole-roster tag list says whose pet is whose.
+    private fun petOf(id: String, name: String, kinfolk: String) = Kin(id = id, name = name, kinfolkId = kinfolk)
+    private val householdNames = mapOf("k1" to "Halbrook", "k2" to "Alvarez")
+    @Test fun groupsKinUnderTheirHouseholdSortedByNameBothLevels() {
+        val groups = groupKinByHousehold(
+            listOf(petOf("a", "Waddles", "k1"), petOf("b", "biscuit", "k2"), petOf("c", "Archie", "k1")),
+        ) { householdNames[it] }
+        assertEquals(listOf("Alvarez", "Halbrook"), groups.map { it.label })
+        assertEquals(listOf("c", "a"), groups[1].kin.map { it.id })
+    }
+    @Test fun samePetNameInTwoHouseholdsStaysApart() {
+        val groups = groupKinByHousehold(listOf(petOf("a", "Biscuit", "k1"), petOf("b", "Biscuit", "k2"))) { householdNames[it] }
+        assertEquals(listOf("Alvarez" to listOf("b"), "Halbrook" to listOf("a")), groups.map { it.label to it.kin.map { k -> k.id } })
+    }
+    @Test fun unresolvedAndBlankHouseholdsSortLastUnderAPlainWordNeverARawId() {
+        val groups = groupKinByHousehold(
+            listOf(petOf("a", "Orphan", ""), petOf("b", "Lost", "k-gone"), petOf("c", "Waddles", "k1")),
+        ) { householdNames[it] }
+        assertEquals("Halbrook", groups[0].label)
+        assertEquals(listOf(UNKNOWN_HOUSEHOLD_LABEL, UNKNOWN_HOUSEHOLD_LABEL), groups.drop(1).map { it.label })
+        assertEquals(false, groups.any { it.label.contains("k-gone") })
+    }
     // #1588: the Upload dialog's kin picker.
     private fun pet(id: String, name: String, kinfolk: String, status: String = "active") =
         Kin(id = id, name = name, kinfolkId = kinfolk, status = status)

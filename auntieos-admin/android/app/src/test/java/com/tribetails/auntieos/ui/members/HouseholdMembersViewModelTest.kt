@@ -171,6 +171,16 @@ class HouseholdMembersViewModelTest {
             assertEquals("Expired", inviteStatusLabel(row.effectiveStatus))
         }
 
+    /** #1603: an accepted invite is spent, so its line carries no expiry date. */
+    @Test fun `an accepted invite drops its expiry date`() {
+        val accepted = invite(
+            status = MembersRepository.InviteStatus.ACCEPTED,
+            effective = MembersRepository.InviteStatus.ACCEPTED,
+            redeemable = false,
+        ).copy(expiresAt = "2026-05-26T00:00:00.000Z")
+        assertFalse(inviteMetaLine(accepted).contains("expire"))
+    }
+
     @Test fun `a revoked invite groups under Revoked and reads its revoked date`() {
         val revoked = invite(
             status = MembersRepository.InviteStatus.REVOKED,
