@@ -432,8 +432,8 @@ function ArchiveOrphanDialog({ report, onClose, onArchived }: ArchiveOrphanDialo
       }
     >
       <p className="needs-triage__hint">
-        Soft-archive: the report stays in Firestore for audit but is hidden from the active buckets.
-        The reason is recorded in the activity log.
+        Archiving hides the report from these lists and keeps it on file. The reason is recorded in
+        the activity log.
       </p>
       <label className="needs-triage__field-label" htmlFor="archive-orphan-reason">
         {`Archive reason (at least ${String(ARCHIVE_REASON_MIN)} characters)`}

@@ -302,7 +302,7 @@ fun CommunicateScreen() {
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker = "The Den · Communicate",
+            kicker = "Care Ops · Communicate",
             title = "Talk to your",
             accentTail = "kinfolk.",
             subtitle = "Pull a saved template or write from scratch, let Auntie draft it, then approve before it goes home.",

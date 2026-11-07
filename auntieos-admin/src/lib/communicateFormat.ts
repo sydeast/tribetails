@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
-import { dayKey, formatWhen, machineWhen, type FsTime } from './time';
+import { dayKey, formatClock, machineWhen, type FsTime } from './time';
 import { sessionDayLabel, localDateIso } from './sessionFormat';
 
 /**
@@ -52,14 +52,12 @@ export function sendDayKey(ms: number): string {
 }
 
 /**
- * LOCAL `HH:mm` clock time for a send's `sentAtMs`. Reuses `formatWhen`'s
- * `MM-DD HH:mm` in full and takes only the time half (`.slice(6)`), matching
- * inboxFormat.ts's `threadClock`: the row's day group header already carries
- * the day, so repeating it per-row would be noise, not a second AO-18 check.
+ * LOCAL `HH:mm` clock time for a send's `sentAtMs`, through `formatClock`
+ * (#1599), matching inboxFormat.ts's `threadClock`: the row's day group
+ * header already carries the day.
  */
 export function sendClock(ms: number): string {
-  const full = formatWhen(sendTimeOf(ms));
-  return full === '(no time)' ? full : full.slice(6);
+  return formatClock(sendTimeOf(ms));
 }
 
 /** Machine-readable local datetime for a row's `<time dateTime={…}>` attribute. */

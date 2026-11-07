@@ -24,3 +24,17 @@ fun isValidBusinessName(value: String): Boolean = value.isNotBlank()
  */
 fun businessNameError(value: String): String? =
     if (isValidBusinessName(value)) null else BUSINESS_NAME_REQUIRED_MESSAGE
+
+/**
+ * #1564. Operator ruling, 2026-11-05 docket: every business email goes to the
+ * business contact email in business settings, and while it is blank each one
+ * is skipped. The warning beside the field, or null once it is filled. Same
+ * words as the admin web and Android.
+ */
+fun businessEmailNotice(value: String): String? =
+    if (value.isBlank()) {
+        "Business emails have nowhere to go until this is filled. " +
+            "Every business notification email goes to this address."
+    } else {
+        null
+    }
