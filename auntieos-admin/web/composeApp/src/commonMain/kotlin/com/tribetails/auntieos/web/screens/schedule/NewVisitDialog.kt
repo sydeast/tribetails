@@ -51,7 +51,6 @@ import kotlinx.datetime.TimeZone
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
-private val FALLBACK_SERVICE_TYPES = listOf("Drop-In", "Dog Walking", "Pet Sitting", "Overnight", "Daycare", "Other")
 
 /**
  * Admin-direct "schedule a visit" dialog. Wires the Stage-1 createKinCareSession
@@ -84,10 +83,9 @@ fun NewVisitDialog(
 
     val kinfolk = kinfolkRead.data.orEmpty()
         .sortedBy { it.displayName.lowercase() }
-    // KinCare types come from Business-Settings serviceRates (never hardcoded); fall
-    // back to a small default list only when settings carry none yet.
-    val serviceTypes = (settingsState as? FirestoreResult.Data)?.value?.serviceRates?.keys
-        ?.toList()?.takeIf { it.isNotEmpty() } ?: FALLBACK_SERVICE_TYPES
+    // #1703: KinCare types come from Business-Settings serviceRates and nowhere
+    // else, so every visit made here can be priced at invoice time.
+    val serviceTypes = rateCardServiceTypes((settingsState as? FirestoreResult.Data)?.value?.serviceRates)
 
     var selectedKinfolk by remember { mutableStateOf<Kinfolk?>(null) }
     var serviceType by remember { mutableStateOf("") }
@@ -103,7 +101,7 @@ fun NewVisitDialog(
     // typed window crosses into the past. Null while the date or time is incomplete.
     val draftTiming = buildRescheduleTimes(date, time, durationMinutes, localZone)
         ?.let { timingOf(it, localZone, nowMs()) }
-    val canCreate = selectedKinfolk != null && serviceType.isNotBlank() &&
+    val canCreate = selectedKinfolk != null && serviceType in serviceTypes &&
         date.length == 10 && time.length == 5 && durationMinutes > 0 &&
         draftTiming != VisitWindowTiming.UNDERWAY
 
@@ -160,13 +158,25 @@ fun NewVisitDialog(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        AuntieSelectField(
-                            label = "Service *",
-                            options = serviceTypes,
-                            selected = serviceType,
-                            onSelect = { serviceType = it },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        when {
+                            settingsState is FirestoreResult.Loading ->
+                                Text("Loading KinCare types...", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            settingsState is FirestoreResult.Error ->
+                                Text(
+                                    "Couldn't load KinCare types: ${(settingsState as FirestoreResult.Error).message}",
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = c.error,
+                                )
+                            serviceTypes.isEmpty() ->
+                                Text(NO_KINCARE_TYPES_MESSAGE, style = AuntieTheme.typography.bodySmall, color = c.error)
+                            else -> AuntieSelectField(
+                                label = "Service *",
+                                options = serviceTypes,
+                                selected = serviceType,
+                                onSelect = { serviceType = it },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             BottomBorderField(date, { date = it }, label = "Date (YYYY-MM-DD)", modifier = Modifier.weight(1f))
                             BottomBorderField(time, { time = it }, label = "Time (HH:MM)", modifier = Modifier.weight(1f))
