@@ -145,6 +145,8 @@ export interface PricedDayRow {
   readonly dayIndex: number;
   readonly items: readonly PricedItem[];
   readonly customized: boolean;
+  /** True only when the day's own list differs from the template. `customized` alone just means an editable copy exists (#1605). */
+  readonly changed: boolean;
   readonly canOvernight: boolean;
   readonly isOvernight: boolean;
   readonly overnightCost: number;
@@ -263,6 +265,45 @@ export function alignPinnedToDurations(rules: CoverageRules, durations: readonly
   return { ...rules, pinnedTimes };
 }
 
+/** The least the "Max gap between visits" rule may be, in hours (#1582). The field has always said `min=1`. */
+export const MAX_GAP_MIN_HOURS = 1;
+export type MaxGapParse = { ok: true; value: number } | { ok: false; message: string };
+/**
+ * Reads what was typed into "Max gap between visits (hrs)".
+ *
+ * REFUSES instead of coercing (#1582). The field used to turn anything it could
+ * not read into 1, so typing the "-" of "-5" repriced every package at a 1 hour
+ * gap and the next keystroke made it "15", with no message. A half-typed or
+ * negative entry now comes back as a message to show beside the field, and the
+ * caller keeps the last good value. There is no upper bound: how long a gap the
+ * client accepts is the operator's call.
+ */
+export function parseMaxGapHours(text: string): MaxGapParse {
+  const t = text.trim();
+  if (t === '') return { ok: false, message: 'Enter the longest gap between visits, in hours.' };
+  if (!/^\d+(\.\d+)?$/.test(t)) {
+    return { ok: false, message: 'Enter hours as a plain number, like 6 or 4.5. A minus sign is not allowed.' };
+  }
+  const value = Number(t);
+  if (!Number.isFinite(value) || value < MAX_GAP_MIN_HOURS) {
+    return { ok: false, message: `Max gap must be at least ${MAX_GAP_MIN_HOURS} hour.` };
+  }
+  return { ok: true, value };
+}
+/**
+ * A stored max gap the field would refuse (a quote saved while the field still
+ * coerced, so `-5` could be stored), as the message the field shows for it, or
+ * null when it is usable. The screen shows the stored value and this message
+ * rather than quietly pricing against something else.
+ */
+export function storedMaxGapRefusal(rules: CoverageRules): string | null {
+  const parsed = parseMaxGapHours(String(rules.maxGapHours));
+  return parsed.ok ? null : parsed.message;
+}
+/** Rules read back from storage, with a refused max gap replaced by the shipped default for pricing. */
+export function sanitizeStoredRules(rules: CoverageRules): CoverageRules {
+  return storedMaxGapRefusal(rules) === null ? rules : { ...rules, maxGapHours: DEFAULT_COVERAGE_RULES.maxGapHours };
+}
 /** The shipped default coverage rules. Pinned id is fixed (not random) so the
  *  default is stable across reads and safe to compare in tests. Its `durationId`
  *  is a menu id that no KinCare rate card carries, so the screen runs the default
@@ -664,6 +705,34 @@ export function gapWarnings(
   return out;
 }
 
+/**
+ * Whether a day's own visit list differs from the package template (#1605).
+ * "Customize this day" forks the template into an editable copy; until the
+ * operator changes something that copy is the template, so the day is not
+ * customized yet. Ids are ignored (the fork mints fresh ones), order is not.
+ */
+export function dayDiffersFromTemplate(pkg: Package, dayIndex: number): boolean {
+  const own = pkg.dayOverrides[dayIndex];
+  if (!own) return false;
+  const key = (v: Visit): string => `${v.time}|${v.durationId}|${v.label}`;
+  const sig = (list: readonly Visit[]): string => list.map(key).sort().join(';');
+  return sig(own) !== sig(pkg.visits);
+}
+/**
+ * A name for a duplicate that no other package carries (#1605): "Lean copy",
+ * then "Lean copy 2". Duplicating a copy extends the original's name rather than
+ * stacking another " copy" on it.
+ */
+export function uniqueCopyName(name: string, existing: readonly string[]): string {
+  const base = name.replace(/ copy( \d+)?$/, '');
+  const taken = new Set(existing);
+  const first = `${base} copy`;
+  if (!taken.has(first)) return first;
+  for (let n = 2; ; n++) {
+    const candidate = `${first} ${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
 /** Price a whole package across the stay: per-day rows, subtotal, discount, total. */
 export function pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
   const { days, nights, durations, overnightDuration } = ctx;
@@ -678,6 +747,7 @@ export function pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
       dayIndex: i,
       items: day.items,
       customized: !!pkg.dayOverrides[i],
+      changed: dayDiffersFromTemplate(pkg, i),
       canOvernight,
       isOvernight,
       overnightCost,

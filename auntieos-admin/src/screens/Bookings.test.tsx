@@ -303,7 +303,7 @@ describe('Bookings screen', () => {
     expect(document.querySelectorAll('.den-stat-label')).toHaveLength(0);
     // DRAFT and PENDING still count as one bucket, mirroring BookingScreen.kt's
     // "Pending approval"; the chip on the section heading is where it is stated.
-    const pending = screen.getByRole('group', { name: /^Pending approval/ });
+    const pending = screen.getByRole('group', { name: /^Visit requests/ });
     expect(within(pending).getByText('2')).toBeInTheDocument();
   });
 
@@ -506,7 +506,7 @@ describe('Bookings screen', () => {
     it('each section is a staggered block with a serif heading and a plain count', () => {
       useCollection.mockReturnValue({ status: 'ready', data: [entry({ status: 'PENDING' })] });
       render(<Bookings />);
-      const pending = screen.getByRole('group', { name: /^Pending approval/ });
+      const pending = screen.getByRole('group', { name: /^Visit requests/ });
       expect(pending.className).toContain('d1');
       expect(screen.getByRole('group', { name: /^Scheduled/ }).className).toContain('d2');
       expect(screen.getByRole('group', { name: /^History/ }).className).toContain('d3');
@@ -869,7 +869,16 @@ describe('groupBookingsByStatus', () => {
   });
   it('keeps an empty section so the screen can say nothing is waiting', () => {
     const sections = groupBookingsByStatus([entry({ _id: 'c', status: 'COMPLETED' })]);
-    expect(sections[0]).toEqual({ key: 'pending', label: 'Pending approval', rows: [] });
+    expect(sections[0]).toEqual({ key: 'pending', label: 'Visit requests', rows: [] });
+  });
+  it('#1578: keeps a visit that is under way in Scheduled, not History', () => {
+    const sections = groupBookingsByStatus([
+      entry({ _id: 'w', status: 'ON_MY_WAY' }),
+      entry({ _id: 'a', status: 'ARRIVED' }),
+      entry({ _id: 'd', status: 'DEPARTED' }),
+    ]);
+    expect(sections[1]?.rows.map((r) => r._id).sort()).toEqual(['a', 'd', 'w']);
+    expect(sections[2]?.rows).toEqual([]);
   });
   it('files an unrecognized status under History rather than letting it vanish', () => {
     // The AO-12 rule this tree keeps: a row that matches no section is a row
@@ -943,20 +952,20 @@ describe('Bookings status sections', () => {
   it('heads each section with its own live count', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    expect(within(sectionNamed('Pending approval')).getByText('1')).toBeInTheDocument();
+    expect(within(sectionNamed('Visit requests')).getByText('1')).toBeInTheDocument();
     expect(within(sectionNamed('Scheduled')).getByText('1')).toBeInTheDocument();
     expect(within(sectionNamed('History')).getByText('2')).toBeInTheDocument();
   });
   it('puts each row under its own status section, not one flat list', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    expect(within(sectionNamed('Pending approval')).getByText('Waiting Wren')).toBeInTheDocument();
+    expect(within(sectionNamed('Visit requests')).getByText('Waiting Wren')).toBeInTheDocument();
     expect(within(sectionNamed('Scheduled')).getByText('Booked Devlin')).toBeInTheDocument();
   });
   it('#704: all three sections are on screen, History open rather than behind "Show N finished"', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    for (const label of ['Pending approval', 'Scheduled', 'History']) {
+    for (const label of ['Visit requests', 'Scheduled', 'History']) {
       expect(sectionNamed(label)).toBeInTheDocument();
     }
     expect(screen.getByText('Finished Sparrow')).toBeInTheDocument();
@@ -982,7 +991,7 @@ describe('Bookings status sections', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [mixed[1] as BookingEntry] });
     render(<Bookings />);
     expect(
-      within(sectionNamed('Pending approval')).getByText(/nothing is waiting on a reply/i),
+      within(sectionNamed('Visit requests')).getByText(/nothing is waiting on a reply/i),
     ).toBeInTheDocument();
   });
   it('#701: the Select toggle on the list header turns select mode on, next to the rows it picks', async () => {

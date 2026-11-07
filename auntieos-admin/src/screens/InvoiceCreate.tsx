@@ -1,5 +1,6 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import { createInvoice, createQuote } from '../api/invoicesWrite';
 import {
   mintInvoiceIdempotencyKey,
@@ -9,7 +10,6 @@ import type {
   CreateInvoiceArgs,
   ListUninvoicedSessionsResultSession,
 } from '../contracts/invoiceContracts.generated';
-import { useCollection } from '../lib/firestore';
 import { computeInvoiceTotals, centsToDollars, type InvoiceLineItemInput } from '../lib/invoiceMath';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import { localDateIso } from '../lib/invoiceFormat';
@@ -230,7 +230,7 @@ export function buildBoundLines(
  * carries Buttons.tsx's `busy` state.
  */
 export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: InvoiceCreateProps) {
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   const households = kinfolkState.status === 'ready' ? kinfolkState.data : [];
 
   const [kind, setKind] = useState<InvoiceCreateMode>(mode);

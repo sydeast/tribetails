@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
+import { useEffect, useMemo, useState } from 'react';
 import {
   invoiceDispute,
   invoiceMatchesSearch,
@@ -11,7 +12,7 @@ import {
   type InvoiceEntry,
   type InvoiceState,
 } from '../api/invoices';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import {
   formatUsd,
   humanizeDate,
@@ -22,10 +23,11 @@ import {
   type InvoiceAction,
   type InvoicePartialPayment,
   isInvoiceOverdue,
+  isUnreadableDueDate,
   localDateIso,
   unstampedStateInfo,
 } from '../lib/invoiceFormat';
-import { useCollection, useDocById } from '../lib/firestore';
+import { useDocById } from '../lib/firestore';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
@@ -44,6 +46,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { InvoiceDetail } from '../components/InvoiceDetail';
 import { InvoiceCreate, type InvoiceCreateMode } from './InvoiceCreate';
+import { navKicker } from '../lib/nav';
 import './Invoices.css';
 
 /**
@@ -179,10 +182,34 @@ interface RowView {
   overdue: boolean;
   /** Whole days past due, or null when the invoice is not a dated overdue balance. */
   daysOverdue: number | null;
+  /**
+   * #1570: the invoice carries a due date that names no day ("Net 14",
+   * "07/14/2026"), so it can never be counted overdue. Flagged on the row and
+   * counted on the Overdue card, never dropped silently.
+   */
+  dueUnreadable: boolean;
   /** Non-null when money has come in that does not cover the invoice. */
   partial: InvoicePartialPayment | null;
 }
 
+/**
+ * #1569: do the page's copy of an invoice and the sheet's live copy say the same
+ * thing? Compared field by field with the keys sorted, so two reads of one
+ * unchanged document agree whatever order their fields arrived in.
+ */
+export function sameDoc(a: unknown, b: unknown): boolean {
+  return stableJson(a) === stableJson(b);
+}
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
+    const rec = v as Record<string, unknown>;
+    // A Firestore Timestamp serializes through its own toJSON; anything else
+    // with one (a Date) is read the same way.
+    if (typeof (rec as { toJSON?: unknown }).toJSON === 'function') return v;
+    return Object.fromEntries(Object.keys(rec).sort().map((k) => [k, rec[k]]));
+  });
+}
 function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
   // Normalize BEFORE anything reads a field. InvoiceEntry is a cast over raw
   // Firestore data, not a guarantee, and real docs ARE missing keys it declares.
@@ -196,6 +223,7 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
       state,
       overdue: isInvoiceOverdue(state, entry.dueDate, todayIso),
       daysOverdue: invoiceDaysOverdue(state, entry.dueDate, todayIso),
+      dueUnreadable: isUnreadableDueDate(entry.dueDate),
       // Like `overdue`, a display refinement of `open` rather than a state of
       // its own, so it changes the chip and never the actions.
       partial: invoicePartialPayment(state, entry),
@@ -307,12 +335,12 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // which is what "last 7 days" means to the person reading it.
   const startDay = useMemo(() => rangeStartIso(range, new Date())?.slice(0, 10) ?? null, [range]);
   const spec = useMemo(() => invoicesPageQuery({ startDay, kinfolkId }), [startDay, kinfolkId]);
-  const { state: rows, hasMore, more, loadMore } = usePagedCollection<InvoiceEntry>(spec);
+  const { state: pagedRows, hasMore, more, loadMore, reload } = usePagedCollection<InvoiceEntry>(spec);
 
   // The facet's options come from the household DIRECTORY rather than from the
   // loaded invoices: a facet built from the page can only offer households that
   // are already visible, which is the opposite of what the control is for.
-  const households = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const households = useKinfolkRoster();
   const householdOptions = useMemo(
     () =>
       households.status === 'ready'
@@ -368,7 +396,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // The by-id document goes through it too: it is the same collection, so it
   // arrives with the same absent fields.
   const selectedRow =
-    selectedId && rows.status === 'ready' ? rows.data.find((r) => r._id === selectedId) : undefined;
+    selectedId && pagedRows.status === 'ready' ? pagedRows.data.find((r) => r._id === selectedId) : undefined;
   const deepLinkedRow =
     deepLinkId !== null && deepLinked.status === 'ready' && deepLinked.data !== null
       ? deepLinked.data
@@ -382,6 +410,29 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
       : undefined;
   const selectedRaw = liveRow ?? selectedRow ?? deepLinkedRow;
   const selected = selectedRaw === undefined ? undefined : normalizeInvoice(selectedRaw);
+  // #1569: THE LIST FOLLOWS WHAT THE SHEET CHANGES. The page is a one-shot read,
+  // so an edit made in the open sheet ($43.00 to $78.50 on the walk) left the
+  // row and the Billed total on the old figure until the operator left the page.
+  // Two halves:
+  //  - while the sheet is open, its live document stands in for its row, so the
+  //    row and every total above it move with the edit, the send or the payment;
+  //  - once anything changed, closing the sheet re-reads the page, which also
+  //    brings in what the live copy cannot place: a new invoice, or one whose
+  //    edit moved it into or out of this window.
+  // An untouched sheet closes without a re-read, so the list keeps its loaded
+  // pages and its place.
+  const [listStale, setListStale] = useState(false);
+  const liveDiffers = liveRow !== undefined && selectedRow !== undefined && !sameDoc(liveRow, selectedRow);
+  useEffect(() => {
+    if (liveDiffers) setListStale(true);
+  }, [liveDiffers]);
+  const rows = useMemo<typeof pagedRows>(
+    () =>
+      liveRow !== undefined && pagedRows.status === 'ready'
+        ? { status: 'ready', data: pagedRows.data.map((r) => (r._id === liveRow._id ? liveRow : r)) }
+        : pagedRows,
+    [pagedRows, liveRow],
+  );
 
   // What the link RESOLVED TO, as one of three states the banner below renders.
   // 'opening' covers the read still being in flight: an unresolved id is not a
@@ -438,6 +489,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   );
   const billedTotal = asyncScalar(rows, () => inScope.reduce((sum, r) => sum + r.entry.total, 0));
   const overdueCount = asyncScalar(rows, () => overdueRows.length);
+  // #1570: open invoices whose due date names no day. Each could be overdue
+  // and none can be counted, so the Overdue card says how many.
+  const unreadableDueOpen = useMemo(() => openRows.filter((r) => r.dueUnreadable).length, [openRows]);
 
   /**
    * WHO IS WORST, and by how long. Android's Overdue card carries this and the
@@ -502,7 +556,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Invoices"
+        kicker={navKicker('invoices')}
         title="Getting"
         accentTail="paid."
         subtitle="Every invoice in the window you choose, by invoice date, newest first."
@@ -537,8 +591,16 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           // Names the worst offender and how long, matching Android. "all clear"
           // rather than a blank when there are none, because an empty subline
           // under a zero reads as a card that failed to finish rendering.
-          trend={worstOverdue ?? 'all clear'}
-          tone={overdueCount.kind === 'value' && overdueCount.value > 0 ? 'error' : 'muted'}
+          trend={
+            unreadableDueOpen > 0
+              ? `${worstOverdue === null ? '' : `${worstOverdue}. `}${String(unreadableDueOpen)} open invoice${
+                  unreadableDueOpen === 1 ? ' has a due date' : 's have due dates'
+                } that cannot be read`
+              : (worstOverdue ?? 'all clear')
+          }
+          tone={
+            (overdueCount.kind === 'value' && overdueCount.value > 0) || unreadableDueOpen > 0 ? 'error' : 'muted'
+          }
           feature={overdueCount.kind === 'value' && overdueCount.value > 0}
         />
       </div>
@@ -727,6 +789,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
             setArmedAction(null);
             setCreatedId(null);
             setCreatedNotice(null);
+            // #1569: re-read only when the sheet changed something.
+            if (listStale || liveDiffers) reload();
+            setListStale(false);
           }}
         />
       )}
@@ -745,6 +810,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           onCreated={(invoiceId, sent) => {
             setCreatedId(invoiceId);
             setSelectedId(invoiceId);
+            // #1569: the new invoice joins the list (and its totals) now, not
+            // after a date chip is switched.
+            reload();
             // #1511: only a QUOTE is sent by its create. The composer's invoice
             // is a draft and sends nothing (#1513): `invoice.new` goes out from
             // reviewAndSendDraftInvoice, so `appOnly` is never set for a draft.
@@ -768,7 +836,7 @@ interface InvoiceRowProps {
 }
 
 function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
-  const { entry, state, overdue, daysOverdue, partial } = view;
+  const { entry, state, overdue, daysOverdue, partial, dueUnreadable } = view;
   // Overdue is a display-level refinement of "open" (see FILTERS' comment),
   // it never becomes its own InvoiceState, it just outranks the plain "Open"
   // chip visually, the same relationship the wasm's InvoiceRow renders.
@@ -790,8 +858,12 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
   // that decides what to do about it, and it is the same stored dueDate either
   // way. Android's meta line reads the same. An overdue invoice whose age cannot
   // be computed keeps the plain due date rather than inventing a number.
-  const dateLine =
-    daysOverdue !== null
+  // #1570: a due date that names no day is said, quoted, where the due date
+  // would be, so the operator can see what is stored and fix it.
+  const flagDue = dueUnreadable && (state === 'open' || !entry.date);
+  const dateLine = flagDue
+    ? `due date cannot be read: "${entry.dueDate.trim()}"`
+    : daysOverdue !== null
       ? `${String(daysOverdue)} day${daysOverdue === 1 ? '' : 's'} overdue`
       : state === 'open' && entry.dueDate
         ? `due ${humanizeDate(entry.dueDate, todayIso)}`
@@ -820,7 +892,11 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
         {secondary ? <span className="invoices__row-secondary">{secondary}</span> : null}
       </span>
 
-      <span className={overdue ? 'invoices__row-meta invoices__row-meta--overdue' : 'invoices__row-meta'}>
+      <span
+        className={
+          overdue || flagDue ? 'invoices__row-meta invoices__row-meta--overdue' : 'invoices__row-meta'
+        }
+      >
         {dateLine}
         {entry.sessionIds.length > 0 ? (
           <span className="invoices__row-visits">

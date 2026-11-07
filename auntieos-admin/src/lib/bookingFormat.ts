@@ -20,9 +20,10 @@ import { serviceDurationMinutes, storedDurationMinutes } from './newBooking';
  *   - The in-visit lifecycle (ON_MY_WAY / ARRIVED / DEPARTED, and Undo Arrival
  *     back to SCHEDULED) is still a direct client patch from the field app.
  *
- * The five values this classifier recognizes are unchanged, and this file is
- * unaffected by the move: a status is a status however it got written. They are
- * read straight off the wasm reference:
+ * The values this classifier recognizes are below. #1578 added the three
+ * in-visit ones; before that a visit the field app had moved on read as
+ * `unknown`. A status is a status however it got written. The original five
+ * are read straight off the wasm reference:
  *   - DRAFT / PENDING   the two outcomes BookingCreateScreen's "Save draft" /
  *                       "Submit request" buttons write (BookingScreen.kt:996,
  *                       1014).
@@ -47,7 +48,26 @@ import { serviceDurationMinutes, storedDurationMinutes } from './newBooking';
  * classifier lives server-side now, `mytribe/functions/src/lib/invoiceEditPolicy.ts`,
  * per ADR-0002), applied here before this screen ever ships a first version.
  */
-export type BookingState = 'draft' | 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'unknown';
+export type BookingState =
+  | 'draft'
+  | 'pending'
+  | 'scheduled'
+  | 'onMyWay'
+  | 'arrived'
+  | 'departed'
+  | 'completed'
+  | 'cancelled'
+  | 'unknown';
+/**
+ * #1578: the three in-visit states the field app writes (ON_MY_WAY, ARRIVED,
+ * DEPARTED). A visit that reached Departed in Auntie Time used to read as
+ * UNKNOWN here with no actions, though the server lets it be completed or
+ * cancelled from any of the three (`bookingTransitions.ts`). A positive
+ * membership test, never a negation of the other states.
+ */
+export function isBookingInFlight(state: BookingState): boolean {
+  return state === 'onMyWay' || state === 'arrived' || state === 'departed';
+}
 
 export interface BookingStateInput {
   /** Optional: a real kin_care_sessions doc can omit `status` entirely.
@@ -65,6 +85,9 @@ export function bookingState(row: BookingStateInput): BookingState {
   if (status === 'DRAFT') return 'draft';
   if (status === 'PENDING') return 'pending';
   if (status === 'SCHEDULED') return 'scheduled';
+  if (status === 'ON_MY_WAY') return 'onMyWay';
+  if (status === 'ARRIVED') return 'arrived';
+  if (status === 'DEPARTED') return 'departed';
   if (status === 'COMPLETED') return 'completed';
   if (CANCELLED_STATUSES.has(status)) return 'cancelled';
   return 'unknown';
@@ -88,6 +111,14 @@ export function bookingStateInfo(state: BookingState): BookingStateInfo {
       return { label: 'Pending', chipLabel: 'PENDING', cssClass: 'pending' };
     case 'scheduled':
       return { label: 'Scheduled', chipLabel: 'SCHEDULED', cssClass: 'scheduled' };
+    // #1578: the labels Auntie Time (`sessionFormat.ts`) and Android
+    // (`statusLabel` in DenScreenKit.kt) already give these three.
+    case 'onMyWay':
+      return { label: 'On the way', chipLabel: 'ON THE WAY', cssClass: 'onmyway' };
+    case 'arrived':
+      return { label: 'Arrived', chipLabel: 'ARRIVED', cssClass: 'arrived' };
+    case 'departed':
+      return { label: 'Departed', chipLabel: 'DEPARTED', cssClass: 'departed' };
     case 'completed':
       return { label: 'Completed', chipLabel: 'COMPLETED', cssClass: 'completed' };
     case 'cancelled':

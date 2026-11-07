@@ -176,6 +176,43 @@ describe('TemplateEditor: create mode', () => {
     expect(saveTemplate).not.toHaveBeenCalled();
   });
 
+  it('#1614: shows every error at its own field and marks each input invalid', async () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText(/template key is required/i)).toBeInTheDocument();
+    expect(screen.getByText('Subject is required.')).toBeInTheDocument();
+    expect(screen.getByText('Headline is required.')).toBeInTheDocument();
+    expect(screen.getByText('The email needs some content.')).toBeInTheDocument();
+    expect(screen.getByLabelText(/template key/i)).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText(/^subject$/i)).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('4 things need fixing. They are marked below.')).toBeInTheDocument();
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+  it('#1614: fixing a field clears its message, and the banner goes with the last one', async () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await screen.findByText('Subject is required.');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    expect(screen.queryByText('Subject is required.')).toBeNull();
+    expect(screen.getByLabelText(/^subject$/i)).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByText('3 things need fixing. They are marked below.')).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    fireEvent.change(screen.getByLabelText(/^headline$/i), { target: { value: 'Headline' } });
+    fillVisualBody();
+    expect(screen.queryByText(/things? need(s)? fixing/)).toBeNull();
+  });
+  it('#1614: a stale Couldn\'t save banner goes away once the operator edits a field', async () => {
+    saveTemplate.mockRejectedValueOnce(new Error('boom'));
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    fireEvent.change(screen.getByLabelText(/^headline$/i), { target: { value: 'Headline' } });
+    fillVisualBody();
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(await screen.findByText(/saveTemplate failed: boom/)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/^subject$/i), '!');
+    expect(screen.queryByText(/saveTemplate failed/)).toBeNull();
+  });
   it('calls saveTemplate with the exact payload and onSaved on success', async () => {
     saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
     const onSaved = vi.fn();

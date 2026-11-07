@@ -184,7 +184,7 @@ internal fun NotificationSchedulePanel(
             // there is no hour to set for them.
             AuntieSettingRow(
                 title = "Visit reminders are not on a clock",
-                description = "They go out 24 to 48 hours before each visit. Turn them on or off under Booking rules.",
+                description = VISIT_REMINDER_NOTE,
                 leadingIcon = Lucide.Clock,
                 iconTone = AuntieStatusTone.Neutral,
                 showDivider = false,

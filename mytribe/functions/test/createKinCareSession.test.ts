@@ -12,7 +12,7 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
 });
 
-import { createKinCareSessionHandler } from '../src/admin/createKinCareSession';
+import { createKinCareSessionHandler, visitLengthMinutes } from '../src/admin/createKinCareSession';
 
 function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unknown> {
   return {
@@ -316,5 +316,42 @@ describe('createKinCareSession writes the booking record the visit sheet needs',
       ),
     ).rejects.toMatchObject({ code: 'failed-precondition' });
     expect(ctx.writes.filter((w) => w.path.startsWith('families/'))).toHaveLength(0);
+  });
+});
+
+// #1581: Auntie Time read "Visit length 0" for a 20:00 to 20:30 visit. A New
+// visit that states no length (or 0) stores its window's own span.
+describe('createKinCareSession visit length (#1581)', () => {
+  const start = new Date(Date.now() + DAY).toISOString();
+  const end = new Date(Date.now() + DAY + 30 * 60_000).toISOString();
+
+  it('stores the window when no length is stated', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(req({ kinfolkId: 'kf1', serviceType: 'Walk', startTime: start, endTime: end }));
+    expect(ctx.adds[0]!.data.serviceDurationMinutes).toBe(30);
+  });
+
+  it('stores the window when the stated length is 0', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(
+      req({ kinfolkId: 'kf1', serviceType: 'Walk', startTime: start, endTime: end, serviceDurationMinutes: 0 }),
+    );
+    expect(ctx.adds[0]!.data.serviceDurationMinutes).toBe(30);
+  });
+
+  it('keeps a stated length as stated', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(
+      req({ kinfolkId: 'kf1', serviceType: 'Walk', startTime: start, endTime: end, serviceDurationMinutes: 45 }),
+    );
+    expect(ctx.adds[0]!.data.serviceDurationMinutes).toBe(45);
+  });
+
+  it('a window it cannot read stays 0 rather than a guess', () => {
+    expect(visitLengthMinutes(undefined, 'soon', 'later')).toBe(0);
+    expect(visitLengthMinutes(undefined, end, start)).toBe(0);
   });
 });

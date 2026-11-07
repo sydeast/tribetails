@@ -1,7 +1,12 @@
-import { useId, useState } from 'react';
-import { useCollection } from '../lib/firestore';
+import { useEffect, useId, useState } from 'react';
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
+import { useDocById } from '../lib/firestore';
 import { str } from '../lib/coerce';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { type GeneratedDraftRow } from '../api/drafts';
+import { publishGeneratedDraft, deleteGeneratedDraft } from '../api/kinTaleDraftActions';
+import { draftBody, draftKinfolkId, draftHousehold, draftTitle, isPublishedDraft } from '../lib/kinTaleList';
+import { GENERATE_COMMUNICATION_TYPES, type GenerateCommunicationType } from '../api/communicateGenerate';
 import {
   PERSONALIZE_MESSAGE_TYPES,
   PERSONALIZE_TONES,
@@ -26,6 +31,7 @@ import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { RecipientContextPanel } from '../components/RecipientContextPanel';
 import { Banner } from '../components/Banner';
+import { LoadingRow } from '../components/LoadingRow';
 import './CommunicatePersonalize.css';
 
 const NOTES_MAX = 2000;
@@ -58,9 +64,38 @@ const SUBJECT_MAX = 500;
  * `sendExternalMessage`, while a KinTale report and a Blog post are promoted and
  * recorded but sent by nothing. A deliverable approve gets a confirm dialog
  * first, because it reaches a real household and is not undoable.
+ *
+ * ── A KINTALE IS SENT BY THE SERVER (#1563) ─────────────────────────────────
+ * A KinTale draft (`visit_report`) goes to the household's portal through the
+ * `publishGeneratedDraft` callable, which writes the SENT report and marks the
+ * draft sent in one transaction. Before #1563 approving one stamped the draft
+ * `approved` and reached nobody.
+ *
+ * ── OPENING A DRAFT THAT ALREADY EXISTS (#1563) ─────────────────────────────
+ * `draftId` loads a `generated_drafts` doc into the form: the household, the
+ * type, the title and the copy, ready to edit and send, or to delete. This is
+ * where KinTales > Drafts and Home's "KinTales pending" rows land. Before
+ * #1563 a draft could only ever be the one this screen had just generated, so
+ * Home's button opened a blank form and every stored draft was stranded.
  */
-export function CommunicatePersonalize() {
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+export interface CommunicatePersonalizeProps {
+  /** A `generated_drafts` doc id (bare, never the list's namespaced row id) to open for review. */
+  draftId?: string | undefined;
+  /** Opens the sent KinTale. Omitted, the success banner offers no link. */
+  onOpenKinTale?: ((reportId: string) => void) | undefined;
+}
+/** The composer chip a stored draft's `communication_type` selects. Blank or unknown reads as a KinTale, Home's own fallback. */
+function messageTypeOfDraft(draft: GeneratedDraftRow): GenerateCommunicationType {
+  const raw = (str(draft.communicationType).trim() || str(draft.communication_type).trim()).toLowerCase();
+  return (GENERATE_COMMUNICATION_TYPES as readonly string[]).includes(raw)
+    ? (raw as GenerateCommunicationType)
+    : 'visit_report';
+}
+export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: CommunicatePersonalizeProps = {}) {
+  const kinfolkState = useKinfolkRoster();
+  // A by-id read, not a search of Home's 50-row drafts stream: a draft from
+  // May can sit outside that window and still be the one the operator clicked.
+  const stored = useDocById<GeneratedDraftRow>('generated_drafts', openDraftId ?? null);
 
   const [form, setForm] = useState<PersonalizeFormState>({
     messageType: DEFAULT_MESSAGE_TYPE,
@@ -83,6 +118,15 @@ export function CommunicatePersonalize() {
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
   const [approved, setApproved] = useState<ApproveDraftResult | null>(null);
+  // #1563: the KinTale a send produced, or the one an opened draft was already sent as.
+  const [published, setPublished] = useState<{ reportId: string; alreadyPublished: boolean } | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleted, setDeleted] = useState(false);
+  // Which stored draft the form was last filled from, so a live update to the
+  // same doc never overwrites what the operator is typing.
+  const [loadedDraftId, setLoadedDraftId] = useState<string | null>(null);
 
   const typeLegendId = useId();
   const toneLegendId = useId();
@@ -93,7 +137,39 @@ export function CommunicatePersonalize() {
   const draftId = useId();
 
   const def = messageTypeDef(form.messageType);
-  const busy = generating || approving;
+  const busy = generating || approving || deleting;
+  useEffect(() => {
+    if (stored.status !== 'ready' || stored.data === null) return;
+    const row = stored.data;
+    if (row._id === loadedDraftId) return;
+    const type = messageTypeOfDraft(row);
+    const body = draftBody(row);
+    const title = draftTitle(row);
+    const kinfolkId = draftKinfolkId(row);
+    const household = draftHousehold(row);
+    setLoadedDraftId(row._id);
+    setForm((f) => ({ ...f, messageType: type, recipientId: kinfolkId, subject: title }));
+    setSubjectTouched(title !== '');
+    setDraft({
+      generated_copy: body,
+      generated_title: title,
+      communication_type: type,
+      kinfolk_name: household !== '' ? household : null,
+      kinfolk_id: kinfolkId !== '' ? kinfolkId : null,
+      draft_id: row._id,
+      model: null,
+      draftWriteFailed: false,
+      warnings: [],
+    });
+    setDraftText(body);
+    setApproved(null);
+    setApproveError(null);
+    setFormError(null);
+    setDeleted(false);
+    setPublished(
+      isPublishedDraft(row) ? { reportId: str(row.publishedReportId).trim(), alreadyPublished: true } : null,
+    );
+  }, [stored, loadedDraftId]);
 
   function patch(next: Partial<PersonalizeFormState>) {
     setForm((f) => ({ ...f, ...next }));
@@ -104,6 +180,7 @@ export function CommunicatePersonalize() {
     setDraft(null);
     setDraftText('');
     setApproved(null);
+    setPublished(null);
     setApproveError(null);
     setFormError(null);
   }
@@ -117,7 +194,9 @@ export function CommunicatePersonalize() {
     }
     setFormError(null);
     setApproved(null);
+    setPublished(null);
     setApproveError(null);
+    setDeleted(false);
     setGenerating(true);
     try {
       const result = await generateDraft(
@@ -142,11 +221,24 @@ export function CommunicatePersonalize() {
     setApproving(true);
     setApproveError(null);
     try {
+      // A KinTale is sent by the server, which also marks the draft sent. No
+      // client-side approve write first: that write is what used to leave a
+      // KinTale `approved` and undelivered.
+      if (def.deliverable === 'kintale') {
+        const result = await publishGeneratedDraft({
+          draftId: draft?.draft_id ?? '',
+          bodyCopy: draftText,
+          title: form.subject,
+        });
+        setPublished({ reportId: result.reportId, alreadyPublished: result.alreadyPublished });
+        setConfirmOpen(false);
+        return;
+      }
       // The deliver step exists only for a type that actually sends. Passing an
       // always-present callback that sometimes no-ops would make `delivered`
       // claim a send that never happened.
       const deliver =
-        def.deliverable !== false && kf !== undefined
+        (def.deliverable === 'email' || def.deliverable === 'sms') && kf !== undefined
           ? async () => {
               const res = await sendExternalMessage({
                 channel: def.deliverable === 'email' ? 'email' : 'sms',
@@ -176,6 +268,22 @@ export function CommunicatePersonalize() {
     }
   }
 
+  async function runDelete() {
+    const id = draft?.draft_id ?? '';
+    if (busy || id === '') return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteGeneratedDraft(id);
+      setDeleteOpen(false);
+      clearDraft();
+      setDeleted(true);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Delete failed.');
+    } finally {
+      setDeleting(false);
+    }
+  }
   function handleApproveClick(kf: Kinfolk | undefined) {
     if (busy) return;
     const blocker = approveBlocker(form, kf, draft?.draft_id ?? null, draftText);
@@ -206,6 +314,9 @@ export function CommunicatePersonalize() {
         const kf = rows.find((r) => r._id === form.recipientId);
         const matches = filterRecipients(rows, query);
         const approveLabel = def.deliverable !== false ? 'Approve and send' : 'Approve draft';
+        const household = kf ? kinfolkDisplayName(kf) : (draft?.kinfolk_name ?? 'the household');
+        // A sent draft is finished: no second send, no delete.
+        const settled = published !== null || approved !== null;
 
         // `.communicate__main` is the left column of the two-column grid
         // `Communicate` draws (the mock's `.cols`); the confirm Dialog is
@@ -213,6 +324,20 @@ export function CommunicatePersonalize() {
         return (
           <>
             <div className="communicate__main">
+            {openDraftId !== undefined && openDraftId !== '' && stored.status === 'loading' && (
+              <LoadingRow label="Opening the draft…" className="personalize__note" />
+            )}
+            {openDraftId !== undefined && openDraftId !== '' && stored.status === 'ready' && stored.data === null && !deleted && (
+              <Banner tone="warning" title="Draft not found">
+                This draft is no longer here. It may have been deleted.
+              </Banner>
+            )}
+            {stored.status === 'error' && (
+              <Banner tone="error" title="Draft did not open">
+                {stored.message}
+              </Banner>
+            )}
+            {deleted && <Banner tone="success">Draft deleted.</Banner>}
             <DenPanel
               title="Personalize"
               subtitle="A one-to-one note that uses the recipient's dossier and kin context."
@@ -417,7 +542,7 @@ export function CommunicatePersonalize() {
                 title="Auntie AI draft"
                 detail={draftSubtitle(draft)}
                 className="personalize__draft"
-                trailing={approved === null ? <StatusPill label="needs approval" tone="purple" /> : undefined}
+                trailing={!settled ? <StatusPill label="needs approval" tone="purple" /> : undefined}
               >
                 <div className="personalize__form">
                   {draft.draftWriteFailed && (
@@ -446,6 +571,25 @@ export function CommunicatePersonalize() {
                     </Banner>
                   )}
 
+                  {published !== null && (
+                    <Banner tone="success" title="KinTale sent">
+                      {published.alreadyPublished
+                        ? `This KinTale was already sent to ${household}.`
+                        : `Sent to ${household}. It is on their portal now.`}
+                      {onOpenKinTale && published.reportId !== '' && (
+                        <>
+                          {' '}
+                          <button
+                            type="button"
+                            className="async-retry"
+                            onClick={() => onOpenKinTale(published.reportId)}
+                          >
+                            Open the KinTale
+                          </button>
+                        </>
+                      )}
+                    </Banner>
+                  )}
                   {approved !== null && (
                     <Banner tone="success" title="Draft approved">
                       {approved.delivered
@@ -457,17 +601,34 @@ export function CommunicatePersonalize() {
                     </Banner>
                   )}
 
-                  <div className="personalize__actions">
-                    <PrimaryButton
-                      label={approveLabel}
-                      busy={approving}
-                      disabled={busy}
-                      onClick={() => handleApproveClick(kf)}
-                    />
-                  </div>
+                  {deleteError !== null && !deleteOpen && (
+                    <Banner tone="error" title="Delete failed">
+                      {deleteError}
+                    </Banner>
+                  )}
+                  {!settled && (
+                    <div className="personalize__actions">
+                      <PrimaryButton
+                        label={approveLabel}
+                        busy={approving}
+                        disabled={busy}
+                        onClick={() => handleApproveClick(kf)}
+                      />
+                      {draft.draft_id !== null && draft.draft_id !== '' && (
+                        <GhostButton
+                          label="Delete draft"
+                          disabled={busy}
+                          onClick={() => {
+                            setDeleteError(null);
+                            setDeleteOpen(true);
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
                   <p className="personalize__note">
-                    Approving promotes the draft in Firestore and logs it to the audit trail. Nothing goes out until
-                    that write succeeds.
+                    Approving saves this draft and records it in the activity log. Nothing goes out until that save
+                    succeeds.
                   </p>
                 </div>
               </DenPanel>
@@ -492,17 +653,35 @@ export function CommunicatePersonalize() {
                   </>
                 }
               >
-                <p className="personalize__confirm-line">
-                  <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'} (
-                  {def.deliverable === 'email' ? str(kf?.email) : str(kf?.phoneNumber)})
-                </p>
-                <p className="personalize__confirm-line">
-                  <strong>Channel:</strong> {def.deliverable === 'email' ? 'Email' : 'Text'}
-                </p>
-                {def.deliverable === 'email' && (
-                  <p className="personalize__confirm-line">
-                    <strong>Subject:</strong> {form.subject.trim()}
-                  </p>
+                {def.deliverable === 'kintale' ? (
+                  <>
+                    <p className="personalize__confirm-line">
+                      <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'}
+                    </p>
+                    <p className="personalize__confirm-line">
+                      <strong>Channel:</strong> KinTale, on their portal
+                    </p>
+                    {form.subject.trim() !== '' && (
+                      <p className="personalize__confirm-line">
+                        <strong>Title:</strong> {form.subject.trim()}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="personalize__confirm-line">
+                      <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'} (
+                      {def.deliverable === 'email' ? str(kf?.email) : str(kf?.phoneNumber)})
+                    </p>
+                    <p className="personalize__confirm-line">
+                      <strong>Channel:</strong> {def.deliverable === 'email' ? 'Email' : 'Text'}
+                    </p>
+                    {def.deliverable === 'email' && (
+                      <p className="personalize__confirm-line">
+                        <strong>Subject:</strong> {form.subject.trim()}
+                      </p>
+                    )}
+                  </>
                 )}
                 <p className="personalize__confirm-line">
                   <strong>Message:</strong> {draftText}
@@ -510,6 +689,31 @@ export function CommunicatePersonalize() {
                 <p className="personalize__confirm-note">
                   This reaches a real household right now. It is not undoable.
                 </p>
+              </Dialog>
+            )}
+            {deleteOpen && (
+              <Dialog
+                title="Delete this draft?"
+                onClose={() => {
+                  if (!deleting) setDeleteOpen(false);
+                }}
+                footer={
+                  <>
+                    <GhostButton label="Cancel" onClick={() => setDeleteOpen(false)} disabled={deleting} />
+                    <PrimaryButton
+                      label={deleting ? 'Deleting…' : 'Delete'}
+                      onClick={() => void runDelete()}
+                      disabled={deleting}
+                      busy={deleting}
+                    />
+                  </>
+                }
+              >
+                <p className="personalize__confirm-line">
+                  {household !== '' ? `The draft for ${household} has not been sent.` : 'This draft has not been sent.'}{' '}
+                  Deleting it cannot be undone.
+                </p>
+                {deleteError !== null && <Banner tone="error">{deleteError}</Banner>}
               </Dialog>
             )}
           </>

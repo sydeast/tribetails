@@ -1,6 +1,7 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useState } from 'react';
 import { TRIBAL_INTEL_QUERY, type TribalIntelEntry } from '../api/tribalIntel';
-import { KINFOLK_QUERY, KIN_QUERY, type Kin, type Kinfolk } from '../api/directory';
+import { KIN_QUERY, type Kin, type Kinfolk } from '../api/directory';
 import { deleteTrainingDocument } from '../api/tribalIntelWrite';
 import {
   TRIBAL_INTEL_DELETE_CAVEAT,
@@ -8,6 +9,8 @@ import {
   attachmentCountLabel,
   distinctCommTypes,
   dropEmptyTribalIntel,
+  TRIBAL_INTEL_EMPTY_COPY,
+  TRIBAL_INTEL_SUBTITLE,
   filterByCommType,
   filterTribalIntel,
   isTribalIntelTitleFallback,
@@ -60,7 +63,7 @@ export function TribalIntel() {
   // The target picker's rosters. Streamed here rather than inside the form so
   // opening the panel is instant instead of showing an empty household list
   // while a fresh listener warms up.
-  const kinfolkRows = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkRows = useKinfolkRoster();
   const kinRows = useCollection<Kin>(KIN_QUERY);
 
   const [query, setQuery] = useState('');
@@ -119,7 +122,7 @@ export function TribalIntel() {
         kicker="The Den · Tribal Intel"
         title="Tribal"
         accentTail="Intel."
-        subtitle="Guides and educational resources for care delivery, newest first."
+        subtitle={TRIBAL_INTEL_SUBTITLE}
         trailing={
           editing === null ? (
             <PrimaryButton
@@ -165,14 +168,21 @@ export function TribalIntel() {
         <StatCard label="With content" value={withContentCount} trend="have a body" tone="purple" />
       </div>
 
-      <DenPanel title="Document library" subtitle="Search across titles, content, and comm. type.">
+      {/* The search tooltip only exists while there is a search box: the box is drawn
+          inside the ready branch below, so an empty library has neither (#1616). */}
+      <DenPanel
+        title="Document library"
+        {...(rows.status === 'ready' && dropEmptyTribalIntel(rows.data).length > 0
+          ? { subtitle: 'Search across titles, content, and comm. type.' }
+          : {})}
+      >
         <AsyncRegion
           state={rows}
           what="Tribal Intel"
           isEmpty={(data) => dropEmptyTribalIntel(data).length === 0}
           loading={<LoadingRow label="Loading Tribal Intel…" className="tribal-intel__hint" />}
           empty={
-            <EmptyHint>No Tribal Intel yet. Training materials and guides will appear here once uploaded.</EmptyHint>
+            <EmptyHint>{TRIBAL_INTEL_EMPTY_COPY}</EmptyHint>
           }
         >
           {(data) => {

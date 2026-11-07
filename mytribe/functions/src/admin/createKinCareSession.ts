@@ -91,6 +91,19 @@ const Args = z.object({
   overrideVisitConflict: z.boolean().optional(),
 });
 
+/**
+ * #1581: the stated length when it is a real one, else the window's span in
+ * whole minutes, else 0 (nothing readable to go on). Same arithmetic as
+ * `approveBookingSeriesCore`'s `durationMinutes`.
+ */
+export function visitLengthMinutes(stated: number | undefined, startIso: string, endIso: string): number {
+  if (typeof stated === 'number' && stated > 0) return stated;
+  const s = Date.parse(startIso);
+  const e = Date.parse(endIso);
+  if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return 0;
+  return Math.round((e - s) / 60_000);
+}
+
 export interface CreateKinCareSessionResult {
   ok: true;
   sessionId: string;
@@ -234,7 +247,10 @@ export async function createKinCareSessionHandler(
     serviceType: args.serviceType,
     startTime: args.startTime,
     endTime: args.endTime,
-    serviceDurationMinutes: args.serviceDurationMinutes ?? 0,
+    // #1581: the visit's own window when the caller states no length (or 0),
+    // never a stored 0 for a visit that plainly has one. Auntie Time read
+    // "Visit length 0" for a 20:00 to 20:30 visit.
+    serviceDurationMinutes: visitLengthMinutes(args.serviceDurationMinutes, args.startTime, args.endTime),
     notes: args.notes ?? '',
     status: 'SCHEDULED',
     sourceBookingId: visitId,

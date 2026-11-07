@@ -29,6 +29,9 @@ import com.composables.icons.lucide.Workflow
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.data.repository.TemplateRepository
 import com.tribetails.auntieos.data.repository.isOverridden
+import com.tribetails.auntieos.data.repository.awaitingImport
+import com.tribetails.auntieos.data.repository.failsOnSend
+import com.tribetails.auntieos.data.repository.missingTemplateNote
 import com.tribetails.auntieos.data.repository.resolvedTemplateMissing
 import com.tribetails.auntieos.data.repository.routingSource
 import com.tribetails.auntieos.ui.components.AuntieBanner
@@ -169,7 +172,8 @@ fun TemplateAssignmentBody(
     val bankIds = templates.map { it.templateId }.toSet()
     val bankLoaded = !loading && templatesError == null && templates.isNotEmpty()
     val overrideCount = catalogRows.count { isOverridden(it) }
-    val brokenCount = catalogRows.count { resolvedTemplateMissing(it, bankIds, bankLoaded) }
+    val brokenCount = catalogRows.count { failsOnSend(it, bankIds, bankLoaded) }
+    val awaitingImportKeys = catalogRows.filter { awaitingImport(it, bankIds, bankLoaded) }.map { it.key }
     val templatesMissing = !loading && templatesError == null && templates.isEmpty()
 
     LazyColumn(
@@ -303,8 +307,11 @@ fun TemplateAssignmentBody(
                                     append("${catalogRows.size} keys route today. ")
                                     append("$overrideCount of them through an override, the rest by name.")
                                     if (brokenCount > 0) {
-                                        val phrase = if (brokenCount == 1) "1 key resolves" else "$brokenCount keys resolve"
-                                        append(" $phrase to a template document that does not exist and will throw on the next send.")
+                                        val phrase = if (brokenCount == 1) "1 key fails" else "$brokenCount keys fail"
+                                        append(" $phrase on the next send because the template does not exist.")
+                                    }
+                                    if (awaitingImportKeys.isNotEmpty()) {
+                                        append("\n\nNot in the bank yet, still delivered: ${awaitingImportKeys.joinToString(", ")}. Load them from Template Import.")
                                     }
                                 },
                                 style = AuntieTheme.typography.bodyMedium,
@@ -344,7 +351,8 @@ fun TemplateAssignmentBody(
                                             row = row,
                                             binding = bindingByKey[row.key],
                                             templateTitle = templateTitles[row.resolvedTemplateId],
-                                            missing = resolvedTemplateMissing(row, bankIds, bankLoaded),
+                                            missing = failsOnSend(row, bankIds, bankLoaded),
+                                            missingNote = missingTemplateNote(row, resolvedTemplateMissing(row, bankIds, bankLoaded)),
                                             onEdit = {
                                                 selected = EditTarget(row, bindingByKey[row.key])
                                             },
@@ -418,6 +426,7 @@ private fun RoutingRow(
     binding: TemplateRepository.TemplateBinding?,
     templateTitle: String?,
     missing: Boolean,
+    missingNote: String? = null,
     onEdit: () -> Unit,
 ) {
     val dims = AuntieTheme.dims
@@ -435,6 +444,7 @@ private fun RoutingRow(
         if (missing) {
             append("\nNo emailTemplates/${row.resolvedTemplateId} document. This key throws \"email template missing\" on its next send.")
         }
+        missingNote?.let { append("\n$it") }
     }
 
     AuntieEntityRow(
