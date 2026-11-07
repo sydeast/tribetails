@@ -6,6 +6,7 @@ import { BreedField } from './BreedField';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { useToast } from './Toast';
+import { validateKinAge } from '../lib/kinMeasures';
 import './AddKinDialog.css';
 
 export interface KinfolkOption {
@@ -72,6 +73,8 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
   const kinfolkError = touched.kinfolk && kinfolkId === '' ? 'Pick a household.' : null;
   const nameError = touched.name && name.trim() === '' ? "Name can't be blank." : null;
   const sexError = touched.sex && sex === '' ? 'Pick a gender.' : null;
+  // #1583: age is a number of years; checked as the operator types and again on save.
+  const ageError = validateKinAge(age);
 
   function markTouched(field: 'kinfolk' | 'name' | 'sex') {
     setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
@@ -83,7 +86,7 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
 
   async function handleSave() {
     setTouched({ kinfolk: true, name: true, sex: true });
-    if (kinfolkId === '' || name.trim() === '' || sex === '' || saving) return;
+    if (kinfolkId === '' || name.trim() === '' || sex === '' || ageError !== null || saving) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -214,7 +217,15 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
               className="add-kin__input"
               value={age}
               onChange={(e) => setAge(e.target.value)}
+              inputMode="decimal"
+              aria-invalid={ageError !== null}
+              aria-describedby={ageError !== null ? 'add-kin-age-error' : undefined}
             />
+            {ageError !== null && (
+              <span id="add-kin-age-error" className="add-kin__error" role="alert">
+                {ageError}
+              </span>
+            )}
           </div>
           <div className="add-kin__field">
             <label className="add-kin__label" htmlFor="add-kin-sex">

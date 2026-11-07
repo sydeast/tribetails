@@ -235,6 +235,7 @@ fun GalleryScreen() {
                 media = media,
                 kin = taggableKin(media, allKin),
                 kinById = kinById,
+                householdLabels = kinfolkLabel,
                 onDismiss = { selected = null },
                 onSave = { ids ->
                     client.updateMediaTags(media._id, ids)
@@ -361,6 +362,8 @@ private fun TagKinOverlay(
     media: MediaFile,
     kin: List<Kin>,
     kinById: Map<String, Kin>,
+    /** Household display names by id (#1604): the headings over a whole-roster list, and the household named on a scoped one. */
+    householdLabels: Map<String, String>,
     onDismiss: () -> Unit,
     onSave: suspend (List<String>) -> WriteResult<Unit>,
 ) {
@@ -390,31 +393,53 @@ private fun TagKinOverlay(
                     GhostButton(label = "Close", onClick = onDismiss)
                 }
                 Spacer(Modifier.height(dims.space3))
+                val scoped = media.kinfolkId.isNotBlank()
+                if (scoped) {
+                    householdLabels[media.kinfolkId]?.takeIf { it.isNotBlank() }?.let {
+                        Text("Household: $it", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Spacer(Modifier.height(dims.space2))
+                    }
+                }
                 if (kin.isEmpty()) {
                     Text("No kin on this household to tag.", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
                 } else {
+                    // A file with a household offers that household's kin: one flat list is
+                    // unambiguous. A file with none offers the whole roster (#1604), so group
+                    // it under each household's name to tell same-named pets apart.
+                    val groups = if (scoped) listOf(KinHouseholdGroup("", "", kin))
+                    else groupKinByHousehold(kin) { householdLabels[it] }
                     Column(
                         modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        kin.forEach { k ->
-                            val on = picked.contains(k._id)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable {
-                                        if (on) picked.remove(k._id) else picked.add(k._id)
+                        groups.forEach { group ->
+                            if (!scoped) {
+                                Text(
+                                    group.label,
+                                    style = AuntieTheme.typography.labelSmall,
+                                    color = c.textDim,
+                                    modifier = Modifier.padding(top = 8.dp, start = 6.dp),
+                                )
+                            }
+                            group.kin.forEach { k ->
+                                val on = picked.contains(k._id)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            if (on) picked.remove(k._id) else picked.add(k._id)
+                                        }
+                                        .padding(vertical = 8.dp, horizontal = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    CheckBox(on)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(k.name.ifBlank { "Unnamed" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                        val sub = listOf(k.species, k.breed).filter { it.isNotBlank() }.joinToString(" · ")
+                                        if (sub.isNotBlank()) Text(sub, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                                     }
-                                    .padding(vertical = 8.dp, horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                CheckBox(on)
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(k.name.ifBlank { "Unnamed" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                                    val sub = listOf(k.species, k.breed).filter { it.isNotBlank() }.joinToString(" · ")
-                                    if (sub.isNotBlank()) Text(sub, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                                 }
                             }
                         }
