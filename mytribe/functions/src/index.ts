@@ -606,6 +606,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   listChecklistBank: () => require('./admin/checklistBank'),
   saveChecklistBankItem: () => require('./admin/checklistBank'),
   triageOrphanReport: () => require('./admin/triageOrphanReport'),
+  // #1631: delete an unsent kin_care_reports draft (owner only).
+  deleteKinTaleReportDraft: () => require('./admin/deleteKinTaleReportDraft'),
   // #1563: send a generated KinTale draft to its household, or delete an unsent one.
   publishGeneratedDraft: () => require('./admin/kinTaleDrafts'),
   deleteGeneratedDraft: () => require('./admin/kinTaleDrafts'),

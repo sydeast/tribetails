@@ -2685,6 +2685,18 @@ callable is the enforcement.
 - Write side is `triageOrphanReport` (ASSIGN, DUPLICATE, ARCHIVE), which both
   clients share.
 
+### deleteKinTaleReportDraft (#1631, owner only)
+- req `{ reportId: string }`, the bare `kin_care_reports` doc id (a slash is
+  `invalid-argument`).
+- res `{ ok: true, reportId }`.
+- Deletes one unsent KinTale draft. Refuses, as `failed-precondition`, the same
+  rows `purgeOldDrafts` refuses: a status other than DRAFT, any `sentAt`, and an
+  untriaged migration orphan (`isUntriagedOrphan`, shared with the purge). A
+  missing doc is `not-found`. Read and deleted in one transaction.
+- Media and comments are not cascaded. Audited as
+  `KINTALE_REPORT_DRAFT_DELETED`. Not in `AUNTIE_ALLOWED_CALLABLES`
+  (destructive). Admin web, Android and the desktop console all call it.
+
 ## Generated KinTale drafts (#1563, staff)
 
 `src/admin/kinTaleDrafts.ts`. A `generated_drafts` doc is a KinTale draft

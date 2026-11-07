@@ -47,6 +47,7 @@ deleteBusinessNotificationOverride
 deleteFormSchema
 deleteGeneratedDraft
 deleteKin
+deleteKinTaleReportDraft
 deleteMediaFile
 deleteTemplate
 deleteTrainingDocument
