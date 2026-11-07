@@ -52,7 +52,9 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.ui.components.AuntieAvatar
+import com.tribetails.auntieos.domain.broadcastSummaryLine
 import com.tribetails.auntieos.ui.components.AuntieBanner
+import com.tribetails.auntieos.ui.components.AuntieModal
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChipGroup
 import com.tribetails.auntieos.ui.components.AuntieEmailPreviewCard
@@ -549,12 +551,18 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
                 singleSelect = true,
             )
             if (state.bcKind == SegmentKind.Status) {
-                AuntieField(
-                    value = state.bcStatusesText,
-                    onValueChange = viewModel::setBcStatuses,
-                    label = "Statuses",
-                    placeholder = "active, prospect",
-                    modifier = Modifier.fillMaxWidth(),
+                // #1610: picked from the Directory's statuses, never typed, so a
+                // misspelled status cannot quietly match nobody.
+                AuntieFieldLabel(text = "Statuses")
+                val picked = state.bcStatusesText.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+                AuntieChipGroup(
+                    options = BROADCAST_STATUS_OPTIONS,
+                    selected = picked,
+                    onSelectionChange = { next ->
+                        BROADCAST_STATUS_OPTIONS.forEach { s -> viewModel.toggleBcStatus(s, s in next) }
+                    },
+                    label = { it.replaceFirstChar { ch -> ch.uppercase() } },
+                    singleSelect = false,
                 )
             }
             if (state.bcKind == SegmentKind.Tags) {
@@ -718,31 +726,33 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
         )
 
-        // The broadcast copy as a recipient reads it, with `emptyMap()` as the
-        // sample. That is not a placeholder waiting to be filled in later, it is
-        // the accurate one: `broadcastMessage` calls `sendTemplatedEmail` with
-        // `data: {}` and hands Twilio / FCM / the in-app write the string
-        // verbatim, so nothing on this path can resolve a merge field. Every
-        // {{token}} typed here IS unresolved, and the footnote says what each
-        // channel does with it rather than leaving the operator to find out from
-        // a customer. Matches CommunicateCompose.tsx word for word.
+        // #1610: `broadcastMessage` fills {{firstName}}, {{lastName}},
+        // {{kinfolkName}} and {{business}} per household on every channel, so
+        // the preview fills them from a sample household. Any other token is
+        // refused before Review (mergeFieldBlocker). Matches
+        // CommunicateCompose.tsx word for word.
         MergePreview(
             subject = state.bcSubject,
             body = state.bcBody,
-            sample = emptyMap(),
-            footnote = "A broadcast carries no merge data. Email sends these blank; in-app, SMS and push send the braces as typed.",
+            sample = BROADCAST_PREVIEW_SAMPLE,
+            footnote = "Filled per household on every channel. A household with no first name on file reads \"$KINFOLK_NAME_STAND_IN\".",
             modifier = Modifier.fillMaxWidth(),
         )
+        mergeFieldBlocker(state.bcSubject, state.bcBody)?.let { msg ->
+            Text(text = msg, style = AuntieTheme.typography.bodySmall, color = c.error)
+        }
 
         PrimaryButton(
-            label = "Send broadcast",
-            onClick = viewModel::sendBroadcast,
+            label = "Review broadcast",
+            onClick = viewModel::requestBroadcast,
             enabled = !state.isBroadcasting,
             loading = state.isBroadcasting,
             leading = {
                 Icon(Lucide.Megaphone, contentDescription = null, tint = c.background, modifier = Modifier.size(14.dp))
             },
         )
+
+        if (state.bcConfirmOpen) BroadcastConfirm(state = state, viewModel = viewModel)
 
         state.broadcastError?.let { msg ->
             AuntieBanner(tone = AuntieBannerTone.Error, title = "Broadcast blocked", icon = Lucide.Megaphone) {
@@ -765,6 +775,54 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
                     if (sending) StillSending(state = state, viewModel = viewModel)
                 }
             }
+        }
+    }
+}
+
+/**
+ * #1610: the confirm before a broadcast. Says who it is for, on which channels,
+ * and how many kinfolk the audience reaches, counted by the server the way the
+ * send counts them, before anything goes out.
+ */
+@Composable
+private fun BroadcastConfirm(state: CommunicateUiState, viewModel: CommunicateViewModel) {
+    val c = AuntieTheme.colors
+    AuntieModal(
+        onDismissRequest = viewModel::cancelBroadcastConfirm,
+        title = "Send this broadcast?",
+        confirmButton = {
+            PrimaryButton(
+                label = if (state.isBroadcasting) "Sending…" else "Send now",
+                onClick = viewModel::sendBroadcast,
+                enabled = !state.isBroadcasting,
+                loading = state.isBroadcasting,
+            )
+        },
+        dismissButton = { GhostButton(label = "Cancel", onClick = viewModel::cancelBroadcastConfirm) },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                "Channels: ${state.bcChannels.joinToString(", ") { com.tribetails.auntieos.domain.channelLabel(it.wire) }}",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            state.bcSubject.trim().takeIf { it.isNotEmpty() }?.let {
+                Text("Subject: $it", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+            Text(
+                text = when (val r = state.bcReach) {
+                    BroadcastReachState.Loading -> "Counting who this reaches…"
+                    is BroadcastReachState.Ready -> reachLine(r.preview)
+                    is BroadcastReachState.Failed -> "The count did not load (${r.message}). The send still reports who it reached."
+                },
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+            )
+            Text(
+                "This goes out right now. A household that switched a channel off does not get it there; the result shows who was reached.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
         }
     }
 }
@@ -1463,7 +1521,7 @@ private fun RecentPanel(state: CommunicateUiState) {
                 )
             }
             state.recentSends.isEmpty() -> Text(
-                text = "No external sends yet. Sends from Communicate show here with delivery and open counts.",
+                text = "Nothing sent yet. Emails, texts, broadcasts and Inbox replies show here, newest first.",
                 style = AuntieTheme.typography.bodyMedium,
                 color = c.textDim,
             )
@@ -1491,8 +1549,12 @@ private fun RecentPanel(state: CommunicateUiState) {
                             snd.subject?.takeIf { it.isNotBlank() }?.let { subj ->
                                 Text(subj, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             }
+                            // #1610: an Inbox reply shows what was written.
+                            snd.preview?.takeIf { snd.kind == "reply" }?.let { p ->
+                                Text(p, style = AuntieTheme.typography.bodySmall, color = c.textDim, maxLines = 2)
+                            }
                             Text(
-                                text = engagementSummary(snd.channel, snd.counts),
+                                text = if (snd.kind == "broadcast") broadcastSummaryLine(snd) else engagementSummary(snd.channel, snd.counts),
                                 style = AuntieTheme.typography.bodySmall,
                                 color = c.textDim,
                             )
@@ -1510,6 +1572,7 @@ private fun recentSendDot(channel: String, c: AuntieColors): Color =
         "email" -> c.accent
         "sms" -> c.primary
         "push" -> c.tertiary
+        "broadcast", "message" -> c.secondary
         else -> c.textFaint
     }
 

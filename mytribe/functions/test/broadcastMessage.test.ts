@@ -662,3 +662,51 @@ describe('broadcastMessage fan-out that outlives its invocation (#823)', () => {
     expect(progress.sent).toBeLessThan(120);
   });
 });
+describe('broadcastMessage fills merge fields per household (#1610)', () => {
+  function namedDb() {
+    return buildDbMock({ writeThrough: true,
+      docs: { 'clients/u1': prefsDoc({ email: true, sms: true, push: true }) },
+      queryDocs: {
+        kinfolk: [
+          { id: 'k1', data: { status: 'active', firstName: '', lastName: '', email: 'catch@hanasamku.com', phoneNumber: '+14155552671', uid: 'u1' } },
+        ],
+        fcm_tokens: [{ id: 'tok1', data: { uid: 'u1' } }],
+      },
+    });
+  }
+  it('a household with no first name reads "Hi Kinfolk," on every channel (operator ruling)', async () => {
+    const ctx = namedDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await broadcastMessageHandler(
+      req({ criteria: { kind: 'all' }, channels: ['inapp', 'email', 'sms', 'push'], subject: 'For {{firstName}}', body: 'Hi {{firstName}},' }),
+    );
+    const inapp = ctx.writes.find((x) => x.path.startsWith('notifications/'));
+    expect(inapp?.data.title).toBe('For Kinfolk');
+    expect(inapp?.data.description).toBe('Hi Kinfolk,');
+    expect(mocks.twilioCreate).toHaveBeenCalledWith(expect.objectContaining({ body: 'Hi Kinfolk,' }));
+    expect(mocks.multicast).toHaveBeenCalledWith(
+      expect.objectContaining({ notification: expect.objectContaining({ title: 'For Kinfolk', body: 'Hi Kinfolk,' }) }),
+    );
+    const email = mocks.sendTemplatedEmail.mock.calls[0]?.[0];
+    expect(email.data.firstName).toBe('Kinfolk');
+    expect(email.subjectTemplate).toBe('For {{firstName}}');
+  });
+  it('a household with a first name reads its own name', async () => {
+    const ctx = buildDbMock({ writeThrough: true,
+      docs: { 'clients/u1': prefsDoc({ sms: true }) },
+      queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', firstName: 'Dana', phoneNumber: '+14155552671', uid: 'u1' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: 'Hi {{firstName}},' }));
+    expect(mocks.twilioCreate).toHaveBeenCalledWith(expect.objectContaining({ body: 'Hi Dana,' }));
+  });
+  it('refuses a field it cannot fill before reading the audience or writing anything', async () => {
+    const ctx = namedDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: 'Hi {{firstname}}, {{kinName}} says hi' })),
+    ).rejects.toMatchObject({ code: 'invalid-argument', message: 'unsupported_merge_fields: firstname, kinName' });
+    expect(ctx.writes).toHaveLength(0);
+    expect(mocks.twilioCreate).not.toHaveBeenCalled();
+  });
+});

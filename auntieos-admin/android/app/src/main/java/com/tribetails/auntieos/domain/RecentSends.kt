@@ -24,6 +24,14 @@ data class RecentSend(
     val sentAtMs: Long,
     val counts: SendCounts,
     val lastEvent: String?,
+    /** #1610: `external` | `broadcast` | `reply`; blank from a server older than the field. */
+    val kind: String = "",
+    /** Broadcast only: households targeted. */
+    val recipientCount: Int = 0,
+    /** Broadcast only: the channels it went out on. */
+    val channels: List<String> = emptyList(),
+    /** Reply only: the start of what Auntie wrote. */
+    val preview: String? = null,
 )
 
 private fun anyToInt(v: Any?): Int = when (v) {
@@ -60,12 +68,19 @@ fun decodeRecentSends(raw: Map<String, Any?>?): List<RecentSend> {
                 failed = anyToInt(c?.get("failed")),
             ),
             lastEvent = (o["lastEvent"] as? String)?.ifBlank { null },
+            kind = anyToStr(o["kind"]),
+            recipientCount = anyToInt(o["recipientCount"]),
+            channels = (o["channels"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+            preview = (o["preview"] as? String)?.ifBlank { null },
         )
     }
 }
 
 /** Honest one-line engagement summary; click is email-only; never fabricates rates. */
 fun engagementSummary(channel: String, counts: SendCounts): String {
+    // #1610: a broadcast reports reach on its own screen and a reply has no
+    // provider events, so neither waits on delivery counts here.
+    if (channel.equals("broadcast", ignoreCase = true) || channel.equals("message", ignoreCase = true)) return "Sent"
     val parts = buildList {
         if (counts.delivered > 0) add("${counts.delivered} delivered")
         if (counts.opened > 0) add("${counts.opened} opened")
@@ -79,5 +94,15 @@ fun engagementSummary(channel: String, counts: SendCounts): String {
 fun channelLabel(channel: String): String = when (channel.lowercase()) {
     "email" -> "Email"
     "sms" -> "Text"
+    "push" -> "Push"
+    "inapp" -> "In-app"
+    "broadcast" -> "Broadcast"
+    "message" -> "Inbox reply"
     else -> channel.ifBlank { "Send" }
+}
+
+/** "12 kinfolk · Email, Text" for a broadcast row (#1610). Pure. */
+fun broadcastSummaryLine(send: RecentSend): String {
+    val via = send.channels.joinToString(", ") { channelLabel(it) }
+    return if (via.isBlank()) "${send.recipientCount} kinfolk" else "${send.recipientCount} kinfolk · $via"
 }

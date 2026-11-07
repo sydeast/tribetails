@@ -192,6 +192,7 @@ optimizeRoute
 outboundFanoutSweep
 payInvoice
 postInvoiceEvent
+previewBroadcastAudience
 previewEmailFrame
 previewEmailTemplate
 previewMarketingBlastAudience

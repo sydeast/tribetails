@@ -574,6 +574,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   listAudienceSegments: () => require('./admin/audienceSegments'),
   deleteAudienceSegment: () => require('./admin/audienceSegments'),
   broadcastMessage: () => require('./admin/broadcastMessage'),
+  previewBroadcastAudience: () => require('./admin/previewBroadcastAudience'),
   // #823. Watching and stopping a broadcast whose fan-out outlived its callable.
   getBroadcastProgress: () => require('./admin/broadcastProgress'),
   stopBroadcast: () => require('./admin/broadcastProgress'),

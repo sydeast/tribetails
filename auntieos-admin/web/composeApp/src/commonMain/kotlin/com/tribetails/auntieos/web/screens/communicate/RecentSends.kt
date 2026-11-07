@@ -32,6 +32,11 @@ data class RecentSend(
     val sentAtMs: Long,
     val counts: SendCounts,
     val lastEvent: String?,
+    /** #1610: `external` | `broadcast` | `reply`; blank from a server older than the field. */
+    val kind: String = "",
+    val recipientCount: Int = 0,
+    val channels: List<String> = emptyList(),
+    val preview: String? = null,
 )
 
 private val recentSendsJson = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -57,6 +62,11 @@ fun decodeRecentSends(dataJson: String): List<RecentSend> {
                 failed = c?.get("failed")?.jsonPrimitive?.intOrNull ?: 0,
             ),
             lastEvent = o["lastEvent"]?.jsonPrimitive?.contentOrNull,
+            kind = o["kind"]?.jsonPrimitive?.contentOrNull ?: "",
+            recipientCount = o["recipientCount"]?.jsonPrimitive?.intOrNull ?: 0,
+            channels = (o["channels"] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
+            preview = o["preview"]?.jsonPrimitive?.contentOrNull?.ifBlank { null },
         )
     }
 }
@@ -66,6 +76,9 @@ fun decodeRecentSends(dataJson: String): List<RecentSend> {
  * reported (click is email-only). Never fabricates rates we have not measured.
  */
 fun engagementSummary(channel: String, counts: SendCounts): String {
+    // #1610: a broadcast reports reach on its own screen and a reply has no
+    // provider events, so neither waits on delivery counts here.
+    if (channel.equals("broadcast", ignoreCase = true) || channel.equals("message", ignoreCase = true)) return "Sent"
     val parts = buildList {
         if (counts.delivered > 0) add("${counts.delivered} delivered")
         if (counts.opened > 0) add("${counts.opened} opened")
@@ -80,5 +93,9 @@ fun engagementSummary(channel: String, counts: SendCounts): String {
 fun channelLabel(channel: String): String = when (channel.lowercase()) {
     "email" -> "Email"
     "sms" -> "Text"
+    "push" -> "Push"
+    "inapp" -> "In-app"
+    "broadcast" -> "Broadcast"
+    "message" -> "Inbox reply"
     else -> channel.ifBlank { "Send" }
 }
