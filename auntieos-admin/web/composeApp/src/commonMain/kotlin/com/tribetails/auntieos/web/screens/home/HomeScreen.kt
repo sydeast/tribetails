@@ -58,6 +58,7 @@ import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
 import com.tribetails.auntieos.web.data.ExpenseSummary
 import com.tribetails.auntieos.web.data.ExpirationItem
 import com.tribetails.auntieos.web.data.GeneratedDraft
+import com.tribetails.auntieos.web.data.draftsAwaitingReview
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.RouteResult
@@ -140,6 +141,13 @@ internal fun statCardNumeric(state: FirestoreResult<*>, ready: Double): Double? 
 fun HomeScreen(
     authUser: AuthUser? = null,
     onNavigate: (Destination) -> Unit,
+    /**
+     * #1563: open one stored draft in Communicate for review, send or delete.
+     * Each "KinTales pending" row opens its own; "Review & send tales" and the
+     * "KinTales to review" card open the newest. They used to open a blank
+     * Communicate with no draft loaded.
+     */
+    onOpenDraft: (GeneratedDraft) -> Unit = { onNavigate(Destination.Communicate) },
 ) {
     val c = AuntieTheme.colors
     val client = remember { FirestoreClient() }
@@ -163,14 +171,19 @@ fun HomeScreen(
     // Drop content-less junk docs (leftover all-null import/seed rows with no
     // generatedCopy): they are nothing to review and would render as "No recipient".
     val drafts   = (draftsState as? FirestoreResult.Data)?.value.orEmpty()
-        .filter { it.generatedCopy.isNotBlank() }
+        .filter { it.body().isNotBlank() }
     val todayKey = nowIso().take(10)
     val todaySessions = sessions.filter { it.startTime.take(10) == todayKey }
         .sortedBy { it.startTime }
     val doneCount = todaySessions.count { it.status.uppercase() == "COMPLETED" }
     val onWayCount = todaySessions.count { it.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED") }
 
-    val draftsPending = drafts.filter { it.status.lowercase() != "approved" }
+    // #1563: unsent drafts only, newest first. A draft already sent as a KinTale
+    // (`publishedReportId`) is waiting on nobody.
+    val draftsPending = draftsAwaitingReview(drafts)
+    val openNewestDraft = {
+        draftsPending.firstOrNull()?.let(onOpenDraft) ?: onNavigate(Destination.Communicate)
+    }
     val kinfolkCount = (kinfolkState as? FirestoreResult.Data)?.value?.count { it.status != "archived" } ?: 0
     // Bookings stream is pre-filtered to booking requests server-side; count the
     // stream length (the old `status=='pending'` predicate was dead - stream is DRAFT).
@@ -371,7 +384,7 @@ fun HomeScreen(
                                     ),
                                     tone = AuntieStatusTone.Teal,
                                     modifier = Modifier.weight(1f),
-                                    onClick = { onNavigate(Destination.Communicate) },
+                                    onClick = openNewestDraft,
                                 )
                                 // Home has no bookings PANEL, so this card is the only place a
                                 // bookingRequestsStream failure can ever surface. Before this, a
@@ -454,13 +467,13 @@ fun HomeScreen(
                                         EmptyHint("Couldn't load drafts: ${(draftsState as FirestoreResult.Error).message}", error = true)
                                     draftsPending.isEmpty() -> EmptyHint("All caught up, no drafts waiting.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                                        draftsPending.take(4).forEachIndexed { i, d -> TaleRow(d, i) }
+                                        draftsPending.take(4).forEachIndexed { i, d -> TaleRow(d, i, onOpen = { onOpenDraft(d) }) }
                                     }
                                 }
                                 Spacer(Modifier.height(14.dp))
                                 PrimaryButton(
                                     label = "Review & send tales",
-                                    onClick = { onNavigate(Destination.Communicate) },
+                                    onClick = openNewestDraft,
                                     modifier = Modifier.fillMaxWidth(),
                                     leading = { Icon(Lucide.Pencil, contentDescription = null, modifier = Modifier.size(14.dp)) },
                                 )
@@ -828,7 +841,7 @@ private fun localWeekStartIso(): String {
 
 /** A KinTales-pending tale row: colored mark, title, blurb, mono meta line. */
 @Composable
-private fun TaleRow(draft: GeneratedDraft, index: Int) {
+private fun TaleRow(draft: GeneratedDraft, index: Int, onOpen: () -> Unit) {
     val c = AuntieTheme.colors
     val markTone = when (index % 3) { 0 -> c.primary; 1 -> c.secondary; else -> c.accent }
     Row(
@@ -837,32 +850,30 @@ private fun TaleRow(draft: GeneratedDraft, index: Int) {
             .clip(RoundedCornerShape(13.dp))
             .background(c.surfaceGlass)
             .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(13.dp))
+            // #1563: the row opens its draft. It used to do nothing.
+            .clickable(onClickLabel = "Open draft", onClick = onOpen)
             .padding(13.dp),
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         Box(Modifier.width(4.dp).height(40.dp).clip(RoundedCornerShape(4.dp)).background(markTone))
         Column(Modifier.weight(1f)) {
             Text(
-                draft.communicationType.replace("_", " ").ifBlank { "Visit report" },
+                draft.type().replace("_", " ").ifBlank { "Visit report" },
                 style = AuntieTheme.typography.titleSmall, color = c.textPrimary,
             )
             // item 6: blurb = first line of the real draft copy (was a redundant
             // second copy of kinfolkName, which then repeated in the meta line).
             Text(
-                draft.generatedCopy.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(80)
+                draft.body().lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(80)
                     ?.ifBlank { null } ?: "No copy yet",
                 style = AuntieTheme.typography.bodySmall, color = c.textDim,
                 maxLines = 1,
             )
             Spacer(Modifier.height(5.dp))
-            // item 6: meta = STATUS · household (name appears ONCE now). createdOn
+            // item 6: meta = DRAFT · household (name appears ONCE now). createdOn
             // appended only when present (no fabricated relative time).
             Text(
-                buildString {
-                    append(draft.status.uppercase())
-                    if (draft.kinfolkName.isNotBlank()) append(" · ${draft.kinfolkName}")
-                    if (draft.createdOn.isNotBlank()) append(" · ${draft.createdOn.take(10)}")
-                },
+                taleRowMeta(draft),
                 style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp, letterSpacing = 0.4.sp),
                 color = c.textFaint,
             )
@@ -892,4 +903,17 @@ internal fun TodaysPackOverdueRow(label: String, onClick: () -> Unit) {
         Icon(Lucide.CalendarClock, contentDescription = null, tint = c.warning, modifier = Modifier.size(18.dp))
         Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
     }
+}
+
+/**
+ * The mono meta line of a "KinTales pending" row: DRAFT, the household, the day.
+ * #1598 ruling (2026-11-05): a written but unsent KinTale is a "Draft"
+ * everywhere, Home included. Every row is unsent ([draftsAwaitingReview]), so
+ * the word is constant; the stored status printed PENDING or GENERATED and
+ * disagreed with KinTales > Drafts. Pure; tested.
+ */
+internal fun taleRowMeta(draft: GeneratedDraft): String = buildString {
+    append("DRAFT")
+    if (draft.household().isNotBlank()) append(" · ${draft.household()}")
+    if (draft.created().isNotBlank()) append(" · ${draft.created().take(10)}")
 }

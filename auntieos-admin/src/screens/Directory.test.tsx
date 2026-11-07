@@ -380,6 +380,28 @@ describe('Directory screen, Kin tab', () => {
     await userEvent.click(screen.getByRole('tab', { name: /^kin(\s|·|$)/i }));
   }
 
+  /** #1602: two kin named Mia could not be told apart; each card names its household. */
+  it('#1602: each kin card names its household', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Dre', lastName: 'East' }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Rae', lastName: 'Wren' }),
+      ],
+    };
+    kinAsync = {
+      status: 'ready',
+      data: [kinRow({ _id: 'a', name: 'Mia', kinfolkId: 'kf1' }), kinRow({ _id: 'b', name: 'Mia', kinfolkId: 'kf2' })],
+    };
+    render(<Directory />);
+    await openKinTab();
+    const households = screen.getAllByTestId('kin-card-household').map((el) => el.textContent);
+    expect(households).toHaveLength(2);
+    expect(new Set(households).size).toBe(2);
+    expect(households.join(' ')).toMatch(/East/);
+    expect(households.join(' ')).toMatch(/Wren/);
+  });
+
   it('renders every active kin as a standalone card', async () => {
     kinAsync = {
       status: 'ready',

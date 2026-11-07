@@ -486,6 +486,18 @@ describe('getMyInvoices ships the stored state stamp', () => {
     return getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
   }
 
+  it('#1570 sorts an imported month-name date by the day it names, not as text', async () => {
+    const res = await load([
+      { id: 'o-sep', data: { status: 'open', amountDue: 5, total: 5, dueDate: '2026-09-01' } },
+      { id: 'o-jul', data: { status: 'open', amountDue: 5, total: 5, dueDate: 'July 14, 2026' } },
+      { id: 'p-aug', data: { status: 'paid', amountDue: 0, total: 5, date: '2026-08-01' } },
+      { id: 'p-jan', data: { status: 'paid', amountDue: 0, total: 5, date: 'January 2, 2026' } },
+    ]);
+    // Soonest due first; as text "July..." sorted after every ISO day.
+    expect(res.open.map((i) => i.id)).toEqual(['o-jul', 'o-sep']);
+    // Newest paid first; as text "January..." outranked every ISO day.
+    expect(res.paid.map((i) => i.id)).toEqual(['p-aug', 'p-jan']);
+  });
   it('buckets all eight stamped states by the table: 4 open, 1 paid, 2 credits, cancelled nowhere', async () => {
     const res = await load([
       { id: 'i-open', data: { status: 'open', amountDue: 50, total: 50 } },

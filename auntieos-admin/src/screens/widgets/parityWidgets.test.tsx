@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { Async } from '../../lib/async';
 import type { SessionEntry } from '../../api/sessions';
 import type { Kin } from '../../api/directory';
@@ -259,13 +260,41 @@ describe('KinTalesPendingWidget', () => {
 
     expect(screen.getByText('visit report')).toBeInTheDocument();
     expect(screen.getByText('Biscuit had a lovely time.')).toBeInTheDocument();
-    expect(screen.getByText(`GENERATED · Sara · ${TODAY}`)).toBeInTheDocument();
+    expect(screen.getByText(`DRAFT · Sara · ${TODAY}`)).toBeInTheDocument();
   });
 
-  it('is all caught up when there is nothing to review', () => {
+  it('#1563: every row opens its own draft', async () => {
+    const onReviewTales = vi.fn();
+    wire({
+      generated_drafts: {
+        status: 'ready',
+        data: [draft({ _id: 'gd-new', generatedCopy: 'Newest tale.' }), draft({ _id: 'gd-old', generatedCopy: 'Older tale.' })],
+      },
+    });
+    render(<KinTalesPendingWidget onReviewTales={onReviewTales} />);
+    await userEvent.click(screen.getByRole('button', { name: /Older tale/ }));
+    expect(onReviewTales).toHaveBeenCalledWith('gd-old');
+  });
+  it('#1563: the button opens the newest draft, never a blank form', async () => {
+    const onReviewTales = vi.fn();
+    wire({
+      generated_drafts: {
+        status: 'ready',
+        data: [draft({ _id: 'gd-new', generatedCopy: 'Newest tale.' }), draft({ _id: 'gd-old', generatedCopy: 'Older tale.' })],
+      },
+    });
+    render(<KinTalesPendingWidget onReviewTales={onReviewTales} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Review and send tales' }));
+    expect(onReviewTales).toHaveBeenCalledWith('gd-new');
+  });
+  it('is all caught up when there is nothing to review', async () => {
+    const onReviewTales = vi.fn();
     wire({ generated_drafts: READY_EMPTY });
-    render(<KinTalesPendingWidget onReviewTales={noop} />);
+    render(<KinTalesPendingWidget onReviewTales={onReviewTales} />);
     expect(screen.getByText(/All caught up/i)).toBeInTheDocument();
+    // Nothing to open, so the button opens a blank form.
+    await userEvent.click(screen.getByRole('button', { name: 'Review and send tales' }));
+    expect(onReviewTales).toHaveBeenCalledWith(null);
   });
 
   it('never says "all caught up" over a failed draft read', () => {

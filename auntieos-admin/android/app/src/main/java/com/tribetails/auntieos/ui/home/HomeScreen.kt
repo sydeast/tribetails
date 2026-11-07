@@ -83,6 +83,12 @@ fun HomeScreen(
     onWriteKinTale: (sessionId: String) -> Unit,
     onLiveTrack: (sessionId: String, kinfolkId: String, kinfolkName: String) -> Unit = { _, _, _ -> },
     onViewRoute: (routeId: String, kinfolkName: String) -> Unit = { _, _ -> },
+    /**
+     * #1563: open one stored draft in Communicate for review, send or delete.
+     * Each "KinTales pending" row opens its own; "Review & send tales" opens the
+     * newest. Both used to open a blank Communicate with no draft loaded.
+     */
+    onOpenDraft: (draftId: String) -> Unit = { onNavigateToCommunicate() },
 ) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -298,7 +304,10 @@ fun HomeScreen(
                                             trend = "${state.recentDrafts.size} recent drafts",
                                             tone = AuntieStatusTone.Teal,
                                             modifier = Modifier.weight(1f),
-                                            onClick = onNavigateToCommunicate,
+                                            onClick = {
+                                                val newest = reviewTarget(state.recentDrafts)
+                                                if (newest != null) onOpenDraft(newest) else onNavigateToCommunicate()
+                                            },
                                         )
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -390,13 +399,18 @@ fun HomeScreen(
                                     state.isLoading -> EmptyHint("Loading drafts…")
                                     state.recentDrafts.isEmpty() -> EmptyHint("All caught up, no drafts waiting.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                                        state.recentDrafts.take(4).forEachIndexed { i, d -> TaleRow(d, i) }
+                                        state.recentDrafts.take(4).forEachIndexed { i, d ->
+                                            TaleRow(d, i, onOpen = { onOpenDraft(d.id) })
+                                        }
                                     }
                                 }
                                 Spacer(Modifier.height(14.dp))
                                 PrimaryButton(
                                     label = "Review & send tales",
-                                    onClick = onNavigateToCommunicate,
+                                    onClick = {
+                                        val newest = reviewTarget(state.recentDrafts)
+                                        if (newest != null) onOpenDraft(newest) else onNavigateToCommunicate()
+                                    },
                                     modifier = Modifier.fillMaxWidth(),
                                     leading = { Icon(Lucide.Pencil, contentDescription = null, modifier = Modifier.size(16.dp)) },
                                 )
@@ -883,7 +897,7 @@ fun OfflineBanner(
 
 /** A KinTales-pending tale row: colored mark, type + recipient, mono meta line. */
 @Composable
-private fun TaleRow(draft: Draft, index: Int) {
+private fun TaleRow(draft: Draft, index: Int, onOpen: () -> Unit) {
     val c = AuntieTheme.colors
     val markTone = when (index % 3) { 0 -> c.primary; 1 -> c.secondary; else -> c.accent }
     Row(
@@ -892,6 +906,8 @@ private fun TaleRow(draft: Draft, index: Int) {
             .clip(RoundedCornerShape(13.dp))
             .background(c.surfaceGlass)
             .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(13.dp))
+            // #1563: the row opens its draft. It used to do nothing.
+            .clickable(onClickLabel = "Open draft", onClick = onOpen)
             .padding(13.dp),
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
@@ -910,13 +926,9 @@ private fun TaleRow(draft: Draft, index: Int) {
                 maxLines = 1,
             )
             Spacer(Modifier.height(5.dp))
-            // item 6: meta = STATUS · household (name once now) · createdOn when present.
+            // item 6: meta = DRAFT · household (name once now) · createdOn when present.
             Text(
-                buildString {
-                    append(draft.status.uppercase())
-                    if (!draft.kinfolkName.isNullOrBlank()) append(" · ${draft.kinfolkName}")
-                    if (draft.createdOn.isNotBlank()) append(" · ${draft.createdOn.take(10)}")
-                },
+                taleRowMeta(draft),
                 style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp, letterSpacing = 0.4.sp),
                 color = c.textFaint,
             )
@@ -1107,4 +1119,23 @@ internal fun TodaysPackOverdueRow(label: String, onClick: () -> Unit) {
         Icon(Lucide.CalendarClock, contentDescription = null, tint = c.warning, modifier = Modifier.size(18.dp))
         Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
     }
+}
+
+/**
+ * #1563: the draft "Review & send tales" opens: the newest listed, or null when
+ * there is none (the button then opens a blank Communicate). Pure; tested.
+ */
+internal fun reviewTarget(drafts: List<Draft>): String? = drafts.firstOrNull { it.id.isNotBlank() }?.id
+
+/**
+ * The mono meta line of a "KinTales pending" row: DRAFT, the household, the day.
+ * #1598 ruling (2026-11-05): a written but unsent KinTale is a "Draft"
+ * everywhere, Home included. Every row is unsent ([AuntieRepository.getRecentDrafts]
+ * keeps only [Draft.isUnsent]), so the word is constant; the stored status
+ * printed PENDING or GENERATED and disagreed with KinTales > Drafts. Pure; tested.
+ */
+internal fun taleRowMeta(draft: Draft): String = buildString {
+    append("DRAFT")
+    if (!draft.kinfolkName.isNullOrBlank()) append(" · ${draft.kinfolkName}")
+    if (draft.createdOn.isNotBlank()) append(" · ${draft.createdOn.take(10)}")
 }

@@ -23,6 +23,7 @@ import {
   type InvoiceAction,
   type InvoicePartialPayment,
   isInvoiceOverdue,
+  isUnreadableDueDate,
   localDateIso,
   unstampedStateInfo,
 } from '../lib/invoiceFormat';
@@ -181,6 +182,12 @@ interface RowView {
   overdue: boolean;
   /** Whole days past due, or null when the invoice is not a dated overdue balance. */
   daysOverdue: number | null;
+  /**
+   * #1570: the invoice carries a due date that names no day ("Net 14",
+   * "07/14/2026"), so it can never be counted overdue. Flagged on the row and
+   * counted on the Overdue card, never dropped silently.
+   */
+  dueUnreadable: boolean;
   /** Non-null when money has come in that does not cover the invoice. */
   partial: InvoicePartialPayment | null;
 }
@@ -216,6 +223,7 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
       state,
       overdue: isInvoiceOverdue(state, entry.dueDate, todayIso),
       daysOverdue: invoiceDaysOverdue(state, entry.dueDate, todayIso),
+      dueUnreadable: isUnreadableDueDate(entry.dueDate),
       // Like `overdue`, a display refinement of `open` rather than a state of
       // its own, so it changes the chip and never the actions.
       partial: invoicePartialPayment(state, entry),
@@ -481,6 +489,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   );
   const billedTotal = asyncScalar(rows, () => inScope.reduce((sum, r) => sum + r.entry.total, 0));
   const overdueCount = asyncScalar(rows, () => overdueRows.length);
+  // #1570: open invoices whose due date names no day. Each could be overdue
+  // and none can be counted, so the Overdue card says how many.
+  const unreadableDueOpen = useMemo(() => openRows.filter((r) => r.dueUnreadable).length, [openRows]);
 
   /**
    * WHO IS WORST, and by how long. Android's Overdue card carries this and the
@@ -580,8 +591,16 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           // Names the worst offender and how long, matching Android. "all clear"
           // rather than a blank when there are none, because an empty subline
           // under a zero reads as a card that failed to finish rendering.
-          trend={worstOverdue ?? 'all clear'}
-          tone={overdueCount.kind === 'value' && overdueCount.value > 0 ? 'error' : 'muted'}
+          trend={
+            unreadableDueOpen > 0
+              ? `${worstOverdue === null ? '' : `${worstOverdue}. `}${String(unreadableDueOpen)} open invoice${
+                  unreadableDueOpen === 1 ? ' has a due date' : 's have due dates'
+                } that cannot be read`
+              : (worstOverdue ?? 'all clear')
+          }
+          tone={
+            (overdueCount.kind === 'value' && overdueCount.value > 0) || unreadableDueOpen > 0 ? 'error' : 'muted'
+          }
           feature={overdueCount.kind === 'value' && overdueCount.value > 0}
         />
       </div>
@@ -817,7 +836,7 @@ interface InvoiceRowProps {
 }
 
 function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
-  const { entry, state, overdue, daysOverdue, partial } = view;
+  const { entry, state, overdue, daysOverdue, partial, dueUnreadable } = view;
   // Overdue is a display-level refinement of "open" (see FILTERS' comment),
   // it never becomes its own InvoiceState, it just outranks the plain "Open"
   // chip visually, the same relationship the wasm's InvoiceRow renders.
@@ -839,8 +858,12 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
   // that decides what to do about it, and it is the same stored dueDate either
   // way. Android's meta line reads the same. An overdue invoice whose age cannot
   // be computed keeps the plain due date rather than inventing a number.
-  const dateLine =
-    daysOverdue !== null
+  // #1570: a due date that names no day is said, quoted, where the due date
+  // would be, so the operator can see what is stored and fix it.
+  const flagDue = dueUnreadable && (state === 'open' || !entry.date);
+  const dateLine = flagDue
+    ? `due date cannot be read: "${entry.dueDate.trim()}"`
+    : daysOverdue !== null
       ? `${String(daysOverdue)} day${daysOverdue === 1 ? '' : 's'} overdue`
       : state === 'open' && entry.dueDate
         ? `due ${humanizeDate(entry.dueDate, todayIso)}`
@@ -869,7 +892,11 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
         {secondary ? <span className="invoices__row-secondary">{secondary}</span> : null}
       </span>
 
-      <span className={overdue ? 'invoices__row-meta invoices__row-meta--overdue' : 'invoices__row-meta'}>
+      <span
+        className={
+          overdue || flagDue ? 'invoices__row-meta invoices__row-meta--overdue' : 'invoices__row-meta'
+        }
+      >
         {dateLine}
         {entry.sessionIds.length > 0 ? (
           <span className="invoices__row-visits">

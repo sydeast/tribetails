@@ -781,6 +781,11 @@ private fun AuthenticatedNavHost(
                 HomeScreen(
                     viewModel             = homeVm,
                     onNavigateToCommunicate = { navController.navigate(Screen.Communicate.route) },
+                    // #1563: a pending draft opens loaded in Communicate.
+                    onOpenDraft = { draftId ->
+                        commVm.loadDraft(draftId)
+                        navController.navigate(Screen.Communicate.route) { launchSingleTop = true }
+                    },
                     onNavigateToCalls     = { navController.navigate(Screen.Calls.route) },
                     onNavigateToAuntieTime = {
                         navController.navigate(Screen.AuntieTime.route) { launchSingleTop = true }
@@ -1196,6 +1201,14 @@ private fun AuthenticatedNavHost(
                 AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
                     KinTaleLogsScreen(
                         onBack = { navController.popBackStack() },
+                        // #1563: rows did nothing here, because nothing was passed.
+                        // A report opens by its visit; a generated draft opens
+                        // loaded in Communicate, where it is reviewed and sent.
+                        onOpenReport = { sessionId -> navController.navigate(Screen.KinTaleReport.createRoute(sessionId)) },
+                        onOpenDraft = { draftId ->
+                            commVm.loadDraft(draftId)
+                            navController.navigate(Screen.Communicate.route) { launchSingleTop = true }
+                        },
                         // The logs mock's "Edit templates" head control.
                         onOpenTemplates = { navController.navigate(Screen.KinTaleTemplates.route) },
                     )

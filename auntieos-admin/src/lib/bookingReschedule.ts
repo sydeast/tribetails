@@ -123,6 +123,11 @@ export function rescheduleApplies(state: BookingState): boolean {
       return true;
     case 'draft':
     case 'pending':
+    // #1578: the Auntie is already on her way or at the door, so the window
+    // is not moved out from under her; the per-row panel refuses it too.
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
     case 'completed':
     case 'cancelled':
     case 'unknown':
@@ -136,6 +141,10 @@ function rescheduleSkipReason(state: BookingState): string {
     case 'draft':
     case 'pending':
       return 'It is still awaiting a reply, so it has no visit on the books to move. Approve it first.';
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
+      return 'The visit is already under way, so it is left where it is.';
     case 'completed':
       return 'It has already been completed.';
     case 'cancelled':

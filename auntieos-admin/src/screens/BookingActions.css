@@ -39,6 +39,20 @@
   background: color-mix(in srgb, var(--color-accent) 18%, transparent);
   color: var(--color-accent);
 }
+/* #1578: the in-visit states, in Auntie Time's hues: on the way orange,
+   arrived teal, departed purple. */
+.booking-actions__chip--onmyway {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+.booking-actions__chip--arrived {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+}
+.booking-actions__chip--departed {
+  background: color-mix(in srgb, var(--color-tertiary) 18%, transparent);
+  color: var(--color-tertiary);
+}
 .booking-actions__chip--completed {
   background: color-mix(in srgb, var(--color-tertiary) 18%, transparent);
   color: var(--color-tertiary);
