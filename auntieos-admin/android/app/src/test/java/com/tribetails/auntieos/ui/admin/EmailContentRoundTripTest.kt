@@ -16,7 +16,7 @@ class EmailContentRoundTripTest {
 
     /**
      * What the server stores: `sanitizeEmailContent` (mytribe/functions/src/lib/emailContent.ts)
-     * rewrites sanitize-html's `<br />` and `<img … />` to `<br>` and `<img …>`, as all 56 seeds
+     * rewrites sanitize-html's `<br />` and `<img … />` to `<br>` and `<img …>`, as all 57 seeds
      * are spelled. Text escapes only & < >, and attributes stay in input order.
      */
     private val canonical = listOf(
@@ -143,7 +143,7 @@ class EmailContentRoundTripTest {
             .map { File(it, "content.html") }
             .filter { it.isFile }
             .sortedBy { it.parentFile.name }
-        assertEquals(56, files.size)
+        assertEquals(57, files.size)
         val loopSeeds = mutableListOf<String>()
         for (file in files) {
             val html = file.readText(Charsets.UTF_8)

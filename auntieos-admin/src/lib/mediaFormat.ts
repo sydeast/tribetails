@@ -368,3 +368,48 @@ export function taggableKin<T extends TaggableKin>(
   if (kinfolkId === '') return allKin;
   return allKin.filter((k) => str(k.kinfolkId).trim() === kinfolkId);
 }
+/** Label for kin whose household is blank or no longer resolves (#1604). */
+export const UNKNOWN_HOUSEHOLD_LABEL = 'Household unavailable';
+export interface KinHouseholdGroup<T> {
+  /** The household's id, or '' for kin with no household on the document. */
+  kinfolkId: string;
+  label: string;
+  kin: T[];
+}
+/**
+ * Groups a kin roster under the household each belongs to (#1604).
+ *
+ * The tag dialog offers the WHOLE roster for a file with no household (company
+ * media, operator ruling 2026-07-31), and a flat list of first names across
+ * every family invited tagging the wrong family's pet: two households each have
+ * a "Biscuit" and nothing on screen told them apart. Grouping puts the family
+ * name above its pets.
+ *
+ * Households sort by label, kin by name, both case-insensitively. Kin with no
+ * household sort last under {@link UNKNOWN_HOUSEHOLD_LABEL}, so an orphaned row
+ * is visible rather than attached to an arbitrary family. A household id the
+ * label map cannot resolve gets the same word, never a raw database id.
+ */
+export function groupKinByHousehold<T extends TaggableKin>(
+  kin: T[],
+  labelFor: (kinfolkId: string) => string | undefined,
+): KinHouseholdGroup<T>[] {
+  const byHousehold = new Map<string, T[]>();
+  for (const k of kin) {
+    const id = str(k.kinfolkId).trim();
+    const rows = byHousehold.get(id);
+    if (rows) rows.push(k);
+    else byHousehold.set(id, [k]);
+  }
+  const byName = (a: T, b: T) => str(a.name).trim().toLowerCase().localeCompare(str(b.name).trim().toLowerCase());
+  const groups: KinHouseholdGroup<T>[] = [...byHousehold.entries()].map(([kinfolkId, rows]) => {
+    const label = kinfolkId === '' ? UNKNOWN_HOUSEHOLD_LABEL : (labelFor(kinfolkId)?.trim() || UNKNOWN_HOUSEHOLD_LABEL);
+    return { kinfolkId, label, kin: [...rows].sort(byName) };
+  });
+  return groups.sort((a, b) => {
+    const aUnknown = a.label === UNKNOWN_HOUSEHOLD_LABEL;
+    const bUnknown = b.label === UNKNOWN_HOUSEHOLD_LABEL;
+    if (aUnknown !== bUnknown) return aUnknown ? 1 : -1;
+    return a.label.toLowerCase().localeCompare(b.label.toLowerCase());
+  });
+}
