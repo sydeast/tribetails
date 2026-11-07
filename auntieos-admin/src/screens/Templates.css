@@ -133,7 +133,8 @@
   outline: var(--border-emphasis) solid var(--color-primary);
   outline-offset: 2px;
 }
-.templates__tab--active {
+.templates__tab--active,
+.templates__tab.templates__tab--active:hover {
   background: var(--color-primary);
   border-color: transparent;
   color: var(--color-background);
@@ -309,7 +310,9 @@
   font-family: var(--type-mono-family);
   font-size: 10.5px;
   color: var(--color-text-dim);
-  word-break: break-all;
+  /* #1614: break at the separators (see KeyWithBreaks), and inside a word only
+     when a single run is wider than the card. */
+  overflow-wrap: break-word;
 }
 /* The mock's `.subj` (l.125): 13px, dim, one line, ellipsis. The full subject
    is in the `title` attribute and in the editor, so nothing here is

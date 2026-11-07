@@ -57,7 +57,7 @@ describe('templates api', () => {
     call.mockResolvedValue({ templates: [{ templateId: 'a' }], nextCursor: 'a' });
     const result = await listTemplatesPage({ limit: 50 });
     expect(call).toHaveBeenCalledWith('listTemplates', { limit: 50 });
-    expect(result).toEqual({ templates: [{ templateId: 'a' }], nextCursor: 'a' });
+    expect(result).toEqual({ templates: [{ templateId: 'a' }], nextCursor: 'a', total: null });
   });
 
   it('listTemplatesPage forwards a startAfter cursor when paging forward', async () => {
@@ -66,9 +66,13 @@ describe('templates api', () => {
     expect(call).toHaveBeenCalledWith('listTemplates', { limit: 50, startAfter: 'b' });
   });
 
+  it('listTemplatesPage passes the bank total through (#1614)', async () => {
+    call.mockResolvedValue({ templates: [], nextCursor: 'a', total: 137 });
+    expect((await listTemplatesPage({ limit: 50 })).total).toBe(137);
+  });
   it('listTemplatesPage defaults templates to [] and nextCursor to null when the callable omits them', async () => {
     call.mockResolvedValue({});
-    expect(await listTemplatesPage({ limit: 50 })).toEqual({ templates: [], nextCursor: null });
+    expect(await listTemplatesPage({ limit: 50 })).toEqual({ templates: [], nextCursor: null, total: null });
   });
 
   it('listTemplateCategories unwraps the { categories } envelope and calls the right callable', async () => {

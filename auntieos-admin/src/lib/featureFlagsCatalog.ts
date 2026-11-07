@@ -52,7 +52,7 @@ export const KEY_COMMUNICATE_COMMS_RECAP = 'auntieos.communicate.commsRecap';
  *      plus `inboxArrangementFromFlags` / `arrangeThreads` and every test that
  *      names the losing arm.
  *   3. If SECTIONS LOSE, `groupThreadsByWaiting` (both clients),
- *      `SECTION_READ_STATE`, `ThreadSectionKey`, the `.inbox__status-*` CSS and
+ *      `ThreadSectionKey`, the `.inbox__status-*` CSS and
  *      the empty-section copy all go with it. If SECTIONS WIN, nothing in
  *      `inboxFormat.ts` dies: `groupThreadsByDay` still runs inside every
  *      section.
