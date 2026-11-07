@@ -364,6 +364,7 @@ jobs:
             scripts:
               - 'scripts/**'
               - '.github/workflows/ci.yml'
+              - '.githooks/**'
               # Every other workflow file, because workflow-budget.test.sh
               # reads all of them and a change to one alone must still run it
               # (#1052). That test fails if a workflow file is missing here.
@@ -1082,6 +1083,14 @@ jobs:
       # whether it has already been dispatched once. Tested against fixture
       # JSON shaped like `gh api`'s own responses so every branch runs with
       # no network (#838).
+      # The pre-commit gate's functions-test selection (#1712): a merge commit
+      - name: Run the pre-commit hook test if present
+        run: |
+          if [ -f scripts/pre-commit-hook.test.sh ]; then
+            bash scripts/pre-commit-hook.test.sh
+          else
+            echo "scripts/pre-commit-hook.test.sh not present yet, skipping."
+          fi
       - name: Run the CI-run-watch decision test if present
         run: |
           if [ -f scripts/ci-run-watch.test.mjs ]; then
