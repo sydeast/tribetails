@@ -54,6 +54,7 @@ import {
 import { BulkRescheduleDialog } from '../components/BulkRescheduleDialog';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
+import { navKicker } from '../lib/nav';
 import './Bookings.css';
 
 /**
@@ -115,7 +116,7 @@ interface SectionDef {
 const SECTIONS: readonly SectionDef[] = [
   {
     key: 'pending',
-    label: 'Pending approval',
+    label: 'Visit requests',
     test: (s) => s === 'draft' || s === 'pending',
     emptyHint: 'Nothing is waiting on a reply.',
     // Matches the Android counterpart (`groupBookingsByStatus` in
@@ -578,7 +579,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
     setShowCreate(false);
     setCreateNotice(
       `Booking request created: ${result.visitCount} visit${result.visitCount === 1 ? '' : 's'} submitted for approval. ` +
-        `It enters the Incoming-requests queue and appears in this list once approved.`,
+        `It enters Visit requests and appears in this list once approved.`,
     );
   }
 
@@ -638,7 +639,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Bookings"
+        kicker={navKicker('bookings')}
         title="Bookings"
         subtitle="Pending requests and scheduled visits"
         trailing={

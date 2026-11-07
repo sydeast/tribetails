@@ -416,6 +416,29 @@ describe('Templates screen', () => {
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
+  it('#1594: the open editor is reported to the route, and a URL naming a template opens its editor', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed', subject: 'Your booking is confirmed' }),
+    ]);
+    const onEditorChange = vi.fn();
+    // A reload of `/templates?template=booking.confirmed`: the editor opens on it.
+    const { rerender } = render(<Templates editorTemplateId="booking.confirmed" onEditorChange={onEditorChange} />);
+    await editorCrumb('Edit template');
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
+
+    // Back: the URL drops `?template=`, so the bank comes back.
+    rerender(
+      <ToastProvider>
+        <Templates onEditorChange={onEditorChange} />
+      </ToastProvider>,
+    );
+    const card = await screen.findByText('Booking Confirmed');
+
+    // Opening a card from the bank tells the route which template is open.
+    await userEvent.click(card);
+    expect(onEditorChange).toHaveBeenLastCalledWith('booking.confirmed');
+  });
+
   /**
    * #716, the card footer. The mock's card ends in a right-aligned "Edit"
    * ghost button, and this card had none: the comment that chose that said a

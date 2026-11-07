@@ -224,6 +224,23 @@ describe('Settings — section nav shell', () => {
     expect(screen.queryByLabelText('Business name')).not.toBeInTheDocument();
   });
 
+  /**
+   * #1564. Operator ruling, 2026-11-05 docket: every business email goes to
+   * `businessEmail`; while it is blank, Settings says they have nowhere to go.
+   */
+  it('#1564: says business emails have nowhere to go while the business email is blank', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(screen.getByText(/Business emails have nowhere to go until this is filled/)).toBeInTheDocument();
+  });
+
+  it('#1564: drops the warning once a business email is stored', async () => {
+    getBusinessSettings.mockResolvedValue({ ...DEFAULT_BUSINESS_SETTINGS, businessEmail: 'pawsome@hanasamku.com' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(screen.queryByText(/Business emails have nowhere to go/)).not.toBeInTheDocument();
+  });
   it('offers Retry on a failed load and re-fetches on click', async () => {
     getBusinessSettings.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
@@ -319,6 +336,21 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
     }
     // The open row paints cream; the modifier is what the stylesheet keys on.
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveClass('settings__nav-item--active');
+    expect(screen.getByRole('tab', { name: 'Business hours' })).not.toHaveClass('settings__nav-item--active');
+  });
+
+  it('#1594: opening a section reports it to the route, and the route opens it again on reload or Back', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    const onSectionChange = vi.fn();
+    const { rerender } = render(<Settings onSectionChange={onSectionChange} />);
+    await screen.findByLabelText('Business name');
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Business hours' }));
+    expect(onSectionChange).toHaveBeenLastCalledWith('businessHours');
+
+    // The URL says Booking rules (a reload of a bookmark, or Back): the screen follows.
+    rerender(<Settings initialSection="bookingRules" onSectionChange={onSectionChange} />);
+    expect(screen.getByRole('tab', { name: 'Booking rules' })).toHaveClass('settings__nav-item--active');
     expect(screen.getByRole('tab', { name: 'Business hours' })).not.toHaveClass('settings__nav-item--active');
   });
 
