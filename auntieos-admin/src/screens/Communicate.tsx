@@ -215,7 +215,7 @@ function RecentSends() {
           live &&
           setSends({
             status: 'error',
-            message: `listRecentSends failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );

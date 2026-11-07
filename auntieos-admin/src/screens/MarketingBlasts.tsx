@@ -297,7 +297,7 @@ export function MarketingBlasts() {
         // Fail loud but non-blocking: saved segments are an accelerator, and an
         // inline audience is still perfectly schedulable without them.
         setSegmentsError(
-          `listAudienceSegments failed: ${errText(err, 'Load failed')}. You can still build an audience below.`,
+          `Could not load: ${errText(err, 'Load failed')}. You can still build an audience below.`,
         );
       });
   }, []);
@@ -312,7 +312,7 @@ export function MarketingBlasts() {
         // Left as null, never as [], so the campaign list renders its error
         // rather than the "nothing scheduled" it would otherwise be lying about.
         setBlasts(null);
-        setBlastsError(`listMarketingBlasts failed: ${errText(err, 'Load failed')}`);
+        setBlastsError(`Could not load: ${errText(err, 'Load failed')}`);
       });
   }, []);
 
@@ -345,7 +345,7 @@ export function MarketingBlasts() {
         })
         .catch((err: unknown) => {
           if (!live) return;
-          setCopyError(`previewMarketingBlastCopy failed: ${errText(err, 'Preview failed')}`);
+          setCopyError(`Could not show the preview: ${errText(err, 'Preview failed')}`);
         })
         .finally(() => {
           if (live) setCopyLoading(false);
@@ -398,7 +398,7 @@ export function MarketingBlasts() {
       setReach(await previewBlastAudience(campaignKey, audience));
     } catch (err) {
       setReach(null);
-      setPreviewError(`previewMarketingBlastAudience failed: ${errText(err, 'Preview failed')}`);
+      setPreviewError(`Could not show the preview: ${errText(err, 'Preview failed')}`);
     } finally {
       setPreviewing(false);
     }
@@ -425,7 +425,7 @@ export function MarketingBlasts() {
       loadBlasts();
     } catch (err) {
       setConfirmOpen(false);
-      setScheduleError(`scheduleMarketingBlast failed: ${errText(err, 'Schedule failed')}`);
+      setScheduleError(`Could not schedule: ${errText(err, 'Schedule failed')}`);
     } finally {
       setScheduling(false);
     }
@@ -440,7 +440,7 @@ export function MarketingBlasts() {
       setNotice(cancelNotice(await cancelMarketingBlast(blast.id)));
       loadBlasts();
     } catch (err) {
-      setBlastsError(`cancelMarketingBlast failed: ${errText(err, 'Cancel failed')}`);
+      setBlastsError(`Could not cancel: ${errText(err, 'Cancel failed')}`);
     } finally {
       setCancellingId(null);
     }

@@ -103,7 +103,7 @@ export function PortalInviteButton({
         if (result.status === 'already_active') setHasActivePrimary(true);
       }
     } catch (err: unknown) {
-      setError(`The portal invite was not sent: ${errText(err, 'inviteKinfolkToPortal failed.')}`);
+      setError(`The portal invite was not sent: ${errText(err, 'Try again in a moment.')}`);
     } finally {
       setBusy(false);
     }

@@ -168,7 +168,7 @@ describe('UninvoicedVisitsPicker loading', () => {
     listUninvoicedSessions.mockRejectedValue(new Error('permission-denied'));
     render(<Harness />);
     expect(
-      await screen.findByText(/listUninvoicedSessions failed:.*permission-denied/i),
+      await screen.findByText(/Could not load:.*permission-denied/i),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
   });
@@ -276,7 +276,7 @@ describe('UninvoicedVisitsPicker do not invoice', () => {
     await userEvent.click(screen.getByRole('button', { name: /do not invoice this visit/i }));
     await userEvent.click(screen.getAllByRole('button', { name: /do not invoice this visit/i })[0]!);
     expect(
-      await screen.findByText(/setSessionDoNotInvoice failed:.*already billed on invoice INV-9/i),
+      await screen.findByText(/Could not save:.*already billed on invoice INV-9/i),
     ).toBeInTheDocument();
   });
 });

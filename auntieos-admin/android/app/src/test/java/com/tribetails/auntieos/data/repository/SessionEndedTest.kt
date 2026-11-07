@@ -120,7 +120,7 @@ class SessionEndedReasonTest {
     fun `the reason is read through a wrapped cause chain`() {
         // Everything on the way here wraps the original at least once.
         val wrapped = IllegalStateException(
-            "listTemplates failed",
+            "Could not load",
             RuntimeException(SERVER_REVOKED_MESSAGE),
         )
         assertEquals(SessionEndedReason.Revoked, sessionEndedReason(wrapped))

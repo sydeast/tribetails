@@ -128,7 +128,7 @@ export function UninvoicedVisitsPicker({
         setResult(null);
         onSessionsLoaded([]);
         setError(
-          `listUninvoicedSessions failed: ${caught instanceof Error ? caught.message : 'Could not load this work'}`,
+          `Could not load: ${caught instanceof Error ? caught.message : 'Could not load this work'}`,
         );
       }
     },
@@ -180,7 +180,7 @@ export function UninvoicedVisitsPicker({
     } catch (caught) {
       setExcludeBusy(false);
       setExcludeError(
-        `setSessionDoNotInvoice failed: ${caught instanceof Error ? caught.message : 'Nothing was changed'}`,
+        `Could not save: ${caught instanceof Error ? caught.message : 'Nothing was changed'}`,
       );
     }
   }

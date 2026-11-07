@@ -71,7 +71,7 @@ export function SecondaryKinfolkList({
         if (live) setPeople({ status: 'ready', data });
       })
       .catch((err: unknown) => {
-        if (live) setPeople({ status: 'error', message: `listSecondaryKinfolk failed: ${errText(err, 'Load failed')}`, retry: load });
+        if (live) setPeople({ status: 'error', message: `Could not load: ${errText(err, 'Load failed')}`, retry: load });
       });
     return () => {
       live = false;

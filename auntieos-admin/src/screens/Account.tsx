@@ -243,7 +243,7 @@ export function Account({ onOpenNotifications }: AccountProps) {
       setJustSaved(true);
       load();
     } catch (err) {
-      setSaveError(`saveUserProfile failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setSaveError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     } finally {
       setSaving(false);
     }

@@ -37,7 +37,7 @@ export function useRefreshingLoad<T>(loader: () => Promise<T>, label: string, ke
         if (live) {
           setState({
             status: 'error',
-            message: `${label} failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: () => setRetries((n) => n + 1),
           });
         }
@@ -66,7 +66,7 @@ export function useOneShot<T>(loader: () => Promise<T>, label: string): Async<T>
         if (live) {
           setState({
             status: 'error',
-            message: `${label} failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           });
         }

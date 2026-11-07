@@ -159,7 +159,7 @@ describe('AddKinDialog', () => {
     await userEvent.selectOptions(screen.getByLabelText('Gender'), 'Female');
     await userEvent.click(screen.getByRole('button', { name: /^add kin$/i }));
 
-    expect(await screen.findByText(/createKin failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not create:.*permission-denied/i)).toBeInTheDocument();
     expect(onCreated).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /^add kin$/i })).toBeEnabled();
   });

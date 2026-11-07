@@ -310,7 +310,7 @@ export function KinfolkEdit({
         if (live) {
           setLoaded({
             status: 'error',
-            message: `getKinfolkProfile failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           });
         }
@@ -434,7 +434,7 @@ export function KinfolkEdit({
         setHouseholdBaseline((prev) => (prev ? { ...prev, ...changes } : prev));
       } catch (err) {
         setSaving(false);
-        setError(`updateKinfolkProfile failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+        setError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
         return;
       }
     }
@@ -481,7 +481,7 @@ export function KinfolkEdit({
       onDone();
     } catch (err) {
       setArchiving(false);
-      setError(`archiveKinfolk failed: ${err instanceof Error ? err.message : 'Archive failed'}`);
+      setError(`Could not archive: ${err instanceof Error ? err.message : 'Archive failed'}`);
     }
   }
 
@@ -496,7 +496,7 @@ export function KinfolkEdit({
       onDone();
     } catch (err) {
       setArchiving(false);
-      setError(`unarchiveKinfolk failed: ${err instanceof Error ? err.message : 'Restore failed'}`);
+      setError(`Could not restore: ${err instanceof Error ? err.message : 'Restore failed'}`);
     }
   }
 

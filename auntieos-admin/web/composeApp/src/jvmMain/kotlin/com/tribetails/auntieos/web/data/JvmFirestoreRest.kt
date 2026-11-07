@@ -723,12 +723,11 @@ internal object JvmFirestoreRest {
             val text = resp.bodyAsText()
             if (!resp.status.isSuccess()) {
                 val error = runCatchingCancellable { codec.parseToJsonElement(text).jsonObject["error"]?.jsonObject }.getOrNull()
-                val msg = runCatchingCancellable { error?.get("message")?.jsonPrimitive?.content }.getOrNull()
-                    ?: "callable ${resp.status.value}"
+                val raw = runCatchingCancellable { error?.get("message")?.jsonPrimitive?.content }.getOrNull()
                 val status = runCatchingCancellable { error?.get("status")?.jsonPrimitive?.content }.getOrNull()
                 // #1145: the callable's machine code (`details.code`), kept so a caller can branch on it.
                 val code = runCatchingCancellable { error?.get("details")?.jsonObject?.get("code")?.jsonPrimitive?.content }.getOrNull()
-                CallableReply.Refused(status, msg, code)
+                refusedReply(name, status, raw, code, resp.status.value)
             } else {
                 val result = codec.parseToJsonElement(text).jsonObject["result"]
                 CallableReply.Ok(result?.toString() ?: "{}")
@@ -741,6 +740,25 @@ internal object JvmFirestoreRest {
     }
 }
 
+/**
+ * #1592: a refusal as the operator reads it. A message written for a developer
+ * ("updateInvoice validation failed", or none at all, which used to read
+ * "callable 400") becomes a plain sentence for [status] (`plainCallableMessage`);
+ * the raw text goes to the console log. [status] and [code] are kept as they
+ * came, so every caller that branches on them still does.
+ */
+internal fun refusedReply(
+    name: String,
+    status: String?,
+    rawMessage: String?,
+    code: String?,
+    httpStatus: Int,
+    log: (String) -> Unit = { System.err.println(it) },
+): CallableReply.Refused {
+    val plain = plainCallableMessage(status.orEmpty(), rawMessage)
+    if (plain != rawMessage) log("[callable] $name ${status ?: httpStatus}: ${rawMessage ?: "(no message)"}")
+    return CallableReply.Refused(status, plain, code)
+}
 /** What a callable POST came back with. See [JvmFirestoreRest.callableReply]. */
 internal sealed class CallableReply {
     /** 2xx: the `result` object as JSON text. */

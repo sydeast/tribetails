@@ -185,7 +185,7 @@ class FormSchemaListScreenUiTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("listFormSchemas failed: permission-denied").assertIsDisplayed()
+        composeRule.onNodeWithText("Could not load: permission-denied").assertIsDisplayed()
         composeRule.onNodeWithText("Schemas unavailable while the load is failing.").assertIsDisplayed()
         assertEquals(
             0,

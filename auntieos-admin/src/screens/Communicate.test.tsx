@@ -171,14 +171,14 @@ describe('Communicate screen', () => {
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
     listRecentSends.mockRejectedValueOnce(new Error('permission-denied'));
     renderRecent();
-    expect(await screen.findByText(/listRecentSends failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.queryByText(/nothing sent yet/i)).toBeNull();
   });
 
   it('retries the load on demand via AsyncRegion', async () => {
     listRecentSends.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([send({})]);
     renderRecent();
-    await screen.findByText(/listRecentSends failed/i);
+    await screen.findByText(/Could not load/i);
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('Email · j***@example.com')).toBeInTheDocument();
     expect(listRecentSends).toHaveBeenCalledTimes(2);

@@ -269,7 +269,7 @@ export function AddKinfolkDialog({
       setSaveError(
         err instanceof OfflineCallError
           ? err.message
-          : `createKinfolk failed: ${err instanceof Error ? err.message : 'Create failed'}`,
+          : `Could not create: ${err instanceof Error ? err.message : 'Create failed'}`,
       );
       return;
     }

@@ -516,7 +516,8 @@ function StatBody({ label, value, trend, formatValue }: StatBodyProps) {
             -
           </span>
           <span className="den-stat-trend den-stat-trend--error" role="alert">
-            Couldn&rsquo;t load {label.toLowerCase()}: {value.message}
+            {/* #1592: a load error already reads "Could not load: ..."; said once. */}
+            Couldn&rsquo;t load {label.toLowerCase()}: {value.message.replace(/^Could not load: /, '')}
           </span>
         </>
       )}

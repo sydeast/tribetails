@@ -234,7 +234,7 @@ describe('KinEdit', () => {
     await screen.findByText('Name');
     await userEvent.type(screen.getByText('Name').parentElement!.querySelector('input')!, ' B');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
-    expect(await screen.findByText(/updateKin failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save:.*permission-denied/i)).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
 

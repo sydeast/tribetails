@@ -45,7 +45,7 @@ class InviteDetailViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         loading = false,
-                        error = "getInvite failed: ${err.message ?: "Load failed"}",
+                        error = "Could not load: ${err.message ?: "Load failed"}",
                     )
                 },
             )

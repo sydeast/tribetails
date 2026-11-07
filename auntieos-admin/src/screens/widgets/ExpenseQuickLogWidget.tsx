@@ -141,7 +141,7 @@ function QuickLogForm({ onLogged }: QuickLogFormProps) {
       })
       .catch((err: unknown) => {
         setBusy(false);
-        setError(`logExpense failed: ${err instanceof Error ? err.message : 'Log failed'}`);
+        setError(`Could not save: ${err instanceof Error ? err.message : 'Log failed'}`);
       });
   };
 

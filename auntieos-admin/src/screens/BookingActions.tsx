@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { failedToLead } from '../lib/callableErrorText';
 import { type BookingEntry } from '../api/bookings';
 import {
   approveBooking,
@@ -258,7 +259,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       onClose();
     } catch (err) {
       setBusy(false);
-      setError(`${action.kind} failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+      setError(`${failedToLead(action.kind)}: ${err instanceof Error ? err.message : 'Write failed'}`);
     }
   }
 
@@ -289,7 +290,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       onClose();
     } catch (err) {
       setBusy(false);
-      setError(`rescheduleBooking failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+      setError(`Could not reschedule: ${err instanceof Error ? err.message : 'Write failed'}`);
       setRetry(overridableScheduleRefusal(err, override !== null));
     }
   }
@@ -499,7 +500,7 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
       // transition failed next to the reason, rather than a bare list of
       // buttons that gives no clue which one they just pressed.
       setBusy(false);
-      setError(`${action.kind} failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+      setError(`${failedToLead(action.kind)}: ${err instanceof Error ? err.message : 'Write failed'}`);
       if (action.kind === 'approve') setRetry(overridableScheduleRefusal(err, override !== null));
     }
   }

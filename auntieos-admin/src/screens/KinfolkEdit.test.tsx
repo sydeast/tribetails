@@ -511,7 +511,7 @@ describe('KinfolkEdit: save', () => {
     await userEvent.type(fieldByLabel('Last name'), 's');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     expect(
-      await screen.findByText(/updateKinfolkProfile failed:.*permission-denied/i),
+      await screen.findByText(/Could not save:.*permission-denied/i),
     ).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
@@ -568,7 +568,7 @@ describe('KinfolkEdit: archive', () => {
     await screen.findByLabelText('First name');
     await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^archive$/i }));
-    expect(await screen.findByText(/archiveKinfolk failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not archive:.*permission-denied/i)).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
 });
@@ -579,7 +579,7 @@ describe('KinfolkEdit: load failure', () => {
     render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={vi.fn()} onCancel={vi.fn()} />);
 
     expect(await screen.findByText(/couldn.t load household/i)).toBeInTheDocument();
-    expect(screen.getByText(/getKinfolkProfile failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(screen.getByText(/Could not load:.*permission-denied/i)).toBeInTheDocument();
     // The forms must not render as a set of blank inputs that look saveable.
     expect(screen.queryByLabelText('First name')).not.toBeInTheDocument();
     expect(screen.queryByText(/no details on file/i)).not.toBeInTheDocument();
@@ -733,7 +733,7 @@ describe('Emergency Contacts on the edit form (#829)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     const err = await screen.findByTestId('kfedit-ec-error');
     expect(err).toHaveTextContent('An Emergency Contact has to be someone outside the household.');
-    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
+    expect(screen.queryByText(/Could not save/)).toBeNull();
   });
 
   // #858: the defect this reproduces is a SERVER rejection of the contact call

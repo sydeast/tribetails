@@ -235,7 +235,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
         if (live) {
           setMembers({
             status: 'error',
-            message: `listMembers failed: ${errText(err, 'Load failed')}`,
+            message: `Could not load: ${errText(err, 'Load failed')}`,
             retry: loadMembers,
           });
         }
@@ -256,7 +256,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
         if (live) {
           setInvites({
             status: 'error',
-            message: `listInvites failed: ${errText(err, 'Load failed')}`,
+            message: `Could not load: ${errText(err, 'Load failed')}`,
             retry: loadInvites,
           });
         }
@@ -294,7 +294,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
     } catch (err: unknown) {
       setMembers({ status: 'ready', data: prev });
       setPermError(
-        `setMemberPermissions failed for ${memberLabel(member)}: ${errText(err, 'Save failed')}`,
+        `Could not save the access for ${memberLabel(member)}: ${errText(err, 'Save failed')}`,
       );
     } finally {
       setSavingPerm(null);
@@ -311,7 +311,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
       loadInvites();
     } catch (err: unknown) {
       setRevokeError(
-        `revokeInvite failed for ${invite.invitedEmail}: ${errText(err, 'The invite is still live.')}`,
+        `Could not cancel the invite for ${invite.invitedEmail}: ${errText(err, 'The invite is still live.')}`,
       );
     } finally {
       setRevokingId(null);
@@ -331,7 +331,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
       // A removed SECONDARY's person record may have just gone back to 'NONE'.
       setSecondaryKinfolkReloadKey((k) => k + 1);
     } catch (err: unknown) {
-      setRemoveError(`removeMember failed: ${errText(err, 'The member was not removed.')}`);
+      setRemoveError(`Could not remove: ${errText(err, 'The member was not removed.')}`);
     } finally {
       setRemoving(false);
     }
@@ -352,7 +352,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
       .catch((err: unknown) => {
         setRecoveryCandidates({
           status: 'error',
-          message: `listRecoveryCandidates failed: ${errText(err, 'Load failed')}`,
+          message: `Could not load: ${errText(err, 'Load failed')}`,
           retry: () => loadRecoveryCandidates(oldUid),
         });
       });

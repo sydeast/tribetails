@@ -338,7 +338,7 @@ describe('InvoiceCreate work path', () => {
     await screen.findByRole('checkbox');
     await userEvent.click(screen.getByRole('button', { name: /create invoice for 1 visit/i }));
 
-    expect(await screen.findByText(/createInvoice failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not create the invoice:.*permission-denied/i)).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });

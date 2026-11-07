@@ -233,7 +233,7 @@ export function KinfolkProfile({
         if (live) {
           setProfile({
             status: 'error',
-            message: `getKinfolkProfile failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           });
         }

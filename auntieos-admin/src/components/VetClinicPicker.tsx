@@ -344,7 +344,7 @@ function CreateClinicForm({
       );
     } catch (err) {
       setSaving(false);
-      setError(`submitVetClinic failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
   }
   /** Use an offered clinic. Pure client-side: it already has the id. */
