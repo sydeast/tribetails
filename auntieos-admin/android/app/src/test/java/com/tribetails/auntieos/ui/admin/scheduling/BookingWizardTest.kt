@@ -355,7 +355,7 @@ class BookingWizardTest {
         assertEquals("new-invoice", submission.billing.mode)
         assertTrue(submission.communication.emailConfirmation)
         assertTrue(submission.communication.timeVisibility)
-        assertEquals("Gate code 1234", submission.notes)
+        assertEquals("Gate code 1234", submission.staffNotes)
         assertEquals(false, submission.overrideBusyConflict)
     }
 
@@ -388,7 +388,7 @@ class BookingWizardTest {
 
     @Test
     fun `blank notes travel as null, not as an empty string`() {
-        assertNull(bookingSubmission(readyState().copy(notes = "   "), roster).notes)
+        assertNull(bookingSubmission(readyState().copy(notes = "   "), roster).staffNotes)
     }
 
     @Test
