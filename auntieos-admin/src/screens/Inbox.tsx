@@ -48,6 +48,7 @@ import {
   filterChannelEntries,
   awaitingReplyCount,
   entryTitle,
+  displayContact,
   entryWhen,
   entryMachineWhen,
   type ChannelFilterKey,
@@ -743,7 +744,7 @@ function ChannelRow({ entry, onOpen }: { entry: InboxEntry; onOpen: (entry: Inbo
   // The mock's `.cp`: the number or address after the name. Skipped when it IS
   // the name (a caller who matched no household), or the row would read
   // "+1555… · +1555…".
-  const counterpart = entry.counterpart !== '' && entry.counterpart !== title ? entry.counterpart : null;
+  const counterpart = entry.counterpart !== '' && entry.kinfolkName !== '' ? displayContact(entry.counterpart) : null;
 
   return (
     <li className="inbox__row inbox__row--card" data-channel={entry.channel}>

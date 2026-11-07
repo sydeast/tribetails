@@ -2,7 +2,6 @@ package com.tribetails.auntieos.ui.inbox
 
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
-import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,7 +23,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.config.LocalFeatureFlags
@@ -236,7 +234,7 @@ fun InboxScreen(
         val canReply = entry.channel == Channel.Sms || entry.channel == Channel.Voicemail
         AuntieModal(
             onDismissRequest = { selectedEntry = null },
-            title = entry.kinfolkName.ifBlank { entry.counterpart.ifBlank { "Inbox thread" } },
+            title = entry.kinfolkName.ifBlank { displayContact(entry.counterpart).ifBlank { "Inbox thread" } },
             confirmButton = {
                 AuntieTextBtn(
                     onClick = {
@@ -259,12 +257,11 @@ fun InboxScreen(
                 if (entry.preview.isNotBlank()) {
                     Text(entry.preview, style = AuntieTheme.typography.bodyMedium)
                 }
-                if (entry.channel == Channel.Voicemail && entry.playbackUrl.isNotBlank()) {
-                    PrimaryButton(
-                        label = "Play voicemail",
-                        onClick = { openExternalUrl(context, entry.playbackUrl) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                // Voicemails and call recordings both play in the app. The stored
+                // Twilio link needs credentials, so it is never handed to a
+                // browser or a player directly (#1573).
+                if (recordingKindOf(entry.channel) != null && entry.playbackUrl.isNotBlank()) {
+                    RecordingPlayerBlock(entry = entry, load = viewModel::fetchRecording)
                 }
 
                 // ── the two no-reply endings, in the BODY not the button bar ──
@@ -391,10 +388,10 @@ private fun ChannelChip(channel: Channel, selected: Boolean, onClick: () -> Unit
 private fun InboxRow(entry: InboxEntry, onClick: () -> Unit) {
     val c = AuntieTheme.colors
     val shape = RoundedCornerShape(12.dp)
-    val title = entry.kinfolkName.ifBlank { entry.counterpart.ifBlank { "Unknown contact" } }
+    val title = entry.kinfolkName.ifBlank { displayContact(entry.counterpart).ifBlank { "Unknown contact" } }
     // The mock's `.cp`: skipped when the counterpart IS the name (a caller who
     // matched no household), or the row would print the number twice.
-    val counterpart = entry.counterpart.takeIf { it.isNotBlank() && it != title }
+    val counterpart = entry.counterpart.takeIf { it.isNotBlank() && entry.kinfolkName.isNotBlank() }?.let { displayContact(it) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -658,10 +655,6 @@ private fun shortDateTime(iso: String): String =
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
-private fun openExternalUrl(context: android.content.Context, url: String) {
-    if (url.isBlank()) return
-    CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url))
-}
 // ─────────────────────────────────────────────────────────────────────────────
 // Messages (Stage 2 step 7 / Message Auntie 16.4): two-way kinfolk<->auntie
 // threads. listConversations -> thread list; opening a thread fetches messages

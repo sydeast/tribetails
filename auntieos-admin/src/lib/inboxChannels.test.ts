@@ -11,6 +11,7 @@ import {
   entryLaunchers,
   entryMachineWhen,
   entryTitle,
+  displayContact,
   entryWhen,
   filterChannelEntries,
   mergeChannelEntries,
@@ -351,8 +352,9 @@ describe('entryTitle', () => {
     expect(entryTitle(entry({ kinfolkName: 'The Alvarez Household' }))).toBe('The Alvarez Household');
   });
 
-  it('falls back to the raw contact when no household matched', () => {
-    expect(entryTitle(entry({ kinfolkName: '', counterpart: '+15551234567' }))).toBe('+15551234567');
+  it('falls back to the contact, in readable form, when no household matched', () => {
+    expect(entryTitle(entry({ kinfolkName: '', counterpart: '+15551234567' }))).toBe('(555) 123-4567');
+    expect(entryTitle(entry({ kinfolkName: '', counterpart: 'a@b.co' }))).toBe('a@b.co');
   });
 
   it('says so honestly when there is neither', () => {
@@ -412,5 +414,23 @@ describe('the channel row shapes, read defensively', () => {
     expect(() => smsEntry({ _id: 's' } as SmsRow)).not.toThrow();
     expect(() => emailEntry({ _id: 'm' } as EmailRow)).not.toThrow();
     expect(voicemailEntry({ _id: 'v' }).timestamp).toBe('');
+  });
+});
+describe('displayContact (a caller no household matches reads as a phone number, #1573)', () => {
+  it('groups a US number the way people write it', () => {
+    expect(displayContact('+16195001530')).toBe('(619) 500-1530');
+    expect(displayContact('16195001530')).toBe('(619) 500-1530');
+    expect(displayContact('6195001530')).toBe('(619) 500-1530');
+    expect(displayContact('(619) 500-1530')).toBe('(619) 500-1530');
+  });
+  it('leaves anything it does not understand exactly as it came', () => {
+    for (const raw of ['', 'unknown', 'a@b.co', '+442071838750', '12345', '+1619500153', '+161950015301', 'client:abc']) {
+      expect(displayContact(raw)).toBe(raw);
+    }
+  });
+  it('is what entryTitle shows for a caller with no household', () => {
+    const e = voicemailEntry({ _id: 'v', callerNumber: '+16195001530', kinfolkName: '' });
+    expect(entryTitle(e)).toBe('(619) 500-1530');
+    expect(entryTitle({ ...e, kinfolkName: 'The Alvarez Household' })).toBe('The Alvarez Household');
   });
 });

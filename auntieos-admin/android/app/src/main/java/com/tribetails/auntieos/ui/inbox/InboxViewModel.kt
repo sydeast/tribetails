@@ -44,6 +44,9 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
     private val _emails = MutableStateFlow<List<EmailMessage>>(emptyList())
     val emails: StateFlow<List<EmailMessage>> = _emails.asStateFlow()
 
+    /** Audio for the Inbox player (#1573). The stored Twilio link needs credentials; the server fetches it. */
+    suspend fun fetchRecording(kind: String, id: String): Result<RecordingAudio> =
+        repository.getRecordingAudio(kind, id)
     private val _actionResult = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val actionResult = _actionResult
 
