@@ -79,6 +79,7 @@ import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.util.nowIso
+import com.tribetails.auntieos.web.util.openAudioBytes
 import com.tribetails.auntieos.web.util.openUrl
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
@@ -129,6 +130,7 @@ fun InboxScreen() {
     var selectedEntryId by remember { mutableStateOf<String?>(null) }
     var replyBody by remember { mutableStateOf("") }
     var isSendingReply by remember { mutableStateOf(false) }
+    var loadingRecording by remember { mutableStateOf(false) }
 
     // Bulk mark-read selection over the real `notifications` collection.
     val notifSelected = remember { mutableStateMapOf<String, Boolean>() }
@@ -286,11 +288,32 @@ fun InboxScreen() {
                                         replyBody = replyBody,
                                         sending = isSendingReply,
                                         onReplyBodyChange = { replyBody = it },
+                                        loadingRecording = loadingRecording,
                                         onPlayVoicemail = {
-                                            if (entry.voicemailAudioUrl.isBlank()) {
-                                                showToast("No voicemail recording URL on this thread.", ToastKind.Error)
-                                            } else {
-                                                openUrl(entry.voicemailAudioUrl)
+                                            val kind = recordingKindOf(entry.channel)
+                                            if (entry.voicemailAudioUrl.isBlank() || kind == null) {
+                                                showToast("No recording on this thread.", ToastKind.Error)
+                                            } else if (!loadingRecording) {
+                                                // The stored Twilio link needs credentials (#1573), so the
+                                                // server fetches the audio and the OS player opens it.
+                                                loadingRecording = true
+                                                showToast("Loading the recording…", ToastKind.Info)
+                                                scope.launch {
+                                                    when (val r = client.getRecordingAudio(kind, entry.id)) {
+                                                        is WriteResult.Ok -> when (val audio = r.value) {
+                                                            is RecordingAudio.Url -> openUrl(audio.url)
+                                                            is RecordingAudio.Bytes -> openAudioBytes(
+                                                                audio.bytes,
+                                                                "${entry.id}.${recordingExtension(audio.contentType)}",
+                                                            )
+                                                        }
+                                                        is WriteResult.Err -> showToast(
+                                                            "Couldn't load the recording: ${r.message}",
+                                                            ToastKind.Error,
+                                                        )
+                                                    }
+                                                    loadingRecording = false
+                                                }
                                             }
                                         },
                                         onSendReply = {
@@ -686,7 +709,7 @@ private fun ChipGlyph(icon: ImageVector, active: Boolean) {
 private fun InboxRow(entry: InboxEntry, selected: Boolean, onClick: () -> Unit) {
     val c = AuntieTheme.colors
     AuntieEntityRow(
-        title = entry.kinfolkName.ifBlank { entry.counterpart.ifBlank { "Unknown" } },
+        title = entry.kinfolkName.ifBlank { displayContact(entry.counterpart).ifBlank { "Unknown" } },
         subtitle = entry.preview.ifBlank { null },
         selected = selected,
         onClick = onClick,
@@ -715,6 +738,7 @@ private fun ThreadActionsCard(
     entry: InboxEntry,
     replyBody: String,
     sending: Boolean,
+    loadingRecording: Boolean,
     onReplyBodyChange: (String) -> Unit,
     onPlayVoicemail: () -> Unit,
     onSendReply: () -> Unit,
@@ -771,9 +795,9 @@ private fun ThreadActionsCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 GhostButton(
-                    label = "Play voicemail",
+                    label = if (loadingRecording) "Loading…" else "Play voicemail",
                     onClick = onPlayVoicemail,
-                    enabled = entry.voicemailAudioUrl.isNotBlank(),
+                    enabled = entry.voicemailAudioUrl.isNotBlank() && !loadingRecording,
                     leading = { GhostGlyph(Lucide.Play) },
                     modifier = Modifier.weight(1f),
                 )
@@ -803,6 +827,15 @@ private fun ThreadActionsCard(
             }
         }
 
+        if (entry.channel == Channel.Call && entry.voicemailAudioUrl.isNotBlank()) {
+            GhostButton(
+                label = if (loadingRecording) "Loading…" else "Play call recording",
+                onClick = onPlayVoicemail,
+                enabled = !loadingRecording,
+                leading = { GhostGlyph(Lucide.Play) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         if (entry.canReply) {
             BottomBorderField(
                 value = replyBody,

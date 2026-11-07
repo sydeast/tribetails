@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { InboxEntry } from '../lib/inboxChannels';
 
 const { sendExternalMessage } = vi.hoisted(() => ({ sendExternalMessage: vi.fn() }));
 vi.mock('../api/externalSend', () => ({ sendExternalMessage }));
+const { getRecordingAudio } = vi.hoisted(() => ({ getRecordingAudio: vi.fn() }));
+vi.mock('../api/recordingAudio', () => ({ getRecordingAudio }));
 
 const { markVoicemail } = vi.hoisted(() => ({ markVoicemail: vi.fn() }));
 vi.mock('../api/inboxChannelsWrite', async (orig) => ({
@@ -45,6 +47,7 @@ beforeEach(() => {
     mirrorSkippedReason: null,
   });
   markVoicemail.mockReset().mockResolvedValue(undefined);
+  getRecordingAudio.mockReset().mockResolvedValue({ kind: 'url', url: 'https://example.test/rec1.mp3' });
 });
 
 describe('ThreadActionsCard', () => {
@@ -82,17 +85,16 @@ describe('ThreadActionsCard', () => {
     expect(screen.getByText(/carries no phone number/i)).toBeInTheDocument();
   });
 
-  it('renders a real audio element for a row with a recording, and none without one', () => {
+  it('renders a real audio element for a row with a recording, and none without one', async () => {
     const { unmount, container } = render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
-    const audio = container.querySelector('audio');
-    expect(audio).not.toBeNull();
-    expect(audio).toHaveAttribute('src', 'https://api.twilio.com/rec1');
+    await waitFor(() => expect(container.querySelector('audio')).not.toBeNull());
+    expect(container.querySelector('audio')).toHaveAttribute('src', 'https://example.test/rec1.mp3');
+    // The stored Twilio link needs credentials; the player asks the server for the audio instead.
+    expect(getRecordingAudio).toHaveBeenCalledWith('voicemail', 'vm1');
     unmount();
-
     const bare = render(<ThreadActionsCard entry={entry({ playbackUrl: '' })} onClose={() => {}} />);
     expect(bare.container.querySelector('audio')).toBeNull();
   });
-
   it('sends a transactional SMS to the row contact and stamps the voicemail replied', async () => {
     render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
     await userEvent.type(screen.getByLabelText('Reply by text'), 'Thursday works!');

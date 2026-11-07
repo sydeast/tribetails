@@ -744,6 +744,25 @@ class FirestoreClient {
     }
 
     /**
+     * #1573: the audio behind a voicemail or call recording. Twilio's stored link
+     * needs the account's credentials, so the admin-gated `getRecordingAudio`
+     * callable fetches it server-side and returns the bytes (or a plain https
+     * link when the stored one is not a Twilio recording). Fail-loud: the
+     * server's reason surfaces verbatim via [WriteResult.Err].
+     */
+    suspend fun getRecordingAudio(kind: String, id: String): WriteResult<com.tribetails.auntieos.web.screens.inbox.RecordingAudio> {
+        val payload = buildJsonObject {
+            put("kind", JsonPrimitive(kind))
+            put("id", JsonPrimitive(id))
+        }
+        return when (val r = platformInvokeCallable("getRecordingAudio", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.inbox.decodeRecordingAudio(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "recording decode failed") }
+        }
+    }
+    /**
      * Stage 3 / 16.2: generates a downloadable PDF of an invoice via the
      * admin-gated generateInvoicePdf callable (MyTribe renders with pdf-lib,
      * stores to Cloud Storage, returns a download-token URL). Returns the URL

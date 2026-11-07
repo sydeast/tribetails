@@ -133,6 +133,7 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'replyToConversation',
   'markConversationRead',
   'markAllThreadsRead',
+  'getRecordingAudio', // the voicemail and call recordings in the same Inbox
 
   // ── Herself ────────────────────────────────────────────────────────────
   'getMyAdminNotificationPrefs',

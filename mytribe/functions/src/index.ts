@@ -589,6 +589,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   replyToConversation: () => require('./admin/conversations'),
   markConversationRead: () => require('./admin/conversations'),
   markAllThreadsRead: () => require('./admin/markAllThreadsRead'),
+  getRecordingAudio: () => require('./admin/getRecordingAudio'),
   sendKinfolkMessage: () => require('./portal/sendKinfolkMessage'),
   getMyConversation: () => require('./portal/sendKinfolkMessage'),
   markThreadRead: () => require('./portal/sendKinfolkMessage'),
