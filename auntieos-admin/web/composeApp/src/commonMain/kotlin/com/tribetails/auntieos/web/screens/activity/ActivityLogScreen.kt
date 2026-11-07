@@ -27,6 +27,7 @@ import com.composables.icons.lucide.CalendarPlus
 import com.composables.icons.lucide.Flag
 import com.composables.icons.lucide.History
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Receipt
 import com.composables.icons.lucide.Settings2
 import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.TriangleAlert
@@ -93,23 +94,13 @@ private enum class ActivityFilter(val label: String) {
     Bookings("Bookings"),
     KinTales("KinTales"),
     Notifications("Notifications"),
+    Billing("Billing"),
     Admin("Admin"),
 }
 
 private fun ActivityFilter.matches(actionType: String): Boolean {
     if (this == ActivityFilter.All) return true
-    val a = actionType.uppercase()
-    return when (this) {
-        ActivityFilter.All           -> true
-        ActivityFilter.Auth          -> a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT")
-        ActivityFilter.Bookings      -> a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")
-        ActivityFilter.KinTales      -> a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")
-        ActivityFilter.Notifications -> a.contains("NOTIFICATION") || a.contains("NOTIF")
-        ActivityFilter.Admin         -> a.startsWith("ADMIN") || a.contains("TRIAGE") ||
-            a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")
-    }
+    return activityCategoryOf(actionType)?.name == name
 }
 
 private fun ActivityFilter.chipTone(): AuntieChipTone = when (this) {
@@ -118,6 +109,7 @@ private fun ActivityFilter.chipTone(): AuntieChipTone = when (this) {
     ActivityFilter.Bookings      -> AuntieChipTone.Orange
     ActivityFilter.KinTales      -> AuntieChipTone.Accent
     ActivityFilter.Notifications -> AuntieChipTone.Teal
+    ActivityFilter.Billing       -> AuntieChipTone.Orange
     ActivityFilter.Admin         -> AuntieChipTone.Orange
 }
 
@@ -647,18 +639,14 @@ private fun rowContext(entry: ActivityLogEntry): String {
     return parts.joinToString(" · ")
 }
 
-private fun categoryTone(actionType: String): AuntieStatusTone {
-    val a = actionType.uppercase()
-    return when {
-        a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT") -> AuntieStatusTone.Purple
-        a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")                    -> AuntieStatusTone.Orange
-        a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")                     -> AuntieStatusTone.Success
-        a.contains("NOTIFICATION") || a.contains("NOTIF")                   -> AuntieStatusTone.Teal
-        a.startsWith("ADMIN") || a.contains("TRIAGE")                       -> AuntieStatusTone.Error
-        else                                                                -> AuntieStatusTone.Neutral
-    }
+private fun categoryTone(actionType: String): AuntieStatusTone = when (activityCategoryOf(actionType)) {
+    ActivityCategory.Auth          -> AuntieStatusTone.Purple
+    ActivityCategory.Bookings      -> AuntieStatusTone.Orange
+    ActivityCategory.KinTales      -> AuntieStatusTone.Success
+    ActivityCategory.Notifications -> AuntieStatusTone.Teal
+    ActivityCategory.Billing       -> AuntieStatusTone.Warning
+    ActivityCategory.Admin         -> AuntieStatusTone.Error
+    null                           -> AuntieStatusTone.Neutral
 }
 
 private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
@@ -675,16 +663,14 @@ private fun actionIcon(actionType: String, status: String): ImageVector {
         return Lucide.TriangleAlert
     }
     val a = actionType.uppercase()
-    return when {
-        a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT") -> Lucide.UserCheck
-        a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")         -> Lucide.Settings2
-        a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")                    -> Lucide.CalendarPlus
-        a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")                     -> Lucide.History
-        a.contains("NOTIFICATION") || a.contains("NOTIF")                   -> Lucide.Bell
-        a.startsWith("ADMIN") || a.contains("TRIAGE")                       -> Lucide.Flag
-        else                                                                -> Lucide.Activity
+    return when (activityCategoryOf(actionType)) {
+        ActivityCategory.Auth          -> Lucide.UserCheck
+        ActivityCategory.Bookings      -> Lucide.CalendarPlus
+        ActivityCategory.KinTales      -> Lucide.History
+        ActivityCategory.Notifications -> Lucide.Bell
+        ActivityCategory.Billing       -> Lucide.Receipt
+        ActivityCategory.Admin         -> if (a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")) Lucide.Settings2 else Lucide.Flag
+        null                           -> Lucide.Activity
     }
 }
 

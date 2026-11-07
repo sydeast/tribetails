@@ -155,7 +155,8 @@
 .schemas__sort:hover {
   color: var(--color-text-primary);
 }
-.schemas__sort[data-active] {
+.schemas__sort[data-active],
+.schemas__sort[data-active]:hover {
   color: var(--color-primary);
 }
 

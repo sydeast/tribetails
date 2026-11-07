@@ -133,7 +133,8 @@
   outline: var(--border-emphasis) solid var(--color-primary);
   outline-offset: 2px;
 }
-.templates__tab--active {
+.templates__tab--active,
+.templates__tab.templates__tab--active:hover {
   background: var(--color-primary);
   border-color: transparent;
   color: var(--color-background);

@@ -204,7 +204,8 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.fse__chip--on {
+.fse__chip--on,
+.fse__chip.fse__chip--on:hover {
   background: var(--color-primary-dim);
   color: var(--tt-brand-navy);
   border-color: var(--color-primary-dim);
@@ -259,7 +260,8 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.fse__seg-btn--on {
+.fse__seg-btn--on,
+.fse__seg-btn.fse__seg-btn--on:hover {
   background: var(--tt-brand-cream);
   color: var(--tt-brand-navy);
 }
