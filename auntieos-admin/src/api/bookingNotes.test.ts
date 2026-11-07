@@ -22,7 +22,12 @@ describe('bookingNotesQuery', () => {
 describe('noteBody / noteAuthorLabel / noteCreatedMs', () => {
   it('reads a well-formed note', () => {
     expect(noteBody({ _id: 'n1', body: 'Fed the cat.' })).toBe('Fed the cat.');
-    expect(noteAuthorLabel({ _id: 'n1', authorRole: 'admin' })).toBe('Auntie');
+    // #1607: staff notes are named by their writer, never assumed to be an Auntie.
+    expect(noteAuthorLabel({ _id: 'n1', authorRole: 'admin' })).toBe('Staff');
+    expect(
+      noteAuthorLabel({ _id: 'n1', authorRole: 'admin', authorUid: 'u-owner' }, new Map([['u-owner', 'The office']])),
+    ).toBe('The office');
+    expect(noteAuthorLabel({ _id: 'n1', authorRole: 'admin', authorUid: 'u-gone' }, new Map())).toBe('Staff');
     expect(noteAuthorLabel({ _id: 'n1', authorRole: 'kinfolk' })).toBe('Kinfolk');
   });
 

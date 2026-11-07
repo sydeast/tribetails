@@ -2,10 +2,13 @@ import { describe, beforeAll, afterAll, it, expect } from 'vitest';
 import {
   blastBlocker,
   cancelNotice,
+  fieldLabel,
+  fieldValuesToData,
   fireAtMsFrom,
   fireLabelInZone,
   mergeFieldsToData,
   parseUidList,
+  pickableAccounts,
   scheduleNotice,
   sendingLabel,
 } from './marketingBlastEdit';
@@ -191,5 +194,83 @@ describe('cancelNotice (#823)', () => {
   });
   it('gets the singular right for one removed copy', () => {
     expect(cancelNotice({ cancelled: 1, stopped: true, neverQueued: 0 })).toContain('1 queued notification removed');
+  });
+});
+
+describe('fieldLabel (#1587)', () => {
+  it('turns a token spelling into a label an operator can read', () => {
+    expect(fieldLabel('firstName')).toBe('First name');
+    expect(fieldLabel('nextVisit.date')).toBe('Next visit date');
+    expect(fieldLabel('promo_code')).toBe('Promo code');
+    expect(fieldLabel('link')).toBe('Link');
+  });
+
+  it('never returns a blank label', () => {
+    expect(fieldLabel('.')).toBe('.');
+  });
+});
+
+describe('fieldValuesToData (#1587)', () => {
+  it('sends only the fields the template names, trimmed', () => {
+    expect(fieldValuesToData({ link: ' https://x.test ', promo: 'SPRING', stale: 'x' }, ['link', 'promo'])).toEqual({
+      link: 'https://x.test',
+      promo: 'SPRING',
+    });
+  });
+
+  it('leaves a blank value out, so the field reads as missing rather than as an empty string', () => {
+    expect(fieldValuesToData({ link: '   ', promo: '' }, ['link', 'promo'])).toEqual({});
+  });
+});
+
+describe('blastBlocker with missing merge fields (#1587)', () => {
+  const now = Date.UTC(2026, 5, 1);
+  const audience = { criteria: { kind: 'all' as const } };
+
+  it('names the fields to fill in, readably', () => {
+    expect(blastBlocker(audience, now + 3_600_000, now, undefined, ['eventDate', 'link'])).toBe(
+      'Fill in Event date, Link before scheduling. The email would go out with a gap there.',
+    );
+  });
+
+  it('reports the audience, time and reach problems before the missing fields', () => {
+    expect(blastBlocker(null, null, now, undefined, ['link'])).toBe('Choose an audience first.');
+    expect(blastBlocker(audience, now + 3_600_000, now, 0, ['link'])).toMatch(/reaches nobody/);
+  });
+
+  it('lets a blast with nothing missing through', () => {
+    expect(blastBlocker(audience, now + 3_600_000, now, 4, [])).toBeNull();
+  });
+});
+
+describe('pickableAccounts (#1587)', () => {
+  const rows = [
+    { firstName: 'Paula', lastName: 'Brandt', email: 'paula@hanasamku.com', uid: 'u-paula', status: 'active' },
+    { firstName: 'dre', lastName: 'East', email: 'dre@hanasamku.com', uid: ' u-dre ', status: 'active' },
+    { firstName: 'Sam', lastName: 'Okafor', email: '', uid: '', status: 'active' },
+    { firstName: '', lastName: '', email: 'ghost@hanasamku.com', status: 'active' },
+    { firstName: 'Old', lastName: 'Timer', uid: 'u-old', status: 'Archived' },
+  ];
+
+  it('offers households with a linked login by name, sorted, and trims the uid it will send', () => {
+    const { accounts } = pickableAccounts(rows);
+    expect(accounts.map((a) => [a.name, a.uid])).toEqual([
+      ['dre East', 'u-dre'],
+      ['Paula Brandt', 'u-paula'],
+    ]);
+  });
+
+  it('lists households with no linked login separately, by name or email, instead of dropping them silently', () => {
+    expect(pickableAccounts(rows).withoutAccount).toEqual(['ghost@hanasamku.com', 'Sam Okafor']);
+  });
+
+  it('leaves archived households out of both lists', () => {
+    const { accounts, withoutAccount } = pickableAccounts(rows);
+    expect(accounts.some((a) => a.uid === 'u-old')).toBe(false);
+    expect(withoutAccount.some((n) => n.includes('Timer'))).toBe(false);
+  });
+
+  it('never prints a raw id as a name', () => {
+    expect(pickableAccounts([{ uid: 'u1', status: 'active' }]).accounts[0]?.name).toBe('Unnamed household');
   });
 });

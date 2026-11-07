@@ -508,6 +508,13 @@ async function runGenerate(deps, body) {
   let draftWriteFailed = false;
   try {
     const ref = db.collection('generated_drafts').doc();
+    // #1629: `createdOn` is the field every admin client orders this collection
+    // by (web GENERATED_DRAFTS_QUERY, Android getGeneratedDrafts, Home's
+    // "KinTales pending"), and Firestore drops a doc that lacks the orderBy
+    // field. A draft written with only `generated_at` never showed on Home or
+    // in KinTales > Drafts. Both carry the same instant; `generated_at` stays
+    // for the readers that already use it.
+    const stampedAt = new Date().toISOString();
     await ref.set({
       communication_type: v.communication_type,
       recipient: v.recipient,
@@ -519,7 +526,8 @@ async function runGenerate(deps, body) {
       model,
       status: 'generated',
       source: 'function:generate',
-      generated_at: new Date().toISOString(),
+      generated_at: stampedAt,
+      createdOn: stampedAt,
     });
     draftId = ref.id;
   } catch (e) {

@@ -801,6 +801,16 @@ describe('runGenerate', needsVoice, () => {
     assert.ok(db._drafts[0].generated_copy.includes('The cats were already'));
   });
 
+  it('#1629: the draft carries createdOn, the field every admin list orders by', async () => {
+    const db = fullDb();
+    await gen.runGenerate({ db, anthropic: fakeAnthropic('The cats were already at the door.'), model: 'm' }, VALID);
+    const d = db._drafts[0];
+    assert.ok(typeof d.createdOn === 'string' && d.createdOn !== '', 'createdOn missing: Firestore drops it from orderBy(createdOn)');
+    assert.ok(!Number.isNaN(Date.parse(d.createdOn)));
+    // One instant, two spellings.
+    assert.strictEqual(d.createdOn, d.generated_at);
+  });
+
   it('strips em/en dashes from the model output', async () => {
     const db = fullDb();
     const out = await gen.runGenerate(

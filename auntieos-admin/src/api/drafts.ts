@@ -79,10 +79,11 @@ export interface GeneratedDraftRow {
   generatedTitle?: string | undefined;
   generated_title?: string | undefined;
   /**
-   * generate.js's creation stamp. NOT `createdOn`, which is why a
-   * generate.js-written draft is dropped by `GENERATED_DRAFTS_QUERY`'s
-   * `orderBy('createdOn')` before any of this code sees it. Read here so that a
-   * doc carrying both (or one backfilled later) still dates correctly.
+   * generate.js's creation stamp. Until #1629 it was its ONLY one, so a
+   * generate.js draft lacked `createdOn` and `GENERATED_DRAFTS_QUERY`'s
+   * `orderBy('createdOn')` dropped it before any of this code saw it.
+   * generate.js now writes both with the same instant, and
+   * `backfill:generated-draft-created-on` stamps `createdOn` on the older ones.
    */
   generated_at?: string | undefined;
   /**
@@ -99,11 +100,12 @@ export interface GeneratedDraftRow {
  * The bounded, server-ordered `generated_drafts` listener: newest first, capped
  * at 50.
  *
- * `createdOn` is the sort key because it is what `generate.js` stamps on every
- * draft it writes and what android orders the same collection by. The standing
- * `orderBy` caveat applies here as everywhere: Firestore drops a doc missing
- * the sort field, so a draft written without `createdOn` never reaches this
- * page. Backfill rather than weaken the sort.
+ * `createdOn` is the sort key because it is what every writer stamps (the n8n
+ * era and, since #1629, `generate.js` too) and what android orders the same
+ * collection by. The standing `orderBy` caveat applies here as everywhere:
+ * Firestore drops a doc missing the sort field, so a draft written without
+ * `createdOn` never reaches this page. Backfill rather than weaken the sort
+ * (`backfill:generated-draft-created-on`).
  *
  * 50 rather than the 200 `KINTALES_QUERY` carries: the panel shows four rows
  * and the count beside it is a review queue, not an archive. A queue that has
