@@ -22,6 +22,13 @@ import java.time.format.DateTimeFormatter
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The three marketing catalog rows `scheduleMarketingBlast` accepts. */
+/**
+ * A campaign's name as the operator reads it (#1587). The key is the wire
+ * spelling (`newsletter.announcement`); a key this build does not know yet reads
+ * as a plain phrase rather than the spelling. Pure.
+ */
+fun campaignName(key: String): String = MarketingKey.fromWire(key)?.label ?: "Marketing email"
+
 enum class MarketingKey(val wire: String, val label: String) {
     Newsletter("newsletter.announcement", "Newsletter"),
     Survey("survey.event", "Survey or event"),
@@ -149,13 +156,125 @@ fun blastBlocker(
     fireAtMs: Long?,
     nowMs: Long,
     reachable: Int?,
+    missingFields: List<String> = emptyList(),
 ): String? {
     if (audience == null) return "Choose an audience first."
     if (fireAtMs == null) return "Pick a date and a time to send."
     // The server's own window: anything more than a minute in the past is refused.
     if (fireAtMs < nowMs - 60_000L) return "That send time has already passed."
     if (reachable == 0) return "This audience reaches nobody. Widen it, or check who has opted in."
+    // #1587: a field the template names and nothing fills renders as a gap in an
+    // email to real households. Naming the fields is what lets the operator fix it.
+    if (missingFields.isNotEmpty()) {
+        return "Fill in ${missingFields.joinToString(", ") { fieldLabel(it) }} before scheduling. " +
+            "The email would go out with a gap there."
+    }
     return null
+}
+
+// ── copy preview (#1587) ──────────────────────────────────────────────────────
+
+/** Who fills a merge field: the pipeline for every send, the blast's own data, or nobody yet. */
+enum class MergeFieldSource { Automatic, Provided, Missing }
+
+data class MergeFieldStatus(val name: String, val source: MergeFieldSource)
+
+/**
+ * What `previewMarketingBlastCopy` returns: the campaign's email as the send
+ * would render it, plus every merge field its template names and whether
+ * something supplies it. [usedFallback] means no template is authored yet and the
+ * generic wording is what would go out.
+ */
+data class BlastCopyPreview(
+    val subject: String = "",
+    val text: String = "",
+    val usedFallback: Boolean = false,
+    val fields: List<MergeFieldStatus> = emptyList(),
+)
+
+/**
+ * Decodes the copy preview payload. Pure; unit-tested. A field row in a shape
+ * this client does not know is dropped rather than guessed at, the same as web.
+ */
+fun decodeBlastCopy(raw: Map<String, Any?>?): BlastCopyPreview {
+    val fields = (raw?.get("fields") as? List<*>).orEmpty().mapNotNull { row ->
+        val map = row as? Map<*, *> ?: return@mapNotNull null
+        val name = (map["name"] as? String)?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        val source = when (map["source"]) {
+            "automatic" -> MergeFieldSource.Automatic
+            "provided" -> MergeFieldSource.Provided
+            "missing" -> MergeFieldSource.Missing
+            else -> return@mapNotNull null
+        }
+        MergeFieldStatus(name, source)
+    }
+    return BlastCopyPreview(
+        subject = (raw?.get("subject") as? String).orEmpty(),
+        text = (raw?.get("text") as? String).orEmpty(),
+        usedFallback = raw?.get("usedFallback") == true,
+        fields = fields,
+    )
+}
+
+/**
+ * A merge field's name as the operator reads it: `eventDate` -> "Event date",
+ * `nextVisit.date` -> "Next visit date". The raw token is the template author's
+ * spelling; the operator filling it in is owed a label, not the spelling.
+ */
+fun fieldLabel(name: String): String {
+    val spaced = name
+        .replace(Regex("[._-]+"), " ")
+        .replace(Regex("([a-z0-9])([A-Z])"), "$1 $2")
+        .trim()
+        .lowercase()
+    return if (spaced.isEmpty()) name else spaced.replaceFirstChar { it.uppercase() }
+}
+
+/**
+ * The `data` record for the blast: the values typed for the fields the template
+ * names, and nothing else. A blank value is left out so the field reads as
+ * missing rather than as an intentional empty string, and a value for a field the
+ * template no longer names (the operator switched campaigns) is not sent.
+ */
+fun fieldValuesToData(values: Map<String, String>, fieldNames: List<String>): Map<String, Any?> {
+    val out = LinkedHashMap<String, Any?>()
+    for (name in fieldNames) {
+        val v = values[name].orEmpty().trim()
+        if (v.isNotEmpty()) out[name] = v
+    }
+    return out
+}
+
+// ── accounts picked by name (#1587) ───────────────────────────────────────────
+
+/** An account the Pick accounts list offers: a household with a linked MyTribe login, by name. */
+data class PickableAccount(val uid: String, val name: String, val email: String)
+
+data class PickableAccounts(val accounts: List<PickableAccount>, val withoutAccount: List<String>)
+
+/**
+ * The households an operator can pick as accounts, by name.
+ *
+ * A blast addresses a MyTribe account (`uid`), not a household, so a household
+ * with no linked login cannot receive one. It is listed separately so the
+ * operator can see who is missing and why, instead of the household silently not
+ * being there. Archived households are neither. Mirrors web `pickableAccounts`.
+ */
+fun pickableAccounts(kinfolk: List<com.tribetails.auntieos.data.model.Kinfolk>): PickableAccounts {
+    val accounts = mutableListOf<PickableAccount>()
+    val without = mutableListOf<String>()
+    for (k in kinfolk) {
+        if (k.status.equals("archived", ignoreCase = true)) continue
+        val name = "${k.firstName.trim()} ${k.lastName.trim()}".trim()
+            .ifEmpty { k.email.trim() }
+            .ifEmpty { "Unnamed household" }
+        val uid = k.uid.trim()
+        if (uid.isEmpty()) without.add(name) else accounts.add(PickableAccount(uid, name, k.email.trim()))
+    }
+    return PickableAccounts(
+        accounts = accounts.sortedBy { it.name.lowercase() },
+        withoutAccount = without.sortedBy { it.lowercase() },
+    )
 }
 
 // ── preview ──────────────────────────────────────────────────────────────────
@@ -370,7 +489,8 @@ data class MarketingBlastRow(
     val audienceSize: Int = 0,
 ) {
     /** What the row is called in the list. The key is the fallback for an unnamed campaign. */
-    val displayName: String get() = title.ifBlank { key }
+    /** #1587: the operator's title, else the campaign's name. Never the wire key. */
+    val displayName: String get() = title.ifBlank { campaignName(key) }
     /** 0f..1f for the mock's Sending bar, or 0f when the roster size is unknown. */
     val progress: Float get() = if (audienceSize > 0) queued.toFloat() / audienceSize else 0f
 }

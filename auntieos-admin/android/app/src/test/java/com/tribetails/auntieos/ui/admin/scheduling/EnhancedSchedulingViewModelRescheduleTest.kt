@@ -94,6 +94,9 @@ class EnhancedSchedulingViewModelRescheduleTest {
         serviceRepository = serviceRepo,
         auntieRepository = auntieRepo,
         kinCareRepository = kinCareRepo,
+        // #1574: the fixtures are June 2026 and a move into the past is refused,
+        // so the clock stands before them.
+        clock = java.time.Clock.fixed(java.time.Instant.parse("2026-01-01T00:00:00Z"), java.time.ZoneOffset.UTC),
     )
 
     private fun booking() = EnhancedBooking(

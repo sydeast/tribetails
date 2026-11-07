@@ -1,4 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// #1574: the fixtures below are fixed 2026 dates, and every reschedule path now
+// refuses a start that has already passed. The clock is pinned before the
+// earliest of them so these tests keep testing what they were written for.
+// Only Date is faked: timers and promises run as normal.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 import { buildDbMock } from './_helpers/mockDb';
 import { callableRequest } from './_helpers/callableRequest';
 
@@ -502,5 +514,43 @@ describe('resolveBookingRescheduleRequestHandler: no end sent (#1118)', () => {
     expect(mocks.guardBookingBusyConflictFn).toHaveBeenCalledWith(
       expect.objectContaining({ visits: [{ startTimeMs: TEN, endTimeMs: TEN + HOUR }] }),
     );
+  });
+});
+
+// #1574: accepting a household's ask is a move, and a move into the past stays
+// blocked. The portal refuses a past proposal when it is made; this is the ask
+// whose time went by while it waited in the queue.
+describe('#1574 accepting an ask whose time has passed', () => {
+  it('refuses with the reschedule_in_past code and writes nothing', async () => {
+    vi.setSystemTime(new Date(NEW_START_MS + 60_000));
+    const ctx = buildDbMock({
+      docs: {
+        [VISIT]: pendingVisit(),
+        'kin_care_sessions/vis_v1': { startTime: '2026-08-20T09:00:00.000Z' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    const { RESCHEDULE_ASK_PASSED_MESSAGE } = await import('../src/lib/pastVisit');
+    await expect(
+      resolveBookingRescheduleRequestHandler(callableRequest(acceptArgs, { uid: 'op-1', token: { admin: true } })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: RESCHEDULE_ASK_PASSED_MESSAGE,
+      details: { code: 'reschedule_in_past' },
+    });
+    expect(ctx.writes).toHaveLength(0);
+    expect(mocks.guardVisitOverlapConflictFn).not.toHaveBeenCalled();
+  });
+
+  it('still lets the office decline that ask', async () => {
+    vi.setSystemTime(new Date(NEW_START_MS + 60_000));
+    const ctx = buildDbMock({ docs: { [VISIT]: pendingVisit() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
+    const res = await resolveBookingRescheduleRequestHandler(
+      callableRequest({ ...acceptArgs, decision: 'decline' }, { uid: 'op-1', token: { admin: true } }),
+    );
+    expect(res).toMatchObject({ ok: true, decision: 'decline' });
   });
 });
