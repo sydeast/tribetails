@@ -41,6 +41,12 @@ export interface Kinfolk {
   profilePictureUrl?: string | undefined;
   status?: string | undefined; // active | inactive | archived
   /**
+   * The household's linked MyTribe login, when it has one (#1587). Blank or
+   * absent until the household signs up. Marketing blasts address accounts, so
+   * this is what lets the screen offer households by name and send to their uid.
+   */
+  uid?: string | undefined;
+  /**
    * Where the Kin Care actually happens. Written by `KinfolkEdit.tsx` through
    * `updateKinfolk` and read back by the profile; modeled on this flat-list type
    * as of #703, because the Auntie Time board needs an address PER CARD and one

@@ -3,7 +3,13 @@ import { sessionState, sessionDayKey, sessionHousehold, shiftDayIso } from './se
 import { formatCentsUsd, isoDatePrefixOrNull } from './invoiceFormat';
 import { str, arr } from './coerce';
 import { isKinInCare } from '../api/directory';
-import { draftStatusAsKinTaleStatus, isPublishedDraft } from './kinTaleList';
+import {
+  draftBody,
+  draftCreatedAt,
+  draftHousehold,
+  draftStatusAsKinTaleStatus,
+  draftTypeLabel,
+} from './kinTaleList';
 import { isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import type { GeneratedDraftRow } from '../api/drafts';
 import type { ConversationSummary } from '../api/inbox';
@@ -799,23 +805,21 @@ export function pendingTaleRows(
   limit = 4,
 ): TaleRow[] {
   return drafts
-    .filter((d) => str(d.generatedCopy).trim() !== '')
-    // #1563: only drafts still waiting on a decision. The rows and the button
-    // open what they list, so an approved or already-sent draft here would open
-    // a draft there is nothing left to do with. Same positive status match the
-    // KinTales list makes (`draftStatusAsKinTaleStatus`).
-    .filter((d) => str(d.publishedReportId).trim() === '')
-    .filter((d) => draftStatusAsKinTaleStatus(str(d.status)) === 'DRAFT')
+    .filter(isDraftAwaitingReview)
     .slice(0, Math.max(0, limit))
     .map((d) => {
-      const type = str(d.communicationType).replace(/_/g, ' ').trim();
+      // #1629: both spellings. A draft generate.js wrote carries
+      // `generated_copy` / `kinfolk_name` / `communication_type` /
+      // `generated_at`, and reading only the camelCase names dropped it here
+      // as a content-less shell.
+      const type = draftTypeLabel(d);
       const firstLine =
-        str(d.generatedCopy)
+        draftBody(d)
           .split('\n')
           .map((line) => line.trim())
           .find((line) => line !== '') ?? '';
-      const household = str(d.kinfolkName).trim();
-      const created = str(d.createdOn).slice(0, 10);
+      const household = draftHousehold(d);
+      const created = draftCreatedAt(d).slice(0, 10);
       // #1598 ruling (2026-11-05): a written but unsent KinTale is a "Draft"
       // everywhere, Home included. Every row here is unsent (filtered above),
       // so the word is constant; the stored status (`pending`, `generated`)
@@ -832,19 +836,28 @@ export function pendingTaleRows(
     });
 }
 /**
+ * A draft still waiting on a decision, the one rule Home's rows and its count
+ * share: it has copy (either spelling), it has not been sent as a KinTale
+ * (#1563 `publishedReportId`), and its status means nobody signed it off. The
+ * status is a POSITIVE match (`draftStatusAsKinTaleStatus` maps `pending`,
+ * `generated` and blank to DRAFT), never "not approved".
+ */
+export function isDraftAwaitingReview(d: GeneratedDraftRow): boolean {
+  return (
+    draftBody(d) !== '' &&
+    str(d.publishedReportId).trim() === '' &&
+    draftStatusAsKinTaleStatus(str(d.status)) === 'DRAFT'
+  );
+}
+
+/**
  * How many drafts are waiting on a decision: the stat row's "KinTales to
- * review". It asks the KinTales list's own question, so the card and the list
- * cannot disagree about what a draft is: a `generated_drafts` doc is a draft
- * when `draftStatusAsKinTaleStatus` files it as DRAFT (generated, pending or
- * blank). Approved and anything unrecognised are not counted, as there.
+ * review". #1629: the same rule as the rows below it. It used to count only
+ * `status === 'pending'`, so a generate.js draft (`generated`) could show as a
+ * row and not in the count.
  */
 export function pendingDraftCount(drafts: readonly GeneratedDraftRow[]): number {
-  // #1563: a draft already sent as a report is a Sent row on the list, not a draft.
-  return drafts.reduce(
-    (n, d) =>
-      !isPublishedDraft(d) && draftStatusAsKinTaleStatus(str(d.status)).toUpperCase() === 'DRAFT' ? n + 1 : n,
-    0,
-  );
+  return drafts.reduce((n, d) => (isDraftAwaitingReview(d) ? n + 1 : n), 0);
 }
 /**
  * Pets in care: the roster minus the inactive and the archived (#1601: it used

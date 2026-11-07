@@ -472,6 +472,40 @@ describe('pendingTaleRows and pendingDraftCount', () => {
     expect(pendingDraftCount(rows)).toBe(1);
     expect(pendingTaleRows(rows)).toHaveLength(1);
   });
+
+  /** #1629: what generate.js writes. snake_case, `generated`, `generated_at` (plus `createdOn` now). */
+  const generateJs = (over: Partial<GeneratedDraftRow> = {}): GeneratedDraftRow => ({
+    _id: 'g1',
+    kinfolk_id: 'k2',
+    kinfolk_name: 'Dre East',
+    communication_type: 'visit_report',
+    generated_copy: 'QA- test note\nmore',
+    status: 'generated',
+    generated_at: '2026-11-05T18:30:00.000Z',
+    ...over,
+  });
+  it('#1629: a generate.js draft is a row, read from its own spellings, not a dropped shell', () => {
+    const rows = pendingTaleRows([generateJs()]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 'g1',
+      title: 'visit report',
+      blurb: 'QA- test note',
+      meta: 'DRAFT · Dre East · 2026-11-05',
+    });
+  });
+  it('#1629: the count and the rows agree, generate.js drafts included', () => {
+    const list = [
+      draft({ _id: 'p' }),
+      generateJs({ _id: 'g' }),
+      generateJs({ _id: 'blank', status: '' }),
+      draft({ _id: 'sent', publishedReportId: 'r1' }),
+      draft({ _id: 'approved', status: 'approved' }),
+      generateJs({ _id: 'shell', generated_copy: '   ' }),
+    ];
+    expect(pendingDraftCount(list)).toBe(3);
+    expect(pendingTaleRows(list, 99).map((r) => r.id)).toEqual(['p', 'g', 'blank']);
+  });
 });
 
 describe('activeKinCount', () => {

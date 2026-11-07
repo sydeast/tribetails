@@ -51,6 +51,11 @@ class MarketingBlastsScreenTest {
         coEvery { repo.listAudienceSegments() } returns Result.success(emptyList())
         coEvery { repo.listMarketingBlasts() } returns Result.success(emptyList())
         coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings(timeZone = "America/Chicago"))
+        // #1587: the screen also reads the roster and the copy preview on open.
+        coEvery { repo.getKinfolk() } returns Result.success(emptyList())
+        coEvery { repo.previewMarketingBlastCopy(any(), any()) } returns Result.success(
+            BlastCopyPreview(subject = "A little news", text = "Hello"),
+        )
     }
 
     @After

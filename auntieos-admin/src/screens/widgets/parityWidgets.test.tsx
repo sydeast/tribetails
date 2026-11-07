@@ -270,6 +270,21 @@ describe('TodaysPackWidget', () => {
     render(<TodaysPackWidget onOpenSessions={noop} />);
     expect(screen.getByRole('button', { name: /1\s*overdue visit to close out/i })).toBeInTheDocument();
   });
+  /**
+   * #1704 (with #1607): Auntie Time's Overdue also lists SCHEDULED visits from
+   * before its 30-day window, so Home's count reads them too, once each.
+   */
+  it('counts the overdue visits older than the board window as well, once each', () => {
+    const recent = sess({ _id: 'recent', startTime: `${daysAgo(5)}T09:00:00`, status: 'SCHEDULED' });
+    const july = sess({ _id: 'july', startTime: `${daysAgo(120)}T09:00:00`, status: 'SCHEDULED' });
+    useCollection.mockImplementation((spec: { path: string; filters?: unknown[][] }) => {
+      if (spec.path !== 'kin_care_sessions') return READY_EMPTY;
+      const older = (spec.filters ?? []).some((f) => f[0] === 'status' && f[1] === '==');
+      return { status: 'ready', data: older ? [july, recent] : [recent] };
+    });
+    render(<TodaysPackWidget onOpenSessions={noop} />);
+    expect(screen.getByRole('button', { name: /2\s*overdue visits/i })).toBeInTheDocument();
+  });
   it('keeps the overdue line beside a populated run', () => {
     wire({
       kin_care_sessions: {
