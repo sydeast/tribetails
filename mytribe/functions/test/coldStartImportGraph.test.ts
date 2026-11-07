@@ -133,7 +133,8 @@ const ALLOWED_EAGER_PACKAGES = [
  * whole. Measured at 423 after merging onto #1316, inside the 430
  * already allowed, so the bound did not move.
  *
- * 440 since #1610 (main had reached 430 exactly): that change adds
+ * 440 since #1610 (#1715: main itself had reached 431 after the 2026-11-07
+ * merges, so the cap was red on every PR): that change also adds
  * `lib/broadcastMerge.ts`, the per-household merge-field fill the broadcast
  * sender and its resume sweep share. Its imports (handlebars,
  * `notifications/templateParsers.ts`, `lib/businessName.ts`) are all already
