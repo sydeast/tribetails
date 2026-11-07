@@ -743,6 +743,15 @@ class FirestoreClient {
         }
     }
 
+    /** #1611: puts one thread back in the unread pile (admin flag only; read receipts stay). */
+    suspend fun markConversationUnread(kinfolkId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("markConversationUnread", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
     /**
      * #1573: the audio behind a voicemail or call recording. Twilio's stored link
      * needs the account's credentials, so the admin-gated `getRecordingAudio`

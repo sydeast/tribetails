@@ -360,8 +360,15 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
   // back as "Marked 2 of 5" for a batch in which nothing failed. Narrowing here
   // makes the label, the request and any partial report the same number.
   const unreadSelected = useMemo(() => unreadAmong(inScope, selectedIds), [inScope, selectedIds]);
-  const allInScopeIds = useMemo(() => inScope.map((r) => r._id), [inScope]);
-  const allSelected = allInScopeIds.length > 0 && selectedIds.size >= allInScopeIds.length;
+  // #1611: Select all covers the rows the operator can SEE, which is the facet
+  // AND the active filter chip. It used to stop at the facet, so "Select all 85"
+  // under the Unread chip picked 85 rows while the feed showed 12.
+  const allVisibleIds = useMemo(
+    () => notificationsForFilter(inScope, filter).map((r) => r._id),
+    [inScope, filter],
+  );
+  const allSelected =
+    allVisibleIds.length > 0 && selectedIds.size === allVisibleIds.length && allVisibleIds.every((id) => selectedIds.has(id));
 
   return (
     <div className="screen">
@@ -489,18 +496,24 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
                 <NotificationFilters
                   categories={categories}
                   filter={filter}
-                  onFilter={setFilter}
+                  onFilter={(next) => {
+                    // Cleared on a filter change for the same reason as the
+                    // facet: a selection made under one chip must not ride into
+                    // a bulk action on rows the next chip hides.
+                    if (next !== filter) bulk.clear();
+                    setFilter(next);
+                  }}
                 />
 
-                {allInScopeIds.length > 0 ? (
+                {allVisibleIds.length > 0 ? (
                   <div className="notif-selectall">
                     <GhostButton
-                      // Over the rows the FACET has left in scope, never over
-                      // the whole stream: a select-all that reaches rows the
+                      // Over the rows on screen (facet AND filter chip), never
+                      // over the whole stream: a select-all that reaches rows the
                       // operator cannot see is how a bulk archive takes out
                       // something nobody looked at.
-                      label={allSelected ? 'Clear selection' : `Select all ${String(allInScopeIds.length)}`}
-                      onClick={() => (allSelected ? bulk.clear() : bulk.selectAll(allInScopeIds))}
+                      label={allSelected ? 'Clear selection' : `Select all ${String(allVisibleIds.length)}`}
+                      onClick={() => (allSelected ? bulk.clear() : bulk.selectAll(allVisibleIds))}
                       disabled={bulk.busy || bulkArchiving}
                     />
                   </div>

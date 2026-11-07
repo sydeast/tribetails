@@ -707,6 +707,37 @@ describe('Notifications bulk bar', () => {
     expect(screen.queryByRole('button', { name: /select all/i })).toBeNull();
   });
 
+  it('Select all is limited to the rows the active filter chip shows (#1611)', async () => {
+    mockStreams({
+      status: 'ready',
+      data: [
+        entry({ _id: 'n1', category: 'bookings' }),
+        entry({ _id: 'n2', category: 'payments' }),
+        entry({ _id: 'n3', category: 'payments' }),
+      ],
+    });
+    bulkArchiveNotifications.mockResolvedValue(2);
+    render(<Notifications />);
+    expect(screen.getByRole('button', { name: 'Select all 3' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'payments' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Select all 2' }));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear selection' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Archive 2' }));
+    expect(bulkArchiveNotifications).toHaveBeenCalledWith(['n2', 'n3']);
+  });
+  it('changing the filter chip drops a selection made under the old one', async () => {
+    mockStreams({
+      status: 'ready',
+      data: [entry({ _id: 'n1', category: 'bookings' }), entry({ _id: 'n2', category: 'payments' })],
+    });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Select all 2' }));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'payments' }));
+    expect(screen.queryByText(/selected$/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Select all 1' })).toBeInTheDocument();
+  });
   it('Select all never reaches rows the archive facet has hidden', async () => {
     mockStreams({
       status: 'ready',
