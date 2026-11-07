@@ -45,6 +45,14 @@
   resize: vertical;
 }
 
+/* #1602: a plain fieldset, with the browser's default groove border removed. */
+.kedit__fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
 .kedit__check {
   display: flex;
   align-items: center;

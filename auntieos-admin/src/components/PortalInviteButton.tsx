@@ -25,6 +25,16 @@ export interface PortalInviteButtonProps {
   householdName: string;
   /** The household's email on file. Blank means nobody can be invited. */
   email: string;
+  /**
+   * #1602: whether a primary is already ACTIVE, when the caller already knows
+   * (the Members screen has the roster). Left out, the button reads it from
+   * `listMembers` itself.
+   */
+  hasActivePrimary?: boolean | null;
+  /** #1602: drawn as the primary action, where a screen's hero puts it. */
+  primary?: boolean;
+  /** Called after an invite actually went out, so the caller can reload. */
+  onSent?: () => void;
 }
 
 /** Why the invite cannot be sent, or null when it can. Pure, so it is tested directly. */
@@ -37,14 +47,25 @@ export function portalInviteBlocker(email: string, hasActivePrimary: boolean | n
 function errText(err: unknown, fallback: string): string {
   return err instanceof Error && err.message !== '' ? err.message : fallback;
 }
-export function PortalInviteButton({ kinfolkId, householdName, email }: PortalInviteButtonProps) {
+
+export function PortalInviteButton({
+  kinfolkId,
+  householdName,
+  email,
+  hasActivePrimary: knownActivePrimary,
+  primary = false,
+  onSent,
+}: PortalInviteButtonProps) {
   const { showToast } = useToast();
-  const [hasActivePrimary, setHasActivePrimary] = useState<boolean | null>(null);
+  const callerKnows = knownActivePrimary !== undefined;
+  const [readActivePrimary, setHasActivePrimary] = useState<boolean | null>(null);
+  const hasActivePrimary = callerKnows ? knownActivePrimary : readActivePrimary;
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (callerKnows) return undefined;
     let live = true;
     listHouseholdMembers(kinfolkId)
       .then((members) => {
@@ -57,9 +78,13 @@ export function PortalInviteButton({ kinfolkId, householdName, email }: PortalIn
     return () => {
       live = false;
     };
-  }, [kinfolkId]);
+  }, [kinfolkId, callerKnows]);
 
   const blocker = portalInviteBlocker(email, hasActivePrimary);
+  const open = () => {
+    setError(null);
+    setConfirming(true);
+  };
   const address = email.trim();
 
   async function send() {
@@ -72,6 +97,7 @@ export function PortalInviteButton({ kinfolkId, householdName, email }: PortalIn
       if (outcome.sent) {
         showToast(outcome.message);
         setConfirming(false);
+        onSent?.();
       } else {
         setError(outcome.message);
         if (result.status === 'already_active') setHasActivePrimary(true);
@@ -85,14 +111,11 @@ export function PortalInviteButton({ kinfolkId, householdName, email }: PortalIn
 
   return (
     <>
-      <GhostButton
-        label="Invite to portal"
-        onClick={() => {
-          setError(null);
-          setConfirming(true);
-        }}
-        disabled={blocker !== null}
-      />
+      {primary ? (
+        <PrimaryButton label="Invite to portal" onClick={open} disabled={blocker !== null} />
+      ) : (
+        <GhostButton label="Invite to portal" onClick={open} disabled={blocker !== null} />
+      )}
       {blocker !== null && (
         <span className="kinfolk-profile__action-note" data-testid="portal-invite-blocker">
           {blocker}

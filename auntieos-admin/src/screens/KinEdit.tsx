@@ -367,7 +367,9 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
               </DenPanel>
 
               <DenPanel title="Auntie's notes" subtitle="Staff-only.">
-                <fieldset disabled={busy}>
+                {/* #1602: classed like the other fieldsets, so it draws no
+                    browser-default border around the box. */}
+                <fieldset className="kedit__fieldset" disabled={busy}>
                   <textarea
                     className="kedit__input kedit__textarea"
                     value={form.officeNotes}

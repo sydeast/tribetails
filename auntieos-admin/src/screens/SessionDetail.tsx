@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressCompleteness';
 import { type SessionEntry } from '../api/sessions';
 import { kinForHouseholdQuery, type Kin, type Kinfolk } from '../api/directory';
 import { getBusinessSettings } from '../api/settings';
@@ -446,6 +447,13 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
           )
         }
       />
+
+      {/* #1602: the walk's visit read "18605" with no hint it was incomplete. */}
+      {addressLooksIncomplete(address) && (
+        <p className="sdetail__addr-hint" role="note">
+          {INCOMPLETE_ADDRESS_HINT}
+        </p>
+      )}
 
       {entry === null ? (
         // THE THREE NO-ROW ANSWERS, kept apart (#753). A refresh on
