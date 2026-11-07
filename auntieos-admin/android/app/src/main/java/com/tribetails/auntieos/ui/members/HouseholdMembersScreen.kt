@@ -952,7 +952,8 @@ internal fun inviteMetaLine(invite: MembersRepository.Invite): String {
     }
     if (invite.effectiveStatus == MembersRepository.InviteStatus.REVOKED) {
         inviteDate(invite.revokedAt)?.let { parts += "revoked $it" }
-    } else {
+    } else if (invite.effectiveStatus != MembersRepository.InviteStatus.ACCEPTED) {
+        // #1603: an accepted invite is spent, so its expiry date says nothing.
         inviteDate(invite.expiresAt)?.let {
             parts += if (invite.effectiveStatus == MembersRepository.InviteStatus.EXPIRED) {
                 "expired $it"

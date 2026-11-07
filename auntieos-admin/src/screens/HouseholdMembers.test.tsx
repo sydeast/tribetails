@@ -645,6 +645,13 @@ describe('inviteMetaLine', () => {
     expect(inviteMetaLine(invite({ effectiveStatus: 'EXPIRED' }))).toContain('expired 2026-06-09');
   });
 
+  // #1603: an accepted invite is spent, so its expiry date says nothing.
+  it('#1603: drops the expiry date once the invite is accepted', () => {
+    const line = inviteMetaLine(invite({ status: 'ACCEPTED', effectiveStatus: 'ACCEPTED' }));
+    expect(line).toContain('Sent 2026-05-26');
+    expect(line).not.toContain('expire');
+  });
+
   it('omits a date the server did not return instead of substituting today', () => {
     const line = inviteMetaLine(
       invite({ sentToInviteeAt: null, createdAt: null, expiresAt: null }),

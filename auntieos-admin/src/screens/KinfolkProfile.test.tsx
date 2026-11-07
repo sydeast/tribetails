@@ -41,6 +41,13 @@ vi.mock('./KinfolkEdit', () => ({
 vi.mock('./HouseholdData', () => ({
   HouseholdData: () => <p>STUB HouseholdData</p>,
 }));
+// #1603: the profile's portal invite has its own suite (PortalInviteButton.test).
+// Here it only has to be on the profile, with the household's email.
+vi.mock('../components/PortalInviteButton', () => ({
+  PortalInviteButton: ({ email, householdName }: { email: string; householdName: string }) => (
+    <button type="button">{`STUB Invite to portal ${householdName} ${email}`}</button>
+  ),
+}));
 // Q6: the account credit card reads a callable; its own suite covers it.
 vi.mock('../api/accountCredit', () => ({
   getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'k1', accountBalanceCents: 0, credits: [], uses: [] }),
@@ -166,6 +173,18 @@ describe('KinfolkProfile', () => {
     expect(screen.getByText('1 Bark Ave')).toBeInTheDocument();
     expect(screen.getByText('Willow')).toBeInTheDocument();
     expect(getKinfolkProfile).toHaveBeenCalledWith('k1');
+  });
+
+  /**
+   * #1603. Operator ruling, 2026-11-05 docket: "no button on the Invites
+   * screen. Invite from the kinfolk profile."
+   */
+  it('#1603: offers Invite to portal on the profile, for the email on file', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ email: 'catch@hanasamku.com' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    expect(
+      await screen.findByRole('button', { name: /STUB Invite to portal .* catch@hanasamku\.com/ }),
+    ).toBeInTheDocument();
   });
 
   it('omits the empty Vet panel, but still shows Emergency Contacts, flagged (#829)', async () => {

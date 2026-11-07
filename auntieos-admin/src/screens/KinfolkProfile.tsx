@@ -22,6 +22,7 @@ import {
 } from '../components/KinfolkProfileFeeds';
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
+import { PortalInviteButton } from '../components/PortalInviteButton';
 import { MaskedValue } from '../components/MaskedValue';
 import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { EMERGENCY_CONTACTS_MAX, EMERGENCY_CONTACTS_OVER_LIMIT } from '../api/emergencyContacts';
@@ -411,6 +412,11 @@ export function KinfolkProfile({
             >
               <span className="auntie-btn__label">Members and invites</span>
             </Link>
+            {/* #1603: the admin's portal invite lives here, on the profile
+                (operator ruling: no button on the Invites screen). */}
+            {loaded !== null && (
+              <PortalInviteButton kinfolkId={kinfolkId} householdName={heroName} email={loaded.email} />
+            )}
             <GhostButton label="Edit" onClick={() => setView('edit')} />
             <GhostButton label={back.label} onClick={back.goBack} />
             {/* The hero used to end with a "New KinTale" primary. Operator ruling
