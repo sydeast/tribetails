@@ -110,7 +110,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         vm.createBookingRequest(
             kinfolkId = s.kinfolkId,
             visits = s.visits,
-            notes = s.notes,
+            staffNotes = s.staffNotes,
             pattern = s.pattern,
             weeklyDays = s.weeklyDays,
             overrideBusyConflict = s.overrideBusyConflict,
@@ -140,7 +140,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
             bookingRepo.createMultiDateBookingRequest(
                 kinfolkId = "kf1",
                 visits = match<List<NewBookingVisit>> { it.size == 2 && it.all { v -> v.serviceName == "Dog Walking" } },
-                notes = "Gate code 1234",
+                staffNotes = "Gate code 1234",
                 pattern = "individual",
                 weeklyDays = null,
                 kinIds = listOf("kin-a"),

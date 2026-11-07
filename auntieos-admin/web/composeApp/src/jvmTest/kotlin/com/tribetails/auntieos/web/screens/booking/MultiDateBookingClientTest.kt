@@ -49,6 +49,34 @@ class MultiDateBookingClientTest {
         assertTrue(payload.contains("svc1"))
     }
 
+    /** #1626: the admin note travels as staffNotes, apart from the household-facing notes. */
+    @Test
+    fun sendsTheAdminNoteAsStaffNotesApartFromTheHouseholdNote() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "createMultiDateBookingRequest" to """{"batchId":"req_1","visitIds":["v1"],"visitCount":1}""",
+        )
+        FirestoreClient().createMultiDateBookingRequest(
+            kinfolkId = "kf1",
+            visits = listOf(NewBookingVisitInput(startTimeMs = 2_000L, serviceName = "Walk")),
+            notes = "Please text when you arrive",
+            staffNotes = "Key is under the blue pot",
+        )
+        val payload = JvmFirestoreFixtures.lastCallablePayloadJson.orEmpty()
+        assertTrue(payload.contains("\"staffNotes\":\"Key is under the blue pot\""), payload)
+        assertTrue(payload.contains("\"notes\":\"Please text when you arrive\""), payload)
+    }
+    @Test
+    fun omitsStaffNotesWhenBlank() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "createMultiDateBookingRequest" to """{"batchId":"req_1","visitIds":["v1"],"visitCount":1}""",
+        )
+        FirestoreClient().createMultiDateBookingRequest(
+            kinfolkId = "kf1",
+            visits = listOf(NewBookingVisitInput(startTimeMs = 2_000L, serviceName = "Walk")),
+            staffNotes = "  ",
+        )
+        assertTrue(!JvmFirestoreFixtures.lastCallablePayloadJson.orEmpty().contains("staffNotes"))
+    }
     /**
      * #644: the console sends the caller's booking id when it has one.
      *
