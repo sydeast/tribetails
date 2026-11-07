@@ -265,6 +265,59 @@ class InvoiceDetailViewModelTest {
     }
 
     @Test
+    fun `#1567 a draft send that got no answer is re-read and reported as sent`() = runTest {
+        val draft = Invoice(id = "d1567", kinfolkId = "fam1", invoiceNumber = "INV-D", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0, status = "draft")
+        coEvery { invoiceRepository.getInvoiceById("d1567") } returns Result.success(draft)
+        val vm = draftViewModel("fam1")
+        vm.loadInvoice("d1567")
+        advanceUntilIdle()
+        coEvery { invoiceRepository.reviewAndSendDraftInvoice("d1567", "fam1") } returns Result.failure(
+            io.mockk.mockk<com.google.firebase.functions.FirebaseFunctionsException>(relaxed = true).also {
+                io.mockk.every { it.code } returns com.google.firebase.functions.FirebaseFunctionsException.Code.DEADLINE_EXCEEDED
+            },
+        )
+        coEvery { invoiceRepository.readInvoiceSendMarks("d1567") } returns
+            com.tribetails.auntieos.domain.SendMarks("open", null, null, null)
+        vm.reviewAndSendDraft()
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertFalse(state.sendingDraft)
+        assertEquals("Draft sent. The answer came late, so this was confirmed by re-reading the invoice.", state.toastMessage)
+        assertFalse(state.toastIsError)
+    }
+    @Test
+    fun `#1567 a draft send whose re-read fails says it cannot tell`() = runTest {
+        val draft = Invoice(id = "d1568", kinfolkId = "fam1", invoiceNumber = "INV-D", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0, status = "draft")
+        coEvery { invoiceRepository.getInvoiceById("d1568") } returns Result.success(draft)
+        val vm = draftViewModel("fam1")
+        vm.loadInvoice("d1568")
+        advanceUntilIdle()
+        coEvery { invoiceRepository.reviewAndSendDraftInvoice("d1568", "fam1") } returns Result.failure(
+            java.net.SocketTimeoutException("timeout"),
+        )
+        coEvery { invoiceRepository.readInvoiceSendMarks("d1568") } returns null
+        vm.reviewAndSendDraft()
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertTrue(state.toastMessage.contains("no way to tell from here whether the draft went"))
+        assertTrue(state.toastIsError)
+    }
+    @Test
+    fun `#1567 a server refusal is still reported verbatim, with no re-read`() = runTest {
+        val draft = Invoice(id = "d1569", kinfolkId = "fam1", invoiceNumber = "INV-D", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0, status = "draft")
+        coEvery { invoiceRepository.getInvoiceById("d1569") } returns Result.success(draft)
+        val vm = draftViewModel("fam1")
+        vm.loadInvoice("d1569")
+        advanceUntilIdle()
+        coEvery { invoiceRepository.reviewAndSendDraftInvoice("d1569", "fam1") } returns Result.failure(
+            IllegalStateException("Invoice is not a draft; nothing to send."),
+        )
+        vm.reviewAndSendDraft()
+        advanceUntilIdle()
+        assertEquals("Couldn't send draft: Invoice is not a draft; nothing to send.", vm.uiState.value.toastMessage)
+        io.mockk.coVerify(exactly = 0) { invoiceRepository.readInvoiceSendMarks("d1569") }
+    }
+    @Test
     fun `reviewAndSendDraft by a channel keeps the plain green toast`() = runTest {
         val draft = Invoice(id = "d1512", kinfolkId = "fam1", invoiceNumber = "INV-D", kinfolkName = "The Whitfields", total = 40.0, amountDue = 40.0, status = "draft")
         coEvery { invoiceRepository.getInvoiceById("d1512") } returns Result.success(draft)
