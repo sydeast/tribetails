@@ -11,6 +11,7 @@ import { sendExternalMessage, type MirrorSkippedReason } from '../api/externalSe
 import { markVoicemail, type VoicemailReplyWrite } from '../api/inboxChannelsWrite';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
+import { RecordingPlayer } from './RecordingPlayer';
 import { PrimaryButton, GhostButton } from './Buttons';
 import './ThreadActionsCard.css';
 
@@ -235,21 +236,10 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
 
         {entry.preview !== '' && <p className="thread-actions__preview">{entry.preview}</p>}
 
-        {/* The audio element is rendered only for a row that really has a URL.
-            A player with no source is a control that cannot work. */}
-        {entry.playbackUrl !== '' && (
-          <div className="thread-actions__player">
-            <p className="thread-actions__player-label">Recording</p>
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-            <audio
-              className="thread-actions__audio"
-              controls
-              preload="none"
-              src={entry.playbackUrl}
-              aria-label={`Play the recording from ${entryTitle(entry)}`}
-            />
-          </div>
-        )}
+        {/* The player is rendered only for a row that really has a recording. A
+            player with no source is a control that cannot work. The stored link
+            needs credentials, so RecordingPlayer fetches it through the server. */}
+        {entry.playbackUrl !== '' && <RecordingPlayer entry={entry} />}
 
         <div className="thread-actions__launchers">
           {launchers.tel !== null && (
