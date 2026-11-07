@@ -3,6 +3,11 @@ import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
+import {
+  anyVisitDeclined,
+  requestResolutionForTransition,
+  stampRequestNotifications,
+} from '../notifications/requestResolution';
 
 type EnvelopeDoc = {
   envelopeStatus?: string;
@@ -158,6 +163,34 @@ export const onBookingEnvelopeCreate = onDocumentCreated(
         function: 'onBookingEnvelopeCreate',
         event: 'notification.dispatch.failed',
         extra: { kinfolkId, batchId, key: 'kincare.requested', err: (err as Error)?.message },
+      });
+      return;
+    }
+
+    // #1647: a request can be answered before its notification exists. The
+    // portal's auto-confirm approves the envelope the moment `writeEnvelope`
+    // returns, so `onBookingEnvelopeResolve` may already have run and found no
+    // row to stamp. Read the envelope again now that the row is written, and
+    // stamp it here if the request is no longer waiting. Whichever of the two
+    // runs second sees both the row and the answer.
+    try {
+      const now = await event.data!.ref.get();
+      const status = (now.data() as EnvelopeDoc | undefined)?.envelopeStatus;
+      let declined = false;
+      if (status === 'cancelled') {
+        const visits = await event.data!.ref.collection('kinCares').get();
+        declined = anyVisitDeclined(visits.docs.map((d) => (d.data() ?? {}) as Record<string, unknown>));
+      }
+      const resolution = requestResolutionForTransition('requested', status, declined);
+      if (resolution !== null) {
+        await stampRequestNotifications({ kinfolkId, batchId, resolution, source: 'onBookingEnvelopeCreate' });
+      }
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'onBookingEnvelopeCreate',
+        event: 'envelope.recheck.failed',
+        extra: { kinfolkId, batchId, err: (err as Error)?.message },
       });
     }
   }),
