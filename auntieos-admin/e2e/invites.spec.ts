@@ -38,14 +38,16 @@ test('the rail entry lands on the invites screen', async ({ page }) => {
   await expect(page.locator('.den-heading-kicker')).toHaveText('The Den · Invites');
 });
 
-test('a failing read says so and names the callable, instead of an empty shelf', async ({
+test('a failing read says so in plain words, instead of an empty shelf', async ({
   page,
 }) => {
   await page.goto('/invites');
 
   const alert = page.getByRole('alert');
   await expect(alert).toBeVisible();
-  await expect(alert).toContainText('listAllInvites failed');
+  // #1592: the line says what failed, never the callable's name.
+  await expect(alert).toContainText('Could not load');
+  await expect(alert).not.toContainText('listAllInvites');
   // The claim an empty list would make, which is the one thing a failed read
   // must never make on the operator's behalf.
   await expect(page.getByText('No invites have been sent from any household yet.')).toHaveCount(0);
