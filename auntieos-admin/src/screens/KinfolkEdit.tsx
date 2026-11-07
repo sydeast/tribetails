@@ -17,7 +17,7 @@ import {
   type KinfolkEditInput,
   type KinfolkPickableStatus,
 } from '../lib/kinfolkEditSchema';
-import { joinDateForEdit } from '../lib/joinDate';
+import { JOIN_DATE_FIRST_DAY, joinDateForEdit, localIsoToday } from '../lib/joinDate';
 import { type Async } from '../lib/async';
 import {
   EMERGENCY_CONTACT_WHO_GETS_CALLED,
@@ -864,6 +864,10 @@ function DateField({ name, label, value, error, hint, onChange, onBlur }: DateFi
         id={id}
         type="date"
         className="kfedit__input"
+        // #1584: the picker offers only 2025 through today. The schema refuses
+        // a typed value outside that with a message beside the field.
+        min={JOIN_DATE_FIRST_DAY}
+        max={localIsoToday()}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}

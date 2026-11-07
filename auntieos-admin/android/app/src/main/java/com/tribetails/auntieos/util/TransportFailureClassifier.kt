@@ -70,3 +70,20 @@ fun isFcmUnavailable(error: Throwable?): Boolean {
     val message = error.message ?: return false
     return message.contains("MISSING_INSTANCEID_SERVICE") || message.contains("SERVICE_NOT_AVAILABLE")
 }
+/**
+ * #1567: true when a SEND got no answer, so its outcome is unknown: the request
+ * may have reached the server and finished after the phone stopped waiting.
+ *
+ * Wider than [isTransportFailure] on one point. A `DEADLINE_EXCEEDED` with no
+ * [IOException] cause is the server's own timeout answering (a 504), not the
+ * network; for a send that is still "we cannot tell", because the handler may
+ * have queued the household's notice before it was stopped. The caller
+ * re-reads the invoice ([com.tribetails.auntieos.domain.sendOutcomeAfterSilence])
+ * rather than reporting a failure.
+ */
+fun isSilentSendFailure(error: Throwable?): Boolean {
+    if (error == null) return false
+    if (error is java.io.InterruptedIOException) return true
+    if (error is FirebaseFunctionsException && error.code == FirebaseFunctionsException.Code.DEADLINE_EXCEEDED) return true
+    return isTransportFailure(error)
+}

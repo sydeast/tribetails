@@ -134,7 +134,7 @@ class BusinessAdminRosterTest {
     // ── The lines the gate renders ──────────────────────────────────────────
 
     @Test
-    fun eachLineNamesThePersonAndHowTheMailReachesThem() {
+    fun eachLineNamesThePersonButNotTheirOwnEmail() {
         val line = businessAdminLines(
             BusinessAdminRoster(
                 members = listOf(
@@ -150,7 +150,8 @@ class BusinessAdminRosterTest {
             ),
         ).single()
         assertTrue(line.contains("Auntie Nora"))
-        assertTrue(line.contains("nora@tribetails.com"))
+        // #1564: business email goes to businessEmail, not to a member's address.
+        assertFalse(line.contains("nora@tribetails.com"))
         assertTrue(line.contains("unassigned visits default to them"))
     }
 
@@ -161,7 +162,7 @@ class BusinessAdminRosterTest {
         ).single()
         assertTrue(line.contains("op8"))
         assertTrue(line.contains("no staff record"))
-        assertTrue(line.contains("no email on file"))
+        assertFalse(line.contains("no email on file"))
     }
 
     @Test
@@ -177,5 +178,37 @@ class BusinessAdminRosterTest {
                 BusinessAdminRoster(members = members, source = BusinessAdminRosterSource.Roster),
             ),
         )
+    }
+
+    /**
+     * #1564. Operator ruling, 2026-11-05 docket: every business email goes to
+     * the business contact email in business settings.
+     */
+    @Test
+    fun decodesBusinessEmailAndSaysWhereEmailsGo() {
+        val roster = businessAdminRosterFromMap(
+            mapOf("members" to emptyList<Any>(), "source" to "roster", "businessEmail" to " pawsome@hanasamku.com "),
+        )
+        assertEquals("pawsome@hanasamku.com", roster.businessEmail)
+        assertEquals("Emails go to the business email, pawsome@hanasamku.com.", businessEmailLine(roster))
+    }
+
+    @Test
+    fun aBlankBusinessEmailSaysTheyHaveNowhereToGo() {
+        val roster = businessAdminRosterFromMap(mapOf("source" to "roster"))
+        assertEquals("", roster.businessEmail)
+        assertTrue(businessEmailLine(roster).contains("nowhere to go"))
+    }
+
+    @Test
+    fun settingsWarnsOnlyWhileTheBusinessEmailIsBlank() {
+        assertTrue(businessEmailNotice("  ")!!.contains("nowhere to go until this is filled"))
+        assertNull(businessEmailNotice("pawsome@hanasamku.com"))
+    }
+
+    @Test
+    fun theBusinessEmailUnsetSkipIsWorded() {
+        val phrase = notifDeliveryPhrase("skipped", BUSINESS_EMAIL_UNSET, null)
+        assertTrue(phrase.detail.contains("business email in Settings > Business was blank"))
     }
 }

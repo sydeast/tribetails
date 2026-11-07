@@ -511,7 +511,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
         className="d1"
         title="Primary contact"
         meta="role: PRIMARY"
-        subtitle="The household account owner. Held by role, not by setting: full billing, home access, kin edits and messaging come with being the primary, and the server reads the role rather than these flags, so there is nothing here to switch off. Swap primary suspends them and mails a claim link to a verified member you pick."
+        subtitle="The household account owner. Held by role, not by setting: full billing, home access, kin edits and messaging come with being the primary, so there is nothing here to switch off. Swap primary suspends them and emails a claim link to a verified member you pick."
       >
         <AsyncRegion
           state={members}
@@ -595,7 +595,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
         className="d3"
         title="Invites"
         meta={inviteCount === null ? '' : `${inviteCount} total`}
-        subtitle="Every invite this household has been sent. An invite past its expiry reads Expired here from the moment it lapses, even though the nightly sweep has not stamped it yet."
+        subtitle="Every invite this household has been sent. An invite reads Expired the moment it lapses."
       >
         <AsyncRegion
           state={invites}

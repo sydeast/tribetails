@@ -34,7 +34,7 @@ import { clearDuplicateAddKinfolk, readDuplicateAddKinfolk } from '../lib/pendin
 import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
 import { EntityCardGrid } from '../components/EntityCardGrid';
-import { KinfolkProfile } from './KinfolkProfile';
+import { KinfolkProfile, type ProfileSubView, type ProfileView } from './KinfolkProfile';
 import { KinView } from './KinView';
 import './Directory.css';
 
@@ -354,6 +354,9 @@ interface DirectoryProps {
   openUnappliedPayments?: boolean;
   /** #1003: that notice's payment, whose Decide dialog opens on arrival. */
   unappliedPaymentId?: string;
+  /** The open profile's sub-view from the URL, and where to report a switch (#1594). */
+  profileView?: ProfileSubView;
+  onProfileViewChange?: (view: ProfileView) => void;
 }
 
 /**
@@ -377,6 +380,8 @@ export function Directory({
   onProfileClose,
   openUnappliedPayments = false,
   unappliedPaymentId = '',
+  profileView,
+  onProfileViewChange,
 }: DirectoryProps) {
   const kinfolkState = useKinfolkRoster();
   const kinState = useCollection<Kin>(KIN_QUERY);
@@ -540,6 +545,8 @@ export function Directory({
         kinPending={kinPending}
         openUnappliedPayments={openUnappliedPayments}
         unappliedPaymentId={unappliedPaymentId}
+        {...(profileView !== undefined ? { view: profileView } : {})}
+        {...(onProfileViewChange !== undefined ? { onViewChange: onProfileViewChange } : {})}
         // #907 review item 1(b): an Add the server answered `duplicateOf` for this
         // household opens it on its editor with the typing filled in, unsaved.
         duplicateAdd={readDuplicateAddKinfolk(operatorUid, openKinfolkId)}

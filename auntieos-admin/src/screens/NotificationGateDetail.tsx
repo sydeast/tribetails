@@ -5,6 +5,7 @@ import { listBusinessAdmins, type BusinessAdminRoster } from '../api/businessAdm
 import {
   businessAdminLines,
   businessAdminSourceNote,
+  businessEmailLine,
   deliveryPhrase,
   hasPartialDataNote,
   mergeFieldNames,
@@ -237,6 +238,7 @@ export function BusinessAdminRosterPanel() {
   const note = businessAdminSourceNote(roster);
   return (
     <>
+      <p className="notifgate__detail-note" data-testid="business-email-line">{businessEmailLine(roster)}</p>
       <p className="notifgate__detail-note">By name:</p>
       {note && <p className="notifgate__detail-note">{note}</p>}
       <ul className="notifgate__detail-list">

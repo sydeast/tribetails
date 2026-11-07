@@ -324,6 +324,8 @@ private fun MediaGrid(
     var pendingDelete by remember { mutableStateOf<MediaFile?>(null) }
     // A1: tapping a tile opens it full-size (the cell's onClick was a dead {}).
     var pendingView by remember { mutableStateOf<MediaFile?>(null) }
+    // #1564: the uploader line names a person, not the uid an upload stores.
+    val uploaderNames = rememberUploaderNames()
 
     val glyphs = MediaCellGlyphs(
         play = Lucide.Play,
@@ -350,6 +352,7 @@ private fun MediaGrid(
             } else null,
             showCaption = true,
             glyphs = glyphs,
+            uploaderNames = uploaderNames,
             modifier = Modifier.fillMaxSize(),
         )
     }
