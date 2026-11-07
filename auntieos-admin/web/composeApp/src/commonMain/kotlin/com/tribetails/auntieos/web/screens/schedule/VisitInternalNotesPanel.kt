@@ -99,7 +99,12 @@ fun VisitInternalNotesPanel(
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text(note.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                            // #1592: the visit record's own text carries ISO stamps.
+                            Text(
+                                if (note.source == "visitRecord") readableVisitNotes(note.body, zone) else note.body,
+                                style = AuntieTheme.typography.bodyMedium,
+                                color = c.textPrimary,
+                            )
                             Text(visitNoteByline(note, zone), style = AuntieTheme.typography.labelSmall, color = c.textDim)
                         }
                     }
