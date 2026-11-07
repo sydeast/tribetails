@@ -441,7 +441,9 @@ describe('KinView: panels', () => {
     ]);
     expect(screen.getByText('per visit')).toBeInTheDocument();
     expect(screen.getByText('Willow only')).toBeInTheDocument();
-    expect(screen.getByText('admin only')).toBeInTheDocument();
+    // #1598 (operator ruling, 2026-11-05 docket): every staff role reads the
+    // pet's notes, so the false "admin only" badge is gone.
+    expect(screen.queryByText('admin only')).toBeNull();
     expect(screen.getByText('auto-generated')).toBeInTheDocument();
     expect(screen.getByText('next 7 days')).toBeInTheDocument();
   });

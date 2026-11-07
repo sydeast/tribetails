@@ -140,7 +140,7 @@ fun KinViewScreen(
                     }
 
                     if (kin.officeNotes.isNotBlank()) {
-                        DenPanel(title = "Internal notes") {
+                        DenPanel(title = "Auntie's notes") {
                             Text(kin.officeNotes, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
                         }
                     }
