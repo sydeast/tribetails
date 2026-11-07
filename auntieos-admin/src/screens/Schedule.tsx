@@ -62,6 +62,7 @@ import { LoadingRow } from '../components/LoadingRow';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { BookingDetailModal } from '../components/BookingDetailModal';
+import { BookingStatusActions } from './BookingActions';
 import { BlockTimeDialog } from '../components/BlockTimeDialog';
 import { NewVisitDialog } from '../components/NewVisitDialog';
 import { ScheduleWeekGrid, type ScheduleDrop } from '../components/ScheduleWeekGrid';
@@ -617,6 +618,19 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   entry={openSession}
                   businessZone={businessZone}
                   onClose={() => setOpenSessionId(null)}
+                  // #1576: the same Actions panel Bookings composes into this
+                  // sheet (Mark Completed / Cancel on a scheduled visit,
+                  // Approve / Reject on a request), so a visit opened from the
+                  // calendar can be closed out where it was found. One
+                  // `actionsFor` map decides what is offered, in BookingActions.
+                  // `createdAt` is the Bookings list's sort key and nothing the
+                  // panel reads; the calendar's row does not carry it.
+                  actions={
+                    <BookingStatusActions
+                      entry={{ ...openSession, createdAt: null }}
+                      onDone={() => setOpenSessionId(null)}
+                    />
+                  }
                   onOpenKinfolk={(kinfolkId) =>
                     void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
                   }
