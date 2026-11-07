@@ -67,6 +67,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieCheckbox
 import com.tribetails.auntieos.web.ui.components.AuntieChipGroup
 import com.tribetails.auntieos.web.ui.components.AuntieDatePickerDialog
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
@@ -443,6 +444,7 @@ private fun BookingListScreen(
                                 locked = vm.seriesActionBatchId != null,
                                 onApprove = { scope.launch { vm.approveSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
                                 onCancel  = { scope.launch { vm.cancelSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
+                                zone      = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone),
                             )
                         }
                     }
@@ -727,6 +729,10 @@ private fun SectionCount(count: String) {
 
 // 16.5: one incoming booking envelope (1..N visits). Approve/cancel the whole
 // series via manageBookingSeries (backend creates the linked sessions).
+//
+// #1577: the household is the card's title, the card body opens the request,
+// and both Approve and Cancel go through a confirm step titled with the
+// household, the same as the web and Android queues.
 @Composable
 private fun IncomingSeriesCard(
     series: BookingSeries,
@@ -734,8 +740,11 @@ private fun IncomingSeriesCard(
     locked: Boolean,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
+    zone: TimeZone,
 ) {
     val c = AuntieTheme.colors
+    var confirming by remember(series.kinfolkId, series.batchId) { mutableStateOf<String?>(null) }
+    var detailOpen by remember(series.kinfolkId, series.batchId) { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -744,20 +753,89 @@ private fun IncomingSeriesCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(series.kinfolkName.ifBlank { "Kinfolk request" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-        Text(
-            buildString {
-                append(if (series.visitCount == 1) "1 visit" else "${series.visitCount} visits")
-                if (series.isSeries) append(" · recurring series")
-                if (series.serviceType.isNotBlank()) append(" · ${series.serviceType}")
-            },
-            style = AuntieTheme.typography.bodySmall,
-            color = c.textDim,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = onApprove, enabled = !locked)
-            GhostButton(label = "Cancel", onClick = onCancel, enabled = !locked)
+        Column(
+            modifier = Modifier.fillMaxWidth().clickable(onClickLabel = "Open the request") { detailOpen = true },
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(series.householdLabel(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+            Text(series.subject(), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { confirming = "approve" }, enabled = !locked)
+            GhostButton(label = "Cancel", onClick = { confirming = "cancel" }, enabled = !locked)
+        }
+    }
+
+    AuntieDialog(
+        visible = confirming != null,
+        title = if (confirming == "cancel") series.declineConfirmTitle() else series.approveConfirmTitle(),
+        onDismiss = { confirming = null },
+        footer = {
+            GhostButton(label = "Never mind", onClick = { confirming = null })
+            PrimaryButton(
+                label = if (confirming == "cancel") "Turn it down" else "Book it",
+                onClick = {
+                    val decision = confirming
+                    confirming = null
+                    if (decision == "cancel") onCancel() else onApprove()
+                },
+                enabled = !locked,
+            )
+        },
+    ) {
+        Text(series.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(
+            when {
+                confirming == "cancel" -> "Nothing will be booked. The household will be told."
+                series.visitCount == 1 -> "This visit will go on the schedule and on the household's portal."
+                else -> "All ${series.visitCount} visits will go on the schedule and on the household's portal."
+            },
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+    }
+
+    AuntieDialog(
+        visible = detailOpen,
+        title = series.detailTitle(),
+        onDismiss = { detailOpen = false },
+        footer = {
+            GhostButton(label = "Close", onClick = { detailOpen = false })
+            GhostButton(
+                label = "Cancel",
+                onClick = {
+                    detailOpen = false
+                    confirming = "cancel"
+                },
+                enabled = !locked,
+            )
+            PrimaryButton(
+                label = "Approve",
+                onClick = {
+                    detailOpen = false
+                    confirming = "approve"
+                },
+                enabled = !locked,
+            )
+        },
+    ) {
+        IncomingFact("Household", series.householdLabel())
+        IncomingFact("Service", series.serviceType.ifBlank { "Not on the request" })
+        IncomingFact(
+            if (series.visitCount == 1) "Visit" else "${series.visitCount} visits",
+            series.visitLines(zone).joinToString("\n"),
+        )
+        val notes = series.visits.map { it.notes.trim() }.filter { it.isNotEmpty() }.distinct()
+        IncomingFact("Notes on the request", notes.joinToString("\n").ifBlank { "None given" })
+    }
+}
+
+@Composable
+private fun IncomingFact(label: String, value: String) {
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(bottom = 10.dp)) {
+        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Text(value, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
     }
 }
 
