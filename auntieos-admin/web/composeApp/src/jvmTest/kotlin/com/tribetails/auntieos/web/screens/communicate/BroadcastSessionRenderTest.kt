@@ -62,6 +62,7 @@ class BroadcastSessionRenderTest {
         waitUntil(timeoutMillis = 10_000) { JvmFirestoreFixtures.lastCallableName == "broadcastMessage" }
         // The confirm closes on Send now; wait for it to leave so it cannot take the next click.
         waitUntil(timeoutMillis = 10_000) { !shown("Send now") }
+        waitForIdle()
         val payload = Json.parseToJsonElement(JvmFirestoreFixtures.lastCallablePayloadJson!!).jsonObject
         return payload["idempotencyKey"]!!.jsonPrimitive.content
     }
@@ -78,7 +79,10 @@ class BroadcastSessionRenderTest {
         val first = sendAndReadKey()
         waitUntil(timeoutMillis = 10_000) { shown("Send may still be running") }
 
-        onNode(hasText("Personalize") and hasClickAction()).performClick()
+        // #1610: the form is a little taller now (the merge-field line), so the
+        // mode picker can sit above the viewport after the scroll to Review.
+        onNode(hasText("Personalize") and hasClickAction()).performScrollTo().performClick()
+        waitForIdle()
         waitUntil(timeoutMillis = 10_000) { !shown("Review broadcast") }
         openBroadcast()
 
