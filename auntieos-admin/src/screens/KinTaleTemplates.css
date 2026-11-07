@@ -143,7 +143,8 @@
 .ktt__picker-row:hover {
   border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
 }
-.ktt__picker-row--active {
+.ktt__picker-row--active,
+.ktt__picker-row.ktt__picker-row--active:hover {
   border-color: var(--color-primary);
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
 }

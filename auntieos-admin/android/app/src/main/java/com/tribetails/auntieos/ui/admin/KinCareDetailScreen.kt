@@ -183,7 +183,7 @@ fun KinCareDetailScreen(
                     // `ready + null`.
                     if (!isKinCarePermissionDenied(err)) {
                         loadError = err.message
-                            ?: "Couldn't load this Kin Care. Check your connection and try again."
+                            ?: "Couldn't load this KinCare. Check your connection and try again."
                     }
                 }
             loading = false
@@ -192,7 +192,7 @@ fun KinCareDetailScreen(
 
     val s = session
     AuntieScreenScaffold(
-        title = s?.kinfolkName?.ifBlank { "Kin Care" } ?: "Loading…",
+        title = s?.kinfolkName?.ifBlank { "KinCare" } ?: "Loading…",
         onBack = onBack,
     ) {
         if (loading) {
@@ -232,7 +232,7 @@ fun KinCareDetailScreen(
                 // unavailable" dialog carries. Also covers the sandbox
                 // permission-denied case folded in above.
                 Text(
-                    "This Kin Care isn't available to open. A visit gets its own record " +
+                    "This KinCare isn't available to open. A visit gets its own record " +
                         "only once the request is approved, so a request still waiting on " +
                         "you has none yet. Otherwise it may have been cancelled or removed.",
                     color = AuntieTheme.colors.textDim,
@@ -256,7 +256,7 @@ fun KinCareDetailScreen(
             val kinLabel = orderedIds
                 .mapNotNull { kinById[it]?.name?.takeIf { n -> n.isNotBlank() } }
                 .joinToString(" & ")
-            val household = s.kinfolkName.ifBlank { "Kin Care" }
+            val household = s.kinfolkName.ifBlank { "KinCare" }
             val heroTitle = listOf(kinLabel, s.serviceType)
                 .filter { it.isNotBlank() }
                 .joinToString(" · ")
@@ -269,7 +269,7 @@ fun KinCareDetailScreen(
 
             item {
                 DenScreenHeading(
-                    kicker = "The Den · Auntie Time",
+                    kicker = "Care Ops · Auntie Time",
                     // The crumb IS the way back, the same trail the web detail
                     // draws: the rail's name for the board, then the Kin.
                     crumbs = listOf(
@@ -359,11 +359,11 @@ fun KinCareDetailScreen(
                     if (!isActive && !hasRoute) {
                         EmptyHint(
                             if (notYetStarted) {
-                                "Tracking starts once an Auntie clocks in for this Kin Care."
+                                "Tracking starts once an Auntie clocks in for this KinCare."
                             } else if (s.gpsSummary != null) {
-                                "A GPS summary was saved for this Kin Care, but it has no route to view."
+                                "A GPS summary was saved for this KinCare, but it has no route to view."
                             } else {
-                                "No GPS breadcrumbs were recorded for this Kin Care because it was never tracked."
+                                "No GPS breadcrumbs were recorded for this KinCare because it was never tracked."
                             }
                         )
                     }
@@ -460,7 +460,7 @@ fun KinCareDetailScreen(
                 item {
                     DetailSection("Kin in this care") {
                         if (kinById.isEmpty() && fourOnes.isEmpty()) {
-                            EmptyHint("No Kin records linked to this Kin Care.")
+                            EmptyHint("No Kin records linked to this KinCare.")
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 orderedIds.forEach { kid ->
@@ -475,7 +475,7 @@ fun KinCareDetailScreen(
             item {
                 DetailSection("KinTales sent") {
                     if (reports.isEmpty()) {
-                        EmptyHint("No KinTales sent yet during this Kin Care.")
+                        EmptyHint("No KinTales sent yet during this KinCare.")
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             reports.forEach { r -> KinTaleSnippet(r) }

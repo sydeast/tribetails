@@ -79,7 +79,7 @@ class DesktopNotFoundRenderTest {
                 KinCareDetailScreen(kinCareId = "s-missing", onBack = {})
             }
         }
-        assertNotFoundShows("This Kin Care couldn't be found. It may have been removed.")
+        assertNotFoundShows("This KinCare couldn't be found. It may have been removed.")
     }
 
     @Test
@@ -90,6 +90,6 @@ class DesktopNotFoundRenderTest {
                 KinTaleComposeScreen(sessionId = "s-missing", onClose = {})
             }
         }
-        assertNotFoundShows("This Kin Care couldn't be found. It may have been removed.")
+        assertNotFoundShows("This KinCare couldn't be found. It may have been removed.")
     }
 }

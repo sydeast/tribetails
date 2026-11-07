@@ -107,7 +107,8 @@
   outline-offset: 2px;
 }
 
-.list-toolbar__chip--active {
+.list-toolbar__chip--active,
+.list-toolbar__chip.list-toolbar__chip--active:hover {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-background);

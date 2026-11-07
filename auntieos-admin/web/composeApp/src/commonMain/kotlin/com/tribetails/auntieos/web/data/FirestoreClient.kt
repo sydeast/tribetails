@@ -1721,16 +1721,28 @@ class FirestoreClient {
         bookingTransition(bookingId, visitId, "REJECT")
     suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         bookingTransition(bookingId, visitId, "CANCEL")
+
+    /**
+     * #1617: Mark Completed on one `kin_care_sessions` row, through
+     * transitionBookingStatus. The rules refuse a client write of COMPLETED or
+     * `completedAt`, so this callable is the only way a visit is completed, and
+     * its refusal (the operator's arrival rule, an illegal transition) comes
+     * back as the Err message.
+     */
+    suspend fun completeKinCare(sessionId: String, completedAt: String): WriteResult<Unit> =
+        bookingTransition(sessionId, null, "COMPLETE", completedAt = completedAt)
     private suspend fun bookingTransition(
         bookingId: String,
         visitId: String?,
         action: String,
         override: ScheduleOverride? = null,
+        completedAt: String? = null,
     ): WriteResult<Unit> {
         if (visitId.isNullOrBlank()) {
             val payload = buildJsonObject {
                 put("sessionId", JsonPrimitive(bookingId))
                 put("action", JsonPrimitive(action))
+                if (!completedAt.isNullOrBlank()) put("completedAt", JsonPrimitive(completedAt))
                 // #1145: APPROVE checks the visit's window. The flag goes only when the operator chose it.
                 when (override) {
                     ScheduleOverride.BUSY -> put("overrideBusyConflict", JsonPrimitive(true))
@@ -2927,6 +2939,13 @@ data class StaffMember(
 }
 
 /**
+ * #1564: uid -> the name the Gallery's uploader line shows (name, else email).
+ * A uid with neither is left out, so the caller keeps whatever it showed before.
+ */
+fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+
+/**
  * Pure decode of the listStaff body `{staff:[{uid, displayName, email}]}`.
  * Lenient: entries without a uid are dropped (a row we can't assign is
  * useless), missing/null name + email decode as null, and an omitted `staff`
@@ -2941,8 +2960,10 @@ internal fun decodeStaffList(dataJson: String): List<StaffMember> =
                 ?: return@mapNotNull null
             StaffMember(
                 uid = uid,
-                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull,
-                email = o["email"]?.jsonPrimitive?.contentOrNull,
+                // A blank name or email is no name or email: the picker falls
+                // through to the next label rather than showing an empty row.
+                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+                email = o["email"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
 
