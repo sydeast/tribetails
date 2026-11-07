@@ -920,7 +920,7 @@ private fun ScheduleViewScreenContent(
                     viewModel.createBookingRequest(
                         kinfolkId = submission.kinfolkId,
                         visits = submission.visits,
-                        notes = submission.notes,
+                        staffNotes = submission.staffNotes,
                         pattern = submission.pattern,
                         weeklyDays = submission.weeklyDays,
                         overrideBusyConflict = submission.overrideBusyConflict,

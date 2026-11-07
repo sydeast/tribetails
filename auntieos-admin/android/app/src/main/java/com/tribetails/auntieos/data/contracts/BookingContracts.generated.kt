@@ -364,6 +364,8 @@ data class CreateMultiDateBookingRequestArgs(
     val kinIds: List<String>? = null,
     /** Optional: omitted from the payload when null. */
     val notes: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val staffNotes: String? = null,
     /**
      * One of `individual`, `weekly`.
      * Optional: omitted from the payload when null.
@@ -388,6 +390,7 @@ data class CreateMultiDateBookingRequestArgs(
         if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
         if (kinIds != null) put("kinIds", kinIds)
         if (notes != null) put("notes", notes)
+        if (staffNotes != null) put("staffNotes", staffNotes)
         if (pattern != null) put("pattern", pattern)
         if (weeklyDays != null) put("weeklyDays", weeklyDays)
         put("visits", visits.map { it.toPayload() })

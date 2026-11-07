@@ -2581,7 +2581,8 @@ class EnhancedSchedulingViewModel(
     fun createBookingRequest(
         kinfolkId: String,
         visits: List<com.tribetails.auntieos.data.repository.NewBookingVisit>,
-        notes: String?,
+        /** #1626: the wizard's private note, staff-only (see [BookingWizardSubmission.staffNotes]). */
+        staffNotes: String?,
         pattern: String,
         weeklyDays: List<Int>?,
         overrideBusyConflict: Boolean = false,
@@ -2610,13 +2611,13 @@ class EnhancedSchedulingViewModel(
         // if that refusal had in fact been a lost reply the shared key is what
         // stops the override booking it twice.
         val idempotencyKey = requestKeyFor(
-            listOf(kinfolkId, visits, notes, pattern, weeklyDays, kinIds, billing, communication).toString(),
+            listOf(kinfolkId, visits, staffNotes, pattern, weeklyDays, kinIds, billing, communication).toString(),
         )
         viewModelScope.launch {
             bookingRepository.createMultiDateBookingRequest(
                 kinfolkId = kinfolkId,
                 visits = visits,
-                notes = notes,
+                staffNotes = staffNotes,
                 pattern = pattern,
                 weeklyDays = weeklyDays,
                 kinIds = kinIds?.takeIf { it.isNotEmpty() },

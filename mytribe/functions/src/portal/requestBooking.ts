@@ -870,6 +870,17 @@ export async function writeEnvelope(opts: {
    */
   kinIds: string[];
   notes: string | null;
+  /**
+   * #1579 / #1626: the office's own note on a request it books for a
+   * household (the admin wizard's "Private notes"). It is NOT the envelope's
+   * `notes`: the portal shows those to the household (`getBookingNotes`
+   * `bookingNote`, `portalBookingDto`), and an active member can read the
+   * envelope doc directly. It is written to each visit's staff-only
+   * `internalNotes` thread instead, the path `firestore.rules` gives staff
+   * alone, so it is on the visit from the moment the request exists and is
+   * still there once the visit is approved. Never set by `requestBooking`.
+   */
+  staffNotes?: { body: string; authorUid: string; authorRole: 'admin' | 'auntie' } | null;
   visits: NormalizedVisit[];
   /** Default-assignee (2026-07-02): the Auntie every new visit starts assigned to. */
   assignee: Assignee | null;
@@ -973,6 +984,20 @@ export async function writeEnvelope(opts: {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    // #1626: the office's private note, one copy on every visit's staff-only
+    // thread, in the same transaction so a request never exists without it.
+    const staffNote = opts.staffNotes ?? null;
+    if (staffNote !== null && staffNote.body.trim() !== '') {
+      for (const ref of visitRefs) {
+        tx.set(ref.collection('internalNotes').doc(), {
+          authorUid: staffNote.authorUid,
+          authorRole: staffNote.authorRole,
+          body: staffNote.body,
+          source: 'bookingRequest',
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      }
+    }
     visits.forEach((v, i) => {
       const visitRef = visitRefs[i];
       tx.set(visitRef, {

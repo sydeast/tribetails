@@ -406,7 +406,7 @@ describe('the submission, and the one refusal an operator may override', () => {
     expect(bookingSubmission(state, ROSTER, true)).toEqual({
       kinfolkId: 'kf1',
       kinIds: ['k1'],
-      notes: 'gate code 1234',
+      staffNotes: 'gate code 1234',
       pattern: 'individual',
       visits: buildVisits(state),
       billing: { mode: 'new-invoice' },

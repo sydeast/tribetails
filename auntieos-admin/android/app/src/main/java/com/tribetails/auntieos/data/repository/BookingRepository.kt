@@ -113,7 +113,13 @@ class BookingRepository(
     suspend fun createMultiDateBookingRequest(
         kinfolkId: String,
         visits: List<NewBookingVisit>,
-        notes: String? = null,
+        /**
+         * #1626: the office's private note. Sent as `staffNotes`, which the
+         * server writes to each visit's staff-only `internalNotes` thread. The
+         * envelope's `notes` is the household-visible field, and no admin
+         * wizard writes it.
+         */
+        staffNotes: String? = null,
         pattern: String = "individual",
         weeklyDays: List<Int>? = null,
         kinIds: List<String>? = null,
@@ -136,7 +142,7 @@ class BookingRepository(
             kinfolkId = kinfolkId,
             idempotencyKey = idempotencyKey,
             kinIds = kinIds,
-            notes = notes?.takeIf { it.isNotBlank() },
+            staffNotes = staffNotes?.takeIf { it.isNotBlank() },
             pattern = pattern,
             weeklyDays = weeklyDays?.map { it.toLong() },
             visits = visits.map { v ->

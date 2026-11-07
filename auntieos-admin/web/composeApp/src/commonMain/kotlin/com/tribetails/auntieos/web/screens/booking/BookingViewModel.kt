@@ -216,6 +216,8 @@ class BookingViewModel(
         notes: String?,
         pattern: String,
         weeklyDays: List<Int>?,
+        /** #1626: the form's "Admin internal notes", staff-only. */
+        staffNotes: String? = null,
     ): MultiDateBookingResult? {
         errorMessage = null
         // #644: one key per submission, not per press. Held while the booking
@@ -223,11 +225,12 @@ class BookingViewModel(
         // after a failure names the booking the first attempt may already have
         // made; re-minted the moment the booking itself changes, because a held
         // key would then replay the OLD booking and report it as the new one.
-        val key = requestKeyFor(listOf(kinfolkId, pattern, notes, weeklyDays, visits).toString())
+        val key = requestKeyFor(listOf(kinfolkId, pattern, notes, staffNotes, weeklyDays, visits).toString())
         return when (
             val r = dataSource.createMultiDateBookingRequest(
                 kinfolkId, visits, notes, pattern, weeklyDays,
                 idempotencyKey = key,
+                staffNotes = staffNotes,
             )
         ) {
             is WriteResult.Ok -> {
