@@ -173,8 +173,13 @@ export function reachesBusinessAdmins(entry: NotificationCatalogEntry): boolean 
 }
 
 /**
- * One line per person on the roster: their name, how to reach them, and
- * anything about them the operator would otherwise have to know already.
+ * One line per person on the roster: their name and anything about them the
+ * operator would otherwise have to know already.
+ *
+ * No address per person (#1564). Operator ruling, 2026-11-05 docket: every
+ * business email goes to the business contact email in business settings, so a
+ * member's own email is not where their mail goes; `businessEmailLine` says
+ * where it does.
  *
  * A uid with no `staff/{uid}` record says so and shows the uid. That member is
  * NOT dropped: they receive every business notification, and a list that hides
@@ -184,13 +189,21 @@ export function reachesBusinessAdmins(entry: NotificationCatalogEntry): boolean 
 export function businessAdminLines(roster: BusinessAdminRoster): string[] {
   return roster.members.map((member) => {
     const name = member.displayName ?? member.uid;
-    const parts = [member.email ?? 'no email on file'];
+    const parts: string[] = [];
     if (!member.hasStaffRecord) parts.push(`no staff record for ${member.uid}`);
     if (member.defaultAssignee) parts.push('unassigned visits default to them');
-    return `${name} (${parts.join('; ')})`;
+    return parts.length > 0 ? `${name} (${parts.join('; ')})` : name;
   });
 }
-
+/**
+ * Where this row's emails go (#1564): the business contact email, or, while
+ * that is blank, nowhere.
+ */
+export function businessEmailLine(roster: Pick<BusinessAdminRoster, 'businessEmail'>): string {
+  return roster.businessEmail !== ''
+    ? `Emails go to the business email, ${roster.businessEmail}.`
+    : 'Business emails have nowhere to go: the business email in Settings > Business is blank, so each one is skipped until it is filled.';
+}
 /**
  * The caveat above the list, when there is one.
  *
@@ -282,6 +295,8 @@ export interface DeliveryPhrase {
  * exist anywhere in this system. A green "Delivered" here would be a guess
  * printed as a fact.
  */
+/** The email channel's skip reason when `businessEmail` is blank (#1564). */
+export const BUSINESS_EMAIL_UNSET = 'business_email_unset';
 export function deliveryPhrase(status: string, skipReason: string | null, errorMessage: string | null): DeliveryPhrase {
   switch (status) {
     case 'sent':
@@ -293,9 +308,11 @@ export function deliveryPhrase(status: string, skipReason: string | null, errorM
     case 'skipped':
       return {
         label: 'Skipped',
-        detail: skipReason
-          ? `Not sendable on this channel: ${skipReason}.`
-          : 'Not sendable on this channel; no reason was recorded.',
+        detail: skipReason === BUSINESS_EMAIL_UNSET
+          ? 'The business email in Settings > Business was blank, so this email had nowhere to go.'
+          : skipReason
+            ? `Not sendable on this channel: ${skipReason}.`
+            : 'Not sendable on this channel; no reason was recorded.',
         tone: 'warn',
       };
     case 'failed':

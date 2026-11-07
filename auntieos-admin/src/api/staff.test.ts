@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
-import { listStaff, staffLabel } from './staff';
+import { listStaff, loadStaffNames, resetStaffNamesForTest, staffLabel, staffNamesByUid } from './staff';
 
 beforeEach(() => {
   call.mockReset();
@@ -46,5 +46,37 @@ describe('staffLabel', () => {
   it('falls back to the email, then to the uid, never to a blank control', () => {
     expect(staffLabel({ uid: 'u1', displayName: '  ', email: 'r@x.com' })).toBe('r@x.com');
     expect(staffLabel({ uid: 'u1', displayName: null, email: null })).toBe('u1');
+  });
+});
+
+/**
+ * #1564: screens that hold a staff uid (the Gallery's uploader line) show the
+ * person instead, from one shared listStaff read.
+ */
+describe('staff names by uid (#1564)', () => {
+  beforeEach(() => resetStaffNamesForTest());
+
+  it('maps each uid to its picker label', () => {
+    const names = staffNamesByUid([
+      { uid: 'a', displayName: 'E2E Admin', email: 'e2e-admin@tribetails.com' },
+      { uid: 'b', displayName: null, email: 'catch@hanasamku.com' },
+    ]);
+    expect(names.get('a')).toBe('E2E Admin');
+    expect(names.get('b')).toBe('catch@hanasamku.com');
+  });
+
+  it('reads once for every caller', async () => {
+    call.mockResolvedValue({ staff: [{ uid: 'a', displayName: 'E2E Admin', email: null }] });
+    const [one, two] = await Promise.all([loadStaffNames(), loadStaffNames()]);
+    expect(one.get('a')).toBe('E2E Admin');
+    expect(two).toBe(one);
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed read gives an empty map and is tried again next time', async () => {
+    call.mockRejectedValueOnce(new Error('permission-denied'));
+    expect((await loadStaffNames()).size).toBe(0);
+    call.mockResolvedValue({ staff: [{ uid: 'a', displayName: 'E2E Admin', email: null }] });
+    expect((await loadStaffNames()).get('a')).toBe('E2E Admin');
   });
 });
