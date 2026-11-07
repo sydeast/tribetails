@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, linkOptions } from '@tanstack/react-router';
 import { getKinfolkProfile, type KinfolkProfile as Profile } from '../api/kinfolkProfile';
 import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
@@ -76,7 +76,18 @@ interface KinfolkProfileProps {
    */
   openUnappliedPayments?: boolean;
   unappliedPaymentId?: string;
+  /**
+   * The sub-view the URL names (#1594), `?view=household` or `?view=edit` on
+   * `/directory/$kinfolkId`. With `onViewChange`, the profile reports every
+   * switch so the route can write it, and a reload or a Back press lands on the
+   * view the operator was on. Without it the sub-view is plain local state.
+   */
+  view?: ProfileSubView;
+  onViewChange?: (view: ProfileView) => void;
 }
+
+/** The sub-views the URL can name. The profile itself is the absent value. */
+export type ProfileSubView = 'edit' | 'household';
 
 /**
  * One label/value line; renders nothing when the value is blank (never "undefined").
@@ -168,7 +179,7 @@ function firstNonBlank(...values: string[]): string {
  * that entry point (a KinTale is only ever started from a KinCare session, not
  * a bare household), so this profile no longer opens a composer at all.
  */
-type ProfileView = 'profile' | 'edit' | 'household';
+export type ProfileView = 'profile' | ProfileSubView;
 
 export function KinfolkProfile({
   kinfolkId,
@@ -181,8 +192,31 @@ export function KinfolkProfile({
   onDuplicateAddApplied,
   openUnappliedPayments = false,
   unappliedPaymentId = '',
+  view: urlView,
+  onViewChange,
 }: KinfolkProfileProps) {
-  const [view, setView] = useState<ProfileView>(() => (duplicateAdd !== null ? 'edit' : 'profile'));
+  const urlDriven = onViewChange !== undefined;
+  const [view, setLocalView] = useState<ProfileView>(() =>
+    duplicateAdd !== null ? 'edit' : urlDriven && urlView !== undefined ? urlView : 'profile',
+  );
+  // The last view this profile wrote to (or read from) the URL, so a change
+  // that came FROM here is not read back as a navigation.
+  const lastUrlView = useRef<ProfileSubView | undefined>(urlView);
+  const setView = useCallback(
+    (next: ProfileView) => {
+      setLocalView(next);
+      if (onViewChange === undefined) return;
+      lastUrlView.current = next === 'profile' ? undefined : next;
+      onViewChange(next);
+    },
+    [onViewChange],
+  );
+  // The URL moved under the profile (Back, Forward, a pasted link): follow it.
+  useEffect(() => {
+    if (!urlDriven || lastUrlView.current === urlView) return;
+    lastUrlView.current = urlView;
+    setLocalView(urlView ?? 'profile');
+  }, [urlDriven, urlView]);
   // #907 review item 1(b): held here and let go once the editor has used it, so
   // Cancel then Edit never lays the dropped typing over the form a second time.
   const [pendingDuplicate, setPendingDuplicate] = useState<DuplicateAddKinfolk | null>(duplicateAdd);

@@ -667,18 +667,12 @@
   max-width: min(260px, calc(100vw - 48px));
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  /* `.glass-surface`'s recipe: the translucent token fill plus a blur of what
-     shows through. It used to say `.den-panel` wears this too, and since #751
-     the panel does not: a panel is a navy gradient with no blur, because the
-     mocks draw it that way and what shows through a panel is the ground.
-
-     This tooltip is the case that still needs the blur, and it is a different
-     case. It floats OVER panel copy rather than over the wash, so without the
-     blur that copy reads straight through a 0.6-alpha fill in dark. The mocks
-     draw no tooltip at all, so there is nothing of theirs to follow here. */
-  background: var(--color-surface-glass);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  /* OPAQUE (#1596). This used to be `.glass-surface`'s recipe, a 0.6/0.8-alpha
+     fill plus a 10px blur, and the QA walk read page text and chips straight
+     through it. A tip floats over panel copy, so it takes the solid surface
+     token. The mocks draw no tooltip, so there is no mock fill to follow. */
+  background: var(--color-surface);
+  color: var(--color-text-dim);
   border: var(--border-hairline) solid var(--color-border);
   border-radius: var(--radius-card);
   /* The popover shadow this app already uses (BreedField, TagAssignField,
@@ -693,6 +687,16 @@
    every tip on the page is permanently open. */
 .kit-tip-body[hidden] {
   display: none;
+}
+/* #1596: an open tip lives in the top layer (KitTooltip calls showPopover), so
+   no panel's stacking context can paint over it. The component sets `top` and
+   `left` from the button's rect and keeps it inside the window; these undo the
+   UA popover sheet's centring (`inset: 0; margin: auto`) and its scroll box. */
+.kit-tip-body:popover-open {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  overflow: visible;
 }
 .den-panel-titlerow,
 .den-heading-titlerow {

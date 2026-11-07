@@ -455,6 +455,27 @@ describe('KinfolkProfile: sub-view wiring', () => {
     await user.click(await screen.findByRole('button', { name: /household data/i }));
     expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
   });
+  it('#1594: reports the sub-view to the route, opens the one the URL names, and follows Back', async () => {
+    const user = userEvent.setup();
+    const onViewChange = vi.fn();
+    const props = { kinfolkId: 'k1', kinfolkName: 'Jamie Halbrook', kin: [kin()], onBack: vi.fn(), onViewChange };
+    const { rerender } = render(<KinfolkProfile {...props} />);
+    await user.click(await screen.findByRole('button', { name: /household data/i }));
+    expect(onViewChange).toHaveBeenLastCalledWith('household');
+    // The route writes `?view=household`.
+    rerender(<KinfolkProfile {...props} view="household" />);
+    expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
+    // Browser Back drops `?view=`: the profile comes back, not the Directory list.
+    rerender(<KinfolkProfile {...props} />);
+    expect(screen.queryByText('STUB HouseholdData')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /household data/i })).toBeInTheDocument();
+  });
+  it('#1594: a reload of ?view=household opens straight on the household record', () => {
+    render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} view="household" onViewChange={vi.fn()} />,
+    );
+    expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
+  });
   // Members is the one sub-view that is NOT a local swap: it has its own route,
   // so it gets a real anchor. That is what makes it linkable and openable in a
   // new tab, which a button swapping state can never be.
