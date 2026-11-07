@@ -80,6 +80,7 @@ getInvitePreview
 getInvoiceLedger
 getKinTaleComments
 getKinTaleReaction
+getKinTaleTemplateUsage
 getLocalWeather
 getMyAccess
 getMyAccount

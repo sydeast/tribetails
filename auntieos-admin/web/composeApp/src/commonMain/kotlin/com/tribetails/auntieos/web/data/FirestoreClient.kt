@@ -934,10 +934,7 @@ class FirestoreClient {
             emit(DefaultKinTaleTemplate.template)
             templatesStream().collect { res ->
                 if (res !is FirestoreResult.Data) return@collect
-                val active = res.value.filter { it.isActive }
-                val needle = serviceType.lowercase().trim()
-                val match  = active.firstOrNull { tpl -> tpl.serviceTypeKeys.any { it.lowercase().trim() == needle } }
-                emit(match ?: active.firstOrNull { it.isDefault } ?: DefaultKinTaleTemplate.template)
+                emit(pickActiveTemplate(res.value, serviceType))
             }
         }
 
@@ -2354,6 +2351,46 @@ class FirestoreClient {
     suspend fun deleteKinTaleTemplate(templateId: String): WriteResult<Unit> =
         platformDeleteKinTaleTemplate(templateId)
 
+    /**
+     * #1591: the one entry point that archives, restores or deletes a KinTale
+     * template (operator ruling 2026-11-05: "both"). ARCHIVE and RESTORE go
+     * through the #994 field diff, so only `archived`, `archivedAt`,
+     * `updatedAt` (and on a restore that must give up the default, `isDefault`)
+     * are written. DELETE removes the doc, which `firestore.rules` allows only
+     * for an archived template.
+     */
+    suspend fun removeKinTaleTemplate(
+        template: KinTaleTemplate,
+        mode: KinTaleTemplateRemoval,
+        clearDefault: Boolean = false,
+        at: String = com.tribetails.auntieos.web.util.nowIso(),
+    ): WriteResult<Unit> {
+        val edited = when (mode) {
+            KinTaleTemplateRemoval.DELETE -> return deleteKinTaleTemplate(template._id)
+            KinTaleTemplateRemoval.ARCHIVE -> template.copy(archived = true, archivedAt = at, updatedAt = at)
+            KinTaleTemplateRemoval.RESTORE -> template.copy(
+                archived = false,
+                archivedAt = "",
+                updatedAt = at,
+                isDefault = template.isDefault && !clearDefault,
+            )
+        }
+        return when (val r = updateKinTaleTemplate(template, edited)) {
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+        }
+    }
+    /** #1591: what uses this template, for a confirm that names what breaks. Owner-only on the server. */
+    suspend fun getKinTaleTemplateUsage(templateId: String): WriteResult<KinTaleTemplateUsage> {
+        val payload = buildJsonObject { put("templateId", JsonPrimitive(templateId)) }
+        return when (val r = platformInvokeCallable("getKinTaleTemplateUsage", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(decodeKinTaleTemplateUsage(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "usage decode failed") }
+        }
+    }
+
     // ---- Booking notes subcollections ----
     /**
      * Live stream of notes under a booking. internal=false reads `notes/` (kinfolk-facing);
@@ -3583,6 +3620,17 @@ data class KinCareReport(
  * pass-1 ("legacy_orphan") or pass-2 ("legacy_visit_logs") backfill markers
  * the May-17 migration scripts wrote.
  */
+/**
+ * The template a NEW KinTale is written against: an active template whose
+ * service keys name [serviceType], else the active default, else the built-in.
+ * #1591: an archived template is never picked. Pure; tested.
+ */
+fun pickActiveTemplate(templates: List<KinTaleTemplate>, serviceType: String): KinTaleTemplate {
+    val active = templates.filter { it.isActive && !it.archived }
+    val needle = serviceType.lowercase().trim()
+    val match = active.firstOrNull { tpl -> tpl.serviceTypeKeys.any { it.lowercase().trim() == needle } }
+    return match ?: active.firstOrNull { it.isDefault } ?: DefaultKinTaleTemplate.template
+}
 fun KinCareReport.isUntriagedOrphan(): Boolean =
     kinfolkId.isBlank() && triageStatus.isBlank() &&
     sentVia in setOf("legacy_orphan", "legacy_visit_logs")
