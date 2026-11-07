@@ -1,3 +1,4 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { kinTaleMatchesSearch, kinTalesPageQuery, type KinTaleEntry } from '../api/kinTales';
@@ -6,7 +7,7 @@ import {
   GENERATED_DRAFTS_MAX,
   type GeneratedDraftRow,
 } from '../api/drafts';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import {
   kinTaleHousehold,
   kinTaleState,
@@ -230,7 +231,7 @@ export function KinTales({ onSelect }: KinTalesProps) {
   // The facet's options come from the household DIRECTORY, not from the loaded
   // KinTales. Deriving them from the page would offer only households that are
   // already on screen, which is the opposite of what the control is for.
-  const households = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const households = useKinfolkRoster();
   const householdOptions = useMemo(
     () =>
       households.status === 'ready'

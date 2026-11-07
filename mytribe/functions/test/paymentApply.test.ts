@@ -69,15 +69,26 @@ describe('planApply: the happy path', () => {
     expect(result.step.after.state).toBe('settled');
   });
 
-  it('reports an overpayment as overpaid, and never as a negative balance', () => {
-    // A negative amountDue is this codebase's CREDIT signal. An overpayment
-    // leaking one would reclassify a settled invoice as money owed BACK.
+  it('#1566: refuses to apply more than the invoice owes, because the rest is tip', () => {
+    // Operator ruling, 2026-09-27: an overpayment is all tip. Before #1566 this
+    // plan was accepted and the invoice went `overpaid` with the $27.50 on the
+    // bill instead of in the tip.
     const result = plan({ appliedCents: 12750, invoice: invoice({ total: 100 }) });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.step.after.state).toBe('overpaid');
-    expect(result.step.after.amountDueCents).toBe(0);
-    expect(result.step.after.overpaidCents).toBe(2750);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.refusal.code).toBe('invoice_amount_exceeds_balance');
+    expect(result.refusal.amountDueCents).toBe(10000);
+    expect(result.refusal.message).toBe(
+      '$127.50 is more than the $100.00 still owed on this invoice. Apply $100.00 and record the rest of the payment as tip.',
+    );
+  });
+  it('#1566: measures the balance from the recorded payments, not the whole total', () => {
+    const partPaid = { ...invoice(), existingPayments: [{ amountCents: 2750 }] };
+    expect(plan({ invoice: partPaid, appliedCents: 10000 }).ok).toBe(true);
+    const over = plan({ invoice: partPaid, appliedCents: 10001 });
+    expect(over.ok).toBe(false);
+    if (over.ok) return;
+    expect(over.refusal.code).toBe('invoice_amount_exceeds_balance');
   });
 
   it('allows an apply against a payment that has no household of its own', () => {
