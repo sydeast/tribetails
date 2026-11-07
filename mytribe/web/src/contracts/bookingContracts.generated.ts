@@ -20,6 +20,7 @@ export interface RescheduleRequestDto {
   kinfolkId: string;
   batchId: string;
   visitId: string;
+  kinfolkName: string | null;
   title: string | null;
   serviceType: string | null;
   kinNames: string[];
@@ -39,6 +40,7 @@ export interface CancelRequestDto {
   kinfolkId: string;
   batchId: string;
   visitId: string;
+  kinfolkName: string | null;
   title: string | null;
   serviceType: string | null;
   kinNames: string[];

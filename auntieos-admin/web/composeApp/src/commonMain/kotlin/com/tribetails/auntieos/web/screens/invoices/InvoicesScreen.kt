@@ -156,6 +156,8 @@ fun InvoicesScreen(
         }
     }
     var actionError by remember { mutableStateOf<String?>(null) }
+    /** #1609: the row send waiting on its confirm. */
+    var rowSendConfirm by remember { mutableStateOf<Pair<String, HouseholdSend>?>(null) }
 
     var actionNotice by remember { mutableStateOf<String?>(null) }
     /**
@@ -412,10 +414,27 @@ fun InvoicesScreen(
                                 todayIso = todayIso,
                                 onInvoiceClick = onInvoiceClick,
                                 onReceipt = onReceipt,
-                                onSendReminder = onSendReminder,
-                                onReviewSend = onReviewSend,
+                                // #1609: both confirm first, naming who the send reaches.
+                                onSendReminder = { id -> rowSendConfirm = id to HouseholdSend.REMINDER },
+                                onReviewSend = { inv -> rowSendConfirm = inv._id to HouseholdSend.REVIEW_SEND },
                                 remindingIds = remindingIds,
                             )
+                            rowSendConfirm?.let { (id, send) ->
+                                SendConfirmDialog(
+                                    client = client,
+                                    invoiceId = id,
+                                    send = send,
+                                    onConfirm = {
+                                        rowSendConfirm = null
+                                        if (send == HouseholdSend.REMINDER) {
+                                            onSendReminder(id)
+                                        } else {
+                                            s.value.firstOrNull { it._id == id }?.let(onReviewSend)
+                                        }
+                                    },
+                                    onDismiss = { rowSendConfirm = null },
+                                )
+                            }
                         }
                     }
                 }
@@ -564,7 +583,7 @@ internal fun overdueCaptionFor(invoices: List<Invoice>, todayIso: String): Strin
 private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
     val outstanding = invoices.filter { invoiceIsOutstanding(it) }
     val outstandingTotal = outstanding.sumOf { it.amountDue }
-    val billedTotal = invoices.sumOf { it.total }
+    val billedTotal = invoiceBilledTotal(invoices)
     val overdueInvoices = invoices.filter { invoiceIsOverdue(it, todayIso) }
     val overdueCount = overdueInvoices.size
 
@@ -590,7 +609,7 @@ private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
         StatCard(
             label    = "Billed total",
             value    = formatMoney(billedTotal),
-            trend    = "all invoices on the books",
+            trend    = "sent invoices on the books",
             tone     = AuntieStatusTone.Teal,
             modifier = Modifier.weight(1f),
         )
@@ -786,7 +805,7 @@ internal fun InvoiceRow(
                 color = c.textDim,
             )
             Text(
-                text  = "#${invoice.invoiceNumber.ifBlank { "(none)" }}",
+                text  = invoiceNumberLabel(invoice.invoiceNumber),
                 style = AuntieTheme.typography.mono.copy(fontWeight = FontWeight.Medium),
                 color = c.textPrimary,
             )
@@ -932,3 +951,17 @@ private fun EmptyState() {
         icon    = Lucide.ReceiptText,
     )
 }
+
+/** #1609: the row's number, or "No number" in words rather than "#(none)". */
+internal fun invoiceNumberLabel(number: String): String =
+    if (number.isBlank()) "No number" else "#${number.trim()}"
+/**
+ * #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
+ * estimate the household has not agreed to, so neither counts toward Billed
+ * total. Same rule as admin web and admin Android. Pure; tested.
+ */
+internal fun invoiceBilledTotal(invoices: List<Invoice>): Double =
+    invoices.filter {
+        val state = invoiceStateOrNull(it)
+        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE
+    }.sumOf { it.total }

@@ -476,6 +476,8 @@ data class Invoice(
     var address: String = "",
     var date: String = "",
     var terms: String = "",
+    /** #1609: the structured terms code when the terms came from the picker, else "". */
+    var termsCode: String = "",
     var dueDate: String = "",
     var discount: String = "",
     var total: Double = 0.0,
@@ -1330,6 +1332,12 @@ data class Draft(
  *
  * Pure (a Map in, a Draft out) so it is unit-tested without Firestore.
  */
+/**
+ * #1629: how many drafts are waiting on a decision, by the rule Home's rows use:
+ * unsent ([Draft.isUnsent]) and with copy to review. Pure; tested.
+ */
+fun pendingDraftCountOf(drafts: List<Draft>): Int = drafts.count { it.isUnsent && it.generatedCopy.isNotBlank() }
+
 fun draftFromFields(id: String, data: Map<String, Any?>): Draft {
     fun str(key: String): String = (data[key] as? String)?.trim().orEmpty()
     fun either(camel: String, snake: String): String = str(camel).ifBlank { str(snake) }

@@ -336,3 +336,14 @@ fun formatDuration(minutes: Int): String {
     val m = minutes % 60
     return "${h}h ${m.toString().padStart(2, '0')}m"
 }
+
+/**
+ * The Today's Pack overdue line (#1590): "6 overdue visits to close out in
+ * Auntie Time". Null when nothing is overdue, so the card says nothing rather
+ * than "0 overdue".
+ */
+fun todaysPackOverdueLabel(count: Int): String? = when {
+    count <= 0 -> null
+    count == 1 -> "1 overdue visit to close out in Auntie Time"
+    else -> "$count overdue visits to close out in Auntie Time"
+}

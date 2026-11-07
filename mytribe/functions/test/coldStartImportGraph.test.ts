@@ -133,11 +133,17 @@ const ALLOWED_EAGER_PACKAGES = [
  * whole. Measured at 423 after merging onto #1316, inside the 430
  * already allowed, so the bound did not move.
  *
- * 440 since #1580 (main had reached 429): that change adds
- * `admin/listVisitInternalNotes.ts`, the visit's one internal-notes list, and
- * `lib/visitNotes.ts`, the path and target resolution it shares with
- * `addInternalBookingNote`. Two modules whose imports are all already
- * resident; not a structural change.
+ * 440 since #1577 (main had reached 431): that change adds
+ * `lib/householdNames.ts`, the one read of `families/{id}.displayName` that
+ * `listRescheduleRequests` and `listCancelRequests` share so a visit request
+ * names its household. One module whose imports are already resident; not a
+ * structural change.
+ *
+ * #1580 adds `admin/listVisitInternalNotes.ts`, the visit's one
+ * internal-notes list, and `lib/visitNotes.ts`, the path and target
+ * resolution it shares with `addInternalBookingNote`. Two modules whose
+ * imports are all already resident, inside the 440 already allowed, so the
+ * bound did not move.
  */
 const MAX_OWN_EAGER_MODULES = 440;
 

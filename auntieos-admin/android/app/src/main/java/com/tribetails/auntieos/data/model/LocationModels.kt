@@ -188,7 +188,10 @@ data class BusinessSettings(
     // --- GPS / tracking ---
     var enableGPSTrackingForAllVisits: Boolean = true, // Master GPS tracking switch
     var enablePhotoLocationTagging: Boolean = true,
-    var requireArrivalDepartureVerification: Boolean = true,
+    // #1620: absent means OFF, the server's reading (`=== true` in
+    // functions/src/lib/arrivalVerification.ts). A default of true showed the
+    // switch on while Complete went through.
+    var requireArrivalDepartureVerification: Boolean = false,
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value here, that is what the switch is for. 150 m matches
