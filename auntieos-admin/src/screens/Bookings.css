@@ -114,6 +114,17 @@
 .bookings__row-accent--scheduled {
   background: var(--color-accent);
 }
+/* #1578: a visit under way keeps the scheduled stripe's place in its section,
+   in the hue its pill wears. */
+.bookings__row-accent--onmyway {
+  background: var(--color-primary);
+}
+.bookings__row-accent--arrived {
+  background: var(--color-accent);
+}
+.bookings__row-accent--departed {
+  background: var(--color-tertiary);
+}
 .bookings__row-accent--completed {
   background: var(--color-tertiary);
 }
