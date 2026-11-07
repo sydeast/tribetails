@@ -47,6 +47,7 @@ import com.tribetails.auntieos.web.screens.inbox.InboxScreen
 import com.tribetails.auntieos.web.screens.notifications.NotificationsScreen
 import com.tribetails.auntieos.web.screens.invoices.InvoiceDetailScreen
 import com.tribetails.auntieos.web.screens.invoices.InvoicesScreen
+import com.tribetails.auntieos.web.screens.kintales.KinTaleListFilter
 import com.tribetails.auntieos.web.screens.kintales.KinTaleLogsScreen
 import com.tribetails.auntieos.web.screens.kintales.KinTaleReportScreen
 import com.tribetails.auntieos.web.screens.media.MediaGalleryScreen
@@ -196,6 +197,11 @@ private fun SignedInApp(
     var invoiceLineVisitId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(current) { if (current != Destination.Sessions) invoiceLineVisitId = null }
     var reportSessionId by remember { mutableStateOf(if (initialRoute.dest == Destination.KinTales) initialRoute.detailId else null) }
+    // #1594: the KinTale list's search and sort, held above the list so a
+    // KinTale opened from it closes back onto the same filtered list. Leaving
+    // KinTales lets it go, as the web list opens fresh from the rail.
+    val kinTaleListFilter = remember { KinTaleListFilter() }
+    LaunchedEffect(current) { if (current != Destination.KinTales) kinTaleListFilter.reset() }
     // #1563: a stored KinTale draft handed to Communicate from KinTales or Home.
     // Communicate clears it once applied, so the next visit opens blank.
     var openDraft by remember { mutableStateOf<com.tribetails.auntieos.web.data.GeneratedDraft?>(null) }
@@ -436,6 +442,7 @@ private fun SignedInApp(
                     KinTaleLogsScreen(
                         onOpenReport = { reportSessionId = it },
                         onOpenDraft = { draft -> openDraft = draft; current = Destination.Communicate },
+                        listFilter = kinTaleListFilter,
                     )
                 }
             }

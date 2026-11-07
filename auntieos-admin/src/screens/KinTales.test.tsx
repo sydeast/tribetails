@@ -450,6 +450,15 @@ describe('KinTales screen: the date window', () => {
     expect(screen.getByRole('tab', { name: 'All (archive)' })).toHaveAttribute('aria-selected', 'true');
     expect(lastSpec().filters ?? []).toEqual([]);
   });
+
+  it('tells the route which window was picked, so a closed KinTale lands back on it (#1594)', async () => {
+    const onRangeChange = vi.fn();
+    render(<KinTales onRangeChange={onRangeChange} />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Last 30 days' }));
+    expect(onRangeChange).toHaveBeenCalledWith('30d');
+    expect(screen.getByRole('tab', { name: 'Last 30 days' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('windows against an ISO string, which is what kin_care_reports.createdAt holds', () => {
     render(<KinTales />);
     const bound = lastSpec().filters?.[0]?.[2];
