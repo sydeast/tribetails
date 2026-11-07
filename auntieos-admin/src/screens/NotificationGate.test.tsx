@@ -530,6 +530,7 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
     source: 'roster' as const,
     rosterPath: 'businessSettings/admins.uids',
     reason: null,
+    businessEmail: 'pawsome@hanasamku.com',
   };
   async function open(label = /Who gets this, and what fires it/i) {
     render(<NotificationGate />);
@@ -540,7 +541,26 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
     listBusinessAdmins.mockResolvedValue(roster);
     await open();
     expect(await screen.findByText(/Auntie Nora/)).toBeInTheDocument();
-    expect(screen.getByText(/nora@tribetails.com/)).toBeInTheDocument();
+    // #1564: a member's own address is not where business email goes.
+    expect(screen.queryByText(/nora@tribetails.com/)).not.toBeInTheDocument();
+  });
+  /**
+   * #1564. Operator ruling, 2026-11-05 docket: every business email goes to
+   * the business contact email in business settings.
+   */
+  it('#1564: says business emails go to the business contact email', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
+    listBusinessAdmins.mockResolvedValue(roster);
+    await open();
+    expect(await screen.findByTestId('business-email-line')).toHaveTextContent(
+      'Emails go to the business email, pawsome@hanasamku.com.',
+    );
+  });
+  it('#1564: says business emails have nowhere to go while businessEmail is blank', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
+    listBusinessAdmins.mockResolvedValue({ ...roster, businessEmail: '' });
+    await open();
+    expect(await screen.findByTestId('business-email-line')).toHaveTextContent(/nowhere to go/);
   });
   it('shows an allowlist-seeded operator by uid rather than dropping them', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
@@ -562,6 +582,7 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
       source: 'none',
       rosterPath: 'businessSettings/admins.uids',
       reason: 'businessSettings/admins.uids is empty, so this reaches nobody. Call provisionBusinessAdmins.',
+      businessEmail: '',
     });
     await open();
     expect(await screen.findByText(/Call provisionBusinessAdmins/)).toBeInTheDocument();

@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.text.SpanStyle
@@ -159,6 +160,7 @@ import com.tribetails.auntieos.data.model.NotifBadgeTone
 import com.tribetails.auntieos.data.model.NotifDeliveryTone
 import com.tribetails.auntieos.data.model.BusinessAdminRoster
 import com.tribetails.auntieos.data.model.businessAdminLines
+import com.tribetails.auntieos.data.model.businessEmailLine
 import com.tribetails.auntieos.data.model.businessAdminSourceNote
 import com.tribetails.auntieos.data.model.notifDeliveryPhrase
 import com.tribetails.auntieos.data.model.notifReachesBusinessAdmins
@@ -1634,6 +1636,13 @@ private fun NotifBusinessAdminRosterBlock() {
                 color = c.textFaint,
             )
             else -> {
+                // #1564: where this row's emails go, before who is on the roster.
+                Text(
+                    businessEmailLine(current),
+                    style = AuntieTheme.typography.bodySmall,
+                    color = if (current.businessEmail.isBlank()) c.warning else c.textDim,
+                    modifier = Modifier.testTag("business-email-line"),
+                )
                 Text(
                     "By name:",
                     style = AuntieTheme.typography.bodySmall,

@@ -123,6 +123,12 @@ describe('mediaMetaLine', () => {
     expect(mediaMetaLine('2026-07-16T09:03:00.000Z', 'Jamie')).toBe('2026-07-16 · Jamie');
   });
 
+  it('#1564: shows the uploader by name when the staff list knows the uid', () => {
+    const names = new Map([['nppJNdMNYJfUigibGKUQj3n4obt2', 'E2E Admin']]);
+    expect(mediaMetaLine('2026-07-16T09:03:00.000Z', 'nppJNdMNYJfUigibGKUQj3n4obt2', names)).toBe('2026-07-16 · E2E Admin');
+    expect(mediaMetaLine('2026-07-16T09:03:00.000Z', 'Jamie', names)).toBe('2026-07-16 · Jamie');
+  });
+
   it('drops the author when it is blank', () => {
     expect(mediaMetaLine('2026-07-16T09:03:00.000Z', '')).toBe('2026-07-16');
     expect(mediaMetaLine('2026-07-16T09:03:00.000Z', '   ')).toBe('2026-07-16');

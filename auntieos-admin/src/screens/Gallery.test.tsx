@@ -7,6 +7,9 @@ import { type MediaFile } from '../api/gallery';
 import { type Kinfolk, type Kin } from '../api/directory';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+// #1564: the uploader line resolves a staff uid to a name through listStaff.
+const { staffNames } = vi.hoisted(() => ({ staffNames: new Map<string, string>() }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
 // The tag dialog's only write path (#447). Mocked at the api seam, not at
@@ -118,6 +121,19 @@ describe('Gallery screen, media stream', () => {
     expect(within(tile).getByText('Rufus at the park')).toBeInTheDocument();
     expect(within(tile).getByText('Jamie Halbrook')).toBeInTheDocument();
     expect(within(tile).getByText('2026-07-16 · Jamie')).toBeInTheDocument();
+  });
+
+  it('#1564: shows a staff uploader by name, never by uid', () => {
+    staffNames.set('nppJNdMNYJfUigibGKUQj3n4obt2', 'E2E Admin');
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ description: 'Rufus at the park', uploadedBy: 'nppJNdMNYJfUigibGKUQj3n4obt2' })],
+    };
+    render(<Gallery />);
+    const tile = tileFor('Rufus at the park');
+    expect(within(tile).getByText('2026-07-16 · E2E Admin')).toBeInTheDocument();
+    expect(within(tile).queryByText(/nppJNdMNYJfUigibGKUQj3n4obt2/)).not.toBeInTheDocument();
+    staffNames.clear();
   });
 
   it('falls back to originalFileName when description is blank', () => {
