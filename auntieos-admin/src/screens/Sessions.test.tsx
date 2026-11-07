@@ -66,6 +66,13 @@ vi.mock('../lib/visitTracking', () => ({
   endVisitTracking: vi.fn(),
   stopVisitTracking: vi.fn(),
 }));
+/**
+ * #1608: the operator's arrival-and-departure rule, as the board reads it.
+ * Mocked at the hook so no case reaches Firestore; null (unknown) by default,
+ * which is the "let the server decide" path every older case was written for.
+ */
+const { useArrivalRule } = vi.hoisted(() => ({ useArrivalRule: vi.fn<() => boolean | null>(() => null) }));
+vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
 import { Sessions } from './Sessions';
 
 /**
@@ -124,11 +131,14 @@ function paged(
  * hand the kin roster to the address lookup and vice versa, which is exactly the
  * confusion the card must never make.
  */
-function directory(households: Kinfolk[] = [], kin: Kin[] = []) {
+function directory(households: Kinfolk[] = [], kin: Kin[] = [], olderOverdue: SessionEntry[] = []) {
   useCollection.mockImplementation((spec: CollectionSpec) =>
     spec.path === 'kin'
       ? { status: 'ready', data: kin }
-      : { status: 'ready', data: households },
+      : // #1607: the overdue visits from before the board's window.
+        spec.path === 'kin_care_sessions'
+        ? { status: 'ready', data: olderOverdue }
+        : { status: 'ready', data: households },
   );
 }
 
@@ -270,6 +280,29 @@ describe('Auntie Time: the four phase groups', () => {
     expect(phaseCount('Overdue')).toBe('1');
     expect(phaseCount('Upcoming')).toBe('1');
     expect(phaseCount('Recent')).toBe('1');
+  });
+
+  /**
+   * #1607: Bookings marked July and August visits OVERDUE while this board's
+   * Overdue showed only six from October, because the board reads a window
+   * from 30 days back. The older ones arrive through their own query and land
+   * in the same group, counted once.
+   */
+  it('Overdue also holds the scheduled visits older than the board window, once each', () => {
+    const july = entry({ _id: 'jul', kinfolkName: 'Left In July', status: 'SCHEDULED', startTime: at(-120) });
+    const recent = entry({ _id: 'rec', kinfolkName: 'Left Last Week', status: 'SCHEDULED', startTime: at(-7) });
+    directory([], [], [july, recent]);
+    usePagedCollection.mockReturnValue(paged([recent]));
+    renderBoard();
+    expect(phaseCount('Overdue')).toBe('2');
+    expect(screen.getByText('Left In July')).toBeInTheDocument();
+    const spec = useCollection.mock.calls
+      .map((c) => c[0] as CollectionSpec)
+      .find((c) => c.path === 'kin_care_sessions');
+    expect(spec?.filters).toEqual([
+      ['status', '==', 'SCHEDULED'],
+      ['startTime', '<', expect.any(String)],
+    ]);
   });
 
   it('sorts each visit into its own phase group', () => {
@@ -616,6 +649,44 @@ describe('Auntie Time: the card runs the visit', () => {
       expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
     );
     expect(patchVisitLifecycle).not.toHaveBeenCalled();
+  });
+
+  // #1608: the rule is checked before the confirm, not 18 s after it.
+  it('says what is missing instead of asking, when the rule refuses the Complete', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }));
+    expect(
+      await screen.findByText(/This visit has no arrival and departure recorded, and your settings require both/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /yes, mark it completed/i })).not.toBeInTheDocument();
+    expect(transitionBookingStatus).not.toHaveBeenCalled();
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('asks as before when the rule is off', async () => {
+    useArrivalRule.mockReturnValue(false);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await act(/^Complete$/, /yes, mark it completed/i);
+    expect(transitionBookingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
+    );
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('asks as before when the rule is on and both steps are stamped', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({
+      status: 'ON_MY_WAY',
+      startTime: at(0, 9),
+      arrivedAt: at(0, 9, 5),
+      departedAt: at(0, 9, 35),
+    });
+    await act(/^Complete$/, /yes, mark it completed/i);
+    expect(transitionBookingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
+    );
+    useArrivalRule.mockReturnValue(null);
   });
 
   it('refreshes the page after a write that changed the document, so the card stops lying', async () => {

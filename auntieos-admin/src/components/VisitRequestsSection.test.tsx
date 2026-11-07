@@ -201,7 +201,7 @@ describe('VisitRequestsSection', () => {
     expect(screen.getByText('The Devlins')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Hide' })).toHaveAttribute('aria-pressed', 'true');
   });
-  it('shows both kinds of ask in one queue, oldest first', async () => {
+  it('shows both kinds of ask in one queue, newest first (#1607)', async () => {
     listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
     render(<VisitRequestsSection />);
@@ -215,8 +215,9 @@ describe('VisitRequestsSection', () => {
     const titles = [...document.querySelectorAll('.visit-requests__row-title')].map(
       (n) => n.textContent,
     );
-    // #1577: the row is named by the household asking, not by the service.
-    expect(titles).toEqual(['The Devlins', 'The Wrens']);
+    // #1577: the row is named by the household asking, not by the service;
+    // #1607: newest first.
+    expect(titles).toEqual(['The Wrens', 'The Devlins']);
   });
 
   it('shows the cancellation ask with the visit it would take off and the reason', async () => {
@@ -484,15 +485,15 @@ describe('VisitRequestsSection', () => {
 });
 
 describe('mergeQueues', () => {
-  it('orders by how long the household has been waiting, oldest first', () => {
+  it('puts the newest ask first, so a request just filed is the first row (#1607)', () => {
     const rows = mergeQueues(
       [reschedule({ requestedAtMs: 300 })],
       [cancellation({ requestedAtMs: 100 }), cancellation({ visitId: 'v3', requestedAtMs: 200 })],
     );
-    expect(rows.map((r) => r.request.requestedAtMs)).toEqual([100, 200, 300]);
+    expect(rows.map((r) => r.request.requestedAtMs)).toEqual([300, 200, 100]);
   });
 
-  it('sorts a row with no timestamp last, rather than pretending it waited since 1970', () => {
+  it('sorts a row with no timestamp last, rather than claiming it just arrived', () => {
     const rows = mergeQueues(
       [reschedule({ requestedAtMs: null })],
       [cancellation({ requestedAtMs: 100 })],
@@ -767,7 +768,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     expect(await screen.findByText(/New booking requests: permission-denied/)).toBeInTheDocument();
   });
 
-  it('all three queues share one list, oldest ask first', async () => {
+  it('all three queues share one list, newest ask first (#1607)', async () => {
     listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
@@ -779,7 +780,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       .getAllByText(/^(New request|Cancel|Reschedule)$/)
       .map((n) => n.textContent);
     // newBooking asked at -5000, cancellation at -1000, reschedule at 0.
-    expect(kinds).toEqual(['New request', 'Cancel', 'Reschedule']);
+    expect(kinds).toEqual(['Reschedule', 'Cancel', 'New request']);
   });
 });
 
@@ -1136,5 +1137,26 @@ describe('VisitRequestsSection: whose request it is (#1577)', () => {
       await screen.findByRole('button', { name: decision === 'accept' ? 'Accept' : 'Decline' }),
     );
     expect(await screen.findByRole('dialog', { name: title })).toBeInTheDocument();
+  });
+});
+
+describe('VisitRequestsSection stays live (#1607)', () => {
+  it('reads the queues again when the screen files a request, keeping the rows on screen meanwhile', async () => {
+    listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
+    const { rerender } = render(<VisitRequestsSection refreshKey={0} />);
+    await openQueue();
+    expect(await screen.findByText('Morning drop-in · Biscuit')).toBeInTheDocument();
+    expect(listRescheduleRequests).toHaveBeenCalledTimes(1);
+    listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
+    rerender(
+      <ToastProvider>
+        <VisitRequestsSection refreshKey={1} />
+      </ToastProvider>,
+    );
+    // The row already shown stays while the next read is in flight.
+    expect(screen.getByText('Morning drop-in · Biscuit')).toBeInTheDocument();
+    expect(await screen.findByText('Evening sit · Nutmeg')).toBeInTheDocument();
+    expect(listRescheduleRequests).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('2 WAITING')).toBeInTheDocument();
   });
 });

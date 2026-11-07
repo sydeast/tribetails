@@ -16,6 +16,40 @@ import type { Async } from './async';
  * NOT re-fire the effect every render (only [label] is a dependency); a genuine
  * reload goes through the `retry` on the error state.
  */
+/**
+ * #1607: `useOneShot` that loads again whenever `key` changes, WITHOUT going
+ * back to `loading` first: the rows already on screen stay put while the next
+ * read is in flight, so a refresh never blanks a list or re-flashes a spinner.
+ * A failed refresh is shown (with a retry), never swallowed.
+ */
+export function useRefreshingLoad<T>(loader: () => Promise<T>, label: string, key: string): Async<T> {
+  const loaderRef = useRef(loader);
+  loaderRef.current = loader;
+  const [state, setState] = useState<Async<T>>({ status: 'loading' });
+  const [retries, setRetries] = useState(0);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const data = await loaderRef.current();
+        if (live) setState({ status: 'ready', data });
+      } catch (err) {
+        if (live) {
+          setState({
+            status: 'error',
+            message: `${label} failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            retry: () => setRetries((n) => n + 1),
+          });
+        }
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [key, label, retries]);
+  return state;
+}
+
 export function useOneShot<T>(loader: () => Promise<T>, label: string): Async<T> {
   const loaderRef = useRef(loader);
   loaderRef.current = loader;

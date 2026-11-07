@@ -14,6 +14,7 @@ import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { serviceDurationsReader, storedVisitEndIso } from './approveBookingSeriesCore';
 import { validateResponse } from '../lib/callableResponse';
 import { householdNamesFor } from '../lib/householdNames';
+import { RESCHEDULE_ASK_PASSED_MESSAGE, RESCHEDULE_IN_PAST_CODE } from '../lib/pastVisit';
 
 /**
  * The office's half of the kinfolk reschedule ask (issue #399, item 2).
@@ -157,6 +158,14 @@ export async function resolveBookingRescheduleRequestHandler(
       'failed-precondition',
       'This request carries no proposed start time, so there is nothing to move the visit to.',
     );
+  }
+  // #1574: the household's time was ahead when they asked (the portal refuses a
+  // past proposal), but it may have passed while the ask waited. Accepting it
+  // now would move the visit into the past, which stays blocked.
+  if (newStart.toMillis() < Date.now()) {
+    throw new HttpsError('failed-precondition', RESCHEDULE_ASK_PASSED_MESSAGE, {
+      code: RESCHEDULE_IN_PAST_CODE,
+    });
   }
   // #1118: a household that sent no end still gets the visit's real length,
   // so the guards below check the whole window and the stored visit has an end.

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useCollection } from '../../lib/firestore';
 import { localDateIso } from '../../lib/invoiceFormat';
-import { SESSIONS_QUERY, type SessionEntry } from '../../api/sessions';
+import { SESSIONS_QUERY, overdueBeforeWindowQuery, sessionsWindowQuery, type SessionEntry } from '../../api/sessions';
 import { KIN_QUERY, type Kin } from '../../api/directory';
 import { INVOICES_QUERY, type InvoiceEntry } from '../../api/invoices';
 import { GENERATED_DRAFTS_QUERY, type GeneratedDraftRow } from '../../api/drafts';
@@ -54,6 +54,27 @@ export function useSessionsStream(): Async<SessionEntry[]> {
   return useCollection<SessionEntry>(SESSIONS_QUERY);
 }
 
+/**
+ * The visits Auntie Time's day-of board reads: `sessionsWindowQuery`, the same
+ * 30-days-back / 15-days-forward range. Home's overdue count has to come from
+ * this window and not from `useSessionsStream`, because the newest-300 page
+ * there is sorted by `startTime` and a long forward book can push the late
+ * visits out of it, while the board would still list them.
+ */
+export function useSessionsWindowStream(todayIso: string): Async<SessionEntry[]> {
+  const spec = useMemo(() => sessionsWindowQuery(todayIso), [todayIso]);
+  const windowRows = useCollection<SessionEntry>(spec);
+  // #1607 / #1704: plus the SCHEDULED visits older than that window, which
+  // Auntie Time's Overdue now lists too, so Home's count is still the board's.
+  const olderSpec = useMemo(() => overdueBeforeWindowQuery(todayIso), [todayIso]);
+  const olderOverdue = useCollection<SessionEntry>(olderSpec);
+  return useMemo((): Async<SessionEntry[]> => {
+    if (windowRows.status !== 'ready') return windowRows;
+    if (olderOverdue.status !== 'ready') return olderOverdue;
+    const seen = new Set(windowRows.data.map((r) => r._id));
+    return { status: 'ready', data: [...windowRows.data, ...olderOverdue.data.filter((r) => !seen.has(r._id))] };
+  }, [windowRows, olderOverdue]);
+}
 /**
  * The bounded pet roster: `kin`, 500 by document id.
  *
