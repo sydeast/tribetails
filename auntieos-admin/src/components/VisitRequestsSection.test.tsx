@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from './Toast';
 import type {
@@ -67,6 +67,7 @@ function reschedule(overrides: Partial<RescheduleRequestDto> = {}): RescheduleRe
     kinfolkId: 'fam-1',
     batchId: 'b1',
     visitId: 'v1',
+    kinfolkName: 'The Wrens',
     title: 'Morning drop-in',
     serviceType: 'Drop-in Visit',
     kinNames: ['Biscuit'],
@@ -86,6 +87,7 @@ function cancellation(overrides: Partial<CancelRequestDto> = {}): CancelRequestD
     kinfolkId: 'fam-2',
     batchId: 'b2',
     visitId: 'v2',
+    kinfolkName: 'The Devlins',
     title: 'Evening sit',
     serviceType: 'Pet Sitting',
     kinNames: ['Nutmeg'],
@@ -191,12 +193,12 @@ describe('VisitRequestsSection', () => {
 
     // Nothing is hidden: the banner states the count out loud before a press.
     expect(await screen.findByText('2 WAITING')).toBeInTheDocument();
-    expect(screen.queryByText('Evening sit')).toBeNull();
+    expect(screen.queryByText('The Devlins')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull();
 
     const review = screen.getByRole('button', { name: 'Review 2' });
     await userEvent.click(review);
-    expect(screen.getByText('Evening sit')).toBeInTheDocument();
+    expect(screen.getByText('The Devlins')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Hide' })).toHaveAttribute('aria-pressed', 'true');
   });
   it('shows both kinds of ask in one queue, newest first (#1607)', async () => {
@@ -205,15 +207,17 @@ describe('VisitRequestsSection', () => {
     render(<VisitRequestsSection />);
     await openQueue();
 
-    expect(await screen.findByText('Evening sit')).toBeInTheDocument();
-    expect(screen.getByText('Morning drop-in')).toBeInTheDocument();
+    expect(await screen.findByText('Evening sit · Nutmeg')).toBeInTheDocument();
+    expect(screen.getByText('Morning drop-in · Biscuit')).toBeInTheDocument();
     // Banner uppercases its pill, so the assertion matches what an operator reads.
     expect(screen.getByText('2 WAITING')).toBeInTheDocument();
 
     const titles = [...document.querySelectorAll('.visit-requests__row-title')].map(
       (n) => n.textContent,
     );
-    expect(titles).toEqual(['Morning drop-in', 'Evening sit']);
+    // #1577: the row is named by the household asking, not by the service;
+    // #1607: newest first.
+    expect(titles).toEqual(['The Wrens', 'The Devlins']);
   });
 
   it('shows the cancellation ask with the visit it would take off and the reason', async () => {
@@ -221,8 +225,8 @@ describe('VisitRequestsSection', () => {
     render(<VisitRequestsSection />);
     await openQueue();
 
-    expect(await screen.findByText('Evening sit')).toBeInTheDocument();
-    expect(screen.getByText('Nutmeg')).toBeInTheDocument();
+    expect(await screen.findByText('The Devlins')).toBeInTheDocument();
+    expect(screen.getByText('Evening sit · Nutmeg')).toBeInTheDocument();
     expect(screen.getByText('We are taking her with us')).toBeInTheDocument();
     expect(screen.getByText(whenLabel(CURRENT_MS))).toBeInTheDocument();
     // The kind chip, so an operator never mistakes one ask for the other.
@@ -459,7 +463,7 @@ describe('VisitRequestsSection', () => {
       await screen.findByText('There is no cancellation request waiting on this visit.'),
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByText('Evening sit')).toBeInTheDocument();
+    expect(screen.getByText('Evening sit · Nutmeg')).toBeInTheDocument();
   });
 
   it('fails LOUD when a queue cannot be read, so nobody reads silence as "none waiting"', async () => {
@@ -475,7 +479,7 @@ describe('VisitRequestsSection', () => {
     render(<VisitRequestsSection />);
     await openQueue();
 
-    expect(await screen.findByText('Evening sit')).toBeInTheDocument();
+    expect(await screen.findByText('Evening sit · Nutmeg')).toBeInTheDocument();
     expect(screen.getByText(/reschedule requests: permission-denied/i)).toBeInTheDocument();
   });
 });
@@ -534,7 +538,8 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     await openQueue();
 
     expect(await screen.findByText('New request')).toBeInTheDocument();
-    expect(screen.getByText('Dog Walk')).toBeInTheDocument();
+    expect(screen.getByText('The Rivera Home')).toBeInTheDocument();
+    expect(screen.getByText('Dog Walk · Rex')).toBeInTheDocument();
     // The household's own words for the request, which an operator needs before
     // answering it.
     expect(screen.getByText('Back door code 1234')).toBeInTheDocument();
@@ -581,6 +586,28 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
         /All 4 visits are on the schedule and the household has been told once, with every date/,
       ),
     ).toBeInTheDocument();
+  });
+
+  it('#1577: says what Accept did and for whom, and keeps saying it once the queue is empty', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    approveBookingRequest.mockResolvedValue({
+      affectedVisits: 4,
+      failedVisits: 0,
+      newlyConfirmed: 4,
+      householdNotified: true,
+    });
+    render(<VisitRequestsSection />);
+    await openQueue();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+
+    // The answered card leaves the list, which empties it; the result stays.
+    const said = await screen.findByRole('status');
+    expect(said).toHaveTextContent(/^The Rivera Home: Approved\. All 4 visits are on the schedule/);
+    expect(screen.getByText('No visit requests waiting.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/The Rivera Home: Approved/)).toBeNull();
   });
 
   it('a re-approve of something already booked does not claim the household was told again', async () => {
@@ -657,6 +684,22 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     expect(screen.getByRole('button', { name: 'Book it' })).toBeEnabled();
   });
 
+  it('#1702: a request whose time has passed shows the server sentence and offers no Approve anyway', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    const sentence =
+      'The time this request asked for has already passed, so it cannot go on the calendar. Decline it, or move the visit to a time still ahead, then approve it.';
+    approveBookingRequest.mockRejectedValue(
+      Object.assign(new Error(sentence), { code: 'functions/failed-precondition', details: { code: 'approve_in_past' } }),
+    );
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+    expect(await screen.findByText(sentence)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
+    // Decline stays open to the operator, as the sentence says.
+    expect(screen.getByRole('button', { name: 'Book it' })).toBeEnabled();
+  });
   it('submits a decline with no note, since the office does not owe a reason (#700)', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     declineBookingRequest.mockResolvedValue({
@@ -1023,12 +1066,102 @@ describe('requestKey: envelope rows (#533)', () => {
     });
   });
 });
+/**
+ * #1577: the QA walk could not safely answer a request it had not made itself.
+ * The cards named the service, never the household; the card body did not
+ * open; and Accept did not say who the answer was for.
+ */
+describe('VisitRequestsSection: whose request it is (#1577)', () => {
+  it('names the household on every kind of card', async () => {
+    listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
+    listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    const titles = [...document.querySelectorAll('.visit-requests__row-title')].map((n) => n.textContent);
+    expect(titles).toEqual(expect.arrayContaining(['The Wrens', 'The Devlins', 'The Rivera Home']));
+  });
+  it('says plainly when the household name did not read, rather than showing the service in its place', async () => {
+    listCancelRequests.mockResolvedValue({ requests: [cancellation({ kinfolkName: null })] });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    expect(await screen.findByText('Household name not on file')).toBeInTheDocument();
+  });
+  it('opens the request from the card body, with every visit, the notes and the household', async () => {
+    listPendingBookingRequests.mockResolvedValue({
+      requests: [
+        newBooking({
+          visitCount: 2,
+          visits: [
+            {
+              visitId: 'v1',
+              serviceId: 's1',
+              serviceType: 'Dog Walk',
+              startTimeMs: CURRENT_MS,
+              startTimePending: false,
+              requestedDate: null,
+              timeBlockLabel: null,
+              lengthMinutes: 30,
+            },
+            {
+              visitId: 'v2',
+              serviceId: 's1',
+              serviceType: 'Dog Walk',
+              startTimeMs: CURRENT_MS + 24 * 60 * 60 * 1000,
+              startTimePending: false,
+              requestedDate: null,
+              timeBlockLabel: null,
+              lengthMinutes: 90,
+            },
+          ],
+        }),
+      ],
+    });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /The Rivera Home/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'New request from The Rivera Home' });
+    expect(dialog).toHaveTextContent('Rex');
+    expect(dialog).toHaveTextContent(`${whenLabel(CURRENT_MS)} · Dog Walk · 30 min`);
+    expect(dialog).toHaveTextContent('1 hr 30 min');
+    expect(dialog).toHaveTextContent('Back door code 1234');
+  });
+  it('Accept from the opened request goes to the confirm step, which names the household', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /The Rivera Home/ }));
+    const detail = await screen.findByRole('dialog', { name: 'New request from The Rivera Home' });
+    await userEvent.click(within(detail).getByRole('button', { name: 'Accept' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Book this request for The Rivera Home' });
+    expect(confirm).toHaveTextContent('Dog Walk · Rex');
+    expect(screen.queryByRole('dialog', { name: 'New request from The Rivera Home' })).toBeNull();
+  });
+  it.each([
+    ['reschedule', 'accept', 'Move this visit for The Wrens'],
+    ['reschedule', 'decline', 'Decline this new time from The Wrens'],
+    ['cancel', 'accept', 'Cancel this visit for The Devlins'],
+    ['cancel', 'decline', 'Keep this visit for The Devlins'],
+    ['newBooking', 'decline', 'Turn down this request from The Rivera Home'],
+  ] as const)('the %s %s dialog is titled with the household', async (kind, decision, title) => {
+    if (kind === 'reschedule') listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
+    if (kind === 'cancel') listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
+    if (kind === 'newBooking') listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await userEvent.click(
+      await screen.findByRole('button', { name: decision === 'accept' ? 'Accept' : 'Decline' }),
+    );
+    expect(await screen.findByRole('dialog', { name: title })).toBeInTheDocument();
+  });
+});
+
 describe('VisitRequestsSection stays live (#1607)', () => {
   it('reads the queues again when the screen files a request, keeping the rows on screen meanwhile', async () => {
     listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
     const { rerender } = render(<VisitRequestsSection refreshKey={0} />);
     await openQueue();
-    expect(await screen.findByText('Morning drop-in')).toBeInTheDocument();
+    expect(await screen.findByText('Morning drop-in · Biscuit')).toBeInTheDocument();
     expect(listRescheduleRequests).toHaveBeenCalledTimes(1);
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
     rerender(
@@ -1037,8 +1170,8 @@ describe('VisitRequestsSection stays live (#1607)', () => {
       </ToastProvider>,
     );
     // The row already shown stays while the next read is in flight.
-    expect(screen.getByText('Morning drop-in')).toBeInTheDocument();
-    expect(await screen.findByText('Evening sit')).toBeInTheDocument();
+    expect(screen.getByText('Morning drop-in · Biscuit')).toBeInTheDocument();
+    expect(await screen.findByText('Evening sit · Nutmeg')).toBeInTheDocument();
     expect(listRescheduleRequests).toHaveBeenCalledTimes(2);
     expect(screen.getByText('2 WAITING')).toBeInTheDocument();
   });

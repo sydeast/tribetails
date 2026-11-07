@@ -20,6 +20,7 @@ export interface RescheduleRequestDto {
   kinfolkId: string;
   batchId: string;
   visitId: string;
+  kinfolkName: string | null;
   title: string | null;
   serviceType: string | null;
   kinNames: string[];
@@ -39,6 +40,7 @@ export interface CancelRequestDto {
   kinfolkId: string;
   batchId: string;
   visitId: string;
+  kinfolkName: string | null;
   title: string | null;
   serviceType: string | null;
   kinNames: string[];
@@ -107,11 +109,13 @@ export interface GetBookingNotesResult {
  * a payload that satisfies the type can still be refused.
  */
 export interface AddInternalBookingNoteArgs {
-  kinfolkId: string;
+  kinfolkId?: string;
   batchId?: string;
   visitId?: string;
   bookingId?: string;
+  sessionId?: string;
   body: string;
+  visibility?: 'shared' | 'adminOnly';
 }
 
 /**
@@ -119,6 +123,44 @@ export interface AddInternalBookingNoteArgs {
  */
 export interface AddInternalBookingNoteResult {
   noteId: string;
+  visibility: 'shared' | 'adminOnly';
+  storedOn: 'thread' | 'visitRecord';
+}
+
+// ---------- listVisitInternalNotes ----------
+
+/**
+ * Request payload for the `listVisitInternalNotes` callable.
+ * The server also enforces a cross-field rule this type cannot express (zod .refine);
+ * a payload that satisfies the type can still be refused.
+ */
+export interface ListVisitInternalNotesArgs {
+  sessionId?: string;
+  kinfolkId?: string;
+  batchId?: string;
+  visitId?: string;
+}
+
+/**
+ * Nested in the `listVisitInternalNotes` contract.
+ */
+export interface ListVisitInternalNotesResultNote {
+  id: string;
+  body: string;
+  authorRole: 'admin' | 'auntie' | 'unknown';
+  authorName: string | null;
+  createdAtMs: number | null;
+  visibility: 'shared' | 'adminOnly';
+  source: 'thread' | 'visitRecord';
+}
+
+/**
+ * Response from the `listVisitInternalNotes` callable.
+ */
+export interface ListVisitInternalNotesResult {
+  notes: ListVisitInternalNotesResultNote[];
+  canMarkAdminOnly: boolean;
+  hasBookingRecord: boolean;
 }
 
 // ---------- batchUpdateBookings ----------
@@ -185,6 +227,7 @@ export interface CreateMultiDateBookingRequestArgs {
   idempotencyKey?: string;
   kinIds?: string[];
   notes?: string;
+  staffNotes?: string;
   pattern?: 'individual' | 'weekly';
   weeklyDays?: number[];
   visits: CreateMultiDateBookingRequestArgsVisit[];

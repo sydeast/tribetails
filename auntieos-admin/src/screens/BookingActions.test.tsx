@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
@@ -34,6 +34,18 @@ vi.mock('../api/bookingsWrite', () => ({
 const { useArrivalRule } = vi.hoisted(() => ({ useArrivalRule: vi.fn<() => boolean | null>(() => null) }));
 vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
 import { BookingActions, BookingStatusActions } from './BookingActions';
+
+// #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
+// into the past (nor a New visit scheduled there). The clock is pinned before
+// the earliest of them; only Date is faked, so userEvent's timers run as normal.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 
 function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;

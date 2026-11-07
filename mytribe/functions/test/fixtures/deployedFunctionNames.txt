@@ -99,6 +99,7 @@ getMyPaymentMethod
 getMyTribeProfile
 getMyVisits
 getNotificationCatalog
+getRecordingAudio
 getServiceCatalog
 getShareLink
 getSharedKinTalePage
@@ -146,6 +147,7 @@ listTemplateBindings
 listTemplates
 listUnappliedPayments
 listUninvoicedSessions
+listVisitInternalNotes
 logActivity
 logExpense
 manageBookingSeries
@@ -153,6 +155,7 @@ mapboxRetrieve
 mapboxSearch
 markAllThreadsRead
 markConversationRead
+markConversationUnread
 markInvoicePaid
 markNotificationRead
 markNotificationUnread
@@ -167,6 +170,7 @@ notificationDebounceSweep
 notificationScheduledSweep
 onAuthUserCreate
 onBookingEnvelopeCreate
+onBookingEnvelopeResolve
 onBookingNoteCreate
 onBookingsWrite
 onBusinessSettingsWrite
@@ -195,8 +199,10 @@ optimizeRoute
 outboundFanoutSweep
 payInvoice
 postInvoiceEvent
+previewBroadcastAudience
 previewEmailFrame
 previewEmailTemplate
+previewInvoiceNotice
 previewMarketingBlastAudience
 previewMarketingBlastCopy
 provisionBusinessAdmins

@@ -57,6 +57,8 @@ import com.tribetails.auntieos.web.data.LocalTestMode
 import com.tribetails.auntieos.web.data.NewBookingVisitInput
 import com.tribetails.auntieos.web.data.TestMode
 import com.tribetails.auntieos.web.screens.schedule.BookingDetailModal
+import com.tribetails.auntieos.web.screens.schedule.NO_KINCARE_TYPES_MESSAGE
+import com.tribetails.auntieos.web.screens.schedule.rateCardServiceTypes
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
 import com.tribetails.auntieos.web.data.resolveTimeBlock
@@ -67,6 +69,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieCheckbox
 import com.tribetails.auntieos.web.ui.components.AuntieChipGroup
 import com.tribetails.auntieos.web.ui.components.AuntieDatePickerDialog
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
@@ -443,6 +446,7 @@ private fun BookingListScreen(
                                 locked = vm.seriesActionBatchId != null,
                                 onApprove = { scope.launch { vm.approveSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
                                 onCancel  = { scope.launch { vm.cancelSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
+                                zone      = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone),
                             )
                         }
                     }
@@ -727,6 +731,10 @@ private fun SectionCount(count: String) {
 
 // 16.5: one incoming booking envelope (1..N visits). Approve/cancel the whole
 // series via manageBookingSeries (backend creates the linked sessions).
+//
+// #1577: the household is the card's title, the card body opens the request,
+// and both Approve and Cancel go through a confirm step titled with the
+// household, the same as the web and Android queues.
 @Composable
 private fun IncomingSeriesCard(
     series: BookingSeries,
@@ -734,8 +742,11 @@ private fun IncomingSeriesCard(
     locked: Boolean,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
+    zone: TimeZone,
 ) {
     val c = AuntieTheme.colors
+    var confirming by remember(series.kinfolkId, series.batchId) { mutableStateOf<String?>(null) }
+    var detailOpen by remember(series.kinfolkId, series.batchId) { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -744,20 +755,89 @@ private fun IncomingSeriesCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(series.kinfolkName.ifBlank { "Kinfolk request" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-        Text(
-            buildString {
-                append(if (series.visitCount == 1) "1 visit" else "${series.visitCount} visits")
-                if (series.isSeries) append(" · recurring series")
-                if (series.serviceType.isNotBlank()) append(" · ${series.serviceType}")
-            },
-            style = AuntieTheme.typography.bodySmall,
-            color = c.textDim,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = onApprove, enabled = !locked)
-            GhostButton(label = "Cancel", onClick = onCancel, enabled = !locked)
+        Column(
+            modifier = Modifier.fillMaxWidth().clickable(onClickLabel = "Open the request") { detailOpen = true },
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(series.householdLabel(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+            Text(series.subject(), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { confirming = "approve" }, enabled = !locked)
+            GhostButton(label = "Cancel", onClick = { confirming = "cancel" }, enabled = !locked)
+        }
+    }
+
+    AuntieDialog(
+        visible = confirming != null,
+        title = if (confirming == "cancel") series.declineConfirmTitle() else series.approveConfirmTitle(),
+        onDismiss = { confirming = null },
+        footer = {
+            GhostButton(label = "Never mind", onClick = { confirming = null })
+            PrimaryButton(
+                label = if (confirming == "cancel") "Turn it down" else "Book it",
+                onClick = {
+                    val decision = confirming
+                    confirming = null
+                    if (decision == "cancel") onCancel() else onApprove()
+                },
+                enabled = !locked,
+            )
+        },
+    ) {
+        Text(series.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(
+            when {
+                confirming == "cancel" -> "Nothing will be booked. The household will be told."
+                series.visitCount == 1 -> "This visit will go on the schedule and on the household's portal."
+                else -> "All ${series.visitCount} visits will go on the schedule and on the household's portal."
+            },
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+    }
+
+    AuntieDialog(
+        visible = detailOpen,
+        title = series.detailTitle(),
+        onDismiss = { detailOpen = false },
+        footer = {
+            GhostButton(label = "Close", onClick = { detailOpen = false })
+            GhostButton(
+                label = "Cancel",
+                onClick = {
+                    detailOpen = false
+                    confirming = "cancel"
+                },
+                enabled = !locked,
+            )
+            PrimaryButton(
+                label = "Approve",
+                onClick = {
+                    detailOpen = false
+                    confirming = "approve"
+                },
+                enabled = !locked,
+            )
+        },
+    ) {
+        IncomingFact("Household", series.householdLabel())
+        IncomingFact("Service", series.serviceType.ifBlank { "Not on the request" })
+        IncomingFact(
+            if (series.visitCount == 1) "Visit" else "${series.visitCount} visits",
+            series.visitLines(zone).joinToString("\n"),
+        )
+        val notes = series.visits.map { it.notes.trim() }.filter { it.isNotEmpty() }.distinct()
+        IncomingFact("Notes on the request", notes.joinToString("\n").ifBlank { "None given" })
+    }
+}
+
+@Composable
+private fun IncomingFact(label: String, value: String) {
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(bottom = 10.dp)) {
+        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Text(value, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
     }
 }
 
@@ -867,9 +947,6 @@ private fun bookingDateLabel(b: KinCareSession): String {
     return raw.take(10).ifBlank { "Date pending" }
 }
 
-private val SERVICE_TYPES = listOf(
-    "Pet Sitting", "Dog Walking", "Overnight", "Daycare", "Drop-In", "Other",
-)
 
 /**
  * B9: order KinCare-type chips by parsed duration (ascending) instead of the
@@ -941,12 +1018,12 @@ internal fun BookingCreateScreen(
     // households with nothing to explain why.
     val kinfolkRead = rememberLiveRead { client.kinfolkStream() }
     // KinCare types are sourced from Business Settings serviceRates (NOT hardcoded), per the
-    // create-booking mockup. Falls back to SERVICE_TYPES when settings have no rates yet.
+    // create-booking mockup. #1703: no fallback names, which priced nothing at invoice time.
     val settingsResult by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
 
     var kinfolkSearch   by remember { mutableStateOf("") }
     var selectedKinfolk by remember { mutableStateOf<Kinfolk?>(null) }
-    var serviceType     by remember { mutableStateOf(SERVICE_TYPES[0]) }
+    var serviceType     by remember { mutableStateOf("") }
     var startDate       by remember { mutableStateOf("") }
     var startTime       by remember { mutableStateOf("") }
     var showDatePicker  by remember { mutableStateOf(false) }
@@ -959,9 +1036,9 @@ internal fun BookingCreateScreen(
     var adminInternalNotes    by remember { mutableStateOf("") }
     var saving          by remember { mutableStateOf(false) }
 
-    // AO-25: multi-date / recurring request. SINGLE keeps the original one-visit
-    // createBooking path; MULTI/WEEKLY route Submit to createMultiDateBookingRequest
-    // (the envelope model / Incoming-requests queue). startDate is visit 1 (MULTI)
+    // AO-25: multi-date / recurring request. Since #1674 every mode routes Submit
+    // to createMultiDateBookingRequest (the envelope model / Incoming-requests
+    // queue), and since #1726 Save draft writes one draft per visit. startDate is visit 1 (MULTI)
     // or the recurrence start (WEEKLY); startTime is the shared time.
     var repeatMode         by remember { mutableStateOf(BookingRepeat.SINGLE) }
     var extraDates         by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -1003,9 +1080,13 @@ internal fun BookingCreateScreen(
 
     val serviceRates: Map<String, String> =
         (settingsResult as? FirestoreResult.Data)?.value?.serviceRates ?: emptyMap()
-    val serviceOptions: List<String> = sortServiceTypesByDuration(
-        if (serviceRates.isNotEmpty()) serviceRates.keys.toList() else SERVICE_TYPES,
-    )
+    val serviceOptions: List<String> = rateCardServiceTypes(serviceRates)
+    // The first KinCare type is picked once the rates land, as the hardcoded first
+    // one used to be; a pick the operator made is kept while it is still a key.
+    LaunchedEffect(serviceOptions) {
+        if (serviceType !in serviceOptions) serviceType = serviceOptions.firstOrNull().orEmpty()
+    }
+    val hasService = serviceType in serviceOptions
 
     ScreenScaffold {
         DenScreenHeading(
@@ -1095,6 +1176,12 @@ internal fun BookingCreateScreen(
 
             // ── KinCare type (from Business Settings serviceRates, NOT hardcoded) ──
             AuntieFieldLabel(text = "KinCare type", optionalNote = "Managed in Business Settings")
+            when {
+                settingsResult is FirestoreResult.Loading -> EmptyHint("Loading KinCare types...")
+                settingsResult is FirestoreResult.Error ->
+                    EmptyHint("Couldn't load KinCare types: ${(settingsResult as FirestoreResult.Error).message}", error = true)
+                serviceOptions.isEmpty() -> EmptyHint(NO_KINCARE_TYPES_MESSAGE, error = true)
+            }
             AuntieChipGroup(
                 options           = serviceOptions,
                 selected          = setOf(serviceType),
@@ -1109,9 +1196,8 @@ internal fun BookingCreateScreen(
             // ── Date & time ─────────────────────────────────────────────────────
             // SUGGESTION (mockup): non-consecutive multi-date calendar + Time Block
             // chips + recurring options + optional specific-start-time with a
-            // kinfolk-facing disclaimer. requestBooking supports visits[]+pattern
-            // server-side, but createBooking/buildSession is single-date/time, so the
-            // real fields stay single-date until the multi-date callable is wired.
+            // kinfolk-facing disclaimer. The repeat modes below expand to concrete
+            // visits (buildStartTimesMs) for both Submit and Save draft.
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 // #1: calendar-style date picker (tap to open) instead of a typed field.
                 Column(modifier = Modifier.weight(1f)) {
@@ -1293,25 +1379,34 @@ internal fun BookingCreateScreen(
             val hasDate     = startDate.isNotBlank()
             // AO-25: in MULTI/WEEKLY the request also needs at least one resolved visit
             // (e.g. Weekly with no weekday selected yields none).
-            val requestVisits = if (repeatMode == BookingRepeat.SINGLE) emptyList()
-                else buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks, businessZone)
-            val canSubmit   = hasKinfolk && hasDate && (repeatMode == BookingRepeat.SINGLE || requestVisits.isNotEmpty())
+            // #1674: every mode, one visit included, is a request with a booking
+            // record, so it can be staffed and noted once approved. A blank time is
+            // the field's own 09:00 placeholder, as it already was for several dates.
+            val requestVisits = buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks, businessZone)
+            val canSubmit   = hasKinfolk && hasService && hasDate && requestVisits.isNotEmpty()
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 GhostButton(label = "Cancel", onClick = onBack, modifier = Modifier.weight(1f))
+                // #1726: one draft per visit the form names, every repeat mode, so
+                // it needs the same visits Submit does; approving one writes its
+                // booking record. The notes ride on the draft (see saveDraft).
                 GhostButton(
                     label   = "Save draft",
-                    enabled = hasKinfolk && !saving,
+                    enabled = canSubmit && !saving,
                     onClick = {
                         scope.launch {
                             saving = true
-                            vm.createBooking(
-                                booking = buildSession(selectedKinfolk!!, serviceType, startDate, startTime, kinfolkAdditionalInfo, "DRAFT", bookingFormValues.toMap()),
-                                kinfolkFacingNote = kinfolkAdditionalInfo,
-                                adminInternalNote = adminInternalNotes,
+                            vm.saveDraft(
+                                kinfolkId = selectedKinfolk!!._id,
+                                kinfolkName = selectedKinfolk!!.displayName,
+                                serviceType = serviceType,
+                                visitStartsMs = requestVisits,
+                                kinfolkNote = kinfolkAdditionalInfo,
+                                staffNote = adminInternalNotes,
+                                formValues = bookingFormValues.toMap(),
                             )
                             saving = false
                             if (vm.errorMessage == null) onBack()
@@ -1326,24 +1421,15 @@ internal fun BookingCreateScreen(
                     onClick = {
                         scope.launch {
                             saving = true
-                            if (repeatMode == BookingRepeat.SINGLE) {
-                                vm.createBooking(
-                                    booking = buildSession(selectedKinfolk!!, serviceType, startDate, startTime, kinfolkAdditionalInfo, "PENDING", bookingFormValues.toMap()),
-                                    kinfolkFacingNote = kinfolkAdditionalInfo,
-                                    adminInternalNote = adminInternalNotes,
-                                )
-                            } else {
-                                // AO-25: multi-date / weekly -> the envelope (Incoming-requests)
-                                // path. serviceName is the KinCare type; the server resolves
-                                // price at invoice time (no client price).
-                                vm.createBookingRequest(
-                                    kinfolkId = selectedKinfolk!!._id,
-                                    visits = requestVisits.map { NewBookingVisitInput(startTimeMs = it, serviceName = serviceType) },
-                                    notes = kinfolkAdditionalInfo.ifBlank { null },
-                                    pattern = if (repeatMode == BookingRepeat.WEEKLY) "weekly" else "individual",
-                                    weeklyDays = if (repeatMode == BookingRepeat.WEEKLY) weekdays.sorted() else null,
-                                )
-                            }
+                            vm.submitBookingRequest(
+                                kinfolkId = selectedKinfolk!!._id,
+                                serviceType = serviceType,
+                                visitStartsMs = requestVisits,
+                                repeat = repeatMode,
+                                weekdays = weekdays,
+                                kinfolkNote = kinfolkAdditionalInfo,
+                                staffNote = adminInternalNotes,
+                            )
                             saving = false
                             if (vm.errorMessage == null) onBack()
                         }
@@ -1354,24 +1440,6 @@ internal fun BookingCreateScreen(
         }
     }
 }
-
-private fun buildSession(
-    kf: Kinfolk,
-    serviceType: String,
-    date: String,
-    time: String,
-    notes: String,
-    status: String,
-    formValues: Map<String, String> = emptyMap(),
-) = KinCareSession(
-    kinfolkId   = kf._id,
-    kinfolkName = kf.displayName,
-    serviceType = serviceType,
-    startTime   = if (date.isBlank()) "" else "${date}T${time.ifBlank { "00:00" }}:00",
-    notes       = notes,
-    status      = status,
-    formValues  = formValues,
-)
 
 /** Two-letter monogram for the avatar, derived from a kinfolk display name. */
 private fun initialsFor(name: String): String {

@@ -23,6 +23,10 @@ vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+// #1707: "Edit templates" is the owner's control. Every test runs as the owner
+// unless it says otherwise.
+const access = vi.hoisted(() => ({ current: { status: 'admin' } as { status: string } | null }));
+vi.mock('../lib/access', () => ({ useAdminAccess: () => access.current }));
 
 // The head's "Edit templates" is a real route link, and a real `Link` wants a
 // RouterProvider no suite in this tree mounts (HouseholdData.test.tsx idiom).
@@ -372,6 +376,15 @@ describe('KinTales screen: the head', () => {
     const link = screen.getByRole('link', { name: 'Edit templates' });
     expect(link).toHaveAttribute('href', '/kintale-templates');
     expect(link).toHaveClass('auntie-btn--ghost');
+  });
+  it('#1707: offers an Auntie no Edit templates, because the rules refuse her template writes', () => {
+    access.current = { status: 'caretaker' };
+    try {
+      render(<KinTales />);
+      expect(screen.queryByRole('link', { name: 'Edit templates' })).toBeNull();
+    } finally {
+      access.current = { status: 'admin' };
+    }
   });
 
   it('keeps the explanation as the heading tooltip, not a line of copy', () => {

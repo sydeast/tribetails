@@ -27,9 +27,9 @@ enum class NotificationAction {
     OpenTarget,
     /** Archive out of the active inbox (archiveNotification). Always available. */
     Archive,
-    /** Approve the linked booking (batchUpdateBookings APPROVE). booking-only. */
+    /** Book the waiting request (manageBookingSeries APPROVE, #1675). */
     ApproveBooking,
-    /** Deny the linked booking (batchUpdateBookings REJECT). booking-only. */
+    /** Decline the waiting request (manageBookingSeries CANCEL, #1675). */
     DenyBooking,
     /** Compose a quote for the linked kinfolk (createQuote). kinfolk-target only. */
     CreateQuote,
@@ -56,8 +56,17 @@ fun notificationIsRead(entry: NotificationEntry): Boolean = entry.isRead
  * Which quick actions apply to [entry]. Order is presentation order. Rules:
  *   - exactly one of MarkRead / MarkUnread, by current readAt state,
  *   - OpenTarget only when targetType is navigable AND targetId is non-blank,
- *   - ApproveBooking + DenyBooking only when targetType == "booking" with a targetId,
+ *   - ApproveBooking + DenyBooking only on a booking request still waiting on a
+ *     decision: key `kincare.requested`, targetType "booking" with a targetId,
+ *     a household ([notificationRequestKinfolkId], #1675), and no
+ *     `requestResolution` stamp ([requestOutcomeLabel] is null),
  *   - Archive is always offered.
+ *
+ * Approve/Deny used to be offered on EVERY booking-targeted row, a booking
+ * confirmation included. Web and Android narrowed it to `kincare.requested` in
+ * #706 (operator: "most of these don't need most of these ctas"); this build
+ * never got that change. #1647 then has the server stamp an answered request,
+ * so a request booked or declined anywhere stops offering a decision here too.
  * Pure; unit-tested.
  */
 fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
@@ -78,13 +87,90 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
         actions += NotificationAction.CreateQuote
     }
 
-    if (entry.targetType.trim().lowercase() == "booking" && entry.targetId.isNotBlank()) {
+    if (
+        entry.key.trim() == PENDING_BOOKING_REQUEST_KEY &&
+        requestOutcomeLabel(entry) == null &&
+        entry.targetType.trim().lowercase() == "booking" &&
+        entry.targetId.isNotBlank() &&
+        notificationRequestKinfolkId(entry).isNotEmpty()
+    ) {
         actions += NotificationAction.ApproveBooking
         actions += NotificationAction.DenyBooking
     }
 
     actions += NotificationAction.Archive
     return actions
+}
+
+/**
+ * The one catalog key that means "a booking request is waiting on a decision"
+ * (mytribe/functions/src/notifications/catalog.ts: "Kinfolk requested a KinCare
+ * visit"), fired once at the moment of the ask by onBookingEnvelopeCreate.ts.
+ */
+const val PENDING_BOOKING_REQUEST_KEY = "kincare.requested"
+
+/**
+ * #1647: the operator-facing word for how a booking request ended, read off the
+ * `requestResolution` stamp the server writes onto the request's rows once it is
+ * booked or declined. Null while the request is still waiting, and on every
+ * other key. An unrecognised non-blank stamp still counts as answered
+ * ("Answered"): the server only stamps a request that has left `requested`.
+ * Mirrors web's `requestOutcomeLabel`. Pure; unit-tested.
+ */
+fun requestOutcomeLabel(entry: NotificationEntry): String? {
+    if (entry.key.trim() != PENDING_BOOKING_REQUEST_KEY) return null
+    return when (entry.requestResolution.trim().lowercase()) {
+        "" -> null
+        "booked" -> "Booked"
+        "declined" -> "Declined"
+        "cancelled" -> "Cancelled"
+        else -> "Answered"
+    }
+}
+
+/**
+ * #1675: the household a waiting request's row belongs to, from `data.kinfolkId`
+ * (`onBookingEnvelopeCreate` always writes it), else `data.familyId`. "" when the
+ * row names none, and then Approve/Deny are not offered: the request is answered
+ * by household and request id. Pure; unit-tested.
+ */
+fun notificationRequestKinfolkId(entry: NotificationEntry): String =
+    entry.dataString("kinfolkId").ifEmpty { entry.dataString("familyId") }
+
+/** What answering a waiting request from its row left on screen: one of the two is set. */
+data class RequestAnswer(val error: String?, val notice: String?)
+
+/**
+ * #1675: Approve / Deny on a waiting request's row answer the WHOLE request, the
+ * `manageBookingSeries` call Bookings' incoming requests make (APPROVE books it,
+ * CANCEL declines it). The row's targetId is the request's envelope id
+ * (`batchId`); these used to send it to `batchUpdateBookings`, which only knows
+ * visit ids, so every press came back not-found. A refusal is the server's own
+ * sentence; a partial approval is a failure, not a success.
+ */
+suspend fun answerBookingRequest(
+    client: com.tribetails.auntieos.web.data.FirestoreClient,
+    entry: NotificationEntry,
+    approve: Boolean,
+): RequestAnswer {
+    val action = if (approve) com.tribetails.auntieos.web.data.BookingSeriesAction.APPROVE
+    else com.tribetails.auntieos.web.data.BookingSeriesAction.CANCEL
+    return when (val r = client.manageBookingSeries(action, notificationRequestKinfolkId(entry), entry.targetId.trim())) {
+        is com.tribetails.auntieos.web.data.WriteResult.Err -> RequestAnswer(error = r.message, notice = null)
+        is com.tribetails.auntieos.web.data.WriteResult.Ok -> {
+            val res = r.value
+            if (res.failedVisits > 0) {
+                RequestAnswer(
+                    error = "${if (approve) "Approved" else "Declined"} ${res.affectedVisits} of " +
+                        "${res.affectedVisits + res.failedVisits} visits. The rest did not go through and the " +
+                        "household has not been told. Open the request in Bookings to finish it.",
+                    notice = null,
+                )
+            } else {
+                RequestAnswer(error = null, notice = if (approve) "Request approved." else "Request declined.")
+            }
+        }
+    }
 }
 
 /** #1003: the admin notice for a card payment that could not be applied. */

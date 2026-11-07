@@ -432,6 +432,8 @@ class EnhancedSchedulingViewModel(
     private val kinCareRepository: KinCareRepository = com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository,
     private val visitRequestRepository: com.tribetails.auntieos.data.repository.VisitRequestRepository =
         com.tribetails.auntieos.data.repository.VisitRequestRepository(),
+    /** #1574: the clock "already passed" is judged on. A parameter so a test can stand at a known instant. */
+    private val clock: java.time.Clock = java.time.Clock.systemUTC(),
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SchedulingState())
@@ -535,6 +537,9 @@ class EnhancedSchedulingViewModel(
         }
     }
 
+    /** #1577: the household's notes on [series], read when its detail sheet opens. */
+    suspend fun loadRequestNotes(series: IncomingSeries): Result<String> =
+        bookingRepository.bookingRequestNotes(series.familyId, series.batchId)
     /** Approve a whole incoming series: flips every visit confirmed + creates the
      *  linked sessions server-side (manageBookingSeries). The stream then drops the
      *  series (no longer 'requested'). */
@@ -1023,6 +1028,62 @@ class EnhancedSchedulingViewModel(
         }
     }
 
+    /** #1574: now, on the business clock, as the wall clock this screen types and sends. */
+    internal fun businessNow(): java.time.LocalDateTime =
+        java.time.LocalDateTime.now(clock.withZone(businessZoneOf(_state.value.businessSettings.timeZone)))
+
+    /**
+     * #1574, operator ruling 2026-11-05: a visit created with a past date is
+     * allowed only as already Completed, never Scheduled. New Booking turns into
+     * "Record completed visit" for a window that has ended, and this writes it
+     * through `createKinCareSession` with `recordAsCompleted`, the same call the
+     * web's New visit makes. The server writes the visit Completed, starts no
+     * live visit and sends the household nothing. Times go as UTC instants
+     * converted on the business clock, exactly as the web sends them.
+     */
+    fun recordCompletedVisit(
+        kinfolkId: String,
+        kinfolkName: String,
+        serviceType: String,
+        startUtcIso: String,
+        endUtcIso: String,
+        durationMinutes: Int,
+        notes: String,
+    ) {
+        if (_state.value.isLoading) return
+        if (kinfolkId.isBlank() || serviceType.isBlank()) {
+            _state.value = _state.value.copy(errorMessage = "Pick a household and a service before recording the visit.")
+            return
+        }
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            kinCareRepository.createKinCareSession(
+                kinfolkId = kinfolkId,
+                kinIds = emptyList(),
+                serviceType = serviceType,
+                startTime = startUtcIso,
+                endTime = endUtcIso,
+                serviceDurationMinutes = durationMinutes,
+                notes = notes,
+                recordAsCompleted = true,
+            ).fold(
+                onSuccess = {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        bookingActionMessage = "${kinfolkName.ifBlank { kinfolkId }}'s visit is recorded as completed.",
+                    )
+                    loadBookingsForDateRange()
+                },
+                onFailure = { e ->
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        errorMessage = e.message ?: "Could not record that visit.",
+                    )
+                },
+            )
+        }
+    }
+
     fun createBooking(booking: EnhancedBooking, internalNote: String = "") {
         if (_state.value.isLoading) return
         _state.value = _state.value.copy(isLoading = true)
@@ -1053,19 +1114,17 @@ class EnhancedSchedulingViewModel(
             }
 
             // No conflicts, create the booking
-            val result = bookingRepository.createBooking(booking)
+            // #1630: the dialog's internal note rides on the booking itself until
+            // it is approved. It used to go to `addInternalBookingNote` against
+            // the `enhanced_bookings` id, which names no booking record, so the
+            // note had nowhere to land. Approval now adds it to the visit's
+            // internal notes ([approveBooking]).
+            val result = bookingRepository.createBooking(
+                if (internalNote.isNotBlank()) booking.copy(internalNotes = internalNote.trim()) else booking,
+            )
 
             if (result.isSuccess) {
                 val newBookingId = result.getOrNull().orEmpty()
-                if (internalNote.isNotBlank() && newBookingId.isNotBlank() && booking.kinfolkId.isNotBlank()) {
-                    val notesRepo = com.tribetails.auntieos.data.repository.BookingNotesRepository()
-                    notesRepo.addInternalNote(booking.kinfolkId, newBookingId, internalNote)
-                        .onFailure { t ->
-                            _state.value = _state.value.copy(
-                                errorMessage = "Booking created but internal note save failed: ${t.message}",
-                            )
-                        }
-                }
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
@@ -1215,6 +1274,17 @@ class EnhancedSchedulingViewModel(
         booking: EnhancedBooking,
         incoming: com.tribetails.auntieos.data.repository.IncomingKinCare? = null,
     ) {
+        // #1702: a booking whose start has gone by would go on the calendar
+        // SCHEDULED in the past (operator ruling for #1574: a past visit only
+        // as already Completed). Refused before the booking is written, since
+        // the server refuses its session only after that write has landed.
+        // An already approved booking puts nothing new on the calendar here.
+        if (booking.status != BookingStatus.ACCEPTED) {
+            com.tribetails.auntieos.domain.approveIntoPastRefusal(booking.startDateTime, businessNow())?.let {
+                _state.value = _state.value.copy(errorMessage = it)
+                return
+            }
+        }
         viewModelScope.launch {
             val approved = booking.copy(
                 status = BookingStatus.ACCEPTED,
@@ -1280,7 +1350,38 @@ class EnhancedSchedulingViewModel(
                     serviceDurationMinutes = durationMinutes,
                     notes = booking.notes
                 )
-                kinCareRepository.createKinCareSession(session)
+                // #1630: a native booking (no MyTribe request behind it) is
+                // approved through the `createKinCareSession` callable, which
+                // writes the booking record with the visit, so it can be given
+                // an Auntie and notes like any other. The direct write it used
+                // made a session with no record ("This visit is not part of a
+                // booking request"). A MyTribe request's approval keeps its own
+                // path: its record already exists and the session links to it.
+                val created = if (incoming == null) {
+                    kinCareRepository.createKinCareSession(
+                        kinfolkId = booking.kinfolkId,
+                        kinIds = booking.kinIds,
+                        serviceType = session.serviceType,
+                        startTime = booking.startDateTime,
+                        endTime = booking.endDateTime,
+                        serviceDurationMinutes = durationMinutes,
+                        notes = booking.notes,
+                        enhancedBookingId = booking.id,
+                    ).onSuccess { sessionId ->
+                        if (booking.internalNotes.isNotBlank()) {
+                            com.tribetails.auntieos.data.repository.BookingNotesRepository()
+                                .addVisitInternalNote(sessionId, booking.internalNotes)
+                                .onFailure { t ->
+                                    _state.value = _state.value.copy(
+                                        errorMessage = "Visit booked, but its internal note did not save: ${t.message}",
+                                    )
+                                }
+                        }
+                    }
+                } else {
+                    kinCareRepository.createKinCareSession(session)
+                }
+                created
                     .onSuccess { kinCareSessionId ->
                         // Booking-envelope write-back: stamp the originating MyTribe
                         // kinCare doc so the kinfolk's live state resolves to confirmed
@@ -1840,6 +1941,12 @@ class EnhancedSchedulingViewModel(
         endIso: String,
         override: ScheduleOverrideKind?,
     ): VisitMoveOutcome {
+        // #1574: a visit is never moved into the past. Said here, before the
+        // lookup or the callable, for the detail sheet, the drag and every bulk
+        // row alike; the server refuses the same move with the same sentence.
+        com.tribetails.auntieos.domain.rescheduleIntoPastRefusal(startIso, businessNow())?.let {
+            return VisitMoveOutcome.NotAttempted(it)
+        }
         val sessionIds = findLinkedSessionIds(booking.id).getOrElse { e ->
             return VisitMoveOutcome.NotAttempted("Could not look up the visit behind this booking: ${e.message}")
         }
@@ -2638,7 +2745,8 @@ class EnhancedSchedulingViewModel(
     fun createBookingRequest(
         kinfolkId: String,
         visits: List<com.tribetails.auntieos.data.repository.NewBookingVisit>,
-        notes: String?,
+        /** #1626: the wizard's private note, staff-only (see [BookingWizardSubmission.staffNotes]). */
+        staffNotes: String?,
         pattern: String,
         weeklyDays: List<Int>?,
         overrideBusyConflict: Boolean = false,
@@ -2667,13 +2775,13 @@ class EnhancedSchedulingViewModel(
         // if that refusal had in fact been a lost reply the shared key is what
         // stops the override booking it twice.
         val idempotencyKey = requestKeyFor(
-            listOf(kinfolkId, visits, notes, pattern, weeklyDays, kinIds, billing, communication).toString(),
+            listOf(kinfolkId, visits, staffNotes, pattern, weeklyDays, kinIds, billing, communication).toString(),
         )
         viewModelScope.launch {
             bookingRepository.createMultiDateBookingRequest(
                 kinfolkId = kinfolkId,
                 visits = visits,
-                notes = notes,
+                staffNotes = staffNotes,
                 pattern = pattern,
                 weeklyDays = weeklyDays,
                 kinIds = kinIds?.takeIf { it.isNotEmpty() },

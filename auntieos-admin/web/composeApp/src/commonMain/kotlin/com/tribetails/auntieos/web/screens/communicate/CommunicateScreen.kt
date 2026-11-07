@@ -75,9 +75,9 @@ import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieChip
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieChipGroup
-import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieEmailPreviewCard
 import com.tribetails.auntieos.web.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.web.ui.components.AuntieIconTile
@@ -213,6 +213,8 @@ fun CommunicateScreen(
     var editedCopy by remember { mutableStateOf("") }
 
     var toastMsg by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
+    // #1625: the "send this to the household?" confirm before a Text or Email approve.
+    var approveConfirmOpen by remember { mutableStateOf(false) }
 
     // #1563: the KinTale a send produced, or the one an opened draft was already sent as.
     var sentReportId by remember { mutableStateOf<String?>(null) }
@@ -224,7 +226,13 @@ fun CommunicateScreen(
 
     // Keep editedCopy in sync when a fresh AI result lands.
     LaunchedEffect(result) {
-        result?.let { editedCopy = it.generated_copy }
+        // #1610: one subject. A "Subject:" line the generator wrote leaves the
+        // body, and fills the Subject field only when the operator left it blank.
+        result?.let {
+            val split = splitSubjectLine(it.generated_copy)
+            editedCopy = split.body
+            if (subject.isBlank() && split.subject.isNotBlank()) subject = split.subject
+        }
     }
 
     // #1563: fill the form from a stored draft, once per draft.
@@ -298,6 +306,12 @@ fun CommunicateScreen(
         }
     }
 
+    /** The household the draft was written for: the id generation resolved, else the picker's. */
+    fun approveRecipient(r: GenerateResponse): Kinfolk? {
+        val list = (kinfolkState as? FirestoreResult.Data)?.value.orEmpty()
+        return r.kinfolk_id?.let { id -> list.firstOrNull { it._id == id } } ?: selectedKinfolk
+    }
+
     /**
      * #1563: send a KinTale draft to its household's portal through the
      * `publishGeneratedDraft` callable, which writes the SENT report and marks
@@ -362,6 +376,7 @@ fun CommunicateScreen(
     }
 
     fun approveDraft() {
+        approveConfirmOpen = false
         // #1563: a KinTale reaches a real household, so it asks first.
         if (messageType == MessageType.Visit) {
             confirmSend = true
@@ -375,30 +390,54 @@ fun CommunicateScreen(
             )
             return
         }
+        if (saving) return
+        // Resolved from what the operator confirmed, before anything is written.
+        val channel = approveDeliveryChannel(messageType)
+        val recipient = approveRecipient(r)
+        val copy = editedCopy
+        val subj = subject.trim()
+        if (channel != null) {
+            approveSendBlocker(channel, recipient, subj, copy)?.let { showToast(it, ToastKind.Error); return }
+        }
         saving = true
         scope.launch {
             try {
-                // 1. Promote the draft in Firestore (canonical store). Fail loud on
-                //    error per project policy: do NOT ping the n8n downstream if the
-                //    source-of-truth write fails.
-                val writeResult = firestore.approveGeneratedDraft(draftId, editedCopy)
-                if (writeResult is WriteResult.Err) {
-                    showToast("Approve failed: Firestore rejected it (${writeResult.message}).", ToastKind.Error)
-                    return@launch
-                }
-                // 2. Activity log emit per project policy. Actor uid resolved from
-                //    the current Auth session.
-                val actorUid = auth.authStateStream().first()?.uid ?: ""
-                AuditLog.fire(
-                    scope = scope,
-                    client = firestore,
-                    actorId = actorUid,
-                    actionType = "DRAFT_APPROVED",
-                    description = "Approved generated_drafts/$draftId (${r.kinfolk_id ?: "no-kinfolk"})",
-                    targetId = draftId,
-                    targetCollection = "generated_drafts",
+                // Write (the gate), then the audit entry, then the send: the web
+                // admin's order. Nothing sends if the write is refused.
+                val outcome = runApprove(
+                    write = { firestore.approveGeneratedDraft(draftId, copy) },
+                    audit = {
+                        val actorUid = auth.authStateStream().first()?.uid ?: ""
+                        AuditLog.fire(
+                            scope = scope,
+                            client = firestore,
+                            actorId = actorUid,
+                            actionType = "DRAFT_APPROVED",
+                            description = "Approved generated_drafts/$draftId (${r.kinfolk_id ?: "no-kinfolk"})",
+                            targetId = draftId,
+                            targetCollection = "generated_drafts",
+                        )
+                    },
+                    channel = channel,
+                    send = if (channel != null && recipient != null) {
+                        {
+                            firestore.sendExternalMessage(
+                                channel = channel.wire,
+                                to = approveSendAddress(channel, recipient),
+                                subject = subj.takeIf { channel == ExternalChannel.Email },
+                                body = copy,
+                                transactional = true,
+                            )
+                        }
+                    } else null,
                 )
-                showToast("Draft #$draftId approved and queued for delivery.", ToastKind.Success)
+                showToast(
+                    approveOutcomeText(draftId, outcome),
+                    when (outcome) {
+                        is ApproveOutcome.Sent, ApproveOutcome.Approved -> ToastKind.Success
+                        else -> ToastKind.Error
+                    },
+                )
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
@@ -407,6 +446,19 @@ fun CommunicateScreen(
                 saving = false
             }
         }
+    }
+
+    /** The Approve button: a Text or Email approve is checked, then confirmed (#1625). */
+    fun requestApprove() {
+        val r = result ?: return
+        if (saving) return
+        val channel = approveDeliveryChannel(messageType)
+        val blocker = approveSendBlocker(channel, approveRecipient(r), subject, editedCopy)
+        if (blocker != null) {
+            showToast(blocker, ToastKind.Error)
+            return
+        }
+        if (channel != null) approveConfirmOpen = true else approveDraft()
     }
 
     fun applyTemplate(t: KinTaleTemplate) {
@@ -457,6 +509,32 @@ fun CommunicateScreen(
         )
         Spacer(Modifier.height(if (toastMsg != null) dims.space3 else 0.dp))
 
+        // #1625: names who gets it, the address and the channel before a send.
+        val confirmChannel = approveDeliveryChannel(messageType)
+        val confirmKf = result?.let { approveRecipient(it) }
+        AuntieDialog(
+            visible = approveConfirmOpen && confirmChannel != null,
+            title = if (confirmChannel == ExternalChannel.Email) "Send this email?" else "Send this text?",
+            onDismiss = { approveConfirmOpen = false },
+            maxWidth = 480.dp,
+            footer = {
+                GhostButton(label = "Cancel", onClick = { approveConfirmOpen = false }, enabled = !saving)
+                PrimaryButton(label = "Approve and send", onClick = { approveDraft() }, enabled = !saving, loading = saving)
+            },
+        ) {
+            if (confirmChannel != null && confirmKf != null) {
+                Text(
+                    text = "To: ${"${confirmKf.firstName} ${confirmKf.lastName}".trim().ifBlank { "This household" }} (${approveSendAddress(confirmChannel, confirmKf)})",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                )
+                Text(text = "Channel: ${confirmChannel.label}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                if (confirmChannel == ExternalChannel.Email) {
+                    Text(text = "Subject: ${subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
+        }
+
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val twoCol = maxWidth >= 860.dp
 
@@ -483,7 +561,7 @@ fun CommunicateScreen(
                             loading = loading, saving = saving,
                             result = result,
                             editedCopy = editedCopy, onEditedCopy = { editedCopy = it },
-                            onGenerate = ::generate, onApprove = ::approveDraft,
+                            onGenerate = ::generate, onApprove = ::requestApprove,
                             firestore = firestore,
                             onToast = { msg, kind -> showToast(msg, kind) },
                             sent = sentReportId != null,
@@ -532,7 +610,7 @@ fun CommunicateScreen(
                         loading = loading, saving = saving,
                         result = result,
                         editedCopy = editedCopy, onEditedCopy = { editedCopy = it },
-                        onGenerate = ::generate, onApprove = ::approveDraft,
+                        onGenerate = ::generate, onApprove = ::requestApprove,
                         firestore = firestore,
                         onToast = { msg, kind -> showToast(msg, kind) },
                         sent = sentReportId != null,
@@ -815,10 +893,12 @@ private fun ComposePanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(dims.space4),
             ) {
+                val approveChannel = approveDeliveryChannel(messageType)
                 PrimaryButton(
                     label = when {
                         sent -> "Sent"
-                        messageType == MessageType.Visit -> "Approve and send"
+                        // #1563: a KinTale sends to the household's portal; #1625: a Text or Email sends too.
+                        messageType == MessageType.Visit || approveChannel != null -> "Approve and send"
                         else -> "Approve draft"
                     },
                     onClick = onApprove,
@@ -834,7 +914,13 @@ private fun ComposePanel(
                     },
                 )
                 Text(
-                    text = "approving promotes the draft in Firestore and logs it to the audit trail",
+                    text = when {
+                        approveChannel != null ->
+                            "Approving saves the draft, logs it, then sends it to the household by " +
+                                (if (approveChannel == ExternalChannel.Email) "email" else "text") + "."
+                        messageType == MessageType.Visit -> "Approving sends this KinTale to the household's portal."
+                        else -> "Approving saves the draft and logs it. This type sends nothing from here."
+                    },
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
@@ -996,11 +1082,34 @@ private fun BroadcastForm(
         }
     }
 
-    fun send() {
-        errorText = null
+    // #1610: Review opens a confirm that asks the server how many kinfolk the
+    // audience reaches, counted the way the send counts them.
+    var confirmOpen by remember { mutableStateOf(false) }
+    var reach by remember { mutableStateOf<WriteResult<BroadcastAudiencePreview>?>(null) }
+
+    fun problem(): String? {
         val criteria = if (selectedSegmentId == null) adhocCriteria() else null
         val effectiveCriteria = criteria ?: segments.firstOrNull { it.id == selectedSegmentId }?.criteria ?: BroadcastCriteria()
-        val blocker = tagCapProblem() ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
+        return tagCapProblem()
+            ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
+            ?: mergeFieldBlocker(subject, body)
+    }
+
+    fun review() {
+        errorText = null
+        val blocker = problem()
+        if (blocker != null) { errorText = blocker; errorIsTimeout = false; onToast(blocker, ToastKind.Error); return }
+        confirmOpen = true
+        reach = null
+        val criteria = if (selectedSegmentId == null) adhocCriteria() else null
+        scope.launch { reach = firestore.previewBroadcastAudience(selectedSegmentId, criteria) }
+    }
+
+    fun send() {
+        confirmOpen = false
+        errorText = null
+        val criteria = if (selectedSegmentId == null) adhocCriteria() else null
+        val blocker = problem()
         if (blocker != null) { errorText = blocker; errorIsTimeout = false; onToast(blocker, ToastKind.Error); return }
         sending = true
         val signature = broadcastSignature(selectedSegmentId, kind, statusesText, selectedTags, tagMatch, channels, subject, body)
@@ -1076,13 +1185,19 @@ private fun BroadcastForm(
                 label = { it.label },
             )
             if (kind == SegmentKind.Status) {
-                BottomBorderField(
-                    value = statusesText,
-                    onValueChange = { statusesText = it },
-                    label = "Statuses",
-                    placeholder = "active, prospect",
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // #1610: picked from the Directory's statuses, never typed.
+                FieldLabel("Statuses")
+                val picked = statusesText.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                Row(horizontalArrangement = Arrangement.spacedBy(dims.space2)) {
+                    BROADCAST_STATUS_OPTIONS.forEach { st ->
+                        AuntieChip(
+                            label = st.replaceFirstChar { it.uppercase() },
+                            selected = st in picked,
+                            onClick = { statusesText = toggleBroadcastStatus(statusesText, st, st !in picked) },
+                            tone = AuntieChipTone.Teal,
+                        )
+                    }
+                }
             }
             if (kind == SegmentKind.Tags) {
                 FieldLabel("Household tags")
@@ -1254,9 +1369,53 @@ private fun BroadcastForm(
             }
         }
 
+        mergeFieldBlocker(subject, body)?.let { msg ->
+            Text(text = msg, style = AuntieTheme.typography.bodySmall, color = c.error)
+        }
+        Text(
+            text = "{{firstName}}, {{lastName}}, {{kinfolkName}} and {{business}} are filled per household on every channel. " +
+                "A household with no first name on file reads \"$KINFOLK_NAME_STAND_IN\".",
+            style = AuntieTheme.typography.bodySmall,
+            color = c.textDim,
+        )
+
+        AuntieDialog(
+            visible = confirmOpen,
+            title = "Send this broadcast?",
+            onDismiss = { confirmOpen = false },
+            maxWidth = 520.dp,
+            footer = {
+                GhostButton(label = "Cancel", onClick = { confirmOpen = false }, enabled = !sending)
+                PrimaryButton(label = "Send now", onClick = ::send, enabled = !sending, loading = sending)
+            },
+        ) {
+            Text(
+                text = "Channels: ${channels.joinToString(", ") { it.label }}",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            subject.trim().takeIf { it.isNotEmpty() }?.let {
+                Text(text = "Subject: $it", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+            Text(
+                text = when (val r = reach) {
+                    null -> "Counting who this reaches…"
+                    is WriteResult.Ok -> reachLine(r.value)
+                    is WriteResult.Err -> "The count did not load (${r.message}). The send still reports who it reached."
+                },
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+            )
+            Text(
+                text = "This goes out right now. A household that switched a channel off does not get it there; the result shows who was reached.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
+
         PrimaryButton(
-            label = "Send broadcast",
-            onClick = ::send,
+            label = "Review broadcast",
+            onClick = ::review,
             loading = sending,
             leading = {
                 Icon(Lucide.Megaphone, contentDescription = null, tint = c.background, modifier = Modifier.size14())
@@ -2049,7 +2208,7 @@ private fun RecentPanel(
             }
             is RecentSendsUi.Loaded -> if (s.items.isEmpty()) {
                 Text(
-                    text = "No external sends yet. Sends from Communicate show here with delivery and open counts.",
+                    text = "Nothing sent yet. Emails, texts, broadcasts and Inbox replies show here, newest first.",
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textDim,
                 )
@@ -2065,8 +2224,12 @@ private fun RecentPanel(
                             snd.subject?.takeIf { it.isNotBlank() }?.let { subj ->
                                 Text(subj, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             }
+                            // #1610: an Inbox reply shows what was written.
+                            snd.preview?.takeIf { snd.kind == "reply" }?.let { p ->
+                                Text(p, style = AuntieTheme.typography.bodySmall, color = c.textDim, maxLines = 2)
+                            }
                             Text(
-                                text = engagementSummary(snd.channel, snd.counts),
+                                text = if (snd.kind == "broadcast") broadcastSummaryLine(snd) else engagementSummary(snd.channel, snd.counts),
                                 style = AuntieTheme.typography.bodySmall,
                                 color = c.textDim,
                             )

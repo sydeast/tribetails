@@ -75,11 +75,18 @@ class EnhancedSchedulingViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = EnhancedSchedulingViewModel(
+    /**
+     * #1702: approval refuses a start already gone by, and the fixtures date
+     * their bookings in June 2026, so the approval tests stand before them.
+     */
+    private val beforeTheFixtures =
+        java.time.Clock.fixed(java.time.Instant.parse("2026-05-01T15:00:00Z"), java.time.ZoneOffset.UTC)
+    private fun buildViewModel(clock: java.time.Clock = java.time.Clock.systemUTC()) = EnhancedSchedulingViewModel(
         bookingRepository = bookingRepo,
         serviceRepository = serviceRepo,
         auntieRepository = auntieRepo,
         kinCareRepository = kinCareRepo,
+        clock = clock,
     )
 
     // ─── approveBooking ───────────────────────────────────────────────────────
@@ -97,11 +104,13 @@ class EnhancedSchedulingViewModelTest {
         coEvery { bookingRepo.updateBooking(any()) } returns Result.success(Unit)
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
         coEvery { kinCareRepo.createKinCareSession(any()) } returns Result.success("session1")
+        // #1630: a native booking (no MyTribe request) is approved through the callable.
+        coEvery { kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.success("session1")
         // loadBookingsForDateRange re-fires after approve
         coEvery { bookingRepo.getBookings(any(), any(), any(), any()) } returns Result.success(emptyList())
         coEvery { bookingRepo.getTimeSlots(any(), any(), any()) } returns Result.success(emptyList())
 
-        val vm = buildViewModel()
+        val vm = buildViewModel(beforeTheFixtures)
         vm.approveBooking(booking)
         advanceUntilIdle()
 
@@ -128,8 +137,10 @@ class EnhancedSchedulingViewModelTest {
         coEvery { bookingRepo.updateBooking(any()) } returns Result.success(Unit)
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
         coEvery { kinCareRepo.createKinCareSession(any()) } returns Result.success("session1")
+        // #1630: a native booking (no MyTribe request) is approved through the callable.
+        coEvery { kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.success("session1")
 
-        val vm = buildViewModel()
+        val vm = buildViewModel(beforeTheFixtures)
         vm.approveBooking(booking)
         advanceUntilIdle()
 
@@ -154,7 +165,7 @@ class EnhancedSchedulingViewModelTest {
 
         coEvery { bookingRepo.updateBooking(any()) } returns Result.failure(RuntimeException("Firestore write failed"))
 
-        val vm = buildViewModel()
+        val vm = buildViewModel(beforeTheFixtures)
         vm.approveBooking(booking)
         advanceUntilIdle()
 

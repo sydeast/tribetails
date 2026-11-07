@@ -164,6 +164,11 @@ data class NotificationEntry(
     // Archive marker written by archiveNotification / bulkArchiveNotifications
     // (server timestamp). Non-null/non-blank => archived out of the active inbox.
     var archivedAt: String? = null,
+    // #1647: how a `kincare.requested` request ended, stamped onto its rows by
+    // the server (onBookingEnvelopeResolve) once the request is booked or
+    // declined: 'booked' | 'declined' | 'cancelled'. Blank while it is still
+    // waiting, and on every other key. Read through requestOutcomeLabel.
+    var requestResolution: String = "",
 )
 
 /**

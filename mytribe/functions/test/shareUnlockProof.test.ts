@@ -82,18 +82,38 @@ async function getShare(req: { method: string; path?: string; query?: Record<str
   return out;
 }
 
+/**
+ * #1677: the passcode the "never echoed" checks look for. An unlock token is
+ * `v1.<expiry ms>.<base64url mac>`, and a digit passcode like 1234 turns up in
+ * it by chance. `~` is in neither alphabet and survives `encodeURIComponent`
+ * and `JSON.stringify` as it is, so these checks fail only on a real leak.
+ */
+const LEAK_PROBE = '~kiwi~';
 describe('#1331 getShareLink takes the passcode in a POST body', () => {
   it('unlocks with the passcode in the body and returns an unlock token', async () => {
-    useDb(share());
-    const r = await getShare({ method: 'POST', body: { passcode: '1234' } });
+    useDb(share({ passcodeHash: `h:${LEAK_PROBE}` }));
+    const r = await getShare({ method: 'POST', body: { passcode: LEAK_PROBE } });
     expect(r.status).toBe(200);
     expect(r.body.body).toBe('Biscuit napped.');
     expect(r.body.sourceKinTaleId).toBe('tale-1');
     expect(typeof r.body.unlockToken).toBe('string');
-    expect(String(r.body.unlockToken)).not.toContain('1234');
+    expect(String(r.body.unlockToken)).not.toContain(LEAK_PROBE);
     expect(mocks.argonVerify).toHaveBeenCalledTimes(1);
   });
 
+  it('#1677: holds on a clock whose token expiry contains 1234', async () => {
+    const flakedExpiry = 1794017712349;
+    vi.spyOn(Date, 'now').mockReturnValue(flakedExpiry - SHARE_UNLOCK_TTL_MS);
+    try {
+      useDb(share({ passcodeHash: `h:${LEAK_PROBE}` }));
+      const r = await getShare({ method: 'POST', body: { passcode: LEAK_PROBE } });
+      expect(r.status).toBe(200);
+      expect(String(r.body.unlockToken).split('.')[1]).toBe(String(flakedExpiry));
+      expect(String(r.body.unlockToken)).not.toContain(LEAK_PROBE);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
   it('refuses a wrong passcode in the body with 401 and no token', async () => {
     useDb(share());
     const r = await getShare({ method: 'POST', body: { passcode: '9999' } });
@@ -121,16 +141,16 @@ describe('#1331 getShareLink takes the passcode in a POST body', () => {
   it('refuses ?passcode= in the URL before reading the share or running argon2, and never echoes it', async () => {
     useDb(share());
     for (const method of ['GET', 'POST']) {
-      const r = await getShare({ method, query: { passcode: '1234' } });
+      const r = await getShare({ method, query: { passcode: LEAK_PROBE } });
       expect(r.status).toBe(400);
       expect(r.body).toEqual({ error: 'passcode-in-url' });
-      expect(JSON.stringify(r.body)).not.toContain('1234');
+      expect(JSON.stringify(r.body)).not.toContain(LEAK_PROBE);
     }
     // An empty `?passcode=` is still a passcode in the URL.
     expect((await getShare({ method: 'GET', query: { passcode: '' } })).status).toBe(400);
     expect(mocks.dbFn).not.toHaveBeenCalled();
     expect(mocks.argonVerify).not.toHaveBeenCalled();
-    expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('1234');
+    expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain(LEAK_PROBE);
   });
 
   it('keeps a plain GET working: 401 for a protected share, the payload for an open one', async () => {

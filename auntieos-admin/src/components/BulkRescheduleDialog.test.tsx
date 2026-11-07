@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -9,6 +9,18 @@ vi.mock('../api/bookingsWrite', () => ({ rescheduleBooking }));
 import { BulkRescheduleDialog } from './BulkRescheduleDialog';
 import { type RescheduleTarget } from '../lib/bookingReschedule';
 import { type BulkRescheduleOutcome } from '../lib/bookingReschedule';
+
+// #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
+// into the past (nor a New visit scheduled there). The clock is pinned before
+// the earliest of them; only Date is faked, so userEvent's timers run as normal.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 
 /**
  * The per-visit review sheet (#397 M16).

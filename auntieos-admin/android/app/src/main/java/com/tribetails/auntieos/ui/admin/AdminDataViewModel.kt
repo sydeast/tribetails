@@ -410,27 +410,37 @@ class AdminDataViewModel(
     }
 
     /**
-     * Step 4 quick-action (booking notifications only): apply a booking transition
-     * (APPROVE/REJECT) to the linked visit via batchUpdateBookings, then reload the
-     * inbox. Fail-loud: the per-id failure (or success) is surfaced verbatim.
+     * #1675: Approve / Deny on a waiting request's notification answer the
+     * whole request, the same `manageBookingSeries` call Bookings' incoming
+     * requests make (APPROVE books it, CANCEL declines it). The row's
+     * `targetId` is the request's envelope id (`batchId`); it used to go to
+     * `batchUpdateBookings`, which only knows visit ids, so every press came
+     * back not-found. Fail-loud: the server's refusal is shown verbatim.
      */
-    fun quickBookingAction(targetId: String, action: String) {
-        if (targetId.isBlank()) return
+    fun answerBookingRequest(kinfolkId: String, batchId: String, approve: Boolean) {
+        if (kinfolkId.isBlank() || batchId.isBlank()) return
+        val action = if (approve) "APPROVE" else "CANCEL"
         viewModelScope.launch {
-            repository.batchUpdateBookings(listOf(targetId), action)
+            repository.manageBookingSeries(action, kinfolkId, batchId)
                 .onSuccess { result ->
-                    _bulkReadMessage.value = when {
-                        result.updated > 0 -> "Booking ${action.lowercase()}."
-                        result.failed.isNotEmpty() -> "Couldn't ${action.lowercase()}: ${result.failed.first().error}"
-                        else -> "No booking updated."
-                    }
+                    _bulkReadMessage.value = bookingRequestAnswerMessage(approve, result)
                     loadNotifications()
                 }
                 .onFailure { throwable ->
-                    _bulkReadMessage.value = "Couldn't ${action.lowercase()}: ${throwable.message}"
+                    _bulkReadMessage.value = "Couldn't ${if (approve) "approve" else "decline"}: ${throwable.message}"
                 }
         }
     }
+
+    /**
+     * #1609: the sentence the row confirm shows, naming who a reminder
+     * ("reminder") or a draft send ("reviewSend") reaches and how.
+     */
+    suspend fun invoiceNoticePreviewSentence(invoiceId: String, action: String): String =
+        invoiceRepository.previewInvoiceNotice(invoiceId, action).fold(
+            onSuccess = { com.tribetails.auntieos.domain.noticePreviewSentence(it) },
+            onFailure = { "Couldn't check who this reaches: ${it.message ?: "the check failed"}" },
+        )
 
     fun loadInvoices() {
         viewModelScope.launch {
@@ -1287,3 +1297,28 @@ internal fun unsentGeneratedDrafts(drafts: List<Draft>): List<Draft> =
     drafts
         .filter { it.isUnsent }
         .sortedByDescending { it.createdOn }
+/**
+ * #1675: what the notifications screen says after answering a waiting request
+ * from its row. Reports the server's answer rather than assuming it, the #536
+ * rule the Schedule screen's `householdLine` follows: a partial approval left
+ * the rest waiting and told the household nothing, a re-approve sent nothing,
+ * and a dispatch can fail. Pure; unit-tested.
+ */
+internal fun bookingRequestAnswerMessage(
+    approve: Boolean,
+    result: com.tribetails.auntieos.data.repository.ManageSeriesResult,
+): String = when {
+    approve && result.failedVisits > 0 ->
+        "Approved ${result.affectedVisits} of ${result.affectedVisits + result.failedVisits} visits. " +
+            "The rest did not go through and the household has not been told. Open the request in Bookings to finish it."
+    approve && result.newlyConfirmed == 0 ->
+        "This was already booked. Nothing changed and the household was not told again."
+    approve && result.householdNotified ->
+        "Approved. The household has been told once, with every date."
+    approve ->
+        "Approved, but the message to the household did not go out, so tell them another way."
+    result.householdNotified ->
+        "Declined. Nothing was booked and the household has your answer."
+    else ->
+        "Declined, but the message to the household did not go out, so tell them another way."
+}

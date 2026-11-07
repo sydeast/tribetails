@@ -619,6 +619,23 @@ class FirestoreClient {
         }
     }
 
+    /** #1610: how many households a broadcast audience reaches, before the send. Writes nothing. */
+    suspend fun previewBroadcastAudience(
+        segmentId: String?,
+        criteria: com.tribetails.auntieos.web.screens.communicate.BroadcastCriteria?,
+    ): WriteResult<com.tribetails.auntieos.web.screens.communicate.BroadcastAudiencePreview> {
+        val payload = buildJsonObject {
+            if (!segmentId.isNullOrBlank()) put("segmentId", JsonPrimitive(segmentId))
+            if (criteria != null) put("criteria", com.tribetails.auntieos.web.screens.communicate.criteriaToJson(criteria))
+        }
+        return when (val r = platformInvokeCallable("previewBroadcastAudience", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeBroadcastAudiencePreview(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "audience count decode failed") }
+        }
+    }
+
     suspend fun broadcastMessage(
         segmentId: String?,
         criteria: com.tribetails.auntieos.web.screens.communicate.BroadcastCriteria?,
@@ -726,6 +743,34 @@ class FirestoreClient {
         }
     }
 
+    /** #1611: puts one thread back in the unread pile (admin flag only; read receipts stay). */
+    suspend fun markConversationUnread(kinfolkId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("markConversationUnread", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
+    /**
+     * #1573: the audio behind a voicemail or call recording. Twilio's stored link
+     * needs the account's credentials, so the admin-gated `getRecordingAudio`
+     * callable fetches it server-side and returns the bytes (or a plain https
+     * link when the stored one is not a Twilio recording). Fail-loud: the
+     * server's reason surfaces verbatim via [WriteResult.Err].
+     */
+    suspend fun getRecordingAudio(kind: String, id: String): WriteResult<com.tribetails.auntieos.web.screens.inbox.RecordingAudio> {
+        val payload = buildJsonObject {
+            put("kind", JsonPrimitive(kind))
+            put("id", JsonPrimitive(id))
+        }
+        return when (val r = platformInvokeCallable("getRecordingAudio", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.inbox.decodeRecordingAudio(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "recording decode failed") }
+        }
+    }
     /**
      * Stage 3 / 16.2: generates a downloadable PDF of an invoice via the
      * admin-gated generateInvoicePdf callable (MyTribe renders with pdf-lib,
@@ -1474,6 +1519,22 @@ class FirestoreClient {
      * went out; that is an Ok, not an Err, because the household has been
      * reminded. See [decodeReminderOutcome] for the pre-#832 response rule.
      */
+    /**
+     * #1609: who a reminder ("reminder") or a draft send ("reviewSend") will
+     * reach, and by which channel, read before the operator confirms it.
+     */
+    suspend fun previewInvoiceNotice(invoiceId: String, action: String): WriteResult<InvoiceNoticePreview> {
+        val payload = buildJsonObject {
+            put("invoiceId", JsonPrimitive(invoiceId))
+            put("action", JsonPrimitive(action))
+        }
+        return when (val r = platformInvokeCallable("previewInvoiceNotice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeInvoiceNoticePreview(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     suspend fun sendInvoiceReminder(
         invoiceId: String,
         nowMs: Long = reminderNowMs(),
@@ -1820,7 +1881,13 @@ class FirestoreClient {
     // ---- Care-ops session callables (1E §A.9) + series approve/cancel (1G) ----
     private val callableJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id. */
+    /**
+     * 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id.
+     *
+     * #1574: [recordAsCompleted] writes down a visit whose window has already
+     * ended, as COMPLETED; the server refuses it for a window that has not, and
+     * refuses a past window without it. Sent only when true.
+     */
     suspend fun createKinCareSession(
         kinfolkId: String,
         kinIds: List<String>,
@@ -1829,6 +1896,7 @@ class FirestoreClient {
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
+        recordAsCompleted: Boolean = false,
     ): WriteResult<String> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
@@ -1838,6 +1906,7 @@ class FirestoreClient {
             put("endTime", JsonPrimitive(endTime))
             put("serviceDurationMinutes", JsonPrimitive(serviceDurationMinutes))
             put("notes", JsonPrimitive(notes))
+            if (recordAsCompleted) put("recordAsCompleted", JsonPrimitive(true))
         }
         return when (val r = platformInvokeCallable("createKinCareSession", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
@@ -1864,6 +1933,13 @@ class FirestoreClient {
         weeklyDays: List<Int>? = null,
         kinIds: List<String>? = null,
         /**
+         * #1626: the office's private note (the form's "Admin internal notes").
+         * Sent as `staffNotes`, which the server writes to each visit's
+         * staff-only `internalNotes` thread. [notes] is the household-facing
+         * note, stored on the envelope the portal shows them.
+         */
+        staffNotes: String? = null,
+        /**
          * #644: the id this submission will be stored under, minted once by the
          * caller and reused by every attempt at it. Optional so an older caller
          * still compiles; the server then mints its own id and dedupes nothing,
@@ -1882,6 +1958,7 @@ class FirestoreClient {
             idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
             put("pattern", JsonPrimitive(pattern))
             if (!notes.isNullOrBlank()) put("notes", JsonPrimitive(notes))
+            if (!staffNotes.isNullOrBlank()) put("staffNotes", JsonPrimitive(staffNotes))
             weeklyDays?.let { days -> put("weeklyDays", buildJsonArray { days.forEach { add(JsonPrimitive(it)) } }) }
             kinIds?.let { ids -> put("kinIds", buildJsonArray { ids.forEach { add(JsonPrimitive(it)) } }) }
             put("visits", buildJsonArray {
@@ -2414,6 +2491,41 @@ class FirestoreClient {
      */
     suspend fun addBookingNote(kinfolkId: String, bookingId: String, body: String, internal: Boolean): WriteResult<String> =
         platformAddBookingNote(kinfolkId, bookingId, body, internal)
+
+    /**
+     * #1580: the visit's ONE list of internal notes, by session, as the signed-in
+     * staff member may see it (`listVisitInternalNotes`). The same list web
+     * Bookings, web Auntie Time and Android show. Operator ruling 2026-11-05:
+     * two kinds, shared and admin-only; the server filters on the caller's
+     * claim, so an Auntie's list never carries an admin-only note.
+     */
+    suspend fun listVisitInternalNotes(sessionId: String): WriteResult<VisitInternalNotes> {
+        val payload = buildJsonObject { put("sessionId", JsonPrimitive(sessionId)) }
+        return when (val r = platformInvokeCallable("listVisitInternalNotes", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeVisitInternalNotes(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+    /**
+     * #1580: add an internal note to the visit, by session
+     * (`addInternalBookingNote`). [adminOnly] keeps it from Aunties; the server
+     * refuses that mark from an Auntie. Returns the stored visibility.
+     */
+    suspend fun addVisitInternalNote(sessionId: String, body: String, adminOnly: Boolean): WriteResult<String> {
+        val payload = buildJsonObject {
+            put("sessionId", JsonPrimitive(sessionId))
+            put("body", JsonPrimitive(body.trim()))
+            put("visibility", JsonPrimitive(if (adminOnly) "adminOnly" else "shared"))
+        }
+        return when (val r = platformInvokeCallable("addInternalBookingNote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                val obj = callableJson.parseToJsonElement(r.value).jsonObject
+                WriteResult.Ok(obj["visibility"]?.jsonPrimitive?.contentOrNull ?: "shared")
+            }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
 
     // ---- KinTale comment thread ----
     /**
@@ -3826,6 +3938,8 @@ data class Invoice(
     val address: String = "",
     val date: String = "",
     val terms: String = "",
+    /** #1609: the structured terms code when the terms came from the picker, else "". */
+    val termsCode: String = "",
     val dueDate: String = "",
     val discount: String = "",
     val total: Double = 0.0,
@@ -4066,6 +4180,11 @@ data class NotificationEntry(
     // map, so an odd `data` never drops the whole notification from the list.
     @Serializable(with = LenientJsonObjectSerializer::class)
     val data: JsonObject? = null,
+    // #1647: how a `kincare.requested` request ended, stamped onto its rows by
+    // the server (onBookingEnvelopeResolve) once the request is booked or
+    // declined: 'booked' | 'declined' | 'cancelled'. Blank while it is still
+    // waiting, and on every other key. Read through requestOutcomeLabel.
+    val requestResolution: String = "",
 ) {
     /** True once the recipient (or an admin) has marked this notification read. */
     val isRead: Boolean get() = readAt.isNotBlank()
@@ -4610,6 +4729,48 @@ data class BookingNote(
     val body: String = "",
     val createdAtMs: Long? = null,
 )
+
+/** #1580: one note in a visit's internal list (`listVisitInternalNotes`). */
+data class VisitInternalNote(
+    val id: String,
+    val body: String,
+    /** 'admin', 'auntie' or 'unknown'. */
+    val authorRole: String,
+    val authorName: String?,
+    val createdAtMs: Long?,
+    /** 'shared' or 'adminOnly'. */
+    val visibility: String,
+    /** 'thread', or 'visitRecord' for the session's older notes text. */
+    val source: String,
+)
+/** #1580: a visit's internal list, and whether the caller may mark a note admin only. */
+data class VisitInternalNotes(
+    val notes: List<VisitInternalNote>,
+    val canMarkAdminOnly: Boolean,
+    val hasBookingRecord: Boolean,
+)
+/** Pure decode of the `listVisitInternalNotes` reply; never throws on a missing field. */
+internal fun decodeVisitInternalNotes(json: String): VisitInternalNotes {
+    val obj = Json.parseToJsonElement(json).jsonObject
+    val notes = (obj["notes"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val n = el as? JsonObject ?: return@mapNotNull null
+        fun str(k: String) = n[k]?.jsonPrimitive?.contentOrNull
+        VisitInternalNote(
+            id = str("id").orEmpty(),
+            body = str("body").orEmpty(),
+            authorRole = str("authorRole").orEmpty(),
+            authorName = str("authorName"),
+            createdAtMs = n["createdAtMs"]?.jsonPrimitive?.doubleOrNull?.toLong(),
+            visibility = str("visibility") ?: "shared",
+            source = str("source") ?: "thread",
+        )
+    }
+    return VisitInternalNotes(
+        notes = notes,
+        canMarkAdminOnly = obj["canMarkAdminOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
+        hasBookingRecord = obj["hasBookingRecord"]?.jsonPrimitive?.booleanOrNull ?: false,
+    )
+}
 
 /**
  * One KinTale comment read from kin_care_reports/{taleId}/comments. authorRole is

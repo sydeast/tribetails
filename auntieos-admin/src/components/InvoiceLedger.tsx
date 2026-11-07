@@ -201,23 +201,31 @@ function PaymentsPanel({
           table collapses to the width of its own text. `.invoice-ledger__scroll`
           carries the rest of that history. */}
       {ledgerPayments.length > 0 && (
+        <p className="invoice-ledger__caption invoice-ledger__explain">
+          What the client actually paid, recorded for the books, and NOT counted in the figures above.
+          A row reads across as amount = applied + tip + balance; the fee is the processor's cut, taken
+          off what reaches the business rather than off the bill.
+        </p>
+      )}
+      {ledgerPayments.length > 0 && (
         <div className="invoice-ledger__scroll">
           <table className="invoice-ledger__table">
-            <caption className="invoice-ledger__caption">
-              Payment history. What the client actually paid, recorded for the books, and NOT counted
-              in the figures above. A row reads across as amount = applied + tip + balance; the fee is
-              the processor's cut, taken off what reaches the business rather than off the bill.
-            </caption>
+            {/* #1609: the caption names the table; the explanation sits above the
+                scroll box, so it no longer slides sideways with the columns. */}
+            <caption className="invoice-ledger__caption">Payment history</caption>
             <thead>
               <tr>
+                {/* #1609: the money first. Amount, Applied to, Tip, Fee and Balance
+                    sat past the right edge at phone width behind Method and
+                    Reference #, which now come last. */}
                 <th scope="col">Transaction date</th>
-                <th scope="col">Method</th>
-                <th scope="col">Reference #</th>
                 <th scope="col" className="invoice-ledger__num">Amount</th>
                 <th scope="col">Applied to</th>
                 <th scope="col" className="invoice-ledger__num">Tip</th>
                 <th scope="col" className="invoice-ledger__num">Fee</th>
                 <th scope="col" className="invoice-ledger__num">Balance</th>
+                <th scope="col">Method</th>
+                <th scope="col">Reference #</th>
               </tr>
             </thead>
             <tbody>
@@ -226,14 +234,6 @@ function PaymentsPanel({
                 return (
                   <tr key={row.paymentId}>
                     <td>{row.date.trim() === '' ? 'no date recorded' : row.date}</td>
-                    <td>{paymentMethodLabel(row.method)}</td>
-                    <td>
-                      {row.reference.trim() === '' ? (
-                        <span className="invoice-ledger__missing">none</span>
-                      ) : (
-                        row.reference
-                      )}
-                    </td>
                     {/* THE WHOLE SUM COLLECTED, tip included. Not amount + tip:
                         on the operator's real data the tip is already inside this
                         figure, and adding them counts the gratuity twice.
@@ -313,6 +313,14 @@ function PaymentsPanel({
                           re-asserts the figure the cell just declined to give. */}
                       {row.amountResolved && row.unappliedCents > 0 && row.autoApply && (
                         <span className="invoice-ledger__note">held as credit</span>
+                      )}
+                    </td>
+                    <td>{paymentMethodLabel(row.method)}</td>
+                    <td>
+                      {row.reference.trim() === '' ? (
+                        <span className="invoice-ledger__missing">none</span>
+                      ) : (
+                        row.reference
                       )}
                     </td>
                   </tr>

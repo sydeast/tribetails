@@ -23,6 +23,7 @@ import {
 import { SEGMENTS_COLLECTION } from './audienceSegments';
 import { unsubscribeFooter, suppressionDocId } from './sendExternalMessage';
 import { loadBusinessName } from '../lib/businessName';
+import { broadcastMergeData, renderBroadcastCopy, unsupportedMergeFields } from '../lib/broadcastMerge';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 import {
   BroadcastIdempotencyKeyArg,
@@ -192,7 +193,7 @@ function allChannelsOff(c: ResolvedChannels): boolean {
 }
 
 /** Reads a kinfolk doc into the resolver's minimal shape. */
-function toKinfolkLike(id: string, data: Record<string, unknown>): KinfolkLike {
+export function toKinfolkLike(id: string, data: Record<string, unknown>): KinfolkLike {
   return {
     id,
     status: typeof data.status === 'string' ? data.status : '',
@@ -200,11 +201,13 @@ function toKinfolkLike(id: string, data: Record<string, unknown>): KinfolkLike {
     email: typeof data.email === 'string' ? data.email : '',
     phoneNumber: typeof data.phoneNumber === 'string' ? data.phoneNumber : '',
     uid: typeof data.uid === 'string' ? data.uid : '',
+    firstName: typeof data.firstName === 'string' ? data.firstName : '',
+    lastName: typeof data.lastName === 'string' ? data.lastName : '',
   };
 }
 
 /** Loads the segment criteria, from the saved doc or the inline arg. */
-async function loadCriteria(args: ParsedArgs): Promise<Criteria> {
+export async function loadCriteria(args: { segmentId?: string; criteria?: Criteria }): Promise<Criteria> {
   if (args.criteria) return args.criteria;
   const snap = await db().collection(SEGMENTS_COLLECTION).doc(args.segmentId as string).get();
   if (!snap.exists) {
@@ -428,6 +431,14 @@ export function broadcastSender(ctx: {
       k = toKinfolkLike(kinfolkId, snap.data() as Record<string, unknown>);
     }
 
+    // #1610: this household's own copy. The merge fields are filled here, per
+    // household and for every channel, with the stand-in word "Kinfolk" for a
+    // blank first name (operator ruling, 2026-11-05). Email renders the same
+    // templates against the same data inside sendTemplatedEmail, so all four
+    // channels read alike.
+    const mergeData = broadcastMergeData(k, businessName);
+    const copy = renderBroadcastCopy(subject, body, mergeData);
+
     // Preference resolution, identical to the dispatcher's: the operator's gate
     // for this row, then the household's own choice within it. A kinfolk with no
     // linked MyTribe account has no prefs document to read, so they resolve to
@@ -469,13 +480,13 @@ export function broadcastSender(ctx: {
             recipientUid: k.uid,
             actorUid: uid,
             data: { kinfolkId: k.id },
-            title: subject,
+            title: copy.subject,
             // `description` is the field every card renderer already reads for
             // the second line (it carries the catalog description on dispatched
             // notifications). `body` alone was written by nothing else and read
             // by nothing, so a broadcast landed in the inbox as a bare subject.
-            description: body,
-            body,
+            description: copy.body,
+            body: copy.body,
             broadcast: true,
             targetType: 'kinfolk',
             targetId: k.id,
@@ -505,7 +516,7 @@ export function broadcastSender(ctx: {
             to: email,
             subjectTemplate: subject,
             bodyTemplate: `${body}${footer}`,
-            data: {},
+            data: mergeData,
           });
           mark('email', 'sent');
           detail.reached = true;
@@ -541,7 +552,7 @@ export function broadcastSender(ctx: {
       } else {
         try {
           const twilio = await getTwilio();
-          await twilio.messages.create({ from: getTwilioFromNumber(), to: e164, body });
+          await twilio.messages.create({ from: getTwilioFromNumber(), to: e164, body: copy.body });
           mark('sms', 'sent');
           detail.reached = true;
         } catch (err) {
@@ -582,7 +593,7 @@ export function broadcastSender(ctx: {
               .sendEachForMulticast({
                 tokens,
                 // #1381: the business name from settings; no title at all when both are unset.
-                notification: { title: subject || businessName || undefined, body },
+                notification: { title: copy.subject || businessName || undefined, body: copy.body },
                 data: { notificationKey: BROADCAST_NOTIFICATION_KEY },
               });
             // Counts are per-RECIPIENT-reached (consistent with email/sms/in-app
@@ -692,6 +703,15 @@ export async function broadcastMessageHandler(
       });
     }
     throw err;
+  }
+
+  // #1610: a merge field the broadcast cannot fill is refused before anything
+  // is read or written, so a typo reaches the operator and not a household.
+  const unsupported = unsupportedMergeFields(args.subject, args.body);
+  if (unsupported.length > 0) {
+    throw new HttpsError('invalid-argument', `unsupported_merge_fields: ${unsupported.join(', ')}`, {
+      unsupportedMergeFields: unsupported,
+    });
   }
 
   const criteria = await loadCriteria(args);

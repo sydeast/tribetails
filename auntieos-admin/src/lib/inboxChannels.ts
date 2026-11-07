@@ -347,10 +347,31 @@ export function awaitingReplyCount(rows: readonly VoicemailRow[]): number {
 
 // ── row display ────────────────────────────────────────────────────────────
 
-/** The name a row leads with: the household when known, else the raw contact. */
+/**
+ * A US number as people write it, `(619) 500-1530`, when `raw` is a plain
+ * +1/10-digit number. Anything else (an email address, a short code, an
+ * international number) comes back untouched: guessing a grouping for a number
+ * this does not understand would print a wrong number. Pure.
+ */
+export function displayContact(raw: string): string {
+  const m = /^\+?1?[\s().-]*(\d{3})[\s().-]*(\d{3})[\s.-]*(\d{4})$/.exec(raw.trim());
+  if (m === null || raw.includes('@')) return raw;
+  // A leading 1 is only the country code when the number is the 11-digit form.
+  const digits = raw.replace(/\D/g, '');
+  const plus = raw.trim().startsWith('+');
+  if (plus ? !(digits.length === 11 && digits.startsWith('1')) : digits.length !== 10 && !(digits.length === 11 && digits.startsWith('1'))) {
+    return raw;
+  }
+  return `(${m[1] ?? ''}) ${m[2] ?? ''}-${m[3] ?? ''}`;
+}
+/**
+ * The name a row leads with: the household when known, else the contact in a
+ * readable form (a caller no household matches reads `(619) 500-1530`, not a
+ * bare `+16195001530`).
+ */
 export function entryTitle(entry: InboxEntry): string {
   if (entry.kinfolkName !== '') return entry.kinfolkName;
-  if (entry.counterpart !== '') return entry.counterpart;
+  if (entry.counterpart !== '') return displayContact(entry.counterpart);
   // Neither a matched household nor a number Twilio passed through. Honest, and
   // the row still carries its timestamp, preview and channel.
   return 'Unknown contact';

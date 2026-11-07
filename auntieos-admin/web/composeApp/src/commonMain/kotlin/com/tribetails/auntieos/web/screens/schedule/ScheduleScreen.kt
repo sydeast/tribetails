@@ -171,6 +171,12 @@ fun ScheduleScreen() {
     fun sendReschedule(attempt: RescheduleAttempt) {
         rescheduleError = null
         rescheduleRetry = null
+        // #1574: a visit is never moved into the past. Refused here, before the
+        // optimistic move or the callable, so the block stays where it was.
+        rescheduleIntoPastRefusal(attempt.startTime, localZone, Clock.System.now().toEpochMilliseconds())?.let {
+            rescheduleError = it
+            return
+        }
         val prev = optimistic[attempt.sessionId]
         optimistic[attempt.sessionId] = attempt.startTime to attempt.endTime // optimistic move
         scope.launch {

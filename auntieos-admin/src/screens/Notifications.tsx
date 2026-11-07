@@ -15,8 +15,8 @@ import {
   unarchiveNotification,
   bulkUnarchiveNotifications,
 } from '../api/notificationsWrite';
-import { batchUpdateBookings, type BatchBookingAction } from '../api/bookingsWrite';
-import { plainBatchError } from '../lib/bookingBulk';
+import { type BatchBookingAction } from '../api/bookingsWrite';
+import { approveBookingRequest, declineBookingRequest } from '../api/bookingRequests';
 import { kinfolkDisplayName } from '../api/directory';
 import { useCollection } from '../lib/firestore';
 import {
@@ -31,7 +31,11 @@ import {
   unreadNotificationCount,
   type NotificationArchivedMode,
 } from '../lib/notificationsFeed';
-import { notificationKinfolkName, notificationTargetLabel } from '../lib/notificationContext';
+import {
+  notificationKinfolkId,
+  notificationKinfolkName,
+  notificationTargetLabel,
+} from '../lib/notificationContext';
 import {
   hasNotificationDetail,
   notificationDetailRows,
@@ -269,23 +273,37 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
     );
   }
 
-  function bookingAction(entry: NotificationEntry, bookingId: string, action: BatchBookingAction) {
+  /**
+   * #1675: Approve / Deny on a waiting request answers the whole request, the
+   * same `manageBookingSeries` call Bookings > Review makes. `batchId` is the
+   * row's envelope id; the household comes off the row. A refusal (a closed
+   * day, a busy block, a night with no start time, a time already passed)
+   * throws with the server's sentence, which `runRowAction` shows. A clean
+   * answer needs no banner: the server stamps the row, and it shows "Booked"
+   * or "Declined" in place of the buttons.
+   */
+  function bookingAction(entry: NotificationEntry, batchId: string, action: BatchBookingAction) {
+    const kinfolkId = notificationKinfolkId(entry);
     void runRowAction(
       entry._id,
       'booking',
       async () => {
-        const result = await batchUpdateBookings([bookingId], action);
-        if (result.failed.length > 0) {
-          return `Booking ${action === 'APPROVE' ? 'approval' : 'denial'} failed: ${result.failed
-            .map((f) => plainBatchError(f.error))
-            .join('; ')}`;
+        if (action !== 'APPROVE') {
+          const declined = await declineBookingRequest(kinfolkId, batchId);
+          return declined.householdNotified
+            ? null
+            : 'Declined, but the message to the household did not go out, so tell them another way.';
         }
-        if (result.updated === 0) {
-          return `No booking was ${action === 'APPROVE' ? 'approved' : 'denied'}.`;
+        const res = await approveBookingRequest(kinfolkId, batchId);
+        if (res.failedVisits > 0) {
+          return `Approved ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through and the household has not been told. Open the request in Bookings to finish it.`;
+        }
+        if (res.newlyConfirmed > 0 && !res.householdNotified) {
+          return 'Approved, but the message to the household did not go out, so tell them another way.';
         }
         return null;
       },
-      'Updating the booking failed.',
+      'Answering the request failed.',
     );
   }
 
@@ -360,8 +378,15 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
   // back as "Marked 2 of 5" for a batch in which nothing failed. Narrowing here
   // makes the label, the request and any partial report the same number.
   const unreadSelected = useMemo(() => unreadAmong(inScope, selectedIds), [inScope, selectedIds]);
-  const allInScopeIds = useMemo(() => inScope.map((r) => r._id), [inScope]);
-  const allSelected = allInScopeIds.length > 0 && selectedIds.size >= allInScopeIds.length;
+  // #1611: Select all covers the rows the operator can SEE, which is the facet
+  // AND the active filter chip. It used to stop at the facet, so "Select all 85"
+  // under the Unread chip picked 85 rows while the feed showed 12.
+  const allVisibleIds = useMemo(
+    () => notificationsForFilter(inScope, filter).map((r) => r._id),
+    [inScope, filter],
+  );
+  const allSelected =
+    allVisibleIds.length > 0 && selectedIds.size === allVisibleIds.length && allVisibleIds.every((id) => selectedIds.has(id));
 
   return (
     <div className="screen">
@@ -489,18 +514,24 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
                 <NotificationFilters
                   categories={categories}
                   filter={filter}
-                  onFilter={setFilter}
+                  onFilter={(next) => {
+                    // Cleared on a filter change for the same reason as the
+                    // facet: a selection made under one chip must not ride into
+                    // a bulk action on rows the next chip hides.
+                    if (next !== filter) bulk.clear();
+                    setFilter(next);
+                  }}
                 />
 
-                {allInScopeIds.length > 0 ? (
+                {allVisibleIds.length > 0 ? (
                   <div className="notif-selectall">
                     <GhostButton
-                      // Over the rows the FACET has left in scope, never over
-                      // the whole stream: a select-all that reaches rows the
+                      // Over the rows on screen (facet AND filter chip), never
+                      // over the whole stream: a select-all that reaches rows the
                       // operator cannot see is how a bulk archive takes out
                       // something nobody looked at.
-                      label={allSelected ? 'Clear selection' : `Select all ${String(allInScopeIds.length)}`}
-                      onClick={() => (allSelected ? bulk.clear() : bulk.selectAll(allInScopeIds))}
+                      label={allSelected ? 'Clear selection' : `Select all ${String(allVisibleIds.length)}`}
+                      onClick={() => (allSelected ? bulk.clear() : bulk.selectAll(allVisibleIds))}
                       disabled={bulk.busy || bulkArchiving}
                     />
                   </div>

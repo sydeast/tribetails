@@ -225,6 +225,10 @@
 .communicate__row-dot[data-channel='push'] {
   background: var(--color-tertiary);
 }
+.communicate__row-dot[data-channel='broadcast'],
+.communicate__row-dot[data-channel='message'] {
+  background: var(--color-secondary);
+}
 
 .communicate__row-who {
   display: flex;

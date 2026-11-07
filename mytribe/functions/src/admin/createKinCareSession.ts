@@ -12,7 +12,6 @@ import { materializeKinRoster, resolveKinfolkDisplayName } from '../lib/kinRoste
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
-import type { BookingCommunication } from '../portal/requestBooking';
 
 /**
  * 1E §A.9: server-bound creation of a kin_care_sessions doc (scheduleNewVisit).
@@ -89,6 +88,28 @@ const Args = z.object({
    * one was taken. See `lib/visitOverlapConflict.ts`.
    */
   overrideVisitConflict: z.boolean().optional(),
+  /**
+   * #1630: the Android admin's own booking (`enhanced_bookings/{id}`) this visit
+   * is the approval of. Optional; absent for Schedule > New visit.
+   *
+   * With it the record ids are DETERMINISTIC (`enh_{id}`), so approving the same
+   * booking twice lands on the same three documents instead of two visits: the
+   * second call returns the visit the first one wrote and writes nothing. The
+   * id is stored on the session as `enhancedBookingId`, which is what Android's
+   * linked-session lookup and cancel cascade now read.
+   */
+  enhancedBookingId: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[A-Za-z0-9_-]+$/, 'enhancedBookingId must be a Firestore document id')
+    .optional(),
+  /**
+   * #1574: the office is writing down a visit that already happened. Required
+   * for a window that has ended and refused for one that has not; see
+   * `lib/pastVisit.ts` and the handler's note below.
+   */
+  recordAsCompleted: z.boolean().optional(),
 });
 
 /**
@@ -128,7 +149,46 @@ export async function createKinCareSessionHandler(
     throw err;
   }
 
-  await guardBookingBusyConflict({
+  // #1630: an approval already turned into a visit is answered with that visit,
+  // BEFORE the guards: the overlap guard would otherwise read the visit this
+  // same booking already made and refuse the retry as a clash with itself.
+  const enhancedId = args.enhancedBookingId ?? null;
+  if (enhancedId !== null) {
+    const existing = await db().collection('kin_care_sessions').doc(`vis_enh_${enhancedId}`).get();
+    if (existing.exists) {
+      logEvent({
+        severity: 'info',
+        function: 'createKinCareSession',
+        event: 'admin.kinCareSession.alreadyCreated',
+        uid,
+        extra: { sessionId: existing.id, enhancedBookingId: enhancedId },
+      });
+      return { ok: true, sessionId: existing.id };
+    }
+  }
+
+  // #1574, operator ruling 2026-11-05: a past-dated visit is "allowed only as
+  // already completed ... never Scheduled". Decided before any guard, so a past
+  // date reports that rather than a calendar clash. `lib/pastVisit` is loaded
+  // here rather than at file scope (#1714): see coldStartImportGraph.test.ts.
+  const { businessTimeZoneReader, newVisitStatusFor } = await import('../lib/pastVisit.js');
+  const status = await newVisitStatusFor({
+    startTime: args.startTime,
+    endTime: args.endTime,
+    nowMs: Date.now(),
+    recordAsCompleted: args.recordAsCompleted === true,
+    timeZone: businessTimeZoneReader(),
+  });
+  const backdated = status === 'COMPLETED';
+
+  // A RECORD OF A VISIT THAT ALREADY HAPPENED SKIPS TWO OF THE THREE GUARDS.
+  // The busy import and the closure list answer "may this hour be booked?",
+  // which has no meaning for an hour that is over: the visit happened, and the
+  // closure guard has no override, so running it would make a real visit on a
+  // closed day impossible to write down. The overlap guard still runs (and is
+  // still overridable): a second record over the same hour is most often the
+  // same visit written down twice.
+  if (!backdated) await guardBookingBusyConflict({
     firestore: db(),
     visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
     actorUid: uid,
@@ -138,7 +198,7 @@ export async function createKinCareSessionHandler(
   });
   // A closed day always refuses the write -- no override. See
   // companyHolidayConflict.ts's header for why this guard has none.
-  await guardCompanyHolidayConflict({
+  if (!backdated) await guardCompanyHolidayConflict({
     firestore: db(),
     visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
   });
@@ -167,9 +227,11 @@ export async function createKinCareSessionHandler(
   // both, in ONE batch so no reader ever sees a session pointing at a visit that
   // is not there (or the reverse). See the header.
   const firestore = db();
-  const parentRef = firestore.collection('families').doc(args.kinfolkId).collection('bookings').doc();
+  // #1630: deterministic for an Android booking's approval (see Args), minted otherwise.
+  const bookings = firestore.collection('families').doc(args.kinfolkId).collection('bookings');
+  const parentRef = enhancedId !== null ? bookings.doc(`enh_${enhancedId}`) : bookings.doc();
   const batchId = parentRef.id;
-  const visitRef = parentRef.collection('kinCares').doc();
+  const visitRef = enhancedId !== null ? parentRef.collection('kinCares').doc(`enh_${enhancedId}`) : parentRef.collection('kinCares').doc();
   const visitId = visitRef.id;
   const ref = firestore.collection('kin_care_sessions').doc(`vis_${visitId}`);
   const startMs = Date.parse(args.startTime);
@@ -178,67 +240,30 @@ export async function createKinCareSessionHandler(
   const endTs = Number.isFinite(endMs) ? Timestamp.fromMillis(endMs) : null;
 
   const batch = firestore.batch();
-  batch.set(parentRef, {
-    familyId: args.kinfolkId,
-    requestBatchId: batchId,
-    visitIds: [visitId],
-    envelopeStatus: 'confirmed',
-    requestedByUid: uid,
-    // Marks the record as the office's own, so nobody reads it as a household
-    // request that was approved.
-    scheduledByOffice: true,
-    pattern: 'individual',
-    weeklyDays: null,
-    serviceId: null,
-    serviceName: args.serviceType,
-    kinIds,
-    kinNames,
-    notes: null,
-    billing: null,
-    // `COMMUNICATION_DEFAULT` (portal/requestBooking.ts), spelled out so this
-    // function does not load the portal callable's module at cold start.
-    communication: { emailConfirmation: false, timeVisibility: false } satisfies BookingCommunication,
-    visitCount: 1,
-    confirmedCount: 1,
-    completedCount: 0,
-    cancelledCount: 0,
-    firstStartTime: startTs,
-    lastStartTime: startTs,
-    targetType: 'KIN',
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-  });
-  batch.set(visitRef, {
+  // #1726: the record's two documents come from `officeBookingRecordDocs`, the
+  // shape `transitionBookingStatus` also writes when it approves a session that
+  // has no record. #1574: a backdated record is completed from birth there too;
+  // neither booking trigger sends anything for it (`onBookingEnvelopeCreate`
+  // answers only an envelope created `requested`, and `onBookingsWrite` on a
+  // visit created `completed` reaches no dispatch).
+  // Loaded here, not at file scope (#1714): see coldStartImportGraph.test.ts.
+  const { officeBookingRecordDocs } = await import('../lib/officeBookingRecord.js');
+  const record = officeBookingRecordDocs({
+    kinfolkId: args.kinfolkId,
+    uid,
     batchId,
-    familyId: args.kinfolkId,
-    status: 'confirmed',
-    visitProgress: null,
-    serviceId: null,
-    serviceName: args.serviceType,
+    visitId,
+    sessionId: ref.id,
     serviceType: args.serviceType,
-    priceCents: null,
-    timeBlockId: null,
-    timeBlockLabel: null,
-    title: args.serviceType,
-    startTime: startTs,
-    endTime: endTs,
-    startTimePending: false,
-    requestedDate: null,
+    startTs,
+    endTs,
     kinIds,
     kinNames,
-    assignedAuntieUid: null,
-    auntieDisplayName: null,
-    auntieAvatarUrl: null,
-    // The household's own note slot. Empty: the office's note is on the session.
-    notes: null,
-    requestedByUid: uid,
-    sourceBookingId: visitId,
-    sessionId: ref.id,
-    scheduledByOffice: true,
-    seriesApprovedAt: FieldValue.serverTimestamp(),
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
+    backdated,
+    householdNote: null,
   });
+  batch.set(parentRef, record.envelope);
+  batch.set(visitRef, record.visit);
   batch.set(ref, {
     kinfolkId: args.kinfolkId,
     kinfolkName,
@@ -252,10 +277,20 @@ export async function createKinCareSessionHandler(
     // "Visit length 0" for a 20:00 to 20:30 visit.
     serviceDurationMinutes: visitLengthMinutes(args.serviceDurationMinutes, args.startTime, args.endTime),
     notes: args.notes ?? '',
-    status: 'SCHEDULED',
+    status,
+    // #1574: a backdated record is COMPLETED from birth and never passes
+    // through `transitionBookingStatus`, so it starts no live visit (Auntie
+    // Time lists only the on-the-books statuses). `completedAt` is when the
+    // visit ended, not when it was typed in, and the marker keeps it findable:
+    // it also skipped the operator's arrival-and-departure rule, which governs
+    // the Complete step only. The booking record above is written completed
+    // from birth too; see the note there on why that sends nothing.
+    ...(backdated && { completedAt: args.endTime, recordedAfterTheFact: true }),
     sourceBookingId: visitId,
     kinCareBatchId: batchId,
     kinCareVisitId: visitId,
+    // #1630: the Android booking this visit approves, or absent.
+    ...(enhancedId !== null ? { enhancedBookingId: enhancedId } : {}),
     createdAt: FieldValue.serverTimestamp(),
     createdBy: uid,
     updatedAt: FieldValue.serverTimestamp(),
@@ -275,6 +310,9 @@ export async function createKinCareSessionHandler(
       visitId,
       serviceType: args.serviceType,
       startTime: args.startTime,
+      enhancedBookingId: enhancedId,
+      status,
+      recordedAfterTheFact: backdated,
     },
   });
 

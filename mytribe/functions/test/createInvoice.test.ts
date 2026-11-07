@@ -79,33 +79,59 @@ describe('createInvoice zod validation', () => {
 
   // #408 CHANGED THIS. A blank invoice number used to be a refusal, because the
   // composer made the operator invent one. It now means "assign it", which is
-  // what the composer sends on every new invoice.
-  it('assigns a number when the caller sends a blank one, instead of refusing', async () => {
-    const ctx = buildDbMock({});
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await createInvoiceHandler(req({ ...validPayload, invoiceNumber: '' }));
-    expect(res.ok).toBe(true);
-    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
-    // The year comes from the invoice's own date, not from the clock.
-    expect(written?.data.invoiceNumber).toBe('INV-2026-0001');
+  // what the composer sends on every new invoice. #1609 ruled the style: the
+  // plain count continues (#1020 on) until 2027-01-01 in Chicago.
+  it('assigns the next plain number when the caller sends a blank one, instead of refusing', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-06T18:00:00Z'));
+    try {
+      const ctx = buildDbMock({
+        queryDocs: {
+          invoices: [
+            { id: 'a', data: { invoiceNumber: '1019' } },
+            { id: 'b', data: { invoiceNumber: 'INV-2026-0001' } },
+            { id: 'c', data: {} },
+          ],
+        },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await createInvoiceHandler(req({ ...validPayload, invoiceNumber: '' }));
+      expect(res.ok).toBe(true);
+      const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+      expect(written?.data.invoiceNumber).toBe('1020');
+      expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')?.data.nextPlain).toBe(1021);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('assigns a number when the caller omits the field entirely', async () => {
-    const { invoiceNumber: _omitted, ...noNumber } = validPayload;
-    const ctx = buildDbMock({});
-    mocks.dbFn.mockReturnValue(ctx.db);
-    await createInvoiceHandler(req(noNumber));
-    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
-    expect(written?.data.invoiceNumber).toBe('INV-2026-0001');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2027-03-01T18:00:00Z'));
+    try {
+      const { invoiceNumber: _omitted, ...noNumber } = validPayload;
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await createInvoiceHandler(req(noNumber));
+      const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+      expect(written?.data.invoiceNumber).toBe('INV-2027-0001');
+    } finally {
+      vi.useRealTimers();
+    }
   });
-  it('continues the sequence from the stored counter rather than starting over', async () => {
-    const ctx = buildDbMock({ docs: { 'counters/invoiceNumber': { next: 42 } } });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    await createInvoiceHandler(req({ ...validPayload, invoiceNumber: '' }));
-    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
-    expect(written?.data.invoiceNumber).toBe('INV-2026-0042');
-    // And the counter moved on, so the next invoice cannot be handed the same
-    // number.
-    expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')?.data.next).toBe(43);
+  it('continues the stored plain counter rather than starting over', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-06T18:00:00Z'));
+    try {
+      const ctx = buildDbMock({ docs: { 'counters/invoiceNumber': { nextPlain: 1042 } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await createInvoiceHandler(req({ ...validPayload, invoiceNumber: '' }));
+      const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+      expect(written?.data.invoiceNumber).toBe('1042');
+      // And the counter moved on, so the next invoice cannot be handed the same number.
+      expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')?.data.nextPlain).toBe(1043);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('keeps a number the caller did send, untouched', async () => {
     const ctx = buildDbMock({});
@@ -116,7 +142,14 @@ describe('createInvoice zod validation', () => {
     // Nothing was drawn from the sequence for an invoice that named itself.
     expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')).toBeUndefined();
   });
-
+  it('#1609 refuses a typed number another invoice already holds', async () => {
+    const ctx = buildDbMock({ queryDocs: { invoices: [{ id: 'other', data: { invoiceNumber: '1018' } }] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(createInvoiceHandler(req({ ...validPayload, invoiceNumber: '1018' }))).rejects.toMatchObject({
+      code: 'already-exists',
+    });
+    expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))).toBeUndefined();
+  });
   it('rejects negative total', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);

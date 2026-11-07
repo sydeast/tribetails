@@ -131,14 +131,47 @@ export interface NotificationActionSet {
   /** Destination for "Open", or null when there is nothing to open. */
   open: NotificationRoute | null;
   /**
-   * The RAW envelope visit id for Approve/Deny, or '' when this is not a
-   * booking notification. Underived on purpose: those callables act on
-   * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`, so the
-   * `vis_` form `open` carries would be the wrong id here.
+   * The waiting request's envelope id (`batchId`) for Approve/Deny, or '' when
+   * this row is not a request still waiting on a decision. With the row's
+   * household (`notificationKinfolkId`) it names
+   * `families/{kinfolkId}/bookings/{batchId}`, what `manageBookingSeries`
+   * answers (#1675).
    */
   bookingId: string;
   /** Destination for "Create quote", or null when no household is identifiable. */
   quote: NotificationRoute | null;
+  /**
+   * #1647: how an answered request ended ("Booked", "Declined", "Cancelled"),
+   * shown where Approve/Deny used to be. Null on every row that is not an
+   * answered `kincare.requested`.
+   */
+  outcome: string | null;
+}
+
+/**
+ * #1647: the operator-facing word for how a booking request ended, read off the
+ * `requestResolution` stamp the server writes onto the request's rows once it
+ * is booked or declined. Null while the request is still waiting.
+ *
+ * An unrecognised non-blank value still counts as answered and reads
+ * "Answered": the server only stamps a row once the request has left
+ * `requested`, so offering Approve on it would fire at a request that is no
+ * longer waiting. A blank or absent value is still waiting.
+ */
+export function requestOutcomeLabel(entry: NotificationEntry): string | null {
+  if (str(entry.key).trim() !== PENDING_BOOKING_REQUEST_KEY) return null;
+  const resolution = str(entry.requestResolution).trim().toLowerCase();
+  if (resolution === '') return null;
+  switch (resolution) {
+    case 'booked':
+      return 'Booked';
+    case 'declined':
+      return 'Declined';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return 'Answered';
+  }
 }
 
 /**
@@ -158,20 +191,24 @@ const QUOTE_DENIED_KEY = 'quote.denied';
  * naming a household offered Create quote, regardless of what the event was or
  * what had already happened to it. Narrowed per event below.
  *
- * APPROVE/DENY calls `batchUpdateBookings` with APPROVE/REJECT, and that is
- * only the right callable for a FRESH request: `kincare.reschedule.requested`
+ * APPROVE/DENY answers the whole request through `manageBookingSeries`
+ * (#1675), the call Bookings > Review makes. The row's `targetId` is the
+ * request's envelope id (`batchId`, written by `onBookingEnvelopeCreate`), and
+ * `batchUpdateBookings`, which these buttons used to call, only knows visit
+ * ids, so every press came back not-found. It needs the household too, so a row
+ * that names none offers no Approve/Deny. Only a FRESH request takes this
+ * path: `kincare.reschedule.requested`
  * resolves through `resolveBookingRescheduleRequest`, and
  * `kincare.cancel.requested` resolves through the #438 accept/decline path.
  * Offering Approve/Deny on either would fire the wrong callable at the entity.
- * A notification doc carries no live visit status to re-check ("is this still
- * pending?"), so pendency is read off the dispatch key itself:
- * `kincare.requested` only ever fires once, at the moment of the ask, which is
- * the moment nothing has ruled on it yet. A request an admin has since decided
- * keeps offering Approve/Deny on its original card until the row is archived
- * or read away; that is not silently wrong, because `bookingAction` in
- * Notifications.tsx fails loud on a stale click (`batchUpdateBookings`
- * resolving `failed[]` or `updated === 0` lands in the error banner, never a
- * fake success).
+ * Pendency is read off the dispatch key PLUS the server's answer stamp:
+ * `kincare.requested` only ever fires once, at the moment of the ask, and
+ * #1647 has the server stamp `requestResolution` on its rows once the request
+ * is booked or declined anywhere (`onBookingEnvelopeResolve`). An answered
+ * request offers no Approve/Deny; it shows its outcome instead (`outcome`),
+ * and "Needs a decision" stops counting it because that count is derived from
+ * `bookingId` below. Before #1647 a booked request kept offering Approve/Deny
+ * on its card until the row was archived.
  *
  * CREATE QUOTE is offered for a quote or a booking request that has no
  * invoice yet: `quote.denied` (the quote itself was rejected, no bill exists)
@@ -180,26 +217,34 @@ const QUOTE_DENIED_KEY = 'quote.denied';
  * `data.invoiceId`). `quote.accepted` is excluded because that quote already
  * became the bill. Every other event, including a declined request or an
  * assignment change, gets none of this: an already-decided or non-billing
- * event has nothing left to approve, deny or quote. The button still
- * disappears when no household is identifiable, same as before.
+ * event has nothing left to approve, deny or quote. That includes a request
+ * the server has stamped as answered (#1647): it is no longer a fresh ask. The
+ * button still disappears when no household is identifiable, same as before.
  */
 export function applicableNotificationActions(entry: NotificationEntry): NotificationActionSet {
   const type = normalizedTargetType(entry.targetType);
   const targetId = str(entry.targetId).trim();
   const key = str(entry.key).trim();
+  const outcome = requestOutcomeLabel(entry);
 
+  const kinfolkId = notificationKinfolkId(entry);
   const isPendingBookingRequest =
-    key === PENDING_BOOKING_REQUEST_KEY && type === 'booking' && targetId !== '';
+    key === PENDING_BOOKING_REQUEST_KEY &&
+    outcome === null &&
+    type === 'booking' &&
+    targetId !== '' &&
+    kinfolkId !== '';
 
   const hasInvoiceReference = type === 'invoice' || str(rec(entry.data)['invoiceId']).trim() !== '';
   const isQuoteDenial = key === QUOTE_DENIED_KEY;
-  const isUninvoicedBookingRequest = key === PENDING_BOOKING_REQUEST_KEY && !hasInvoiceReference;
-  const kinfolkId = notificationKinfolkId(entry);
+  const isUninvoicedBookingRequest =
+    key === PENDING_BOOKING_REQUEST_KEY && outcome === null && !hasInvoiceReference;
   const quoteEligible = kinfolkId !== '' && (isQuoteDenial || isUninvoicedBookingRequest);
 
   return {
     open: notificationOpenRoute(entry),
     bookingId: isPendingBookingRequest ? targetId : '',
     quote: quoteEligible ? notificationQuoteRoute(kinfolkId) : null,
+    outcome,
   };
 }

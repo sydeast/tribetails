@@ -21,6 +21,10 @@
 import type { z } from 'zod';
 
 import { Args as AddInternalBookingNoteArgs, Result as AddInternalBookingNoteResult } from '../../src/admin/addInternalBookingNote';
+import {
+  Args as ListVisitInternalNotesArgs,
+  Result as ListVisitInternalNotesResult,
+} from '../../src/admin/listVisitInternalNotes';
 import { Args as ArchiveInvoiceArgs, Result as ArchiveInvoiceResult } from '../../src/admin/archiveInvoice';
 import { Args as BatchUpdateBookingsArgs, Result as BatchUpdateBookingsResult } from '../../src/admin/batchUpdateBookings';
 import { Args as CreateMultiDateBookingRequestArgs, Result as CreateMultiDateBookingRequestResult } from '../../src/admin/createMultiDateBookingRequest';
@@ -63,6 +67,7 @@ import {
 } from '../../src/portal/getAccountCreditHistory';
 import { Args as ReviewAndSendDraftInvoiceArgs, Result as ReviewAndSendDraftInvoiceResult } from '../../src/admin/reviewAndSendDraftInvoice';
 import { Args as SendInvoiceReminderArgs, Result as SendInvoiceReminderResult } from '../../src/admin/sendInvoiceReminder';
+import { Args as PreviewInvoiceNoticeArgs, Result as PreviewInvoiceNoticeResult } from '../../src/admin/previewInvoiceNotice';
 import { Args as RetryInvoiceCheckoutCloseArgs, Result as RetryInvoiceCheckoutCloseResult } from '../../src/admin/retryInvoiceCheckoutClose';
 import { Args as UnarchiveInvoiceArgs, Result as UnarchiveInvoiceResult } from '../../src/admin/unarchiveInvoice';
 import { Args as UpdateInvoiceArgs, Result as UpdateInvoiceResult } from '../../src/admin/updateInvoice';
@@ -178,6 +183,7 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'resolveUnappliedPayment', args: ResolveUnappliedPaymentArgs, result: ResolveUnappliedPaymentResult },
     { name: 'resendQuote', args: ResendQuoteArgs, result: ResendQuoteResult },
     { name: 'reviewAndSendDraftInvoice', args: ReviewAndSendDraftInvoiceArgs, result: ReviewAndSendDraftInvoiceResult },
+    { name: 'previewInvoiceNotice', args: PreviewInvoiceNoticeArgs, result: PreviewInvoiceNoticeResult },
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },
     { name: 'retryInvoiceCheckoutClose', args: RetryInvoiceCheckoutCloseArgs, result: RetryInvoiceCheckoutCloseResult },
     { name: 'unarchiveInvoice', args: UnarchiveInvoiceArgs, result: UnarchiveInvoiceResult },
@@ -220,6 +226,7 @@ export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'addBookingNote', args: AddBookingNoteArgs, result: AddBookingNoteResult },
     { name: 'getBookingNotes', args: GetBookingNotesArgs, result: GetBookingNotesResult },
     { name: 'addInternalBookingNote', args: AddInternalBookingNoteArgs, result: AddInternalBookingNoteResult },
+    { name: 'listVisitInternalNotes', args: ListVisitInternalNotesArgs, result: ListVisitInternalNotesResult },
     { name: 'batchUpdateBookings', args: BatchUpdateBookingsArgs, result: BatchUpdateBookingsResult },
     {
       name: 'createMultiDateBookingRequest',

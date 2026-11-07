@@ -31,6 +31,7 @@ import {
   type InvoiceLineItemInput,
   type PaymentAmount,
 } from '../lib/invoiceMath';
+import { invoiceNumberTaken } from '../lib/invoiceNumber';
 
 /**
  * Edits an invoice: its descriptive fields, its line items, or both.
@@ -73,7 +74,8 @@ export const Args = z.object({
   invoiceId: z.string().min(1).max(200),
   patch: z
     .object({
-      invoiceNumber: z.string().min(1).max(60).optional(),
+      // #1609: a blank number is refused in planEdit, in words, not by zod's raw 400.
+      invoiceNumber: z.string().max(60).optional(),
       date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -263,6 +265,26 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
     throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
   }
 
+  // #1609: AN INVOICE KEEPS A NUMBER, AND NO TWO SHARE ONE. Clearing the field
+  // used to fail zod's min(1) and surface as a raw [400]; it is refused here
+  // with a sentence the edit form can show beside the field. A number another
+  // invoice already holds is refused the same way, read in this transaction.
+  if (patch.invoiceNumber !== undefined) {
+    const typed = patch.invoiceNumber.trim();
+    if (typed === '') {
+      throw new HttpsError('invalid-argument', 'An invoice needs a number. Type one, or put the old one back.', {
+        code: 'invoice_number_blank',
+      });
+    }
+    patch.invoiceNumber = typed;
+    if (typed !== (typeof data.invoiceNumber === 'string' ? data.invoiceNumber.trim() : '')) {
+      if (await invoiceNumberTaken(db(), typed, invoiceId, tx)) {
+        throw new HttpsError('already-exists', `Invoice number ${typed} is already used by another invoice.`, {
+          code: 'invoice_number_taken',
+        });
+      }
+    }
+  }
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (patch.invoiceNumber !== undefined) update['invoiceNumber'] = patch.invoiceNumber;
   if (patch.date !== undefined) update['date'] = patch.date;

@@ -129,11 +129,21 @@ class KinCareRepository(
 
     suspend fun getKinCareSessionsBySourceBookingId(sourceBookingId: String): Result<List<KinCareSession>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        val snapshot = firestore.collection("kin_care_sessions")
+        // #1630: an Android booking approved through `createKinCareSession`
+        // carries its id as `enhancedBookingId` (its `sourceBookingId` is the
+        // booking record's visit). Sessions written before that carry it as
+        // `sourceBookingId`. Both are this booking's visits.
+        val byEnhanced = firestore.collection("kin_care_sessions")
+            .whereEqualTo("enhancedBookingId", sourceBookingId)
+            .get()
+            .await()
+            .toObjects(KinCareSession::class.java)
+        val bySource = firestore.collection("kin_care_sessions")
             .whereEqualTo("sourceBookingId", sourceBookingId)
             .get()
             .await()
-        snapshot.toObjects(KinCareSession::class.java)
+            .toObjects(KinCareSession::class.java)
+        (byEnhanced + bySource).distinctBy { it.id }
     }.onFailure { AuntieLog.e("Failed to get kin care sessions for source booking $sourceBookingId", it) }
 
     /**
@@ -399,7 +409,13 @@ class KinCareRepository(
 
     // ---- Care-ops session callables (1E §A.9) ----
 
-    /** 1E §A.9: create a SCHEDULED kin_care_sessions doc. Returns the new session id. */
+    /**
+     * 1E §A.9: create a SCHEDULED kin_care_sessions doc. Returns the new session id.
+     *
+     * #1574: [recordAsCompleted] writes down a visit whose window has already
+     * ended, as COMPLETED; the server refuses it for a window that has not, and
+     * refuses a past window without it. Sent only when true.
+     */
     suspend fun createKinCareSession(
         kinfolkId: String,
         kinIds: List<String>,
@@ -408,15 +424,29 @@ class KinCareRepository(
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
+        recordAsCompleted: Boolean = false,
+        /**
+         * #1630: the `enhanced_bookings` id this visit is the approval of. The
+         * server derives the booking record's ids from it, so approving the
+         * same booking twice returns the first visit instead of making two,
+         * and stores it on the session as `enhancedBookingId`.
+         */
+        enhancedBookingId: String? = null,
     ): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         val kinfolkId = mode.scopedKinfolkId(kinfolkId)
-        val payload = mapOf(
-            "kinfolkId" to kinfolkId, "kinIds" to kinIds, "serviceType" to serviceType,
-            "startTime" to startTime, "endTime" to endTime,
-            "serviceDurationMinutes" to serviceDurationMinutes, "notes" to notes,
-        )
+        val payload = buildMap<String, Any> {
+            put("kinfolkId", kinfolkId)
+            put("kinIds", kinIds)
+            put("serviceType", serviceType)
+            put("startTime", startTime)
+            put("endTime", endTime)
+            put("serviceDurationMinutes", serviceDurationMinutes)
+            put("notes", notes)
+            enhancedBookingId?.takeIf { it.isNotBlank() }?.let { put("enhancedBookingId", it) }
+            if (recordAsCompleted) put("recordAsCompleted", true)
+        }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createKinCareSession").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("createKinCareSession: non-map payload")

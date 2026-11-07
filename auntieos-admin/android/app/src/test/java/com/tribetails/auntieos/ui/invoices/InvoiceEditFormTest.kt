@@ -220,7 +220,45 @@ class InvoiceEditFormTest {
         val invoice = itemized(scope = "metadataOnly")
         val outcome = invoiceEditPatchOf(invoice, invoiceEditDraftOf(invoice)!!.copy(invoiceNumber = "  "))
         assertNull(outcome.patch)
-        assertEquals("The invoice number cannot be empty.", outcome.error)
+        assertEquals("An invoice needs a number. Type one, or put the old one back.", outcome.error)
+    }
+
+    // ── #1609: terms from the same picker New invoice uses ─────────────────────
+
+    @Test
+    fun `an invoice with free-text terms opens with no code picked, and sends no terms`() {
+        val invoice = itemized(scope = "metadataOnly")
+        val draft = invoiceEditDraftOf(invoice)!!
+        assertNull(draft.termsCode)
+        val outcome = invoiceEditPatchOf(invoice, draft.copy(address = "14 Elm Row"))
+        val patch = outcome.patch!!.toPayload()
+        assertFalse(patch.containsKey("terms"))
+        assertFalse(patch.containsKey("termsCode"))
+    }
+
+    @Test
+    fun `a picked code is sent as termsCode, and its due date is left to the server`() {
+        val invoice = itemized(scope = "metadataOnly")
+        val draft = invoiceEditDraftOf(invoice)!!.copy(
+            termsCode = com.tribetails.auntieos.domain.InvoiceTermsCode.NET_30,
+            dueDate = "2026-12-01",
+        )
+        val patch = invoiceEditPatchOf(invoice, draft).patch!!.toPayload()
+        assertEquals("net_30", patch["termsCode"])
+        assertFalse(patch.containsKey("dueDate"))
+        assertFalse(patch.containsKey("terms"))
+    }
+
+    @Test
+    fun `custom terms send the typed due date with the code`() {
+        val invoice = itemized(scope = "metadataOnly")
+        val draft = invoiceEditDraftOf(invoice)!!.copy(
+            termsCode = com.tribetails.auntieos.domain.InvoiceTermsCode.CUSTOM,
+            dueDate = "2026-12-01",
+        )
+        val patch = invoiceEditPatchOf(invoice, draft).patch!!.toPayload()
+        assertEquals("custom", patch["termsCode"])
+        assertEquals("2026-12-01", patch["dueDate"])
     }
 
     @Test

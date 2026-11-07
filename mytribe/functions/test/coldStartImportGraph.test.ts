@@ -132,8 +132,46 @@ const ALLOWED_EAGER_PACKAGES = [
  * than a dispatcher export because every callable test mocks the dispatcher
  * whole. Measured at 423 after merging onto #1316, inside the 430
  * already allowed, so the bound did not move.
+ *
+ * 440 since #1577 (main had reached 431): that change adds
+ * `lib/householdNames.ts`, the one read of `families/{id}.displayName` that
+ * `listRescheduleRequests` and `listCancelRequests` share so a visit request
+ * names its household. One module whose imports are already resident; not a
+ * structural change.
+ *
+ * #1714: main reached 432 when #1679, #1682 and #1689 merged one after another,
+ * each having passed alone. They added `admin/previewInvoiceNotice.ts`,
+ * `lib/pastVisit.ts` and `admin/marketingCopy.ts`. The first is a FUNCTIONS
+ * entry, so it is in this graph by construction. The other two, and
+ * `lib/stripVideoLocationJob.ts` with the two modules only it imports, now load
+ * with `await import()` inside the handlers that use them. Measured at 428
+ * after merging onto #1577 (433 without this change), so the bound did not
+ * move.
+ *
+ * #1580 adds `admin/listVisitInternalNotes.ts`, the visit's one
+ * internal-notes list, and `lib/visitNotes.ts`, the path and target
+ * resolution it shares with `addInternalBookingNote`. Two modules whose
+ * imports are all already resident, inside the 440 already allowed, so the
+ * bound did not move.
+ *
+ * #1610 adds `lib/broadcastMerge.ts`, the per-household merge-field fill the
+ * broadcast sender and its resume sweep share. Its imports are all already
+ * resident through `lib/email.ts`, so it costs one module, inside the 440
+ * already allowed, and the bound did not move.
+ *
+ * 435 since #1718 (was 440, which #1577 set while main was over 430). #1716
+ * brought main back to 428 and #1718 asked for 430, but by the time it was
+ * built main had reached 435: four new FUNCTIONS entries,
+ * `admin/getRecordingAudio.ts`, `admin/listVisitInternalNotes.ts`,
+ * `admin/previewBroadcastAudience.ts` and
+ * `triggers/onBookingEnvelopeResolve.ts`, which are in this graph by
+ * construction, and three helpers, `lib/visitNotes.ts`,
+ * `notifications/requestResolution.ts` and `lib/broadcastMerge.ts`, whose
+ * imports are already resident. 430 is not reachable without moving modules
+ * out of the graph, so the bound sits at the measured count with no slack:
+ * the next eager module has to be looked at.
  */
-const MAX_OWN_EAGER_MODULES = 430;
+const MAX_OWN_EAGER_MODULES = 435;
 
 interface Edge {
   spec: string;

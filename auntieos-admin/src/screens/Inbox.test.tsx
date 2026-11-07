@@ -850,7 +850,7 @@ describe('Inbox channels', () => {
     });
     render(<Inbox />);
     await screen.findByText('Channels');
-    expect(screen.getByText('+15559998888')).toBeInTheDocument();
+    expect(screen.getByText('(555) 999-8888')).toBeInTheDocument();
   });
 });
 
@@ -922,7 +922,7 @@ describe('Inbox on the glass ground (#755)', () => {
 
     const call = rowOf('Okafor Household');
     expect(call.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'error');
-    expect(within(call).getByText('· +17375550192')).toHaveClass('inbox__row-counterpart');
+    expect(within(call).getByText('· (737) 555-0192')).toHaveClass('inbox__row-counterpart');
 
     const sms = rowOf('Bell Household');
     expect(sms.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'orange');
@@ -963,7 +963,7 @@ describe('Inbox on the glass ground (#755)', () => {
     streams({ voicemails: ready([voicemail({ kinfolkId: null, kinfolkName: '', callerNumber: '+15559998888' })]) });
     render(<Inbox />);
     await screen.findByText('Channels');
-    const row = screen.getByText('+15559998888').closest('.inbox__row') as HTMLElement;
+    const row = screen.getByText('(555) 999-8888').closest('.inbox__row') as HTMLElement;
     expect(row.querySelector('.inbox__row-counterpart')).toBeNull();
   });
 

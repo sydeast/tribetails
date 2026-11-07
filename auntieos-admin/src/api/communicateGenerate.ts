@@ -186,9 +186,14 @@ export async function generateDraft(args: GenerateDraftArgs): Promise<GenerateDr
   }
 
   const warningsRaw = body?.['warnings'];
+  // #1610: one subject. A generator deployed before it learned to drop its own
+  // "Subject:" line still sends one, so the body loses it here too and a blank
+  // title takes its text.
+  const split = splitSubjectLine(generatedCopy);
+  const title = stringField(body, 'generated_title') ?? '';
   return {
-    generated_copy: generatedCopy,
-    generated_title: stringField(body, 'generated_title') ?? '',
+    generated_copy: split.body,
+    generated_title: title !== '' ? title : split.subject,
     communication_type: stringField(body, 'communication_type') ?? args.communication_type,
     kinfolk_name: stringField(body, 'kinfolk_name'),
     kinfolk_id: stringField(body, 'kinfolk_id'),
@@ -320,4 +325,18 @@ export async function sendPersonalizedMessage(
   }
 
   return { ok: true, providerId: res.providerMessageId ?? null };
+}
+/**
+ * #1610: cuts a leading `Subject: ...` line (optionally bold) and the blank
+ * lines after it from generated copy, returning its text. Copy without one
+ * comes back unchanged with subject ''. Mirrors `splitSubjectLine` in
+ * auntieos-admin/web/functions/generate.js. Pure.
+ */
+export function splitSubjectLine(text: string): { subject: string; body: string } {
+  const m = /^\s*(?:\*\*)?\s*subject\s*:\s*(.*?)\s*(?:\*\*)?\s*(?:\r?\n|$)/i.exec(text);
+  if (!m) return { subject: '', body: text };
+  return {
+    subject: (m[1] ?? '').replace(/\*\*/g, '').trim(),
+    body: text.slice(m[0].length).replace(/^\s*\n/, '').trimStart(),
+  };
 }

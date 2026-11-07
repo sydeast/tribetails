@@ -87,8 +87,10 @@ import kotlinx.coroutines.launch
  *   - open linked item    -> navigate by targetType/targetId via [onOpenTarget],
  *   - dismiss/archive      -> archiveNotification (single) + bulkArchiveNotifications
  *     (multi-select), with archived rows filtered out of the default list,
- *   - approve / deny       -> batchUpdateBookings([targetId], APPROVE|REJECT),
- *     shown ONLY when targetType == "booking".
+ *   - approve / deny       -> manageBookingSeries(APPROVE|CANCEL, kinfolkId, targetId)
+ *     on the whole request (#1675; targetId is the request's batchId),
+ *     shown ONLY on a `kincare.requested` row still waiting on a decision
+ *     (#706, #1647); an answered request shows its outcome instead.
  * Every action is fail-loud: a WriteResult.Err surfaces the server message in an
  * error banner and the optimistic stream re-renders truth on the next snapshot.
  *
@@ -152,19 +154,9 @@ fun NotificationsScreen(
     }
     val onBookingAction: (NotificationEntry, String) -> Unit = { entry, action ->
         scope.launch {
-            when (val r = client.batchUpdateBookings(listOf(entry.targetId), action)) {
-                is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> {
-                    val refused = com.tribetails.auntieos.web.data.batchFailureText(r.value)
-                    if (refused != null) {
-                        actionNotice = null
-                        actionError = "Booking ${if (action == "APPROVE") "approval" else "denial"} failed: $refused"
-                    } else {
-                        actionError = null
-                        actionNotice = if (action == "APPROVE") "Booking approved." else "Booking denied."
-                    }
-                }
-            }
+            val answer = answerBookingRequest(client, entry, approve = action == "APPROVE")
+            actionError = answer.error
+            actionNotice = answer.notice
         }
     }
     val onBulkArchive: () -> Unit = {
@@ -323,7 +315,12 @@ fun NotificationsScreen(
                         FilterRow(
                             categories = categories,
                             active = activeFilter,
-                            onSelect = { activeFilter = it },
+                            onSelect = {
+                                // #1611: a selection made under one chip must not
+                                // ride into a bulk action on rows the next hides.
+                                if (it != activeFilter) selectedIds.clear()
+                                activeFilter = it
+                            },
                         )
                         Spacer(Modifier.height(16.dp))
 
@@ -570,6 +567,14 @@ private fun NotificationRow(
                 tone = statusTone(entry.status),
                 showDot = true,
             )
+            // #1647: an answered request says how it ended, where the Approve
+            // and Deny buttons used to sit.
+            requestOutcomeLabel(entry)?.let { outcome ->
+                AuntieStatusPill(
+                    label = outcome,
+                    tone = if (outcome == "Booked") AuntieStatusTone.Success else AuntieStatusTone.Neutral,
+                )
+            }
 
             // Real, fail-loud quick actions (Stage 2 Step 4). Each maps to a
             // deployed callable; the parent surfaces any error loudly.

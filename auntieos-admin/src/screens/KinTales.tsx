@@ -20,6 +20,7 @@ import { kinTaleListRows, type KinTaleListRow } from '../lib/kinTaleList';
 import { type Async } from '../lib/async';
 import { createdAtProvenanceNote } from '../lib/createdAtProvenance';
 import { useCollection } from '../lib/firestore';
+import { useAdminAccess } from '../lib/access';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import {
   DenScreenHeading,
@@ -198,6 +199,10 @@ interface KinTalesProps {
  * `NeedsTriageSection.tsx`'s own header for why).
  */
 export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE }: KinTalesProps) {
+  // #1707: template writes are owner-only in the rules, so "Edit templates"
+  // is the owner's control. Anyone else reaches the read-only list from the rail.
+  const access = useAdminAccess();
+  const canEditTemplates = access?.status === 'admin';
   const [search, setSearch] = useState('');
   const [range, setRange] = useState<DateRangeKey>(initialRange);
   const [kinfolkId, setKinfolkId] = useState('');
@@ -325,12 +330,14 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE }: KinTal
           // which is Auntie Time's "Complete KinTale" (#703). The mock never
           // drew one either.
           trailing={
-            <Link to="/kintale-templates" className="auntie-btn auntie-btn--ghost">
-              <span className="auntie-btn__leading" aria-hidden="true">
-                <Glyph name="settings" />
-              </span>
-              <span className="auntie-btn__label">Edit templates</span>
-            </Link>
+            canEditTemplates ? (
+              <Link to="/kintale-templates" className="auntie-btn auntie-btn--ghost">
+                <span className="auntie-btn__leading" aria-hidden="true">
+                  <Glyph name="settings" />
+                </span>
+                <span className="auntie-btn__label">Edit templates</span>
+              </Link>
+            ) : undefined
           }
         />
       </div>

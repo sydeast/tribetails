@@ -4,6 +4,7 @@ import com.tribetails.auntieos.web.data.NotificationEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -50,7 +51,7 @@ class NotificationActionsTest {
     @Test
     fun bookingTargetOffersApproveDenyAndOpen() {
         val actions = applicableActions(
-            NotificationEntry(targetType = "booking", targetId = "bk1"),
+            NotificationEntry(key = "kincare.requested", targetType = "booking", targetId = "bk1", data = kotlinx.serialization.json.buildJsonObject { put("kinfolkId", kotlinx.serialization.json.JsonPrimitive("kf1")) }),
         )
         assertTrue(NotificationAction.ApproveBooking in actions)
         assertTrue(NotificationAction.DenyBooking in actions)
@@ -96,8 +97,79 @@ class NotificationActionsTest {
     @Test
     fun bookingTargetTypeIsCaseInsensitive() {
         val actions = applicableActions(
-            NotificationEntry(targetType = "Booking", targetId = "bk1"),
+            NotificationEntry(key = "kincare.requested", targetType = "Booking", targetId = "bk1", data = kotlinx.serialization.json.buildJsonObject { put("kinfolkId", kotlinx.serialization.json.JsonPrimitive("kf1")) }),
         )
         assertTrue(NotificationAction.ApproveBooking in actions)
+    }
+
+    // #706 on this build: a booking row that is not a waiting request (a
+    // confirmation, a reschedule or cancellation ask) offers no Approve/Deny.
+    @Test
+    fun onlyAPendingRequestOffersApproveDeny() {
+        for (key in listOf(
+            "kincare.booking.confirm",
+            "kincare.booking.cancel",
+            "kincare.request.declined",
+            "kincare.reschedule.requested",
+            "kincare.cancel.requested",
+            "",
+        )) {
+            val actions = applicableActions(NotificationEntry(key = key, targetType = "booking", targetId = "bk1"))
+            assertFalse(NotificationAction.ApproveBooking in actions, "Approve on $key")
+            assertFalse(NotificationAction.DenyBooking in actions, "Deny on $key")
+            assertTrue(NotificationAction.OpenTarget in actions, "Open on $key")
+        }
+    }
+
+    // #1647: a request booked or declined anywhere stops offering a decision and
+    // names its outcome.
+    @Test
+    fun answeredRequestOffersNoApproveDenyAndNamesItsOutcome() {
+        for ((stamp, label) in listOf(
+            "booked" to "Booked",
+            "declined" to "Declined",
+            "cancelled" to "Cancelled",
+            "BOOKED" to "Booked",
+            "something-new" to "Answered",
+        )) {
+            val entry = NotificationEntry(
+                key = "kincare.requested",
+                targetType = "booking",
+                targetId = "req_1",
+                requestResolution = stamp,
+            )
+            val actions = applicableActions(entry)
+            assertFalse(NotificationAction.ApproveBooking in actions, "Approve on $stamp")
+            assertFalse(NotificationAction.DenyBooking in actions, "Deny on $stamp")
+            assertEquals(label, requestOutcomeLabel(entry))
+        }
+    }
+
+    @Test
+    fun waitingRequestHasNoOutcome() {
+        val waiting = NotificationEntry(key = "kincare.requested", targetType = "booking", targetId = "req_1", data = kotlinx.serialization.json.buildJsonObject { put("kinfolkId", kotlinx.serialization.json.JsonPrimitive("kf1")) })
+        assertNull(requestOutcomeLabel(waiting))
+        assertNull(requestOutcomeLabel(waiting.copy(requestResolution = "  ")))
+        assertTrue(NotificationAction.ApproveBooking in applicableActions(waiting.copy(requestResolution = "  ")))
+        // The stamp means nothing on another key.
+        assertNull(requestOutcomeLabel(waiting.copy(key = "kincare.booking.confirm", requestResolution = "booked")))
+    }
+
+    // #1675: Approve/Deny answer the request by household and request id, so a
+    // request row that names no household offers neither.
+    @Test
+    fun waitingRequestWithNoHouseholdOffersNoApproveDeny() {
+        val anonymous = NotificationEntry(key = "kincare.requested", targetType = "booking", targetId = "req_1")
+        assertEquals("", notificationRequestKinfolkId(anonymous))
+        assertFalse(NotificationAction.ApproveBooking in applicableActions(anonymous))
+        assertFalse(NotificationAction.DenyBooking in applicableActions(anonymous))
+    }
+    @Test
+    fun theHouseholdComesOffTheRowData() {
+        assertEquals("kf1", notificationRequestKinfolkId(NotificationEntry(data = kotlinx.serialization.json.buildJsonObject { put("kinfolkId", kotlinx.serialization.json.JsonPrimitive("kf1")) })))
+        val legacy = NotificationEntry(
+            data = kotlinx.serialization.json.buildJsonObject { put("familyId", kotlinx.serialization.json.JsonPrimitive("fam9")) },
+        )
+        assertEquals("fam9", notificationRequestKinfolkId(legacy))
     }
 }
