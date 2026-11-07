@@ -329,11 +329,21 @@ private fun AuntieTimeListScreen(
                                     timeBlockLabelFor = timeBlockLabelFor,
                                     onOpenDetail = onOpenDetail,
                                     onWriteKinTale = onWriteKinTale,
-                                    onPatch = { id, patch, successMsg ->
+                                    onWrite = { id, write, successMsg ->
                                         scope.launch {
-                                            when (val r = client.patchKinCare(id, patch)) {
+                                            // #1617: the two terminal actions go through
+                                            // transitionBookingStatus; the rules refuse a
+                                            // client write of COMPLETED or CANCELLED.
+                                            val r = when (write) {
+                                                is KinCareWrite.Patch -> client.patchKinCare(id, write.fields)
+                                                is KinCareWrite.Transition -> when (write.action) {
+                                                    "COMPLETE" -> client.completeKinCare(id, write.completedAt.orEmpty())
+                                                    else       -> client.cancelBooking(id)
+                                                }
+                                            }
+                                            when (r) {
                                                 is WriteResult.Ok  -> {
-                                                    when (gpsEffectFor(patch)) {
+                                                    when (gpsEffectAfter(write)) {
                                                         GpsEffect.Start -> startGpsFor(id)
                                                         GpsEffect.Stop  -> stopGpsFor(id)
                                                         GpsEffect.None  -> Unit
@@ -398,7 +408,7 @@ private fun PhaseGroup(
     timeBlockLabelFor: (KinCareSession) -> String?,
     onOpenDetail: (String) -> Unit,
     onWriteKinTale: (String) -> Unit,
-    onPatch: (id: String, patch: Map<String, String>, successMsg: String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     // Each phase is a Den glass panel; the count rides in the panel trailing slot
     // as a toned status pill (replaces the bespoke mockup .phlab chip).
@@ -425,7 +435,7 @@ private fun PhaseGroup(
                     timeBlockLabel = timeBlockLabelFor(session),
                     onOpenDetail = { onOpenDetail(session._id) },
                     onWriteKinTale = { onWriteKinTale(session._id) },
-                    onPatch     = onPatch,
+                    onWrite     = onWrite,
                 )
             }
         }
@@ -442,7 +452,7 @@ private fun KinCareCard(
     timeBlockLabel: String?,
     onOpenDetail: () -> Unit,
     onWriteKinTale: () -> Unit,
-    onPatch: (id: String, patch: Map<String, String>, successMsg: String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     val tone = statusTone(session.status)
@@ -541,7 +551,7 @@ private fun KinCareCard(
                     tone  = tone,
                     mono  = true,
                 )
-                KebabMenu(session = session, onPatch = onPatch)
+                KebabMenu(session = session, onWrite = onWrite)
             }
 
             // ---- Live GPS indicator (only while ARRIVED + tracking) ----
@@ -584,7 +594,7 @@ private fun KinCareCard(
             }
 
             // ---- State-aware action row ----
-            ActionRow(session = session, onPatch = onPatch, onWriteKinTale = onWriteKinTale)
+            ActionRow(session = session, onWrite = onWrite, onWriteKinTale = onWriteKinTale)
         }
     }
 }
@@ -592,14 +602,14 @@ private fun KinCareCard(
 @Composable
 private fun ActionRow(
     session: KinCareSession,
-    onPatch: (id: String, patch: Map<String, String>, successMsg: String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
     onWriteKinTale: () -> Unit,
 ) {
     val now = nowIso()
     // Fires [action] through the shared pure patch/message builders so the button
     // wiring holds no transition logic of its own (see kinCarePatch below).
     fun fire(action: AuntieTimeAction) =
-        onPatch(session._id, kinCarePatch(session, action, now), kinCareSuccessMessage(action))
+        onWrite(session._id, kinCareWrite(session, action, now), kinCareSuccessMessage(action))
 
     when (session.status.uppercase()) {
         "SCHEDULED" -> Row(
@@ -678,7 +688,7 @@ private fun ActionRow(
 @Composable
 private fun KebabMenu(
     session: KinCareSession,
-    onPatch: (id: String, patch: Map<String, String>, successMsg: String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     val terminal = session.status.equals("COMPLETED",  ignoreCase = true) ||
@@ -707,7 +717,7 @@ private fun KebabMenu(
                 onClick = {
                     open = false
                     val a = AuntieTimeAction.MarkCompleted
-                    onPatch(session._id, kinCarePatch(session, a, nowIso()), kinCareSuccessMessage(a))
+                    onWrite(session._id, kinCareWrite(session, a, nowIso()), kinCareSuccessMessage(a))
                 },
                 leadingIcon = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(16.dp)) },
             )
@@ -716,7 +726,7 @@ private fun KebabMenu(
                 onClick = {
                     open = false
                     val a = AuntieTimeAction.Cancel
-                    onPatch(session._id, kinCarePatch(session, a, nowIso()), kinCareSuccessMessage(a))
+                    onWrite(session._id, kinCareWrite(session, a, nowIso()), kinCareSuccessMessage(a))
                 },
                 leadingIcon = { Icon(Lucide.Ban, contentDescription = null, modifier = Modifier.size(16.dp)) },
             )
@@ -804,8 +814,9 @@ internal enum class AuntieTimeAction {
 }
 
 /**
- * The exact Firestore patch a transition writes. [now] is the caller's clock
- * (`nowIso()` at composition) so the field set is deterministic under test.
+ * The exact Firestore patch an in-visit clock action writes. [now] is the
+ * caller's clock (`nowIso()` at composition) so the field set is deterministic
+ * under test. Mark Completed and Cancel are not patches; see [kinCareWrite].
  *
  * Undo Arrived is the subtle one: it rewinds to ON_MY_WAY only when the session
  * actually recorded an on-my-way stamp, otherwise all the way to SCHEDULED, and
@@ -839,8 +850,43 @@ internal fun kinCarePatch(
         "arrivalAccuracyMeters"    to "",
         "arrivalLocationCheckedAt" to "",
     )
-    AuntieTimeAction.MarkCompleted -> mapOf("status" to "COMPLETED", "completedAt" to now)
-    AuntieTimeAction.Cancel        -> mapOf("status" to "CANCELLED")
+    AuntieTimeAction.MarkCompleted,
+    AuntieTimeAction.Cancel        -> throw IllegalArgumentException(
+        "$action is a terminal transition and goes through transitionBookingStatus, never a patch (#1617)",
+    )
+}
+
+/**
+ * How one Auntie Time action reaches the server.
+ *
+ * ISSUE #1617: the kebab's Mark Completed and Cancel KinCare used to be a
+ * [kinCarePatch] like the clock buttons, writing `status=COMPLETED` or
+ * `CANCELLED` straight to the document. `firestore.rules`
+ * (`bookingTerminalFieldsUntouched`) refuses a client write of a terminal
+ * status or `completedAt` for every caller, so both items failed every time on
+ * this client. Web (`Sessions.tsx`) and Android (`KinCareRepository`) already
+ * send them through `transitionBookingStatus`, which runs the transition
+ * machine, the operator's arrival rule and the audit trail. This client now
+ * does the same; the in-visit clock stays a direct patch, which the rules allow
+ * so the field app keeps working offline.
+ */
+internal sealed interface KinCareWrite {
+    /** A direct field patch on `kin_care_sessions/{id}`: the in-visit clock. */
+    data class Patch(val fields: Map<String, String>) : KinCareWrite
+
+    /** A `transitionBookingStatus` call. [completedAt] rides only on COMPLETE. */
+    data class Transition(val action: String, val completedAt: String? = null) : KinCareWrite
+}
+
+/** The write [action] makes on [session], with [now] as the stamp. */
+internal fun kinCareWrite(
+    session: KinCareSession,
+    action: AuntieTimeAction,
+    now: String,
+): KinCareWrite = when (action) {
+    AuntieTimeAction.MarkCompleted -> KinCareWrite.Transition("COMPLETE", completedAt = now)
+    AuntieTimeAction.Cancel        -> KinCareWrite.Transition("CANCEL")
+    else                           -> KinCareWrite.Patch(kinCarePatch(session, action, now))
 }
 
 /** Success-toast copy for a transition. */
@@ -855,6 +901,16 @@ internal fun kinCareSuccessMessage(action: AuntieTimeAction): String = when (act
 
 /** What a successful patch does to the per-session GPS tracker. */
 internal enum class GpsEffect { Start, Stop, None }
+
+/**
+ * GPS side effect for a write that has already succeeded. A terminal transition
+ * ends the visit, so it stops tracking, as the COMPLETED and CANCELLED patches
+ * did before #1617.
+ */
+internal fun gpsEffectAfter(write: KinCareWrite): GpsEffect = when (write) {
+    is KinCareWrite.Patch      -> gpsEffectFor(write.fields)
+    is KinCareWrite.Transition -> GpsEffect.Stop
+}
 
 /**
  * GPS side effect for a patch that has already been written successfully.
