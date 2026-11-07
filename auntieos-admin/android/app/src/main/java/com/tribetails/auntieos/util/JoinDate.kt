@@ -95,3 +95,24 @@ fun joinDateRangeError(value: String, today: LocalDate = LocalDate.now()): Strin
     val v = value.trim()
     return if (v.isEmpty() || isJoinDateInRange(v, today)) null else JOIN_DATE_RANGE_MESSAGE
 }
+
+/** #1602: the profile's line for a join date it cannot stand behind. Same words as the admin web. */
+const val JOIN_DATE_NEEDS_FIXING = "Join date needs fixing: pick it in Edit"
+
+/**
+ * #1602: what the household profile says about its join date, the same shape
+ * for every household. The walk found one profile reading a formatted date
+ * with a tenure badge and another reading stored text with none. A readable day
+ * from 2025 through [today] reads "Joined <date>" and earns the tenure badge
+ * ([profileJoinDateIsSound]); anything else says it needs fixing. Blank is null.
+ */
+fun profileJoinLine(raw: String, today: LocalDate = LocalDate.now()): String? {
+    if (raw.isBlank()) return null
+    return if (profileJoinDateIsSound(raw, today)) "Joined ${formatJoinDate(raw)}" else JOIN_DATE_NEEDS_FIXING
+}
+
+/** #1602: true when the stored join date is a readable day from 2025 through [today]. */
+fun profileJoinDateIsSound(raw: String, today: LocalDate = LocalDate.now()): Boolean {
+    val day = isoDayPrefix(raw) ?: return false
+    return isJoinDateInRange(day, today)
+}

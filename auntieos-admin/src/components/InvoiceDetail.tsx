@@ -18,6 +18,7 @@ import {
   invoicePartialPayment,
   invoiceStateInfo,
   isInvoiceOverdue,
+  isUnreadableDueDate,
   localDateIso,
   unstampedStateInfo,
   type InvoiceAction,
@@ -1509,7 +1510,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           </div>
           <div className="invoice-detail__fact">
             <dt>Due date</dt>
-            <dd>{invoice.dueDate.trim() === '' ? 'not set' : invoice.dueDate}</dd>
+            <dd>
+              {invoice.dueDate.trim() === '' ? 'not set' : invoice.dueDate}
+              {/* #1570: a due date that names no day can never be overdue, so
+                  the sheet says so beside it rather than letting it pass. */}
+              {isUnreadableDueDate(invoice.dueDate) && (
+                <span className="invoice-detail__due-unreadable"> (not a date this app can read, so it is never counted overdue)</span>
+              )}
+            </dd>
           </div>
           <div className="invoice-detail__fact">
             <dt>Last reminder</dt>

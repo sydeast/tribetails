@@ -29,14 +29,22 @@ vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }));
  * WIRING: that a row opens the sheet for the right session, and that the
  * sheet's navigation callbacks reach the router.
  */
-vi.mock('../components/BookingDetailModal', () => ({
+vi.mock('../components/BookingDetailModal', async () => {
+  // #1576: the stub renders the caller's Actions slot, so this suite can see
+  // what the Schedule composes into the sheet. The real panel needs a toast host.
+  const { ToastProvider } = await vi.importActual<typeof import('../components/Toast')>('../components/Toast');
+  return {
   BookingDetailModal: (props: {
     entry: { _id: string; kinfolkId?: string | undefined };
     onClose: () => void;
     onOpenKinfolk?: (id: string) => void;
     onOpenKinTale?: (id: string) => void;
+    actions?: import('react').ReactNode;
   }) => (
     <div data-testid="booking-detail-modal" data-entry-id={props.entry._id}>
+      <div data-testid="booking-detail-actions">
+        <ToastProvider>{props.actions}</ToastProvider>
+      </div>
       <button type="button" onClick={() => props.onOpenKinfolk?.(props.entry.kinfolkId ?? '')}>
         stub open kinfolk
       </button>
@@ -48,7 +56,8 @@ vi.mock('../components/BookingDetailModal', () => ({
       </button>
     </div>
   ),
-}));
+  };
+});
 
 /**
  * The three write surfaces (#397 M11/M12/M13). Only the CALLABLES are stubbed:
@@ -56,7 +65,14 @@ vi.mock('../components/BookingDetailModal', () => ({
  * these assertions are about what actually reaches the wire.
  */
 const { rescheduleBooking } = vi.hoisted(() => ({ rescheduleBooking: vi.fn() }));
-vi.mock('../api/bookingsWrite', () => ({ rescheduleBooking }));
+// #1576: the sheet's Actions panel imports the other transition writers too.
+vi.mock('../api/bookingsWrite', () => ({
+  rescheduleBooking,
+  approveBooking: vi.fn(),
+  rejectBooking: vi.fn(),
+  cancelBooking: vi.fn(),
+  markBookingCompleted: vi.fn(),
+}));
 const { createBlockedTimeSlot, createKinCareSession, deleteBlockedTimeSlot } = vi.hoisted(() => ({
   createBlockedTimeSlot: vi.fn(),
   createKinCareSession: vi.fn(),
@@ -504,6 +520,20 @@ describe('Schedule screen', () => {
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
     await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
     expect(screen.getByTestId('booking-detail-modal')).toHaveAttribute('data-entry-id', 'sess-42');
+  });
+
+  /**
+   * #1576: the sheet opened from the calendar carries the same Actions panel
+   * Bookings composes into it, so a scheduled visit can be closed out or called
+   * off where it was found.
+   */
+  it('the calendar\u2019s sheet offers Mark Completed and Cancel for a scheduled visit', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [todaySession({ status: 'SCHEDULED' })] } });
+    render(<Schedule />);
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
+    const actions = screen.getByTestId('booking-detail-actions');
+    expect(within(actions).getByRole('button', { name: 'Mark Completed' })).toBeInTheDocument();
+    expect(within(actions).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 
   it('closing the detail sheet returns to the agenda', async () => {

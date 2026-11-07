@@ -206,3 +206,23 @@ describe('TagsEditor', () => {
     expect(within(await householdPanel()).getByText('VIP')).toBeInTheDocument();
   });
 });
+// ISSUE #1612: Settings mounts this editor inline, under the Settings page's
+// own heading and section nav. Its own page heading drew a second header
+// inside the panel.
+describe('TagsEditor inside Settings', () => {
+  it('draws no page heading of its own when opened inline', async () => {
+    getBusinessSettings.mockResolvedValue(settings([], []));
+    render(<TagsEditor />);
+    await householdPanel();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByText('The Den · Admin')).not.toBeInTheDocument();
+  });
+
+  it('keeps the heading and the way back when opened on its own', async () => {
+    getBusinessSettings.mockResolvedValue(settings([], []));
+    render(<TagsEditor onBack={vi.fn()} />);
+    await householdPanel();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Tags');
+    expect(screen.getByRole('button', { name: 'Back to settings' })).toBeInTheDocument();
+  });
+});

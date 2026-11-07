@@ -117,10 +117,20 @@ function SetupChecklist({ signals }: { signals: GoogleOAuthSetupSignals }) {
   );
 }
 
+/**
+ * ISSUE #1612: which action is in flight. One shared boolean used to drive
+ * every button's label, so Load calendars turned Save calendar into "Saving…"
+ * and the push into "Sending…" while nothing was saved or sent. Every button
+ * is still disabled while any action runs (`busy`), but each label reads only
+ * its own action.
+ */
+type BusyAction = 'connect' | 'listCalendars' | 'saveTarget' | 'push' | 'disconnect';
+
 export function GoogleCalendarSection() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
+  const busy = busyAction !== null;
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [calendars, setCalendars] = useState<GoogleCalendarSummary[] | null>(null);
@@ -194,7 +204,7 @@ export function GoogleCalendarSection() {
 
   async function handleConnect() {
     if (busy) return;
-    setBusy(true);
+    setBusyAction('connect');
     setActionError(null);
     setConsentTimedOut(false);
     try {
@@ -228,13 +238,13 @@ export function GoogleCalendarSection() {
       setActionError(err instanceof Error ? err.message : 'Could not start the connection.');
       noteFailure(err);
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function handleLoadCalendars() {
     if (busy) return;
-    setBusy(true);
+    setBusyAction('listCalendars');
     setCalendarsError(null);
     try {
       const result = await listGoogleCalendars();
@@ -244,7 +254,7 @@ export function GoogleCalendarSection() {
       setCalendarsError(err instanceof Error ? err.message : 'Could not list the calendars.');
       noteFailure(err);
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -259,7 +269,7 @@ export function GoogleCalendarSection() {
       setActionError(problem);
       return;
     }
-    setBusy(true);
+    setBusyAction('saveTarget');
     setActionError(null);
     try {
       const result = await setGoogleCalendarTargets(draftCalendarId, [draftCalendarId]);
@@ -268,13 +278,13 @@ export function GoogleCalendarSection() {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Could not save the calendar.');
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function handlePush() {
     if (busy) return;
-    setBusy(true);
+    setBusyAction('push');
     setActionError(null);
     setPushNote(null);
     try {
@@ -297,13 +307,13 @@ export function GoogleCalendarSection() {
       // re-read it: after a reload it is the only record left.
       await load();
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function handleDisconnect() {
     if (busy) return;
-    setBusy(true);
+    setBusyAction('disconnect');
     setActionError(null);
     setDisconnectNote(null);
     try {
@@ -322,7 +332,7 @@ export function GoogleCalendarSection() {
       setActionError(err instanceof Error ? err.message : 'Could not disconnect.');
       noteFailure(err);
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -414,7 +424,7 @@ export function GoogleCalendarSection() {
             {calendars === null ? (
               <div className="settingsEdit__saveRow">
                 <GhostButton
-                  label="Load calendars"
+                  label={busyAction === 'listCalendars' ? 'Loading calendars…' : 'Load calendars'}
                   onClick={() => void handleLoadCalendars()}
                   disabled={busy}
                 />
@@ -455,10 +465,10 @@ export function GoogleCalendarSection() {
 
             <div className="settingsEdit__saveRow">
               <PrimaryButton
-                label={busy ? 'Saving…' : 'Save calendar'}
+                label={busyAction === 'saveTarget' ? 'Saving…' : 'Save calendar'}
                 onClick={() => void handleSaveTarget()}
                 disabled={busy || draftCalendarId === '' || draftProblem !== null}
-                busy={busy}
+                busy={busyAction === 'saveTarget'}
               />
               {justSaved ? <span className="settingsEdit__savedNote">Saved</span> : null}
             </div>
@@ -490,10 +500,10 @@ export function GoogleCalendarSection() {
 
             <div className="settingsEdit__saveRow">
               <PrimaryButton
-                label={busy ? 'Sending…' : 'Push next 30 days'}
+                label={busyAction === 'push' ? 'Sending…' : 'Push next 30 days'}
                 onClick={() => void handlePush()}
                 disabled={busy || connection.writeCalendarId === ''}
-                busy={busy}
+                busy={busyAction === 'push'}
               />
             </div>
             {connection.writeCalendarId === '' ? (
@@ -516,7 +526,11 @@ export function GoogleCalendarSection() {
 
           <div className="settingsEdit__subsection">
             <div className="settingsEdit__saveRow">
-              <GhostButton label="Disconnect" onClick={() => void handleDisconnect()} disabled={busy} />
+              <GhostButton
+                label={busyAction === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
+                onClick={() => void handleDisconnect()}
+                disabled={busy}
+              />
             </div>
             <p className="settingsEdit__hint">
               Disconnecting removes the access AuntieOS holds. Visits already written stay on the
@@ -552,10 +566,10 @@ export function GoogleCalendarSection() {
 
           <div className="settingsEdit__saveRow">
             <PrimaryButton
-              label={busy ? 'Opening Google…' : 'Connect Google Calendar'}
+              label={busyAction === 'connect' ? 'Opening Google…' : 'Connect Google Calendar'}
               onClick={() => void handleConnect()}
               disabled={busy || waitingForConsent}
-              busy={busy}
+              busy={busyAction === 'connect'}
             />
           </div>
         </div>

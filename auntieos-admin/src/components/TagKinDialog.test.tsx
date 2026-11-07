@@ -207,3 +207,42 @@ describe('TagKinDialog: saving', () => {
     expect(saveMediaTags).not.toHaveBeenCalled();
   });
 });
+describe('TagKinDialog: a file with no household (#1604)', () => {
+  const LABELS = new Map([
+    ['fam1', 'Halbrook'],
+    ['fam9', 'Alvarez'],
+  ]);
+  it('groups the whole roster under each household name, so same-named pets are told apart', () => {
+    renderDialog({
+      media: media({ kinfolkId: '' }),
+      householdLabels: LABELS,
+      allKin: [...ROSTER, kin({ _id: 'k10', name: 'Biscuit', kinfolkId: 'fam9' })],
+    });
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+    expect(headings).toEqual(['Alvarez', 'Halbrook']);
+    expect(screen.getAllByRole('checkbox', { name: /Biscuit/ })).toHaveLength(2);
+  });
+  it('shows "Household unavailable" for kin whose household does not resolve, never a raw id', () => {
+    renderDialog({ media: media({ kinfolkId: '' }), householdLabels: new Map() });
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+      'Household unavailable',
+      'Household unavailable',
+    ]);
+    expect(screen.queryByText(/fam1|fam9/)).toBeNull();
+  });
+  it('a file WITH a household stays one flat list and names the household once', () => {
+    renderDialog({ householdLabels: LABELS });
+    expect(screen.queryByRole('heading', { level: 3 })).toBeNull();
+    expect(screen.getByText('Household: Halbrook')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /Stranger/ })).toBeNull();
+  });
+  it('still saves the picked ids from a grouped list', async () => {
+    saveMediaTags.mockResolvedValue({ ok: true, mediaFileId: 'm1', taggedKinIds: ['k9'] });
+    const { onSaved } = renderDialog({ media: media({ kinfolkId: '' }), householdLabels: LABELS });
+    await userEvent.click(screen.getByRole('checkbox', { name: /Stranger/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save tags' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(['k9']));
+    expect(saveMediaTags).toHaveBeenCalledWith('m1', ['k9']);
+  });
+});
+

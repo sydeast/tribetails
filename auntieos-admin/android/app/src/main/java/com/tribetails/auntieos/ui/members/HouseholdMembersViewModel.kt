@@ -52,6 +52,10 @@ data class HouseholdMembersUiState(
     val removingUid: String? = null,
     val removeError: String? = null,
     val portalInviteBusy: Boolean = false,
+    /** #1602: the household's email on file, named in the invite confirm. */
+    val householdEmail: String = "",
+    /** #1602: true once [householdEmail] was read; an unread one never disables the invite. */
+    val householdEmailLoaded: Boolean = false,
     val portalInviteError: String? = null,
     /**
      * A portal-invite answer that emailed NOBODY. `already_active` and
@@ -83,6 +87,13 @@ class HouseholdMembersViewModel(
     val kinfolkId: String,
     private val householdName: String,
     private val repository: MembersRepository = MembersRepository(),
+    /**
+     * #1602: the household's email on file, the address Invite to portal
+     * mails, so the confirm can name it. Null when it cannot be read.
+     */
+    private val householdEmailLoader: suspend (String) -> String? = { id ->
+        com.tribetails.auntieos.AuntieOSApp.instance.repository.getKinfolkById(id).getOrNull()?.email
+    },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HouseholdMembersUiState())
@@ -92,6 +103,15 @@ class HouseholdMembersViewModel(
         loadMembers()
         loadInvites()
         loadPeople()
+        loadHouseholdEmail()
+    }
+
+    /** #1602: the address the portal invite goes to; null until read, "" when none is on file. */
+    fun loadHouseholdEmail() {
+        viewModelScope.launch {
+            val email = runCatching { householdEmailLoader(kinfolkId) }.getOrNull()
+            _uiState.value = _uiState.value.copy(householdEmail = email?.trim() ?: "", householdEmailLoaded = email != null)
+        }
     }
     fun loadPeople() {
         viewModelScope.launch {
