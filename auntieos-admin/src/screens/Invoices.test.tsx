@@ -1545,6 +1545,22 @@ describe('#1609 invoices list', () => {
     d.setDate(d.getDate() - days);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
+  it('places an imported month-name date by the day it names (#1570 reader)', () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const yesterdayNamed = `${months[d.getMonth()]!} ${String(d.getDate())}, ${String(d.getFullYear())}`;
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'named', invoiceNumber: 'NAMED', date: yesterdayNamed }),
+        entry({ _id: 'today', invoiceNumber: 'TODAY', date: dayAgo(0) }),
+        entry({ _id: 'old', invoiceNumber: 'OLD', date: dayAgo(4) }),
+      ]),
+    );
+    render(<Invoices />);
+    const numbers = Array.from(document.querySelectorAll('.invoices__row-number')).map((n) => n.textContent);
+    expect(numbers).toEqual(['#TODAY', '#NAMED', '#OLD']);
+  });
   it('lists the loaded rows newest first, whatever order the page arrived in', () => {
     usePagedCollection.mockReturnValue(
       paged([

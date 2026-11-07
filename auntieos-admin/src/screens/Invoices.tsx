@@ -23,7 +23,7 @@ import {
   type InvoiceAction,
   type InvoicePartialPayment,
   isInvoiceOverdue,
-  isoDatePrefixOrNull,
+  invoiceDayOrNull,
   isUnreadableDueDate,
   localDateIso,
   unstampedStateInfo,
@@ -202,7 +202,8 @@ interface RowView {
 
 /** #1609: the day an invoice date names, for sorting. */
 function invoiceSortDay(raw: string): string | null {
-  return isoDatePrefixOrNull(raw);
+  // #1570's reader: an imported "July 14, 2026" sorts by the day it names.
+  return invoiceDayOrNull(raw);
 }
 
 /** #1609: the loaded rows by invoice day, newest first; ties by creation, undated last. */

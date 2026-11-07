@@ -1,4 +1,5 @@
 import { type CollectionSpec } from '../lib/firestore';
+import { invoiceDayOrNull } from '../lib/invoiceFormat';
 import type { PagedCollectionSpec } from '../lib/usePagedCollection';
 import type { Timestamp } from 'firebase/firestore';
 import type {
@@ -890,7 +891,10 @@ export function invoiceWithinWindow(
   // would empty the screen silently, which is the failure this whole function
   // exists to prevent, so the window simply does not narrow anything.
   if (startMs === null) return true;
-  const rowMs = invoiceDayMs(row.date ?? '');
+  // #1570/#1609: an imported "July 14, 2026" is read as the day it names, so
+  // it falls inside or outside the window like any other dated row.
+  const rowDay = invoiceDayOrNull(row.date ?? '');
+  const rowMs = rowDay === null ? null : invoiceDayMs(rowDay);
   return rowMs !== null && rowMs >= startMs;
 }
 
