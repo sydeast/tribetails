@@ -62,6 +62,9 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'getKinTaleComments',
   'listOrphanReports', // a tale that landed without a household
   'triageOrphanReport', // assign / mark duplicate / archive bad data
+  // #1563: send a generated KinTale draft to its household. Deleting one
+  // (deleteGeneratedDraft) is destructive (rule 6) and stays with the owner.
+  'publishGeneratedDraft',
   'listTemplates',
   'listTemplateBindings',
   'listCategories',
