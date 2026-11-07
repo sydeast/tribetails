@@ -282,6 +282,15 @@ describe('#1278 share page under the production CSP', () => {
   });
 });
 
+/**
+ * #1677: the passcode the "never in the cookie" checks unlock with. The cookie
+ * is `v1.<expiry ms>.<base64url mac>`, so a digit passcode like 1234 turns up
+ * inside the expiry or the mac by chance and fails the check for no reason
+ * (run 42322419987: `v1.1794017712349...`). `~` is in neither alphabet, nor in
+ * any cookie attribute, and `encodeURIComponent` leaves it as it is, so the
+ * check can only fail when the passcode really is in the header.
+ */
+const LEAK_PROBE = '~kiwi~';
 describe('#1280 passcode by POST and an unlock cookie', () => {
   function cookieFrom(c: Captured): string {
     const set = c.headers['Set-Cookie'];
@@ -290,8 +299,8 @@ describe('#1280 passcode by POST and an unlock cookie', () => {
   }
 
   it('sets a short-lived HttpOnly, Secure, SameSite cookie and redirects to the clean URL', async () => {
-    useDb(share({ passcodeHash: 'h:1234' }));
-    const r = await call({ method: 'POST', path: '/share/s1', body: { intent: 'unlock', passcode: '1234' } });
+    useDb(share({ passcodeHash: `h:${LEAK_PROBE}` }));
+    const r = await call({ method: 'POST', path: '/share/s1', body: { intent: 'unlock', passcode: LEAK_PROBE } });
     expect(r.status).toBe(303);
     expect(r.headers['Location']).toBe('/share/s1');
     const set = r.headers['Set-Cookie'];
@@ -302,8 +311,25 @@ describe('#1280 passcode by POST and an unlock cookie', () => {
     expect(set).toContain('Secure');
     expect(set).toContain('SameSite=Lax');
     // The passcode itself is never in the cookie or the Location.
-    expect(set).not.toContain('1234');
-    expect(r.headers['Location']).not.toContain('1234');
+    expect(set).not.toContain(LEAK_PROBE);
+    expect(r.headers['Location']).not.toContain(LEAK_PROBE);
+  });
+  it('#1677: holds on the clock of the run that flaked, whose expiry contained 1234', async () => {
+    // Run 42322419987 set `__session=v1.1794017712349.<mac>`. Pin that expiry.
+    const flakedExpiry = 1794017712349;
+    vi.spyOn(Date, 'now').mockReturnValue(flakedExpiry - SHARE_UNLOCK_TTL_MS);
+    try {
+      useDb(share({ passcodeHash: `h:${LEAK_PROBE}` }));
+      const r = await call({ method: 'POST', path: '/share/s1', body: { intent: 'unlock', passcode: LEAK_PROBE } });
+      expect(r.status).toBe(303);
+      const set = r.headers['Set-Cookie'];
+      // The expiry really does contain 1234, and the check still holds.
+      expect(cookieFrom(r).split('.')[1]).toBe(String(flakedExpiry));
+      expect(set).not.toContain(LEAK_PROBE);
+      expect(r.headers['Location']).not.toContain(LEAK_PROBE);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('unlocks the tale on a later GET that carries only the cookie', async () => {
