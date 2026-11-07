@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -10,6 +10,18 @@ vi.mock('../api/scheduleWrite', async () => {
 });
 
 import { NewVisitDialog } from './NewVisitDialog';
+
+// #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
+// into the past (nor a New visit scheduled there). The clock is pinned before
+// the earliest of them; only Date is faked, so userEvent's timers run as normal.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 // #1155: device America/Los_Angeles, business America/Chicago.
 let originalTz: string | undefined;
 beforeAll(() => {
@@ -170,5 +182,47 @@ describe('NewVisitDialog', () => {
 
     expect(screen.getByText(/The business is closed/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Schedule anyway' })).toBeNull();
+  });
+});
+
+/**
+ * #1574, operator ruling 2026-11-05: a visit created with a past date is
+ * allowed only as already Completed, never Scheduled. The form reads the clock
+ * (pinned above to 2026-06-01 00:00Z, which is 2026-05-31 19:00 in Chicago).
+ */
+describe('NewVisitDialog, a window in the past (#1574)', () => {
+  it('a window that has ended offers "Record completed visit" and sends recordAsCompleted', async () => {
+    open({ initialDate: '2026-05-20' });
+    await fillHouseholdAndService();
+    expect(screen.queryByRole('button', { name: 'Schedule visit' })).toBeNull();
+    expect(screen.getByText(/recorded as completed\. The household is not notified\./)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Record completed visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({
+      startTime: '2026-05-20T14:00:00.000Z',
+      endTime: '2026-05-20T14:30:00.000Z',
+      recordAsCompleted: true,
+    });
+    expect(onCreated).toHaveBeenCalledWith('sess-9');
+  });
+
+  it('a window still ahead is scheduled and never carries the flag', async () => {
+    open({ initialDate: '2026-06-10' });
+    await fillHouseholdAndService();
+    expect(screen.queryByText(/recorded as completed/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).not.toHaveProperty('recordAsCompleted');
+  });
+
+  it('a window under way right now can be neither, and says so', async () => {
+    // 09:00 to 21:00 Chicago on 2026-05-31 straddles the pinned 19:00.
+    open({ initialDate: '2026-05-31' });
+    await fillHouseholdAndService();
+    await user.clear(screen.getByLabelText('Minutes'));
+    await user.type(screen.getByLabelText('Minutes'), '720');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('That visit would already be under way.');
+    expect(screen.getByRole('button', { name: 'Schedule visit' })).toBeDisabled();
+    expect(createKinCareSession).not.toHaveBeenCalled();
   });
 });

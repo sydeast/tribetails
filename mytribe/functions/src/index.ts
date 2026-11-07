@@ -464,6 +464,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // able to exist beside it (preview the audience, list the campaigns, call one
   // back before it fires).
   previewMarketingBlastAudience: () => require('./admin/marketingBlasts'),
+  previewMarketingBlastCopy: () => require('./admin/marketingBlasts'),
   listMarketingBlasts: () => require('./admin/marketingBlasts'),
   cancelMarketingBlast: () => require('./admin/marketingBlasts'),
   addInternalBookingNote: () => require('./admin/addInternalBookingNote'),

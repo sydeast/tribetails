@@ -1839,7 +1839,13 @@ class FirestoreClient {
     // ---- Care-ops session callables (1E §A.9) + series approve/cancel (1G) ----
     private val callableJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id. */
+    /**
+     * 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id.
+     *
+     * #1574: [recordAsCompleted] writes down a visit whose window has already
+     * ended, as COMPLETED; the server refuses it for a window that has not, and
+     * refuses a past window without it. Sent only when true.
+     */
     suspend fun createKinCareSession(
         kinfolkId: String,
         kinIds: List<String>,
@@ -1848,6 +1854,7 @@ class FirestoreClient {
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
+        recordAsCompleted: Boolean = false,
     ): WriteResult<String> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
@@ -1857,6 +1864,7 @@ class FirestoreClient {
             put("endTime", JsonPrimitive(endTime))
             put("serviceDurationMinutes", JsonPrimitive(serviceDurationMinutes))
             put("notes", JsonPrimitive(notes))
+            if (recordAsCompleted) put("recordAsCompleted", JsonPrimitive(true))
         }
         return when (val r = platformInvokeCallable("createKinCareSession", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)

@@ -5,6 +5,7 @@ import {
   overrideHint,
 } from '../api/scheduleWrite';
 import { buildRescheduleTimes } from '../lib/bookingDetailFormat';
+import { RECORD_COMPLETED_HINT, VISIT_UNDERWAY_MESSAGE, timingOf } from '../lib/pastVisit';
 import { serviceChipLabel, serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
@@ -61,6 +62,13 @@ interface NewVisitDialogProps {
  * `buildRescheduleTimes`, the same function the detail sheet's Reschedule and
  * the grid drag use, so all three write the same shape.
  *
+ * A PAST WINDOW IS RECORDED AS COMPLETED, NEVER SCHEDULED (#1574, operator
+ * ruling 2026-11-05). The form reads the clock as the date and time change: a
+ * window that has ended turns the button into "Record completed visit" and
+ * sends `recordAsCompleted`, so the visit is written Completed with no notice to
+ * the household; one already under way can be neither and says so. The server
+ * (`lib/pastVisit.ts`) makes the same call and refuses anything else.
+ *
  * KIN ARE NOT PICKED HERE (operator ruling R1: a KinCare covers every Kin in the
  * household). `kinIds: []` tells the server to materialize the whole roster,
  * which is what it stores; the desktop `NewVisitDialog.kt` sends the same.
@@ -93,8 +101,18 @@ export function NewVisitDialog({
 
   const durationMinutes = Number.parseInt(durationText, 10);
   const durationOk = Number.isFinite(durationMinutes) && durationMinutes > 0;
+  // #1574: read on every render, so the button changes the moment the typed
+  // window crosses into the past. `null` while the date or time is incomplete.
+  const draftTimes = durationOk ? buildRescheduleTimes(date.trim(), time.trim(), durationMinutes, businessZone) : null;
+  const timing = draftTimes === null ? null : timingOf(draftTimes, Date.now());
   const canSave =
-    kinfolkId !== '' && serviceType !== '' && date.trim() !== '' && time.trim() !== '' && durationOk && !saving;
+    kinfolkId !== '' &&
+    serviceType !== '' &&
+    date.trim() !== '' &&
+    time.trim() !== '' &&
+    durationOk &&
+    timing !== 'underway' &&
+    !saving;
 
   function pickService(option: ServiceOption) {
     setServiceType(option.name);
@@ -114,6 +132,11 @@ export function NewVisitDialog({
       setError('Enter a real date and a time of day before scheduling.');
       return;
     }
+    const sendTiming = timingOf(times, Date.now());
+    if (sendTiming === 'underway') {
+      setError(VISIT_UNDERWAY_MESSAGE);
+      return;
+    }
     setSaving(true);
     setError(null);
     setOverridable(null);
@@ -128,6 +151,7 @@ export function NewVisitDialog({
         ...(notes.trim() !== '' && { notes: notes.trim() }),
         ...(override === 'visit' && { overrideVisitConflict: true }),
         ...(override === 'busy' && { overrideBusyConflict: true }),
+        ...(sendTiming === 'ended' && { recordAsCompleted: true }),
       });
       setSaving(false);
       onCreated(res.sessionId);
@@ -147,7 +171,15 @@ export function NewVisitDialog({
         <>
           <GhostButton label="Cancel" onClick={onClose} disabled={saving} />
           <PrimaryButton
-            label={saving ? 'Scheduling…' : 'Schedule visit'}
+            label={
+              timing === 'ended'
+                ? saving
+                  ? 'Recording…'
+                  : 'Record completed visit'
+                : saving
+                  ? 'Scheduling…'
+                  : 'Schedule visit'
+            }
             onClick={() => void submit(null)}
             disabled={!canSave}
             busy={saving}
@@ -271,6 +303,17 @@ export function NewVisitDialog({
           />
         </div>
       </fieldset>
+
+      {timing === 'ended' && (
+        <Banner tone="info" title="Already happened">
+          <p>{RECORD_COMPLETED_HINT}</p>
+        </Banner>
+      )}
+      {timing === 'underway' && (
+        <p className="new-visit__error" role="alert">
+          {VISIT_UNDERWAY_MESSAGE}
+        </p>
+      )}
 
       {error !== null && (
         <Banner tone="error" title="Couldn’t schedule the visit">

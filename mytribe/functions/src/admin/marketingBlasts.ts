@@ -10,6 +10,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 import { BLASTS_COLLECTION, MARKETING_KEYS } from './scheduleMarketingBlast';
 import { fanoutProgressState, type FanoutProgressState } from '../lib/fanoutResume';
+import { previewMarketingCopy, type MarketingCopyPreview } from './marketingCopy';
 import {
   AudienceArgsShape,
   countMarketingReach,
@@ -96,6 +97,42 @@ export const previewMarketingBlastAudience = onCall(
   wrapAdminCallable('previewMarketingBlastAudience', previewMarketingBlastAudienceHandler),
 );
 
+// ---------------------------------------------------------------------------
+// previewMarketingBlastCopy: what the email will say, before scheduling it (#1587).
+// ---------------------------------------------------------------------------
+const CopyPreviewArgs = z.object({
+  key: z.enum(MARKETING_KEYS),
+  /** The merge fields typed so far, the same record `scheduleMarketingBlast` takes as `data`. */
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+/**
+ * Renders the campaign's email exactly as the send would, against the merge
+ * fields typed so far, and names every merge field the template uses and whether
+ * something supplies it. Writes nothing and needs no audience, so the screen can
+ * show the copy while the operator is still choosing who gets it.
+ */
+export async function previewMarketingBlastCopyHandler(
+  req: CallableRequest<unknown>,
+): Promise<{ ok: true } & MarketingCopyPreview> {
+  initSentry();
+  if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  let args: z.infer<typeof CopyPreviewArgs>;
+  try {
+    args = CopyPreviewArgs.parse(req.data);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      throw new HttpsError('invalid-argument', 'previewMarketingBlastCopy validation failed', {
+        validationErrors: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+    throw err;
+  }
+  return { ok: true, ...(await previewMarketingCopy(args.key, args.data ?? {})) };
+}
+export const previewMarketingBlastCopy = onCall(
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  wrapAdminCallable('previewMarketingBlastCopy', previewMarketingBlastCopyHandler),
+);
 // ---------------------------------------------------------------------------
 // listMarketingBlasts: scheduled and sent campaigns, newest first.
 // ---------------------------------------------------------------------------

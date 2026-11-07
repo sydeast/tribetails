@@ -28,6 +28,7 @@ import {
   notesLocked,
   visitDurationMinutes,
 } from '../lib/bookingDetailFormat';
+import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import { sessionHousehold, sessionState, sessionStateInfo } from '../lib/sessionFormat';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
@@ -515,6 +516,12 @@ function ReschedulePanel({ entry, durationMinutes, businessZone, onDone }: Resch
     const times = buildRescheduleTimes(date, time, durationMinutes, businessZone);
     if (times === null) {
       setError('Enter a real date and a time of day before rescheduling.');
+      return;
+    }
+    // #1574: a visit is never moved into the past; say so before sending.
+    const pastRefusal = rescheduleIntoPastRefusal(times.startTime, Date.now());
+    if (pastRefusal !== null) {
+      setError(pastRefusal);
       return;
     }
     setBusy(true);
