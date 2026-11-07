@@ -430,6 +430,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // settlement authority and `firestore.rules` grants no client any access to it,
   // so this callable is the only way a detail screen can show what was paid.
   getInvoiceLedger: () => require('./admin/getInvoiceLedger'),
+  // #1609: who a reminder or a draft send will reach, and by which channel,
+  // read before the operator confirms it. Read-only.
+  previewInvoiceNotice: () => require('./admin/previewInvoiceNotice'),
   // The staff payment browser's read. `getInvoiceLedger` above answers "what was
   // paid against THIS invoice"; this answers "what has been paid, across
   // households", which that callable refuses to degenerate into. Cursored by
@@ -464,6 +467,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // able to exist beside it (preview the audience, list the campaigns, call one
   // back before it fires).
   previewMarketingBlastAudience: () => require('./admin/marketingBlasts'),
+  previewMarketingBlastCopy: () => require('./admin/marketingBlasts'),
   listMarketingBlasts: () => require('./admin/marketingBlasts'),
   cancelMarketingBlast: () => require('./admin/marketingBlasts'),
   addInternalBookingNote: () => require('./admin/addInternalBookingNote'),

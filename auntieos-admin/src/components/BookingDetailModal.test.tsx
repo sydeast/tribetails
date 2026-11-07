@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
@@ -39,6 +39,9 @@ vi.mock('../api/staff', async (orig) => ({
   ...(await orig<typeof import('../api/staff')>()),
   listStaff,
 }));
+// #1607: the notes name their staff writer through the shared roster read.
+const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() } }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames.current }));
 
 const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
 vi.mock('../api/kinfolkProfile', async (orig) => ({
@@ -47,6 +50,18 @@ vi.mock('../api/kinfolkProfile', async (orig) => ({
 }));
 
 import { BookingDetailModal } from './BookingDetailModal';
+
+// #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
+// into the past (nor a New visit scheduled there). The clock is pinned before
+// the earliest of them; only Date is faked, so userEvent's timers run as normal.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 
 // #1155: the DEVICE is America/Los_Angeles (UTC-7 in July) and the BUSINESS is
 // America/Chicago (UTC-5), so a stored "...Z" instant must be re-read on the

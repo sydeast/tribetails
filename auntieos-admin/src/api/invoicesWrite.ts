@@ -13,6 +13,8 @@ import type {
   GenerateReceiptResult,
   GetInvoiceLedgerArgs,
   GetInvoiceLedgerResult,
+  PreviewInvoiceNoticeArgs,
+  PreviewInvoiceNoticeResult,
   LinkInvoiceSessionsArgs,
   LinkInvoiceSessionsResult,
   ListUninvoicedSessionsArgs,
@@ -157,6 +159,17 @@ export async function createQuote(input: CreateQuoteArgs): Promise<CreatedInvoic
  * swallowed) `failed-precondition` if the invoice is already paid, `not-found`
  * if the id is wrong.
  */
+/**
+ * #1609: who a reminder or a draft send will reach, and by which channel, read
+ * before the operator confirms it. Read-only on the server.
+ */
+export async function previewInvoiceNotice(
+  invoiceId: string,
+  action: PreviewInvoiceNoticeArgs['action'],
+): Promise<PreviewInvoiceNoticeResult> {
+  return call<PreviewInvoiceNoticeArgs, PreviewInvoiceNoticeResult>('previewInvoiceNotice', { invoiceId, action });
+}
+
 export async function sendInvoiceReminder(invoiceId: string): Promise<ReminderOutcome> {
   // #832: a reminder inside the server's window is answered `sent: false`, not
   // thrown, so the caller can say when the earlier one went out.

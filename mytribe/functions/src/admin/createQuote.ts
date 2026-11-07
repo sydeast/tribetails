@@ -25,7 +25,7 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
 import { InvoiceDayArg } from '../lib/invoiceDay';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
-import { INVOICE_NUMBER_COUNTER_PATH, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
+import { invoiceNumberTaken, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
 import { QuoteIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 
 /**
@@ -254,7 +254,6 @@ export async function createQuoteHandler(
   // not going to write; `createInvoice` carries the full argument, and the two
   // callables share the counter on purpose, so they must share this treatment
   // of it too.
-  const counterRef = firestore.doc(INVOICE_NUMBER_COUNTER_PATH);
   const written = await firestore.runTransaction(async (tx) => {
     if (args.idempotencyKey !== undefined) {
       const existing = await tx.get(ref);
@@ -264,10 +263,17 @@ export async function createQuoteHandler(
         return null;
       }
     }
+    // #1609: a typed number is refused when another invoice already holds it,
+    // and a minted one steps over any such number, so no two share one.
+    const typedNumber = (args.invoiceNumber ?? '').trim();
+    if (typedNumber !== '' && (await invoiceNumberTaken(firestore, typedNumber, null, tx))) {
+      throw new HttpsError(
+        'already-exists',
+        `Invoice number ${typedNumber} is already used by another invoice. Leave it blank to get the next number.`,
+      );
+    }
     const invoiceNumber =
-      (args.invoiceNumber ?? '').trim() === ''
-        ? await mintInvoiceNumberInTransaction(tx, counterRef, args.date)
-        : args.invoiceNumber!.trim();
+      typedNumber === '' ? await mintInvoiceNumberInTransaction(tx, firestore) : typedNumber;
     const doc = { ...docBase, invoiceNumber };
     // The state stamp (ADR-0002), in the same write. paidCents is 0 by
     // construction on a brand-new doc.

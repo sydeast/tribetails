@@ -234,7 +234,8 @@ describe('Schedule screen', () => {
       // session should appear in that day's agenda, not be silently absent
       // because it landed under tomorrow's UTC-sliced key instead.
       expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toBeInTheDocument();
-      expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+      // #1606: the 20:00 visit is also drawn on the grid now, so the agenda is the scope.
+      expect(within(agenda()).getByText('The Whitfields')).toBeInTheDocument();
     });
   });
 
@@ -1075,6 +1076,18 @@ describe('Schedule month grid', () => {
  * and that a refusal is shown rather than swallowed.
  */
 describe('Schedule write surfaces', () => {
+  // #1574: these grid visits sit at 9:00 LOCAL today and a drag moves them a
+  // little; a visit is never moved into the past, so the clock is pinned to the
+  // start of today (Date only, so userEvent's timers run as normal).
+  beforeEach(() => {
+    const real = new Date();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(real.getFullYear(), real.getMonth(), real.getDate(), 0, 0, 0, 0));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   /** A visit at 9:00-10:30 LOCAL today, so it lands inside the 8a-6p grid in any zone. */
   function gridSession(): ScheduleSessionEntry {
     const today = new Date();
@@ -1110,6 +1123,16 @@ describe('Schedule write surfaces', () => {
     const at = (hh: number, mm: number) =>
       new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0).toISOString();
     expect(rescheduleBooking).toHaveBeenCalledWith('sess-42', at(10, 0), at(11, 30), {});
+  });
+  /** #1574: a visit is never moved into the past. At noon, a drop onto 10:00 is refused before the callable. */
+  it('a drag onto an hour that has passed is refused here and sends nothing', async () => {
+    const real = new Date();
+    vi.setSystemTime(new Date(real.getFullYear(), real.getMonth(), real.getDate(), 12, 0, 0, 0));
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX); // 9:00 -> 10:00, two hours ago
+    await screen.findByText('That time has already passed. A visit can only be moved to a time still ahead.');
+    expect(rescheduleBooking).not.toHaveBeenCalled();
   });
   /**
    * A drop that resolves back to the visit's own start writes nothing: no
@@ -1392,6 +1415,18 @@ describe('Schedule on the business clock, device in another zone (#1158)', () =>
   afterAll(() => {
     if (outerTz === undefined) delete process.env.TZ;
     else process.env.TZ = outerTz;
+  });
+
+  // #1574: the drop below lands on 15:00 Chicago today, and a visit is never
+  // moved into the past, so the clock is pinned to the start of the business's
+  // today (Date only).
+  beforeEach(() => {
+    const startOfBizToday = businessWallClockToMs(businessTodayIso(BIZ), '00:00', BIZ)!;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(startOfBizToday));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   /** A Chicago wall clock on the business's today, as the UTC instant a session stores. */
