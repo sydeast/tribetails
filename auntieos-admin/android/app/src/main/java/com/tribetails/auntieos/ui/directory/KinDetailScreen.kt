@@ -423,10 +423,15 @@ private fun MedicalPanel(kin: Kin) {
     }
 }
 
-/** The pet's office notes. Admin-only, on an admin surface. */
+/**
+ * The pet's `officeNotes`, titled "Auntie's notes" (#1598, operator ruling
+ * 2026-11-05 docket): every staff role reads it (`kin/{docId}` read is
+ * `isStaff()`), so it carries no "admin only" badge. "Office notes" is kept
+ * for a box that really is admin-only.
+ */
 @Composable
 private fun AuntieNotesOnKinPanel(kin: Kin) {
-    DenPanel(title = "Auntie's notes", meta = "admin only") {
+    DenPanel(title = "Auntie's notes") {
         if (kin.officeNotes.isNotBlank()) {
             Text(
                 text = kin.officeNotes,

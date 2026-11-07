@@ -412,7 +412,6 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
                       when it shares a line with `className`. */}
                   <DenPanel
                     title="Auntie's notes"
-                    meta="admin only"
                     className="d3"
                   >
                     {k.officeNotes.trim() !== '' ? (
