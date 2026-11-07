@@ -204,6 +204,24 @@ describe('manageBookingSeries', () => {
     expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1')?.data.status).toBe('CANCELLED');
   });
 
+  it('CANCEL: cancels the session the visit names when it is not vis_{visitId} (#1726)', async () => {
+    // An approved desktop draft keeps its own session id; its record's visit
+    // stores it as sessionId.
+    const ctx = buildDbMock({
+      docs: {
+        'families/kf1/bookings/ses_draft1': { envelopeStatus: 'confirmed' },
+        'kin_care_sessions/draft1': { status: 'SCHEDULED', kinCareVisitId: 'ses_draft1' },
+      },
+      queryDocs: {
+        'families/kf1/bookings/ses_draft1/kinCares': [
+          { id: 'ses_draft1', data: { status: 'confirmed', sessionId: 'draft1' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await manageBookingSeriesHandler(req({ action: 'CANCEL', kinfolkId: 'kf1', batchId: 'ses_draft1' }));
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/draft1')?.data.status).toBe('CANCELLED');
+  });
   it('SAD: missing envelope rejected (not-found)', async () => {
     const ctx = buildDbMock({ docs: {} });
     mocks.dbFn.mockReturnValue(ctx.db);

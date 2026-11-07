@@ -8,7 +8,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { approveBookingSeriesCore } from './approveBookingSeriesCore';
+import { approveBookingSeriesCore, linkedSessionId } from './approveBookingSeriesCore';
 import { validateResponse } from '../lib/callableResponse';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
@@ -162,7 +162,9 @@ export async function manageBookingSeriesHandler(
   for (const doc of childSnap.docs) {
     const id = doc.id;
     const childRef = parentRef.collection('kinCares').doc(id);
-    const sessionRef = db().collection('kin_care_sessions').doc(`vis_${id}`);
+    const sessionRef = db()
+      .collection('kin_care_sessions')
+      .doc(linkedSessionId(id, (doc.data() as Record<string, unknown>)['sessionId']));
     try {
       await childRef.set(
         {

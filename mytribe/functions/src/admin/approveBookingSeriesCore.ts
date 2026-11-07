@@ -79,6 +79,16 @@ export function toIso(v: unknown): string {
   return '';
 }
 
+/**
+ * The `kin_care_sessions` id a booking-record visit points at: its stored
+ * `sessionId` when it has one, else `vis_{visitId}`, the id every approval of a
+ * request mints. #1726: a draft approved through `transitionBookingStatus` keeps
+ * its own session id, which `vis_{visitId}` would not find, so a later Cancel
+ * by visit id would cancel the household's copy and leave the visit SCHEDULED.
+ */
+export function linkedSessionId(visitId: string, stored: unknown): string {
+  return typeof stored === 'string' && stored.trim() !== '' ? stored.trim() : `vis_${visitId}`;
+}
 export function durationMinutes(startIso: string, endIso: string): number {
   if (!startIso || !endIso) return 0;
   const s = Date.parse(startIso);
