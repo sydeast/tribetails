@@ -33,12 +33,9 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
-import {
-  GPS_STRIP_STATUS,
-  MAX_STRIP_ATTEMPTS,
-  MediaFileDoc,
-  stripVideoLocationForMedia,
-} from '../lib/stripVideoLocationJob';
+// The job module is loaded inside the handler, not here (#1714): see
+// triggers/onMediaFileVideoStrip.ts and coldStartImportGraph.test.ts.
+import type { MediaFileDoc } from '../lib/stripVideoLocationJob';
 
 const CLOUDINARY_CLOUD_NAME = defineSecret('CLOUDINARY_CLOUD_NAME');
 const CLOUDINARY_API_KEY = defineSecret('CLOUDINARY_API_KEY');
@@ -62,6 +59,9 @@ export async function videoGpsStripSweepHandler(): Promise<void> {
     return;
   }
 
+  const { GPS_STRIP_STATUS, MAX_STRIP_ATTEMPTS, stripVideoLocationForMedia } = await import(
+    '../lib/stripVideoLocationJob.js'
+  );
   const snap = await db()
     .collection('media_files')
     .where('gpsStripStatus', 'in', [GPS_STRIP_STATUS.pending, GPS_STRIP_STATUS.failed])

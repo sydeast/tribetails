@@ -12,7 +12,6 @@ import { materializeKinRoster, resolveKinfolkDisplayName } from '../lib/kinRoste
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
-import { businessTimeZoneReader, newVisitStatusFor } from '../lib/pastVisit';
 import type { BookingCommunication } from '../portal/requestBooking';
 
 /**
@@ -137,7 +136,9 @@ export async function createKinCareSessionHandler(
 
   // #1574, operator ruling 2026-11-05: a past-dated visit is "allowed only as
   // already completed ... never Scheduled". Decided before any guard, so a past
-  // date reports that rather than a calendar clash.
+  // date reports that rather than a calendar clash. `lib/pastVisit` is loaded
+  // here rather than at file scope (#1714): see coldStartImportGraph.test.ts.
+  const { businessTimeZoneReader, newVisitStatusFor } = await import('../lib/pastVisit.js');
   const status = await newVisitStatusFor({
     startTime: args.startTime,
     endTime: args.endTime,
