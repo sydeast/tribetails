@@ -413,6 +413,26 @@ describe('Directory screen, Kin tab', () => {
     expect(screen.queryByText('Gravy')).toBeNull();
   });
 
+  const inactiveAndActive = [
+    kinRow({ _id: 'a', name: 'Biscuit', status: 'active' }),
+    kinRow({ _id: 'b', name: 'Sandbox Bird', status: 'inactive' }),
+  ];
+  it('lists inactive pets under "All kin", and drops them under "In care" (#1601)', async () => {
+    kinAsync = { status: 'ready', data: inactiveAndActive };
+    render(<Directory />);
+    await openKinTab();
+    expect(screen.getByText('Sandbox Bird')).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Filter kin by status' }), 'inCare');
+    expect(screen.getByText('Biscuit')).toBeInTheDocument();
+    expect(screen.queryByText('Sandbox Bird')).toBeNull();
+  });
+  it('opens on the Kin tab already narrowed to pets in care when Home sends it there (#1601)', () => {
+    kinAsync = { status: 'ready', data: inactiveAndActive };
+    render(<Directory initialTab="kin" initialKinInCare />);
+    expect(screen.getByText('Biscuit')).toBeInTheDocument();
+    expect(screen.queryByText('Sandbox Bird')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Filter kin by status' })).toHaveValue('inCare');
+  });
   it('search filters kin by species or breed', async () => {
     kinAsync = {
       status: 'ready',

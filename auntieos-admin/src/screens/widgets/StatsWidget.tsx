@@ -38,7 +38,22 @@ import './widgets.css';
  * one on a phone. Android does the same 2x2 fold; this only adds the four-wide
  * case the phone has no room for.
  */
-export function StatsWidget() {
+interface StatsWidgetProps {
+  /** Today's pack: Auntie Time, where the day's visits and the Overdue group live. */
+  onOpenSessions: () => void;
+  /** KinTales to review: the KinTales list, widened to the archive so the drafts counted are the drafts listed. */
+  onOpenKinTales: () => void;
+  /** Kin in care: the Directory's Kin tab, filtered to the same pets. */
+  onOpenKinInCare: () => void;
+  /** This week: Invoices, where the paid invoices behind the figure are. */
+  onOpenInvoices: () => void;
+}
+export function StatsWidget({
+  onOpenSessions,
+  onOpenKinTales,
+  onOpenKinInCare,
+  onOpenInvoices,
+}: StatsWidgetProps) {
   const sessions = useSessionsStream();
   const drafts = useDraftsStream();
   const kin = useKinStream();
@@ -77,20 +92,29 @@ export function StatsWidget() {
         tone="orange"
         feature
         className="stat-row__feature"
+        onClick={onOpenSessions}
       />
       <StatCard
         label="KinTales to review"
         value={reviewValue}
         trend={trendForDrafts(drafts)}
         tone="teal"
+        onClick={onOpenKinTales}
       />
-      <StatCard label="Kin in care" value={kinValue} trend="across all households" tone="purple" />
+      <StatCard
+        label="Kin in care"
+        value={kinValue}
+        trend="across all households"
+        tone="purple"
+        onClick={onOpenKinInCare}
+      />
       <StatCard
         label="This week"
         value={revenueValue}
         trend="paid invoices this week"
         tone="success"
         formatValue={formatRevenue}
+        onClick={onOpenInvoices}
       />
     </div>
   );

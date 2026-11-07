@@ -2,6 +2,7 @@ import { threadHouseholdName, threadPreviewText } from './inboxFormat';
 import { sessionState, sessionDayKey, sessionHousehold, shiftDayIso } from './sessionFormat';
 import { formatCentsUsd, isoDatePrefixOrNull } from './invoiceFormat';
 import { str, arr } from './coerce';
+import { isKinInCare } from '../api/directory';
 import {
   draftBody,
   draftCreatedAt,
@@ -858,7 +859,11 @@ export function isDraftAwaitingReview(d: GeneratedDraftRow): boolean {
 export function pendingDraftCount(drafts: readonly GeneratedDraftRow[]): number {
   return drafts.reduce((n, d) => (isDraftAwaitingReview(d) ? n + 1 : n), 0);
 }
-/** Pets in care: the roster minus the archived. Mirrors android's kin count. */
+/**
+ * Pets in care: the roster minus the inactive and the archived (#1601: it used
+ * to count every record, so Sandbox Bird, marked inactive, was "in care").
+ * The Directory's Kin tab "In care" filter uses the same `isKinInCare`.
+ */
 export function activeKinCount(kin: readonly { status?: string | undefined }[]): number {
-  return kin.reduce((n, k) => (str(k.status).trim().toLowerCase() === 'archived' ? n : n + 1), 0);
+  return kin.reduce((n, k) => (isKinInCare(k) ? n + 1 : n), 0);
 }
