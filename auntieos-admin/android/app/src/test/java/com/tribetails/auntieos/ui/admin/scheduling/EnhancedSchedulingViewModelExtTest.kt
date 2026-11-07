@@ -75,11 +75,18 @@ class EnhancedSchedulingViewModelExtTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel() = EnhancedSchedulingViewModel(
+    /**
+     * #1702: approval refuses a start already gone by, and the fixtures date
+     * their bookings in June 2026, so the approval tests stand before them.
+     */
+    private val beforeTheFixtures =
+        java.time.Clock.fixed(java.time.Instant.parse("2026-05-01T15:00:00Z"), java.time.ZoneOffset.UTC)
+    private fun buildViewModel(clock: java.time.Clock = java.time.Clock.systemUTC()) = EnhancedSchedulingViewModel(
         bookingRepository = bookingRepo,
         serviceRepository = serviceRepo,
         auntieRepository = auntieRepo,
         kinCareRepository = kinCareRepo,
+        clock = clock,
     )
 
     @Test
@@ -171,7 +178,7 @@ class EnhancedSchedulingViewModelExtTest {
             coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b2") } returns Result.success(listOf(existingSession))
             coEvery { kinCareRepo.createKinCareSession(any()) } returns Result.success("ses-existing")
 
-            val vm = buildViewModel()
+            val vm = buildViewModel(beforeTheFixtures)
             val alreadyAccepted = TestFixtures.booking2.copy(status = BookingStatus.ACCEPTED)
             vm.approveBooking(alreadyAccepted)
             advanceUntilIdle()

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
@@ -19,6 +19,17 @@ vi.mock('firebase-admin/firestore', async () => {
 });
 
 import { transitionBookingStatusHandler } from '../src/admin/transitionBookingStatus';
+
+// #1702: approval refuses a visit whose start has already passed. These
+// fixtures date their visits from June 2026 on, so the clock stands before
+// them; the past-start refusal itself is tested in approveIntoPast.test.ts.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function req(data: unknown): CallableRequest<unknown> {
   return {
