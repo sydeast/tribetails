@@ -282,6 +282,33 @@ describe('BookingActions: Mark Completed', () => {
   });
 });
 
+/**
+ * #1578: Sandy Demo's Aug 21 visit read UNKNOWN with "isn't recognized, so no
+ * actions are offered" because the field app had moved it to DEPARTED. The
+ * server completes or cancels from any in-visit state, so the sheet offers both.
+ */
+describe('BookingActions: a visit under way (#1578)', () => {
+  it.each([
+    ['ON_MY_WAY', 'ON THE WAY'],
+    ['ARRIVED', 'ARRIVED'],
+    ['DEPARTED', 'DEPARTED'],
+  ])('%s shows its own chip and offers Mark Completed and Cancel', (status, chip) => {
+    render(<BookingActions entry={entry({ _id: 'ses-9', status })} onClose={vi.fn()} />);
+    expect(screen.getByText(chip)).toBeInTheDocument();
+    expect(screen.queryByText(/isn't recognized/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Mark Completed' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    // The Auntie is already on her way or at the door: no window to move.
+    expect(screen.queryByRole('button', { name: 'Reschedule' })).toBeNull();
+  });
+  it('completes a Departed visit', async () => {
+    markBookingCompleted.mockResolvedValue(undefined);
+    render(<BookingActions entry={entry({ _id: 'ses-9', status: 'DEPARTED' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, mark it completed' }));
+    expect(markBookingCompleted).toHaveBeenCalledWith('ses-9', expect.any(String));
+  });
+});
 describe('BookingActions: Reschedule', () => {
   it('opens a start/end form, not a bare confirm', async () => {
     render(<BookingActions entry={entry({ status: 'SCHEDULED' })} onClose={vi.fn()} />);

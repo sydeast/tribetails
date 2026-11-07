@@ -871,6 +871,15 @@ describe('groupBookingsByStatus', () => {
     const sections = groupBookingsByStatus([entry({ _id: 'c', status: 'COMPLETED' })]);
     expect(sections[0]).toEqual({ key: 'pending', label: 'Pending approval', rows: [] });
   });
+  it('#1578: keeps a visit that is under way in Scheduled, not History', () => {
+    const sections = groupBookingsByStatus([
+      entry({ _id: 'w', status: 'ON_MY_WAY' }),
+      entry({ _id: 'a', status: 'ARRIVED' }),
+      entry({ _id: 'd', status: 'DEPARTED' }),
+    ]);
+    expect(sections[1]?.rows.map((r) => r._id).sort()).toEqual(['a', 'd', 'w']);
+    expect(sections[2]?.rows).toEqual([]);
+  });
   it('files an unrecognized status under History rather than letting it vanish', () => {
     // The AO-12 rule this tree keeps: a row that matches no section is a row
     // nobody can see. `historyCount` already counts `unknown`, so the section

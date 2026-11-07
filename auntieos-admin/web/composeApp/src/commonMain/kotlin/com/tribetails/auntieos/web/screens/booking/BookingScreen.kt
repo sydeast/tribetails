@@ -374,8 +374,10 @@ private fun BookingListScreen(
         // ── stat row: counts mirror the three sections ────────────────────────
         val pending   = (pendingState as? FirestoreResult.Data)?.value.orEmpty()
         val sessions  = (sessionsState as? FirestoreResult.Data)?.value.orEmpty()
-        val scheduled = sessions.filter { it.status.uppercase() == "SCHEDULED" }
-        val history   = sessions.filter { it.status.uppercase() !in setOf("SCHEDULED", "DRAFT", "PENDING") }
+        // #1578: a visit under way (on the way, arrived, departed) is still on
+        // the books, so it sits with Scheduled rather than in History.
+        val scheduled = sessions.filter { isOnTheBooks(it.status) }
+        val history   = sessions.filter { !isOnTheBooks(it.status) && it.status.trim().uppercase() !in setOf("DRAFT", "PENDING") }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -823,7 +825,7 @@ private fun BookingCard(
             }
 
             Spacer(Modifier.height(9.dp))
-            AuntieStatusPill(label = booking.status, tone = tone, mono = true)
+            AuntieStatusPill(label = bookingStatusLabel(booking.status), tone = tone, mono = true)
             if (notePreview.isNotBlank()) {
                 Spacer(Modifier.height(7.dp))
                 Text(
@@ -1366,10 +1368,26 @@ private fun initialsFor(name: String): String {
     }
 }
 
+/** #1578: the three in-visit statuses the field app writes. */
+internal val IN_FLIGHT_STATUSES: Set<String> = setOf("ON_MY_WAY", "ARRIVED", "DEPARTED")
+/**
+ * #1578: a visit still on the books, scheduled or under way. The server
+ * completes or cancels from all four (`bookingTransitions.ts`), so they share
+ * the Scheduled section and its Cancel.
+ */
+internal fun isOnTheBooks(status: String): Boolean =
+    status.trim().uppercase().let { it == "SCHEDULED" || it in IN_FLIGHT_STATUSES }
+/** The pill's words: the stored status, with ON_MY_WAY read as Auntie Time reads it. */
+internal fun bookingStatusLabel(status: String): String =
+    status.trim().uppercase().let { if (it == "ON_MY_WAY") "ON THE WAY" else it }
 private fun bookingStatusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
     "DRAFT"     -> AuntieStatusTone.Orange
     "PENDING"   -> AuntieStatusTone.Warning
     "SCHEDULED" -> AuntieStatusTone.Teal
+    // #1578: Auntie Time's in-visit hues.
+    "ON_MY_WAY" -> AuntieStatusTone.Orange
+    "ARRIVED"   -> AuntieStatusTone.Teal
+    "DEPARTED"  -> AuntieStatusTone.Purple
     "COMPLETED" -> AuntieStatusTone.Purple
     "CANCELLED" -> AuntieStatusTone.Muted
     else        -> AuntieStatusTone.Neutral
