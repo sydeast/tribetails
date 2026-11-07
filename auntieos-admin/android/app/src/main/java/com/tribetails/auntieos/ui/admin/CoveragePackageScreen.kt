@@ -60,6 +60,7 @@ import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.domain.CoverageRules
 import com.tribetails.auntieos.domain.DEFAULT_COVERAGE_RULES
+import com.tribetails.auntieos.domain.uniqueCopyName
 import com.tribetails.auntieos.domain.MaxGapParse
 import com.tribetails.auntieos.domain.parseMaxGapHours
 import com.tribetails.auntieos.domain.DayPattern
@@ -121,6 +122,12 @@ import kotlin.math.floor
  * a package can only quote a price Settings actually holds.
  */
 private enum class DateTarget { START, END }
+/** What the last destructive action can give back (#1605). */
+private class UndoEntry(val label: String, val restore: () -> Unit)
+private class QuoteSnapshot(
+    val packages: List<Package>, val detailId: String?, val clientName: String, val startDate: String,
+    val endDate: String, val rules: CoverageRules, val overnightDurationId: String,
+)
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -188,6 +195,15 @@ fun CoveragePackageScreen(
     val overnightDuration = durations.firstOrNull { it.id == overnightDurationId }
     val visitDurations = durations.filter { it.kind == "visit" }
 
+    // The one thing the last destructive action can give back (#1605). Trashing a
+    // package or visit, resetting a day and Start new quote all wipe instantly, so each
+    // leaves its undo here; the next destructive action replaces it.
+    var undo by remember { mutableStateOf<UndoEntry?>(null) }
+    /** Applies [apply] to one package and offers [restore] (run on that package as it is then) as the undo. */
+    fun patchUndoable(id: String, label: String, apply: (Package) -> Package, restore: (Package) -> Package) {
+        packages = packages.map { if (it.id == id) apply(it) else it }
+        undo = UndoEntry(label) { packages = packages.map { if (it.id == id) restore(it) else it } }
+    }
     fun patchPackage(id: String, block: (Package) -> Package) {
         packages = packages.map { if (it.id == id) block(it) else it }
     }
@@ -226,6 +242,17 @@ fun CoveragePackageScreen(
         formError = null
     }
     fun startNewQuote() {
+        // Everything this wipes comes back whole with Undo (#1605).
+        val before = QuoteSnapshot(packages, detailId, clientName, startDate, endDate, rules, overnightDurationId)
+        val beforeGapText = gapText
+        val beforeGapError = gapError
+        undo = UndoEntry("Started a new quote.") {
+            packages = before.packages; detailId = before.detailId; clientName = before.clientName
+            startDate = before.startDate; endDate = before.endDate; rules = before.rules
+            overnightDurationId = before.overnightDurationId
+            // The Max gap text and its message come back with the rule they feed (#1582).
+            gapText = beforeGapText; gapError = beforeGapError
+        }
         detailId = null; clientName = ""; startDate = todayIso(); endDate = ""
         // Rules are per-client, so reset them for the next one, repointed at the menu
         // (#728 made the service NAME the duration id, so the shipped pin needs realigning).
@@ -268,6 +295,7 @@ fun CoveragePackageScreen(
     }
 
     AuntieScreenScaffold(title = "Coverage Packages", onBack = onBack, imePaddingEnabled = true) {
+      Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -331,7 +359,15 @@ fun CoveragePackageScreen(
                             Text(p.label, style = AuntieTheme.typography.titleSmall, color = c.textPrimary, modifier = Modifier.weight(2f))
                             Text(pinnedTimeLabel(p), style = AuntieTheme.typography.bodySmall, color = c.primary, modifier = Modifier.weight(1f))
                             Text(durations.firstOrNull { it.id == p.durationId }?.label ?: "", style = AuntieTheme.typography.bodySmall, color = c.textDim, modifier = Modifier.weight(1f))
-                            AuntieIconBtn(onClick = { rules = rules.copy(pinnedTimes = rules.pinnedTimes.filter { it.id != p.id }) }) {
+                            AuntieIconBtn(onClick = {
+                                val at = rules.pinnedTimes.indexOfFirst { it.id == p.id }
+                                rules = rules.copy(pinnedTimes = rules.pinnedTimes.filter { it.id != p.id })
+                                undo = UndoEntry("Removed the pinned visit \"${p.label}\".") {
+                                    if (rules.pinnedTimes.none { it.id == p.id }) {
+                                        rules = rules.copy(pinnedTimes = rules.pinnedTimes.take(at) + p + rules.pinnedTimes.drop(at))
+                                    }
+                                }
+                            }) {
                                 Icon(Lucide.Trash2, contentDescription = "Remove ${p.label}", tint = c.textDim, modifier = Modifier.size(16.dp))
                             }
                         }
@@ -410,10 +446,23 @@ fun CoveragePackageScreen(
                                 isDetail = detailId == pkg.id,
                                 onPatch = { block -> patchPackage(pkg.id, block) },
                                 onDuplicate = {
-                                    val copy = pkg.copy(id = uid(), name = "${pkg.name} copy", visits = pkg.visits.map { it.copy(id = uid()) }, dayOverrides = emptyMap())
+                                    val copy = pkg.copy(id = uid(), name = uniqueCopyName(pkg.name, packages.map { it.name }), visits = pkg.visits.map { it.copy(id = uid()) }, dayOverrides = emptyMap())
                                     packages = packages + copy; detailId = copy.id
                                 },
-                                onRemove = { packages = packages.filter { it.id != pkg.id }; if (detailId == pkg.id) detailId = null },
+                                onPatchUndoable = { label, apply, restore -> patchUndoable(pkg.id, label, apply, restore) },
+                                onRemove = {
+                                    val at = packages.indexOfFirst { it.id == pkg.id }
+                                    val gone = pkg
+                                    val wasOpen = detailId == pkg.id
+                                    packages = packages.filter { it.id != pkg.id }
+                                    if (wasOpen) detailId = null
+                                    undo = UndoEntry("Deleted package \"${gone.name}\".") {
+                                        if (packages.none { it.id == gone.id }) {
+                                            packages = packages.take(at) + gone + packages.drop(at)
+                                            if (wasOpen) detailId = gone.id
+                                        }
+                                    }
+                                },
                                 onToggleDetail = { detailId = if (detailId == pkg.id) null else pkg.id },
                                 wakeStart = rules.wakeStart,
                             )
@@ -440,6 +489,7 @@ fun CoveragePackageScreen(
                             DayDetailRow(
                                 row = row, pkg = detailPkg, durations = durations, startDate = startDate, wakeStart = rules.wakeStart,
                                 onPatch = { block -> patchPackage(detailPkg.id, block) },
+                                onPatchUndoable = { label, apply, restore -> patchUndoable(detailPkg.id, label, apply, restore) },
                             )
                         }
                     }
@@ -454,6 +504,24 @@ fun CoveragePackageScreen(
                 }
             }
         }
+        // #1605: pinned over the bottom of the screen, not at the top of the scroll, so
+        // the Undo is in view wherever the trash was pressed.
+        undo?.let { entry ->
+            Box(
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp)
+                    .background(c.surface, RoundedCornerShape(12.dp)),
+            ) {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Info,
+                    dismissible = true,
+                    onDismiss = { undo = null },
+                    trailing = { GhostButton(label = "Undo", onClick = { entry.restore(); undo = null }) },
+                ) {
+                    Text(entry.label, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
+        }
+      }
     }
 }
 
@@ -473,6 +541,7 @@ private fun PackageCard(
     isDetail: Boolean,
     wakeStart: String,
     onPatch: ((Package) -> Package) -> Unit,
+    onPatchUndoable: (label: String, apply: (Package) -> Package, restore: (Package) -> Package) -> Unit,
     onDuplicate: () -> Unit,
     onRemove: () -> Unit,
     onToggleDetail: () -> Unit,
@@ -499,7 +568,14 @@ private fun PackageCard(
 
         SectionLabel("Every day of the stay")
         pkg.visits.sortedBy { it.time }.forEach { v ->
-            VisitEditorRow(visit = v, durations = durations, onPatch = { patch -> onPatch { p -> p.copy(visits = p.visits.map { if (it.id == v.id) patch(it) else it }) } }, onRemove = { onPatch { p -> p.copy(visits = p.visits.filter { it.id != v.id }) } })
+            VisitEditorRow(visit = v, durations = durations, onPatch = { patch -> onPatch { p -> p.copy(visits = p.visits.map { if (it.id == v.id) patch(it) else it }) } }, onRemove = {
+                val at = pkg.visits.indexOfFirst { it.id == v.id }
+                onPatchUndoable(
+                    "Removed the ${v.label.ifBlank { "visit" }} from \"${pkg.name}\".",
+                    { p -> p.copy(visits = p.visits.filter { it.id != v.id }) },
+                    { p -> if (p.visits.any { it.id == v.id }) p else p.copy(visits = p.visits.take(at) + v + p.visits.drop(at)) },
+                )
+            })
         }
         if (pkg.visits.isEmpty()) Text("No visits yet.", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
         GhostButton(label = "Add visit", onClick = {
@@ -574,7 +650,11 @@ private fun VisitEditorRow(visit: Visit, durations: List<Duration>, onPatch: ((V
 }
 
 @Composable
-private fun DayDetailRow(row: PricedDayRow, pkg: Package, durations: List<Duration>, startDate: String, wakeStart: String, onPatch: ((Package) -> Package) -> Unit) {
+private fun DayDetailRow(
+    row: PricedDayRow, pkg: Package, durations: List<Duration>, startDate: String, wakeStart: String,
+    onPatch: ((Package) -> Package) -> Unit,
+    onPatchUndoable: (label: String, apply: (Package) -> Package, restore: (Package) -> Package) -> Unit,
+) {
     val c = AuntieTheme.colors
     val dayVisits = effectiveVisits(pkg, row.dayIndex).sortedBy { it.time }
     Column(modifier = Modifier.fillMaxWidth().border(1.dp, c.border, RoundedCornerShape(8.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -592,7 +672,18 @@ private fun DayDetailRow(row: PricedDayRow, pkg: Package, durations: List<Durati
 
         if (row.customized) {
             dayVisits.forEach { v ->
-                VisitEditorRow(visit = v, durations = durations, onPatch = { patch -> onPatch { p -> p.copy(dayOverrides = p.dayOverrides + (row.dayIndex to (p.dayOverrides[row.dayIndex] ?: emptyList()).map { if (it.id == v.id) patch(it) else it })) } }, onRemove = { onPatch { p -> p.copy(dayOverrides = p.dayOverrides + (row.dayIndex to (p.dayOverrides[row.dayIndex] ?: emptyList()).filter { it.id != v.id })) } })
+                VisitEditorRow(visit = v, durations = durations, onPatch = { patch -> onPatch { p -> p.copy(dayOverrides = p.dayOverrides + (row.dayIndex to (p.dayOverrides[row.dayIndex] ?: emptyList()).map { if (it.id == v.id) patch(it) else it })) } }, onRemove = {
+                    val at = (pkg.dayOverrides[row.dayIndex] ?: emptyList()).indexOfFirst { it.id == v.id }
+                    onPatchUndoable(
+                        "Removed the ${v.label.ifBlank { "visit" }} from day ${row.dayIndex + 1}.",
+                        { p -> p.copy(dayOverrides = p.dayOverrides + (row.dayIndex to (p.dayOverrides[row.dayIndex] ?: emptyList()).filter { it.id != v.id })) },
+                        { p ->
+                            val cur = p.dayOverrides[row.dayIndex]
+                            if (cur == null || cur.any { it.id == v.id }) p
+                            else p.copy(dayOverrides = p.dayOverrides + (row.dayIndex to (cur.take(at) + v + cur.drop(at))))
+                        },
+                    )
+                })
             }
             if (dayVisits.isEmpty()) Text("No visits this day.", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
             GhostButton(label = "Add visit to this day", onClick = { onPatch { p -> p.copy(dayOverrides = p.dayOverrides + (row.dayIndex to (p.dayOverrides[row.dayIndex] ?: emptyList()) + Visit(uid(), timeToMinutes(wakeStart) ?: 720, durations.firstOrNull { it.kind == "visit" }?.id ?: "", "Check-in"))) } }, leading = { Icon(Lucide.Plus, contentDescription = null, tint = c.primary, modifier = Modifier.size(12.dp)) })
@@ -616,8 +707,15 @@ private fun DayDetailRow(row: PricedDayRow, pkg: Package, durations: List<Durati
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (row.customized) {
-                Text("Customized", style = AuntieTheme.typography.labelSmall, color = c.primary)
-                AuntieTextBtn(onClick = { onPatch { p -> p.copy(dayOverrides = p.dayOverrides - row.dayIndex) } }) { Text("Reset to template") }
+                if (row.changed) Text("Customized", style = AuntieTheme.typography.labelSmall, color = c.primary)
+                AuntieTextBtn(onClick = {
+                    val prior = pkg.dayOverrides[row.dayIndex]
+                    onPatchUndoable(
+                        "Day ${row.dayIndex + 1} is back on the template.",
+                        { p -> p.copy(dayOverrides = p.dayOverrides - row.dayIndex) },
+                        { p -> if (prior == null || p.dayOverrides.containsKey(row.dayIndex)) p else p.copy(dayOverrides = p.dayOverrides + (row.dayIndex to prior)) },
+                    )
+                }) { Text("Reset to template") }
             } else {
                 AuntieTextBtn(onClick = { onPatch { p -> p.copy(dayOverrides = p.dayOverrides + (row.dayIndex to p.visits.map { it.copy(id = uid()) })) } }) { Text("Customize this day") }
             }

@@ -56,11 +56,28 @@ export function dayKey(ts: FsTimeLike): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** LOCAL `MM-DD HH:mm` for a row timestamp (companion to dayKey). */
-export function formatWhen(ts: FsTimeLike): string {
+/**
+ * LOCAL `MM-DD HH:mm` for a row timestamp (companion to dayKey), with the year
+ * in front (`YYYY-MM-DD HH:mm`) when it is not the current year (#1599). Lists
+ * such as KinTales span more than a year, and "09-03 14:02" could not say
+ * whether a row was last month or a year ago. `now` is for tests.
+ */
+export function formatWhen(ts: FsTimeLike, now: Date = new Date()): string {
   const d = tsToDate(ts);
   if (!d) return '(no time)';
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const monthDayTime = `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return d.getFullYear() === now.getFullYear() ? monthDayTime : `${d.getFullYear()}-${monthDayTime}`;
+}
+
+/**
+ * LOCAL `HH:mm` alone, for a row whose day group header already carries the
+ * day. Its callers used to take `formatWhen(...).slice(6)`, which stopped
+ * being the time once `formatWhen` could lead with a year (#1599).
+ */
+export function formatClock(ts: FsTimeLike): string {
+  const d = tsToDate(ts);
+  if (!d) return '(no time)';
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**
