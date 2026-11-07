@@ -68,7 +68,7 @@ class EnhancedSchedulingViewModelNativeApprovalTest {
         coEvery { bookingRepo.updateBooking(any()) } returns Result.success(Unit)
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId(any()) } returns Result.success(emptyList())
         coEvery {
-            kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any())
+            kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns Result.success("vis_enh_eb1")
         coEvery { kinCareRepo.createKinCareSession(any<KinCareSession>()) } returns Result.success("ses-direct")
     }
@@ -124,7 +124,7 @@ class EnhancedSchedulingViewModelNativeApprovalTest {
         val vm = buildViewModel()
         vm.approveBooking(booking())
 
-        coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any<KinCareSession>()) }
     }
 }

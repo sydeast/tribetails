@@ -113,7 +113,13 @@ class BookingRepository(
     suspend fun createMultiDateBookingRequest(
         kinfolkId: String,
         visits: List<NewBookingVisit>,
-        notes: String? = null,
+        /**
+         * #1626: the office's private note. Sent as `staffNotes`, which the
+         * server writes to each visit's staff-only `internalNotes` thread. The
+         * envelope's `notes` is the household-visible field, and no admin
+         * wizard writes it.
+         */
+        staffNotes: String? = null,
         pattern: String = "individual",
         weeklyDays: List<Int>? = null,
         kinIds: List<String>? = null,
@@ -136,7 +142,7 @@ class BookingRepository(
             kinfolkId = kinfolkId,
             idempotencyKey = idempotencyKey,
             kinIds = kinIds,
-            notes = notes?.takeIf { it.isNotBlank() },
+            staffNotes = staffNotes?.takeIf { it.isNotBlank() },
             pattern = pattern,
             weeklyDays = weeklyDays?.map { it.toLong() },
             visits = visits.map { v ->
@@ -388,6 +394,18 @@ class BookingRepository(
         awaitClose { registration.remove() }
     }
 
+    /**
+     * #1577: the household's own notes on a booking request, the envelope-level
+     * `notes` at `families/{familyId}/bookings/{batchId}` (no visit doc carries
+     * them). Read when the request is opened, not streamed with the queue.
+     * Blank when the request has none.
+     */
+    suspend fun bookingRequestNotes(familyId: String, batchId: String): Result<String> = runCatchingCancellable {
+        val snap = firestore.collection("families").document(familyId)
+            .collection("bookings").document(batchId)
+            .get().await()
+        snap.getString("notes").orEmpty().trim()
+    }.onFailure { AuntieLog.e("bookingRequestNotes failed", it) }
     // === Conflict Detection ===
 
     suspend fun checkBookingConflicts(
@@ -1221,6 +1239,8 @@ data class IncomingKinCare(
     val startTimePending: Boolean = false,
     /** #1098: the night asked for, `YYYY-MM-DD` in the business zone. Blank when absent. */
     val requestedDate: String = "",
+    /** #1577: the Kin this visit covers, as the visit doc names them. Empty when absent. */
+    val kinNames: List<String> = emptyList(),
 )
 
 /**
@@ -1257,6 +1277,7 @@ internal fun incomingKinCareOf(path: String, visitId: String, data: Map<String, 
         serviceId = str("serviceId"),
         startTimePending = data["startTimePending"] == true,
         requestedDate = str("requestedDate"),
+        kinNames = (data["kinNames"] as? List<*>).orEmpty().mapNotNull { (it as? String)?.takeIf { n -> n.isNotBlank() } },
     )
 }
 

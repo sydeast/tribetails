@@ -146,6 +146,7 @@ listTemplateBindings
 listTemplates
 listUnappliedPayments
 listUninvoicedSessions
+listVisitInternalNotes
 logActivity
 logExpense
 manageBookingSeries
@@ -167,6 +168,7 @@ notificationDebounceSweep
 notificationScheduledSweep
 onAuthUserCreate
 onBookingEnvelopeCreate
+onBookingEnvelopeResolve
 onBookingNoteCreate
 onBookingsWrite
 onBusinessSettingsWrite
@@ -197,7 +199,9 @@ payInvoice
 postInvoiceEvent
 previewEmailFrame
 previewEmailTemplate
+previewInvoiceNotice
 previewMarketingBlastAudience
+previewMarketingBlastCopy
 provisionBusinessAdmins
 provisionTribe
 publishGeneratedDraft

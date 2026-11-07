@@ -863,7 +863,7 @@ export function ReviewStep({
           placeholder="Anything the Auntie should know"
         />
         <span className="new-booking__hint">
-          Kept on the booking request for whoever runs these visits.
+          Saved to each visit&rsquo;s internal notes for staff. The household never sees it.
         </span>
       </label>
     </div>

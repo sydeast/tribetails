@@ -76,11 +76,24 @@ export function noteBody(note: BookingNoteEntry): string {
   return typeof note.body === 'string' ? note.body : '';
 }
 
-/** Who wrote it, in operator language. `Unknown` rather than a blank byline. */
-export function noteAuthorLabel(note: BookingNoteEntry): string {
+/**
+ * Who wrote it, in operator language. `Unknown` rather than a blank byline.
+ *
+ * #1607: a note the admin wrote was labelled AUNTIE. `authorRole: 'admin'` is
+ * stamped for EVERY staff caller (admin or Auntie alike), so the role cannot
+ * say which of them it was; the `authorUid` can. A staff note is named by the
+ * person (`staffNames`, the shared `listStaff` read), and reads `Staff` until
+ * that lands or for a uid it does not know, never a role the writer may not have.
+ */
+export function noteAuthorLabel(
+  note: BookingNoteEntry,
+  staffNames: ReadonlyMap<string, string> = new Map(),
+): string {
   switch (note.authorRole) {
-    case 'admin':
-      return 'Auntie';
+    case 'admin': {
+      const name = note.authorUid !== undefined ? staffNames.get(note.authorUid) : undefined;
+      return name !== undefined && name.trim() !== '' ? name : 'Staff';
+    }
     case 'kinfolk':
       return 'Kinfolk';
     default:

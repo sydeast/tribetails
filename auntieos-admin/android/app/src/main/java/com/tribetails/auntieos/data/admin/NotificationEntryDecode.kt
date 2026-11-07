@@ -90,6 +90,7 @@ fun notificationEntryFromMap(id: String, m: Map<String, Any?>): NotificationEntr
         targetType = text(m["targetType"]),
         targetId = text(m["targetId"]),
         archivedAt = notificationInstantToIso(m["archivedAt"]),
+        requestResolution = text(m["requestResolution"]),
     )
 
 /**

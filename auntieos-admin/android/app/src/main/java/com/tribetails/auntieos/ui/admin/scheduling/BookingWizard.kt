@@ -445,7 +445,12 @@ data class BookingWizardSubmission(
     val kinfolkId: String,
     val kinIds: List<String>,
     val visits: List<NewBookingVisit>,
-    val notes: String?,
+    /**
+     * #1626: the Review step's "Private notes". The office's note, so it goes
+     * to the callable as `staffNotes` (each visit's staff-only thread) and
+     * never as `notes`, the envelope field the portal shows the household.
+     */
+    val staffNotes: String?,
     val pattern: String,
     val weeklyDays: List<Int>?,
     val billing: CreateMultiDateBookingRequestArgsBilling,
@@ -457,7 +462,7 @@ data class BookingWizardSubmission(
  * Builds the submission. [overrideBusyConflict] is true only on the operator's
  * explicit "Create anyway" after a busy refusal; nothing sets it on a first try.
  *
- * `notes` is nulled when blank, mirroring web's conditional spread: the callable
+ * `staffNotes` is nulled when blank, mirroring web's conditional spread: the callable
  * treats an omitted key and a blank value identically, so sending the blank
  * would just be noise on the wire.
  *
@@ -477,7 +482,7 @@ fun bookingSubmission(
     kinfolkId = state.kinfolkId,
     kinIds = resolveKinIds(state, householdKinIds),
     visits = buildVisits(state),
-    notes = state.notes.trim().takeIf { it.isNotEmpty() },
+    staffNotes = state.notes.trim().takeIf { it.isNotEmpty() },
     pattern = bookingPattern(state),
     weeklyDays = bookingWeeklyDays(state),
     billing = CreateMultiDateBookingRequestArgsBilling(mode = state.billingMode),

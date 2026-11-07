@@ -163,6 +163,37 @@ fun InvoiceDetailScreen(
             onOpenVisit = onOpenVisit,
         )
     }
+    // #1609: the confirm before a household send names the person and the channel.
+    uiState.sendConfirm?.let { action ->
+        AuntieDialog(
+            visible   = true,
+            title     = if (action == "reminder") "Send a payment reminder?" else "Send this draft?",
+            onDismiss = { viewModel.dismissSendConfirm() },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { viewModel.dismissSendConfirm() })
+                PrimaryButton(
+                    label   = if (action == "reminder") "Send reminder" else "Review and send",
+                    onClick = { viewModel.confirmSend() },
+                )
+            },
+        ) {
+            Text(
+                text = if (action == "reminder") {
+                    "This sends a real payment-reminder notification to the household."
+                } else {
+                    "This sends the draft to the household and marks the invoice open. A draft missing its " +
+                        "total, household, or invoice number is rejected rather than sent."
+                },
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
+            Text(
+                text  = uiState.sendConfirmPreview ?: "Checking who this reaches…",
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textPrimary,
+            )
+        }
+    }
     // Session-link edit dialog
     if (uiState.editMode) {
         LinkSessionsDialog(
@@ -274,8 +305,9 @@ fun InvoiceDetailScreen(
                         onRecordPayment   = { viewModel.openRecordPayment() },
                         onRetryPayments   = { viewModel.retryPayments() },
                         onGenerateReceipt = { viewModel.generateReceipt() },
-                        onSendReminder    = { viewModel.sendReminder() },
-                        onSendDraft       = { viewModel.reviewAndSendDraft() },
+                        // #1609: both open a confirm naming who the send reaches.
+                        onSendReminder    = { viewModel.askSend("reminder") },
+                        onSendDraft       = { viewModel.askSend("reviewSend") },
                         onResendQuote     = { viewModel.resendQuote() },
                         onDownloadPdf     = { viewModel.downloadPdf() },
                         onArchive         = { viewModel.promptArchive() },
@@ -1896,13 +1928,16 @@ private fun LinkSessionsDialog(
                     // #1254: shown, not hidden, and not tickable: another
                     // invoice already bills it.
                     val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
+                    // #1609: a cancelled visit is not billable.
+                    val cancelled = linkPickerCancelled(session, storedIds)
                     val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel" +
-                        if (elsewhere) " · on another invoice" else ""
+                        (if (elsewhere) " · on another invoice" else "") +
+                        (if (cancelled) " · cancelled, not billable" else "")
                     AuntieChip(
                         label    = chipLabel,
                         selected = session.id in selectedIds,
                         onClick  = { onToggle(session.id) },
-                        enabled  = !elsewhere && !saveLoading,
+                        enabled  = !elsewhere && !cancelled && !saveLoading,
                     )
                 }
             }

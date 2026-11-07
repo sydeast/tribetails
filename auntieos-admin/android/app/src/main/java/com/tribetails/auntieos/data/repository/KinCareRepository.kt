@@ -409,7 +409,13 @@ class KinCareRepository(
 
     // ---- Care-ops session callables (1E §A.9) ----
 
-    /** 1E §A.9: create a SCHEDULED kin_care_sessions doc. Returns the new session id. */
+    /**
+     * 1E §A.9: create a SCHEDULED kin_care_sessions doc. Returns the new session id.
+     *
+     * #1574: [recordAsCompleted] writes down a visit whose window has already
+     * ended, as COMPLETED; the server refuses it for a window that has not, and
+     * refuses a past window without it. Sent only when true.
+     */
     suspend fun createKinCareSession(
         kinfolkId: String,
         kinIds: List<String>,
@@ -425,6 +431,7 @@ class KinCareRepository(
          * and stores it on the session as `enhancedBookingId`.
          */
         enhancedBookingId: String? = null,
+        recordAsCompleted: Boolean = false,
     ): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
@@ -438,6 +445,7 @@ class KinCareRepository(
             put("serviceDurationMinutes", serviceDurationMinutes)
             put("notes", notes)
             enhancedBookingId?.takeIf { it.isNotBlank() }?.let { put("enhancedBookingId", it) }
+            if (recordAsCompleted) put("recordAsCompleted", true)
         }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createKinCareSession").call(payload).awaitCallable().data as? Map<String, Any?>

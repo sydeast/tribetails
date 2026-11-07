@@ -105,6 +105,12 @@ const Args = z.object({
     .max(200)
     .regex(/^[A-Za-z0-9_-]+$/, 'enhancedBookingId must be a Firestore document id')
     .optional(),
+  /**
+   * #1574: the office is writing down a visit that already happened. Required
+   * for a window that has ended and refused for one that has not; see
+   * `lib/pastVisit.ts` and the handler's note below.
+   */
+  recordAsCompleted: z.boolean().optional(),
 });
 
 /**
@@ -162,7 +168,28 @@ export async function createKinCareSessionHandler(
     }
   }
 
-  await guardBookingBusyConflict({
+  // #1574, operator ruling 2026-11-05: a past-dated visit is "allowed only as
+  // already completed ... never Scheduled". Decided before any guard, so a past
+  // date reports that rather than a calendar clash. `lib/pastVisit` is loaded
+  // here rather than at file scope (#1714): see coldStartImportGraph.test.ts.
+  const { businessTimeZoneReader, newVisitStatusFor } = await import('../lib/pastVisit.js');
+  const status = await newVisitStatusFor({
+    startTime: args.startTime,
+    endTime: args.endTime,
+    nowMs: Date.now(),
+    recordAsCompleted: args.recordAsCompleted === true,
+    timeZone: businessTimeZoneReader(),
+  });
+  const backdated = status === 'COMPLETED';
+
+  // A RECORD OF A VISIT THAT ALREADY HAPPENED SKIPS TWO OF THE THREE GUARDS.
+  // The busy import and the closure list answer "may this hour be booked?",
+  // which has no meaning for an hour that is over: the visit happened, and the
+  // closure guard has no override, so running it would make a real visit on a
+  // closed day impossible to write down. The overlap guard still runs (and is
+  // still overridable): a second record over the same hour is most often the
+  // same visit written down twice.
+  if (!backdated) await guardBookingBusyConflict({
     firestore: db(),
     visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
     actorUid: uid,
@@ -172,7 +199,7 @@ export async function createKinCareSessionHandler(
   });
   // A closed day always refuses the write -- no override. See
   // companyHolidayConflict.ts's header for why this guard has none.
-  await guardCompanyHolidayConflict({
+  if (!backdated) await guardCompanyHolidayConflict({
     firestore: db(),
     visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
   });
@@ -218,7 +245,12 @@ export async function createKinCareSessionHandler(
     familyId: args.kinfolkId,
     requestBatchId: batchId,
     visitIds: [visitId],
-    envelopeStatus: 'confirmed',
+    // #1574: a backdated record is completed from birth, on the household's
+    // copy as on the office's. Neither booking trigger sends anything for it:
+    // `onBookingEnvelopeCreate` answers only an envelope created `requested`,
+    // and `onBookingsWrite` on a visit created `completed` reaches no dispatch
+    // (no assignee, no ask, and no status branch for `completed`).
+    envelopeStatus: backdated ? 'completed' : 'confirmed',
     requestedByUid: uid,
     // Marks the record as the office's own, so nobody reads it as a household
     // request that was approved.
@@ -235,8 +267,8 @@ export async function createKinCareSessionHandler(
     // function does not load the portal callable's module at cold start.
     communication: { emailConfirmation: false, timeVisibility: false } satisfies BookingCommunication,
     visitCount: 1,
-    confirmedCount: 1,
-    completedCount: 0,
+    confirmedCount: backdated ? 0 : 1,
+    completedCount: backdated ? 1 : 0,
     cancelledCount: 0,
     firstStartTime: startTs,
     lastStartTime: startTs,
@@ -247,7 +279,8 @@ export async function createKinCareSessionHandler(
   batch.set(visitRef, {
     batchId,
     familyId: args.kinfolkId,
-    status: 'confirmed',
+    status: backdated ? 'completed' : 'confirmed',
+    ...(backdated && { completedAt: endTs }),
     visitProgress: null,
     serviceId: null,
     serviceName: args.serviceType,
@@ -288,7 +321,15 @@ export async function createKinCareSessionHandler(
     // "Visit length 0" for a 20:00 to 20:30 visit.
     serviceDurationMinutes: visitLengthMinutes(args.serviceDurationMinutes, args.startTime, args.endTime),
     notes: args.notes ?? '',
-    status: 'SCHEDULED',
+    status,
+    // #1574: a backdated record is COMPLETED from birth and never passes
+    // through `transitionBookingStatus`, so it starts no live visit (Auntie
+    // Time lists only the on-the-books statuses). `completedAt` is when the
+    // visit ended, not when it was typed in, and the marker keeps it findable:
+    // it also skipped the operator's arrival-and-departure rule, which governs
+    // the Complete step only. The booking record above is written completed
+    // from birth too; see the note there on why that sends nothing.
+    ...(backdated && { completedAt: args.endTime, recordedAfterTheFact: true }),
     sourceBookingId: visitId,
     kinCareBatchId: batchId,
     kinCareVisitId: visitId,
@@ -314,6 +355,8 @@ export async function createKinCareSessionHandler(
       serviceType: args.serviceType,
       startTime: args.startTime,
       enhancedBookingId: enhancedId,
+      status,
+      recordedAfterTheFact: backdated,
     },
   });
 

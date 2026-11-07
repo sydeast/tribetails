@@ -2562,14 +2562,36 @@ instead of hand mirrors.
 - NEVER returns staff rows (`authorRole: 'admin'`), `internalNotes`, dossier or
   411 text; the filter runs on the server (#1283)
 - an Auntie is refused (household callable, `householdStaffFlag`)
-- req: identical to `addBookingNote`
-- res `{ noteId: string }`
-- writes `.../kinCares/{visitId}/internalNotes`, `authorRole` always `'admin'`
 
-**The 3 hour cutoff, shared by both note callables.**
-BOTH callables enforce it, through `src/lib/bookingNoteCutoff.ts`. Changed
-2026-07-25: it used to be private to `addBookingNote`, so the internal thread
-was guarded by client code alone and any other caller wrote straight past it.
+### addInternalBookingNote
+- req `{ kinfolkId?: string, batchId?: string, visitId?: string, bookingId?: string, sessionId?: string, body: string, visibility?: 'shared' | 'adminOnly' }`
+  (the visit by its booking record, as `addBookingNote`, or by `sessionId`)
+- res `{ noteId: string, visibility: 'shared' | 'adminOnly', storedOn: 'thread' | 'visitRecord' }`
+- #1580, operator ruling 2026-11-05: two kinds of internal note, marked by the
+  writer. `shared` (the default) writes `.../kinCares/{visitId}/internalNotes`
+  (rules: staff); `adminOnly` writes `.../kinCares/{visitId}/adminNotes`
+  (rules: owner only). `authorRole` is `'admin'` or `'auntie'` from the caller.
+- an Auntie sending `adminOnly` is refused `permission-denied`
+- a visit with no booking record (older ad-hoc sessions) keeps a `shared` note
+  on its session `notes` text (`storedOn: 'visitRecord'`) and refuses
+  `adminOnly` with `failed-precondition`, `details { code: 'visit_has_no_booking_record' }`
+- NO cutoff (#1580): staff notes are written during and after a visit
+
+### listVisitInternalNotes
+- req `{ sessionId?: string, kinfolkId?: string, batchId?: string, visitId?: string }`
+- res `{ notes: Array<{ id, body, authorRole: 'admin'|'auntie'|'unknown', authorName: string | null, createdAtMs: number | null, visibility: 'shared'|'adminOnly', source: 'thread'|'visitRecord' }>, canMarkAdminOnly: boolean, hasBookingRecord: boolean }`
+- the visit's ONE internal list: the session's own `notes` text first (one
+  `visitRecord` entry), then both kinds in time order
+- filtered on the caller's claim: an Auntie's response never reads
+  `adminNotes`, and `canMarkAdminOnly` is false for her
+- every admin surface (web, Android, desktop) reads internal notes through
+  this, so Bookings and Auntie Time show the same list
+
+**The 3 hour cutoff, on the household thread.**
+`addBookingNote` enforces it, through `src/lib/bookingNoteCutoff.ts`. From
+2026-07-25 to #1580 `addInternalBookingNote` enforced it too; #1580 lifted it
+there, because that thread now takes Auntie Time's notes, which are written
+during and after a visit.
 - rejection `failed-precondition`, message
   `"Notes cannot be edited within 3 hours of booking start window."`,
   details `{ code: 'booking_note_cutoff' }`
@@ -2577,7 +2599,7 @@ was guarded by client code alone and any other caller wrote straight past it.
 - a visit with no readable `startTime` is NOT locked: there is no window to be
   inside of
 - `test/bookingNoteCutoff.test.ts` freezes the boundary to the millisecond and
-  asserts both callables reject identically
+  asserts the internal thread takes a note the household thread refuses
 Clients mirror the rule for a courtesy lock so the operator is not surprised by
 a rejection (`auntieos-admin/src/lib/bookingDetailFormat.ts`,
 `ui/admin/scheduling/BookingNoteCutoff.kt`). Those are conveniences. The
@@ -3106,6 +3128,17 @@ the callable originally took.
 - Four counted facts, none derived from another by subtraction, so a screen
   rendering them is never showing arithmetic dressed as data.
 
+### previewMarketingBlastCopy (net-new 2026-11-05, #1587)
+- req `{ key: <same enum>, data?: Record<string, unknown> }`
+- res `{ ok: true, subject: string, text: string, html: string | null, usedFallback: boolean, fields: Array<{ name: string, source: 'automatic'|'provided'|'missing' }> }`
+- Writes nothing and takes no audience. Renders the campaign's `emailTemplates/{key}`
+  with the same `renderEmailParts` the sender uses, against `data` plus the business
+  tokens the pipeline fills itself, so the preview cannot disagree with the inbox.
+- `fields` names every merge field the template uses. `automatic` is filled by the
+  pipeline for every send, `provided` has a non-blank value in `data`, `missing` is
+  named by the template and supplied by nothing (a send would render it blank).
+- A template document that does not exist is not an error: the sender falls back to
+  generic wording, and so does this, with `usedFallback: true`.
 ### listMarketingBlasts (net-new 2026-09-12)
 - req `{ limit?: number /* 1-200, default 100 */ }`
 - res `{ ok: true, blasts: Array<{ id, key, title, fireAtMs, status: 'scheduled'|'sent'|'cancelled', audienceDescription, matched, noLinkedAccount, dispatched, suppressed, failed, cancelledAtMs: number|null, createdAtMs }> }`

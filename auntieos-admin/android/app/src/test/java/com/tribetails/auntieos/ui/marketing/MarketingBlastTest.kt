@@ -242,9 +242,9 @@ class MarketingBlastTest {
     }
 
     @Test
-    fun `a row with no title falls back to its campaign key`() {
+    fun `a row with no title falls back to its campaign name, never the key (#1587)`() {
         val rows = decodeBlasts(mapOf("blasts" to listOf(mapOf("id" to "b1", "key" to "survey.event"))))
-        assertEquals("survey.event", rows.first().displayName)
+        assertEquals("Survey or event", rows.first().displayName)
     }
 
     @Test
@@ -463,16 +463,94 @@ class MarketingBlastTest {
         val state = MarketingBlastsUiState(
             campaignKey = MarketingKey.Survey,
             mode = AudienceMode.Uids,
-            uidsText = "u1, u2",
+            pickedUids = listOf("u1", "u2"),
             sendDate = "2026-06-03",
             sendTime = "09:00",
         )
         val line = confirmLine(state)
-        assertTrue(line.startsWith("Survey or event to 2 chosen accounts, firing "))
+        assertTrue(line.startsWith("Survey or event to 2 chosen households, firing "))
     }
 
     @Test
     fun `confirmLine says so plainly when no time has been picked`() {
         assertTrue(confirmLine(MarketingBlastsUiState()).endsWith("firing no time yet."))
+    }
+
+    // ── #1587 ───────────────────────────────────────────────────────────────
+
+    @Test
+    fun `a campaign row never prints the wire key`() {
+        val untitled = MarketingBlastRow(id = "b", key = "newsletter.announcement", title = "", fireAtMs = 1L,
+            status = BlastStatus.Scheduled, audienceDescription = "All active kinfolk", matched = 1,
+            noLinkedAccount = 0, dispatched = 0, suppressed = 0, failed = 0)
+        assertEquals("Newsletter", untitled.displayName)
+        assertTrue(!blastMeta(untitled, java.time.ZoneId.of("UTC")).contains("newsletter.announcement"))
+        val titled = untitled.copy(title = "June newsletter")
+        assertTrue(blastMeta(titled, java.time.ZoneId.of("UTC")).startsWith("Newsletter \u00b7 All active kinfolk"))
+        assertEquals("Marketing email", campaignName("some.future.key"))
+    }
+
+    @Test
+    fun `fieldLabel turns a token into words`() {
+        assertEquals("Event date", fieldLabel("eventDate"))
+        assertEquals("Next visit date", fieldLabel("nextVisit.date"))
+        assertEquals("Link", fieldLabel("link"))
+    }
+
+    @Test
+    fun `fieldValuesToData sends only named, non-blank fields`() {
+        assertEquals(
+            mapOf("link" to "https://x.test"),
+            fieldValuesToData(mapOf("link" to " https://x.test ", "blank" to "  ", "stale" to "old"), listOf("link", "blank")),
+        )
+    }
+
+    @Test
+    fun `pickableAccounts lists linked households by name and skips archived ones`() {
+        val out = pickableAccounts(
+            listOf(
+                com.tribetails.auntieos.data.model.Kinfolk(id = "1", firstName = "Zed", lastName = "Rowan", uid = "u2"),
+                com.tribetails.auntieos.data.model.Kinfolk(id = "2", firstName = "Ana", lastName = "Sparrow", uid = "u1"),
+                com.tribetails.auntieos.data.model.Kinfolk(id = "3", firstName = "Old", lastName = "Devlin", uid = "u3", status = "archived"),
+                com.tribetails.auntieos.data.model.Kinfolk(id = "4", firstName = "", lastName = "", email = "pawsome@hanasamku.com"),
+            ),
+        )
+        assertEquals(listOf("Ana Sparrow", "Zed Rowan"), out.accounts.map { it.name })
+        assertEquals(listOf("pawsome@hanasamku.com"), out.withoutAccount)
+    }
+
+    @Test
+    fun `decodeBlastCopy drops field rows it does not understand`() {
+        val copy = decodeBlastCopy(
+            mapOf(
+                "subject" to "S", "text" to "T", "usedFallback" to true,
+                "fields" to listOf(
+                    mapOf("name" to "a", "source" to "later"),
+                    mapOf("name" to "", "source" to "missing"),
+                    mapOf("name" to "b", "source" to "provided"),
+                ),
+            ),
+        )
+        assertEquals(BlastCopyPreview("S", "T", true, listOf(MergeFieldStatus("b", MergeFieldSource.Provided))), copy)
+    }
+
+    @Test
+    fun `blastBlocker names the missing fields last, after the audience and time`() {
+        val now = 1_000_000L
+        val audience = BlastAudience.Uids(listOf("u1"))
+        assertEquals(
+            "Fill in Event date, Link before scheduling. The email would go out with a gap there.",
+            blastBlocker(audience, now + 60_000L, now, 3, listOf("eventDate", "link")),
+        )
+        assertNull(blastBlocker(audience, now + 60_000L, now, 3, emptyList()))
+    }
+
+    @Test
+    fun `account search and count line`() {
+        val a = listOf(PickableAccount("u1", "Dana Wren", "catch@hanasamku.com"), PickableAccount("u2", "Ari Mercer", ""))
+        assertEquals(listOf("u1"), filterAccounts(a, "HANASAMKU").map { it.uid })
+        assertEquals(2, filterAccounts(a, " ").size)
+        assertEquals("1 household chosen", accountCountLine(1, 0))
+        assertEquals("2 households chosen. 1 household has no linked account and cannot be picked.", accountCountLine(2, 1))
     }
 }
