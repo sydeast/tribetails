@@ -161,6 +161,10 @@
   gap: 0.3rem;
   flex: 1 1 10rem;
 }
+.cpb__fieldError {
+  color: var(--color-error);
+  font-size: var(--type-body-sm-size);
+}
 .cpb__fieldLabel {
   font-size: var(--type-label-md-size);
   color: var(--color-text-dim);

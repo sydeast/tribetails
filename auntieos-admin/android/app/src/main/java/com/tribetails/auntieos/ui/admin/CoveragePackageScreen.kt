@@ -61,6 +61,8 @@ import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.domain.CoverageRules
 import com.tribetails.auntieos.domain.DEFAULT_COVERAGE_RULES
 import com.tribetails.auntieos.domain.uniqueCopyName
+import com.tribetails.auntieos.domain.MaxGapParse
+import com.tribetails.auntieos.domain.parseMaxGapHours
 import com.tribetails.auntieos.domain.DayPattern
 import com.tribetails.auntieos.domain.Duration
 import com.tribetails.auntieos.domain.Package
@@ -146,6 +148,11 @@ fun CoveragePackageScreen(
 
     // Session quote state (rules are PER-CLIENT — never in the saved config).
     var rules by remember { mutableStateOf(DEFAULT_COVERAGE_RULES) }
+    // What is typed in Max gap, kept apart from the rule it feeds (#1582). A half-typed or
+    // negative entry is refused with a message; the rule, and every price built from it,
+    // keeps the last good value until the text reads as a valid gap.
+    var gapText by remember { mutableStateOf(numText(DEFAULT_COVERAGE_RULES.maxGapHours)) }
+    var gapError by remember { mutableStateOf<String?>(null) }
     var clientName by remember { mutableStateOf("") }
     // A fresh quote opens on today rather than blank (issue #693).
     var startDate by remember { mutableStateOf(todayIso()) }
@@ -237,16 +244,21 @@ fun CoveragePackageScreen(
     fun startNewQuote() {
         // Everything this wipes comes back whole with Undo (#1605).
         val before = QuoteSnapshot(packages, detailId, clientName, startDate, endDate, rules, overnightDurationId)
+        val beforeGapText = gapText
+        val beforeGapError = gapError
         undo = UndoEntry("Started a new quote.") {
             packages = before.packages; detailId = before.detailId; clientName = before.clientName
             startDate = before.startDate; endDate = before.endDate; rules = before.rules
             overnightDurationId = before.overnightDurationId
+            // The Max gap text and its message come back with the rule they feed (#1582).
+            gapText = beforeGapText; gapError = beforeGapError
         }
         detailId = null; clientName = ""; startDate = todayIso(); endDate = ""
         // Rules are per-client, so reset them for the next one, repointed at the menu
         // (#728 made the service NAME the duration id, so the shipped pin needs realigning).
         val freshRules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations)
         rules = freshRules
+        gapText = numText(freshRules.maxGapHours); gapError = null
         // The next quote opens the way this one did: the three tiers already built.
         packages = packagesFromPatterns(
             buildDayPatterns(
@@ -314,7 +326,23 @@ fun CoveragePackageScreen(
                         TimeField(label = "Day starts", value = rules.wakeStart, onChange = { rules = rules.copy(wakeStart = it) }, modifier = Modifier.weight(1f))
                         TimeField(label = "Day ends", value = rules.wakeEnd, onChange = { rules = rules.copy(wakeEnd = it) }, modifier = Modifier.weight(1f))
                     }
-                    AuntieField(value = numText(rules.maxGapHours), onValueChange = { rules = rules.copy(maxGapHours = it.toDoubleOrNull() ?: 1.0) }, label = "Max gap between visits (hrs)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(0.5f))
+                    AuntieField(
+                        value = gapText,
+                        onValueChange = { typed ->
+                            gapText = typed
+                            when (val parsed = parseMaxGapHours(typed)) {
+                                is MaxGapParse.Ok -> { gapError = null; rules = rules.copy(maxGapHours = parsed.hours) }
+                                is MaxGapParse.Refused -> gapError = parsed.message
+                            }
+                        },
+                        label = "Max gap between visits (hrs)",
+                        isError = gapError != null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(0.5f),
+                    )
+                    gapError?.let {
+                        Text("$it Prices still use ${numText(rules.maxGapHours)}h.", style = AuntieTheme.typography.bodySmall, color = c.error)
+                    }
                     val overnightOptions = durations.filter { it.kind == "overnight" }
                     if (overnightOptions.isNotEmpty()) {
                         Text("Overnight duration", style = AuntieTheme.typography.labelSmall, color = c.textDim)
