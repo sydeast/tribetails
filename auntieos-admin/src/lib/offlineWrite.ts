@@ -142,6 +142,12 @@ export type WritePhase = 'idle' | 'sending' | 'queued' | 'blocked' | 'unknown' |
 export function phaseOfError(err: unknown): WritePhase {
   if (err instanceof OfflineCallError) return 'blocked';
   if (err instanceof LostSignalError) return 'unknown';
+  // #1567: a callable that got no answer inside its budget. The request was
+  // away and the server may have finished it after the client stopped
+  // listening, which is the same fact `LostSignalError` states. Matched by
+  // name because `fns.ts` imports this module, so importing the class back
+  // would be a cycle.
+  if (err instanceof Error && err.name === 'CallableTimeoutError') return 'unknown';
   return 'failed';
 }
 

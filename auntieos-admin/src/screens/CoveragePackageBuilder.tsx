@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBusinessSettings, type BusinessSettings } from '../api/settings';
 import {
   DEFAULT_COVERAGE_RULES,
@@ -10,11 +10,14 @@ import {
   effectiveVisits,
   gapWarnings,
   minutesToInput,
+  parseMaxGapHours,
   minutesToTime,
   normalizePackage,
   packagesFromPatterns,
   pricePackage,
   quoteText,
+  sanitizeStoredRules,
+  storedMaxGapRefusal,
   timeToMinutes,
   todayIso,
   uid,
@@ -169,7 +172,7 @@ function Builder({ settings }: BuilderProps) {
   const [endDate, setEndDate] = useState(stored.endDate ?? '');
   // Rules pin visits by duration id, and #728 made the service NAME the id, so a
   // rule saved under the old ids must be repointed before anything reads it.
-  const initialRules = alignPinnedToDurations(stored.rules ?? DEFAULT_COVERAGE_RULES, durations);
+  const initialRules = alignPinnedToDurations(sanitizeStoredRules(stored.rules ?? DEFAULT_COVERAGE_RULES), durations);
   const [rules, setRules] = useState<CoverageRules>(initialRules);
   // Every quote opens with the three tiers already built, beside whatever the
   // operator has hand-built (issue #694). Seeded once per quote, so deleting one
@@ -239,6 +242,40 @@ function Builder({ settings }: BuilderProps) {
   // ── per-client rules ────────────────────────────────────────────────────────
 
   const patchRules = (patch: Partial<CoverageRules>) => setRules((r) => ({ ...r, ...patch }));
+  // What is typed in Max gap, kept apart from the rule it feeds (#1582). A half-typed
+  // or negative entry is refused here with a message; the rule, and every price
+  // built from it, keeps the last good value until the text reads as a valid gap.
+  // A stored gap the field would refuse (saved while it still coerced) is shown as
+  // stored, with its message, and prices use the default until it is retyped.
+  const storedRefusal = stored.rules ? storedMaxGapRefusal(stored.rules) : null;
+  const [gapText, setGapText] = useState(
+    storedRefusal !== null && stored.rules ? String(stored.rules.maxGapHours) : String(initialRules.maxGapHours),
+  );
+  const [gapError, setGapError] = useState(storedRefusal ?? '');
+  // Rules that change from outside the field (Undo, a new quote) bring the text with
+  // them. Only a CHANGE to the rule does this, never the first render, so a refused
+  // stored gap keeps its message.
+  const lastGap = useRef(rules.maxGapHours);
+  useEffect(() => {
+    if (lastGap.current === rules.maxGapHours) return;
+    lastGap.current = rules.maxGapHours;
+    const parsed = parseMaxGapHours(gapText);
+    if (!(parsed.ok && parsed.value === rules.maxGapHours)) {
+      setGapText(String(rules.maxGapHours));
+      setGapError('');
+    }
+    // Only a change to the rule itself; typing never moves it away from the text.
+  }, [rules.maxGapHours]); // eslint-disable-line react-hooks/exhaustive-deps
+  const changeGap = (text: string) => {
+    setGapText(text);
+    const parsed = parseMaxGapHours(text);
+    if (parsed.ok) {
+      setGapError('');
+      patchRules({ maxGapHours: parsed.value });
+    } else {
+      setGapError(parsed.message);
+    }
+  };
 
   const addPinned = () => {
     if (!newPinned.label.trim() || !newPinned.time || !newPinned.durationId) {
@@ -368,6 +405,8 @@ function Builder({ settings }: BuilderProps) {
     setStartDate(todayIso()); // same default a fresh load opens on
     setEndDate('');
     setRules(freshRules);
+    setGapText(String(freshRules.maxGapHours));
+    setGapError('');
   };
 
   // ── pricing ─────────────────────────────────────────────────────────────────
@@ -476,10 +515,25 @@ function Builder({ settings }: BuilderProps) {
             <span className="cpb__fieldLabel">Day ends</span>
             <input className="cpb__input" type="time" value={rules.wakeEnd} onChange={(e) => patchRules({ wakeEnd: e.target.value })} />
           </label>
-          <label className="cpb__field">
-            <span className="cpb__fieldLabel">Max gap between visits (hrs)</span>
-            <input className="cpb__input" type="number" min="1" step="0.5" value={rules.maxGapHours} onChange={(e) => patchRules({ maxGapHours: parseFloat(e.target.value) || 1 })} />
-          </label>
+          {/* A div, not a wrapping label: the message must not become part of the field's name. */}
+          <div className="cpb__field">
+            <label className="cpb__fieldLabel" htmlFor="cpb-gap">Max gap between visits (hrs)</label>
+            <input
+              id="cpb-gap"
+              className="cpb__input"
+              type="text"
+              inputMode="decimal"
+              value={gapText}
+              aria-invalid={gapError !== '' ? true : undefined}
+              aria-describedby={gapError !== '' ? 'cpb-gap-error' : undefined}
+              onChange={(e) => changeGap(e.target.value)}
+            />
+            {gapError !== '' ? (
+              <span id="cpb-gap-error" className="cpb__fieldError" role="alert">
+                {gapError} Prices still use {rules.maxGapHours}h.
+              </span>
+            ) : null}
+          </div>
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Overnight duration</span>
             <select className="cpb__input" value={overnightDurationId} onChange={(e) => setOvernightDurationId(e.target.value)}>

@@ -666,11 +666,11 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     return (
       <div className="screen kintale-compose">
         {heading}
-        <AsyncRegion state={sessions} what="the Kin Care session" isEmpty={() => false} empty={null}>
+        <AsyncRegion state={sessions} what="the KinCare session" isEmpty={() => false} empty={null}>
           {(data) => {
             const found = data.find((s) => s._id === effectiveSessionId);
             if (!found) {
-              return <EmptyHint>No Kin Care session found with id &ldquo;{effectiveSessionId}&rdquo;.</EmptyHint>;
+              return <EmptyHint>No KinCare session found with id &ldquo;{effectiveSessionId}&rdquo;.</EmptyHint>;
             }
             return formProps ? (
               <>
@@ -735,7 +735,7 @@ function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
   const scoped = kinfolkId !== undefined && kinfolkId !== '';
   return (
     <DenPanel
-      title="Pick a Kin Care session"
+      title="Pick a KinCare session"
       subtitle={
         scoped
           ? "This household's visits that have already happened."
@@ -744,7 +744,7 @@ function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
     >
       <AsyncRegion
         state={sessions}
-        what="Kin Care sessions"
+        what="KinCare sessions"
         isEmpty={(data) => pickableSessions(data, kinfolkId).length === 0}
         empty={
           <EmptyHint>
