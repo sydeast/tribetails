@@ -4,6 +4,7 @@ import com.tribetails.auntieos.web.data.CatalogKeyRow
 import com.tribetails.auntieos.web.data.JvmFirestoreFixtures
 import com.tribetails.auntieos.web.data.TemplateService
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.failingKeysWithRepoCopy
 import com.tribetails.auntieos.web.data.keysAwaitingImport
 import com.tribetails.auntieos.web.data.keysFailingOnSend
 import kotlinx.coroutines.runBlocking
@@ -15,9 +16,9 @@ import kotlin.test.assertTrue
 
 /**
  * #1586: Manage assignments said five keys had no template and would fail. Only
- * a direct send with no template can fail: the email channel sends generic
- * wording, a direct send with a repo copy sends that, and a broadcast never
- * reads a template. The desktop console now reads the server's
+ * a direct send with no template can fail (invite.verify-email): the email
+ * channel sends generic wording and a broadcast never reads a template. A
+ * direct send never falls back to its repo copy, so the screen says to load it. The desktop console now reads the server's
  * `whenTemplateMissing` and names only the keys that really fail.
  */
 class TemplateMissingEffectClientTest {
@@ -41,7 +42,7 @@ class TemplateMissingEffectClientTest {
 
     private val walked = listOf(
         row("broadcast.message", "unused", corpus = false),
-        row("invite.verify-email", "repoCopy", source = "direct-send"),
+        row("invite.verify-email", "fails", source = "direct-send"),
         row("kin.removal.archived", "generic"),
         row("kin.removal.declined", "generic"),
         row("kin.removal.requested", "generic"),
@@ -65,6 +66,7 @@ class TemplateMissingEffectClientTest {
         val rows = listOf(row("invite.primary", "fails", corpus = false, source = "direct-send"))
         assertEquals(listOf("invite.primary"), keysFailingOnSend(rows, emptySet(), bankLoaded = true))
         assertEquals(emptyList(), keysAwaitingImport(rows, emptySet(), bankLoaded = true))
+        assertEquals(emptyList(), failingKeysWithRepoCopy(rows, emptySet(), bankLoaded = true))
     }
 
     @Test

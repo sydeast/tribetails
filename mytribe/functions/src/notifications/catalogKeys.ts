@@ -75,9 +75,10 @@ export type CatalogKeySource = 'catalog' | 'direct-send' | 'legacy';
  * (#1586). The Assignments screen used to say every such key would throw, and
  * only one of five actually did.
  *
- *  - `fails`     the send throws. A direct send with no repo copy.
- *  - `repoCopy`  the repo's seed copy goes out instead (`sendFromTemplate`,
- *                `auth/requestPasswordReset.ts`).
+ *  - `fails`     the send throws. Every direct send (`sendFromTemplate` never
+ *                falls back, so a deleted template stops the send).
+ *  - `repoCopy`  the repo's seed copy goes out instead. Only the external
+ *                password reset row (`auth/requestPasswordReset.ts`).
  *  - `generic`   the dispatcher's email channel sends generic wording
  *                (notifications/fallbackTemplate.ts). Delivered, but it cannot
  *                say what happened.
@@ -105,7 +106,7 @@ export function missingTemplateEffect(
   hasRepoCopy: boolean,
 ): MissingTemplateEffect {
   if (source === 'legacy') return 'unused';
-  if (source === 'direct-send') return hasRepoCopy ? 'repoCopy' : 'fails';
+  if (source === 'direct-send') return 'fails';
   if (TEMPLATELESS_CATALOG_KEYS.has(key)) return 'unused';
   // An external row (auth.password.reset) is sent by its own trigger, which
   // falls back to the repo copy and never to generic wording.

@@ -296,6 +296,11 @@ internal fun resolvedTemplateMissing(row: CatalogKeyRow, bankIds: Set<String>, b
 internal fun keysFailingOnSend(rows: List<CatalogKeyRow>, bankIds: Set<String>, bankLoaded: Boolean): List<String> =
     rows.filter { it.whenTemplateMissing == "fails" && resolvedTemplateMissing(it, bankIds, bankLoaded) }.map { it.key }
 
+/** #1586: the failing keys the repo has a copy of, so Template Import can fix them. */
+internal fun failingKeysWithRepoCopy(rows: List<CatalogKeyRow>, bankIds: Set<String>, bankLoaded: Boolean): List<String> {
+    val failing = keysFailingOnSend(rows, bankIds, bankLoaded).toSet()
+    return rows.filter { it.key in failing && it.inRepoCorpus }.map { it.key }
+}
 /** #1586: keys missing from the bank that still go out and Template Import can load. */
 internal fun keysAwaitingImport(rows: List<CatalogKeyRow>, bankIds: Set<String>, bankLoaded: Boolean): List<String> =
     rows.filter {

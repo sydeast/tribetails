@@ -453,8 +453,9 @@ internal fun awaitingImport(
     resolvedTemplateMissing(row, bankTemplateIds, bankLoaded)
 
 /**
- * #1586: the quiet line under a row whose template is missing but whose send
- * still goes out, or null. A failing send gets the loud line instead.
+ * #1586: the quiet line under a row whose template is missing, or null. A send
+ * that still goes out says what goes out; a failing send gets the loud line,
+ * and this only says the repo has a copy Template Import can load.
  */
 internal fun missingTemplateNote(row: TemplateRepository.CatalogKey, templateMissing: Boolean): String? {
     if (row.whenTemplateMissing == "unused") {
@@ -465,7 +466,8 @@ internal fun missingTemplateNote(row: TemplateRepository.CatalogKey, templateMis
     return when (row.whenTemplateMissing) {
         "generic" -> "Not in the bank yet, so this sends generic wording that cannot say what happened.$load"
         "repoCopy" -> "Not in the bank yet, so this sends the repo copy.$load"
-        else -> null
+        // A failing send gets the loud line; this only says where the fix is.
+        else -> if (row.inRepoCorpus) "The repo has a copy. Load it from Template Import." else null
     }
 }
 /**

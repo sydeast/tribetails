@@ -4,8 +4,6 @@ import { sendPartsFor } from './emailFrame';
 import { loadEmailFrame } from './emailFrameStore';
 import type { EmailFrame } from './emailFrameConfig';
 import { assertNotHardBounced } from './suppressions';
-import { logEvent } from './logger';
-import { SEED_CORPUS } from '../notifications/seedCorpus.generated';
 
 /**
  * Whether a `notificationTemplateBindings` doc is live, given its `active`
@@ -130,13 +128,12 @@ export interface SendFromTemplateOptions {
  * so every caller's existing error handling covers it. Marketing opt-outs are
  * not consulted: nothing sent through here is marketing.
  *
- * #1586: when the template document is missing, the repo's copy of [key] from
- * the seed corpus is sent instead, the same rule `auth/requestPasswordReset.ts`
- * has used since #905. These sends carry a link the person needs (a verify
- * link, an invite), so the dispatcher's generic wording is no use here, and a
- * throw used to leave the person with nothing. Logged at `warn` so the
- * operator can see the bank is missing it; Template Import loads the copy into
- * the bank, where it can be edited. A key with no repo copy still throws.
+ * A missing template document THROWS, and never falls back to the repo's seed
+ * copy (#1586). The operator decides which notifications exist, and deleting
+ * a template is how they say a send should stop (operator ruling 2026-08-18,
+ * "I did not need that type of notification"); a repo copy would quietly send
+ * it again. A template reaches the bank through Template Import or authoring,
+ * and Manage assignments names every key whose send this throw would break.
  */
 export async function sendFromTemplate(
   key: string,
@@ -146,27 +143,9 @@ export async function sendFromTemplate(
   options: SendFromTemplateOptions = {},
 ): Promise<string> {
   if (!options.personRequested) await assertNotHardBounced(to);
-  const tpl = (await loadEmailTemplate(key)) ?? repoCopyOf(key);
+  const tpl = await loadEmailTemplate(key);
   if (!tpl) throw new Error(`email template missing: resolved from ${key}`);
   const resolvedFrame = frame ?? (await loadEmailFrame('sendFromTemplate'));
   return sendTemplatedEmail({ to, data, templateKey: key, ...sendPartsFor(tpl, resolvedFrame) });
 }
 
-/**
- * The seed corpus copy of [key] as an email template document, or null when the
- * repo has none. Logs that the bank is missing it.
- */
-function repoCopyOf(key: string): EmailTemplateDoc | null {
-  const seed = SEED_CORPUS.find((e) => e.key === key);
-  if (!seed) return null;
-  logEvent({
-    severity: 'warn',
-    function: 'sendFromTemplate',
-    event: 'notification.template.repoCopy',
-    extra: {
-      key,
-      action: 'sent the repo copy; load it into the Template Bank from Template Import',
-    },
-  });
-  return { subject: seed.emailSubject, format: 'visual', headline: seed.emailHeadline, content: seed.emailContent };
-}

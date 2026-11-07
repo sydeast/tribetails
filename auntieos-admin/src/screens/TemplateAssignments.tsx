@@ -49,9 +49,10 @@ function routingSource(row: CatalogKeyRow): string {
 }
 
 /**
- * The quiet line under a row whose template is missing but whose send still
- * goes out (#1586), or null when there is nothing to say. A send that fails
- * gets the loud alert instead, so this returns null for `fails`.
+ * The quiet line under a row whose template is missing (#1586), or null when
+ * there is nothing to say. A send that still goes out says what goes out; a
+ * send that fails gets the loud alert, and this line only says the repo has a
+ * copy Template Import can load.
  */
 export function missingTemplateNote(row: CatalogKeyRow, templateMissing: boolean): string | null {
   if (row.whenTemplateMissing === 'unused') {
@@ -65,7 +66,8 @@ export function missingTemplateNote(row: CatalogKeyRow, templateMissing: boolean
   if (row.whenTemplateMissing === 'repoCopy') {
     return `Not in the bank yet, so this sends the repo copy.${load}`;
   }
-  return null;
+  // A failing send gets the loud line; this only says where the fix is.
+  return row.inRepoCorpus ? 'The repo has a copy. Load it from Template Import.' : null;
 }
 
 /**

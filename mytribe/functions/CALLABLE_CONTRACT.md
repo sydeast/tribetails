@@ -1384,9 +1384,8 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     refused again and reads as a broken verification link.
   - #1586: the repo now carries an `invite.verify-email` copy in the seed corpus,
     which Template Import loads into `emailTemplates` like any other. Until it is
-    loaded, `sendFromTemplate` sends that repo copy rather than throwing (the
-    rule `requestPasswordReset` already used), logged as
-    `notification.template.repoCopy`.
+    loaded, the send throws `email template missing`, as every `sendFromTemplate`
+    key does; there is no repo-copy fallback, so a deleted template stops the send.
   - Needs `SMTP2GO_API_KEY` + `EMAIL_FROM` (already created, already bound to the
     other invite functions) and the `invite.verify-email` document in the
     Firestore `emailTemplates` collection. The operator edits email templates in

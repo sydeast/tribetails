@@ -159,7 +159,8 @@ class TemplateRepositoryCatalogKeysTest {
     }
 
     // #1586: the 2026-11-05 walk. Five keys were called broken; only a direct send
-    // with no template can fail, and invite.verify-email now has a repo copy.
+    // with no template fails (invite.verify-email). The repo has its copy, but a
+    // direct send never falls back to it, so the row points at Template Import.
     private fun walked(key: String, effect: String, inCorpus: Boolean = true, source: String = "catalog") =
         TemplateRepository.CatalogKey(
             key = key, label = key, category = null, audience = null, source = source,
@@ -167,17 +168,17 @@ class TemplateRepositoryCatalogKeysTest {
             whenTemplateMissing = effect, inRepoCorpus = inCorpus,
         )
 
-    @Test fun `none of the five walked keys fails on send`() {
+    @Test fun `of the five walked keys only invite verify-email fails on send`() {
         val rows = listOf(
             walked("broadcast.message", "unused", inCorpus = false),
-            walked("invite.verify-email", "repoCopy", source = "direct-send"),
+            walked("invite.verify-email", "fails", source = "direct-send"),
             walked("kin.removal.archived", "generic"),
             walked("kin.removal.declined", "generic"),
             walked("kin.removal.requested", "generic"),
         )
-        assertEquals(0, rows.count { failsOnSend(it, emptySet(), bankLoaded = true) })
+        assertEquals(listOf("invite.verify-email"), rows.filter { failsOnSend(it, emptySet(), bankLoaded = true) }.map { it.key })
         assertEquals(
-            listOf("invite.verify-email", "kin.removal.archived", "kin.removal.declined", "kin.removal.requested"),
+            listOf("kin.removal.archived", "kin.removal.declined", "kin.removal.requested"),
             rows.filter { awaitingImport(it, emptySet(), bankLoaded = true) }.map { it.key },
         )
     }
@@ -195,7 +196,11 @@ class TemplateRepositoryCatalogKeysTest {
         )
         assertEquals(
             "Not in the bank yet, so this sends the repo copy. Load it from Template Import.",
-            missingTemplateNote(walked("invite.verify-email", "repoCopy"), templateMissing = true),
+            missingTemplateNote(walked("auth.password.reset", "repoCopy"), templateMissing = true),
+        )
+        assertEquals(
+            "The repo has a copy. Load it from Template Import.",
+            missingTemplateNote(walked("invite.verify-email", "fails", source = "direct-send"), templateMissing = true),
         )
         assertEquals(
             "Written when it is sent, so no template is used.",

@@ -29,6 +29,7 @@ import com.composables.icons.lucide.Workflow
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.web.data.CatalogKeyRow
 import com.tribetails.auntieos.web.data.TemplateService
+import com.tribetails.auntieos.web.data.failingKeysWithRepoCopy
 import com.tribetails.auntieos.web.data.keysAwaitingImport
 import com.tribetails.auntieos.web.data.keysFailingOnSend
 import com.tribetails.auntieos.web.data.computeUnboundCatalogKeys
@@ -234,6 +235,7 @@ fun TemplateAssignmentBody(
             val bankIds = templates.map { it.templateId }.toSet()
             val bankLoaded = templatesError == null && templates.isNotEmpty()
             val failing = keysFailingOnSend(catalogRows, bankIds, bankLoaded)
+            val loadable = failingKeysWithRepoCopy(catalogRows, bankIds, bankLoaded)
             val awaiting = keysAwaitingImport(catalogRows, bankIds, bankLoaded)
             if (failing.isNotEmpty()) {
                 AuntieBanner(
@@ -243,7 +245,8 @@ fun TemplateAssignmentBody(
                     modifier = Modifier.padding(bottom = dims.space3),
                 ) {
                     Text(
-                        "The template does not exist: ${failing.joinToString(", ")}.",
+                        "The template does not exist: ${failing.joinToString(", ")}." +
+                            if (loadable.isEmpty()) "" else " The repo has a copy of ${loadable.joinToString(", ")}. Load it from Template Import.",
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )

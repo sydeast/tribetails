@@ -168,15 +168,15 @@ describe('whenTemplateMissing (#1586)', () => {
     expect(row('broadcast.message').whenTemplateMissing).toBe('unused');
   });
 
-  it('invite.verify-email now has a repo copy, so it sends that instead of throwing', () => {
+  it('invite.verify-email fails until imported, and the repo has the copy Template Import loads', () => {
     expect(row('invite.verify-email')).toMatchObject({
       source: 'direct-send',
       inRepoCorpus: true,
-      whenTemplateMissing: 'repoCopy',
+      whenTemplateMissing: 'fails',
     });
   });
 
-  it('a direct send with no repo copy still fails', () => {
+  it('a direct send with no repo copy fails too', () => {
     expect(row('invite.primary')).toMatchObject({ inRepoCorpus: false, whenTemplateMissing: 'fails' });
   });
 
@@ -190,12 +190,13 @@ describe('whenTemplateMissing (#1586)', () => {
 
   it('table: the pure helper agrees with the rows', () => {
     expect(missingTemplateEffect('x', 'direct-send', false)).toBe('fails');
-    expect(missingTemplateEffect('x', 'direct-send', true)).toBe('repoCopy');
+    // A repo copy never rescues a direct send: a deleted template stops it.
+    expect(missingTemplateEffect('x', 'direct-send', true)).toBe('fails');
     expect(missingTemplateEffect('x', 'legacy', true)).toBe('unused');
     expect(missingTemplateEffect('kincare.requested', 'catalog', false)).toBe('generic');
   });
 
-  it('exactly one key on the walk list still fails: none of the five', () => {
+  it('of the five keys on the walk list, only invite.verify-email fails on send', () => {
     const walked = [
       'broadcast.message',
       'invite.verify-email',
@@ -203,6 +204,6 @@ describe('whenTemplateMissing (#1586)', () => {
       'kin.removal.declined',
       'kin.removal.requested',
     ];
-    expect(walked.filter((k) => row(k).whenTemplateMissing === 'fails')).toEqual([]);
+    expect(walked.filter((k) => row(k).whenTemplateMissing === 'fails')).toEqual(['invite.verify-email']);
   });
 });

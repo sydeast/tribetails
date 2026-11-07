@@ -162,31 +162,32 @@ describe('TemplateAssignments routing table', () => {
 
   /**
    * #1586: the 2026-11-05 walk. Five keys were called broken; only the one
-   * direct send without a template could fail, and since #1586 it has a repo
-   * copy. The screen now reports none of the five as failing.
+   * direct send without a template fails. The repo now has its copy, which a
+   * direct send never falls back to, so the row says to load it.
    */
-  it('reports only keys that really fail: none of the five from the walk', async () => {
+  it('reports only keys that really fail: invite.verify-email of the five from the walk', async () => {
     listTemplateBindings.mockResolvedValue([]);
     const missing = (key: string, over: Partial<CatalogKeyRow> = {}) =>
       catalogRow({ key, label: key, defaultTemplateId: key, resolvedTemplateId: key, hasDefaultTemplate: false, ...over });
     listCatalogKeys.mockResolvedValue([
       missing('broadcast.message', { whenTemplateMissing: 'unused', inRepoCorpus: false }),
-      missing('invite.verify-email', { source: 'direct-send', whenTemplateMissing: 'repoCopy' }),
+      missing('invite.verify-email', { source: 'direct-send', whenTemplateMissing: 'fails' }),
       missing('kin.removal.archived'),
       missing('kin.removal.declined'),
       missing('kin.removal.requested'),
     ]);
     render(<TemplateAssignments onClose={vi.fn()} />);
     await screen.findByText('kin.removal.requested');
-    expect(screen.queryByText(/fails? on the next send/i)).not.toBeInTheDocument();
-    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    expect(screen.getByText(/1 key fails on the next send/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
     expect(screen.getByTestId('tassign-awaiting-import').textContent).toBe(
-      'Not in the bank yet, still delivered: invite.verify-email, kin.removal.archived, kin.removal.declined, kin.removal.requested. Load them from Template Import.',
+      'Not in the bank yet, still delivered: kin.removal.archived, kin.removal.declined, kin.removal.requested. Load them from Template Import.',
     );
     const kin = screen.getByText('kin.removal.requested').closest('li')!;
     expect(within(kin).getByText(/sends generic wording that cannot say what happened/i)).toBeInTheDocument();
     const verify = screen.getByText('invite.verify-email').closest('li')!;
-    expect(within(verify).getByText(/sends the repo copy\. Load it from Template Import/i)).toBeInTheDocument();
+    expect(within(verify).getByRole('alert').textContent).toMatch(/throws "email template missing"/);
+    expect(within(verify).getByText('The repo has a copy. Load it from Template Import.')).toBeInTheDocument();
     const broadcast = screen.getByText('broadcast.message').closest('li')!;
     expect(within(broadcast).getByText(/no template is used/i)).toBeInTheDocument();
   });
