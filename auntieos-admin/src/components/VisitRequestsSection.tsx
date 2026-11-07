@@ -22,7 +22,7 @@ import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import { BOOKING_BUSY_CONFLICT_CODE, callableConflictCode } from '../lib/bookingWizard';
 import { nightLabel, startTimeOnNight } from '../lib/businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
-import { useOneShot } from '../lib/useOneShot';
+import { useRefreshingLoad } from '../lib/useOneShot';
 import { useToast } from './Toast';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
@@ -93,7 +93,12 @@ export function requestKey(row: VisitRequest): string {
   return `${row.kind}/${row.request.kinfolkId}/${row.request.batchId}/${row.request.visitId}`;
 }
 
-/** Oldest first: the household that has been waiting longest is the one to answer. */
+/**
+ * NEWEST FIRST (#1607). The walk filed a request and watched it land at the
+ * bottom of the queue, under five older ones, which reads as "nothing new
+ * arrived". The newest ask is the one the office has not seen yet; the
+ * oldest is still on the list, with its date.
+ */
 export function mergeQueues(
   reschedule: RescheduleRequestDto[],
   cancel: CancelRequestDto[],
@@ -104,13 +109,12 @@ export function mergeQueues(
     ...cancel.map((request): VisitRequest => ({ kind: 'cancel', request })),
     ...newBookings.map((request): VisitRequest => ({ kind: 'newBooking', request })),
   ];
-  // A row with no `requestedAtMs` sorts last rather than to 1970: an unknown
-  // wait is not a long one, and putting it at the top would push a household
-  // that really has been waiting since July down the list.
+  // A row with no `requestedAtMs` sorts last: an unknown time is neither the
+  // newest nor the oldest, and putting it on top would claim it just arrived.
   return rows.sort(
     (a, b) =>
-      (a.request.requestedAtMs ?? Number.MAX_SAFE_INTEGER) -
-      (b.request.requestedAtMs ?? Number.MAX_SAFE_INTEGER),
+      (b.request.requestedAtMs ?? Number.MIN_SAFE_INTEGER) -
+      (a.request.requestedAtMs ?? Number.MIN_SAFE_INTEGER),
   );
 }
 
@@ -146,8 +150,29 @@ function reasonOf(err: unknown): string {
   return err instanceof Error ? err.message : 'the read did not land';
 }
 
-export function VisitRequestsSection() {
-  const loaded = useOneShot(loadQueues, 'visit requests');
+/** #1607: how often the waiting queue reads again while the screen is open. */
+export const VISIT_REQUESTS_REFRESH_MS = 60_000;
+
+export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number } = {}) {
+  // #1607: the waiting count stayed at 6 after a new request until a reload.
+  // It now reads again every minute, when the tab comes back into view, and
+  // whenever this screen itself files a request (`refreshKey`).
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setTick((n) => n + 1);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') bump();
+    };
+    const id = setInterval(bump, VISIT_REQUESTS_REFRESH_MS);
+    window.addEventListener('focus', bump);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('focus', bump);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+  const loaded = useRefreshingLoad(loadQueues, 'visit requests', `${String(refreshKey)}:${String(tick)}`);
   const [resolvedKeys, setResolvedKeys] = useState<ReadonlySet<string>>(new Set());
   const [activeSheet, setActiveSheet] = useState<
     { row: VisitRequest; decision: 'accept' | 'decline' } | null

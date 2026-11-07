@@ -4307,7 +4307,9 @@ data class BusinessSettings(
     // ---- GPS / tracking ----
     val enableGPSTrackingForAllVisits: Boolean = true,
     val enablePhotoLocationTagging: Boolean = true,
-    val requireArrivalDepartureVerification: Boolean = true,
+    // #1620: absent means OFF, the server's reading (`=== true` in
+    // functions/src/lib/arrivalVerification.ts).
+    val requireArrivalDepartureVerification: Boolean = false,
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value. 150 m matches ARRIVAL_RADIUS_DEFAULT_METERS on the server, which
