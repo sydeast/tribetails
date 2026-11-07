@@ -998,12 +998,12 @@ internal fun listOutcome(loaded: Int, matching: Int, orphans: Int, isLoading: Bo
     }
 
 /**
- * #1563: a draft row's line under the household: its type, then its date.
- * Pure; tested.
+ * #1563: a draft row's line under the household: its type, then its date
+ * (with the year when it is not [currentYear], #1599). Pure; tested.
  */
-internal fun draftSubmeta(d: Draft): String {
+internal fun draftSubmeta(d: Draft, currentYear: Int = java.time.LocalDate.now().year): String {
     val type = d.communicationType.replace('_', ' ').trim().ifBlank { "visit report" }
-    val whenText = if (d.createdOn.isBlank()) "Date TBD" else shortDateTime(d.createdOn)
+    val whenText = if (d.createdOn.isBlank()) "Date TBD" else kinTaleShortDateTime(d.createdOn, currentYear)
     return "$type · $whenText"
 }
 /** #1563: the list search over a draft (household, type, copy). Pure; tested. */

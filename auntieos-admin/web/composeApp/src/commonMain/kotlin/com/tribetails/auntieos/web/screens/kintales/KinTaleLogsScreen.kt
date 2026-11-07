@@ -770,10 +770,16 @@ private fun GeneratedDraftRow(draft: GeneratedDraft, onOpenDraft: (GeneratedDraf
     }
 }
 
-/** #1563: a draft row's line under the household: its type, then its date. Pure; tested. */
-internal fun draftSubmeta(d: GeneratedDraft): String {
+/**
+ * #1563: a draft row's line under the household: its type, then its date (with
+ * the year when it is not [currentYear], #1599). Pure; tested.
+ */
+internal fun draftSubmeta(
+    d: GeneratedDraft,
+    currentYear: Int = com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0,
+): String {
     val type = d.type().replace('_', ' ').ifBlank { "visit report" }
-    val whenText = if (d.created().isBlank()) "Date TBD" else shortDateTime(d.created())
+    val whenText = if (d.created().isBlank()) "Date TBD" else kinTaleShortDateTime(d.created(), currentYear)
     return "$type · $whenText"
 }
 

@@ -102,8 +102,10 @@ class KinTaleLogsDraftsTest {
     @Test
     fun `the row names the type and the date`() {
         val d = Draft(id = "a", communicationType = "visit_report", createdOn = "2026-05-23T22:23:00.000Z")
-        assertEquals("visit report · May 23 · 22:23", draftSubmeta(d))
-        assertEquals("visit report · Date TBD", draftSubmeta(d.copy(createdOn = "")))
+        assertEquals("visit report · May 23 · 22:23", draftSubmeta(d, currentYear = 2026))
+        assertEquals("visit report · Date TBD", draftSubmeta(d.copy(createdOn = ""), currentYear = 2026))
+        // #1599: a draft from another year says which year.
+        assertEquals("visit report · May 23, 2026 · 22:23", draftSubmeta(d, currentYear = 2027))
     }
 
     @Test

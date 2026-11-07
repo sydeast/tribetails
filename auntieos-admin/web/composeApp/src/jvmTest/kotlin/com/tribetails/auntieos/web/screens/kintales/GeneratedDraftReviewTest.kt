@@ -74,7 +74,9 @@ class GeneratedDraftReviewTest {
     fun draftRowTextAndSearch() {
         val d = GeneratedDraft(_id = "a", kinfolkName = "Robyn", communicationType = "visit_report",
             generatedCopy = "Biscuit ran", createdOn = "2026-05-23T22:23:00.000Z")
-        assertEquals("visit report · May 23 · 22:23", draftSubmeta(d))
+        assertEquals("visit report · May 23 · 22:23", draftSubmeta(d, currentYear = 2026))
+        // #1599: a draft from another year says which year.
+        assertEquals("visit report · May 23, 2026 · 22:23", draftSubmeta(d, currentYear = 2027))
         assertTrue(matchesDraftSearch(d, "robyn"))
         assertTrue(matchesDraftSearch(d, "biscuit"))
         assertFalse(matchesDraftSearch(d, "olivia"))
