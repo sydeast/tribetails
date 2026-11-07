@@ -33,7 +33,7 @@ export function sectionPanelId(id: string): string {
  * `useRovingTabs` keyboard contract every other tablist in this app uses
  * (`NotificationGate`, `Templates`, `Invoices`...), only oriented vertically so
  * Up/Down move between sections and one Tab keypress leaves the whole list.
- * Clicking (or Enter/Space on a focused tab) switches which single panel the
+ * Clicking, Enter/Space, or moving focus onto a tab (#1597) switches which single panel the
  * shell renders in the right column; this component owns none of that state, it
  * just reports the chosen id up through `onSelect`.
  *
@@ -75,6 +75,13 @@ export function SectionNav<Id extends string>({
             aria-controls={sectionPanelId(item.id)}
             className={active ? 'settings__nav-item settings__nav-item--active' : 'settings__nav-item'}
             onClick={() => onSelect(item.id)}
+            // #1597: selection follows focus. With Enter-to-activate, an arrow
+            // key left the old section painted as selected beside a focused
+            // new one, two highlighted rows at once. Visited panels stay
+            // mounted, so switching on focus costs no load.
+            onFocus={() => {
+              if (!active) onSelect(item.id);
+            }}
             {...getTabProps(index)}
           >
             {item.icon}

@@ -156,13 +156,20 @@ interface SettingsProps {
    * exactly like a plain visit to `/settings` always has.
    */
   initialSection?: string;
+  /**
+   * Told every time the operator opens a section (#1594), so the route can put
+   * it in the URL and a reload comes back to it. A later `initialSection`
+   * (the URL changing under the screen, as on Back) opens that section.
+   */
+  onSectionChange?: (id: string) => void;
 }
 
-export function Settings({ initialSection }: SettingsProps = {}) {
-  const startSection: SectionId =
-    initialSection !== undefined && SECTIONS.some((s) => s.id === initialSection)
-      ? (initialSection as SectionId)
-      : FIRST_SECTION;
+function knownSection(id: string | undefined): SectionId | null {
+  return id !== undefined && SECTIONS.some((s) => s.id === id) ? (id as SectionId) : null;
+}
+
+export function Settings({ initialSection, onSectionChange }: SettingsProps = {}) {
+  const startSection: SectionId = knownSection(initialSection) ?? FIRST_SECTION;
 
   const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
   const [selected, setSelected] = useState<SectionId>(startSection);
@@ -219,10 +226,25 @@ export function Settings({ initialSection }: SettingsProps = {}) {
     setSettings((prev) => (prev.status === 'ready' ? { status: 'ready', data: { ...prev.data, ...patch } } : prev));
   }, []);
 
-  const selectSection = useCallback((id: SectionId) => {
+  const openSection = useCallback((id: SectionId) => {
     setSelected(id);
     setVisited((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   }, []);
+
+  // The operator picked a section: open it and tell the route (#1594).
+  const selectSection = useCallback(
+    (id: SectionId) => {
+      openSection(id);
+      onSectionChange?.(id);
+    },
+    [openSection, onSectionChange],
+  );
+
+  // The URL moved under the screen (Back, a pasted link): follow it.
+  const urlSection = knownSection(initialSection);
+  useEffect(() => {
+    if (urlSection !== null) openSection(urlSection);
+  }, [urlSection, openSection]);
 
   return (
     <div className="screen">

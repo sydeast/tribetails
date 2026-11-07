@@ -12,6 +12,7 @@ import { BreedField } from '../components/BreedField';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
 import { useAdminAccess } from '../lib/access';
+import { validateKinAge, validateKinWeight } from '../lib/kinMeasures';
 import './KinEdit.css';
 
 interface KinEditProps {
@@ -181,6 +182,15 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
       setError('A kin name is required.');
       return;
     }
+    // #1583: age and weight are numbers. A value left as it loaded passes even
+    // if it is old free text, so a record with a bad legacy value stays editable.
+    const base = loaded.status === 'ready' ? toForm(loaded.data) : null;
+    const measureError =
+      validateKinAge(form.age, base?.age) ?? validateKinWeight(form.weight, base?.weight);
+    if (measureError !== null) {
+      setError(measureError);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -241,6 +251,14 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   }
 
   const busy = saving || archiving;
+  // #1583: shown beside the field as soon as it is edited into an invalid value.
+  const measureErrors: Partial<Record<(typeof TEXT_FIELDS)[number][0], string | null>> =
+    form === null || loaded.status !== 'ready'
+      ? {}
+      : {
+          age: validateKinAge(form.age, toForm(loaded.data).age),
+          weight: validateKinWeight(form.weight, toForm(loaded.data).weight),
+        };
   const access = useAdminAccess();
   const isOwner = access?.status === 'admin';
 
@@ -281,7 +299,14 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                           className="kedit__input"
                           value={form[key]}
                           onChange={(e) => set(key, e.target.value)}
+                          inputMode={key === 'age' || key === 'weight' ? 'decimal' : undefined}
+                          aria-invalid={measureErrors[key] != null}
                         />
+                        {measureErrors[key] != null && (
+                          <span className="kedit__error" role="alert">
+                            {measureErrors[key]}
+                          </span>
+                        )}
                       </label>
                       {key === 'species' && (
                         // Rendered here rather than appended so Breed keeps its
@@ -366,14 +391,14 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                 </fieldset>
               </DenPanel>
 
-              <DenPanel title="Office notes" subtitle="Staff-only.">
+              <DenPanel title="Auntie's notes" subtitle="Staff-only.">
                 <fieldset disabled={busy}>
                   <textarea
                     className="kedit__input kedit__textarea"
                     value={form.officeNotes}
                     onChange={(e) => set('officeNotes', e.target.value)}
                     rows={3}
-                    aria-label="Office notes"
+                    aria-label="Auntie's notes"
                   />
                 </fieldset>
               </DenPanel>

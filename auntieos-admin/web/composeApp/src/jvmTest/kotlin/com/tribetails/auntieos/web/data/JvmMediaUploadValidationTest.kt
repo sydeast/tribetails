@@ -184,4 +184,20 @@ class JvmMediaUploadStripsExifTest {
         assertFalse(json.contains("gpsStripAttempts"), "got $json")
         assertFalse(json.contains("gpsStripError"), "got $json")
     }
+
+    // #1588: which household a new media row is stamped with, per upload target.
+    @Test
+    fun `a household upload is stamped with its own id`() {
+        assertEquals("kf1", JvmMediaUpload.mediaKinfolkIdFor("kinfolk", "kf1", ""))
+        assertEquals("kf1", JvmMediaUpload.mediaKinfolkIdFor("KINFOLK", "kf1", ""))
+    }
+    @Test
+    fun `a kin upload is stamped with its household, not the pet id`() {
+        assertEquals("kf9", JvmMediaUpload.mediaKinfolkIdFor("kin", "pet1", " kf9 "))
+    }
+    @Test
+    fun `a kin upload with no household and every other target stay blank`() {
+        assertEquals("", JvmMediaUpload.mediaKinfolkIdFor("kin", "pet1", ""))
+        assertEquals("", JvmMediaUpload.mediaKinfolkIdFor("USER", "u1", "kf1"))
+    }
 }

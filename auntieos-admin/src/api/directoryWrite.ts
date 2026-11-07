@@ -1,3 +1,4 @@
+import { validateKinAge, validateKinWeight } from '../lib/kinMeasures';
 import { collection, doc, serverTimestamp } from 'firebase/firestore';
 import { addDoc, updateDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
@@ -199,6 +200,8 @@ export async function createKin(input: NewKinInput): Promise<string> {
   if (name === '') throw new Error('createKin requires a name');
   if (species === '') throw new Error('createKin requires a species');
   if (sex === '') throw new Error('createKin requires a gender');
+  const ageProblem = validateKinAge(input.age);
+  if (ageProblem !== null) throw new Error(ageProblem);
 
   const ref = await addDoc(collection(db, 'kin'), {
     kinfolkId,
@@ -256,6 +259,12 @@ export async function updateKin(kinId: string, patch: KinEditPatch): Promise<voi
   const id = kinId.trim();
   if (id === '') throw new Error('updateKin requires a kin id');
   if ((patch.name ?? '').trim() === '' && 'name' in patch) throw new Error('A kin name is required.');
+  // #1583: the patch carries only fields the editor changed, so a legacy value
+  // left alone is never in it and is never refused here.
+  const measureProblem =
+    (patch.age !== undefined ? validateKinAge(patch.age) : null) ??
+    (patch.weight !== undefined ? validateKinWeight(patch.weight) : null);
+  if (measureProblem !== null) throw new Error(measureProblem);
   await updateDoc(doc(db, 'kin', id), { ...patch, updatedAt: serverTimestamp() });
 }
 
