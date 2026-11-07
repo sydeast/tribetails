@@ -214,7 +214,8 @@ fun KinCareDetailScreen(
             session.serviceType.takeIf { it.isNotBlank() }?.let {
                 AuntieKeyValueRow(label = "Service", value = it)
             }
-            session.serviceDurationMinutes.takeIf { it > 0 }?.let {
+            // #1581: a stored 0 falls back to the visit's own window.
+            shownVisitLengthMinutes(session.serviceDurationMinutes, session.startTime, session.endTime)?.let {
                 AuntieKeyValueRow(label = "Duration", value = "$it min")
             }
             AuntieKeyValueRow(label = "Window", value = sessionWindowFor(session))

@@ -388,15 +388,16 @@ fun KinCareDetailScreen(
             item {
                 DetailSection("Details") {
                     DetailFieldRow("Service", s.serviceType)
-                    DetailFieldRow(
-                        "Visit length",
-                        if (s.serviceDurationMinutes > 0) "${s.serviceDurationMinutes} min" else "",
+                    // #1581: a stored 0 falls back to the visit's own window.
+                    val lengthMinutes = com.tribetails.auntieos.domain.shownVisitLengthMinutes(
+                        s.serviceDurationMinutes, s.startTime, s.endTime,
                     )
+                    DetailFieldRow("Visit length", lengthMinutes?.let { "$it min" } ?: "")
                     // Present only once the visit has been billed, the same
                     // rule as the board's "Invoice linked" chip: an unbilled
                     // visit is the normal state of a visit, not a gap.
                     DetailFieldRow("Invoice", if (s.invoiceId.isNotBlank()) "Linked" else "")
-                    if (s.serviceType.isBlank() && s.serviceDurationMinutes <= 0 && s.invoiceId.isBlank()) {
+                    if (s.serviceType.isBlank() && lengthMinutes == null && s.invoiceId.isBlank()) {
                         EmptyHint("No service, length or invoice on this record yet.")
                     }
                 }
