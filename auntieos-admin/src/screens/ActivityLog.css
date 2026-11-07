@@ -108,7 +108,8 @@
 .activity__chip:hover {
   color: var(--color-text-primary);
 }
-.activity__chip[aria-selected='true'] {
+.activity__chip[aria-selected='true'],
+.activity__chip[aria-selected='true']:hover {
   background: var(--color-text-primary);
   color: var(--color-background);
   border-color: var(--color-text-primary);
