@@ -249,6 +249,41 @@ class BookingViewModel(
         }
     }
 
+    /**
+     * #1674: New booking's "Submit request", for every repeat mode. One visit used
+     * to be written straight to `kin_care_sessions` as PENDING with no booking
+     * record, so once approved it could not be given an Auntie or notes ("This
+     * visit is not part of a booking request" on every client), and its two notes
+     * went to calls that name no record. Now one visit is a request with a record
+     * like several are (AO-25's envelope path, `createMultiDateBookingRequest`):
+     * it lands in Incoming requests, its notes ride the request (#1579, #1626),
+     * and the server's busy and closed-day checks answer it in their own words.
+     * [serviceType] is the KinCare type; the server prices it at invoice time.
+     */
+    suspend fun submitBookingRequest(
+        kinfolkId: String,
+        serviceType: String,
+        visitStartsMs: List<Long>,
+        repeat: BookingRepeat,
+        weekdays: Set<Int>,
+        kinfolkNote: String,
+        staffNote: String,
+    ): MultiDateBookingResult? {
+        if (visitStartsMs.isEmpty()) {
+            errorMessage = "Pick a date for the visit."
+            return null
+        }
+        val weekly = repeat == BookingRepeat.WEEKLY
+        return createBookingRequest(
+            kinfolkId = kinfolkId,
+            visits = visitStartsMs.map { NewBookingVisitInput(startTimeMs = it, serviceName = serviceType) },
+            notes = kinfolkNote.ifBlank { null },
+            pattern = if (weekly) "weekly" else "individual",
+            weeklyDays = if (weekly) weekdays.sorted() else null,
+            staffNotes = staffNote.ifBlank { null },
+        )
+    }
+
     /** #644: the submission signature this key was minted for, and the key. */
     private var pendingRequestKey: Pair<String, String>? = null
 

@@ -165,4 +165,54 @@ class BookingViewModelTest {
         vm.rejectBooking("b12")
         assertEquals(listOf("REJECT_BOOKING"), ds.loggedActivity.map { it.actionType })
     }
+
+    // #1674: one visit from New booking used to be a PENDING session written
+    // straight to Firestore with no booking record, so once approved it could not
+    // be given an Auntie. It is a request with a record now, like several are.
+    @Test
+    fun oneVisitIsFiledAsARequestWithItsNotesNotWrittenAsASession() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = BookingViewModel(ds)
+        val start = 1_794_000_000_000L
+        val r = vm.submitBookingRequest(
+            kinfolkId = "kf1",
+            serviceType = "30Minute",
+            visitStartsMs = listOf(start),
+            repeat = BookingRepeat.SINGLE,
+            weekdays = setOf(2),
+            kinfolkNote = "Gate code is on the fridge",
+            staffNote = "  ",
+        )
+        assertNotNull(r)
+        assertNull(vm.errorMessage)
+        assertTrue(ds.createdBookings.isEmpty(), "no direct kin_care_sessions write")
+        val filed = ds.filedRequests.single()
+        assertEquals("kf1", filed.kinfolkId)
+        assertEquals(listOf(start), filed.visits.map { it.startTimeMs })
+        assertEquals(listOf("30Minute"), filed.visits.map { it.serviceName })
+        assertEquals("individual", filed.pattern)
+        assertNull(filed.weeklyDays)
+        assertEquals("Gate code is on the fridge", filed.notes)
+        assertNull(filed.staffNotes, "a blank office note is not sent")
+    }
+    @Test
+    fun aWeeklyRequestCarriesItsDays() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = BookingViewModel(ds)
+        vm.submitBookingRequest("kf1", "30Minute", listOf(1L, 2L), BookingRepeat.WEEKLY, setOf(4, 2), "", "Key under the mat")
+        val filed = ds.filedRequests.single()
+        assertEquals("weekly", filed.pattern)
+        assertEquals(listOf(2, 4), filed.weeklyDays)
+        assertEquals("Key under the mat", filed.staffNotes)
+        assertNull(filed.notes)
+    }
+    @Test
+    fun noVisitFilesNothingAndSaysWhy() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = BookingViewModel(ds)
+        assertNull(vm.submitBookingRequest("kf1", "30Minute", emptyList(), BookingRepeat.SINGLE, emptySet(), "", ""))
+        assertEquals("Pick a date for the visit.", vm.errorMessage)
+        assertTrue(ds.filedRequests.isEmpty())
+        assertTrue(ds.createdBookings.isEmpty())
+    }
 }

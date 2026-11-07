@@ -1380,9 +1380,11 @@ internal fun BookingCreateScreen(
             val hasDate     = startDate.isNotBlank()
             // AO-25: in MULTI/WEEKLY the request also needs at least one resolved visit
             // (e.g. Weekly with no weekday selected yields none).
-            val requestVisits = if (repeatMode == BookingRepeat.SINGLE) emptyList()
-                else buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks, businessZone)
-            val canSubmit   = hasKinfolk && hasService && hasDate && (repeatMode == BookingRepeat.SINGLE || requestVisits.isNotEmpty())
+            // #1674: every mode, one visit included, is a request with a booking
+            // record, so it can be staffed and noted once approved. A blank time is
+            // the field's own 09:00 placeholder, as it already was for several dates.
+            val requestVisits = buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks, businessZone)
+            val canSubmit   = hasKinfolk && hasService && hasDate && requestVisits.isNotEmpty()
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1413,26 +1415,15 @@ internal fun BookingCreateScreen(
                     onClick = {
                         scope.launch {
                             saving = true
-                            if (repeatMode == BookingRepeat.SINGLE) {
-                                vm.createBooking(
-                                    booking = buildSession(selectedKinfolk!!, serviceType, startDate, startTime, kinfolkAdditionalInfo, "PENDING", bookingFormValues.toMap()),
-                                    kinfolkFacingNote = kinfolkAdditionalInfo,
-                                    adminInternalNote = adminInternalNotes,
-                                )
-                            } else {
-                                // AO-25: multi-date / weekly -> the envelope (Incoming-requests)
-                                // path. serviceName is the KinCare type; the server resolves
-                                // price at invoice time (no client price).
-                                vm.createBookingRequest(
-                                    kinfolkId = selectedKinfolk!!._id,
-                                    visits = requestVisits.map { NewBookingVisitInput(startTimeMs = it, serviceName = serviceType) },
-                                    notes = kinfolkAdditionalInfo.ifBlank { null },
-                                    pattern = if (repeatMode == BookingRepeat.WEEKLY) "weekly" else "individual",
-                                    weeklyDays = if (repeatMode == BookingRepeat.WEEKLY) weekdays.sorted() else null,
-                                    // #1626: the admin note used to be dropped on this path.
-                                    staffNotes = adminInternalNotes.ifBlank { null },
-                                )
-                            }
+                            vm.submitBookingRequest(
+                                kinfolkId = selectedKinfolk!!._id,
+                                serviceType = serviceType,
+                                visitStartsMs = requestVisits,
+                                repeat = repeatMode,
+                                weekdays = weekdays,
+                                kinfolkNote = kinfolkAdditionalInfo,
+                                staffNote = adminInternalNotes,
+                            )
                             saving = false
                             if (vm.errorMessage == null) onBack()
                         }
