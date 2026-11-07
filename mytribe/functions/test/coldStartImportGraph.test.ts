@@ -148,6 +148,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * after merging onto #1577 (433 without this change), so the bound did not
  * move.
  *
+ * #1580 adds `admin/listVisitInternalNotes.ts`, the visit's one
+ * internal-notes list, and `lib/visitNotes.ts`, the path and target
+ * resolution it shares with `addInternalBookingNote`. Two modules whose
+ * imports are all already resident, inside the 440 already allowed, so the
+ * bound did not move.
+ *
  * #1610 adds `lib/broadcastMerge.ts`, the per-household merge-field fill the
  * broadcast sender and its resume sweep share. Its imports are all already
  * resident through `lib/email.ts`, so it costs one module, inside the 440

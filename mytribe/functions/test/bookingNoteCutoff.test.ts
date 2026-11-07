@@ -132,125 +132,29 @@ describe('bookingNoteCutoff: the shared rule', () => {
 });
 
 /**
- * The point of moving the rule server-side: a client that sends anyway is
- * rejected. Every case below sends a note the UI would have blocked.
+ * #1580: the internal thread no longer freezes. It is now the visit's one
+ * internal-notes store, which Auntie Time writes during and after a visit;
+ * the cutoff's reason (what the Auntie read at the door is what the household
+ * asked for) is about the household's thread, which keeps it, above.
  */
-describe('addInternalBookingNote enforces the cutoff server-side', () => {
+describe('addInternalBookingNote takes staff notes inside the window (#1580)', () => {
   afterEach(() => vi.restoreAllMocks());
-
   const startMs = Date.parse('2026-07-16T19:00:00.000Z');
-
-  function seedVisit() {
-    const ctx = buildDbMock({ docs: { [VISIT_PATH]: { startTime: new Date(startMs) } } });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    return ctx;
-  }
-
-  function pinClock(nowMs: number) {
-    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
-  }
-
-  it('HAPPY: accepts a note outside the window', async () => {
-    const ctx = seedVisit();
-    pinClock(startMs - NOTE_CUTOFF_MS - 1);
-    const res = await addInternalBookingNoteHandler(
-      adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'gate code changed' }),
-    );
-    expect(res.noteId).toMatch(/^auto-/);
-    expect(ctx.adds.find((a) => a.collection.endsWith('/internalNotes'))).toBeDefined();
-  });
-
-  it('SAD: rejects a note the client sent from INSIDE the window anyway', async () => {
-    const ctx = seedVisit();
-    pinClock(startMs - 60 * 60 * 1000); // one hour out, well inside
-    await expect(
-      addInternalBookingNoteHandler(
-        adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'too late' }),
-      ),
-    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: NOTE_CUTOFF_CODE } });
-    // And nothing was written: the guard runs before the add, not after.
-    expect(ctx.adds.find((a) => a.collection.endsWith('/internalNotes'))).toBeUndefined();
-  });
-
-  it('BOUNDARY: open at cutoff minus 1ms, closed exactly at the cutoff', async () => {
-    seedVisit();
-    pinClock(startMs - NOTE_CUTOFF_MS - 1);
-    await expect(
-      addInternalBookingNoteHandler(
-        adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'just in time' }),
-      ),
-    ).resolves.toMatchObject({ noteId: expect.stringMatching(/^auto-/) });
-
-    seedVisit();
-    pinClock(startMs - NOTE_CUTOFF_MS);
-    await expect(
-      addInternalBookingNoteHandler(
-        adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'one millisecond late' }),
-      ),
-    ).rejects.toMatchObject({ details: { code: NOTE_CUTOFF_CODE } });
-  });
-
-  it('SAD: rejects once the visit has already started', async () => {
-    seedVisit();
-    pinClock(startMs + 60_000);
-    await expect(
-      addInternalBookingNoteHandler(
-        adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'mid-visit' }),
-      ),
-    ).rejects.toMatchObject({ details: { code: NOTE_CUTOFF_CODE } });
-  });
-
-  it('accepts when the visit has no readable start, same as the kinfolk-facing thread', async () => {
-    const ctx = buildDbMock({ docs: { [VISIT_PATH]: { startTime: 'whenever' } } });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    await expect(
-      addInternalBookingNoteHandler(
-        adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'undated visit' }),
-      ),
-    ).resolves.toMatchObject({ noteId: expect.stringMatching(/^auto-/) });
-  });
-});
-
-/**
- * Both threads must behave IDENTICALLY when locked, so a client can render one
- * message for either. This asserts they reject with the same code and text
- * rather than trusting that two call sites of one helper stay in step.
- */
-describe('both note callables reject identically when locked', () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  const startMs = Date.parse('2026-07-16T19:00:00.000Z');
-
-  async function rejectionOf(run: () => Promise<unknown>) {
-    try {
-      await run();
-      expect.unreachable('expected the cutoff to reject');
-    } catch (err) {
-      const e = err as { code?: string; message?: string; details?: { code?: string } };
-      return { code: e.code, message: e.message, detailCode: e.details?.code };
+  it('accepts a note one hour out and one after the start, where the household thread refuses', async () => {
+    for (const nowMs of [startMs - 60 * 60 * 1000, startMs + 60_000]) {
+      vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+      const ctxA = buildDbMock({ docs: { [VISIT_PATH]: { startTime: new Date(startMs) } } });
+      mocks.dbFn.mockReturnValue(ctxA.db);
+      await expect(
+        addBookingNoteHandler(adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'late' })),
+      ).rejects.toMatchObject({ details: { code: NOTE_CUTOFF_CODE } });
+      const ctxB = buildDbMock({ docs: { [VISIT_PATH]: { startTime: new Date(startMs) } } });
+      mocks.dbFn.mockReturnValue(ctxB.db);
+      await expect(
+        addInternalBookingNoteHandler(adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'late' })),
+      ).resolves.toMatchObject({ storedOn: 'thread' });
+      expect(ctxB.adds.find((a) => a.collection.endsWith('/internalNotes'))).toBeDefined();
+      vi.restoreAllMocks();
     }
-  }
-
-  it('same code, same message, same detail code', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(startMs - 60 * 60 * 1000);
-
-    const ctxA = buildDbMock({ docs: { [VISIT_PATH]: { startTime: new Date(startMs) } } });
-    mocks.dbFn.mockReturnValue(ctxA.db);
-    const kinfolkFacing = await rejectionOf(() =>
-      addBookingNoteHandler(
-        adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'late' }),
-      ),
-    );
-
-    const ctxB = buildDbMock({ docs: { [VISIT_PATH]: { startTime: new Date(startMs) } } });
-    mocks.dbFn.mockReturnValue(ctxB.db);
-    const internal = await rejectionOf(() =>
-      addInternalBookingNoteHandler(
-        adminReq({ kinfolkId: 'f1', batchId: 'batch1', visitId: 'v1', body: 'late' }),
-      ),
-    );
-
-    expect(internal).toEqual(kinfolkFacing);
-    expect(internal.detailCode).toBe(NOTE_CUTOFF_CODE);
   });
 });
