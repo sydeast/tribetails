@@ -1394,6 +1394,63 @@ class EnhancedSchedulingViewModel(
     fun clearBookingActionMessage() { _state.value = _state.value.copy(bookingActionMessage = null) }
 
     /**
+     * #1576: Mark Completed from the Schedule's visit sheet, the action web
+     * Bookings offers beside Cancel. The visit is the linked `kin_care_sessions`
+     * row, completed through `transitionBookingStatus` (the only writer the
+     * rules allow for a terminal status); the envelope this screen draws then
+     * follows with a status-only update. Exactly one linked visit, or it says
+     * why not, the same rule a move follows. The server's refusal (the
+     * arrival-and-departure rule, an illegal transition) is shown as sent.
+     */
+    fun markBookingCompleted(booking: EnhancedBooking) {
+        if (_state.value.isLoading) return
+        _state.value = _state.value.copy(isLoading = true)
+        viewModelScope.launch {
+            val who = booking.kinfolkName.ifBlank { booking.kinfolkId }
+            val sessionIds = findLinkedSessionIds(booking.id).getOrElse { e ->
+                _state.value = _state.value.copy(isLoading = false, errorMessage = "Could not look up the visit behind this booking: ${e.message}")
+                return@launch
+            }
+            if (sessionIds.size != 1) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = if (sessionIds.isEmpty())
+                        "No scheduled visit is linked to this booking, so there is nothing to complete."
+                    else
+                        "This booking has ${sessionIds.size} visits linked to it. Complete each visit from Auntie Time.",
+                )
+                return@launch
+            }
+            kinCareRepository.markSessionComplete(sessionIds.first()).fold(
+                onSuccess = {
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = auntieRepository,
+                        actionType       = "VISIT_COMPLETED",
+                        description      = "Completed visit for $who from the Schedule",
+                        targetId         = sessionIds.first(),
+                        targetCollection = "kin_care_sessions",
+                    )
+                    val patched = bookingRepository.updateBookingStatus(booking.id, BookingStatus.COMPLETED)
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        selectedBooking = null,
+                        // Same sentence as web's BookingActions COMPLETE.confirmedToast.
+                        bookingActionMessage = "$who's visit is marked Completed.",
+                        errorMessage = patched.exceptionOrNull()?.let {
+                            "The visit is completed, but this calendar could not be updated to match: ${it.message}. Refresh to see it."
+                        },
+                    )
+                    loadBookingsForDateRange()
+                },
+                onFailure = { e ->
+                    _state.value = _state.value.copy(isLoading = false, errorMessage = e.message ?: "Could not complete that visit.")
+                },
+            )
+        }
+    }
+
+    /**
      * Stage 2 tail: apply ONE transition (APPROVE/REJECT/CANCEL) to many bookings at
      * once via the batchUpdateBookings callable. Fail-loud: the server-reported
      * updated/failed counts are surfaced in [SchedulingState.bulkBookingMessage]; the

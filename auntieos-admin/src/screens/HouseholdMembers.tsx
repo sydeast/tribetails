@@ -21,9 +21,7 @@ import {
 } from '../api/members';
 import {
   INVITE_TTL_DAYS,
-  describePortalInviteOutcome,
   executePrimaryRecovery,
-  inviteKinfolkToPortal,
   removeMember,
   revokeInvite,
   setMemberPermissions,
@@ -41,6 +39,7 @@ import { AsyncLoading, AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { PortalInviteButton } from '../components/PortalInviteButton';
 import { Toggle } from '../components/Toggle';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
@@ -129,6 +128,11 @@ export interface HouseholdMembersProps {
   /** For the heading and the confirm copy. The id is used when it is blank. */
   kinfolkName?: string;
   /**
+   * #1602: the household's email on file, the address Invite to portal mails.
+   * The route reads it with the name. Blank turns the invite off, with why.
+   */
+  kinfolkEmail?: string;
+  /**
    * Where Back goes on a COLD arrival only (#689): this screen has its own
    * `/household-members/{id}` route, so an operator who walked here has an
    * entry behind them and Back returns to that instead, whatever it was.
@@ -183,7 +187,7 @@ function roleWord(role: MemberRole): string {
   return role === 'PRIMARY' ? 'Primary' : 'Secondary';
 }
 
-export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMembersProps) {
+export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', onBack }: HouseholdMembersProps) {
   const { showToast } = useToast();
   // #1589: never the database id. The route reads the household and passes its
   // name; a household with no name on file reads "This household".
@@ -201,9 +205,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   const [savingPerm, setSavingPerm] = useState<string | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
-  const [portalError, setPortalError] = useState<string | null>(null);
-  const [portalNotice, setPortalNotice] = useState<string | null>(null);
-  const [portalBusy, setPortalBusy] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<HouseholdMember | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -211,6 +212,8 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   // back to 'NONE' server-side. SecondaryKinfolkList loads once on mount, so
   // bumping this key is what tells it to refetch after a remove succeeds.
   const [secondaryKinfolkReloadKey, setSecondaryKinfolkReloadKey] = useState(0);
+  /** #1602: how many no-portal secondaries the list below shows; null until it has read them. */
+  const [noPortalSecondaryCount, setNoPortalSecondaryCount] = useState<number | null>(null);
   // Primary recovery. The choice list is loaded when the dialog opens, never on
   // first paint: it costs an Auth lookup per member and nobody recovers a
   // household by accident.
@@ -315,33 +318,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     }
   }
 
-  async function invitePortal() {
-    if (portalBusy) return;
-    setPortalBusy(true);
-    setPortalError(null);
-    setPortalNotice(null);
-    try {
-      const result = await inviteKinfolkToPortal(kinfolkId);
-      const outcome = describePortalInviteOutcome(result, householdName);
-      if (outcome.sent) {
-        showToast(outcome.message);
-        loadInvites();
-        loadMembers();
-      } else {
-        // A success response that emailed nobody. It gets a banner, not a
-        // toast: "already active" and "no email" are things the operator has to
-        // read and act on, not things to celebrate for three seconds.
-        setPortalNotice(outcome.message);
-      }
-    } catch (err: unknown) {
-      setPortalError(
-        `inviteKinfolkToPortal failed: ${errText(err, 'The portal invite was not sent.')}`,
-      );
-    } finally {
-      setPortalBusy(false);
-    }
-  }
-
   async function confirmRemove() {
     if (removeTarget === null || removing) return;
     const target = removeTarget;
@@ -423,8 +399,14 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
 
   // The mock's `.ct` on the Secondary kinfolk panel: "2 of role: SECONDARY".
   // Written only from a read roster; a count is a claim.
-  const secondaryCount =
+  // #1602: the people added here with no portal account count too. The walk
+  // added one and the panel still read 0 with its empty sentence, after reload.
+  const portalSecondaryCount =
     members.status === 'ready' ? members.data.filter((m) => m.role === 'SECONDARY').length : null;
+  const secondaryCount =
+    portalSecondaryCount === null || noPortalSecondaryCount === null
+      ? null
+      : portalSecondaryCount + noPortalSecondaryCount;
   const inviteCount = invites.status === 'ready' ? invites.data.length : null;
   const secondaryMeta = secondaryCount === null ? '' : `${secondaryCount} of role: SECONDARY`;
 
@@ -471,10 +453,23 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
               {/* The one admin invite. "Add secondary contact" sat beside it
                   under the 2026-09-12 ruling; the 2026-09-27 ruling (#829)
                   removed the contacts list, so the invite has the primary slot. */}
-              <PrimaryButton
-                label={portalBusy ? 'Sending…' : 'Invite to portal'}
-                onClick={() => void invitePortal()}
-                disabled={portalBusy}
+              {/* #1602: asks first, names the address, and is off with the
+                  reason when it cannot succeed. It fired on one click before,
+                  then said the household already had an account. */}
+              <PortalInviteButton
+                kinfolkId={kinfolkId}
+                householdName={householdName}
+                email={kinfolkEmail}
+                primary
+                hasActivePrimary={
+                  members.status === 'ready'
+                    ? members.data.some((m) => m.role === 'PRIMARY' && m.status === 'ACTIVE')
+                    : null
+                }
+                onSent={() => {
+                  loadInvites();
+                  loadMembers();
+                }}
               />
             </div>
           }
@@ -495,16 +490,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
       {revokeError !== null && (
         <Banner tone="error" title="The invite was not revoked" onDismiss={() => setRevokeError(null)}>
           {revokeError}
-        </Banner>
-      )}
-      {portalError !== null && (
-        <Banner tone="error" title="Portal invite failed" onDismiss={() => setPortalError(null)}>
-          {portalError}
-        </Banner>
-      )}
-      {portalNotice !== null && (
-        <Banner tone="warning" title="Nothing was sent" onDismiss={() => setPortalNotice(null)}>
-          {portalNotice}
         </Banner>
       )}
 
@@ -581,14 +566,21 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
                 ))}
             </ul>
           ) : (
-            <EmptyHint>
-              Nobody on this household has been invited to the portal as a secondary. Their primary
-              does that from MyTribe.
-            </EmptyHint>
+            // #1602: only when the list below is empty too, so a secondary
+            // added there is never contradicted by an empty sentence above it.
+            noPortalSecondaryCount === 0 && (
+              <EmptyHint>
+                No secondary kinfolk yet. Add one below, or their primary invites them from MyTribe.
+              </EmptyHint>
+            )
           ))}
         {/* 2026-09-27 Q3: secondary kinfolk with no portal account. Added
             here with no invite; portal access only through their primary. */}
-        <SecondaryKinfolkList kinfolkId={kinfolkId} reloadKey={secondaryKinfolkReloadKey} />
+        <SecondaryKinfolkList
+          kinfolkId={kinfolkId}
+          reloadKey={secondaryKinfolkReloadKey}
+          onCountChange={setNoPortalSecondaryCount}
+        />
 
       </DenPanel>
 

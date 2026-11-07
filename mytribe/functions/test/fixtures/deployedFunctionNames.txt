@@ -47,6 +47,7 @@ deleteBusinessNotificationOverride
 deleteFormSchema
 deleteGeneratedDraft
 deleteKin
+deleteKinTaleReportDraft
 deleteMediaFile
 deleteTemplate
 deleteTrainingDocument
@@ -79,6 +80,7 @@ getInvitePreview
 getInvoiceLedger
 getKinTaleComments
 getKinTaleReaction
+getKinTaleTemplateUsage
 getLocalWeather
 getMyAccess
 getMyAccount

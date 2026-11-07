@@ -362,12 +362,17 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
 
   return (
     <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · Admin"
-        title="Tags"
-        subtitle="Manage the tags you put on households and Kin."
-        trailing={onBack ? <GhostButton label="Back to settings" onClick={onBack} disabled={busy} /> : undefined}
-      />
+      {/* ISSUE #1612: only as a view of its own. Settings mounts this editor
+          inline under its own page heading and section nav, where a second
+          page heading read as a doubled header inside the panel. */}
+      {onBack ? (
+        <DenScreenHeading
+          kicker="The Den · Admin"
+          title="Tags"
+          subtitle="Manage the tags you put on households and Kin."
+          trailing={<GhostButton label="Back to settings" onClick={onBack} disabled={busy} />}
+        />
+      ) : null}
 
       {error !== null && (
         <Banner tone="error" title="Save failed" onDismiss={() => setError(null)}>

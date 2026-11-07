@@ -30,6 +30,9 @@ vi.mock('../api/bookingsWrite', () => ({
   rescheduleBooking,
 }));
 
+// #1608: the arrival rule, mocked at the hook so nothing reaches Firestore.
+const { useArrivalRule } = vi.hoisted(() => ({ useArrivalRule: vi.fn<() => boolean | null>(() => null) }));
+vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
 import { BookingActions, BookingStatusActions } from './BookingActions';
 
 function fakeTs(iso: string): Timestamp {
@@ -282,6 +285,33 @@ describe('BookingActions: Mark Completed', () => {
   });
 });
 
+/**
+ * #1578: Sandy Demo's Aug 21 visit read UNKNOWN with "isn't recognized, so no
+ * actions are offered" because the field app had moved it to DEPARTED. The
+ * server completes or cancels from any in-visit state, so the sheet offers both.
+ */
+describe('BookingActions: a visit under way (#1578)', () => {
+  it.each([
+    ['ON_MY_WAY', 'ON THE WAY'],
+    ['ARRIVED', 'ARRIVED'],
+    ['DEPARTED', 'DEPARTED'],
+  ])('%s shows its own chip and offers Mark Completed and Cancel', (status, chip) => {
+    render(<BookingActions entry={entry({ _id: 'ses-9', status })} onClose={vi.fn()} />);
+    expect(screen.getByText(chip)).toBeInTheDocument();
+    expect(screen.queryByText(/isn't recognized/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Mark Completed' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    // The Auntie is already on her way or at the door: no window to move.
+    expect(screen.queryByRole('button', { name: 'Reschedule' })).toBeNull();
+  });
+  it('completes a Departed visit', async () => {
+    markBookingCompleted.mockResolvedValue(undefined);
+    render(<BookingActions entry={entry({ _id: 'ses-9', status: 'DEPARTED' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, mark it completed' }));
+    expect(markBookingCompleted).toHaveBeenCalledWith('ses-9', expect.any(String));
+  });
+});
 describe('BookingActions: Reschedule', () => {
   it('opens a start/end form, not a bare confirm', async () => {
     render(<BookingActions entry={entry({ status: 'SCHEDULED' })} onClose={vi.fn()} />);
@@ -437,6 +467,35 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
    * then clicked the confirm and asserted the write. None of them looked at
    * whether the two steps could be told apart. These three do.
    */
+  // #1608: the arrival rule answers before the question is asked.
+  it('Mark Completed says what is missing, without asking or writing, when the rule refuses', async () => {
+    useArrivalRule.mockReturnValue(true);
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED', arrivedAt: '' })} onDone={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    expect(screen.getByText(/has no arrival and departure recorded/)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Mark this visit completed?' })).toBeNull();
+    expect(markBookingCompleted).not.toHaveBeenCalled();
+    useArrivalRule.mockReturnValue(null);
+  });
+  it('Cancel is never held back by the arrival rule', async () => {
+    useArrivalRule.mockReturnValue(true);
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED', arrivedAt: '' })} onDone={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('heading', { name: 'Cancel this scheduled visit?' })).toBeInTheDocument();
+    useArrivalRule.mockReturnValue(null);
+  });
+  it('Mark Completed asks as before once both steps are stamped', async () => {
+    useArrivalRule.mockReturnValue(true);
+    render(
+      <BookingStatusActions
+        entry={entry({ status: 'SCHEDULED', arrivedAt: '2026-07-16T09:02:00Z', departedAt: '2026-07-16T09:40:00Z' })}
+        onDone={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    expect(screen.getByRole('heading', { name: 'Mark this visit completed?' })).toBeInTheDocument();
+    useArrivalRule.mockReturnValue(null);
+  });
   it('renders the QUESTION on the confirm step, not just the consequence', async () => {
     render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
