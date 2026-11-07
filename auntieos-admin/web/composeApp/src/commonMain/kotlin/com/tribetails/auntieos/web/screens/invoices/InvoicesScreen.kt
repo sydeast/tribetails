@@ -723,10 +723,10 @@ internal fun invoiceRowDateLine(invoice: Invoice, todayIso: String): String {
         state == InvoiceState.DRAFT -> "draft"
         dueUnreadable -> "due date cannot be read: \"${invoice.dueDate.trim()}\""
         days != null -> "$days day${if (days == 1) "" else "s"} overdue"
-        state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+        state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate, todayIso)}"
         invoice.date.isNotBlank() ->
-            "${if (state == InvoiceState.PAID) "paid" else "dated"} ${humanizeDate(invoice.date)}"
-        invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+            "${if (state == InvoiceState.PAID) "paid" else "dated"} ${humanizeDate(invoice.date, todayIso)}"
+        invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate, todayIso)}"
         else -> "no date"
     }
 }

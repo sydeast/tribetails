@@ -473,6 +473,32 @@ describe('Gallery screen, filters', () => {
   });
 });
 
+describe('Gallery screen, upload to a kin (#1588)', () => {
+  it('feeds the Upload dialog a household picker and that household\u2019s active kin, never a typed id', async () => {
+    mediaAsync = { status: 'ready', data: [] };
+    kinfolkAsync = {
+      status: 'ready',
+      data: [kinfolkRow({ _id: 'kf1' }), kinfolkRow({ _id: 'kf2', firstName: 'Dre', lastName: 'East' })],
+    };
+    kinAsync = {
+      status: 'ready',
+      data: [
+        kinRow({ _id: 'k1', name: 'Waddles', kinfolkId: 'kf1' }),
+        kinRow({ _id: 'k2', name: 'Old Boy', kinfolkId: 'kf1', status: 'archived' }),
+        kinRow({ _id: 'k3', name: 'Mochi', kinfolkId: 'kf2' }),
+      ],
+    };
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Upload media' }));
+    const dialog = screen.getByRole('dialog');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Target type'), 'KIN');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Kin\u2019s household'), 'kf1');
+    expect(within(dialog).getByRole('option', { name: 'Waddles' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('option', { name: 'Old Boy' })).toBeNull();
+    expect(within(dialog).queryByRole('option', { name: 'Mochi' })).toBeNull();
+    expect(within(dialog).queryByLabelText('Kin ID')).toBeNull();
+  });
+});
 describe('Gallery screen, kin tagging (#447)', () => {
   function withOnePhoto(taggedKinIds?: string[]) {
     mediaAsync = {

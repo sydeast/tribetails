@@ -882,16 +882,22 @@ internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
 private fun visitTimestamp(r: KinCareReport): String {
     val raw = sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt)
         .firstOrNull { it.isNotBlank() } ?: return "Date TBD"
-    return shortDateTime(raw)
+    val currentYear = com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0
+    return kinTaleShortDateTime(raw, currentYear)
 }
 
-private fun shortDateTime(iso: String): String =
+/**
+ * "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear]
+ * (#1599: the list spans more than a year). Echoes non-ISO text.
+ */
+internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
     runCatchingCancellable {
         if (iso.length < 16) return@runCatchingCancellable iso
+        val year  = iso.substring(0, 4).toInt()
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]
         val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
         val time  = iso.substring(11, 16)
-        "$month $day · $time"
+        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
     }.getOrDefault(iso)
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
