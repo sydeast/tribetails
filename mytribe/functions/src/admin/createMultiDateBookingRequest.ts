@@ -12,6 +12,8 @@ import { writeEnvelope, resolveService, loadServicePriceBook, type NormalizedVis
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
+import { sanitizeRichText } from '../lib/richText';
+import { isAuntieClaim } from '../lib/staffGate';
 import { IdempotencyKeyArg, lookupIdempotentEnvelope } from '../lib/bookingIdempotency';
 
 /**
@@ -79,6 +81,12 @@ const HandlerArgs = z.object({
   idempotencyKey: IdempotencyKeyArg,
   kinIds: z.array(z.string()).optional(),
   notes: z.string().max(1000).optional(),
+  /**
+   * #1579 / #1626: the office's private note on the request, the admin
+   * wizard's "Private notes". Staff-only: written to each visit's
+   * `internalNotes` thread, never to the envelope's household-visible `notes`.
+   */
+  staffNotes: z.string().max(1000).optional(),
   pattern: z.enum(['individual', 'weekly']).optional(),
   weeklyDays: z.array(z.number().int().min(0).max(6)).optional(),
   visits: z.array(VisitArgs).min(1).max(60),
@@ -134,6 +142,8 @@ export const Args = z
     idempotencyKey: IdempotencyKeyArg,
     kinIds: z.array(z.string()).optional(),
     notes: z.string().max(1000).optional(),
+    /** #1579 / #1626: the office's private note. Staff-only; see HandlerArgs. */
+    staffNotes: z.string().max(1000).optional(),
     pattern: z.enum(['individual', 'weekly']).optional(),
     weeklyDays: z.array(z.number().int().min(0).max(6)).optional(),
     visits: z.array(ExportedVisitArgs).min(1).max(60),
@@ -153,6 +163,19 @@ export const Result = z
   })
   .strict();
 
+/**
+ * #1579: the office's private note, sanitized the way `addInternalBookingNote`
+ * sanitizes one, stamped with who wrote it. Null when there is nothing to keep.
+ */
+function staffNoteOf(
+  raw: string | undefined,
+  authorUid: string,
+  authorRole: 'admin' | 'auntie',
+): { body: string; authorUid: string; authorRole: 'admin' | 'auntie' } | null {
+  if (raw === undefined) return null;
+  const body = sanitizeRichText(raw);
+  return body.trim() === '' ? null : { body, authorUid, authorRole };
+}
 export async function createMultiDateBookingRequestHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -244,6 +267,7 @@ export async function createMultiDateBookingRequestHandler(
     weeklyDays: args.weeklyDays ?? null,
     kinIds: args.kinIds ?? [],
     notes: args.notes ?? null,
+    staffNotes: staffNoteOf(args.staffNotes, uid, isAuntieClaim(req.auth?.token) ? 'auntie' : 'admin'),
     visits: normalized,
     assignee: await resolveDefaultAssignee(),
     billing: args.billing ?? null,

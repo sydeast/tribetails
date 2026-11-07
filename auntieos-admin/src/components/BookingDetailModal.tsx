@@ -195,9 +195,14 @@ export function BookingDetailModal({
                 {stateInfo.chipLabel}
               </span>
             </Fact>
-            <Fact label="Booking notes">
-              {str(entry.notes).trim() === '' ? 'None on the request' : str(entry.notes)}
+            {/* #1579: the household's note on the request, which approval now
+                carries onto the visit as `kinfolkNotes`. It used to read the
+                session's `notes`, which is the office's note, so a booked
+                request always said "None on the request". */}
+            <Fact label="From the household">
+              {str(entry.kinfolkNotes).trim() === '' ? 'None on the request' : str(entry.kinfolkNotes)}
             </Fact>
+            {str(entry.notes).trim() !== '' && <Fact label="Office note">{str(entry.notes)}</Fact>}
           </dl>
         </DenPanel>
 

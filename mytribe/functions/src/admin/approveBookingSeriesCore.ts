@@ -338,6 +338,9 @@ export async function approveBookingSeriesCore(opts: {
   // notification even though re-running the core is otherwise harmless (the
   // deterministic `vis_{visitId}` session id makes the writes idempotent).
   const wasAlreadyConfirmed = envelope?.['envelopeStatus'] === 'confirmed';
+  // #1579: the household's note on the whole request, carried to every visit
+  // this approval books. Trimmed; blank when the request had none.
+  const requestNote = typeof envelope?.['notes'] === 'string' ? (envelope['notes'] as string).trim() : '';
 
   const childSnap = await parentRef.collection('kinCares').get();
   const childIds = childSnap.docs.map((d) => d.id);
@@ -478,6 +481,14 @@ export async function approveBookingSeriesCore(opts: {
           endTime: endIso,
           serviceDurationMinutes: durationMinutes(startIso, endIso),
           notes: typeof data.notes === 'string' ? data.notes : '',
+          // #1579: the household's own words for the request live on the
+          // ENVELOPE (`requestBooking` writes `notes` there, never on a
+          // visit), so copying only the visit's field dropped them on every
+          // approval: the request card showed the note and the booked visit
+          // read "None on the request". `kinfolkNotes` is the session field
+          // every reader already labels as the household's note (Auntie
+          // Time's Kinfolk-facing box, Android's "On file", Bookings).
+          kinfolkNotes: requestNote,
           status: 'SCHEDULED',
           sourceBookingId: id,
           kinCareBatchId: batchId,

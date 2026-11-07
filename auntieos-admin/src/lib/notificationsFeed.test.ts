@@ -273,6 +273,14 @@ describe('actionableNotificationCount', () => {
   it('is 0 on an empty feed', () => {
     expect(actionableNotificationCount([])).toBe(0);
   });
+  // #1647, the walk: 20 requests waiting, one booked from Bookings > Review,
+  // and the count stayed at 20.
+  it('drops a request once the server stamps it booked or declined', () => {
+    const waiting = entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'req_1' });
+    const booked = entry({ _id: 'b', key: 'kincare.requested', targetType: 'booking', targetId: 'req_2', requestResolution: 'booked' });
+    const declined = entry({ _id: 'c', key: 'kincare.requested', targetType: 'booking', targetId: 'req_3', requestResolution: 'declined' });
+    expect(actionableNotificationCount([waiting, booked, declined])).toBe(1);
+  });
 });
 /**
  * WHAT THE BULK MARK-READ BUTTON SENDS, which is not the selection.

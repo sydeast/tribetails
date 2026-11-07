@@ -748,7 +748,10 @@ export function bookingSubmission(
     kinfolkId: state.kinfolkId,
     ...(idempotencyKey !== undefined && { idempotencyKey }),
     ...(kinIds.length > 0 && { kinIds }),
-    ...(state.notes.trim() !== '' && { notes: state.notes.trim() }),
+    // #1626: the wizard's "Private notes" are the office's, so they go as
+    // `staffNotes` (each visit's staff-only thread), never as `notes`, which
+    // is the envelope field the portal shows the household.
+    ...(state.notes.trim() !== '' && { staffNotes: state.notes.trim() }),
     pattern: state.mode === 'weekly' ? 'weekly' : 'individual',
     ...(state.mode === 'weekly' && { weeklyDays: state.weeklyDays }),
     visits: buildVisits(state),
