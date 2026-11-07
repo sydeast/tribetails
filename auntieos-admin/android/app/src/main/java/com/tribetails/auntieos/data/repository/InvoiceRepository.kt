@@ -158,6 +158,23 @@ class InvoiceRepository(
     }.onFailure { AuntieLog.e("Failed to get invoice $invoiceId", it) }
 
     /**
+     * #1567: re-reads one invoice FROM THE SERVER after a send got no answer, and
+     * returns the marks [com.tribetails.auntieos.domain.sendOutcomeAfterSilence]
+     * compares. Source.SERVER, never the cache: the cached copy is the one from
+     * before the press and would always answer "not sent".
+     *
+     * Null when the read fails or the invoice is gone. The caller turns that into
+     * "there is no way to tell from here", which is the truth, never "not sent".
+     */
+    suspend fun readInvoiceSendMarks(invoiceId: String): com.tribetails.auntieos.domain.SendMarks? =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            val doc = firestore.collection("invoices").document(invoiceId)
+                .get(com.google.firebase.firestore.Source.SERVER).await()
+            doc.data?.let { com.tribetails.auntieos.domain.sendMarksOf(it) }
+        }.onFailure { AuntieLog.w("Send re-read failed for invoice $invoiceId", it) }.getOrNull()
+
+    /**
      * Slice 2: routes through the createInvoice callable (server mints the id,
      * writes audit BILLING_INVOICE_CREATED, and enqueues the invoice.new
      * notification). Replaces the old silent direct Firestore write.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isIsoDate, joinDateForEdit, formatJoinDate } from './joinDate';
+import { isIsoDate, isJoinDateInRange, joinDateForEdit, formatJoinDate, localIsoToday } from './joinDate';
 
 describe('isIsoDate', () => {
   it('accepts a real YYYY-MM-DD day', () => {
@@ -67,5 +67,28 @@ describe('formatJoinDate', () => {
   it('never throws on junk', () => {
     expect(() => formatJoinDate('!!!', 'en-US')).not.toThrow();
     expect(formatJoinDate('', 'en-US')).toBe('');
+  });
+});
+
+/** #1584. Operator ruling, 2026-11-05 docket: 2025 through today. */
+describe('isJoinDateInRange (#1584)', () => {
+  it('takes 2025-01-01 through today, inclusive', () => {
+    expect(isJoinDateInRange('2025-01-01', '2026-11-06')).toBe(true);
+    expect(isJoinDateInRange('2026-11-06', '2026-11-06')).toBe(true);
+  });
+
+  it('refuses the day before 2025 and the day after today', () => {
+    expect(isJoinDateInRange('2024-12-31', '2026-11-06')).toBe(false);
+    expect(isJoinDateInRange('2026-11-07', '2026-11-06')).toBe(false);
+    expect(isJoinDateInRange('1900-01-15', '2026-11-06')).toBe(false);
+    expect(isJoinDateInRange('2099-06-01', '2026-11-06')).toBe(false);
+  });
+
+  it('refuses a day that is not real', () => {
+    expect(isJoinDateInRange('2025-02-30', '2026-11-06')).toBe(false);
+  });
+
+  it('reads today in local time', () => {
+    expect(localIsoToday(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05');
   });
 });

@@ -39,6 +39,11 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.CheckedSend
+import com.tribetails.auntieos.web.data.SendCheckAction
+import com.tribetails.auntieos.web.data.SilenceKind
+import com.tribetails.auntieos.web.data.SilenceOutcome
+import com.tribetails.auntieos.web.data.checkedSend
 import com.tribetails.auntieos.web.data.invoiceSentMessage
 import com.tribetails.auntieos.web.data.lastReminderLabel
 import com.tribetails.auntieos.web.data.mintInvoiceIdempotencyKey
@@ -207,16 +212,33 @@ fun InvoicesScreen(
         return minted
     }
 
+    // #1567: what a timed-out send turned out to be. A landed send is the notice;
+    // anything else is the error banner, worded as "not sent" or "cannot tell".
+    val showSilence: (SilenceOutcome) -> Unit = { outcome ->
+        if (outcome.kind == SilenceKind.SENT) {
+            actionError = null
+            actionNotice = outcome.message
+        } else {
+            actionError = outcome.message
+        }
+    }
     val onReceipt: (String) -> Unit = { invoiceId ->
         scope.launch {
-            when (val r = client.generateReceipt(invoiceId)) {
-                is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> {
-                    actionError = null
-                    // #1511: honest about where the notice went.
-                    val message = receiptGeneratedMessage(r.value.appOnly)
-                    actionNotice = message
-                    appOnlyNotice = if (r.value.appOnly) message else null
+            // #1567: a send that times out is re-read, never reported as failed.
+            val checked = checkedSend(SendCheckAction.RECEIPT, { client.invoiceSendMarks(invoiceId) }) {
+                client.generateReceipt(invoiceId)
+            }
+            when (checked) {
+                is CheckedSend.Silent -> showSilence(checked.outcome)
+                is CheckedSend.Answered -> when (val r = checked.result) {
+                    is WriteResult.Err -> actionError = r.message
+                    is WriteResult.Ok -> {
+                        actionError = null
+                        // #1511: honest about where the notice went.
+                        val message = receiptGeneratedMessage(r.value.appOnly)
+                        actionNotice = message
+                        appOnlyNotice = if (r.value.appOnly) message else null
+                    }
                 }
             }
         }
@@ -234,14 +256,20 @@ fun InvoicesScreen(
         if (invoiceId in remindingIds) return@onSendReminder
         remindingIds = remindingIds + invoiceId
         scope.launch {
-            when (val r = client.sendInvoiceReminder(invoiceId)) {
-                is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> {
-                    actionError = null
-                    val message = reminderOutcomeMessage(r.value)
-                    actionNotice = message
-                    reminderRefusalNotice = if (r.value.sent) null else message
-                    appOnlyNotice = if (r.value.sent && r.value.appOnly) message else null
+            val checked = checkedSend(SendCheckAction.REMINDER, { client.invoiceSendMarks(invoiceId) }) {
+                client.sendInvoiceReminder(invoiceId)
+            }
+            when (checked) {
+                is CheckedSend.Silent -> showSilence(checked.outcome)
+                is CheckedSend.Answered -> when (val r = checked.result) {
+                    is WriteResult.Err -> actionError = r.message
+                    is WriteResult.Ok -> {
+                        actionError = null
+                        val message = reminderOutcomeMessage(r.value)
+                        actionNotice = message
+                        reminderRefusalNotice = if (r.value.sent) null else message
+                        appOnlyNotice = if (r.value.sent && r.value.appOnly) message else null
+                    }
                 }
             }
             remindingIds = remindingIds - invoiceId
@@ -252,14 +280,20 @@ fun InvoicesScreen(
     // existing doc and fires invoice.updated. familyId is the invoice kinfolkId.
     val onReviewSend: (Invoice) -> Unit = { invoice ->
         scope.launch {
-            when (val r = client.reviewAndSendDraftInvoice(invoice._id, invoice.kinfolkId)) {
-                is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> {
-                    actionError = null
-                    // #1511: honest about where the invoice went.
-                    val message = invoiceSentMessage(r.value.appOnly)
-                    actionNotice = message
-                    appOnlyNotice = if (r.value.appOnly) message else null
+            val checked = checkedSend(SendCheckAction.REVIEW_SEND, { client.invoiceSendMarks(invoice._id) }) {
+                client.reviewAndSendDraftInvoice(invoice._id, invoice.kinfolkId)
+            }
+            when (checked) {
+                is CheckedSend.Silent -> showSilence(checked.outcome)
+                is CheckedSend.Answered -> when (val r = checked.result) {
+                    is WriteResult.Err -> actionError = r.message
+                    is WriteResult.Ok -> {
+                        actionError = null
+                        // #1511: honest about where the invoice went.
+                        val message = invoiceSentMessage(r.value.appOnly)
+                        actionNotice = message
+                        appOnlyNotice = if (r.value.appOnly) message else null
+                    }
                 }
             }
         }
@@ -267,7 +301,7 @@ fun InvoicesScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Invoices",
+            kicker     = "Care Ops · Invoices",
             title      = "Getting",
             accentTail = "paid.",
             trailing   = {
@@ -673,10 +707,10 @@ internal fun invoiceRowDateLine(invoice: Invoice, todayIso: String): String {
         state == InvoiceState.QUOTE -> "quote"
         state == InvoiceState.DRAFT -> "draft"
         days != null -> "$days day${if (days == 1) "" else "s"} overdue"
-        state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+        state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate, todayIso)}"
         invoice.date.isNotBlank() ->
-            "${if (state == InvoiceState.PAID) "paid" else "dated"} ${humanizeDate(invoice.date)}"
-        invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+            "${if (state == InvoiceState.PAID) "paid" else "dated"} ${humanizeDate(invoice.date, todayIso)}"
+        invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate, todayIso)}"
         else -> "no date"
     }
 }

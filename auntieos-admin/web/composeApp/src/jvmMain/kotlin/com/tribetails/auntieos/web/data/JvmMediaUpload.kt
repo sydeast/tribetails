@@ -66,6 +66,8 @@ internal object JvmMediaUpload {
         entityType: String,
         bytes: ByteArray,
         mimeType: String,
+        // #1588: the household of a "kin" upload; ignored for every other target.
+        kinfolkId: String = "",
     ): WriteResult<MediaFile> {
         if (entityId.isBlank()) return WriteResult.Err("uploadMedia requires a non-blank entityId")
 
@@ -119,7 +121,7 @@ internal object JvmMediaUpload {
                 // #3 (2026-06-08): stamp kinfolkId so the gallery scopes kin-tagging to
                 // the owning household (entityType "kinfolk" -> entityId is the kinfolkId).
                 // Parity with wasm/Android.
-                kinfolkId = if (entityType.equals("kinfolk", ignoreCase = true)) entityId else "",
+                kinfolkId = mediaKinfolkIdFor(entityType, entityId, kinfolkId),
                 fileName = publicId.substringAfterLast('/').ifBlank { fileName },
                 originalFileName = fileName,
                 fileType = if (isVideo) "VIDEO" else "IMAGE",
@@ -148,6 +150,13 @@ internal object JvmMediaUpload {
         }
     }
 
+    /** The household stamped on a new `media_files` row (#1588): the entity itself for a household, the pet's household for a kin. */
+    internal fun mediaKinfolkIdFor(entityType: String, entityId: String, kinfolkId: String): String = when {
+        entityType.equals("kinfolk", ignoreCase = true) -> entityId
+        // #1588: a pet's household rides along, so Tag kin offers that household's kin.
+        entityType.equals("kin", ignoreCase = true) -> kinfolkId.trim()
+        else -> ""
+    }
     /**
      * #593. Serialises a `media_files` document, dropping the gpsStrip* keys
      * when there is no asynchronous strip to report.

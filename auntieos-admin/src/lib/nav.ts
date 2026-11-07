@@ -232,6 +232,17 @@ export function screenTitle(location: string): string | null {
   return TITLE_BY_DEST.get(dest) ?? null;
 }
 
+/**
+ * A screen's breadcrumb kicker, "<rail section> · <rail title>" (#1598). The
+ * section comes from the rail entry, so a screen filed under Care Ops never
+ * reads "The Den" in its heading while the sidebar says Care Ops.
+ */
+export function navKicker(dest: Destination): string {
+  const entry = NAV.find((e) => e.dest === dest);
+  if (entry === undefined) return NAV_GROUP_LABEL.den;
+  return `${NAV_GROUP_LABEL[entry.group]} · ${entry.title}`;
+}
+
 /** Build a hash for a route. */
 export function routeToHash(r: Route): string {
   const slug = BY_DEST.get(r.dest) ?? 'home';

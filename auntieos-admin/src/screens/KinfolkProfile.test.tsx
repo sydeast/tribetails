@@ -41,6 +41,13 @@ vi.mock('./KinfolkEdit', () => ({
 vi.mock('./HouseholdData', () => ({
   HouseholdData: () => <p>STUB HouseholdData</p>,
 }));
+// #1603: the profile's portal invite has its own suite (PortalInviteButton.test).
+// Here it only has to be on the profile, with the household's email.
+vi.mock('../components/PortalInviteButton', () => ({
+  PortalInviteButton: ({ email, householdName }: { email: string; householdName: string }) => (
+    <button type="button">{`STUB Invite to portal ${householdName} ${email}`}</button>
+  ),
+}));
 // Q6: the account credit card reads a callable; its own suite covers it.
 vi.mock('../api/accountCredit', () => ({
   getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'k1', accountBalanceCents: 0, credits: [], uses: [] }),
@@ -166,6 +173,18 @@ describe('KinfolkProfile', () => {
     expect(screen.getByText('1 Bark Ave')).toBeInTheDocument();
     expect(screen.getByText('Willow')).toBeInTheDocument();
     expect(getKinfolkProfile).toHaveBeenCalledWith('k1');
+  });
+
+  /**
+   * #1603. Operator ruling, 2026-11-05 docket: "no button on the Invites
+   * screen. Invite from the kinfolk profile."
+   */
+  it('#1603: offers Invite to portal on the profile, for the email on file', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ email: 'catch@hanasamku.com' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    expect(
+      await screen.findByRole('button', { name: /STUB Invite to portal .* catch@hanasamku\.com/ }),
+    ).toBeInTheDocument();
   });
 
   it('omits the empty Vet panel, but still shows Emergency Contacts, flagged (#829)', async () => {
@@ -434,6 +453,27 @@ describe('KinfolkProfile: sub-view wiring', () => {
     const user = userEvent.setup();
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: /household data/i }));
+    expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
+  });
+  it('#1594: reports the sub-view to the route, opens the one the URL names, and follows Back', async () => {
+    const user = userEvent.setup();
+    const onViewChange = vi.fn();
+    const props = { kinfolkId: 'k1', kinfolkName: 'Jamie Halbrook', kin: [kin()], onBack: vi.fn(), onViewChange };
+    const { rerender } = render(<KinfolkProfile {...props} />);
+    await user.click(await screen.findByRole('button', { name: /household data/i }));
+    expect(onViewChange).toHaveBeenLastCalledWith('household');
+    // The route writes `?view=household`.
+    rerender(<KinfolkProfile {...props} view="household" />);
+    expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
+    // Browser Back drops `?view=`: the profile comes back, not the Directory list.
+    rerender(<KinfolkProfile {...props} />);
+    expect(screen.queryByText('STUB HouseholdData')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /household data/i })).toBeInTheDocument();
+  });
+  it('#1594: a reload of ?view=household opens straight on the household record', () => {
+    render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} view="household" onViewChange={vi.fn()} />,
+    );
     expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
   });
   // Members is the one sub-view that is NOT a local swap: it has its own route,

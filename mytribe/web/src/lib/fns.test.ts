@@ -2,7 +2,9 @@ import { FirebaseError } from 'firebase/app';
 import { signOut as firebaseSignOut } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { call, CallableTimeoutError } from './fns';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { call, CallableTimeoutError, LONG_CALLABLE_TIMEOUT_MS, LONG_RUNNING_CALLABLES } from './fns';
 import { resetRevokedSessionForTest } from './revokedSession';
 
 vi.mock('./firebase', () => ({ functions: {}, auth: { name: 'test-auth' } }));
@@ -169,5 +171,35 @@ describe('call, the opt-in retry', () => {
     // A retry that re-minted the key would be a fresh booking to the server.
     expect(fn.mock.calls[0]?.[0]).toEqual(payload);
     expect(fn.mock.calls[1]?.[0]).toEqual(payload);
+  });
+});
+/**
+ * #1567: a 20.8s cold start was cut off at 20s and reported while the server
+ * finished the work. The slow callables get the SDK's 70s, and a timeout says
+ * the outcome is unknown rather than that it failed.
+ */
+describe('call, the per-callable budget (#1567)', () => {
+  it('gives a slow callable 70s and leaves a read at 20s', async () => {
+    vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockResolvedValue({ data: {} }) as never);
+    await call('payInvoice', {});
+    expect(httpsCallable).toHaveBeenLastCalledWith(expect.anything(), 'payInvoice', { timeout: 70_000 });
+    await call('getMyHome', {});
+    expect(httpsCallable).toHaveBeenLastCalledWith(expect.anything(), 'getMyHome', { timeout: 20_000 });
+    expect(LONG_CALLABLE_TIMEOUT_MS).toBeGreaterThan(60_000);
+  });
+  it('names the budget on a timeout and never says failed', async () => {
+    const deadlineExceeded = new FirebaseError('functions/deadline-exceeded', 'deadline exceeded');
+    vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(deadlineExceeded) as never);
+    const err = (await call('addSecondaryContact', {}).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(CallableTimeoutError);
+    expect(err.message).toContain('70 seconds');
+    expect(err.message).toMatch(/may still have gone through/);
+    expect(err.message).not.toMatch(/fail/i);
+  });
+  it('lists only callables the server really exports', () => {
+    const index = readFileSync(resolve(__dirname, '../../../functions/src/index.ts'), 'utf8');
+    for (const name of LONG_RUNNING_CALLABLES) {
+      expect(index, `${name} is not exported by mytribe/functions`).toMatch(new RegExp(`\\b${name}:`));
+    }
   });
 });
