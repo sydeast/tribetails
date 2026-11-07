@@ -150,7 +150,7 @@ class KinCareDetailScreenTest {
         mount(kinCareRepo)
 
         rule.onNodeWithText(
-            "This Kin Care isn't available to open. A visit gets its own record " +
+            "This KinCare isn't available to open. A visit gets its own record " +
                 "only once the request is approved, so a request still waiting on " +
                 "you has none yet. Otherwise it may have been cancelled or removed.",
         ).assertIsDisplayed()
@@ -174,7 +174,7 @@ class KinCareDetailScreenTest {
         mount(kinCareRepo)
 
         rule.onNodeWithText(
-            "This Kin Care isn't available to open. A visit gets its own record " +
+            "This KinCare isn't available to open. A visit gets its own record " +
                 "only once the request is approved, so a request still waiting on " +
                 "you has none yet. Otherwise it may have been cancelled or removed.",
         ).assertIsDisplayed()
@@ -196,7 +196,7 @@ class KinCareDetailScreenTest {
         rule.onNodeWithText("Network unreachable").assertIsDisplayed()
         rule.onNodeWithText("Retry").assertIsDisplayed()
         rule.onNodeWithText(
-            "This Kin Care isn't available to open. A visit gets its own record " +
+            "This KinCare isn't available to open. A visit gets its own record " +
                 "only once the request is approved, so a request still waiting on " +
                 "you has none yet. Otherwise it may have been cancelled or removed.",
         ).assertDoesNotExist()
@@ -231,7 +231,7 @@ class KinCareDetailScreenTest {
         mount(kinCareRepo)
 
         rule.onNodeWithText(
-            "No GPS breadcrumbs were recorded for this Kin Care because it was never tracked.",
+            "No GPS breadcrumbs were recorded for this KinCare because it was never tracked.",
         ).assertIsDisplayed()
     }
 
@@ -258,7 +258,7 @@ class KinCareDetailScreenTest {
         mount(kinCareRepo)
 
         rule.onNodeWithText(
-            "A GPS summary was saved for this Kin Care, but it has no route to view.",
+            "A GPS summary was saved for this KinCare, but it has no route to view.",
         ).assertIsDisplayed()
     }
 
@@ -287,7 +287,7 @@ class KinCareDetailScreenTest {
         mount(kinCareRepo)
 
         rule.onNodeWithText(
-            "Tracking starts once an Auntie clocks in for this Kin Care.",
+            "Tracking starts once an Auntie clocks in for this KinCare.",
         ).assertIsDisplayed()
     }
 }

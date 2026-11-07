@@ -12,6 +12,7 @@ import {
   type MediaKind,
 } from '../lib/mediaFormat';
 import { str } from '../lib/coerce';
+import { useStaffNames } from '../lib/useStaffNames';
 import { type MediaFile } from '../api/gallery';
 import './MediaViewerDialog.css';
 
@@ -98,7 +99,8 @@ export function MediaViewerDialog({
     savedDescription === null ? media : { ...media, description: savedDescription };
 
   const caption = mediaCaption(shown);
-  const meta = mediaMetaLine(str(media.uploadedAt), str(media.uploadedBy));
+  const staffNames = useStaffNames();
+  const meta = mediaMetaLine(str(media.uploadedAt), str(media.uploadedBy), staffNames);
   const duration = kind === 'video' ? mediaDurationLabel(media.durationSeconds) : undefined;
   const title = caption !== '' ? caption : 'Media';
 

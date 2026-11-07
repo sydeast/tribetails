@@ -915,7 +915,7 @@ describe('Auntie Time: the Archive', () => {
     usePagedCollection.mockReturnValue(paged([]));
     renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
-    expect(screen.getByText('No Kin Cares in this range.')).toBeInTheDocument();
+    expect(screen.getByText('No KinCares in this range.')).toBeInTheDocument();
   });
 });
 
@@ -1045,9 +1045,9 @@ describe('Auntie Time: a failed FIRST page is not a failed LATER page', () => {
     expect(screen.getByText('Still Here')).toBeInTheDocument();
     expect(document.querySelectorAll('.sessions__card')).toHaveLength(1);
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Couldn’t load more Kin Care sessions. deadline-exceeded');
+    expect(alert).toHaveTextContent('Couldn’t load more KinCare sessions. deadline-exceeded');
     expect(alert).toHaveTextContent('The 1 already loaded are unaffected');
-    expect(screen.queryByText('Kin Care sessions unavailable while the load is failing.')).toBeNull();
+    expect(screen.queryByText('KinCare sessions unavailable while the load is failing.')).toBeNull();
   });
 
   it('retries the failed page from where it stopped, not from the top', async () => {

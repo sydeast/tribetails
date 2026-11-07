@@ -7,6 +7,9 @@ import { type MediaFile } from '../api/gallery';
 import { NO_TARGET_ENTITY_ID_SENTINEL } from '../api/media';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+// #1564: the uploader line resolves a staff uid to a name through listStaff.
+const { staffNames } = vi.hoisted(() => ({ staffNames: new Map<string, string>() }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 // #397 S1/S2. Mocked at the api seam, so these tests cover THIS screen's wiring
 // (which id and entity it sends, what it does with a refusal) rather than the

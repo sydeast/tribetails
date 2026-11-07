@@ -46,14 +46,14 @@ class BookingSectionsTest {
     @Test fun `keeps an empty section so the screen can say nothing is waiting`() {
         val sections = groupBookingsByStatus(listOf(booking("c", BookingStatus.COMPLETED)))
         val pending = sections.section(BookingSectionKey.PENDING)
-        assertEquals("Pending approval", pending.label)
+        assertEquals("Visit requests", pending.label)
         assertEquals(emptyList<EnhancedBooking>(), pending.rows)
     }
 
     @Test fun `an empty input still returns all three headings`() {
         val sections = groupBookingsByStatus(emptyList())
         assertEquals(3, sections.size)
-        assertEquals(listOf("Pending approval", "Scheduled", "History"), sections.map { it.label })
+        assertEquals(listOf("Visit requests", "Scheduled", "History"), sections.map { it.label })
         assertEquals(0, sections.sumOf { it.rows.size })
     }
 

@@ -37,6 +37,7 @@ import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { VisitTrackingIndicator } from '../components/VisitTrackingIndicator';
+import { navKicker } from '../lib/nav';
 import './Sessions.css';
 
 /** Which body of data the screen is showing: the day-of board, or older history. */
@@ -206,12 +207,12 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
           the Directory mock marks its last word up as `<b>`, this one does not,
           so the kit's optional accent stays off here. */}
       <DenScreenHeading
-        kicker="The Den · Auntie Time"
+        kicker={navKicker('sessions')}
         title="🐾 Auntie Time"
         subtitle={
           mode === 'archive'
             ? 'Older history, by day. Pick a range; the year shows on any day outside this one.'
-            : 'Day-of view. Clock in, clock out, every Kin Care in flight.'
+            : 'Day-of view. Clock in, clock out, every KinCare in flight.'
         }
         trailing={
           <GhostButton
@@ -248,14 +249,14 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
 
       <AsyncRegion
         state={rows}
-        what="Kin Care sessions"
+        what="KinCare sessions"
         // The BOARD is never empty: four phase groups render whatever the data
         // says, so `isEmpty` is false there by construction and the "nothing on
         // the books" line rides UNDER the groups instead of replacing them. The
         // Archive is a plain list and keeps the ordinary empty state.
         isEmpty={(data) => mode === 'archive' && data.length === 0}
-        loading={<LoadingRow label="Loading Kin Care sessions…" className="sessions__hint" />}
-        empty={<EmptyHint>No Kin Cares in this range.</EmptyHint>}
+        loading={<LoadingRow label="Loading KinCare sessions…" className="sessions__hint" />}
+        empty={<EmptyHint>No KinCares in this range.</EmptyHint>}
       >
         {(data) => (
           <>
@@ -316,7 +317,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
                 />
                 {more.status === 'error' && (
                   <p className="sessions__more-error" role="alert">
-                    Couldn&rsquo;t load more Kin Care sessions. {more.message} The{' '}
+                    Couldn&rsquo;t load more KinCare sessions. {more.message} The{' '}
                     {String(data.length)} already loaded are unaffected.
                     {more.retry && (
                       <button type="button" className="async-retry" onClick={more.retry}>

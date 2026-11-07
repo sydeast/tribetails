@@ -30,6 +30,29 @@
  */
 
 const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * #1584. Operator ruling, 2026-11-05 docket: join dates run "from the year the
+ * business started, 2025, up to today". Earlier and future dates are refused.
+ * Mirrored by Android and desktop `JoinDate.kt` and by `joinDateInRange` in
+ * `mytribe/firestore.rules`; change them together.
+ */
+export const JOIN_DATE_FIRST_DAY = '2025-01-01';
+export const JOIN_DATE_RANGE_MESSAGE = 'Pick a join date from 2025 through today.';
+/** Today's date in the browser's own time zone, as `YYYY-MM-DD`. */
+export function localIsoToday(now: Date = new Date()): string {
+  const y = String(now.getFullYear()).padStart(4, '0');
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * True for an ISO day from 2025-01-01 through [today] inclusive. ISO days
+ * compare correctly as strings, so no Date is built.
+ */
+export function isJoinDateInRange(iso: string, today: string = localIsoToday()): boolean {
+  return isIsoDate(iso) && iso >= JOIN_DATE_FIRST_DAY && iso <= today;
+}
 
 /** True for a `YYYY-MM-DD` string that names a day that actually exists. */
 export function isIsoDate(raw: string): boolean {
