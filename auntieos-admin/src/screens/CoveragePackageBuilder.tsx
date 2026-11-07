@@ -33,7 +33,7 @@ import {
 } from '../lib/coveragePackage';
 import { formatUsd } from '../lib/invoiceFormat';
 import { type Async } from '../lib/async';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, InfoTip } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
@@ -630,7 +630,10 @@ function Builder({ settings }: BuilderProps) {
         </p>
 
         <div className="cpb__pinned">
-          <p className="cpb__pinnedHeading">Pinned visits — this client's non-negotiables. New blank packages start with these.</p>
+          {/* #1595: a label and a tip, not a label with its explanation run on. */}
+          <p className="cpb__pinnedHeading">
+            Pinned visits <InfoTip text="This client's non-negotiables. New blank packages start with these." />
+          </p>
           {rules.pinnedTimes.map((p) => (
             <div key={p.id} className="cpb__pinnedRow">
               <span className="cpb__pinnedLabel">{p.label}</span>

@@ -328,3 +328,10 @@ fun invoiceChipLabel(invoice: Invoice, todayIso: String): String {
         null -> invoice.status.trim().ifBlank { "No status" }
     }
 }
+
+/**
+ * #1595: the Invoices panel's count line, "3 of 12 shown". A value, so it is
+ * the panel's visible detail line. It used to be the panel's info tip, along
+ * with "Tap a row to open the invoice.", which the rows' own affordance says.
+ */
+fun invoicesShownDetail(shown: Int, total: Int): String = "$shown of $total shown"
