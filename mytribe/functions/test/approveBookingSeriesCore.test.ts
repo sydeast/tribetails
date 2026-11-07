@@ -584,3 +584,41 @@ describe('approveBookingSeriesCore: visits the household cancelled (#1101)', () 
     expect(env?.data).toMatchObject({ envelopeStatus: 'cancelled', confirmedCount: 0, cancelledCount: 2 });
   });
 });
+// ── #1579: the request's note reaches the booked visit ──────────────────────
+describe('approveBookingSeriesCore carries the request note (#1579)', () => {
+  function seedWithNote(note: unknown) {
+    const ctx = buildDbMock({
+      docs: { 'families/3/bookings/b1': { kinfolkName: 'Doe Household', notes: note } },
+      queryDocs: {
+        'families/3/bookings/b1/kinCares': [
+          { id: 'v1', data: { startTime: '2026-07-01T10:00:00Z', endTime: '2026-07-01T11:00:00Z', kinIds: ['k1'], serviceType: 'walk' } },
+          { id: 'v2', data: { startTime: '2026-07-02T10:00:00Z', endTime: '2026-07-02T11:00:00Z', kinIds: ['k1'], serviceType: 'walk' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return ctx;
+  }
+  it('puts the household’s request note on every session it books, as kinfolkNotes', async () => {
+    const ctx = seedWithNote('  Side gate sticks, lift it  ');
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+    await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+    for (const id of ['vis_v1', 'vis_v2']) {
+      const s = ctx.writes.find((w) => w.path === `kin_care_sessions/${id}`);
+      expect(s?.data.kinfolkNotes).toBe('Side gate sticks, lift it');
+    }
+  });
+  it('never files the household’s words as the office note', async () => {
+    const ctx = seedWithNote('Side gate sticks, lift it');
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+    await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+    const s = ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1');
+    expect(s?.data.notes).toBe('');
+  });
+  it('a request with no note books visits with an empty kinfolkNotes', async () => {
+    const ctx = seedWithNote(null);
+    const { approveBookingSeriesCore } = await import('../src/admin/approveBookingSeriesCore');
+    await approveBookingSeriesCore({ kinfolkId: '3', batchId: 'b1', actorUid: 'sys', actorRole: 'SYSTEM' });
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1')?.data.kinfolkNotes).toBe('');
+  });
+});

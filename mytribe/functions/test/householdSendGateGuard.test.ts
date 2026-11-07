@@ -116,6 +116,10 @@ const ALLOWED = new Map<string, string>([
   ['mytribe/functions/src/portal/markNotificationRead.ts', 'marks an existing inbox doc read'],
   ['mytribe/functions/src/portal/bulkMarkNotificationsRead.ts', 'marks existing inbox docs read'],
   ['mytribe/functions/src/portal/archiveNotification.ts', 'archives existing inbox docs'],
+  [
+    'mytribe/functions/src/notifications/requestResolution.ts',
+    'stamps how a request ended on existing staff inbox docs (#1647); creates and sends nothing',
+  ],
   ['mytribe/functions/src/admin/listNotificationDeliveries.ts', 'reads the work-order collection'],
   [
     'mytribe/functions/src/admin/marketingBlasts.ts',

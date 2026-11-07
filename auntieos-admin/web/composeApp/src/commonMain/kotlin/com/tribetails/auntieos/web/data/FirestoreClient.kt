@@ -4109,6 +4109,11 @@ data class NotificationEntry(
     // map, so an odd `data` never drops the whole notification from the list.
     @Serializable(with = LenientJsonObjectSerializer::class)
     val data: JsonObject? = null,
+    // #1647: how a `kincare.requested` request ended, stamped onto its rows by
+    // the server (onBookingEnvelopeResolve) once the request is booked or
+    // declined: 'booked' | 'declined' | 'cancelled'. Blank while it is still
+    // waiting, and on every other key. Read through requestOutcomeLabel.
+    val requestResolution: String = "",
 ) {
     /** True once the recipient (or an admin) has marked this notification read. */
     val isRead: Boolean get() = readAt.isNotBlank()

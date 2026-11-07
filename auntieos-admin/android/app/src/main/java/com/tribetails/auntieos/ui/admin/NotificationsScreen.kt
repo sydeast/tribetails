@@ -780,6 +780,16 @@ private fun QuickActions(
             PrimaryButton(label = "Approve", onClick = onApprove)
             GhostButton(label = "Deny", onClick = onDeny)
         }
+        // #1647: an answered request says how it ended instead of offering a
+        // decision nobody can make any more.
+        actions.outcome?.let { outcome ->
+            AuntieStatusPill(
+                label = outcome,
+                tone = if (outcome == "Booked") AuntieStatusTone.Success else AuntieStatusTone.Neutral,
+                compact = true,
+                modifier = Modifier.align(Alignment.CenterVertically),
+            )
+        }
         if (actions.canOpen) {
             GhostButton(label = "Open", onClick = onOpen)
         }
@@ -820,7 +830,17 @@ internal fun notificationsForFilter(all: List<NotificationEntry>, filter: String
  * the dispatch `key` as well. read/unread toggle + Dismiss always apply, so
  * they are not modeled here. Pure; unit-tested.
  */
-internal data class NotificationActions(val canOpen: Boolean, val canApproveDeny: Boolean, val canCreateQuote: Boolean)
+internal data class NotificationActions(
+    val canOpen: Boolean,
+    val canApproveDeny: Boolean,
+    val canCreateQuote: Boolean,
+    /**
+     * #1647: how an answered request ended ("Booked", "Declined", "Cancelled"),
+     * shown where Approve/Deny used to be. Null on every row that is not an
+     * answered `kincare.requested`.
+     */
+    val outcome: String? = null,
+)
 
 internal val OPENABLE_TARGET_TYPES = setOf("booking", "invoice", "kintale", "kinfolk")
 
@@ -906,6 +926,25 @@ private const val PENDING_BOOKING_REQUEST_KEY = "kincare.requested"
 private const val QUOTE_DENIED_KEY = "quote.denied"
 
 /**
+ * #1647: the operator-facing word for how a booking request ended, read off
+ * the `requestResolution` stamp the server writes onto the request's rows once
+ * it is booked or declined. Null while the request is still waiting, and on
+ * every other key. An unrecognised non-blank stamp still counts as answered
+ * ("Answered"): the server only stamps a request that has left `requested`.
+ * Mirrors the web build's `requestOutcomeLabel`. Pure; unit-tested.
+ */
+internal fun requestOutcomeLabel(entry: NotificationEntry): String? {
+    if (entry.key.trim() != PENDING_BOOKING_REQUEST_KEY) return null
+    return when (entry.requestResolution.trim().lowercase()) {
+        "" -> null
+        "booked" -> "Booked"
+        "declined" -> "Declined"
+        "cancelled" -> "Cancelled"
+        else -> "Answered"
+    }
+}
+
+/**
  * Entry-aware overload of [applicableNotificationActions]. Open stays decided
  * purely by targetType/targetId; Approve/Deny and Create quote are narrowed by
  * the dispatch `key` (issue #706, operator: "most of these don't need most of
@@ -918,12 +957,12 @@ private const val QUOTE_DENIED_KEY = "quote.denied"
  * APPROVE/DENY calls the batch booking callable with APPROVE/REJECT, and that
  * is only the right action for a FRESH request: a reschedule ask resolves
  * through a different callable and a cancellation ask through the #438
- * accept/decline path. A notification carries no live visit status to
- * re-check, so pendency is read off the key itself:
- * [PENDING_BOOKING_REQUEST_KEY] only ever fires once, at the moment of the
- * ask. A request an admin has since decided keeps offering Approve/Deny on its
- * original card until archived or read away; the callable itself fails loud on
- * a stale click rather than pretending the click worked.
+ * accept/decline path. Pendency is read off the key PLUS the server's answer
+ * stamp: [PENDING_BOOKING_REQUEST_KEY] only ever fires once, at the moment of
+ * the ask, and #1647 has the server stamp `requestResolution` on its rows once
+ * the request is booked or declined anywhere. An answered request offers no
+ * Approve/Deny and shows its outcome instead ([requestOutcomeLabel]); "Needs a
+ * decision" stops counting it because that count reads `canApproveDeny`.
  *
  * CREATE QUOTE is offered for a quote or a booking request that has no
  * invoice yet: [QUOTE_DENIED_KEY] (the quote itself was rejected, no bill
@@ -939,12 +978,17 @@ internal fun applicableNotificationActions(entry: NotificationEntry): Notificati
     val type = entry.targetType.trim().lowercase()
     val targetId = entry.targetId.trim()
 
+    val outcome = requestOutcomeLabel(entry)
+
     val isPendingBookingRequest =
-        key == PENDING_BOOKING_REQUEST_KEY && type == "booking" && targetId.isNotBlank()
+        key == PENDING_BOOKING_REQUEST_KEY && outcome == null && type == "booking" && targetId.isNotBlank()
 
     val hasInvoiceReference = type == "invoice" || dataString(entry, "invoiceId").isNotBlank()
     val isQuoteDenial = key == QUOTE_DENIED_KEY
-    val isUninvoicedBookingRequest = key == PENDING_BOOKING_REQUEST_KEY && !hasInvoiceReference
+    // An answered request is no longer a fresh ask (#706's "already-decided"
+    // rule), so it offers no quote either (#1647).
+    val isUninvoicedBookingRequest =
+        key == PENDING_BOOKING_REQUEST_KEY && outcome == null && !hasInvoiceReference
     val kinfolkId = notificationKinfolkId(entry)
     val quoteEligible = kinfolkId.isNotBlank() && (isQuoteDenial || isUninvoicedBookingRequest)
 
@@ -954,6 +998,7 @@ internal fun applicableNotificationActions(entry: NotificationEntry): Notificati
         canOpen = base.canOpen || unappliedPaymentNotice(entry) != null,
         canApproveDeny = isPendingBookingRequest,
         canCreateQuote = quoteEligible,
+        outcome = outcome,
     )
 }
 
