@@ -44,6 +44,12 @@ data class BusinessAdminRoster(
     val rosterPath: String = "businessSettings/admins.uids",
     /** Why nobody is on it, when nobody is. Null when there are members. */
     val reason: String? = null,
+    /**
+     * #1564: where every business email goes, `businessEmail` in business
+     * settings (operator ruling, 2026-11-05 docket). "" when unset: business
+     * emails are skipped until it is filled.
+     */
+    val businessEmail: String = "",
 )
 
 private fun strOrNull(raw: Any?): String? = (raw as? String)?.takeIf { it.isNotBlank() }
@@ -69,4 +75,5 @@ fun businessAdminRosterFromMap(raw: Map<*, *>): BusinessAdminRoster = BusinessAd
     },
     rosterPath = strOrNull(raw["rosterPath"]) ?: "businessSettings/admins.uids",
     reason = strOrNull(raw["reason"]),
+    businessEmail = (raw["businessEmail"] as? String)?.trim().orEmpty(),
 )

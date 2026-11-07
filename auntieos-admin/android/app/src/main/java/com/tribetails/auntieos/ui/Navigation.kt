@@ -151,7 +151,7 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object AdminKinTaleLogs : Screen("admin_kintale_logs", "KinTales", Lucide.LayoutDashboard)
     object AdminTrainingDocs : Screen("admin_training_docs", "Tribal Intel", Lucide.LayoutDashboard)
     object AdminKinCareSessions : Screen("admin_kin_care_sessions", "Auntie Time", Lucide.LayoutDashboard)
-    object KinCareDetail        : Screen("kin_care_detail/{kinCareId}", "Kin Care", Lucide.LayoutDashboard) {
+    object KinCareDetail        : Screen("kin_care_detail/{kinCareId}", "KinCare", Lucide.LayoutDashboard) {
         fun createRoute(kinCareId: String): String = "kin_care_detail/$kinCareId"
     }
     object ServiceManagement : Screen("service_management", "Services", Lucide.LayoutDashboard)

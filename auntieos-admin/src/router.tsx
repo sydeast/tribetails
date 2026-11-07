@@ -254,7 +254,8 @@ const directoryProfileRoute = createRoute({
   // #1003: the `invoice.payment.unapplied` notice lands here with
   // `?section=unapplied-payments&paymentId=...`, which opens the Account credit
   // panel's "Payments needing a decision" list and that payment's dialog.
-  validateSearch: optionalIdSearch(['section', 'paymentId'] as const),
+  // `view` is the profile's sub-view (#1594): `household` or `edit`.
+  validateSearch: optionalIdSearch(['section', 'paymentId', 'view'] as const),
   component: lazyRouteComponent(
     () => import('./routes/DirectoryProfileView'),
     'DirectoryProfileView',
@@ -338,7 +339,9 @@ const galleryRoute = createRoute({
 const templatesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'templates',
-  component: lazyRouteComponent(() => import('./screens/Templates'), 'Templates'),
+  // `template` is the open editor (#1594): a template id, or `new`. Absent is the bank.
+  validateSearch: optionalIdSearch(['template'] as const),
+  component: lazyRouteComponent(() => import('./routes/TemplatesView'), 'TemplatesView'),
 });
 
 /**

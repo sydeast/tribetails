@@ -38,6 +38,14 @@
 .cpb__banner {
   margin-top: var(--space-2);
 }
+/* #1605: the undo for the last destructive action stays in view while scrolling. */
+.banner.cpb__undo {
+  position: sticky;
+  bottom: var(--space-3);
+  z-index: 2;
+  /* Opaque under the wash, so the rows it floats over do not show through. */
+  background-color: var(--color-surface);
+}
 
 /* ── inputs ───────────────────────────────────────────────────────────────── */
 
@@ -153,6 +161,10 @@
   gap: 0.3rem;
   flex: 1 1 10rem;
 }
+.cpb__fieldError {
+  color: var(--color-error);
+  font-size: var(--type-body-sm-size);
+}
 .cpb__fieldLabel {
   font-size: var(--type-label-md-size);
   color: var(--color-text-dim);
@@ -262,12 +274,24 @@
   flex-direction: column;
   gap: var(--space-2);
 }
-.cpb__visitRow,
-.cpb__dayEditRow {
+.cpb__visitRow {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+/* One grid for every row of a day's editor (#1605): the time, length, label, price and
+   trash columns sit on the same lines in every row. Flex-wrap gave each row its own
+   widths, so the columns zig-zagged. */
+.cpb__dayEditRow {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(9rem, 2fr) minmax(6rem, 1fr) 4.5rem auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+.cpb__dayEditRow > * {
+  min-width: 0;
+  width: auto;
 }
 .cpb__visitTime {
   flex: 0 0 6.5rem;
@@ -577,6 +601,12 @@
 }
 
 @media (max-width: 640px) {
+  .cpb__dayEditRow {
+    grid-template-columns: 6.5rem 1fr auto;
+  }
+  .cpb__dayEditRow .cpb__visitLabel {
+    grid-column: 1 / -1;
+  }
   .cpb__durationRow,
   .cpb__addRow {
     gap: var(--space-2);

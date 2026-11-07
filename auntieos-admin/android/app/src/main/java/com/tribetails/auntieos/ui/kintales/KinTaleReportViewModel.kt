@@ -400,7 +400,7 @@ class KinTaleReportViewModel(
         }
         val recipient = state.kinfolk?.displayName.orEmpty()
         if (recipient.isBlank()) {
-            _uiState.value = state.copy(error = "This Kin Care has no linked Kinfolk to write to.")
+            _uiState.value = state.copy(error = "This KinCare has no linked Kinfolk to write to.")
             return
         }
         viewModelScope.launch {

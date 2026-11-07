@@ -226,24 +226,23 @@ internal fun invoiceRowDateLine(invoice: Invoice, todayIso: String): String {
         state == InvoiceState.QUOTE -> "quote"
         state == InvoiceState.DRAFT -> "draft"
         days != null -> "$days day${if (days == 1) "" else "s"} overdue"
-        state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+        state == InvoiceState.OPEN && invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate, todayIso)}"
         invoice.date.isNotBlank() ->
-            "${if (state == InvoiceState.PAID) "paid" else "dated"} ${humanizeDate(invoice.date)}"
-        invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate)}"
+            "${if (state == InvoiceState.PAID) "paid" else "dated"} ${humanizeDate(invoice.date, todayIso)}"
+        invoice.dueDate.isNotBlank() -> "due ${humanizeDate(invoice.dueDate, todayIso)}"
         else -> "no date"
     }
 }
 /** Compact USD formatting from a Double total: "$1,280" / "$1,280.50". */
 private fun formatMoney(amount: Double): String = com.tribetails.auntieos.domain.formatUsdCompact(amount)
 
-/** A human-ish "MMM d" style label from a YYYY-MM-DD prefix, or echoes input. */
-private fun humanizeDate(date: String): String {
+/**
+ * "Jul 2", or "Jul 2, 2025" when it is not this year (#1599: a paid row from a
+ * past year read as this summer). Echoes the input when it has no date in it.
+ */
+private fun humanizeDate(date: String, todayIso: String): String {
     val iso = invoiceIsoDatePrefixOrNull(date) ?: return date
-    return runCatching {
-        val d = java.time.LocalDate.parse(iso)
-        val month = d.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
-        "$month ${d.dayOfMonth}"
-    }.getOrDefault(date)
+    return visitDayLabel(iso, todayIso)
 }
 
 private fun nowDateIso(): String =
@@ -351,7 +350,7 @@ fun InvoicesScreen(
             ) {
                 item {
                     DenScreenHeading(
-                        kicker = "The Den · Invoices",
+                        kicker = "Care Ops · Invoices",
                         title = "Getting",
                         accentTail = "paid.",
                         trailing = {

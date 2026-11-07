@@ -33,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.text.SpanStyle
@@ -158,6 +160,7 @@ import com.tribetails.auntieos.data.model.NotifBadgeTone
 import com.tribetails.auntieos.data.model.NotifDeliveryTone
 import com.tribetails.auntieos.data.model.BusinessAdminRoster
 import com.tribetails.auntieos.data.model.businessAdminLines
+import com.tribetails.auntieos.data.model.businessEmailLine
 import com.tribetails.auntieos.data.model.businessAdminSourceNote
 import com.tribetails.auntieos.data.model.notifDeliveryPhrase
 import com.tribetails.auntieos.data.model.notifReachesBusinessAdmins
@@ -475,7 +478,11 @@ fun AdminSettingsScreen(
     // the ViewModel-held businessSettings is untouched by switching sections, so
     // an edit in one section persists (each panel instant-saves) regardless of
     // where the operator navigates next.
-    var selectedSection by remember { mutableStateOf<SettingsSection?>(null) }
+    //
+    // Saveable (#1594): a rotation, a trip through the system back stack or a
+    // process restore used to reopen the section LIST, losing the operator's
+    // place. The enum is Serializable, so the Bundle holds it as it is.
+    var selectedSection by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AuntieScreenScaffold(
@@ -1629,6 +1636,13 @@ private fun NotifBusinessAdminRosterBlock() {
                 color = c.textFaint,
             )
             else -> {
+                // #1564: where this row's emails go, before who is on the roster.
+                Text(
+                    businessEmailLine(current),
+                    style = AuntieTheme.typography.bodySmall,
+                    color = if (current.businessEmail.isBlank()) c.warning else c.textDim,
+                    modifier = Modifier.testTag("business-email-line"),
+                )
                 Text(
                     "By name:",
                     style = AuntieTheme.typography.bodySmall,
