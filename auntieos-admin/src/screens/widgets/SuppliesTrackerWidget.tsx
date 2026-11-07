@@ -77,7 +77,7 @@ function SupplyRowItem({ supply, onAdjusted }: SupplyRowItemProps) {
       })
       .catch((err: unknown) => {
         setBusy(false);
-        setError(`adjustSupply failed: ${err instanceof Error ? err.message : 'Adjust failed'}`);
+        setError(`Could not save: ${err instanceof Error ? err.message : 'Adjust failed'}`);
       });
   };
 

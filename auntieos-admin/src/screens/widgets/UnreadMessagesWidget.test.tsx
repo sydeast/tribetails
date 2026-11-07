@@ -79,7 +79,7 @@ describe('UnreadMessagesWidget', () => {
     listConversations.mockRejectedValue(new Error('permission-denied'));
     render(<UnreadMessagesWidget />);
     expect(
-      await screen.findByText(/listConversations failed:.*permission-denied/i),
+      await screen.findByText(/Could not load:.*permission-denied/i),
     ).toBeInTheDocument();
   });
 });

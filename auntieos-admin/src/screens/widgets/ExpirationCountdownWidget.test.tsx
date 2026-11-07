@@ -38,6 +38,6 @@ describe('ExpirationCountdownWidget', () => {
   it('fails loud (names the callable) when the load rejects', async () => {
     listExpirations.mockRejectedValue(new Error('permission-denied'));
     render(<ExpirationCountdownWidget />);
-    expect(await screen.findByText(/listExpirations failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*permission-denied/i)).toBeInTheDocument();
   });
 });

@@ -231,14 +231,14 @@ describe('WizardModal: flow-level notices', () => {
           onClose={() => {}}
           onFinish={() => {}}
           finishLabel="Save schema"
-          notice={<p>saveFormSchema failed: nope</p>}
+          notice={<p>Could not save: nope</p>}
         />
       );
     }
     render(<WithNotice />);
-    expect(screen.getByText('saveFormSchema failed: nope')).toBeTruthy();
+    expect(screen.getByText('Could not save: nope')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: /^3 Review/ }));
-    expect(screen.getByText('saveFormSchema failed: nope')).toBeTruthy();
+    expect(screen.getByText('Could not save: nope')).toBeTruthy();
   });
 });
 

@@ -421,7 +421,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
       // failed would offer the same losing move twice.
       setBusyOverridable(isOverridableBusyRefusal(err, overrideBusyConflict));
       setError(
-        `createMultiDateBookingRequest failed: ${err instanceof Error ? err.message : 'Create failed'}`,
+        `Could not create: ${err instanceof Error ? err.message : 'Create failed'}`,
       );
     }
   }

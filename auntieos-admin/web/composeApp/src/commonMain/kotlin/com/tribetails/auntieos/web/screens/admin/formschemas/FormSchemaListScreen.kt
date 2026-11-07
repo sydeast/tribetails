@@ -103,7 +103,7 @@ const val NEW_SCHEMA_ID: String = "new"
  */
 internal fun deleteResultMessage(result: WriteResult<Unit>): String? = when (result) {
     is WriteResult.Ok -> null
-    is WriteResult.Err -> "deleteFormSchema failed: ${result.message}"
+    is WriteResult.Err -> "Could not delete: ${result.message}"
 }
 
 /**
@@ -258,7 +258,7 @@ fun FormSchemaListScreen(
                 trailing = { GhostButton(label = "Retry", onClick = { scope.launch { reload() } }) },
             ) {
                 Text(
-                    "listFormSchemas failed: $msg",
+                    "Could not load: $msg",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )

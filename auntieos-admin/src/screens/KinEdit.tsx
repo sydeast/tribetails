@@ -159,7 +159,7 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
         if (live) {
           setLoaded({
             status: 'error',
-            message: `getKin failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           });
         }
@@ -230,7 +230,7 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
       onDone();
     } catch (err) {
       setSaving(false);
-      setError(`updateKin failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
   }
 
@@ -246,7 +246,7 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
       onDone();
     } catch (err) {
       setArchiving(false);
-      setError(`setKinArchived failed: ${err instanceof Error ? err.message : 'Update failed'}`);
+      setError(`Could not save: ${err instanceof Error ? err.message : 'Update failed'}`);
     }
   }
 

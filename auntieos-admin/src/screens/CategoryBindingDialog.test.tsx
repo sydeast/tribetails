@@ -116,7 +116,7 @@ describe('CategoryBindingDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: /add .*to category/i }));
 
     expect(
-      await screen.findByText(/assignTemplatesToCategory failed:.*not found/i),
+      await screen.findByText(/Could not save:.*not found/i),
     ).toBeInTheDocument();
     expect(onBound).not.toHaveBeenCalled();
   });
@@ -124,6 +124,6 @@ describe('CategoryBindingDialog', () => {
   it('surfaces a template-list load failure fail-loud rather than an empty checklist', async () => {
     listTemplates.mockRejectedValue(new Error('permission-denied'));
     render(<CategoryBindingDialog categories={[]} onClose={vi.fn()} onBound={vi.fn()} />);
-    expect(await screen.findByText(/listTemplates failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*permission-denied/i)).toBeInTheDocument();
   });
 });

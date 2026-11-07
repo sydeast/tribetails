@@ -123,7 +123,7 @@ class HouseholdMembersViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         peopleLoading = false,
-                        peopleError = "listSecondaryKinfolk failed: ${err.message ?: "Load failed"}",
+                        peopleError = "Could not load: ${err.message ?: "Load failed"}",
                     )
                 },
             )
@@ -218,7 +218,7 @@ class HouseholdMembersViewModel(
                     // promote an unknown roster into a proven-empty one.
                     _uiState.value = _uiState.value.copy(
                         membersLoading = false,
-                        membersError = "listMembers failed: ${err.message ?: "Load failed"}",
+                        membersError = "Could not load: ${err.message ?: "Load failed"}",
                     )
                 },
             )
@@ -239,7 +239,7 @@ class HouseholdMembersViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         invitesLoading = false,
-                        invitesError = "listInvites failed: ${err.message ?: "Load failed"}",
+                        invitesError = "Could not load: ${err.message ?: "Load failed"}",
                     )
                 },
             )
@@ -280,7 +280,7 @@ class HouseholdMembersViewModel(
                     _uiState.value = _uiState.value.copy(
                         portalInviteBusy = false,
                         portalInviteError =
-                            "inviteKinfolkToPortal failed: ${err.message ?: "The portal invite was not sent."}",
+                            "The portal invite was not sent: ${err.message ?: "Try again in a moment."}",
                     )
                 },
             )
@@ -323,7 +323,7 @@ class HouseholdMembersViewModel(
                         members = before,
                         savingPermission = null,
                         permissionError =
-                            "setMemberPermissions failed for ${member.label}: ${err.message ?: "Save failed"}",
+                            "Could not save the access for ${member.label}: ${err.message ?: "Save failed"}",
                     )
                 },
             )
@@ -345,7 +345,7 @@ class HouseholdMembersViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         revokingInviteId = null,
-                        revokeError = "revokeInvite failed for ${invite.invitedEmail}: " +
+                        revokeError = "Could not cancel the invite for ${invite.invitedEmail}: " +
                             (err.message ?: "The invite is still live."),
                     )
                 },
@@ -375,7 +375,7 @@ class HouseholdMembersViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         removingUid = null,
-                        removeError = "removeMember failed: ${err.message ?: "The member was not removed."}",
+                        removeError = "Could not remove: ${err.message ?: "The member was not removed."}",
                     )
                 },
             )

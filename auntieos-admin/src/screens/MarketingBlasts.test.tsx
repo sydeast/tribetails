@@ -112,7 +112,7 @@ describe('MarketingBlasts', () => {
   it('surfaces a failed campaign load instead of rendering it as "nothing scheduled"', async () => {
     listMarketingBlasts.mockRejectedValue(new Error('permission-denied'));
     render(<MarketingBlasts />);
-    expect(await screen.findByText(/listMarketingBlasts failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.queryByText('Nothing scheduled.')).not.toBeInTheDocument();
   });
 
@@ -249,7 +249,7 @@ describe('MarketingBlasts', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
 
-    expect(await screen.findByText(/scheduleMarketingBlast failed: no_recipients/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not schedule: no_recipients/)).toBeInTheDocument();
   });
 
   /**
@@ -278,7 +278,7 @@ describe('MarketingBlasts', () => {
     await userEvent.type(screen.getByLabelText('Time'), when.time);
     await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
-    expect(await screen.findByText(/scheduleMarketingBlast failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not schedule/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
@@ -313,7 +313,7 @@ describe('MarketingBlasts', () => {
     await userEvent.type(screen.getByLabelText('Time'), when.time);
     await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
-    expect(await screen.findByText(/scheduleMarketingBlast failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not schedule/)).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText('Name this campaign'), 'July newsletter');
     await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
@@ -474,7 +474,7 @@ describe('MarketingBlasts', () => {
       render(<MarketingBlasts />);
       await userEvent.type(screen.getByLabelText('Date'), when.date);
       await userEvent.type(screen.getByLabelText('Time'), when.time);
-      expect(await screen.findByText(/previewMarketingBlastCopy failed: unavailable/)).toBeInTheDocument();
+      expect(await screen.findByText(/Could not show the preview: unavailable/)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Schedule blast' })).toBeEnabled();
     });
 
@@ -557,7 +557,7 @@ describe('MarketingBlasts', () => {
     render(<MarketingBlasts />);
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
-    expect(await screen.findByText(/cancelMarketingBlast failed: already_fired/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not cancel: already_fired/)).toBeInTheDocument();
     expect(screen.getByText('Too late')).toBeInTheDocument();
   });
 
@@ -723,7 +723,7 @@ describe('MarketingBlasts', () => {
   it('keeps building an audience possible when the saved segments fail to load', async () => {
     listAudienceSegments.mockRejectedValue(new Error('offline'));
     render(<MarketingBlasts />);
-    expect(await screen.findByText(/listAudienceSegments failed: offline/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: offline/)).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Build a filter' })).toBeChecked();
   });
 });

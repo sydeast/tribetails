@@ -104,7 +104,7 @@ class InvitesViewModelTest {
         val state = vm.uiState.value
         assertFalse(state.loaded)
         assertNotNull(state.error)
-        assertTrue(state.error!!.contains("listAllInvites failed"))
+        assertTrue(state.error!!.contains("Could not load"))
         assertTrue(state.error!!.contains("permission-denied"))
         assertTrue(state.all.isEmpty())
     }

@@ -55,10 +55,10 @@ class SecondaryKinfolkRenderTest {
     fun aFailedReadIsNamedNeverAnEmptyHousehold() = runDesktopComposeUiTest {
         setContent {
             AuntieAppTheme(themeMode = ThemeMode.DARK) {
-                SecondaryKinfolkContent(null, "listSecondaryKinfolk failed: permission-denied", {}, {}, {}, {})
+                SecondaryKinfolkContent(null, "Could not load: permission-denied", {}, {}, {}, {})
             }
         }
-        onNodeWithText("listSecondaryKinfolk failed: permission-denied").assertIsDisplayed()
+        onNodeWithText("Could not load: permission-denied").assertIsDisplayed()
         assertTrue(onAllNodesWithText("No secondary kinfolk on this household yet.").fetchSemanticsNodes().isEmpty())
     }
     @Test

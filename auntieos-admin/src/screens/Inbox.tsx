@@ -260,7 +260,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
           live &&
           setThreads({
             status: 'error',
-            message: `listConversations failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );
@@ -319,7 +319,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
         bulkReadInFlight.current = false;
         setBulkRead({
           status: 'failed',
-          message: `markAllThreadsRead failed: ${err instanceof Error ? err.message : 'Mark all read failed'}`,
+          message: `Could not save: ${err instanceof Error ? err.message : 'Mark all read failed'}`,
         });
       });
   }, [load]);

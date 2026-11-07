@@ -188,7 +188,7 @@ class InvitesScreenUiTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("listAllInvites failed", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Could not load", substring = true).assertIsDisplayed()
         assertEquals(
             0,
             composeRule.onAllNodesWithText("No invites have been sent from any household yet.")

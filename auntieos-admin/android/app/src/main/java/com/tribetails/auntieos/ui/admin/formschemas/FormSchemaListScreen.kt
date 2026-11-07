@@ -341,7 +341,7 @@ fun FormSchemaListScreen(
                         },
                     ) {
                         Text(
-                            text = "listFormSchemas failed: $msg",
+                            text = "Could not load: $msg",
                             style = AuntieTheme.typography.bodySmall,
                             color = c.textDim,
                         )

@@ -182,7 +182,7 @@ describe('BookingActions: Approve', () => {
     render(<BookingActions entry={entry({ status: 'DRAFT' })} onClose={onClose} />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await userEvent.click(screen.getByRole('button', { name: /yes, approve it/i }));
-    expect(await screen.findByText(/approve failed: permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not approve: permission-denied/i)).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -373,7 +373,7 @@ describe('BookingActions: Reschedule', () => {
     fireEvent.change(inputs[0] as HTMLInputElement, { target: { value: '2026-07-20T09:00' } });
     fireEvent.change(inputs[1] as HTMLInputElement, { target: { value: '2026-07-20T10:00' } });
     await userEvent.click(screen.getByRole('button', { name: /save new time/i }));
-    expect(await screen.findByText(/rescheduleBooking failed:.*not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not reschedule:.*not found/i)).toBeInTheDocument();
   });
 });
 /** #1154: the reschedule dialog's refusal over a busy block or another visit can be moved over. */
@@ -567,7 +567,7 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={onDone} />);
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await userEvent.click(screen.getByRole('button', { name: 'Yes, cancel the visit' }));
-    expect(await screen.findByText(/cancel failed: permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not cancel: permission-denied/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Yes, cancel the visit' })).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
@@ -658,7 +658,7 @@ describe('BookingStatusActions: Approve anyway (#1145)', () => {
     approveBooking.mockRejectedValueOnce(new Error('permission-denied'));
     render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
     await pressApprove();
-    expect(await screen.findByText(/approve failed: permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not approve: permission-denied/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
   });
 });

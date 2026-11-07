@@ -1022,7 +1022,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     // bar cannot tell them apart.
                     _uiState.value = _uiState.value.copy(
                         broadcastProgress = null,
-                        broadcastError = "getBroadcastProgress failed: ${e.message ?: "Read failed"}",
+                        broadcastError = "Could not load: ${e.message ?: "Read failed"}",
                     )
                 },
             )

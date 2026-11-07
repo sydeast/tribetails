@@ -264,8 +264,8 @@ interface FormSchemasProps {
  * callable, offers Retry, and refuses to render a false empty list while the
  * load is failing. `AsyncRegion` is that behavior expressed as a shared
  * component; this screen prefixes its error message with the callable name to
- * match the reference's "listFormSchemas failed: $msg" /
- * "deleteFormSchema failed: $msg" wording, since `AsyncRegion` itself does not
+ * match the reference's "Could not load: $msg" /
+ * "Could not delete: $msg" wording, since `AsyncRegion` itself does not
  * know which callable is loading.
  *
  * `listBusinessAdmins` resolves each row's `updatedBy` uid to an admin's email
@@ -305,7 +305,7 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
           live &&
           setSchemas({
             status: 'error',
-            message: `listFormSchemas failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );
@@ -372,7 +372,7 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
       setPendingDelete(null);
       setSchemas({
         status: 'error',
-        message: `deleteFormSchema failed: ${err instanceof Error ? err.message : 'Delete failed'}`,
+        message: `Could not delete: ${err instanceof Error ? err.message : 'Delete failed'}`,
         retry: load,
       });
     }
