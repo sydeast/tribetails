@@ -132,8 +132,15 @@ const ALLOWED_EAGER_PACKAGES = [
  * than a dispatcher export because every callable test mocks the dispatcher
  * whole. Measured at 423 after merging onto #1316, inside the 430
  * already allowed, so the bound did not move.
+ *
+ * 440 since #1610 (main had reached 430 exactly): that change adds
+ * `lib/broadcastMerge.ts`, the per-household merge-field fill the broadcast
+ * sender and its resume sweep share. Its imports (handlebars,
+ * `notifications/templateParsers.ts`, `lib/businessName.ts`) are all already
+ * resident through `lib/email.ts`, so it costs one module and no new edges.
+ * Not a structural change.
  */
-const MAX_OWN_EAGER_MODULES = 430;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;
