@@ -20,6 +20,7 @@ import {
   validateTimeBlocks,
   firstActiveOverlap,
   compareBlocksByStart,
+  blockOverlaps,
   type TimeBlockDraft,
 } from './businessOperations';
 
@@ -351,5 +352,35 @@ describe('resolveBusinessTimeZone (#1109)', () => {
     expect(resolveBusinessTimeZone('')).toBe('America/Chicago');
     expect(resolveBusinessTimeZone('   ')).toBe('America/Chicago');
     expect(resolveBusinessTimeZone('Mars/Olympus_Mons')).toBe('America/Chicago');
+  });
+});
+
+// ISSUE #1612: an overlap is reported on the clashing rows themselves, named or
+// not. `validateTimeBlocks` stops at the first problem ("Every block needs a
+// name."), so a new unnamed block sitting on top of Midday used to say nothing
+// about the overlap at all.
+describe('blockOverlaps', () => {
+  it('flags both rows of a clash even while one of them has no name yet', () => {
+    const rows = [block(), block({ id: 'new-block-2', label: '', startTime: '09:00', endTime: '13:00' })];
+    expect(blockOverlaps(rows)).toEqual([['a block with no name yet'], ['Midday']]);
+  });
+
+  it('flags every row a long block covers, not only its neighbour', () => {
+    const rows = [
+      block({ id: 'day', label: 'All day', startTime: '08:00', endTime: '18:00' }),
+      block({ id: 'am', label: 'Morning', startTime: '09:00', endTime: '10:00' }),
+      block({ id: 'pm', label: 'Afternoon', startTime: '14:00', endTime: '15:00' }),
+    ];
+    expect(blockOverlaps(rows)).toEqual([['Morning', 'Afternoon'], ['All day'], ['All day']]);
+  });
+
+  it('ignores touching ends, switched-off rows and rows whose times are not set yet', () => {
+    const rows = [
+      block(),
+      block({ id: 'eve', label: 'Evening', startTime: '15:00', endTime: '19:00' }),
+      block({ id: 'parked', label: 'Parked', startTime: '12:00', endTime: '13:00', active: false }),
+      block({ id: 'blank', label: '', startTime: '', endTime: '' }),
+    ];
+    expect(blockOverlaps(rows)).toEqual([[], [], [], []]);
   });
 });

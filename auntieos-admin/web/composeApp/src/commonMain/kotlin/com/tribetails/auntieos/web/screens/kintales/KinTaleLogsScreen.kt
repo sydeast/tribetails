@@ -49,6 +49,8 @@ import com.composables.icons.lucide.UserPlus
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.GeneratedDraft
+import com.tribetails.auntieos.web.data.draftsAwaitingReview
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.WriteResult
@@ -108,7 +110,15 @@ private sealed class TriageDialogState {
  * loudly. The triage dialogs write through the audited orphan-triage callables.
  */
 @Composable
-fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
+fun KinTaleLogsScreen(
+    onOpenReport: (sessionId: String) -> Unit = {},
+    /**
+     * #1563: opens one `generated_drafts` doc in Communicate, where a draft is
+     * reviewed, sent or deleted. Drafts were not listed here at all before, so a
+     * draft Home counted could not be found on this screen.
+     */
+    onOpenDraft: (GeneratedDraft) -> Unit = {},
+) {
     var showTemplates by remember { mutableStateOf(false) }
     if (showTemplates) {
         KinTaleTemplateEditorScreen(onClose = { showTemplates = false })
@@ -120,6 +130,10 @@ fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
     // recomposition (otherwise data flickers Loading -> Data each frame).
     val state by remember { client.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #1563: the other half of a KinTale. A KinTale in draft state is a
+    // `generated_drafts` doc (ruling D-2026-08-04); only the unsent ones are listed.
+    val draftsState by remember { client.generatedDraftsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val unsentDrafts = draftsAwaitingReview((draftsState as? FirestoreResult.Data)?.value.orEmpty())
 
     val scope = rememberReportingScope()
     var dialog by remember { mutableStateOf<TriageDialogState?>(null) }
@@ -204,7 +218,7 @@ fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
             }
 
             is FirestoreResult.Data -> {
-                if (s.value.isEmpty()) {
+                if (s.value.isEmpty() && unsentDrafts.isEmpty()) {
                     EmptyState()
                 } else {
                     val (orphans, nonOrphans) = partitionForDisplay(s.value)
@@ -223,15 +237,28 @@ fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
                         val grouped = sortReports(nonOrphans.filter { matchesSearch(it, search) }, sortMode)
                             .groupBy { bucketFor(it) }
 
+                        val drafts = unsentDrafts.filter { matchesDraftSearch(it, search) }
                         listOf(Bucket.Failed, Bucket.Drafts, Bucket.Sent).forEach { bucket ->
                             val items = grouped[bucket].orEmpty()
-                            if (items.isNotEmpty()) {
+                            val bucketDrafts = if (bucket == Bucket.Drafts) drafts else emptyList()
+                            if (items.isNotEmpty() || bucketDrafts.isNotEmpty()) {
                                 BucketGroup(
                                     bucket       = bucket,
                                     reports      = items,
+                                    drafts       = bucketDrafts,
                                     onOpenReport = onOpenReport,
+                                    onOpenDraft  = onOpenDraft,
                                 )
                             }
+                        }
+
+                        // A failed drafts read never passes for "no drafts".
+                        (draftsState as? FirestoreResult.Error)?.let { err ->
+                            Text(
+                                text  = "Drafts could not be loaded (${err.message}), so the Drafts count is missing them.",
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.error,
+                            )
                         }
                     }
                 }
@@ -687,16 +714,82 @@ private fun PickerRow(
 private fun BucketGroup(
     bucket: Bucket,
     reports: List<KinCareReport>,
+    drafts: List<GeneratedDraft> = emptyList(),
     onOpenReport: (sessionId: String) -> Unit = {},
+    onOpenDraft: (GeneratedDraft) -> Unit = {},
 ) {
     DenPanel(
         title = bucket.label,
-        trailing = { AuntieChip(label = "${reports.size}", mono = true) },
+        trailing = { AuntieChip(label = "${reports.size + drafts.size}", mono = true) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
             reports.forEach { ReportRow(it, onOpenReport) }
+            drafts.forEach { GeneratedDraftRow(it, onOpenDraft) }
         }
     }
+}
+
+/**
+ * #1563: one `generated_drafts` doc in the Drafts bucket. Same frame as
+ * [ReportRow]; the line under the household names the draft's type and date,
+ * because the generator writes every kind of message into this collection.
+ * Always tappable: it opens the draft in Communicate.
+ */
+@Composable
+private fun GeneratedDraftRow(draft: GeneratedDraft, onOpenDraft: (GeneratedDraft) -> Unit) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val name = draft.household()
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(c.surfaceGlass)
+            .border(dims.borderHairline, c.border, shape)
+            .clickable(onClickLabel = "Open draft") { onOpenDraft(draft) }
+            .padding(horizontal = 15.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(13.dp),
+    ) {
+        AuntieIconTile(icon = Lucide.FileText, tone = AuntieStatusTone.Neutral, size = 36.dp)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                text  = name.ifBlank { "Unnamed Kinfolk" },
+                style = if (name.isBlank()) {
+                    AuntieTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic, fontWeight = FontWeight.Normal)
+                } else {
+                    AuntieTheme.typography.titleMedium
+                },
+                color = if (name.isBlank()) c.textDim else c.textPrimary,
+            )
+            Text(draftSubmeta(draft), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+        // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
+        AuntieStatusPill(label = "Draft", tone = AuntieStatusTone.Neutral)
+    }
+}
+
+/**
+ * #1563: a draft row's line under the household: its type, then its date (with
+ * the year when it is not [currentYear], #1599). Pure; tested.
+ */
+internal fun draftSubmeta(
+    d: GeneratedDraft,
+    currentYear: Int = com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0,
+): String {
+    val type = d.type().replace('_', ' ').ifBlank { "visit report" }
+    val whenText = if (d.created().isBlank()) "Date TBD" else kinTaleShortDateTime(d.created(), currentYear)
+    return "$type · $whenText"
+}
+
+/** #1563: the list search over a draft (household, type, copy). Pure; tested. */
+internal fun matchesDraftSearch(d: GeneratedDraft, query: String): Boolean {
+    val q = query.lowercase().trim()
+    if (q.isBlank()) return true
+    return d.household().lowercase().contains(q) ||
+        d.type().replace('_', ' ').lowercase().contains(q) ||
+        d.body().lowercase().contains(q)
 }
 
 /**

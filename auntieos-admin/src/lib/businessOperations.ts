@@ -329,6 +329,47 @@ export function firstActiveOverlap(sorted: readonly TimeBlockDefinition[]): [str
   return null;
 }
 
+/**
+ * ISSUE #1612: for each row, the names of the other ACTIVE rows it overlaps
+ * (empty when none), so the clash can be shown on the rows themselves.
+ *
+ * Labels play no part in the check. `validateTimeBlocks` stops at its first
+ * problem, and a new row has no name yet, so its banner said "Every block needs
+ * a name." while the new row sat on top of Midday. Rows whose times are not a
+ * valid HH:mm pair yet, or that end before they start, are skipped: they have
+ * their own message, and "overlaps" would be a guess. Touching ends do not
+ * overlap, the same half-open rule as `firstActiveOverlap`.
+ */
+export function blockOverlaps(drafts: readonly TimeBlockDraft[]): string[][] {
+  const usable = (d: TimeBlockDraft) =>
+    d.active && HHMM_REGEX.test(d.startTime) && HHMM_REGEX.test(d.endTime) && d.startTime < d.endTime;
+  const name = (d: TimeBlockDraft) => d.label.trim() || 'a block with no name yet';
+  return drafts.map((row, i) => {
+    if (!usable(row)) return [];
+    return drafts
+      .filter((other, j) => j !== i && usable(other))
+      .filter((other) => other.startTime < row.endTime && row.startTime < other.endTime)
+      .map(name);
+  });
+}
+
+/** "Overlaps Midday." / "Overlaps Morning and Midday." / "Overlaps A, B and C." */
+export function overlapNote(names: readonly string[]): string {
+  if (names.length <= 1) return `Overlaps ${names[0] ?? ''}.`;
+  return `Overlaps ${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}.`;
+}
+
+/**
+ * ISSUE #1612: when `kincareReminderCron` sends the visit reminder, the one
+ * phrase both Booking rules (where it is switched on and off) and Notifications
+ * (which says it has no hour) use. This is a fact about the server, not a value
+ * the operator sets: the cron runs hourly and reminds once per confirmed visit
+ * starting 24 to 48 hours out (`WINDOW_LOWER_MS` / `WINDOW_UPPER_MS` in
+ * `mytribe/functions/src/scheduled/kincareReminderCron.ts`). Change it there
+ * first, then here.
+ */
+export const VISIT_REMINDER_TIMING = '24 to 48 hours before';
+
 /** The end time a NEW block gets: `startTime` plus the operator's default block length, capped at 23:59. */
 export function defaultBlockEnd(startTime: string, durationHours: number): string {
   if (!HHMM_REGEX.test(startTime)) return '23:59';

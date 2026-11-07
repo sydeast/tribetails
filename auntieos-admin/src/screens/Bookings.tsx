@@ -7,6 +7,7 @@ import {
   bookingState,
   bookingStateInfo,
   initialsFor,
+  isBookingInFlight,
   EMPTY_BOOKING_CATALOG,
   type BookingCatalog,
   type BookingState,
@@ -129,7 +130,10 @@ const SECTIONS: readonly SectionDef[] = [
   {
     key: 'scheduled',
     label: 'Scheduled',
-    test: (s) => s === 'scheduled',
+    // #1578: a visit the Auntie is on her way to, at, or has just left is
+    // still on the books until it is completed or cancelled, so it stays here
+    // rather than falling into History as an unknown status.
+    test: (s) => s === 'scheduled' || isBookingInFlight(s),
     emptyHint: 'Nothing on the books. A request moves here once you approve it.',
     // #699: a to-do list reads soonest first. `BOOKINGS_QUERY` orders by
     // `createdAt` (the one field every row genuinely carries), so the streamed
@@ -165,6 +169,10 @@ const BOOKING_STATE_TONE: Record<BookingState, DenTone> = {
   draft: 'error',
   pending: 'orange',
   scheduled: 'teal',
+  // #1578: the in-visit pills Auntie Time wears (`SESSION_STATE_TONE`).
+  onMyWay: 'orange',
+  arrived: 'teal',
+  departed: 'purple',
   completed: 'purple',
   cancelled: 'muted',
   unknown: 'warning',
@@ -1167,6 +1175,11 @@ const CARD_ACTIONS: Record<BookingState, readonly { kind: BookingActionKind; lab
     { kind: 'reject', label: 'Reject' },
   ],
   scheduled: [{ kind: 'cancel', label: 'Cancel' }],
+  // #1578: a visit in flight can still be completed or called off; the card
+  // offers Cancel, the sheet offers both, the same as a scheduled one.
+  onMyWay: [{ kind: 'cancel', label: 'Cancel' }],
+  arrived: [{ kind: 'cancel', label: 'Cancel' }],
+  departed: [{ kind: 'cancel', label: 'Cancel' }],
   completed: [],
   cancelled: [],
   unknown: [],

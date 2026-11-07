@@ -43,6 +43,17 @@ class JoinDateTest {
         assertEquals(JOIN_DATE_RANGE_MESSAGE, joinDateRangeError("sometime", "07/24/2026", today))
     }
 
+    /** #1602: one shape for every profile; only a sound day is formatted and chipped. */
+    @Test
+    fun theProfileFormatsASoundDayAndNothingElse() {
+        assertEquals("Jun 1, 2026", profileJoinDateLabel("2026-06-01", today))
+        assertEquals("Jan 4, 2026", profileJoinDateLabel("2026-01-04T12:00:00Z", today))
+        assertNull(profileJoinDateLabel("March 5", today))
+        assertNull(profileJoinDateLabel("1900-01-15", today))
+        assertNull(profileJoinDateLabel("2099-06-01", today))
+        assertNull(profileJoinDateLabel("", today))
+    }
+
     @Test
     fun aPickedJoinDateIsWrittenAndAnUntouchedOneIsNot() {
         val loaded = Kinfolk(_id = "k1", joinDate = "2026-01-04")

@@ -30,6 +30,13 @@
   padding-bottom: var(--space-1);
 }
 
+/* ISSUE #1612: the clash note under a row spans the whole row, below the
+   controls it is about, in the warning tone of the save banner. */
+.bookingRules__overlap {
+  grid-column: 1 / -1;
+  color: var(--color-warning);
+}
+
 @media (max-width: 640px) {
   .bookingRules__block {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
