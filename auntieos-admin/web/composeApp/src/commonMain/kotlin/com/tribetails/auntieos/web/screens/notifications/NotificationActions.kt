@@ -56,8 +56,16 @@ fun notificationIsRead(entry: NotificationEntry): Boolean = entry.isRead
  * Which quick actions apply to [entry]. Order is presentation order. Rules:
  *   - exactly one of MarkRead / MarkUnread, by current readAt state,
  *   - OpenTarget only when targetType is navigable AND targetId is non-blank,
- *   - ApproveBooking + DenyBooking only when targetType == "booking" with a targetId,
+ *   - ApproveBooking + DenyBooking only on a booking request still waiting on a
+ *     decision: key `kincare.requested`, targetType "booking" with a targetId,
+ *     and no `requestResolution` stamp ([requestOutcomeLabel] is null),
  *   - Archive is always offered.
+ *
+ * Approve/Deny used to be offered on EVERY booking-targeted row, a booking
+ * confirmation included. Web and Android narrowed it to `kincare.requested` in
+ * #706 (operator: "most of these don't need most of these ctas"); this build
+ * never got that change. #1647 then has the server stamp an answered request,
+ * so a request booked or declined anywhere stops offering a decision here too.
  * Pure; unit-tested.
  */
 fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
@@ -78,13 +86,44 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
         actions += NotificationAction.CreateQuote
     }
 
-    if (entry.targetType.trim().lowercase() == "booking" && entry.targetId.isNotBlank()) {
+    if (
+        entry.key.trim() == PENDING_BOOKING_REQUEST_KEY &&
+        requestOutcomeLabel(entry) == null &&
+        entry.targetType.trim().lowercase() == "booking" &&
+        entry.targetId.isNotBlank()
+    ) {
         actions += NotificationAction.ApproveBooking
         actions += NotificationAction.DenyBooking
     }
 
     actions += NotificationAction.Archive
     return actions
+}
+
+/**
+ * The one catalog key that means "a booking request is waiting on a decision"
+ * (mytribe/functions/src/notifications/catalog.ts: "Kinfolk requested a KinCare
+ * visit"), fired once at the moment of the ask by onBookingEnvelopeCreate.ts.
+ */
+const val PENDING_BOOKING_REQUEST_KEY = "kincare.requested"
+
+/**
+ * #1647: the operator-facing word for how a booking request ended, read off the
+ * `requestResolution` stamp the server writes onto the request's rows once it is
+ * booked or declined. Null while the request is still waiting, and on every
+ * other key. An unrecognised non-blank stamp still counts as answered
+ * ("Answered"): the server only stamps a request that has left `requested`.
+ * Mirrors web's `requestOutcomeLabel`. Pure; unit-tested.
+ */
+fun requestOutcomeLabel(entry: NotificationEntry): String? {
+    if (entry.key.trim() != PENDING_BOOKING_REQUEST_KEY) return null
+    return when (entry.requestResolution.trim().lowercase()) {
+        "" -> null
+        "booked" -> "Booked"
+        "declined" -> "Declined"
+        "cancelled" -> "Cancelled"
+        else -> "Answered"
+    }
 }
 
 /** #1003: the admin notice for a card payment that could not be applied. */

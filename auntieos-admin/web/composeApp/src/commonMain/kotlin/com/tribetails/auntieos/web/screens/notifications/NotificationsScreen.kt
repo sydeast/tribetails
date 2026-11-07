@@ -88,7 +88,8 @@ import kotlinx.coroutines.launch
  *   - dismiss/archive      -> archiveNotification (single) + bulkArchiveNotifications
  *     (multi-select), with archived rows filtered out of the default list,
  *   - approve / deny       -> batchUpdateBookings([targetId], APPROVE|REJECT),
- *     shown ONLY when targetType == "booking".
+ *     shown ONLY on a `kincare.requested` row still waiting on a decision
+ *     (#706, #1647); an answered request shows its outcome instead.
  * Every action is fail-loud: a WriteResult.Err surfaces the server message in an
  * error banner and the optimistic stream re-renders truth on the next snapshot.
  *
@@ -570,6 +571,14 @@ private fun NotificationRow(
                 tone = statusTone(entry.status),
                 showDot = true,
             )
+            // #1647: an answered request says how it ended, where the Approve
+            // and Deny buttons used to sit.
+            requestOutcomeLabel(entry)?.let { outcome ->
+                AuntieStatusPill(
+                    label = outcome,
+                    tone = if (outcome == "Booked") AuntieStatusTone.Success else AuntieStatusTone.Neutral,
+                )
+            }
 
             // Real, fail-loud quick actions (Stage 2 Step 4). Each maps to a
             // deployed callable; the parent surfaces any error loudly.
