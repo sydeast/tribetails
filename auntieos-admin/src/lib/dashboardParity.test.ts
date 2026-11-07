@@ -401,13 +401,31 @@ describe('pendingTaleRows and pendingDraftCount', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.title).toBe('visit report');
     expect(rows[0]?.blurb).toBe('Biscuit had a lovely time.');
-    expect(rows[0]?.meta).toBe('GENERATED · Sara · 2026-07-20');
+    // #1598: "Draft" everywhere, never the stored status word.
+    expect(rows[0]?.meta).toBe('DRAFT · Sara · 2026-07-20');
     // The Sara-Sara defect: the name must not also be the blurb.
     expect(rows[0]?.blurb).not.toContain('Sara');
   });
 
   it('drops a content-less shell draft rather than showing an empty row', () => {
     expect(pendingTaleRows([draft({ generatedCopy: '   ' })])).toEqual([]);
+  });
+
+  it('#1563: drops a draft already sent as a KinTale, which is waiting on nobody', () => {
+    const rows = pendingTaleRows([draft({ _id: 'sent', publishedReportId: 'r1' }), draft({ _id: 'open' })]);
+    expect(rows.map((r) => r.id)).toEqual(['open']);
+  });
+
+  it('#1563: lists only drafts still waiting, since each row opens its draft', () => {
+    const rows = pendingTaleRows([
+      draft({ _id: 'approved', status: 'approved' }),
+      draft({ _id: 'gen', status: 'generated' }),
+      draft({ _id: 'blank', status: '' }),
+      draft({ _id: 'pend', status: 'PENDING' }),
+    ]);
+    expect(rows.map((r) => r.id)).toEqual(['gen', 'blank', 'pend']);
+    // #1598: a `pending` draft reads DRAFT on Home, as it does in KinTales.
+    expect(rows.map((r) => r.meta.split(' · ')[0])).toEqual(['DRAFT', 'DRAFT', 'DRAFT']);
   });
 
   it('skips blank leading lines to find the real first line of copy', () => {
@@ -445,6 +463,14 @@ describe('pendingTaleRows and pendingDraftCount', () => {
       draft({ _id: 'e', status: 'mystery' }),
     ];
     expect(pendingDraftCount(rows)).toBe(3);
+  });
+  it('does not count a draft already sent as a KinTale (#1563), as the list and the rows do not', () => {
+    const rows = [
+      draft({ _id: 'a', status: 'generated' }),
+      draft({ _id: 'b', status: 'generated', publishedReportId: 'rep-1' }),
+    ];
+    expect(pendingDraftCount(rows)).toBe(1);
+    expect(pendingTaleRows(rows)).toHaveLength(1);
   });
 });
 

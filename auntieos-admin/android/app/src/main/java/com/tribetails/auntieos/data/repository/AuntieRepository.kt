@@ -64,6 +64,12 @@ private val KINFOLK_CREATE_EXCLUDED_FIELDS = setOf(
  */
 data class KinfolkCreated(val kinfolk: Kinfolk, val duplicateOf: String?)
 
+/**
+ * #1563: how many `generated_drafts` the KinTales list reads. The same 50 the web
+ * list reads (`GENERATED_DRAFTS_MAX` in `src/api/drafts.ts`).
+ */
+const val GENERATED_DRAFTS_LIST_MAX = 50
+
 class AuntieRepository(
     private val n8n: N8nApi,
     /**
@@ -1529,8 +1535,27 @@ class AuntieRepository(
         },
     )
 
-    suspend fun getRecentDrafts(): Result<List<Draft>> = runCatchingCancellable {
-        AuntieLog.d("Fetching recent drafts")
+    /**
+     * Home's "KinTales pending": the three newest drafts still waiting on a
+     * decision. #1563: an approved or already-sent draft is not pending, and the
+     * panel's rows and its "Review & send" button now open what they list, so
+     * listing one would open a draft there is nothing left to do with. Read a
+     * little wider than three so a run of decided drafts does not empty it.
+     */
+    suspend fun getRecentDrafts(): Result<List<Draft>> = getGeneratedDrafts(limit = 10)
+        .map { drafts -> drafts.filter { it.isUnsent }.take(3) }
+        .onFailure { AuntieLog.e("Failed to get recent drafts", it) }
+    /**
+     * #1563: the newest [limit] `generated_drafts` docs that have NOT been sent,
+     * decoded from both spellings ([draftFromFields]). Home's "KinTales pending"
+     * reads three; the KinTales list reads [GENERATED_DRAFTS_LIST_MAX], the same
+     * cap the web list uses.
+     *
+     * A draft already sent as a KinTale (`publishedReportId` set) is dropped: the
+     * household has the report, and the KinTales list shows that instead.
+     */
+    suspend fun getGeneratedDrafts(limit: Int = GENERATED_DRAFTS_LIST_MAX): Result<List<Draft>> = runCatchingCancellable {
+        AuntieLog.d("Fetching generated drafts (limit $limit)")
         authGate.ensureAuthenticated()
         scoped.scopedQuery(
             "generated_drafts",
@@ -1540,19 +1565,53 @@ class AuntieRepository(
             // field == testScope; see generate.js). Sort + cap client-side to avoid a
             // composite (kinfolk_id, createdOn) index; the sandbox draft set is tiny.
             sandbox = { q ->
-                q.get().await()
-                    .toObjects(Draft::class.java)
+                q.get().await().documents
+                    .map { draftFromFields(it.id, it.data.orEmpty()) }
+                    .filterNot { it.isPublished }
                     .sortedByDescending { it.createdOn }
-                    .take(3)
+                    .take(limit)
             },
             unscoped = { col ->
                 col.orderBy("createdOn", com.google.firebase.firestore.Query.Direction.DESCENDING)
-                    .limit(3)
-                    .get().await()
-                    .toObjects(Draft::class.java)
+                    .limit(limit.toLong())
+                    .get().await().documents
+                    .map { draftFromFields(it.id, it.data.orEmpty()) }
+                    .filterNot { it.isPublished }
             },
         )
-    }.onFailure { AuntieLog.e("Failed to get recent drafts", it) }
+    }.onFailure { AuntieLog.e("Failed to get generated drafts", it) }
+    /** #1563: one `generated_drafts` doc by id, both spellings, or null when it is gone. */
+    suspend fun getGeneratedDraft(draftId: String): Result<Draft?> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(draftId.isNotBlank()) { "draftId required" }
+        val snap = firestore.collection("generated_drafts").document(draftId).get().await()
+        if (snap.exists()) draftFromFields(snap.id, snap.data.orEmpty()) else null
+    }.onFailure { AuntieLog.e("Failed to read draft $draftId", it) }
+    /**
+     * #1563: send a generated KinTale draft to its household. The
+     * `publishGeneratedDraft` callable writes the SENT `kin_care_reports` doc the
+     * portal lists and marks the draft sent, in one transaction, and answers a
+     * repeat with the first report's id. Returns that report id.
+     */
+    suspend fun publishGeneratedDraft(draftId: String, bodyCopy: String, title: String): Result<String> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(draftId.isNotBlank()) { "draftId required" }
+        val payload = buildMap<String, Any> {
+            put("draftId", draftId)
+            put("bodyCopy", bodyCopy)
+            if (title.isNotBlank()) put("title", title.trim())
+        }
+        val raw = functions.getHttpsCallable("publishGeneratedDraft").call(payload).awaitCallable().data as? Map<*, *>
+        (raw?.get("reportId") as? String)?.takeIf { it.isNotBlank() }
+            ?: error("publishGeneratedDraft returned no reportId")
+    }.onFailure { AuntieLog.e("Failed to send draft $draftId", it) }
+    /** #1563: delete an unsent generated draft. The server refuses one already sent. */
+    suspend fun deleteGeneratedDraft(draftId: String): Result<Unit> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(draftId.isNotBlank()) { "draftId required" }
+        functions.getHttpsCallable("deleteGeneratedDraft").call(mapOf("draftId" to draftId)).awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to delete draft $draftId", it) }
 
     suspend fun getKinfolkCount(): Result<Int> = runCatchingCancellable {
         authGate.ensureAuthenticated()
@@ -1580,12 +1639,15 @@ class AuntieRepository(
             field = "kinfolk_id",
             sandbox = { q ->
                 q.get().await().documents.count {
-                    com.tribetails.auntieos.domain.isDraftAwaitingReview(it.getString("status"))
+                    com.tribetails.auntieos.domain.isDraftAwaitingReview(it.getString("status")) &&
+                        it.getString("publishedReportId").isNullOrBlank()
                 }
             },
             unscoped = { col ->
+                // #1563: a draft already sent as a KinTale is waiting on nobody.
                 col.get().await().documents.count {
-                    com.tribetails.auntieos.domain.isDraftAwaitingReview(it.getString("status"))
+                    com.tribetails.auntieos.domain.isDraftAwaitingReview(it.getString("status")) &&
+                        it.getString("publishedReportId").isNullOrBlank()
                 }
             },
         )

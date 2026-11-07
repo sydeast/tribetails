@@ -3,7 +3,7 @@ import { sessionState, sessionDayKey, sessionHousehold, shiftDayIso } from './se
 import { formatCentsUsd, isoDatePrefixOrNull } from './invoiceFormat';
 import { str, arr } from './coerce';
 import { isKinInCare } from '../api/directory';
-import { draftStatusAsKinTaleStatus } from './kinTaleList';
+import { draftStatusAsKinTaleStatus, isPublishedDraft } from './kinTaleList';
 import { isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import type { GeneratedDraftRow } from '../api/drafts';
 import type { ConversationSummary } from '../api/inbox';
@@ -800,6 +800,12 @@ export function pendingTaleRows(
 ): TaleRow[] {
   return drafts
     .filter((d) => str(d.generatedCopy).trim() !== '')
+    // #1563: only drafts still waiting on a decision. The rows and the button
+    // open what they list, so an approved or already-sent draft here would open
+    // a draft there is nothing left to do with. Same positive status match the
+    // KinTales list makes (`draftStatusAsKinTaleStatus`).
+    .filter((d) => str(d.publishedReportId).trim() === '')
+    .filter((d) => draftStatusAsKinTaleStatus(str(d.status)) === 'DRAFT')
     .slice(0, Math.max(0, limit))
     .map((d) => {
       const type = str(d.communicationType).replace(/_/g, ' ').trim();
@@ -810,7 +816,11 @@ export function pendingTaleRows(
           .find((line) => line !== '') ?? '';
       const household = str(d.kinfolkName).trim();
       const created = str(d.createdOn).slice(0, 10);
-      const meta = [str(d.status).trim().toUpperCase() || 'DRAFT', household, created]
+      // #1598 ruling (2026-11-05): a written but unsent KinTale is a "Draft"
+      // everywhere, Home included. Every row here is unsent (filtered above),
+      // so the word is constant; the stored status (`pending`, `generated`)
+      // printed as PENDING / GENERATED and disagreed with KinTales > Drafts.
+      const meta = ['DRAFT', household, created]
         .filter((part) => part !== '')
         .join(' · ');
       return {
@@ -829,8 +839,10 @@ export function pendingTaleRows(
  * blank). Approved and anything unrecognised are not counted, as there.
  */
 export function pendingDraftCount(drafts: readonly GeneratedDraftRow[]): number {
+  // #1563: a draft already sent as a report is a Sent row on the list, not a draft.
   return drafts.reduce(
-    (n, d) => (draftStatusAsKinTaleStatus(str(d.status)).toUpperCase() === 'DRAFT' ? n + 1 : n),
+    (n, d) =>
+      !isPublishedDraft(d) && draftStatusAsKinTaleStatus(str(d.status)).toUpperCase() === 'DRAFT' ? n + 1 : n,
     0,
   );
 }

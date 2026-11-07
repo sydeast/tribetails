@@ -99,7 +99,8 @@ export const DASH_LABELS: Readonly<Record<DashKey, string>> = {
 interface WidgetProps {
   onOpenInbox: () => void;
   onOpenSessions: () => void;
-  onOpenCommunicate: () => void;
+  /** Communicate, on one stored draft when an id is given (#1563). */
+  onOpenCommunicate: (draftId: string | null) => void;
   /** KinTales, widened to the whole archive so every draft the Home count includes is listed. */
   onOpenKinTales: () => void;
   /** Directory's Kin tab, filtered to the pets "Kin in care" counts. */
@@ -129,8 +130,8 @@ const WEB_WIDGETS: Readonly<Record<DashKey, (props: WidgetProps) => ReactElement
     />
   ),
   todaysPack: ({ onOpenSessions }) => <TodaysPackWidget onOpenSessions={onOpenSessions} />,
-  kintales: ({ onOpenCommunicate, onOpenKinTales }) => (
-    <KinTalesPendingWidget onReviewTales={onOpenCommunicate} onOpenTale={onOpenKinTales} />
+  kintales: ({ onOpenCommunicate }) => (
+    <KinTalesPendingWidget onReviewTales={onOpenCommunicate} />
   ),
   cashFlow: () => <CashFlowWidget />,
   gatekeeper: () => <GatekeeperWidget />,
@@ -378,7 +379,9 @@ export function Home() {
                 widgetKey={w.key}
                 onOpenInbox={() => void navigate({ to: '/inbox' })}
                 onOpenSessions={() => void navigate({ to: '/sessions' })}
-                onOpenCommunicate={() => void navigate({ to: '/communicate' })}
+                onOpenCommunicate={(draftId) =>
+                  void navigate({ to: '/communicate', search: draftId !== null ? { draftId } : {} })
+                }
                 onOpenKinTales={() => void navigate({ to: '/kintales', search: { range: 'all' } })}
                 onOpenKinInCare={() =>
                   void navigate({ to: '/directory', search: { tab: 'kin', inCare: '1' } })

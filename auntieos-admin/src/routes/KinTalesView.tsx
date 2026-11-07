@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { KinTales } from '../screens/KinTales';
 import { isDateRangeKey } from '../components/ListToolbar';
 import { KinTaleCompose } from '../screens/KinTaleCompose';
 import { KinTaleDetail } from '../screens/KinTaleDetail';
+import { draftIdFromListRowId } from '../lib/kinTaleList';
+import { LoadingRow } from '../components/LoadingRow';
 
 /**
  * Three-state router wrapper, replacing the old two-state (list/compose)
@@ -21,6 +23,12 @@ import { KinTaleDetail } from '../screens/KinTaleDetail';
  * never an implicit "start editing". Editing is its own explicit affordance,
  * `KinTaleDetail`'s own Edit button, which routes to `compose` carrying the
  * same `kinTaleId`. Both `detail` and `compose` return to `list` on close.
+ *
+ * A DRAFT ROW IS NOT A REPORT (#1563). The list joins `generated_drafts` into
+ * its Drafts bucket under namespaced ids (`generated_drafts/<id>`), and the
+ * detail screen reads `kin_care_reports`, so a draft id handed to it can only
+ * ever say "No KinTale found". A draft opens where drafts are reviewed and
+ * sent: Communicate's Personalize, `/communicate?draftId=<bare id>`.
  */
 type KinTalesMode =
   | { kind: 'list' }
@@ -39,8 +47,13 @@ export function KinTalesView() {
   // bouncing back off a stale URL.
   const { kinTaleId, sessionId, range } = useSearch({ from: '/admin/kintales' });
   const navigate = useNavigate();
+  // A draft named in the URL goes to Communicate before anything renders here.
+  const linkedDraftId = kinTaleId ? draftIdFromListRowId(kinTaleId) : null;
+  useEffect(() => {
+    if (linkedDraftId !== null) void navigate({ to: '/communicate', search: { draftId: linkedDraftId } });
+  }, [linkedDraftId, navigate]);
   const [mode, setMode] = useState<KinTalesMode>(() => {
-    if (kinTaleId) return { kind: 'detail', kinTaleId };
+    if (kinTaleId && draftIdFromListRowId(kinTaleId) === null) return { kind: 'detail', kinTaleId };
     if (sessionId) return { kind: 'compose', sessionId };
     return { kind: 'list' };
   });
@@ -55,6 +68,7 @@ export function KinTalesView() {
     if (kinTaleId || sessionId) void navigate({ to: '/kintales', search: {} });
   }
 
+  if (linkedDraftId !== null) return <LoadingRow label="Opening the draft…" />;
   if (mode.kind === 'compose') {
     return (
       <KinTaleCompose
@@ -79,7 +93,14 @@ export function KinTalesView() {
   // composer of its own.
   return (
     <KinTales
-      onSelect={(id) => setMode({ kind: 'detail', kinTaleId: id })}
+      onSelect={(id) => {
+        const draftId = draftIdFromListRowId(id);
+        if (draftId !== null) {
+          void navigate({ to: '/communicate', search: { draftId } });
+          return;
+        }
+        setMode({ kind: 'detail', kinTaleId: id });
+      }}
       {...(isDateRangeKey(range) ? { initialRange: range } : {})}
     />
   );

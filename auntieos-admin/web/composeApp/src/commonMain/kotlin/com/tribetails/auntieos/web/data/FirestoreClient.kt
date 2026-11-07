@@ -106,6 +106,29 @@ class FirestoreClient {
      */
     suspend fun approveGeneratedDraft(draftId: String, editedCopy: String): WriteResult<Unit> =
         platformApproveGeneratedDraft(draftId, editedCopy)
+    /**
+     * #1563: send a KinTale draft to its household through the
+     * `publishGeneratedDraft` callable, which writes the SENT `kin_care_reports`
+     * doc the portal lists and marks the draft sent in one transaction, and
+     * answers a repeat with the first report. Returns that report id.
+     */
+    suspend fun publishGeneratedDraft(draftId: String, bodyCopy: String, title: String): WriteResult<String> {
+        val payload = publishGeneratedDraftPayloadOf(draftId, bodyCopy, title)
+        return when (val r = platformInvokeCallable("publishGeneratedDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> decodePublishedReportId(r.value)
+                ?.let { WriteResult.Ok(it) }
+                ?: WriteResult.Err("publishGeneratedDraft returned no reportId")
+        }
+    }
+    /** #1563: delete an unsent generated draft. The server refuses one already sent. */
+    suspend fun deleteGeneratedDraft(draftId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("draftId", JsonPrimitive(draftId.trim())) }
+        return when (val r = platformInvokeCallable("deleteGeneratedDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
     fun reportsStream():    Flow<FirestoreResult<List<KinCareReport>>>  {
         val scope = kinfolkScopeFilter(testMode)
         return if (scope != null) platformReportsForKinfolkStream(scope).scopeKinfolk(testMode) { it.kinfolkId }
@@ -3448,7 +3471,42 @@ data class GeneratedDraft(
     val kinfolkName: String = "",
     val createdOn: String = "",
     val approvedAt: String = "",
-)
+    // #1563: the SECOND writer's spellings. `web/functions/generate.js` writes this
+    // same collection in snake_case, so a draft it wrote decoded here with no
+    // household and no copy. Read through the accessors below, which take the
+    // first non-blank of the two.
+    val kinfolk_id: String = "",
+    val kinfolk_name: String = "",
+    val generated_copy: String = "",
+    val communication_type: String = "",
+    val generated_at: String = "",
+    val generatedTitle: String = "",
+    val generated_title: String = "",
+    /** #1563: the kin_care_reports id this draft was sent as; set by `publishGeneratedDraft`. */
+    val publishedReportId: String = "",
+) {
+    fun householdId(): String = kinfolkId.trim().ifBlank { kinfolk_id.trim() }
+    fun household(): String = kinfolkName.trim().ifBlank { kinfolk_name.trim() }
+    fun body(): String = generatedCopy.ifBlank { generated_copy }
+    fun type(): String = communicationType.trim().ifBlank { communication_type.trim() }
+    fun title(): String = generatedTitle.trim().ifBlank { generated_title.trim() }
+    fun created(): String = createdOn.trim().ifBlank { generated_at.trim() }
+    /** Already sent to the household as a KinTale. */
+    val isPublished: Boolean get() = publishedReportId.isNotBlank()
+    /**
+     * Not sent, and in a status that means nobody has signed it off: `pending`
+     * (n8n era), `generated` (generate.js) or blank. The positive match the web
+     * list makes; `approved` and anything unknown are not "waiting".
+     */
+    val isUnsent: Boolean get() = !isPublished && status.trim().lowercase() in setOf("pending", "generated", "")
+}
+/**
+ * #1563: the drafts waiting on a decision, newest first: Home's "KinTales
+ * pending" rows and its "KinTales to review" count, and the KinTales list's
+ * Drafts bucket. Pure; tested.
+ */
+fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
+    drafts.filter { it.isUnsent }.sortedByDescending { it.created() }
 
 /**
  * KinCareReport - the "KinTale" visit recap that goes home to a kinfolk after a
@@ -4694,3 +4752,16 @@ data class UserProfile(
             return ""
         }
 }
+
+/** #1563: the `publishGeneratedDraft` request body. A blank title is left out (the draft's own is used). Pure; tested. */
+internal fun publishGeneratedDraftPayloadOf(draftId: String, bodyCopy: String, title: String): JsonObject =
+    buildJsonObject {
+        put("draftId", JsonPrimitive(draftId.trim()))
+        put("bodyCopy", JsonPrimitive(bodyCopy))
+        if (title.isNotBlank()) put("title", JsonPrimitive(title.trim()))
+    }
+/** #1563: the report id out of a `publishGeneratedDraft` reply, or null. Pure; tested. */
+internal fun decodePublishedReportId(raw: String): String? =
+    runCatching {
+        Json.parseToJsonElement(raw).jsonObject["reportId"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()?.takeIf { it.isNotBlank() }

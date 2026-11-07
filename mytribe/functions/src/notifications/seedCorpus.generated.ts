@@ -82,6 +82,14 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     pushTxt: "Invite expired. The invite to {{invitedEmail}} expired. Tap to resend.\n",
   },
   {
+    key: "invite.verify-email",
+    emailSubject: "Confirm your email to finish joining",
+    emailHeadline: "Confirm your email to finish joining",
+    emailContent: "<p>Hi, before I can add {{invitedEmail}} to your household on MyTribe, I need to know this address is yours.</p><p><a href=\"{{verifyUrl}}\" class=\"button\">Confirm my email</a></p><p>Once it is confirmed, open your invite and accept it again: <a href=\"{{claimUrl}}\">open your invite</a>.</p><p>If you were not expecting this, you can ignore it.</p><p>Take care,<br><strong>Auntie</strong></p>",
+    smsTxt: "Confirm your email to finish joining MyTribe. The link is in your inbox at {{invitedEmail}}.\n",
+    pushTxt: "Confirm your email. The link to finish joining MyTribe is in your inbox at {{invitedEmail}}.\n",
+  },
+  {
     key: "invoice.charge.failed",
     emailSubject: "Your payment didn't go through",
     emailHeadline: "Your payment didn't go through",
