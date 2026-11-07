@@ -31,6 +31,7 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import kotlinx.coroutines.launch
+import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -154,6 +155,7 @@ fun VisitInternalNotesPanel(
 }
 
 /** "Admin only · Syd · Nov 5, 3:00 PM"; the session's older text reads "On the visit record". */
+@OptIn(ExperimentalTime::class)
 internal fun visitNoteByline(note: VisitInternalNote, zone: TimeZone): String {
     if (note.source == "visitRecord") return "On the visit record"
     val who = note.authorName?.takeIf { it.isNotBlank() } ?: when (note.authorRole) {
