@@ -157,8 +157,9 @@ class HouseholdMembersViewModel(
     fun savePerson() {
         val draft = _uiState.value.personDraft ?: return
         if (_uiState.value.personSaving) return
-        if (draft.name.isBlank()) {
-            _uiState.value = _uiState.value.copy(personError = MembersRepository.SECONDARY_KINFOLK_NAME_REQUIRED)
+        // #1593: name, phone and email are checked here first, not 4 s later by the server.
+        secondaryKinfolkDraftError(draft.name, draft.phone, draft.email)?.let { refusal ->
+            _uiState.value = _uiState.value.copy(personError = refusal)
             return
         }
         _uiState.value = _uiState.value.copy(personSaving = true, personError = null)
