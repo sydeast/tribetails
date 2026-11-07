@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.admin.formschemas
 
+import com.tribetails.auntieos.web.screens.media.rememberUploaderNames
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -110,6 +111,13 @@ internal fun deleteResultMessage(result: WriteResult<Unit>): String? = when (res
  * back null (a landed delete). Pure + unit-tested for the same reason
  * [deleteResultMessage] is: the wording is covered without a live callable.
  */
+/**
+ * #1592: who a schema's Updated by names: the person (listStaff) when staff
+ * knows the uid, else the stored value as it is.
+ */
+internal fun updatedByLabel(updatedBy: String, names: Map<String, String>): String =
+    names[updatedBy.trim()] ?: updatedBy
+
 internal fun deletedNoticeMessage(target: FormSchemaSummary): String =
     "Deleted ${target.name.ifBlank { target.id }}."
 
@@ -117,6 +125,8 @@ internal fun deletedNoticeMessage(target: FormSchemaSummary): String =
 fun FormSchemaListScreen(
     repository: FormSchemaRepository = remember { CloudFormSchemaRepository() },
     onOpenEditor: (schemaId: String) -> Unit,
+    /** #1592: uid -> name from listStaff (#1564's fallback), the Gallery's read. */
+    staffNames: Map<String, String> = rememberUploaderNames(),
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -171,14 +181,14 @@ fun FormSchemaListScreen(
 
     LaunchedEffect(Unit) { reload() }
 
-    val sorted = remember(schemas, sortCol, sortAsc) {
+    val sorted = remember(schemas, sortCol, sortAsc, staffNames) {
         val cmp = when (sortCol) {
             SortCol.Name      -> compareBy<FormSchemaSummary> { it.name.lowercase() }
             SortCol.Version   -> compareBy { it.version }
             // Blank updatedAt sorts last in both directions (mirror Android null-last semantics).
             SortCol.UpdatedAt -> compareBy<FormSchemaSummary> { it.updatedAt.isBlank() }
                 .thenBy { it.updatedAt }
-            SortCol.UpdatedBy -> compareBy { it.updatedBy.lowercase() }
+            SortCol.UpdatedBy -> compareBy { updatedByLabel(it.updatedBy, staffNames).lowercase() }
         }
         if (sortAsc) {
             schemas.sortedWith(cmp)
@@ -297,6 +307,7 @@ fun FormSchemaListScreen(
                         visible.forEach { row ->
                             SchemaRow(
                                 row = row,
+                                staffNames = staffNames,
                                 onOpenEditor = onOpenEditor,
                                 onDelete = { pendingDelete = row },
                             )
@@ -355,6 +366,7 @@ fun FormSchemaListScreen(
 @Composable
 private fun SchemaRow(
     row: FormSchemaSummary,
+    staffNames: Map<String, String>,
     onOpenEditor: (schemaId: String) -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -395,7 +407,7 @@ private fun SchemaRow(
             val meta = listOf(
                 "v${row.version}",
                 row.updatedAt.takeIf { it.isNotBlank() },
-                row.updatedBy.takeIf { it.isNotBlank() }?.let { "by $it" },
+                row.updatedBy.takeIf { it.isNotBlank() }?.let { "by ${updatedByLabel(it, staffNames)}" },
             ).filterNotNull().joinToString("  ·  ")
             Text(text = meta, style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }

@@ -43,6 +43,8 @@ export interface ActivityDetailRow {
 export function activityDetailRows(
   entry: ActivityLogEntry,
   zone: string = DEFAULT_BUSINESS_TIME_ZONE,
+  /** uid -> name (`useStaffNames`), #1592. A uid it does not know shows as it is. */
+  names: ReadonlyMap<string, string> = new Map(),
 ): ActivityDetailRow[] {
   const rows: ActivityDetailRow[] = [];
   const push = (label: string, value: string): void => {
@@ -57,7 +59,12 @@ export function activityDetailRows(
   push('Action', str(entry.actionType));
   push('Status', str(entry.status));
   push('Severity', str(entry.severity));
-  push('Actor', str(entry.actorId));
+  // #1592: the person by name. The uid stays on the opened record beside it,
+  // because this is the evidence log and the uid is what the record holds.
+  const actorId = str(entry.actorId).trim();
+  const actorName = names.get(actorId);
+  push('Actor', actorName ?? actorId);
+  if (actorName !== undefined) push('Actor id', actorId);
   push('Actor role', str(entry.actorRole));
   push('Household', str(entry.familyId));
   // A path, not a link. Where a route exists the screen offers one separately;
@@ -167,13 +174,19 @@ function renderScalar(v: unknown): string {
  * entry mentioning this booking id" is the actual question an operator has, and
  * the id is almost always in the payload rather than in the description.
  */
-export function activityMatchesQuery(entry: ActivityLogEntry, query: string): boolean {
+export function activityMatchesQuery(
+  entry: ActivityLogEntry,
+  query: string,
+  /** #1592: so the actor can be found by the name the row shows. */
+  names: ReadonlyMap<string, string> = new Map(),
+): boolean {
   const q = query.trim().toLowerCase();
   if (q === '') return true;
   const haystack = [
     str(entry.actionType),
     str(entry.description),
     str(entry.actorId),
+    names.get(str(entry.actorId).trim()) ?? '',
     str(entry.actorRole),
     str(entry.targetId),
     str(entry.targetCollection),

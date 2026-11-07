@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.data.repository.staffNamesByUid
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -112,6 +113,11 @@ private fun ActivityFilter.matches(actionType: String): Boolean {
 fun ActivityLogScreen(
     viewModel: AdminDataViewModel = viewModel(),
     onBack: () -> Unit,
+    /** #1592: uid -> name from `listStaff` (#1564's fallback). A failed read is an empty map. */
+    loadStaffNames: suspend () -> Map<String, String> = {
+        runCatching { com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository.listStaff() }
+            .getOrNull()?.getOrNull()?.let(::staffNamesByUid).orEmpty()
+    },
 ) {
     val entries   by viewModel.activityLog.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -119,6 +125,8 @@ fun ActivityLogScreen(
     val zoneId by viewModel.businessTimeZone.collectAsState()
     val zone = remember(zoneId) { businessZone(zoneId) }
     val chainVerify by viewModel.chainVerify.collectAsState()
+    var staffNames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    LaunchedEffect(Unit) { staffNames = loadStaffNames() }
 
     // Verify on arrival as well as on demand: the mock's badge reads "Chain
     // verified" the moment the screen opens, and web has verified on mount
@@ -135,7 +143,7 @@ fun ActivityLogScreen(
     var selectedEntry by remember { mutableStateOf<ActivityLogEntry?>(null) }
 
     selectedEntry?.let { entry ->
-        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null })
+        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null }, names = staffNames)
     }
 
     AuntieScreenScaffold(title = "Activity Log", onBack = onBack) {
@@ -190,6 +198,7 @@ fun ActivityLogScreen(
                     query              = query,
                     zone               = zone,
                     onRowClick         = { selectedEntry = it },
+                    staffNames         = staffNames,
                 )
             }
         }
@@ -204,6 +213,7 @@ private fun LogPanel(
     query: String,
     zone: ZoneId,
     onRowClick: (ActivityLogEntry) -> Unit,
+    staffNames: Map<String, String> = emptyMap(),
 ) {
     // The mock's `.log`: one glass panel with no title, rows running edge to
     // edge, so this is the kit surface rather than a DenPanel with a heading
@@ -251,7 +261,7 @@ private fun LogPanel(
 
             val visible = sortedAll
                 .filter { filter.matches(it.actionType) }
-                .filter { matchesQuery(it, query) }
+                .filter { matchesQuery(it, query, staffNames) }
 
             if (visible.isEmpty()) {
                 Column(Modifier.padding(horizontal = 20.dp)) { NoMatchesState() }
@@ -267,7 +277,7 @@ private fun LogPanel(
 
             grouped.forEach { (dateIso, dayEntries) ->
                 DaySeparator(label = relativeDayLabel(dateIso, todayKey, yesterdayKey))
-                dayEntries.forEach { entry -> ActivityRow(entry, zone = zone, onClick = { onRowClick(entry) }) }
+                dayEntries.forEach { entry -> ActivityRow(entry, zone = zone, names = staffNames, onClick = { onRowClick(entry) }) }
             }
         }
     }
@@ -454,7 +464,12 @@ private fun DaySeparator(label: String) {
  * build's opened row field for field.
  */
 @Composable
-private fun ActivityDetailModal(entry: ActivityLogEntry, zone: ZoneId, onDismiss: () -> Unit) {
+private fun ActivityDetailModal(
+    entry: ActivityLogEntry,
+    zone: ZoneId,
+    onDismiss: () -> Unit,
+    names: Map<String, String> = emptyMap(),
+) {
     val payload = activityPayloadRows(entry)
     val chain = activityChainRows(entry)
     AuntieModal(
@@ -463,7 +478,7 @@ private fun ActivityDetailModal(entry: ActivityLogEntry, zone: ZoneId, onDismiss
         confirmButton = { GhostButton(label = "Close", onClick = onDismiss) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            activityDetailRows(entry, zone).forEach { (label, value) -> DetailKv(label, value) }
+            activityDetailRows(entry, zone, names).forEach { (label, value) -> DetailKv(label, value) }
 
             DetailSectionHeading("What happened")
             if (payload.isEmpty()) {
@@ -548,6 +563,8 @@ private fun DetailKv(label: String, value: String, mono: Boolean = false) {
 internal fun activityDetailRows(
     entry: ActivityLogEntry,
     zone: ZoneId = businessZone(null),
+    /** uid -> name (`listStaff`), #1592. A uid it does not know shows as it is. */
+    names: Map<String, String> = emptyMap(),
 ): List<Pair<String, String>> {
     val rows = mutableListOf<Pair<String, String>>()
     fun add(label: String, value: String) {
@@ -560,7 +577,11 @@ internal fun activityDetailRows(
     add("Action", entry.actionType)
     add("Status", entry.status)
     add("Severity", entry.severity)
-    add("Actor", entry.actorId)
+    // #1592: the person by name; the uid stays beside it on the opened record,
+    // because this is the evidence log and the uid is what the record holds.
+    val actorName = names[entry.actorId.trim()]
+    add("Actor", actorName ?: entry.actorId)
+    if (actorName != null) add("Actor id", entry.actorId)
     add("Actor role", entry.actorRole)
     add("Household", entry.familyId)
     add("Detail", entry.description)
@@ -646,7 +667,12 @@ internal fun activityPayloadRows(entry: ActivityLogEntry): List<Pair<String, Str
  * seq would be; it never wears a made-up seal.
  */
 @Composable
-internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit, zone: ZoneId = businessZone(null)) {
+internal fun ActivityRow(
+    entry: ActivityLogEntry,
+    onClick: () -> Unit,
+    zone: ZoneId = businessZone(null),
+    names: Map<String, String> = emptyMap(),
+) {
     val c = AuntieTheme.colors
     val isFailure = entry.status.equals("FAILURE", ignoreCase = true) ||
         entry.status.equals("ERROR", ignoreCase = true)
@@ -654,7 +680,7 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit, zone: Zon
 
     AuntieEntityRow(
         title    = humanizeAction(entry.actionType),
-        subtitle = rowContext(entry).ifBlank { null },
+        subtitle = rowContext(entry, names).ifBlank { null },
         onClick  = onClick,
         modifier = Modifier.padding(horizontal = 8.dp),
         leading = {
@@ -760,7 +786,7 @@ private fun NoMatchesState() {
 
 // ---------- styling + formatting helpers (pure, JVM-testable) ----------
 
-private fun matchesQuery(entry: ActivityLogEntry, query: String): Boolean {
+internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<String, String> = emptyMap()): Boolean {
     val q = query.trim()
     if (q.isBlank()) return true
     val hay = listOf(
@@ -768,6 +794,7 @@ private fun matchesQuery(entry: ActivityLogEntry, query: String): Boolean {
         humanizeAction(entry.actionType),
         entry.description,
         entry.actorId,
+        names[entry.actorId.trim()].orEmpty(),
         entry.targetId,
         entry.targetCollection,
         entry.status,
@@ -776,10 +803,11 @@ private fun matchesQuery(entry: ActivityLogEntry, query: String): Boolean {
 }
 
 /** Actor + target context line built only from real fields. */
-private fun rowContext(entry: ActivityLogEntry): String {
+internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = emptyMap()): String {
     val parts = buildList {
         if (entry.description.isNotBlank()) add(entry.description)
-        if (entry.actorId.isNotBlank()) add(entry.actorId)
+        // #1592: the actor's name, not their uid, once `listStaff` has answered.
+        if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
         val target = when {
             entry.targetCollection.isNotBlank() && entry.targetId.isNotBlank() ->
                 "${entry.targetCollection}/${entry.targetId}"

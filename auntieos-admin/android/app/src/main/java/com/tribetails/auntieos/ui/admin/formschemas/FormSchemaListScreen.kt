@@ -42,6 +42,7 @@ import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.FormSchemaSummary
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.staffNamesByUid
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDialog
@@ -187,6 +188,14 @@ fun FormSchemaListScreen(
     onBack: () -> Unit,
     onOpenEditor: (schemaId: String?) -> Unit,
     repository: AuntieRepository = remember { AuntieOSApp.instance.repository },
+    /**
+     * #1592: uid -> name from `listStaff` (staff record, then Auth display name,
+     * then email; #1564). A failed read is an empty map.
+     */
+    loadStaffNames: suspend () -> Map<String, String> = {
+        runCatching { AuntieOSApp.instance.kinCareRepository.listStaff() }
+            .getOrNull()?.getOrNull()?.let(::staffNamesByUid).orEmpty()
+    },
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -207,6 +216,9 @@ fun FormSchemaListScreen(
     // operator the schemas list, it only leaves Updated-by showing the raw uid.
     // Never chained into reload(). Mirrors the React sibling's `emailByUid`.
     var emailByUid by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var staffNames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    // #1592: a person's name first, the roster's email for a uid only it knows.
+    val labelByUid = remember(emailByUid, staffNames) { updatedByLabels(emailByUid, staffNames) }
     // Local-only filter query; the loaded list is filtered client-side, never re-queried.
     var query by remember { mutableStateOf("") }
     // Row-delete: the schema awaiting confirmation (null = no dialog), an in-flight
@@ -237,6 +249,7 @@ fun FormSchemaListScreen(
                 emailByUid = roster.members.mapNotNull { m -> m.email?.let { m.uid to it } }.toMap()
             }
     }
+    LaunchedEffect(Unit) { staffNames = loadStaffNames() }
 
     // Confirmed delete: route through the deployed deleteFormSchema callable, then
     // reload so the row disappears only after the server confirms. Fail-loud: a
@@ -259,8 +272,8 @@ fun FormSchemaListScreen(
         }
     }
 
-    val sorted = remember(schemas, sortColumn, sortDescending, emailByUid) {
-        formSchemaSort(schemas, sortColumn, sortDescending) { uid -> emailByUid[uid] ?: uid }
+    val sorted = remember(schemas, sortColumn, sortDescending, labelByUid) {
+        formSchemaSort(schemas, sortColumn, sortDescending) { uid -> labelByUid[uid] ?: uid }
     }
 
     // Filter the already-sorted list by name or id (always on). Empty query is a
@@ -405,7 +418,7 @@ fun FormSchemaListScreen(
                     item {
                         SchemaTable(
                             rows = visible,
-                            emailByUid = emailByUid,
+                            emailByUid = labelByUid,
                             sortColumn = sortColumn,
                             sortDescending = sortDescending,
                             onSort = { column ->
@@ -713,3 +726,11 @@ private fun SortHeaderCell(
         }
     }
 }
+
+/**
+ * #1592: who the Updated by column names for a uid. The staff name
+ * (`listStaff`) wins over the roster's email, which still answers for a uid
+ * only the roster knows.
+ */
+internal fun updatedByLabels(emailByUid: Map<String, String>, staffNames: Map<String, String>): Map<String, String> =
+    emailByUid + staffNames

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   listFormSchemas,
   deleteFormSchema,
   type FormSchemaSummary,
 } from '../api/formSchemas';
 import { listBusinessAdmins } from '../api/businessAdmins';
+import { useStaffNames } from '../lib/useStaffNames';
 import { type Async } from '../lib/async';
 import { formSchemaUpdatedFull } from '../lib/formSchemaFormat';
 import { DenScreenHeading } from '../components/DenScreenKit';
@@ -280,6 +281,13 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
   const { showToast } = useToast();
   const [schemas, setSchemas] = useState<Async<FormSchemaSummary[]>>({ status: 'loading' });
   const [emailByUid, setEmailByUid] = useState<ReadonlyMap<string, string>>(new Map());
+  // #1592: a person's name first (staff record, then Auth display name, then
+  // email: `listStaff`, #1564), the roster's email for a uid only it knows.
+  const staffNames = useStaffNames();
+  const labelByUid = useMemo<ReadonlyMap<string, string>>(
+    () => new Map([...emailByUid, ...staffNames]),
+    [emailByUid, staffNames],
+  );
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [query, setQuery] = useState('');
   const [pendingDelete, setPendingDelete] = useState<FormSchemaSummary | null>(null);
@@ -406,7 +414,7 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
       >
         {(rows) => {
           const visible = filterSchemas(rows, query);
-          const sorted = sortSchemas(visible, emailByUid, sort);
+          const sorted = sortSchemas(visible, labelByUid, sort);
           return (
             <>
               <div className="schemas__controls">
@@ -448,7 +456,7 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
                     <tbody>
                       {sorted.map((row) => {
                         const updatedFull = formSchemaUpdatedFull(row.updatedAt);
-                        const byLabel = resolveUpdatedBy(row.updatedBy, emailByUid);
+                        const byLabel = resolveUpdatedBy(row.updatedBy, labelByUid);
                         const nameCell = (
                           <>
                             <span className="schemas__row-name">{row.name || row.id}</span>
