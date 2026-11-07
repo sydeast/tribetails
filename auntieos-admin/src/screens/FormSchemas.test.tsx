@@ -27,6 +27,9 @@ vi.mock('../api/businessAdmins', async (orig) => ({
   ...(await orig<typeof import('../api/businessAdmins')>()),
   listBusinessAdmins,
 }));
+// #1592: the shared staff-name read (`listStaff`), stubbed so no test dials it.
+const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() as ReadonlyMap<string, string> } }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames.current }));
 
 import {
   FormSchemas,
@@ -57,6 +60,7 @@ beforeEach(() => {
   listFormSchemas.mockReset();
   deleteFormSchema.mockReset();
   listBusinessAdmins.mockReset();
+  staffNames.current = new Map();
   // Every screen-level test gets a resolved-but-empty roster by default, so a
   // test that never mocks it does not hang waiting on a pending promise.
   listBusinessAdmins.mockResolvedValue(roster([]));
@@ -227,6 +231,17 @@ describe('filterSchemas (pure)', () => {
 });
 
 describe('FormSchemas screen', () => {
+  it('shows who last updated a schema by name, ahead of the roster email (#1592)', async () => {
+    staffNames.current = new Map([['admin1', 'Syd East']]);
+    listFormSchemas.mockResolvedValue([schema({})]);
+    listBusinessAdmins.mockResolvedValue(
+      roster([{ uid: 'admin1', email: 'auntie@tribetails.example', displayName: null, hasStaffRecord: true, defaultAssignee: false }]),
+    );
+    render(<FormSchemas />);
+    expect(await screen.findByText('Syd East')).toBeInTheDocument();
+    expect(screen.queryByText('admin1')).toBeNull();
+  });
+
   it('loads and renders the table with a name, id, version, updated, and updated-by cell', async () => {
     listFormSchemas.mockResolvedValue([schema({})]);
     listBusinessAdmins.mockResolvedValue(

@@ -7,6 +7,7 @@ import {
   type VerifyResult,
 } from '../api/activityLog';
 import { useCollection } from '../lib/firestore';
+import { useStaffNames } from '../lib/useStaffNames';
 import { str } from '../lib/coerce';
 import { type Async } from '../lib/async';
 import {
@@ -114,6 +115,7 @@ function byDay(rows: ActivityLogEntry[], zone: string): [string, ActivityLogEntr
  */
 export function ActivityLog() {
   const entries = useCollection<ActivityLogEntry>(ACTIVITY_LOG_QUERY);
+  const staffNames = useStaffNames();
   const [chain, setChain] = useState<Async<VerifyResult>>({ status: 'loading' });
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<ActivityCategory>('all');
@@ -196,7 +198,7 @@ export function ActivityLog() {
             (e) =>
               activityMatchesCategory(e, category) &&
               activityMatchesStatus(e, statusFilter) &&
-              activityMatchesQuery(e, query),
+              activityMatchesQuery(e, query, staffNames),
           );
           // The cap is STATED rather than left to be discovered. Removing it
           // needs a paginated listener (page-spec 22 item 6), so until then
@@ -241,6 +243,7 @@ export function ActivityLog() {
                             key={e._id}
                             entry={e}
                             zone={zone}
+                            names={staffNames}
                             open={openIds.has(e._id)}
                             onToggle={() => toggleOpen(e._id)}
                           />
@@ -456,10 +459,12 @@ function rowTile(entry: ActivityLogEntry): { glyph: string; tone: IconTileTone }
 }
 
 /** The mock's `.meta small`: description, actor, target, whichever are on the record. */
-function rowContext(entry: ActivityLogEntry): string {
+function rowContext(entry: ActivityLogEntry, names: ReadonlyMap<string, string>): string {
   const parts: string[] = [];
   if (str(entry.description).trim() !== '') parts.push(str(entry.description).trim());
-  if (str(entry.actorId).trim() !== '') parts.push(str(entry.actorId).trim());
+  // #1592: the actor's name, not their uid, once `listStaff` has answered.
+  const actor = str(entry.actorId).trim();
+  if (actor !== '') parts.push(names.get(actor) ?? actor);
   const targetId = str(entry.targetId).trim();
   const targetCollection = str(entry.targetCollection).trim();
   if (targetId !== '' && targetCollection !== '') parts.push(`${targetCollection}/${targetId}`);
@@ -483,20 +488,22 @@ function rowContext(entry: ActivityLogEntry): string {
 function ActivityRow({
   entry,
   zone,
+  names,
   open,
   onToggle,
 }: {
   entry: ActivityLogEntry;
   zone: string;
+  names: ReadonlyMap<string, string>;
   open: boolean;
   onToggle: () => void;
 }) {
   const detailId = `log-detail-${entry._id}`;
-  const detail = activityDetailRows(entry, zone);
+  const detail = activityDetailRows(entry, zone, names);
   const chain = activityChainRows(entry);
   const payload = activityPayloadRows(entry);
   const tile = rowTile(entry);
-  const context = rowContext(entry);
+  const context = rowContext(entry, names);
   const timestamp = str(entry.timestamp);
   const clock = activityWhen(timestamp, zone)?.clock ?? '';
   // A row can carry a seq but no entryHash; slicing that undefined would blank
