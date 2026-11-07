@@ -116,7 +116,7 @@ beforeEach(() => {
 });
 
 describe('/sessions/$sessionId', () => {
-  it('renders the named Kin Care from a cold arrival, which is what a refresh is', async () => {
+  it('renders the named KinCare from a cold arrival, which is what a refresh is', async () => {
     useDocById.mockReturnValue({ status: 'ready', data: entry({ status: 'ARRIVED' }) });
     const router = makeRouter('/sessions/vis_1');
     render(<RouterProvider router={router} />);
@@ -142,7 +142,7 @@ describe('/sessions/$sessionId', () => {
     useDocById.mockReturnValue({ status: 'ready', data: null });
     render(<RouterProvider router={makeRouter('/sessions/vis_gone')} />);
     expect(
-      await screen.findByText(/no Kin Care session is on file under this id/i),
+      await screen.findByText(/no KinCare session is on file under this id/i),
     ).toBeInTheDocument();
     // The way back is the crumb: the mock's hero carries no Back button.
     expect(screen.getByRole('button', { name: 'Auntie Time' })).toBeInTheDocument();
@@ -151,7 +151,7 @@ describe('/sessions/$sessionId', () => {
   it('does not report a session still loading as a session that is gone', async () => {
     useDocById.mockReturnValue({ status: 'loading' });
     render(<RouterProvider router={makeRouter('/sessions/vis_slow')} />);
-    expect(await screen.findByText('Looking this Kin Care session up…')).toBeInTheDocument();
+    expect(await screen.findByText('Looking this KinCare session up…')).toBeInTheDocument();
     expect(screen.queryByText(/not on file/i)).toBeNull();
   });
 
