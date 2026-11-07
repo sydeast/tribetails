@@ -27,6 +27,10 @@ data class KinTaleTemplate(
     val serviceTypeKeys: List<String> = emptyList(),
     val isActive: Boolean = true,
     val isDefault: Boolean = false,
+    // #1591: in the archive. Hidden from the template list and never picked for
+    // a new KinTale; KinTales already written from it keep reading it.
+    val archived: Boolean = false,
+    val archivedAt: String = "",
 
     val photoShowcaseEnabled:   Boolean = true,
     val checklistEnabled:       Boolean = true,
