@@ -133,6 +133,11 @@ export interface KinTaleEntry {
   /** Free-text send channel, or a `legacy_*` backfill marker, see `lib/kinTaleFormat.ts#sentViaLabel`. */
   sentVia?: string | undefined;
   /**
+   * Set once Needs triage has decided a migration orphan (#1631 reads it: an
+   * untriaged orphan cannot be deleted, see `api/kinTaleReportDraftDelete.ts`).
+   */
+  triageStatus?: string | undefined;
+  /**
    * WHEN THIS RECAP CAME INTO EXISTENCE. Same free-text ISO caveat as
    * `visitDate`, and stamped on every real write (create AND update).
    *

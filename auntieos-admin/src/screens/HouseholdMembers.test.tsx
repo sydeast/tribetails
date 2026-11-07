@@ -1063,6 +1063,31 @@ describe('HouseholdMembers secondary kinfolk with no portal access (Q3)', () => 
     expect(await within(dialog).findByText(/Emergency Contact is someone outside the household/)).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Name')).toHaveValue('Rae Park');
   });
+  it('#1593: refuses a bad phone and a bad email at their fields, before any round trip', async () => {
+    api.saveSecondaryKinfolk.mockResolvedValue(undefined);
+    mount();
+    await userEvent.click(await screen.findByRole('button', { name: 'Add secondary kinfolk' }));
+    const dialog = screen.getByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Rae Park');
+    await userEvent.type(within(dialog).getByLabelText('Phone (optional)'), '12345');
+    await userEvent.type(within(dialog).getByLabelText('Email (optional)'), 'rae@');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    expect(api.saveSecondaryKinfolk).not.toHaveBeenCalled();
+    const phone = within(dialog).getByLabelText('Phone (optional)');
+    const email = within(dialog).getByLabelText('Email (optional)');
+    expect(phone).toHaveAttribute('aria-invalid', 'true');
+    expect(phone).toHaveAccessibleDescription('Enter a 10-digit phone number, or leave it blank.');
+    expect(email).toHaveAttribute('aria-invalid', 'true');
+    expect(email).toHaveAccessibleDescription('Enter an email like name@example.com, or leave it blank.');
+
+    // Fixing a field clears its refusal; a blank optional field is fine.
+    await userEvent.clear(phone);
+    expect(phone).not.toHaveAttribute('aria-invalid');
+    await userEvent.clear(email);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.saveSecondaryKinfolk).toHaveBeenCalledWith('fam1', { name: 'Rae Park', phone: '', email: '' }, undefined));
+  });
   it('edits one, sending every field with its person id', async () => {
     api.listSecondaryKinfolk.mockResolvedValue([sam]);
     api.saveSecondaryKinfolk.mockResolvedValue(undefined);
