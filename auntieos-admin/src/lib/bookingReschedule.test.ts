@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest';
 import { type BookingEntry } from '../api/bookings';
 import {
   bulkRescheduleSummary,
@@ -10,6 +10,18 @@ import {
   type RescheduleDraft,
   type RescheduleTarget,
 } from './bookingReschedule';
+
+// #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
+// into the past (nor a New visit scheduled there). The clock is pinned before
+// the earliest of them; only Date is faked, so userEvent's timers run as normal.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 
 // #1155: the DEVICE is America/Los_Angeles and the BUSINESS is America/Chicago,
 // so any reading or building that leaks the device zone lands two hours off.
@@ -200,5 +212,25 @@ describe('rescheduleOverrideLabel', () => {
   it('says which kind of clash the operator would be moving over', () => {
     expect(rescheduleOverrideLabel('visit')).toContain('booked visit');
     expect(rescheduleOverrideLabel('busy')).toContain('busy block');
+  });
+});
+
+describe('planRescheduleWrites, a time already passed (#1574)', () => {
+  it('skips a row moved into the past with the server\u2019s sentence, and still writes the rest', () => {
+    const past = target({ id: 'ses1' });
+    const ahead = target({ id: 'ses2', name: 'The Sparrows' });
+    const planned = planRescheduleWrites(
+      [past, ahead],
+      drafts({
+        ses1: { date: '2026-05-01', time: '09:00' },
+        ses2: { date: '2026-07-20', time: '09:00' },
+      }),
+      BIZ,
+      Date.parse('2026-06-01T00:00:00.000Z'),
+    );
+    expect(planned.writes.map((w) => w.target.id)).toEqual(['ses2']);
+    expect(planned.skipped).toEqual([
+      { id: 'ses1', name: past.name, reason: 'That time has already passed. A visit can only be moved to a time still ahead.' },
+    ]);
   });
 });

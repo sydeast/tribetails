@@ -12,6 +12,7 @@ import { materializeKinRoster, resolveKinfolkDisplayName } from '../lib/kinRoste
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
+import { businessTimeZoneReader, newVisitStatusFor } from '../lib/pastVisit';
 
 /**
  * 1E §A.9: server-bound creation of a kin_care_sessions doc (scheduleNewVisit).
@@ -56,6 +57,12 @@ const Args = z.object({
    * one was taken. See `lib/visitOverlapConflict.ts`.
    */
   overrideVisitConflict: z.boolean().optional(),
+  /**
+   * #1574: the office is writing down a visit that already happened. Required
+   * for a window that has ended and refused for one that has not; see
+   * `lib/pastVisit.ts` and the handler's note below.
+   */
+  recordAsCompleted: z.boolean().optional(),
 });
 
 export interface CreateKinCareSessionResult {
@@ -82,7 +89,26 @@ export async function createKinCareSessionHandler(
     throw err;
   }
 
-  await guardBookingBusyConflict({
+  // #1574, operator ruling 2026-11-05: a past-dated visit is "allowed only as
+  // already completed ... never Scheduled". Decided before any guard, so a past
+  // date reports that rather than a calendar clash.
+  const status = await newVisitStatusFor({
+    startTime: args.startTime,
+    endTime: args.endTime,
+    nowMs: Date.now(),
+    recordAsCompleted: args.recordAsCompleted === true,
+    timeZone: businessTimeZoneReader(),
+  });
+  const backdated = status === 'COMPLETED';
+
+  // A RECORD OF A VISIT THAT ALREADY HAPPENED SKIPS TWO OF THE THREE GUARDS.
+  // The busy import and the closure list answer "may this hour be booked?",
+  // which has no meaning for an hour that is over: the visit happened, and the
+  // closure guard has no override, so running it would make a real visit on a
+  // closed day impossible to write down. The overlap guard still runs (and is
+  // still overridable): a second record over the same hour is most often the
+  // same visit written down twice.
+  if (!backdated) await guardBookingBusyConflict({
     firestore: db(),
     visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
     actorUid: uid,
@@ -92,7 +118,7 @@ export async function createKinCareSessionHandler(
   });
   // A closed day always refuses the write -- no override. See
   // companyHolidayConflict.ts's header for why this guard has none.
-  await guardCompanyHolidayConflict({
+  if (!backdated) await guardCompanyHolidayConflict({
     firestore: db(),
     visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
   });
@@ -127,7 +153,15 @@ export async function createKinCareSessionHandler(
     endTime: args.endTime,
     serviceDurationMinutes: args.serviceDurationMinutes ?? 0,
     notes: args.notes ?? '',
-    status: 'SCHEDULED',
+    status,
+    // #1574: a backdated record is COMPLETED from birth and never passes
+    // through `transitionBookingStatus`, so it starts no live visit (Auntie
+    // Time lists only the on-the-books statuses) and sends the household
+    // nothing (no trigger on this collection notifies; the calendar sync has no
+    // attendees). `completedAt` is when the visit ended, not when it was typed
+    // in, and the marker keeps it findable: it also skipped the operator's
+    // arrival-and-departure rule, which governs the Complete step only.
+    ...(backdated && { completedAt: args.endTime, recordedAfterTheFact: true }),
     createdAt: FieldValue.serverTimestamp(),
     createdBy: uid,
     updatedAt: FieldValue.serverTimestamp(),
@@ -139,7 +173,14 @@ export async function createKinCareSessionHandler(
     severity: 'info',
     actorRole: 'AUNTIE',
     actorUid: uid,
-    payload: { sessionId: ref.id, kinfolkId: args.kinfolkId, serviceType: args.serviceType, startTime: args.startTime },
+    payload: {
+      sessionId: ref.id,
+      kinfolkId: args.kinfolkId,
+      serviceType: args.serviceType,
+      startTime: args.startTime,
+      status,
+      recordedAfterTheFact: backdated,
+    },
   });
 
   logEvent({

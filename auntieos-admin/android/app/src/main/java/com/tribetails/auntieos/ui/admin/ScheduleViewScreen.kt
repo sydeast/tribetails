@@ -878,6 +878,20 @@ private fun ScheduleViewScreenContent(
                     viewModel.createBooking(booking, internalNote)
                     viewModel.hideAddBookingDialog()
                 },
+                // #1574: a window that has ended is recorded as Completed, never booked.
+                onRecordCompleted = { visit ->
+                    viewModel.recordCompletedVisit(
+                        kinfolkId = visit.kinfolkId,
+                        kinfolkName = visit.kinfolkName,
+                        serviceType = visit.serviceType,
+                        startUtcIso = visit.startUtcIso,
+                        endUtcIso = visit.endUtcIso,
+                        durationMinutes = visit.durationMinutes,
+                        notes = visit.notes,
+                    )
+                    viewModel.hideAddBookingDialog()
+                },
+                now = viewModel::businessNow,
                 bookingSchemas = state.bookingFormSchemas,
                 schemaError    = state.bookingSchemaError,
             )
@@ -2356,6 +2370,17 @@ fun TimeSlotManagementDialog(
     }
 }
 
+/** #1574: what New Booking hands back when the window has ended and the visit is written down as Completed. */
+data class RecordCompletedVisit(
+    val kinfolkId: String,
+    val kinfolkName: String,
+    val serviceType: String,
+    val startUtcIso: String,
+    val endUtcIso: String,
+    val durationMinutes: Int,
+    val notes: String,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEnhancedBookingDialog(
@@ -2367,7 +2392,17 @@ fun AddEnhancedBookingDialog(
     onSave: (EnhancedBooking, String) -> Unit,
     bookingSchemas: List<FormSchema> = emptyList(),
     schemaError: String? = null,
+    /**
+     * #1574, operator ruling 2026-11-05: a visit created with a past date is
+     * allowed only as already Completed, never Scheduled. For a window that has
+     * ended the button becomes "Record completed visit" and this is called
+     * instead of [onSave]; null leaves the dialog refusing a past window outright.
+     */
+    onRecordCompleted: ((RecordCompletedVisit) -> Unit)? = null,
+    /** Now, on the business clock. A parameter so a test can stand at a known instant. */
+    now: () -> LocalDateTime = { LocalDateTime.now() },
 ) {
+    val businessZone = LocalBusinessZone.current
     var selectedKinfolk by remember { mutableStateOf<Kinfolk?>(null) }
     var selectedService by remember { mutableStateOf<BaseService?>(baseServices.firstOrNull()) }
     // Phase 14: answers to BOOKING-placed custom fields; persisted into EnhancedBooking.formValues.
@@ -2389,6 +2424,13 @@ fun AddEnhancedBookingDialog(
     var notes         by remember { mutableStateOf("") }
     var internalNotes by remember { mutableStateOf("") }
     var publishImmediately by remember { mutableStateOf(false) }
+    val draftTiming: com.tribetails.auntieos.domain.VisitWindowTiming? = run {
+        val epochDay = datePickerState.selectedDateMillis?.let { it / 86_400_000L } ?: initialDate.toEpochDay()
+        val s = runCatching { LocalTime.parse(startTimeText) }.getOrNull()
+        val e = runCatching { LocalTime.parse(endTimeText) }.getOrNull()
+        if (s == null || e == null || !e.isAfter(s)) null
+        else com.tribetails.auntieos.domain.newVisitTiming(LocalDate.ofEpochDay(epochDay), s, e, now())
+    }
 
     if (showDatePicker) {
         DatePickerDialog(
@@ -2452,6 +2494,21 @@ fun AddEnhancedBookingDialog(
                     timeError?.let {
                         Text(it, color = AuntieTheme.colors.error, style = AuntieTheme.typography.bodySmall)
                     }
+                    // #1574: read on every recomposition, so the form changes the
+                    // moment the typed window crosses into the past.
+                    when (draftTiming) {
+                        com.tribetails.auntieos.domain.VisitWindowTiming.ENDED -> Text(
+                            com.tribetails.auntieos.domain.RECORD_COMPLETED_HINT,
+                            color = AuntieTheme.colors.textFaint,
+                            style = AuntieTheme.typography.bodySmall,
+                        )
+                        com.tribetails.auntieos.domain.VisitWindowTiming.UNDERWAY -> Text(
+                            com.tribetails.auntieos.domain.VISIT_UNDERWAY_MESSAGE,
+                            color = AuntieTheme.colors.error,
+                            style = AuntieTheme.typography.bodySmall,
+                        )
+                        else -> Unit
+                    }
                 }
                 item {
                     AuntieField(
@@ -2511,7 +2568,11 @@ fun AddEnhancedBookingDialog(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
                         PrimaryButton(
-                            label    = if (publishImmediately) "Confirm" else "Save Draft",
+                            label    = when {
+                                draftTiming == com.tribetails.auntieos.domain.VisitWindowTiming.ENDED -> "Record completed visit"
+                                publishImmediately -> "Confirm"
+                                else -> "Save Draft"
+                            },
                             onClick  = {
                                 val epochDay  = datePickerState.selectedDateMillis?.let { it / 86_400_000L } ?: initialDate.toEpochDay()
                                 val date      = LocalDate.ofEpochDay(epochDay)
@@ -2520,6 +2581,34 @@ fun AddEnhancedBookingDialog(
                                 if (startTime == null || endTime == null) { timeError = "Use HH:mm format (e.g. 09:00)"; return@PrimaryButton }
                                 if (!endTime.isAfter(startTime)) { timeError = "End time must be after start"; return@PrimaryButton }
                                 val svc = selectedService
+                                // #1574: never a booking in the past. Judged again
+                                // at the tap, on the clock as it is now.
+                                when (com.tribetails.auntieos.domain.newVisitTiming(date, startTime, endTime, now())) {
+                                    com.tribetails.auntieos.domain.VisitWindowTiming.UNDERWAY -> {
+                                        timeError = com.tribetails.auntieos.domain.VISIT_UNDERWAY_MESSAGE
+                                        return@PrimaryButton
+                                    }
+                                    com.tribetails.auntieos.domain.VisitWindowTiming.ENDED -> {
+                                        val kinfolk = selectedKinfolk
+                                        if (onRecordCompleted == null || kinfolk == null || svc == null) {
+                                            timeError = "That time has already passed. Pick a household and a service to record it as completed."
+                                            return@PrimaryButton
+                                        }
+                                        onRecordCompleted(
+                                            RecordCompletedVisit(
+                                                kinfolkId = kinfolk.id,
+                                                kinfolkName = kinfolk.displayName,
+                                                serviceType = svc.title,
+                                                startUtcIso = com.tribetails.auntieos.domain.wallClockToUtcIso(date, startTime, businessZone),
+                                                endUtcIso = com.tribetails.auntieos.domain.wallClockToUtcIso(date, endTime, businessZone),
+                                                durationMinutes = java.time.Duration.between(startTime, endTime).toMinutes().toInt(),
+                                                notes = notes,
+                                            ),
+                                        )
+                                        return@PrimaryButton
+                                    }
+                                    com.tribetails.auntieos.domain.VisitWindowTiming.AHEAD -> Unit
+                                }
                                 onSave(
                                     EnhancedBooking(
                                         title            = svc?.title ?: "New Booking",

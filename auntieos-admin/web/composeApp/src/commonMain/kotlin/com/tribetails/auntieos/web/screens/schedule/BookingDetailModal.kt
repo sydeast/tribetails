@@ -378,8 +378,15 @@ fun BookingDetailModal(
                                 enabled = !rescheduling && reschedDate.length == 10 && reschedTime.length == 5,
                                 onClick = {
                                     val times = buildRescheduleTimes(reschedDate, reschedTime, session.serviceDurationMinutes, localZone)
+                                    val pastRefusal = times?.let {
+                                        rescheduleIntoPastRefusal(it.first, localZone, Clock.System.now().toEpochMilliseconds())
+                                    }
                                     if (times == null) {
                                         reschedError = "Enter a valid date (YYYY-MM-DD) and time (HH:MM)."
+                                    } else if (pastRefusal != null) {
+                                        // #1574: a visit is never moved into the past; said before sending.
+                                        reschedError = pastRefusal
+                                        reschedRetry = null
                                     } else {
                                         scope.launch {
                                             rescheduling = true
