@@ -75,6 +75,34 @@ export interface CatalogKeyRow {
   bound: boolean;
   /** What dispatch sends for this key right now. */
   resolvedTemplateId: string;
+  /**
+   * What a send does when the resolved template document is missing (#1586).
+   * A server from before #1586 omits it, and the decode reads that as `fails`,
+   * which is what this screen used to say about every missing template.
+   */
+  whenTemplateMissing: MissingTemplateEffect;
+  /** Whether the repo carries a copy Template Import can load. */
+  inRepoCorpus: boolean;
+}
+
+/**
+ * `fails` the send throws; `repoCopy` the repo's copy goes out; `generic` the
+ * email channel sends generic wording; `unused` no template is ever read.
+ */
+export type MissingTemplateEffect = 'fails' | 'repoCopy' | 'generic' | 'unused';
+
+const EFFECTS: readonly MissingTemplateEffect[] = ['fails', 'repoCopy', 'generic', 'unused'];
+
+/** Fills the two #1586 fields when an older server left them out. */
+export function decodeCatalogKeyRow(raw: CatalogKeyRow): CatalogKeyRow {
+  const effect = (raw as { whenTemplateMissing?: unknown }).whenTemplateMissing;
+  return {
+    ...raw,
+    whenTemplateMissing: EFFECTS.includes(effect as MissingTemplateEffect)
+      ? (effect as MissingTemplateEffect)
+      : 'fails',
+    inRepoCorpus: (raw as { inRepoCorpus?: unknown }).inRepoCorpus === true,
+  };
 }
 
 export async function listCatalogKeys(): Promise<CatalogKeyRow[]> {
@@ -82,7 +110,7 @@ export async function listCatalogKeys(): Promise<CatalogKeyRow[]> {
     'listCatalogKeys',
     {},
   );
-  return res.rows ?? [];
+  return (res.rows ?? []).map(decodeCatalogKeyRow);
 }
 
 /** The keys a NEW binding may be written under. Legacy keys are not among them. */

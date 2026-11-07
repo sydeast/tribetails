@@ -102,18 +102,22 @@ fun GalleryScreen() {
     // household's kinfolkId so kin-tagging scopes correctly.
     val uploadScope = rememberReportingScope()
     var uploadPickerOpen by remember { mutableStateOf(false) }
+    // #1588: the dialog's step. null = the Household / Kin choice; a household id
+    // then lists that household (to upload to it, or to pick one of its kin).
+    var uploadStep by remember { mutableStateOf<UploadStep>(UploadStep.Type) }
     var uploadBusy by remember { mutableStateOf(false) }
     var uploadToast by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
-    fun uploadTo(kinfolkId: String, householdName: String) {
+    fun uploadTo(entityId: String, entityType: String, targetName: String, kinfolkId: String = "") {
         uploadPickerOpen = false
+        uploadStep = UploadStep.Type
         if (uploadBusy) return
         uploadBusy = true
         uploadScope.launch {
             // Run-4 #4b: multi-file upload (was single). Empty result = picker cancelled.
-            uploadToast = when (val r = client.pickAndUploadMedia(kinfolkId, "kinfolk", max = 10)) {
+            uploadToast = when (val r = client.pickAndUploadMedia(entityId, entityType, max = 10, kinfolkId = kinfolkId)) {
                 is WriteResult.Ok ->
                     if (r.value.isEmpty()) "Upload cancelled" to ToastKind.Info
-                    else "Uploaded ${r.value.size} ${if (r.value.size == 1) "file" else "files"} to $householdName" to ToastKind.Success
+                    else "Uploaded ${r.value.size} ${if (r.value.size == 1) "file" else "files"} to $targetName" to ToastKind.Success
                 is WriteResult.Err ->
                     if (r.message.contains("no file", ignoreCase = true)) "Upload cancelled" to ToastKind.Info
                     else "Upload failed: ${r.message}" to ToastKind.Error
@@ -231,6 +235,7 @@ fun GalleryScreen() {
                 media = media,
                 kin = taggableKin(media, allKin),
                 kinById = kinById,
+                householdLabels = kinfolkLabel,
                 onDismiss = { selected = null },
                 onSave = { ids ->
                     client.updateMediaTags(media._id, ids)
@@ -238,38 +243,80 @@ fun GalleryScreen() {
             )
         }
 
-        // #3: pick the household to upload to (the platform file picker opens after).
+        // #3 / #1588: pick where the upload goes (the platform file picker opens
+        // after). Household, or Kin: a household first, then one of ITS kin. The
+        // kin id is never typed.
+        val closeUploadPicker = { uploadPickerOpen = false; uploadStep = UploadStep.Type }
+        val step = uploadStep
         AuntieDialog(
             visible = uploadPickerOpen,
-            title = "Upload to which household?",
-            hint = "Pick the household this media belongs to. The file picker opens next.",
-            onDismiss = { uploadPickerOpen = false },
+            title = when (step) {
+                UploadStep.Type -> "Where should this upload go?"
+                is UploadStep.Household -> if (step.forKin) "Which household is the kin in?" else "Upload to which household?"
+                is UploadStep.PetOf -> "Which kin in ${kinfolkDisplayName(step.household)}?"
+            },
+            hint = "The file picker opens next.",
+            onDismiss = closeUploadPicker,
         ) {
-            if (allKinfolk.isEmpty()) {
-                Text("No households yet.", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(dims.space2),
-                ) {
-                    allKinfolk.sortedBy { kinfolkDisplayName(it) }.forEach { kf ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { uploadTo(kf._id, kinfolkDisplayName(kf)) }
-                                .background(c.surface2)
-                                .padding(dims.space3),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(kinfolkDisplayName(kf), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(dims.space2),
+            ) {
+                @Composable
+                fun Choice(label: String, onClick: () -> Unit) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onClick)
+                            .background(c.surface2)
+                            .padding(dims.space3),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                    }
+                }
+                @Composable
+                fun Hint(text: String) = Text(text, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                when (step) {
+                    UploadStep.Type -> {
+                        Choice("Household") { uploadStep = UploadStep.Household(forKin = false) }
+                        Choice("Kin (pet)") { uploadStep = UploadStep.Household(forKin = true) }
+                    }
+                    is UploadStep.Household -> {
+                        if (kinfolkResult is FirestoreResult.Loading) Hint("Loading households…")
+                        else if (allKinfolk.isEmpty()) Hint("No households yet.")
+                        else allKinfolk.sortedBy { kinfolkDisplayName(it) }.forEach { kf ->
+                            Choice(kinfolkDisplayName(kf)) {
+                                if (step.forKin) uploadStep = UploadStep.PetOf(kf)
+                                else uploadTo(kf._id, "kinfolk", kinfolkDisplayName(kf))
+                            }
                         }
+                        GhostButton(label = "Back", onClick = { uploadStep = UploadStep.Type })
+                    }
+                    is UploadStep.PetOf -> {
+                        val pets = uploadableKin(allKin, step.household._id)
+                        if (kinResult is FirestoreResult.Loading) Hint("Loading kin…")
+                        else if (kinResult !is FirestoreResult.Data) Hint("Couldn't load the kin roster, so there is nothing to choose from.")
+                        else if (pets.isEmpty()) Hint("No kin on this household yet.")
+                        else pets.forEach { pet ->
+                            Choice(pet.name.ifBlank { "Unnamed" }) {
+                                uploadTo(pet._id, "kin", pet.name.ifBlank { "Unnamed" }, kinfolkId = step.household._id)
+                            }
+                        }
+                        GhostButton(label = "Back", onClick = { uploadStep = UploadStep.Household(forKin = true) })
                     }
                 }
             }
         }
     }
 }
-
+/** Where the Gallery's Upload dialog is (#1588): the Household / Kin choice, a household list, or one household's kin. */
+private sealed class UploadStep {
+    object Type : UploadStep()
+    /** [forKin] true: choosing the household a pet belongs to; false: choosing the household to upload to. */
+    data class Household(val forKin: Boolean) : UploadStep()
+    data class PetOf(val household: Kinfolk) : UploadStep()
+}
 private fun kinfolkDisplayName(k: Kinfolk): String =
     k.lastName.ifBlank { k._id.take(6) }
 
@@ -315,6 +362,8 @@ private fun TagKinOverlay(
     media: MediaFile,
     kin: List<Kin>,
     kinById: Map<String, Kin>,
+    /** Household display names by id (#1604): the headings over a whole-roster list, and the household named on a scoped one. */
+    householdLabels: Map<String, String>,
     onDismiss: () -> Unit,
     onSave: suspend (List<String>) -> WriteResult<Unit>,
 ) {
@@ -344,31 +393,53 @@ private fun TagKinOverlay(
                     GhostButton(label = "Close", onClick = onDismiss)
                 }
                 Spacer(Modifier.height(dims.space3))
+                val scoped = media.kinfolkId.isNotBlank()
+                if (scoped) {
+                    householdLabels[media.kinfolkId]?.takeIf { it.isNotBlank() }?.let {
+                        Text("Household: $it", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Spacer(Modifier.height(dims.space2))
+                    }
+                }
                 if (kin.isEmpty()) {
                     Text("No kin on this household to tag.", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
                 } else {
+                    // A file with a household offers that household's kin: one flat list is
+                    // unambiguous. A file with none offers the whole roster (#1604), so group
+                    // it under each household's name to tell same-named pets apart.
+                    val groups = if (scoped) listOf(KinHouseholdGroup("", "", kin))
+                    else groupKinByHousehold(kin) { householdLabels[it] }
                     Column(
                         modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        kin.forEach { k ->
-                            val on = picked.contains(k._id)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable {
-                                        if (on) picked.remove(k._id) else picked.add(k._id)
+                        groups.forEach { group ->
+                            if (!scoped) {
+                                Text(
+                                    group.label,
+                                    style = AuntieTheme.typography.labelSmall,
+                                    color = c.textDim,
+                                    modifier = Modifier.padding(top = 8.dp, start = 6.dp),
+                                )
+                            }
+                            group.kin.forEach { k ->
+                                val on = picked.contains(k._id)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            if (on) picked.remove(k._id) else picked.add(k._id)
+                                        }
+                                        .padding(vertical = 8.dp, horizontal = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    CheckBox(on)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(k.name.ifBlank { "Unnamed" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                                        val sub = listOf(k.species, k.breed).filter { it.isNotBlank() }.joinToString(" · ")
+                                        if (sub.isNotBlank()) Text(sub, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                                     }
-                                    .padding(vertical = 8.dp, horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                CheckBox(on)
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(k.name.ifBlank { "Unnamed" }, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                                    val sub = listOf(k.species, k.breed).filter { it.isNotBlank() }.joinToString(" · ")
-                                    if (sub.isNotBlank()) Text(sub, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                                 }
                             }
                         }

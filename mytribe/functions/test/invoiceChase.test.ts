@@ -125,6 +125,14 @@ describe('the due day and the business calendar', () => {
     expect(invoiceDueDayOf({})).toBeNull();
   });
 
+  it('#1570 reads an imported month-name due date, so an open one past due is chased', () => {
+    // The walk's #1018: OPEN, "due July 14, 2026", and the overdue scan skipped it.
+    const due = invoiceDueDayOf({ dueDate: 'July 14, 2026' });
+    expect(due).toBe('2026-07-14');
+    expect(daysPastDue(due, '2026-11-05')).toBe(114);
+    expect(invoiceDueDayOf({ dueDate: '07/14/2026' })).toBeNull();
+  });
+
   it('due today is due, not overdue; yesterday is one day past', () => {
     expect(daysPastDue('2026-09-14', '2026-09-14')).toBeNull();
     expect(daysPastDue('2026-09-13', '2026-09-14')).toBe(1);

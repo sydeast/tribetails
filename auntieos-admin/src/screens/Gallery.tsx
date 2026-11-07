@@ -31,7 +31,7 @@ import { LoadingRow } from '../components/LoadingRow';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { deleteMediaFile, mediaWriteErrorMessage } from '../api/mediaWrite';
-import { MediaUploadDialog, type KinfolkOption } from '../components/MediaUploadDialog';
+import { MediaUploadDialog, type KinfolkOption, type KinOption } from '../components/MediaUploadDialog';
 import { MediaViewerDialog } from '../components/MediaViewerDialog';
 import { TagKinDialog } from '../components/TagKinDialog';
 import './Gallery.css';
@@ -176,12 +176,26 @@ export function Gallery() {
     if (kinfolkState.status !== 'ready') return new Map<string, string>();
     return new Map(kinfolkState.data.map((kf) => [kf._id, kinfolkDisplayName(kf)]));
   }, [kinfolkState]);
-
   // The kin roster in the two shapes this screen needs: a flat list for the
   // tag picker's options, and an id lookup for resolving a file's tags to
   // names. Empty (never fabricated) until the stream resolves.
   const allKin = useMemo(() => (kinState.status === 'ready' ? kinState.data : []), [kinState]);
   const kinById = useMemo(() => new Map(allKin.map((k) => [k._id, k])), [allKin]);
+
+  // The KIN upload target's second picker (#1588): active kin only, each carrying
+  // its household so the dialog can narrow to the household chosen above it.
+  const kinOptions = useMemo<KinOption[]>(
+    () =>
+      allKin
+        .filter((k) => k.status !== 'archived' && str(k.kinfolkId).trim() !== '')
+        .map((k) => ({
+          id: k._id,
+          label: str(k.name).trim() !== '' ? str(k.name).trim() : 'Unnamed',
+          kinfolkId: str(k.kinfolkId).trim(),
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [allKin],
+  );
 
   // The Upload dialog's household picker reuses this same already-streamed
   // roster (no second fetch): an {id, label} pair per household, in stream
@@ -267,6 +281,9 @@ export function Gallery() {
       {uploadOpen && (
         <MediaUploadDialog
           kinfolkOptions={kinfolkOptions}
+          kinOptions={kinOptions}
+          kinLoading={kinState.status === 'loading'}
+          kinError={kinState.status === 'error' ? kinState.message : null}
           onClose={() => setUploadOpen(false)}
           onUploaded={() => setUploadOpen(false)}
         />
@@ -288,6 +305,7 @@ export function Gallery() {
         <TagKinDialog
           media={tagMedia}
           allKin={allKin}
+          householdLabels={kinfolkLabel}
           kinLoading={kinState.status === 'loading'}
           kinError={kinState.status === 'error' ? kinState.message : null}
           onClose={() => setTagMedia(null)}

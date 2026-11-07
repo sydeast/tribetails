@@ -1,0 +1,1 @@
+Confirm your email. The link to finish joining MyTribe is in your inbox at {{invitedEmail}}.

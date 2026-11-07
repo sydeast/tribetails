@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressCompleteness';
 import { type SessionEntry } from '../api/sessions';
 import { kinForHouseholdQuery, type Kin, type Kinfolk } from '../api/directory';
 import { getBusinessSettings } from '../api/settings';
@@ -34,6 +35,7 @@ import {
   localDateIso,
 } from '../lib/sessionFormat';
 import { str, arr } from '../lib/coerce';
+import { kinCoveredLabel, shownVisitLengthMinutes } from '../lib/visitFacts';
 import {
   DenScreenHeading,
   DenPanel,
@@ -290,7 +292,9 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
 
   // ── the details edit ───────────────────────────────────────────────────────
   const currentServiceType = str(entry?.serviceType);
-  const currentDuration = entry?.serviceDurationMinutes;
+  // #1581: the stored length when it is real, else the visit's own window, so a
+  // 20:00 to 20:30 visit stored with 0 reads (and saves) as 30.
+  const currentDuration = entry === null ? null : shownVisitLengthMinutes(entry);
   const [serviceType, setServiceType] = useState(currentServiceType);
   const [duration, setDuration] = useState(
     typeof currentDuration === 'number' ? String(currentDuration) : '',
@@ -446,6 +450,13 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
           )
         }
       />
+
+      {/* #1602: the walk's visit read "18605" with no hint it was incomplete. */}
+      {addressLooksIncomplete(address) && (
+        <p className="sdetail__addr-hint" role="note">
+          {INCOMPLETE_ADDRESS_HINT}
+        </p>
+      )}
 
       {entry === null ? (
         // THE THREE NO-ROW ANSWERS, kept apart (#753). A refresh on
@@ -793,15 +804,14 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                       all; each is said out loud rather than under-reported. */}
                   <FieldRow
                     label="Kin covered"
-                    value={
-                      kinNames.length > 0
-                        ? kinIds.length > kinNames.length
-                          ? `${kinNames.join(', ')} · ${String(kinIds.length - kinNames.length)} without a name on file`
-                          : kinNames.join(', ')
-                        : kinIds.length > 0
-                          ? `${String(kinIds.length)} (names not on file)`
-                          : 'Every Kin in the home (the booking named none)'
-                    }
+                    // #1581: an id the record carries no name for is named
+                    // from the household's roster, the same list the picker
+                    // below ticks it in.
+                    value={kinCoveredLabel(kinIds, kinNames, (id) => {
+                      if (roster.status !== 'ready') return null;
+                      const k = roster.data.find((r) => r._id === id);
+                      return k === undefined ? null : str(k.name);
+                    })}
                   />
 
                   <fieldset className="sdetail__row sdetail__row--stack sdetail__kin-picker">

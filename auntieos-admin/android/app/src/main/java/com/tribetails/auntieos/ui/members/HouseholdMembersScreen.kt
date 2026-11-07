@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -173,8 +174,22 @@ fun HouseholdMembersBody(
 
     var removeTarget by remember { mutableStateOf<MembersRepository.Member?>(null) }
     var removePersonTarget by remember { mutableStateOf<MembersRepository.SecondaryPerson?>(null) }
+    // #1602: the ask before the portal invite goes out.
+    var confirmPortalInvite by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.load() }
+
+    if (confirmPortalInvite) {
+        com.tribetails.auntieos.ui.directory.PortalInviteConfirmDialog(
+            householdName = kinfolkName,
+            email = state.householdEmail,
+            onConfirm = {
+                confirmPortalInvite = false
+                viewModel.invitePortal()
+            },
+            onDismiss = { confirmPortalInvite = false },
+        )
+    }
 
     val primaries = state.members.filter { it.role == MembersRepository.MemberRole.PRIMARY }
     val secondaries = state.members.filter { it.role == MembersRepository.MemberRole.SECONDARY }
@@ -205,10 +220,12 @@ fun HouseholdMembersBody(
                 trailing = {
                     // The one admin invite, in the primary slot. "Add secondary
                     // contact" sat beside it until the 2026-09-27 ruling (#829).
+                    // #1602: asks first and names the address; off, with the
+                    // reason under the hero, when it cannot succeed.
                     PrimaryButton(
                         label = if (state.portalInviteBusy) "Sending…" else "Invite to portal",
-                        onClick = { viewModel.invitePortal() },
-                        enabled = !state.portalInviteBusy,
+                        onClick = { confirmPortalInvite = true },
+                        enabled = !state.portalInviteBusy && portalInviteBlockerFor(state) == null,
                     )
                 },
                 leading = {
@@ -227,6 +244,15 @@ fun HouseholdMembersBody(
                         style = AuntieTheme.typography.mono.copy(fontSize = 13.5.sp, letterSpacing = 0.3.sp),
                         color = c.textDim,
                     )
+                    // #1602: why Invite to portal is off, beside it.
+                    portalInviteBlockerFor(state)?.let { reason ->
+                        Text(
+                            reason,
+                            style = AuntieTheme.typography.labelSmall,
+                            color = c.textDim,
+                            modifier = Modifier.testTag("portal-invite-blocker"),
+                        )
+                    }
                 },
             )
         }
@@ -500,12 +526,17 @@ fun HouseholdMembersBody(
 }
 
 /**
- * The mock's `.ct` note on the Secondary kinfolk panel. Written only once the
- * roster read has landed, so an unread roster never reads as zero. Null until
- * then.
+ * The mock's `.ct` note on the Secondary kinfolk panel. Written only once both
+ * reads have landed, so an unread list never reads as zero. Null until then.
+ *
+ * #1602: the people added with no portal account count too. The walk added
+ * one and the panel still read 0 after a reload.
  */
-internal fun secondaryMeta(state: HouseholdMembersUiState, secondaries: Int): String? =
-    if (state.membersLoaded) "$secondaries of role: SECONDARY" else null
+internal fun secondaryMeta(state: HouseholdMembersUiState, secondaries: Int): String? {
+    if (!state.membersLoaded || !state.peopleLoaded) return null
+    val noPortal = state.people.count { it.access != MembersRepository.PersonAccess.ACTIVE }
+    return "${secondaries + noPortal} of role: SECONDARY"
+}
 
 /** Adds one dismissible error banner to the list, or nothing when there is none. */
 private fun androidx.compose.foundation.lazy.LazyListScope.errorBannerItem(
@@ -598,11 +629,17 @@ private fun MemberBlock(
                 // The mock's `.contact`: mono and dim. The uid is what this
                 // screen has where the mock shows an email and a phone; the
                 // name above is the email.
-                Text(
-                    text = member.uid,
-                    style = AuntieTheme.typography.mono.copy(fontSize = 12.5.sp),
-                    color = c.textDim,
-                )
+                // #1589: the email, never the database id. When the email is
+                // already the heading (nothing names the person) it is not
+                // printed twice.
+                val email = member.invitedEmail?.takeIf { it.isNotBlank() && it != member.label }
+                if (email != null) {
+                    Text(
+                        text = email,
+                        style = AuntieTheme.typography.mono.copy(fontSize = 12.5.sp),
+                        color = c.textDim,
+                    )
+                }
                 val label = member.secondaryLabel?.trim().orEmpty()
                 if (member.role == MembersRepository.MemberRole.SECONDARY && label.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))
@@ -952,7 +989,8 @@ internal fun inviteMetaLine(invite: MembersRepository.Invite): String {
     }
     if (invite.effectiveStatus == MembersRepository.InviteStatus.REVOKED) {
         inviteDate(invite.revokedAt)?.let { parts += "revoked $it" }
-    } else {
+    } else if (invite.effectiveStatus != MembersRepository.InviteStatus.ACCEPTED) {
+        // #1603: an accepted invite is spent, so its expiry date says nothing.
         inviteDate(invite.expiresAt)?.let {
             parts += if (invite.effectiveStatus == MembersRepository.InviteStatus.EXPIRED) {
                 "expired $it"
@@ -1062,4 +1100,21 @@ private fun SecondaryPersonDialog(
             error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.error) }
         }
     }
+}
+
+/**
+ * #1602: why the hero's Invite to portal is off, or null when it can be sent.
+ * No email on file (once read), or a primary already ACTIVE on the portal.
+ * An unread email never disables it: the server still refuses what it must.
+ */
+internal fun portalInviteBlockerFor(state: HouseholdMembersUiState): String? {
+    val hasActivePrimary = if (state.membersLoaded) {
+        state.members.any {
+            it.role == MembersRepository.MemberRole.PRIMARY && it.status == MembersRepository.MemberStatus.ACTIVE
+        }
+    } else {
+        null
+    }
+    val email = if (state.householdEmailLoaded) state.householdEmail else "unread"
+    return com.tribetails.auntieos.ui.directory.portalInviteBlocker(email, hasActivePrimary)
 }

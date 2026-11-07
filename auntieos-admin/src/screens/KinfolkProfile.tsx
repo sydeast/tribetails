@@ -6,7 +6,7 @@ import { getKin411 } from '../api/recipientContext';
 import { type Async } from '../lib/async';
 import { str } from '../lib/coerce';
 import { directionsHref } from '../lib/directions';
-import { formatJoinDate } from '../lib/joinDate';
+import { profileJoinDate } from '../lib/joinDate';
 import { tenureLabel } from '../lib/kinfolkProfileFeeds';
 import { useHistoryBack } from '../lib/useHistoryBack';
 import { DenPanel, DenScreenHeading, EmptyHint, StatusPill } from '../components/DenScreenKit';
@@ -22,6 +22,7 @@ import {
 } from '../components/KinfolkProfileFeeds';
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
+import { PortalInviteButton } from '../components/PortalInviteButton';
 import { MaskedValue } from '../components/MaskedValue';
 import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { EMERGENCY_CONTACTS_MAX, EMERGENCY_CONTACTS_OVER_LIMIT } from '../api/emergencyContacts';
@@ -338,7 +339,10 @@ export function KinfolkProfile({
   const loaded = profile.status === 'ready' ? profile.data : null;
   const heroName = loaded !== null ? kinfolkDisplayName(loaded) : kinfolkName || kinfolkId;
   const phone = loaded !== null ? loaded.phoneNumber.trim() : '';
-  const tenure = loaded !== null ? tenureLabel(loaded.joinDate, new Date()) : null;
+  // #1602: one shape for every household. Only a readable day from 2025
+  // through today is formatted and earns the tenure badge.
+  const join = loaded !== null ? profileJoinDate(loaded.joinDate) : ({ kind: 'none' } as const);
+  const tenure = loaded !== null && join.kind === 'joined' ? tenureLabel(loaded.joinDate, new Date()) : null;
 
   return (
     <div className="screen">
@@ -379,9 +383,7 @@ export function KinfolkProfile({
           `formatJoinDate` cannot read prints exactly as stored, which is
           honest, and is why this never renders "Invalid Date".
         */
-        {...(loaded !== null && loaded.joinDate.trim() !== ''
-          ? { detail: `Joined ${formatJoinDate(loaded.joinDate)}` }
-          : {})}
+        {...(join.kind !== 'none' ? { detail: join.label } : {})}
         leading={
           <Avatar
             label={heroName}
@@ -445,6 +447,11 @@ export function KinfolkProfile({
             >
               <span className="auntie-btn__label">Members and invites</span>
             </Link>
+            {/* #1603: the admin's portal invite lives here, on the profile
+                (operator ruling: no button on the Invites screen). */}
+            {loaded !== null && (
+              <PortalInviteButton kinfolkId={kinfolkId} householdName={heroName} email={loaded.email} />
+            )}
             <GhostButton label="Edit" onClick={() => setView('edit')} />
             <GhostButton label={back.label} onClick={back.goBack} />
             {/* The hero used to end with a "New KinTale" primary. Operator ruling
@@ -483,16 +490,15 @@ export function KinfolkProfile({
                     <Fact label="Email" value={p.email} />
                     <Fact label="Secondary phone" value={p.secondaryPhone} mono />
                     <Fact label="Secondary email" value={p.secondaryEmail} />
-                    <Fact label="Preferred contact" value={p.preferredContactMethod} />
-                    <Fact label="Best time to reach" value={p.bestTimeToContact} />
+                    {/* #1602: Preferred contact and Best time to reach are gone
+                        from the profile (Fix Backlog 4.8/4.9, punchlist K2).
+                        The fields stay on the record; nothing shows them. */}
                     <Fact label="Service address" value={p.serviceAddress} directions />
                     {!any(
                       p.phoneNumber,
                       p.email,
                       p.secondaryPhone,
                       p.secondaryEmail,
-                      p.preferredContactMethod,
-                      p.bestTimeToContact,
                       p.serviceAddress,
                     ) && <EmptyHint>No contact details on file.</EmptyHint>}
                   </dl>

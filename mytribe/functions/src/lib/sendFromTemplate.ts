@@ -127,6 +127,13 @@ export interface SendFromTemplateOptions {
  * throw here fails the caller exactly where a provider failure already would,
  * so every caller's existing error handling covers it. Marketing opt-outs are
  * not consulted: nothing sent through here is marketing.
+ *
+ * A missing template document THROWS, and never falls back to the repo's seed
+ * copy (#1586). The operator decides which notifications exist, and deleting
+ * a template is how they say a send should stop (operator ruling 2026-08-18,
+ * "I did not need that type of notification"); a repo copy would quietly send
+ * it again. A template reaches the bank through Template Import or authoring,
+ * and Manage assignments names every key whose send this throw would break.
  */
 export async function sendFromTemplate(
   key: string,
@@ -141,3 +148,4 @@ export async function sendFromTemplate(
   const resolvedFrame = frame ?? (await loadEmailFrame('sendFromTemplate'));
   return sendTemplatedEmail({ to, data, templateKey: key, ...sendPartsFor(tpl, resolvedFrame) });
 }
+
