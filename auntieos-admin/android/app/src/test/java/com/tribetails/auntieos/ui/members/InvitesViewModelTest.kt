@@ -154,12 +154,13 @@ class InvitesViewModelTest {
     // ── pure helpers ────────────────────────────────────────────────────────
 
     /**
-     * "Outstanding" answers "who never accepted". An EXPIRED invite belongs
-     * there; a REVOKED one does not, because revocation was a decision already
-     * taken about it.
+     * #1603: "Outstanding" is the invites still waiting on somebody. An EXPIRED
+     * invite can no longer be accepted, so it is under Expired; a REVOKED one
+     * was a decision already taken. The 2026-11-05 walk found Outstanding
+     * holding only expired rows.
      */
     @Test
-    fun `outstanding is pending, sent and expired, and never revoked`() {
+    fun `outstanding is pending and sent, never expired or revoked`() {
         val rows = listOf(
             invite(id = "p", status = MembersRepository.InviteStatus.PENDING),
             invite(id = "s", status = MembersRepository.InviteStatus.EMAIL_SENT),
@@ -167,7 +168,8 @@ class InvitesViewModelTest {
             invite(id = "a", status = MembersRepository.InviteStatus.ACCEPTED),
             invite(id = "r", status = MembersRepository.InviteStatus.REVOKED),
         )
-        assertEquals(listOf("p", "s", "x"), filterInvites(rows, InviteFilter.OUTSTANDING).map { it.invite.inviteId })
+        assertEquals(listOf("p", "s"), filterInvites(rows, InviteFilter.OUTSTANDING).map { it.invite.inviteId })
+        assertEquals(listOf("x"), filterInvites(rows, InviteFilter.EXPIRED).map { it.invite.inviteId })
         assertEquals(listOf("a"), filterInvites(rows, InviteFilter.ACCEPTED).map { it.invite.inviteId })
         assertEquals(listOf("r"), filterInvites(rows, InviteFilter.REVOKED).map { it.invite.inviteId })
         assertEquals(5, filterInvites(rows, InviteFilter.ALL).size)
@@ -185,7 +187,8 @@ class InvitesViewModelTest {
             status = MembersRepository.InviteStatus.EMAIL_SENT,
             effective = MembersRepository.InviteStatus.EXPIRED,
         )
-        assertEquals(listOf("l"), filterInvites(listOf(lapsed), InviteFilter.OUTSTANDING).map { it.invite.inviteId })
+        assertTrue(filterInvites(listOf(lapsed), InviteFilter.OUTSTANDING).isEmpty())
+        assertEquals(listOf("l"), filterInvites(listOf(lapsed), InviteFilter.EXPIRED).map { it.invite.inviteId })
         assertEquals(
             "Expired",
             groupInvitesByStatus(listOf(lapsed)).first { it.rows.isNotEmpty() }.heading,

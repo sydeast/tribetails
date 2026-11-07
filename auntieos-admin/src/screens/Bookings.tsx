@@ -14,7 +14,7 @@ import {
 } from '../lib/bookingFormat';
 import { getBusinessSettings } from '../api/settings';
 import { useCollection, useDocById } from '../lib/firestore';
-import { DenScreenHeading, EmptyHint, StatusPill, type DenTone } from '../components/DenScreenKit';
+import { DenScreenHeading, EmptyHint, InfoTip, StatusPill, type DenTone } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
@@ -696,10 +696,9 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           screen's name; repeating "Bookings" here as a second heading would
           announce a section that is the whole page. */}
       <div className="bookings__toolbar" role="group" aria-label="Bookings list">
-        <p className="bookings__toolbar-note">
-          Pending: newest request first. Scheduled: soonest visit first. History: most recent
-          first. Capped at 200.
-        </p>
+        <span className="bookings__toolbar-note">
+          Order <InfoTip text="Visit requests: newest request first. Scheduled: soonest visit first. History: most recent first. Up to 200 bookings." />
+        </span>
         {selectToggle}
       </div>
 

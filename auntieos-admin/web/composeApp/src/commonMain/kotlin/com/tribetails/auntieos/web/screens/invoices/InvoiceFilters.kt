@@ -210,9 +210,10 @@ private fun isoToEpochDay(iso: String): Long? {
 /**
  * Humanizes an ISO date prefix to a compact "May 21" label for row meta lines,
  * or echoes the raw string when it is not ISO-parseable (fail-loud: we show the
- * operator exactly what is stored rather than hiding bad data).
+ * operator exactly what is stored rather than hiding bad data). With [todayIso],
+ * a date from another year carries it ("Jul 2, 2025", #1599).
  */
-fun humanizeDate(raw: String): String {
+fun humanizeDate(raw: String, todayIso: String? = null): String {
     val iso = isoDatePrefixOrNull(raw) ?: return raw.trim()
     val month = iso.substring(5, 7).toIntOrNull() ?: return raw.trim()
     val day = iso.substring(8, 10).toIntOrNull() ?: return raw.trim()
@@ -221,7 +222,8 @@ fun humanizeDate(raw: String): String {
         7 -> "Jul"; 8 -> "Aug"; 9 -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; 12 -> "Dec"
         else -> return raw.trim()
     }
-    return "$name $day"
+    val year = iso.substring(0, 4)
+    return if (todayIso != null && year != todayIso.take(4)) "$name $day, $year" else "$name $day"
 }
 
 /** "$36.00" / "-$12.50" / "$1,234.50". Display only; an input is seeded with `centsToInputDollars`. */
