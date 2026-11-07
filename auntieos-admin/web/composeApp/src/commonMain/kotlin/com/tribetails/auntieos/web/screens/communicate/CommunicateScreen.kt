@@ -88,6 +88,7 @@ import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.DenScreenHeading
 import com.tribetails.auntieos.web.ui.components.EmptyHint
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.MultilineField
@@ -190,6 +191,8 @@ fun CommunicateScreen() {
     var editedCopy by remember { mutableStateOf("") }
 
     var toastMsg by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
+    // #1625: the "send this to the household?" confirm before a Text or Email approve.
+    var approveConfirmOpen by remember { mutableStateOf(false) }
 
     // Keep editedCopy in sync when a fresh AI result lands.
     LaunchedEffect(result) {
@@ -239,7 +242,27 @@ fun CommunicateScreen() {
         }
     }
 
+    /** The household the draft was written for: the id generation resolved, else the picker's. */
+    fun approveRecipient(r: GenerateResponse): Kinfolk? {
+        val list = (kinfolkState as? FirestoreResult.Data)?.value.orEmpty()
+        return r.kinfolk_id?.let { id -> list.firstOrNull { it._id == id } } ?: selectedKinfolk
+    }
+
+    /** The Approve button: a Text or Email approve is checked, then confirmed (#1625). */
+    fun requestApprove() {
+        val r = result ?: return
+        if (saving) return
+        val channel = approveDeliveryChannel(messageType)
+        val blocker = approveSendBlocker(channel, approveRecipient(r), subject, editedCopy)
+        if (blocker != null) {
+            showToast(blocker, ToastKind.Error)
+            return
+        }
+        if (channel != null) approveConfirmOpen = true else approveDraft()
+    }
+
     fun approveDraft() {
+        approveConfirmOpen = false
         val r = result ?: return
         val draftId = r.draft_id ?: run {
             showToast(
@@ -248,30 +271,54 @@ fun CommunicateScreen() {
             )
             return
         }
+        if (saving) return
+        // Resolved from what the operator confirmed, before anything is written.
+        val channel = approveDeliveryChannel(messageType)
+        val recipient = approveRecipient(r)
+        val copy = editedCopy
+        val subj = subject.trim()
+        if (channel != null) {
+            approveSendBlocker(channel, recipient, subj, copy)?.let { showToast(it, ToastKind.Error); return }
+        }
         saving = true
         scope.launch {
             try {
-                // 1. Promote the draft in Firestore (canonical store). Fail loud on
-                //    error per project policy: do NOT ping the n8n downstream if the
-                //    source-of-truth write fails.
-                val writeResult = firestore.approveGeneratedDraft(draftId, editedCopy)
-                if (writeResult is WriteResult.Err) {
-                    showToast("Approve failed: Firestore rejected it (${writeResult.message}).", ToastKind.Error)
-                    return@launch
-                }
-                // 2. Activity log emit per project policy. Actor uid resolved from
-                //    the current Auth session.
-                val actorUid = auth.authStateStream().first()?.uid ?: ""
-                AuditLog.fire(
-                    scope = scope,
-                    client = firestore,
-                    actorId = actorUid,
-                    actionType = "DRAFT_APPROVED",
-                    description = "Approved generated_drafts/$draftId (${r.kinfolk_id ?: "no-kinfolk"})",
-                    targetId = draftId,
-                    targetCollection = "generated_drafts",
+                // Write (the gate), then the audit entry, then the send: the web
+                // admin's order. Nothing sends if the write is refused.
+                val outcome = runApprove(
+                    write = { firestore.approveGeneratedDraft(draftId, copy) },
+                    audit = {
+                        val actorUid = auth.authStateStream().first()?.uid ?: ""
+                        AuditLog.fire(
+                            scope = scope,
+                            client = firestore,
+                            actorId = actorUid,
+                            actionType = "DRAFT_APPROVED",
+                            description = "Approved generated_drafts/$draftId (${r.kinfolk_id ?: "no-kinfolk"})",
+                            targetId = draftId,
+                            targetCollection = "generated_drafts",
+                        )
+                    },
+                    channel = channel,
+                    send = if (channel != null && recipient != null) {
+                        {
+                            firestore.sendExternalMessage(
+                                channel = channel.wire,
+                                to = approveSendAddress(channel, recipient),
+                                subject = subj.takeIf { channel == ExternalChannel.Email },
+                                body = copy,
+                                transactional = true,
+                            )
+                        }
+                    } else null,
                 )
-                showToast("Draft #$draftId approved and queued for delivery.", ToastKind.Success)
+                showToast(
+                    approveOutcomeText(draftId, outcome),
+                    when (outcome) {
+                        is ApproveOutcome.Sent, ApproveOutcome.Approved -> ToastKind.Success
+                        else -> ToastKind.Error
+                    },
+                )
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
@@ -330,6 +377,32 @@ fun CommunicateScreen() {
         )
         Spacer(Modifier.height(if (toastMsg != null) dims.space3 else 0.dp))
 
+        // #1625: names who gets it, the address and the channel before a send.
+        val confirmChannel = approveDeliveryChannel(messageType)
+        val confirmKf = result?.let { approveRecipient(it) }
+        AuntieDialog(
+            visible = approveConfirmOpen && confirmChannel != null,
+            title = if (confirmChannel == ExternalChannel.Email) "Send this email?" else "Send this text?",
+            onDismiss = { approveConfirmOpen = false },
+            maxWidth = 480.dp,
+            footer = {
+                GhostButton(label = "Cancel", onClick = { approveConfirmOpen = false }, enabled = !saving)
+                PrimaryButton(label = "Approve and send", onClick = { approveDraft() }, enabled = !saving, loading = saving)
+            },
+        ) {
+            if (confirmChannel != null && confirmKf != null) {
+                Text(
+                    text = "To: ${"${confirmKf.firstName} ${confirmKf.lastName}".trim().ifBlank { "This household" }} (${approveSendAddress(confirmChannel, confirmKf)})",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                )
+                Text(text = "Channel: ${confirmChannel.label}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                if (confirmChannel == ExternalChannel.Email) {
+                    Text(text = "Subject: ${subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
+        }
+
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val twoCol = maxWidth >= 860.dp
 
@@ -356,7 +429,7 @@ fun CommunicateScreen() {
                             loading = loading, saving = saving,
                             result = result,
                             editedCopy = editedCopy, onEditedCopy = { editedCopy = it },
-                            onGenerate = ::generate, onApprove = ::approveDraft,
+                            onGenerate = ::generate, onApprove = ::requestApprove,
                             firestore = firestore,
                             onToast = { msg, kind -> showToast(msg, kind) },
                         )
@@ -401,7 +474,7 @@ fun CommunicateScreen() {
                         loading = loading, saving = saving,
                         result = result,
                         editedCopy = editedCopy, onEditedCopy = { editedCopy = it },
-                        onGenerate = ::generate, onApprove = ::approveDraft,
+                        onGenerate = ::generate, onApprove = ::requestApprove,
                         firestore = firestore,
                         onToast = { msg, kind -> showToast(msg, kind) },
                     )
@@ -616,8 +689,9 @@ private fun ComposePanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(dims.space4),
             ) {
+                val approveChannel = approveDeliveryChannel(messageType)
                 PrimaryButton(
-                    label = "Approve draft",
+                    label = if (approveChannel != null) "Approve and send" else "Approve draft",
                     onClick = onApprove,
                     loading = saving,
                     enabled = result?.draft_id != null,
@@ -631,7 +705,12 @@ private fun ComposePanel(
                     },
                 )
                 Text(
-                    text = "approving promotes the draft in Firestore and logs it to the audit trail",
+                    text = if (approveChannel != null) {
+                        "Approving saves the draft, logs it, then sends it to the household by " +
+                            (if (approveChannel == ExternalChannel.Email) "email" else "text") + "."
+                    } else {
+                        "Approving saves the draft and logs it. This type sends nothing from here."
+                    },
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )

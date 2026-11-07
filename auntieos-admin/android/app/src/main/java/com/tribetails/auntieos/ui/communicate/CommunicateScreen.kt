@@ -53,6 +53,7 @@ import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
+import com.tribetails.auntieos.ui.components.AuntieModal
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChipGroup
 import com.tribetails.auntieos.ui.components.AuntieEmailPreviewCard
@@ -468,11 +469,16 @@ private fun ComposePanel(
                     )
                 }
 
-                // ── Approve bar (backed send-path: approveDraft) ───────────────
+                // ── Approve bar (#1625: a Text or Email approve also SENDS) ────
+                val approveChannel = approveDeliveryChannel(state.commType)
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                     PrimaryButton(
-                        label = if (state.savedDraftId != null) "Approved" else "Approve draft",
-                        onClick = viewModel::approveDraft,
+                        label = when {
+                            state.savedDraftId != null -> "Approved"
+                            approveChannel != null -> "Approve and send"
+                            else -> "Approve draft"
+                        },
+                        onClick = viewModel::requestApprove,
                         enabled = state.draftId != null && state.savedDraftId == null && !state.isSaving && !state.isGenerating,
                         loading = state.isSaving,
                         leading = {
@@ -485,15 +491,65 @@ private fun ComposePanel(
                         },
                     )
                     Text(
-                        text = "approving promotes the draft in Firestore, then logs it to the audit trail. Nothing runs unless the write lands",
+                        text = if (approveChannel != null) {
+                            "Approving saves the draft, logs it to the audit trail, then sends it to the household by " +
+                                (if (approveChannel == ExternalChannel.Email) "email" else "text") +
+                                ". Nothing sends unless the save lands."
+                        } else {
+                            "Approving saves the draft and logs it to the audit trail. This type sends nothing from here."
+                        },
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )
+                }
+                if (state.approveConfirmOpen && approveChannel != null) {
+                    ApproveSendConfirm(state = state, channel = approveChannel, viewModel = viewModel)
                 }
             }
 
             // ── External send (one-off email/SMS to a non-kinfolk recipient) ─────
             ExternalSendSection(state = state, viewModel = viewModel)
+        }
+    }
+}
+
+/**
+ * #1625: the confirm before an approve that reaches a household. Names who gets
+ * it, the address it goes to and the channel, the same facts the web admin's
+ * confirm dialog shows.
+ */
+@Composable
+private fun ApproveSendConfirm(state: CommunicateUiState, channel: ExternalChannel, viewModel: CommunicateViewModel) {
+    val c = AuntieTheme.colors
+    val kf = state.kinfolkList.firstOrNull { state.kinfolkId != null && it.id == state.kinfolkId } ?: state.selectedKinfolk
+    val address = if (channel == ExternalChannel.Email) kf?.email.orEmpty() else kf?.phoneNumber.orEmpty()
+    AuntieModal(
+        onDismissRequest = viewModel::cancelApproveConfirm,
+        title = if (channel == ExternalChannel.Email) "Send this email?" else "Send this text?",
+        confirmButton = {
+            PrimaryButton(
+                label = if (state.isSaving) "Sending…" else "Approve and send",
+                onClick = viewModel::approveDraft,
+                enabled = !state.isSaving,
+                loading = state.isSaving,
+            )
+        },
+        dismissButton = { GhostButton(label = "Cancel", onClick = viewModel::cancelApproveConfirm) },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                "To: ${kf?.displayName ?: "This household"} ($address)",
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+            )
+            Text(
+                "Channel: ${if (channel == ExternalChannel.Email) "Email" else "Text"}",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            if (channel == ExternalChannel.Email) {
+                Text("Subject: ${state.subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
         }
     }
 }
