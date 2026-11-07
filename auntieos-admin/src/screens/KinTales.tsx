@@ -135,6 +135,8 @@ interface KinTalesProps {
    * detail route wires the handler.
    */
   onSelect?: (kinTaleId: string) => void;
+  /** The window the list opens in. Home's draft count links with `all` (#1601). */
+  initialRange?: DateRangeKey;
 }
 
 /**
@@ -196,13 +198,13 @@ interface KinTalesProps {
  * list's date-windowed, 25-per-page query is the wrong source for them (see
  * `NeedsTriageSection.tsx`'s own header for why).
  */
-export function KinTales({ onSelect }: KinTalesProps) {
+export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE }: KinTalesProps) {
   // #1707: template writes are owner-only in the rules, so "Edit templates"
   // is the owner's control. Anyone else reaches the read-only list from the rail.
   const access = useAdminAccess();
   const canEditTemplates = access?.status === 'admin';
   const [search, setSearch] = useState('');
-  const [range, setRange] = useState<DateRangeKey>(DEFAULT_DATE_RANGE);
+  const [range, setRange] = useState<DateRangeKey>(initialRange);
   const [kinfolkId, setKinfolkId] = useState('');
 
   // Computed once per window choice, never per render: a boundary recreated

@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.home
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Draft
+import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
@@ -99,6 +100,29 @@ class HomeViewModelTest {
         )
 
     @Test
+    fun `Kin in care counts pets not marked inactive or archived (1601)`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getAllKin() } returns Result.success(
+            listOf(
+                Kin(id = "a", status = "active"),
+                Kin(id = "b", status = "inactive"),
+                Kin(id = "c", status = "archived"),
+                Kin(id = "d", status = ""),
+            ),
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        assertEquals(2, vm.uiState.value.kinCount)
+    }
+
+    @Test
+    fun `Kin in care falls back to the server count when the kin list cannot be read (1601)`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getAllKin() } returns Result.failure(RuntimeException("denied"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        assertEquals(3, vm.uiState.value.kinCount)
+    }
+
+    @Test
     fun `init loads dashboard data successfully`() = runTest(testDispatcher) {
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -107,7 +131,9 @@ class HomeViewModelTest {
         assertFalse(state.isLoading)
         assertFalse(state.isOffline)
         assertEquals(2, state.kinfolkCount)
-        assertEquals(3, state.kinCount)
+        // getAllKin() is empty here, so the in-care count is 0; the server's 3 is
+        // only the fallback for a failed read (next test).
+        assertEquals(0, state.kinCount)
         assertEquals(1, state.pendingDraftCount)
         assertEquals(1, state.recentDrafts.size)
         assertNull(state.actionError)

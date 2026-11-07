@@ -400,6 +400,15 @@ class DashboardInsightsTest {
         assertEquals("0m", formatDuration(-5))
     }
 
+    // ── KinTales to review (#1601) ───────────────────────────────────────────
+    @Test
+    fun `isDraftAwaitingReview counts generated, pending and blank, never approved`() {
+        assertTrue(isDraftAwaitingReview("generated"))
+        assertTrue(isDraftAwaitingReview("PENDING"))
+        assertTrue(isDraftAwaitingReview(""))
+        assertTrue(!isDraftAwaitingReview("approved"))
+        assertTrue(!isDraftAwaitingReview("mystery"))
+    }
     // ── Today's Pack overdue line (#1590) ────────────────────────────────────
     @Test
     fun `todaysPackOverdueLabel is silent at zero and counts in words otherwise`() {

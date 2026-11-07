@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { KinTales } from '../screens/KinTales';
+import { isDateRangeKey } from '../components/ListToolbar';
 import { KinTaleCompose } from '../screens/KinTaleCompose';
 import { KinTaleDetail } from '../screens/KinTaleDetail';
 import { draftIdFromListRowId } from '../lib/kinTaleList';
@@ -44,7 +45,7 @@ export function KinTalesView() {
   //     the operator on the list to hunt for it would be the wrong screen.
   // Initial state only, so closing either one returns to the list rather than
   // bouncing back off a stale URL.
-  const { kinTaleId, sessionId } = useSearch({ from: '/admin/kintales' });
+  const { kinTaleId, sessionId, range } = useSearch({ from: '/admin/kintales' });
   const navigate = useNavigate();
   // A draft named in the URL goes to Communicate before anything renders here.
   const linkedDraftId = kinTaleId ? draftIdFromListRowId(kinTaleId) : null;
@@ -101,6 +102,7 @@ export function KinTalesView() {
         }
         setMode({ kind: 'detail', kinTaleId: id });
       }}
+      {...(isDateRangeKey(range) ? { initialRange: range } : {})}
     />
   );
 }

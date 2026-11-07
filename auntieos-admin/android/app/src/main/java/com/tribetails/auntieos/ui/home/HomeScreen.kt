@@ -80,6 +80,8 @@ fun HomeScreen(
     onNavigateToCommunicate: () -> Unit,
     onNavigateToCalls: () -> Unit,
     onNavigateToAuntieTime: () -> Unit = {},
+    onNavigateToKinInCare: () -> Unit = {},
+    onNavigateToInvoices: () -> Unit = {},
     onWriteKinTale: (sessionId: String) -> Unit,
     onLiveTrack: (sessionId: String, kinfolkId: String, kinfolkName: String) -> Unit = { _, _, _ -> },
     onViewRoute: (routeId: String, kinfolkName: String) -> Unit = { _, _ -> },
@@ -295,6 +297,7 @@ fun HomeScreen(
                                             tone = AuntieStatusTone.Orange,
                                             feature = true,
                                             modifier = Modifier.weight(1.5f),
+                                            onClick = onNavigateToAuntieTime,
                                         )
                                         StatCard(
                                             label = "KinTales to review",
@@ -319,6 +322,7 @@ fun HomeScreen(
                                             trend = "across all households",
                                             tone = AuntieStatusTone.Purple,
                                             modifier = Modifier.weight(1f),
+                                            onClick = onNavigateToKinInCare,
                                         )
                                         StatCard(
                                             label = "This week",
@@ -328,6 +332,7 @@ fun HomeScreen(
                                             trend = "paid invoices this week",
                                             tone = AuntieStatusTone.Success,
                                             modifier = Modifier.weight(1f),
+                                            onClick = onNavigateToInvoices,
                                         )
                                     }
                                 }

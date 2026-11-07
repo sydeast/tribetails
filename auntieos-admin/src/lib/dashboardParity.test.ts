@@ -454,6 +454,24 @@ describe('pendingTaleRows and pendingDraftCount', () => {
     expect(pendingDraftCount(rows)).toBe(3);
     expect(pendingDraftCount([])).toBe(0);
   });
+  it('counts what the KinTales list files as a draft: generated, pending and blank, never approved (#1601)', () => {
+    const rows = [
+      draft({ _id: 'a', status: 'generated' }),
+      draft({ _id: 'b', status: 'pending' }),
+      draft({ _id: 'c', status: '' }),
+      draft({ _id: 'd', status: 'approved' }),
+      draft({ _id: 'e', status: 'mystery' }),
+    ];
+    expect(pendingDraftCount(rows)).toBe(3);
+  });
+  it('does not count a draft already sent as a KinTale (#1563), as the list and the rows do not', () => {
+    const rows = [
+      draft({ _id: 'a', status: 'generated' }),
+      draft({ _id: 'b', status: 'generated', publishedReportId: 'rep-1' }),
+    ];
+    expect(pendingDraftCount(rows)).toBe(1);
+    expect(pendingTaleRows(rows)).toHaveLength(1);
+  });
 
   /** #1629: what generate.js writes. snake_case, `generated`, `generated_at` (plus `createdOn` now). */
   const generateJs = (over: Partial<GeneratedDraftRow> = {}): GeneratedDraftRow => ({
@@ -493,5 +511,10 @@ describe('pendingTaleRows and pendingDraftCount', () => {
 describe('activeKinCount', () => {
   it('counts the roster minus the archived', () => {
     expect(activeKinCount([{ status: 'active' }, {}, { status: 'archived' }])).toBe(2);
+  });
+  it('leaves out inactive pets too, so Sandbox Bird is not "in care" (#1601)', () => {
+    expect(
+      activeKinCount([{ status: 'active' }, { status: 'inactive' }, { status: ' Inactive ' }, { status: 'archived' }, {}]),
+    ).toBe(2);
   });
 });

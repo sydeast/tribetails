@@ -429,6 +429,18 @@ fun holidayRunway(
 }
 
 /**
+ * Whether a `generated_drafts` doc is waiting on a decision: generated, pending
+ * or blank. The same three statuses the KinTales list files as DRAFT on the
+ * web admin (`draftStatusAsKinTaleStatus`), so Home's "KinTales to review"
+ * count and the list it summarises agree (#1601). Approved, and anything
+ * unrecognised, are not waiting.
+ */
+fun isDraftAwaitingReview(status: String): Boolean =
+    when (status.trim().lowercase()) {
+        "generated", "pending", "" -> true
+        else -> false
+    }
+/**
  * The Today's Pack overdue line (#1590): "6 overdue visits to close out in
  * Auntie Time". Null when nothing is overdue, so the card says nothing rather
  * than "0 overdue". Same words as the web admin and the phone.

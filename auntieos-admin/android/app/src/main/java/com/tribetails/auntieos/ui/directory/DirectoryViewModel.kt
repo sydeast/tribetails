@@ -106,8 +106,10 @@ internal fun filterKinDirectory(
     search: String,
     tag: String,
     sort: SortOption = SortOption.AlphaAsc,
+    inCareOnly: Boolean = false,
 ): List<Kin> {
     val rows = kin.filter { k ->
+        if (inCareOnly && !com.tribetails.auntieos.domain.isKinInCare(k.status)) return@filter false
         val matchesSearch = search.isBlank() ||
             k.name.contains(search, ignoreCase = true) ||
             k.species.contains(search, ignoreCase = true) ||
