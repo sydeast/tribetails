@@ -399,7 +399,9 @@ fun InvoicesScreen(
 
                     DenPanel(
                         title    = "Invoices",
-                        subtitle = "${visible.size} of ${s.value.size} shown. Tap a row to open the invoice.",
+                        // #1595: the count is a value, so it shows under the title
+                        // (Android's detail line), not hidden in the info tip.
+                        detail   = invoicesShownDetail(visible.size, s.value.size),
                     ) {
                         if (visible.isEmpty()) {
                             AuntieEmptyState(
