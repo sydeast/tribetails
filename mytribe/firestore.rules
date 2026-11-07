@@ -175,6 +175,43 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(caretakerMoneyKeys());
     }
 
+    // #1583. Age and weight on a Kin are numbers, checked the same way in every
+    // client, the callables (functions/src/lib/kinMeasures.ts) and here. Age is a
+    // number of YEARS up to 100; weight is a number with an optional unit. Blank
+    // is "not recorded". A value that is NOT being changed passes whatever it is,
+    // so a record that already holds old free text stays editable: only a field
+    // this write changes is held to the rule.
+    function kinAgeOk(v) {
+      return v is string && (v == '' || (v.matches('^[0-9]{1,3}([.][0-9]{1,2})?$') && float(v) <= 100));
+    }
+    function kinWeightOk(v) {
+      return v is string && (v == ''
+        || (v.matches('(?i)^[0-9]{1,4}([.][0-9]{1,2})? ?(lb|lbs|kg|oz|g)?$')
+            && !v.matches('(?i)^0+([.]0+)? ?(lb|lbs|kg|oz|g)?$')));
+    }
+    function kinAgeYearsOk(v) {
+      return v == null || (v is number && v >= 0 && v <= 100);
+    }
+    function flatKinMeasuresOkOnCreate() {
+      return kinAgeOk(request.resource.data.get('age', ''))
+          && kinWeightOk(request.resource.data.get('weight', ''));
+    }
+    function flatKinMeasuresOkOnUpdate() {
+      return (request.resource.data.get('age', '') == resource.data.get('age', '')
+              || kinAgeOk(request.resource.data.get('age', '')))
+          && (request.resource.data.get('weight', '') == resource.data.get('weight', '')
+              || kinWeightOk(request.resource.data.get('weight', '')));
+    }
+    function familyKinMeasuresOkOnCreate() {
+      return kinAgeYearsOk(request.resource.data.get('ageYears', null))
+          && kinWeightOk(request.resource.data.get('weight', ''));
+    }
+    function familyKinMeasuresOkOnUpdate() {
+      return (request.resource.data.get('ageYears', null) == resource.data.get('ageYears', null)
+              || kinAgeYearsOk(request.resource.data.get('ageYears', null)))
+          && (request.resource.data.get('weight', '') == resource.data.get('weight', '')
+              || kinWeightOk(request.resource.data.get('weight', '')));
+    }
     function diffOnly(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -593,8 +630,8 @@ service cloud.firestore {
     match /kin/{docId} {
       allow read: if isStaff()
                   || testOwnsExisting();
-      allow create: if isStaff() || testOwnsIncoming();
-      allow update: if isStaff() || testOwnsExisting();
+      allow create: if (isStaff() || testOwnsIncoming()) && flatKinMeasuresOkOnCreate();
+      allow update: if (isStaff() || testOwnsExisting()) && flatKinMeasuresOkOnUpdate();
       // #1442: callable-only. `deleteKin` refuses a Kin that has visits,
       // KinTales, photos or admin records, and removes this doc together with
       // its family mirror; a client deleteDoc here skips that check. The Admin
@@ -952,7 +989,7 @@ service cloud.firestore {
       // the rest stay on the staff-only flat `kin/{docId}`.
       match /kin/{kinId} {
         allow read: if activeMember(fid) || isStaff();
-        allow create: if hasPerm(fid, 'kin_edit');
+        allow create: if hasPerm(fid, 'kin_edit') && familyKinMeasuresOkOnCreate();
         // #1442: delete is callable-only (`deleteKin` runs the history check
         // and removes the flat mirror with this doc). No household role and no
         // staff role deletes from a client.
@@ -964,7 +1001,7 @@ service cloud.firestore {
         // profile, the care block, and the five descriptive facts shared with
         // the admin (sex, weight, colorMarkings, spayedNeutered, vetInfo; see
         // functions/src/triggers/kinMirror.ts HOUSEHOLD_SHARED_FIELDS).
-        allow update: if (hasPerm(fid, 'kin_edit') && diffOnly([
+        allow update: if familyKinMeasuresOkOnUpdate() && ((hasPerm(fid, 'kin_edit') && diffOnly([
             'name','species','breed','ageYears','photoUrl','status','legacyKinId',
             'feedingInstructions','walkingInstructions','sitterNotes',
             'emergencyNotes','medications','allergies',
@@ -976,7 +1013,7 @@ service cloud.firestore {
             'emergencyNotes','medications','allergies',
             'sex','weight','colorMarkings','spayedNeutered','vetInfo',
             'updatedAt'
-          ]));
+          ])));
       }
 
       match /kinfolk/{kinfolkId} {

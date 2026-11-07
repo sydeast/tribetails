@@ -120,6 +120,45 @@ describe('KinEdit', () => {
     expect(updateKin).not.toHaveBeenCalled();
   });
 
+  it('#1583: refuses a non-numeric age or weight, beside the field, and writes nothing', async () => {
+    getKin.mockResolvedValue(kin());
+    const onDone = vi.fn();
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={onDone} onCancel={vi.fn()} />);
+    const age = (await screen.findByText('Age')).parentElement!.querySelector('input')!;
+    await userEvent.type(age, 'abc-5');
+    expect(await screen.findByText(/Age is a number of years/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(updateKin).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    await userEvent.clear(age);
+    const weight = screen.getByText('Weight').parentElement!.querySelector('input')!;
+    await userEvent.type(weight, 'heavy-ish');
+    expect(await screen.findByText(/Weight is a number/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(updateKin).not.toHaveBeenCalled();
+  });
+
+  it('#1583: a legacy bad value loads, shows no error, and the record can still be saved and corrected', async () => {
+    getKin.mockResolvedValue(kin({ age: 'abc-5', weight: 'heavy-ish' }));
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const age = (await screen.findByText('Age')).parentElement!.querySelector('input')!;
+    expect(age).toHaveValue('abc-5');
+    expect(screen.queryByText(/Age is a number of years/)).toBeNull();
+    // Edit another field: the legacy values are not in the patch.
+    const color = screen.getByText('Color / markings').parentElement!.querySelector('input')!;
+    await userEvent.type(color, 'Brindle');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    expect(Object.keys(updateKin.mock.calls[0]![1])).toEqual(['colorMarkings']);
+    // Correcting the age to a number is accepted.
+    updateKin.mockClear();
+    await userEvent.clear(age);
+    await userEvent.type(age, '5');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    expect(updateKin.mock.calls[0]![1].age).toBe('5');
+  });
   it('blocks save on a blank name', async () => {
     getKin.mockResolvedValue(kin());
     render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
