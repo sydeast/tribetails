@@ -172,7 +172,7 @@ val conditionAttributeCatalog: List<ConditionAttribute> = listOf(
     ConditionAttribute("checklist",             "Care checklist"),
     ConditionAttribute("reactive",              "Reactive"),
     ConditionAttribute("spayedNeutered",        "Spayed / neutered"),
-    ConditionAttribute("officeNotes",           "Office notes"),
+    ConditionAttribute("officeNotes",           "Auntie's notes"),
     ConditionAttribute("colorMarkings",         "Color / markings"),
 )
 

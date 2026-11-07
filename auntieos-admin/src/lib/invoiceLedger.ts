@@ -212,6 +212,22 @@ export function ledgerCoversBalance(input: {
   return ledgerTotal >= input.amountDueCents;
 }
 
+/**
+ * #1568: IS THERE NO PAYMENT AT ALL TO SHOW? Only when BOTH sources are empty.
+ *
+ * The panel lists two collections: the `invoices/{id}/payments` settlement rows
+ * and, beneath them, the root `payments` history. The empty sentence used to
+ * read the first alone, so an invoice whose only payment is in the history (a
+ * Stripe card payment, a migrated row) said "No payment has been recorded"
+ * directly above a table listing one. Invoices #1018 and #1010 on the live
+ * admin. A sentence that the same panel contradicts is worse than none.
+ */
+export function paymentsPanelIsEmpty(input: {
+  payments: readonly unknown[];
+  ledgerPayments: readonly unknown[];
+}): boolean {
+  return input.payments.length === 0 && input.ledgerPayments.length === 0;
+}
 /** Sum of the subcollection rows, for the panel's own footer. */
 export function paymentsTotalCents(
   payments: readonly Pick<GetInvoiceLedgerResultPayment, 'amountCents'>[],
