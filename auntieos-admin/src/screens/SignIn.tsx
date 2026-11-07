@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useRouter, useSearch } from '@tanstack/react-router';
 import { DEFAULT_SIGN_IN_LANDING, safeRedirectPath } from '../lib/signInRedirect';
 import { FirebaseError } from 'firebase/app';
@@ -18,8 +18,30 @@ import { GlassSurface } from '../components/GlassSurface';
  * the admin claim" on Android; the sweep for #755 put all three on one string.
  */
 const DENIED_MSG = 'This account does not have admin access.';
-const MISSING_MSG = 'Email and password are required.';
+const MISSING_EMAIL_MSG = 'Enter your email.';
+const MISSING_PASSWORD_MSG = 'Enter your password.';
 const RESET_NEEDS_EMAIL_MSG = 'Type your email above first.';
+/** What each field has to say about itself. Absent key = the field is fine. */
+export interface SignInFieldErrors {
+  email?: string;
+  password?: string;
+}
+function withoutField(f: SignInFieldErrors, key: keyof SignInFieldErrors): SignInFieldErrors {
+  const next = { ...f };
+  delete next[key];
+  return next;
+}
+/**
+ * Which of the two fields an empty submit is refusing (#1600). One line per
+ * field, shown under the field, replaces the old single banner that said both
+ * and highlighted neither.
+ */
+export function signInFieldErrors(email: string, password: string): SignInFieldErrors {
+  const out: SignInFieldErrors = {};
+  if (email.trim() === '') out.email = MISSING_EMAIL_MSG;
+  if (password === '') out.password = MISSING_PASSWORD_MSG;
+  return out;
+}
 const RESET_SENT_MSG = 'Reset link sent. Check your inbox.';
 
 /** Maps the common auth error codes to a human line; anything else stays raw. */
@@ -88,6 +110,15 @@ export function SignIn() {
   const [password, setPassword] = useState('');
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Per-field refusals (#1600). They render in a line the form always reserves
+   * under each field, so a refusal changes text and colour and moves nothing.
+   * Auth outcomes (wrong password, locked account) stay in the banner: they are
+   * about the pair, not about one field.
+   */
+  const [fieldErrors, setFieldErrors] = useState<SignInFieldErrors>({});
+  const emailInput = useRef<HTMLInputElement>(null);
+  const passwordInput = useRef<HTMLInputElement>(null);
   const [resetSent, setResetSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -115,6 +146,8 @@ export function SignIn() {
   // the field's accessible name.
   const emailId = useId();
   const passwordId = useId();
+  const emailErrId = useId();
+  const passwordErrId = useId();
 
   /**
    * A non-admin who authenticates has to be signed out, and how depends on
@@ -188,11 +221,14 @@ export function SignIn() {
     if (busy || resetting) return;
     setError(null);
     setResetSent(false);
+    setFieldErrors({});
     // The pointer path calls this directly, so the inputs' `required` never
-    // runs for a click. Checked here, with the mock's line, instead of letting
-    // Firebase answer an empty email with "That email address is not valid."
-    if (email.trim() === '' || password === '') {
-      setError(MISSING_MSG);
+    // runs for a click. Checked here instead of letting Firebase answer an
+    // empty email with "That email address is not valid."
+    const missing = signInFieldErrors(email, password);
+    if (missing.email !== undefined || missing.password !== undefined) {
+      setFieldErrors(missing);
+      (missing.email !== undefined ? emailInput : passwordInput).current?.focus();
       return;
     }
     setBusy(true);
@@ -220,8 +256,10 @@ export function SignIn() {
     if (busy || resetting) return;
     setError(null);
     setResetSent(false);
+    setFieldErrors({});
     if (email.trim() === '') {
-      setError(RESET_NEEDS_EMAIL_MSG);
+      setFieldErrors({ email: RESET_NEEDS_EMAIL_MSG });
+      emailInput.current?.focus();
       return;
     }
     setResetting(true);
@@ -263,36 +301,51 @@ export function SignIn() {
 
           {resetSent ? <Banner tone="info">{RESET_SENT_MSG}</Banner> : null}
 
-          <form className="signin__form" onSubmit={onSubmit}>
+          <form className="signin__form" onSubmit={onSubmit} noValidate>
             <div className="signin__field">
               <label className="signin__label" htmlFor={emailId}>
                 Email
               </label>
-              <div className="signin__input">
+              <div className="signin__input" data-invalid={fieldErrors.email ? 'true' : undefined}>
                 <input
+                  ref={emailInput}
                   id={emailId}
                   type="email"
                   autoComplete="username"
                   placeholder="you@auntieos.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (fieldErrors.email) setFieldErrors((f) => withoutField(f, 'email'));
+                  }}
                   required
+                  aria-invalid={fieldErrors.email ? true : undefined}
+                  aria-describedby={emailErrId}
                 />
               </div>
+              <p id={emailErrId} className="signin__fielderr" aria-live="polite">
+                {fieldErrors.email ?? ''}
+              </p>
             </div>
             <div className="signin__field">
               <label className="signin__label" htmlFor={passwordId}>
                 Password
               </label>
-              <div className="signin__input">
+              <div className="signin__input" data-invalid={fieldErrors.password ? 'true' : undefined}>
                 <input
+                  ref={passwordInput}
                   id={passwordId}
                   type={revealed ? 'text' : 'password'}
                   autoComplete="current-password"
                   placeholder="••••••••"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (fieldErrors.password) setFieldErrors((f) => withoutField(f, 'password'));
+                  }}
                   required
+                  aria-invalid={fieldErrors.password ? true : undefined}
+                  aria-describedby={passwordErrId}
                 />
                 <button
                   type="button"
@@ -304,6 +357,9 @@ export function SignIn() {
                   {revealed ? 'hide' : 'show'}
                 </button>
               </div>
+              <p id={passwordErrId} className="signin__fielderr" aria-live="polite">
+                {fieldErrors.password ?? ''}
+              </p>
             </div>
             {/* ControlShell renders type="button", not a submit button, so the
                 pointer path calls doSignIn directly; Enter-in-field goes through

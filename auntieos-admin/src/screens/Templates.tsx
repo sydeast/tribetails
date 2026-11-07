@@ -117,7 +117,19 @@ export interface TemplatesProps {
    * reason as `onSelect` above.
    */
   onNew?: () => void;
+  /**
+   * Which editor the URL says is open (#1594): a template id, `'new'`, or
+   * absent for the bank. `routes/TemplatesView.tsx` reads it from
+   * `?template=`, so a reload or a pasted link returns to the editor, and Back
+   * from the editor returns to the bank.
+   */
+  editorTemplateId?: string;
+  /** Told when the editor opens (`id` or `'new'`) or closes (`null`). */
+  onEditorChange?: (templateId: string | null) => void;
 }
+
+/** The `?template=` value that means the create-mode editor. */
+export const NEW_TEMPLATE_PARAM = 'new';
 
 const ALL_FILTER = null;
 
@@ -272,7 +284,7 @@ function HeaderOverflowMenu({ items }: { items: readonly OverflowItem[] }) {
   );
 }
 
-export function Templates({ onSelect, onNew }: TemplatesProps) {
+export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }: TemplatesProps) {
   const [templates, setTemplates] = useState<Async<TemplateSummary[]>>({ status: 'loading' });
   const [categories, setCategories] = useState<Async<string[]>>({ status: 'loading' });
   const [query, setQuery] = useState('');
@@ -426,19 +438,54 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
       const row = templates.data.find((t) => t.templateId === templateId);
       if (!row) return;
       setEditor({ mode: 'edit', template: row });
+      onEditorChange?.(templateId);
     },
-    [templates],
+    [templates, onEditorChange],
   );
 
+  const closeEditor = useCallback(() => {
+    setEditor(null);
+    onEditorChange?.(null);
+  }, [onEditorChange]);
+
+  // The URL is the source of truth for which editor is open (#1594). It opens
+  // the editor on a reload or a pasted link once the bank has loaded the row,
+  // and closes it when Back takes `?template=` away.
+  // Only when a route drives it: a caller with no onEditorChange (the tests,
+  // an embed) keeps the editor as plain local state.
+  const urlDriven = onEditorChange !== undefined;
+  useEffect(() => {
+    if (!urlDriven) return;
+    if (editorTemplateId === undefined) {
+      setEditor(null);
+      return;
+    }
+    if (editorTemplateId === NEW_TEMPLATE_PARAM) {
+      setEditor((prev) => (prev?.mode === 'create' ? prev : { mode: 'create' }));
+      return;
+    }
+    if (templates.status !== 'ready') return;
+    const row = templates.data.find((t) => t.templateId === editorTemplateId);
+    if (!row) return;
+    setEditor((prev) =>
+      prev?.mode === 'edit' && prev.template.templateId === row.templateId ? prev : { mode: 'edit', template: row },
+    );
+  }, [urlDriven, editorTemplateId, templates]);
+
   const handleSelect = onSelect ?? openEditorFor;
-  const handleNew = onNew ?? (() => setEditor({ mode: 'create' }));
+  const handleNew =
+    onNew ??
+    (() => {
+      setEditor({ mode: 'create' });
+      onEditorChange?.(NEW_TEMPLATE_PARAM);
+    });
 
   // Reload after a save so the row reflects exactly what the server has,
   // rather than optimistically patching local state: the same
   // reload-over-optimistic-splice convention FormSchemas.tsx's confirmDelete()
   // uses for its own write.
   function handleSaved() {
-    setEditor(null);
+    closeEditor();
     load();
   }
 
@@ -446,7 +493,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   // optimistically splicing the row out, the same convention
   // FormSchemas.tsx's confirmDelete() uses for its own write.
   function handleDeleted() {
-    setEditor(null);
+    closeEditor();
     load();
   }
 
@@ -489,7 +536,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
           key={editor.mode === 'edit' ? `edit:${editor.template.templateId}` : 'new'}
           template={editor.mode === 'edit' ? editor.template : null}
           categories={categoryList}
-          onClose={() => setEditor(null)}
+          onClose={closeEditor}
           onSaved={handleSaved}
           onDeleted={handleDeleted}
         />

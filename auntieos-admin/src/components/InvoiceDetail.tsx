@@ -56,6 +56,9 @@ import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
 import { phaseOfError } from '../lib/offlineWrite';
+import { readInvoiceSendMarks } from '../api/invoiceSendCheck';
+import { sendMarksOf, sendOutcomeAfterSilence, type SendCheckAction } from '../lib/invoiceSendCheck';
+import { CallableTimeoutError, LONG_CALLABLE_TIMEOUT_MS } from '../lib/fns';
 import {
   mintInvoicePaymentIdempotencyKey,
   mintPaymentIdempotencyKey,
@@ -638,6 +641,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   /** Download link shown when the browser would not open the PDF tab itself. */
   const [pdfLink, setPdfLink] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // #1567: the banner title for an error raised after a send got no answer.
+  // Keyed to its own message, so any later error falls back to "Action failed".
+  const [silenceTitle, setSilenceTitle] = useState<{ message: string; title: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /**
    * Whether the notice above is wholly good news.
@@ -1146,6 +1152,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     if (busy) return;
     setBusy(true);
     setActionError(null);
+    const before = sendMarksOf(invoice as unknown as Record<string, unknown>);
     try {
       const resent = await resendQuote(invoice._id);
       setBusy(false);
@@ -1160,6 +1167,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           : 'Quote sent again. The household can accept or decline it now.',
       );
     } catch (caught) {
+      // #1567: no answer is not a refusal. Re-read the quote and say what
+      // really happened before offering anything.
+      if (phaseOfError(caught) === 'unknown') {
+        await reportAfterSilence('resendQuote', caught, before);
+        setResendPrompt(false);
+        return;
+      }
       setBusy(false);
       setResendPrompt(false);
       // Fail loud and verbatim: every refusal this callable makes names what to
@@ -1171,10 +1185,34 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     }
   }
 
+  /**
+   * #1567: a send got no answer. The server may have finished it after the
+   * client stopped listening, so the invoice is re-read from the server and the
+   * panel reports what it shows (`lib/invoiceSendCheck.ts`), never "failed".
+   * Leaves `busy` on through the re-read, so the button keeps its spinner.
+   */
+  async function reportAfterSilence(action: SendCheckAction, caught: unknown, before: ReturnType<typeof sendMarksOf>) {
+    const seconds =
+      caught instanceof CallableTimeoutError ? caught.seconds : Math.round(LONG_CALLABLE_TIMEOUT_MS / 1000);
+    const after = await readInvoiceSendMarks(invoice._id);
+    const outcome = sendOutcomeAfterSilence(action, seconds, before, after);
+    setBusy(false);
+    if (outcome.kind === 'sent') {
+      setNoticeIncomplete(false);
+      setNotice(outcome.message);
+      setPending(null);
+      return;
+    }
+    setSilenceTitle({ message: outcome.message, title: outcome.kind === 'not-sent' ? 'Not sent' : 'No answer' });
+    setActionError(outcome.message);
+  }
   async function confirmPending() {
     if (!meta || busy) return;
     setBusy(true);
     setActionError(null);
+    // #1567: the marks each send leaves, as they stood when the button was
+    // pressed, so a re-read after a silent send can tell whether it landed.
+    const before = sendMarksOf(invoice as unknown as Record<string, unknown>);
     try {
       let outcome = meta.successMessage;
       // Set wherever an outcome sentence gets a clause saying part of this did
@@ -1428,6 +1466,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       setNotice(outcome);
       setPending(null);
     } catch (caught) {
+      const silentSend: SendCheckAction | null =
+        meta.key === 'reviewSend' || meta.key === 'reminder' || meta.key === 'receipt' ? meta.key : null;
+      if (silentSend !== null && phaseOfError(caught) === 'unknown') {
+        await reportAfterSilence(silentSend, caught, before);
+        return;
+      }
       setBusy(false);
       setActionError(invoiceActionError(caught, meta.callableName));
     }
@@ -1581,7 +1625,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           </Banner>
         )}
         {actionError && (
-          <Banner tone="error" title="Action failed">
+          <Banner
+            tone="error"
+            title={silenceTitle !== null && silenceTitle.message === actionError ? silenceTitle.title : 'Action failed'}
+          >
             {actionError}
           </Banner>
         )}

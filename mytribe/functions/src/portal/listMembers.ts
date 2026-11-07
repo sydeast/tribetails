@@ -17,6 +17,12 @@ const Args = z.object({
 /** Safe, non-sensitive projection of a family member for the members-editor. */
 export interface MemberDTO {
   uid: string;
+  /**
+   * The person's name (#1589): the member doc's `displayName`, or for a PRIMARY
+   * with none, the household's contact name. Null when nothing names them. The
+   * members screens show this instead of the uid.
+   */
+  displayName: string | null;
   secondaryLabel: string | null;
   role: MemberRole;
   status: MemberStatus;
@@ -28,8 +34,7 @@ export interface MemberDTO {
   permissions: MemberPermissions;
   /**
    * The member's invited email, sourced from the real `email` schema field when
-   * present, else null. We do NOT surface `displayName` here (it can hold PII)
-   * nor fabricate an address from any other field.
+   * present, else null. Never fabricated from any other field.
    */
   invitedEmail: string | null;
 }
@@ -95,15 +100,26 @@ export async function listMembersHandler(
   // allow, consistent with requireKinfolkPrimary). A secondary is denied here.
   await requireKinfolkPrimary(uid, kinfolkId, staffBypass(req.auth, 'listMembers'), 'listMembers');
 
-  const snap = await db().collection(`families/${kinfolkId}/members`).get();
+  const [snap, householdSnap] = await Promise.all([
+    db().collection(`families/${kinfolkId}/members`).get(),
+    db().doc(`kinfolk/${kinfolkId}`).get(),
+  ]);
+  const household = (householdSnap.data() ?? {}) as Record<string, unknown>;
+  const contactName = [household['firstName'], household['lastName']]
+    .filter((p): p is string => typeof p === 'string' && p.trim() !== '')
+    .join(' ')
+    .trim();
   const members: MemberDTO[] = snap.docs.map((d) => {
     const data = (d.data() ?? {}) as Partial<MemberDoc> & Record<string, unknown>;
     const rawLabel = data.secondaryLabel;
     const rawEmail = data.email;
+    const ownName = typeof data.displayName === 'string' ? data.displayName.trim() : '';
+    const role = asRole(data.role);
     return {
       uid: typeof data.uid === 'string' ? data.uid : d.id,
+      displayName: ownName !== '' ? ownName : role === 'PRIMARY' && contactName !== '' ? contactName : null,
       secondaryLabel: typeof rawLabel === 'string' ? rawLabel : null,
-      role: asRole(data.role),
+      role,
       status: asStatus(data.status),
       permissions: asPermissions(data.permissions),
       invitedEmail: typeof rawEmail === 'string' ? rawEmail : null,
