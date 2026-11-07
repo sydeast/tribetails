@@ -253,6 +253,31 @@ describe('listRescheduleRequestsHandler', () => {
     });
   });
 
+  it('#1577: names the household on each row, one family read per household', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/f1': { displayName: 'The Wrens' } },
+      collectionGroupDocs: {
+        kinCares: [
+          { id: 'v1', path: VISIT, data: { ...pendingVisit(), rescheduleRequestedAt: ts(1_700_000_000_000) } },
+          {
+            id: 'v2',
+            path: 'families/f9/bookings/b9/kinCares/v2',
+            data: { ...pendingVisit(), rescheduleRequestedAt: ts(1_700_000_000_001) },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { listRescheduleRequestsHandler } = await import('../src/admin/rescheduleRequests');
+    const res = await listRescheduleRequestsHandler(
+      callableRequest({}, { uid: 'op-1', token: { admin: true } }),
+    );
+    // A household with no family doc still lists, nameless, rather than dropping.
+    expect(res.requests.map((r) => [r.visitId, r.kinfolkName])).toEqual([
+      ['v1', 'The Wrens'],
+      ['v2', null],
+    ]);
+  });
   it('refuses a limit outside the allowed range', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock({ collectionGroupDocs: { kinCares: [] } }).db);
     const { listRescheduleRequestsHandler } = await import('../src/admin/rescheduleRequests');

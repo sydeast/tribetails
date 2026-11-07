@@ -494,7 +494,7 @@ private fun ScheduleViewScreenContent(
                             message = msg,
                             override = state.incomingOverride,
                             busy = state.seriesActionBatchId != null,
-                            title = "Incoming requests",
+                            title = "Visit requests",
                             overrideLabel = "Approve anyway",
                             onOverride = { viewModel.retryIncomingWithOverride() },
                             onDismiss = { viewModel.clearIncomingError() },
@@ -502,7 +502,7 @@ private fun ScheduleViewScreenContent(
                     } else {
                         AuntieBanner(
                             tone = AuntieBannerTone.Error,
-                            title = "Incoming requests",
+                            title = "Visit requests",
                             icon = Lucide.CircleAlert,
                             onDismiss = { viewModel.clearIncomingError() },
                         ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
@@ -513,7 +513,7 @@ private fun ScheduleViewScreenContent(
                 item {
                     AuntieBanner(
                         tone = AuntieBannerTone.Success,
-                        title = "Booking series",
+                        title = "Visit requests",
                         icon = Lucide.CircleCheckBig,
                         onDismiss = { viewModel.clearSeriesActionMessage() },
                     ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) }
@@ -522,7 +522,7 @@ private fun ScheduleViewScreenContent(
             if (state.incomingSeries.isNotEmpty()) {
                 item {
                     DenPanel(
-                        title = "Incoming requests",
+                        title = "Visit requests",
                         subtitle = "New requests from MyTribe. Approve a whole series at once; approving creates the visits on Auntie Time.",
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -535,6 +535,7 @@ private fun ScheduleViewScreenContent(
                                     onSetStartTime = { visitId, time -> viewModel.setSeriesStartTime(series, visitId, time) },
                                     onApprove = { viewModel.approveSeries(series) },
                                     onCancel = { viewModel.cancelSeries(series) },
+                                    loadNotes = { viewModel.loadRequestNotes(series) },
                                 )
                             }
                         }
@@ -2891,39 +2892,48 @@ fun AddEventDialog(onDismiss: () -> Unit, onAdd: (Event) -> Unit) {
 /**
  * One row in the change-request queue (#438, #399 item 2).
  *
- * Accept is one tap; Decline opens an inline note field first, since a note
- * needs a text box rather than firing straight away. #700: the note is
+ * #1577: the card names the household first, the card body opens the request,
+ * and Accept goes through a confirm step titled with the household, so an
+ * operator never answers a request without seeing whose it is. Decline opens
+ * an inline note field first, headed with the household. #700: the note is
  * optional, not a gate. The office does not owe the household a reason, so
  * "Send the decline" is never held back on it.
  */
 @Composable
-private fun VisitRequestRowCard(
+internal fun VisitRequestRowCard(
     row: VisitRequestRow,
     inFlight: Boolean,
     actionsLocked: Boolean,
     onResolve: (decision: String, note: String?) -> Unit,
 ) {
     val c = AuntieTheme.colors
+    val zone = LocalBusinessZone.current
     var declining by remember(row.key) { mutableStateOf(false) }
     var note by remember(row.key) { mutableStateOf("") }
-
+    var confirmingAccept by remember(row.key) { mutableStateOf(false) }
+    var detailOpen by remember(row.key) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AuntieStatusPill(
-                label = row.kindLabel(),
-                tone = if (row is VisitRequestRow.Cancel) AuntieStatusTone.Orange else AuntieStatusTone.Teal,
-            )
-            Text(text = row.title, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = "Open the request") { detailOpen = true },
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                AuntieStatusPill(
+                    label = row.kindLabel(),
+                    tone = if (row is VisitRequestRow.Cancel) AuntieStatusTone.Orange else AuntieStatusTone.Teal,
+                )
+                Text(text = row.householdLabel(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+            }
+            Text(text = row.subject(), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            Text(text = visitRequestWhen(row, zone), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+            row.reason?.takeIf { it.isNotBlank() }?.let {
+                Text(text = it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
         }
-        if (row.kinNames.isNotBlank()) {
-            Text(text = row.kinNames, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
-        Text(text = visitRequestWhen(row, LocalBusinessZone.current), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
-        row.reason?.takeIf { it.isNotBlank() }?.let {
-            Text(text = it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
-
         if (declining) {
+            Text(text = row.declineConfirmTitle(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
             AuntieField(
                 value = note,
                 onValueChange = { note = it.take(500) },
@@ -2948,7 +2958,7 @@ private fun VisitRequestRowCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PrimaryButton(
                     label = if (inFlight) "Working…" else row.acceptLabel(),
-                    onClick = { onResolve("accept", null) },
+                    onClick = { confirmingAccept = true },
                     enabled = !actionsLocked,
                 )
                 GhostButton(
@@ -2959,8 +2969,72 @@ private fun VisitRequestRowCard(
             }
         }
     }
+    AuntieDialog(
+        visible = confirmingAccept,
+        title = row.acceptConfirmTitle(),
+        onDismiss = { confirmingAccept = false },
+        footer = {
+            GhostButton(label = "Never mind", onClick = { confirmingAccept = false })
+            PrimaryButton(
+                label = row.acceptLabel(),
+                onClick = {
+                    confirmingAccept = false
+                    onResolve("accept", null)
+                },
+                enabled = !actionsLocked,
+            )
+        },
+    ) {
+        Text(text = row.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(text = visitRequestWhen(row, zone), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+    }
+    AuntieDialog(
+        visible = detailOpen,
+        title = "${row.kindLabel()} request${householdSuffix(row.householdName, "from")}",
+        onDismiss = { detailOpen = false },
+        footer = {
+            GhostButton(label = "Close", onClick = { detailOpen = false })
+            GhostButton(
+                label = "Decline",
+                onClick = {
+                    detailOpen = false
+                    declining = true
+                },
+                enabled = !actionsLocked,
+            )
+            PrimaryButton(
+                label = "Accept",
+                onClick = {
+                    detailOpen = false
+                    confirmingAccept = true
+                },
+                enabled = !actionsLocked,
+            )
+        },
+    ) {
+        RequestFact("Household", row.householdLabel())
+        RequestFact("Visit", row.title)
+        RequestFact("Kin", row.kinNames.ifBlank { "Not on the visit" })
+        when (row) {
+            is VisitRequestRow.Cancel -> RequestFact("Booked for", visitRequestTime(row.dto.startTimeMs, zone))
+            is VisitRequestRow.Reschedule -> {
+                RequestFact("Booked for", visitRequestTime(row.dto.currentStartTimeMs, zone))
+                RequestFact("Asked to move to", visitRequestTime(row.dto.proposedStartTimeMs, zone))
+            }
+        }
+        RequestFact("Reason given", row.reason?.takeIf { it.isNotBlank() } ?: "None given")
+        RequestFact("Asked", visitRequestTime(row.requestedAtMs, zone))
+    }
 }
-
+/** One labelled fact in a request's detail sheet. */
+@Composable
+private fun RequestFact(label: String, value: String) {
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(bottom = 10.dp)) {
+        Text(text = label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Text(text = value, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+    }
+}
 /**
  * The times on a row. A reschedule shows both windows, because the decision is
  * about the difference between them; a cancellation shows the visit that would
@@ -2983,8 +3057,15 @@ private fun visitRequestTime(ms: Long?, zone: ZoneId): String {
     return local.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d 'at' h:mm a"))
 }
 
+/**
+ * One incoming booking request (#533 / 16.5).
+ *
+ * #1577: the household is the card's title, the card body opens the request
+ * with every visit and the household's notes, and both Approve and Cancel go
+ * through a confirm step titled with the household.
+ */
 @Composable
-private fun IncomingSeriesRow(
+internal fun IncomingSeriesRow(
     series: IncomingSeries,
     inFlight: Boolean,
     actionsLocked: Boolean,
@@ -2992,25 +3073,33 @@ private fun IncomingSeriesRow(
     onSetStartTime: (visitId: String, time: LocalTime) -> Unit,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
+    loadNotes: suspend () -> Result<String> = { Result.success("") },
 ) {
     val c = AuntieTheme.colors
+    val zone = LocalBusinessZone.current
     val nights = series.pendingNights
     val ready = seriesReadyToApprove(series, startTimes)
+    val seriesKey = seriesNightKey(series, "")
+    var confirming by remember(seriesKey) { mutableStateOf<String?>(null) }
+    var detailOpen by remember(seriesKey) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = series.kinfolkName.ifBlank { "Kinfolk request" },
-            style = AuntieTheme.typography.titleSmall,
-            color = c.textPrimary,
-        )
-        Text(
-            text = buildString {
-                append(if (series.visitCount == 1) "1 visit" else "${series.visitCount} visits")
-                if (series.isSeries) append(" · recurring series")
-                if (series.serviceType.isNotBlank()) append(" · ${series.serviceType}")
-            },
-            style = AuntieTheme.typography.bodySmall,
-            color = c.textDim,
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = "Open the request") { detailOpen = true },
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = series.householdLabel(),
+                style = AuntieTheme.typography.titleSmall,
+                color = c.textPrimary,
+            )
+            Text(
+                text = series.subject(),
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
         // #1098: an Overnight is asked for as a night. Its start time is the
         // operator's to set, with the same hour and minute pickers the New
         // booking wizard uses, and Approve waits until every night has one.
@@ -3054,14 +3143,98 @@ private fun IncomingSeriesRow(
                     !ready -> "Set the start times first"
                     else -> "Approve series"
                 },
-                onClick = onApprove,
+                onClick = { confirming = "approve" },
                 enabled = !actionsLocked && ready,
             )
             GhostButton(
                 label = "Cancel",
-                onClick = onCancel,
+                onClick = { confirming = "cancel" },
                 enabled = !actionsLocked,
             )
+        }
+    }
+    AuntieDialog(
+        visible = confirming != null,
+        title = if (confirming == "cancel") series.declineConfirmTitle() else series.approveConfirmTitle(),
+        onDismiss = { confirming = null },
+        footer = {
+            GhostButton(label = "Never mind", onClick = { confirming = null })
+            PrimaryButton(
+                label = if (confirming == "cancel") "Turn it down" else "Book it",
+                onClick = {
+                    val decision = confirming
+                    confirming = null
+                    if (decision == "cancel") onCancel() else onApprove()
+                },
+                enabled = !actionsLocked,
+            )
+        },
+    ) {
+        Text(text = series.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(
+            text = if (confirming == "cancel") {
+                "Nothing will be booked. The household will be told."
+            } else {
+                if (series.visitCount == 1) "This visit will go on the schedule and on the household's portal."
+                else "All ${series.visitCount} visits will go on the schedule and on the household's portal."
+            },
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+    }
+    if (detailOpen) {
+        var notes by remember(seriesKey) { mutableStateOf<Result<String>?>(null) }
+        LaunchedEffect(seriesKey) { notes = loadNotes() }
+        AuntieDialog(
+            visible = true,
+            title = "New request${householdSuffix(series.kinfolkName, "from")}",
+            onDismiss = { detailOpen = false },
+            footer = {
+                GhostButton(label = "Close", onClick = { detailOpen = false })
+                GhostButton(
+                    label = "Cancel",
+                    onClick = {
+                        detailOpen = false
+                        confirming = "cancel"
+                    },
+                    enabled = !actionsLocked,
+                )
+                PrimaryButton(
+                    label = "Approve",
+                    onClick = {
+                        detailOpen = false
+                        confirming = "approve"
+                    },
+                    enabled = !actionsLocked && ready,
+                )
+            },
+        ) {
+            RequestFact("Household", series.householdLabel())
+            RequestFact("Service", series.serviceType.ifBlank { "Not on the request" })
+            RequestFact("Kin", series.kinNames.joinToString(", ").ifBlank { "Not on the request" })
+            RequestFact(
+                if (series.visitCount == 1) "Visit" else "${series.visitCount} visits",
+                series.visitLines(zone).joinToString("\n"),
+            )
+            val loaded = notes
+            when {
+                loaded == null -> {
+                    Text(text = "NOTES ON THE REQUEST", style = AuntieTheme.typography.labelSmall, color = c.textDim)
+                    AuntieLinearProgress(modifier = Modifier.fillMaxWidth())
+                }
+                loaded.isFailure -> RequestFact(
+                    "Notes on the request",
+                    "Couldn't load the notes: ${loaded.exceptionOrNull()?.message ?: "the read did not land"}",
+                )
+                else -> RequestFact("Notes on the request", loaded.getOrNull().orEmpty().ifBlank { "None given" })
+            }
+            if (!ready) {
+                Text(
+                    text = if (nights.size == 1) "Set the start time on the card before approving." else "Set the start times on the card before approving.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+            }
         }
     }
 }

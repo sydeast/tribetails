@@ -535,6 +535,9 @@ class EnhancedSchedulingViewModel(
         }
     }
 
+    /** #1577: the household's notes on [series], read when its detail sheet opens. */
+    suspend fun loadRequestNotes(series: IncomingSeries): Result<String> =
+        bookingRepository.bookingRequestNotes(series.familyId, series.batchId)
     /** Approve a whole incoming series: flips every visit confirmed + creates the
      *  linked sessions server-side (manageBookingSeries). The stream then drops the
      *  series (no longer 'requested'). */

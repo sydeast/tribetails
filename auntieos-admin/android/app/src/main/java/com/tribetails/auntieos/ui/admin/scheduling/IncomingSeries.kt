@@ -31,7 +31,38 @@ data class IncomingSeries(
      * the operator to set its start time before the request can be approved.
      */
     val pendingNights: List<IncomingKinCare> get() = visits.filter { it.startTimePending }
+    /** #1577: the Kin the request covers, from the first visit that names them. */
+    val kinNames: List<String> get() = visits.firstOrNull { it.kinNames.isNotEmpty() }?.kinNames.orEmpty()
 }
+/** #1577: WHO is asking, the card's title. */
+fun IncomingSeries.householdLabel(): String =
+    kinfolkName.trim().takeIf { it.isNotEmpty() } ?: HOUSEHOLD_NOT_ON_FILE
+/** What the request covers: its visit count, service and Kin, for the line under the household. */
+fun IncomingSeries.subject(): String = buildString {
+    append(if (visitCount == 1) "1 visit" else "$visitCount visits")
+    if (isSeries) append(" · recurring series")
+    if (serviceType.isNotBlank()) append(" · $serviceType")
+    if (kinNames.isNotEmpty()) append(" · ${kinNames.joinToString(", ")}")
+}
+/** #1577: the confirm step for Approve, titled with the household. */
+fun IncomingSeries.approveConfirmTitle(): String = "Book this request${householdSuffix(kinfolkName, "for")}"
+/** #1577: the confirm step for Cancel (turning the request down), titled with the household. */
+fun IncomingSeries.declineConfirmTitle(): String = "Turn down this request${householdSuffix(kinfolkName, "from")}"
+/**
+ * One line per visit in the request, for the request's detail sheet: the
+ * start on the business clock, or the night asked for when it awaits a start
+ * time (#1098), then its service when it differs from the request's.
+ */
+fun IncomingSeries.visitLines(zone: ZoneId): List<String> = visits.map { v ->
+    val start = runCatching { java.time.Instant.parse(v.startTime) }.getOrNull()
+    val whenText = when {
+        start != null -> start.atZone(zone).format(VISIT_LINE_FORMAT)
+        v.requestedDate.isNotBlank() -> "Night of ${nightLabel(v.requestedDate)}, start time not set"
+        else -> "Time not on file"
+    }
+    if (v.serviceType.isNotBlank() && v.serviceType != serviceType) "$whenText · ${v.serviceType}" else whenText
+}
+private val VISIT_LINE_FORMAT = DateTimeFormatter.ofPattern("EEE, MMM d 'at' h:mm a", Locale.US)
 
 /**
  * The key one night's chosen start time is held under. A visit id is unique
