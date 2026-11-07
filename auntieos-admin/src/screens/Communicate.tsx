@@ -25,6 +25,7 @@ import { GhostButton } from '../components/Buttons';
 import { ExternalSendPanel } from '../components/ExternalSendPanel';
 import { CommunicateCompose } from './CommunicateCompose';
 import { CommunicatePersonalize } from './CommunicatePersonalize';
+import { navKicker } from '../lib/nav';
 import './Communicate.css';
 
 /**
@@ -138,7 +139,7 @@ export function Communicate({ draftId, onOpenKinTale }: CommunicateProps = {}) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Communicate"
+        kicker={navKicker('communicate')}
         title="Talk to your"
         accentTail="kinfolk"
         subtitle={active.subtitle}

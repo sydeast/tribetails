@@ -265,7 +265,7 @@ private fun BookingListScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Bookings",
+            kicker     = "Care Ops · Bookings",
             title      = "Bookings",
             subtitle   = "Pending requests and scheduled visits.",
             trailing   = {
@@ -382,7 +382,7 @@ private fun BookingListScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             StatRowCard(
-                label = "Pending approval",
+                label = "Visit requests",
                 value = if (pendingState is FirestoreResult.Loading) "…" else pending.size.toString(),
                 trend = "awaiting a reply",
                 tone  = AuntieStatusTone.Orange,
@@ -409,15 +409,15 @@ private fun BookingListScreen(
         // ── 16.5 Incoming requests (MyTribe envelopes; approve/cancel a series) ──
         if (incomingSeries.isNotEmpty() || incomingState is FirestoreResult.Error) {
             DenPanel(
-                title    = "Incoming requests",
+                title    = "Visit requests",
                 subtitle = "New requests from MyTribe. Approve a whole series at once; approving creates the visits.",
                 trailing = { SectionCount("${incomingSeries.size}") },
             ) {
                 when {
                     requestBanner(testMode, incomingState) == RequestBanner.Sandbox ->
-                        EmptyHint("Incoming requests aren't available in the sandbox (cross-tenant data).")
+                        EmptyHint("Visit requests aren't available in the sandbox (cross-tenant data).")
                     incomingState is FirestoreResult.Error ->
-                        EmptyHint("Couldn't load incoming requests: ${(incomingState as FirestoreResult.Error).message}", error = true)
+                        EmptyHint("Couldn't load visit requests: ${(incomingState as FirestoreResult.Error).message}", error = true)
                     else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         incomingSeries.forEach { series ->
                             IncomingSeriesCard(
@@ -436,7 +436,7 @@ private fun BookingListScreen(
 
         // ── Pending approval (real DRAFT requests) ────────────────────────────
         DenPanel(
-            title    = "Pending approval",
+            title    = "Visit requests",
             subtitle = "New booking requests waiting on your call.",
             trailing = { SectionCount(if (pendingState is FirestoreResult.Loading) "" else "${pending.size}") },
         ) {

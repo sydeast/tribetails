@@ -352,7 +352,7 @@ describe('KinTales screen', () => {
     expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();
   });
 
-  it('offers no New KinTale: a KinTale starts from a Kin Care (#676), as the mock draws it', () => {
+  it('offers no New KinTale: a KinTale starts from a KinCare (#676), as the mock draws it', () => {
     render(<KinTales />);
     expect(screen.queryByText(/new kintale/i)).toBeNull();
   });
