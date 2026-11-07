@@ -9,6 +9,7 @@ import {
   bookingWhen,
   formatLocalDateTime,
   initialsFor,
+  isBookingInFlight,
   parseFlexibleDate,
   EMPTY_BOOKING_CATALOG,
   type BookingCatalog,
@@ -38,6 +39,16 @@ describe('bookingState (enumerated, never derived by negation)', () => {
     expect(bookingState(statusRow('cancelled'))).toBe('cancelled');
   });
 
+  it('#1578: reads the three in-visit statuses the field app writes, rather than calling them unknown', () => {
+    expect(bookingState(statusRow('ON_MY_WAY'))).toBe('onMyWay');
+    expect(bookingState(statusRow(' arrived '))).toBe('arrived');
+    expect(bookingState(statusRow('Departed'))).toBe('departed');
+    expect(isBookingInFlight('onMyWay')).toBe(true);
+    expect(isBookingInFlight('arrived')).toBe(true);
+    expect(isBookingInFlight('departed')).toBe(true);
+    expect(isBookingInFlight('scheduled')).toBe(false);
+    expect(isBookingInFlight('completed')).toBe(false);
+  });
   it('folds CANCELLED / CANCELED / REJECTED into one cancelled bucket, per BookingScreen.kt', () => {
     expect(bookingState(statusRow('CANCELLED'))).toBe('cancelled');
     expect(bookingState(statusRow('CANCELED'))).toBe('cancelled');
@@ -55,6 +66,9 @@ describe('bookingStateInfo', () => {
     ['draft', 'Draft', 'DRAFT', 'draft'],
     ['pending', 'Pending', 'PENDING', 'pending'],
     ['scheduled', 'Scheduled', 'SCHEDULED', 'scheduled'],
+    ['onMyWay', 'On the way', 'ON THE WAY', 'onmyway'],
+    ['arrived', 'Arrived', 'ARRIVED', 'arrived'],
+    ['departed', 'Departed', 'DEPARTED', 'departed'],
     ['completed', 'Completed', 'COMPLETED', 'completed'],
     ['cancelled', 'Cancelled', 'CANCELLED', 'cancelled'],
     ['unknown', 'Unknown', 'UNKNOWN', 'unknown'],

@@ -4,7 +4,7 @@ import { DenPanel, InfoTip } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
-import { resolveBusinessTimeZone } from '../../lib/businessOperations';
+import { VISIT_REMINDER_TIMING, resolveBusinessTimeZone } from '../../lib/businessOperations';
 import '../SettingsEdit.css';
 
 /**
@@ -200,7 +200,7 @@ export function NotificationScheduleSection({ data, onSave }: NotificationSchedu
       <div className="settingsEdit__subsection">
         <span className="settingsEdit__groupHeading">
           Daily jobs{' '}
-          <InfoTip text="Visit reminders are not on a clock: they go out 24 to 48 hours before each visit. Turn them on or off under Booking rules." />
+          <InfoTip text={`Visit reminders are not on a clock: they go out ${VISIT_REMINDER_TIMING} each visit. Turn them on or off under Booking rules.`} />
         </span>
         <div className="settingsEdit__fields">
           <div className="settingsEdit__fieldGroup">

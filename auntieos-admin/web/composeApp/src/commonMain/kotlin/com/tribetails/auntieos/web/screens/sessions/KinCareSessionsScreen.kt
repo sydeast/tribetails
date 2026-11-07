@@ -575,6 +575,14 @@ private fun KinCareCard(
             if (address.isNotBlank()) {
                 AddressChip(address)
             }
+            // #1602: "18605" was all the walk's chip said, with no hint.
+            if (addressLooksIncomplete(address)) {
+                Text(
+                    INCOMPLETE_ADDRESS_HINT,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.warning,
+                )
+            }
 
             // ---- One-line notes preview ----
             if (session.notes.isNotBlank()) {
