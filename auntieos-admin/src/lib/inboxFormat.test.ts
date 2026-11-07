@@ -13,6 +13,7 @@ import {
   threadMessageCount,
   groupThreadsByDay,
   groupThreadsByWaiting,
+  threadAwaitsReply,
   localDateIso,
   replyBlocker,
   inboxArrangementFromFlags,
@@ -190,65 +191,78 @@ describe('groupThreadsByDay', () => {
   });
 });
 
+describe('threadAwaitsReply', () => {
+  it('is true when the household spoke last, read or not', () => {
+    expect(threadAwaitsReply({ lastSenderRole: 'kinfolk', unreadForAdmin: true })).toBe(true);
+    expect(threadAwaitsReply({ lastSenderRole: 'kinfolk', unreadForAdmin: false })).toBe(true);
+  });
+  it('is false when Auntie spoke last, even if the thread was marked unread', () => {
+    expect(threadAwaitsReply({ lastSenderRole: 'auntie', unreadForAdmin: false })).toBe(false);
+    expect(threadAwaitsReply({ lastSenderRole: 'auntie', unreadForAdmin: true })).toBe(false);
+  });
+  it('falls back to the unread flag only when nobody can say who spoke last', () => {
+    expect(threadAwaitsReply({ lastSenderRole: '', unreadForAdmin: true })).toBe(true);
+    expect(threadAwaitsReply({ lastSenderRole: '', unreadForAdmin: false })).toBe(false);
+    expect(threadAwaitsReply({ lastSenderRole: 'robot', unreadForAdmin: false })).toBe(false);
+  });
+});
 describe('groupThreadsByWaiting', () => {
   interface Row {
     _id: string;
     unreadForAdmin: boolean;
+    lastSenderRole: string;
     lastMessageAtMs: number;
   }
-
+  const row = (_id: string, lastSenderRole: string, unreadForAdmin: boolean, lastMessageAtMs = 1): Row => ({
+    _id,
+    lastSenderRole,
+    unreadForAdmin,
+    lastMessageAtMs,
+  });
   it('puts threads waiting on a reply above answered ones', () => {
-    const sections = groupThreadsByWaiting<Row>([
-      { _id: 'a', unreadForAdmin: false, lastMessageAtMs: 2 },
-      { _id: 'b', unreadForAdmin: true, lastMessageAtMs: 1 },
-    ]);
+    const sections = groupThreadsByWaiting<Row>([row('a', 'auntie', false, 2), row('b', 'kinfolk', true, 1)]);
     expect(sections.map((s) => s.key)).toEqual(['waiting', 'answered']);
     expect(sections[0]?.threads.map((t) => t._id)).toEqual(['b']);
     expect(sections[1]?.threads.map((t) => t._id)).toEqual(['a']);
   });
-
+  it('keeps a read-but-unanswered household message under Waiting (#1572)', () => {
+    // The operator opened the thread (unreadForAdmin cleared by the server)
+    // and sent nothing. The household is still waiting.
+    const sections = groupThreadsByWaiting<Row>([row('opened', 'kinfolk', false)]);
+    expect(sections[0]?.threads.map((t) => t._id)).toEqual(['opened']);
+    expect(sections[1]?.threads).toEqual([]);
+  });
+  it('opening a thread does not move it: same section before and after the read', () => {
+    const before = groupThreadsByWaiting<Row>([row('t', 'kinfolk', true)]);
+    const after = groupThreadsByWaiting<Row>([row('t', 'kinfolk', false)]);
+    expect(before.map((s) => s.threads.map((t) => t._id))).toEqual(after.map((s) => s.threads.map((t) => t._id)));
+  });
+  it('moves a thread to Answered once Auntie replies', () => {
+    const sections = groupThreadsByWaiting<Row>([row('t', 'auntie', false)]);
+    expect(sections[0]?.threads).toEqual([]);
+    expect(sections[1]?.threads.map((t) => t._id)).toEqual(['t']);
+  });
   it('keeps both sections when one is empty so the screen can say so', () => {
-    const sections = groupThreadsByWaiting<Row>([
-      { _id: 'a', unreadForAdmin: false, lastMessageAtMs: 1 },
-    ]);
+    const sections = groupThreadsByWaiting<Row>([row('a', 'auntie', false)]);
     expect(sections[0]).toEqual({ key: 'waiting', label: 'Waiting on a reply', threads: [] });
     expect(sections[1]?.key).toBe('answered');
   });
-
-  it('splits on the same threadReadState the badge and the filter chips use', () => {
-    // `unreadForAdmin` is a STORED BOOLEAN (api/inbox.ts:44), never a count, so
-    // there is no arithmetic here at all. Routing the split through
-    // `threadReadState` rather than re-reading the raw field is what keeps this
-    // section, the "N unread" badge (`unreadThreadCount`) and the Unread filter
-    // chip from ever disagreeing about one row.
-    const rows = [
-      { _id: 'read', unreadForAdmin: false, lastMessageAtMs: 2 },
-      { _id: 'unread', unreadForAdmin: true, lastMessageAtMs: 1 },
-    ];
-    const sections = groupThreadsByWaiting(rows);
-    const waitingIds = sections[0]?.threads.map((t) => t._id) ?? [];
-    expect(waitingIds).toEqual(
-      rows.filter((r) => threadReadState(r.unreadForAdmin) === 'unread').map((r) => r._id),
-    );
-    expect(unreadThreadCount(rows)).toBe(waitingIds.length);
+  it('is independent of the unread badge: a read waiting thread is waiting but not unread', () => {
+    const rows = [row('read-waiting', 'kinfolk', false), row('unread-waiting', 'kinfolk', true)];
+    expect(groupThreadsByWaiting(rows)[0]?.threads).toHaveLength(2);
+    expect(unreadThreadCount(rows)).toBe(1);
   });
-
   it('returns both sections, both empty, for no input at all', () => {
     const sections = groupThreadsByWaiting<Row>([]);
     expect(sections.map((s) => s.key)).toEqual(['waiting', 'answered']);
     expect(sections.every((s) => s.threads.length === 0)).toBe(true);
   });
-
   it('does not mutate or re-order the caller array; day order stays groupThreadsByDay’s job', () => {
-    const rows: Row[] = [
-      { _id: 'a', unreadForAdmin: false, lastMessageAtMs: 1 },
-      { _id: 'b', unreadForAdmin: true, lastMessageAtMs: 2 },
-    ];
+    const rows: Row[] = [row('a', 'auntie', false, 1), row('b', 'kinfolk', true, 2)];
     groupThreadsByWaiting(rows);
     expect(rows.map((r) => r._id)).toEqual(['a', 'b']);
   });
 });
-
 /**
  * The Inbox A/B flag's one decision point. The interesting cases are all about
  * what happens when the flag map does NOT carry a usable answer: the fallback
