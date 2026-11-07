@@ -46,6 +46,15 @@ export async function replyToConversation(kinfolkId: string, body: string): Prom
 }
 
 /**
+ * markConversationUnread (admin, #1611) -> puts one thread back in the unread
+ * pile. Only the admin-side flag moves; the household's read receipts and who
+ * spoke last are untouched. Opening the thread clears the flag again, so the
+ * caller leaves the thread right after this resolves.
+ */
+export async function markConversationUnread(kinfolkId: string): Promise<void> {
+  await call<{ kinfolkId: string }, { ok: true; kinfolkId: string }>('markConversationUnread', { kinfolkId });
+}
+/**
  * markAllThreadsRead (admin) -> clears the admin-side unread flag on EVERY
  * thread waiting on a reply, and stamps `readAt` on their kinfolk messages the
  * same way opening a thread does. Returns the number of threads it ACTUALLY

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { getConversationThread, replyToConversation, type ThreadMessage } from '../api/inboxThread';
+import {
+  getConversationThread,
+  replyToConversation,
+  markConversationUnread,
+  type ThreadMessage,
+} from '../api/inboxThread';
 import {
   threadClock,
   threadMachineTime,
@@ -59,6 +64,8 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [markingUnread, setMarkingUnread] = useState(false);
+  const [unreadError, setUnreadError] = useState<string | null>(null);
 
   const todayIso = useMemo(() => localDateIso(new Date()), []);
 
@@ -104,14 +111,43 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
     }
   }
 
+  // #1611: back to the unread pile, then out of the thread. Staying would be
+  // pointless: the next read of this thread clears the flag again.
+  async function handleMarkUnread() {
+    if (markingUnread) return;
+    setMarkingUnread(true);
+    setUnreadError(null);
+    try {
+      await markConversationUnread(kinfolkId);
+      setMarkingUnread(false);
+      onBack();
+    } catch (err) {
+      setMarkingUnread(false);
+      setUnreadError(`markConversationUnread failed: ${err instanceof Error ? err.message : 'Mark unread failed'}`);
+    }
+  }
   return (
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Inbox"
         title={kinfolkName || kinfolkId}
         subtitle="Two-way message thread with this household."
-        trailing={<GhostButton label="Back to Inbox" onClick={onBack} />}
+        trailing={
+          <div className="thread__heading-actions">
+            <GhostButton
+              label={markingUnread ? 'Marking unread…' : 'Mark unread'}
+              onClick={() => void handleMarkUnread()}
+              disabled={markingUnread}
+            />
+            <GhostButton label="Back to Inbox" onClick={onBack} disabled={markingUnread} />
+          </div>
+        }
       />
+      {unreadError ? (
+        <Banner tone="error" title="Mark unread failed" onDismiss={() => setUnreadError(null)}>
+          {unreadError}
+        </Banner>
+      ) : null}
 
       <DenPanel title="Messages" subtitle="Oldest first. Opening this thread marks it read.">
         <AsyncRegion

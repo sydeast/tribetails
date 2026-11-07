@@ -71,6 +71,8 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
 
     private val _isReplying = MutableStateFlow(false)
     val isReplying: StateFlow<Boolean> = _isReplying.asStateFlow()
+    private val _markingUnread = MutableStateFlow(false)
+    val markingUnread: StateFlow<Boolean> = _markingUnread.asStateFlow()
 
     // Bulk "Mark all read". `bulkReadResult` holds the sentence the operator is
     // shown after a SUCCESSFUL clear; a failure goes to `conversationError` like
@@ -157,6 +159,34 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
         }
     }
 
+    /**
+     * #1611: puts the open thread back in the unread pile, then closes it.
+     * Leaving it open would be pointless: the next read of the thread clears the
+     * flag again. No optimistic flip: the dot and the badge come from the
+     * re-read list, so a refused write cannot show a thread as unread.
+     */
+    fun markConversationUnread() {
+        val id = _selectedConversationId.value ?: return
+        if (_markingUnread.value) return
+        _markingUnread.value = true
+        _conversationError.value = null
+        viewModelScope.launch {
+            repository.markConversationUnread(id)
+                .onSuccess {
+                    _markingUnread.value = false
+                    if (_selectedConversationId.value == id) {
+                        _selectedConversationId.value = null
+                        _thread.value = emptyList()
+                    }
+                    _actionResult.tryEmit("Marked unread")
+                    loadConversations()
+                }
+                .onFailure {
+                    _markingUnread.value = false
+                    _conversationError.value = "Could not mark unread: ${it.message ?: "Mark unread failed"}"
+                }
+        }
+    }
     /** Re-fetches a thread already open (after a reply) without toggling selection. */
     private fun openConversationRefresh(kinfolkId: String) {
         _threadLoading.value = true

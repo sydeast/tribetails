@@ -1,5 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z, ZodError } from 'zod';
+import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
@@ -25,6 +26,7 @@ import {
  *   getConversationThread -> one thread's messages (and clears the admin unread)
  *   replyToConversation  -> auntie replies (creates the thread if needed)
  *   markConversationRead -> clears the admin-side unread flag + stamps readAt
+ *   markConversationUnread -> puts the admin-side unread flag back (#1611)
  */
 
 export interface ConversationSummary {
@@ -201,4 +203,46 @@ export async function markConversationReadHandler(
 export const markConversationRead = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('markConversationRead', markConversationReadHandler),
+);
+
+// ---------------------------------------------------------------------------
+/**
+ * markConversationUnread (#1611): the operator read a thread and wants it back
+ * in the unread pile, the way a mail client's "Mark unread" works.
+ *
+ * Only the admin-side flag moves. The messages keep their `readAt` stamps: the
+ * household may already have seen "Read" on them, and un-reading a message the
+ * operator did read would put a false receipt in front of them. Nothing in the
+ * admin's list reads those stamps; the list, the badge and the Unread chip all
+ * read `unreadForAdmin`.
+ *
+ * Who spoke last is not touched either, so a thread the household is waiting on
+ * stays under "Waiting on a reply" (#1572) whatever this flag says.
+ */
+export async function markConversationUnreadHandler(
+  req: CallableRequest<unknown>,
+): Promise<{ ok: true; kinfolkId: string }> {
+  initSentry();
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  let args: z.infer<typeof MarkArgs>;
+  try {
+    args = MarkArgs.parse(req.data);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      throw new HttpsError('invalid-argument', 'markConversationUnread validation failed');
+    }
+    throw err;
+  }
+  const convRef = db().collection(CONVERSATIONS_COLLECTION).doc(args.kinfolkId);
+  const snap = await convRef.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', `Conversation ${args.kinfolkId} does not exist.`);
+  }
+  await convRef.set({ unreadForAdmin: true, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true, kinfolkId: args.kinfolkId };
+}
+export const markConversationUnread = onCall(
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  wrapAdminCallable('markConversationUnread', markConversationUnreadHandler),
 );

@@ -1405,6 +1405,12 @@ class AuntieRepository(
         functions.getHttpsCallable("markConversationRead").call(mapOf("kinfolkId" to kinfolkId)).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("markConversationRead failed", it) }
+    /** #1611: puts one thread back in the unread pile (admin flag only; read receipts stay). */
+    suspend fun markConversationUnread(kinfolkId: String): Result<Unit> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        functions.getHttpsCallable("markConversationUnread").call(mapOf("kinfolkId" to kinfolkId)).awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("markConversationUnread failed", it) }
 
     /**
      * Clears the admin-side unread flag on EVERY thread waiting on a reply and
