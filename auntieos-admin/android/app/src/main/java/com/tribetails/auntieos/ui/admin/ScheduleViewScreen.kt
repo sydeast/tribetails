@@ -138,7 +138,7 @@ data class BookingSection(
 internal fun groupBookingsByStatus(rows: List<EnhancedBooking>): List<BookingSection> = listOf(
     BookingSection(
         key = BookingSectionKey.PENDING,
-        label = "Pending approval",
+        label = "Visit requests",
         rows = rows.filter { it.status == BookingStatus.DRAFT },
     ),
     BookingSection(
@@ -322,10 +322,10 @@ private fun ScheduleViewScreenContent(
                 // navigator below (#755), the way the mock draws it, so it is not
                 // repeated on `detail`; the explanation is the info tooltip.
                 DenScreenHeading(
-                    kicker = "The Den · Schedule",
+                    kicker = "Care Ops · Schedule",
                     title = "Schedule",
                     accentTail = "${state.viewMode.displayName.lowercase(Locale.US)}.",
-                    subtitle = "Every Kin Care visit on the books, with Google Calendar busy windows and your own blocked time laid over them.",
+                    subtitle = "Every KinCare visit on the books, with Google Calendar busy windows and your own blocked time laid over them.",
                 )
             }
 
@@ -494,7 +494,7 @@ private fun ScheduleViewScreenContent(
                             message = msg,
                             override = state.incomingOverride,
                             busy = state.seriesActionBatchId != null,
-                            title = "Incoming requests",
+                            title = "Visit requests",
                             overrideLabel = "Approve anyway",
                             onOverride = { viewModel.retryIncomingWithOverride() },
                             onDismiss = { viewModel.clearIncomingError() },
@@ -502,7 +502,7 @@ private fun ScheduleViewScreenContent(
                     } else {
                         AuntieBanner(
                             tone = AuntieBannerTone.Error,
-                            title = "Incoming requests",
+                            title = "Visit requests",
                             icon = Lucide.CircleAlert,
                             onDismiss = { viewModel.clearIncomingError() },
                         ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
@@ -522,7 +522,7 @@ private fun ScheduleViewScreenContent(
             if (state.incomingSeries.isNotEmpty()) {
                 item {
                     DenPanel(
-                        title = "Incoming requests",
+                        title = "Visit requests",
                         subtitle = "New requests from MyTribe. Approve a whole series at once; approving creates the visits on Auntie Time.",
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -659,7 +659,7 @@ private fun ScheduleViewScreenContent(
                     subtitle = "Tap a visit to open its booking detail and notes. Long-press a confirmed visit and drag to move it.",
                 ) {
                     if (selectedDayBookings.isEmpty() && selectedDayBusy.isEmpty()) {
-                        EmptyHint("No Kin Care sessions on this day.")
+                        EmptyHint("No KinCare sessions on this day.")
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             // #575: a dropped drag is a reschedule, and its refusal
@@ -954,6 +954,8 @@ private fun ScheduleViewScreenContent(
                 onDismiss    = { viewModel.selectBooking(null) },
                 onApprove    = { viewModel.approveBooking(booking) },
                 onCancel     = { viewModel.cancelBooking(booking) },
+                // #1576: the same Mark Completed web Bookings offers beside Cancel.
+                onMarkCompleted = { viewModel.markBookingCompleted(booking) },
                 onArchive    = { reason -> viewModel.archiveBooking(booking.id, reason) },
                 onUnarchive  = { viewModel.unarchiveBooking(booking.id) },
                 onSaveNotes  = { newNotes, newSpecial ->
@@ -1422,7 +1424,7 @@ private fun AdminBookingAgendaRow(
 ) {
     val c = AuntieTheme.colors
     val accent = bookingServiceTint(booking)
-    val serviceText = booking.baseServiceTitle.ifBlank { booking.title.ifBlank { "Kin Care Visit" } }
+    val serviceText = booking.baseServiceTitle.ifBlank { booking.title.ifBlank { "KinCare Visit" } }
     val bookingStart = parseIsoDateTimeOrNull(booking.startDateTime)
     // No start time we can read is no window we can move: the row still opens,
     // it just cannot be dragged onto a time nobody could name.
@@ -1924,7 +1926,7 @@ private fun ScreenshotBookingCard(
             Box(modifier = Modifier.width(1.dp).height(84.dp).background(AuntieTheme.colors.borderSoft))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = booking.title.ifBlank { booking.baseServiceTitle.ifBlank { "Kin Care Visit" } }, style = AuntieTheme.typography.headlineLarge, color = AuntieTheme.colors.textPrimary)
+                    Text(text = booking.title.ifBlank { booking.baseServiceTitle.ifBlank { "KinCare Visit" } }, style = AuntieTheme.typography.headlineLarge, color = AuntieTheme.colors.textPrimary)
                     Box(modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(accent.copy(alpha = 0.16f)).padding(horizontal = 12.dp, vertical = 6.dp)) {
                         Text(text = status, style = AuntieTheme.typography.headlineSmall, color = accent)
                     }
@@ -2607,6 +2609,8 @@ fun BookingDetailsDialog(
     onDismiss: () -> Unit,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
+    /** #1576: shown for a scheduled (ACCEPTED) visit only; null hides it. */
+    onMarkCompleted: (() -> Unit)? = null,
     onArchive: (reason: String) -> Unit = {},
     onUnarchive: () -> Unit = {},
     onSaveNotes: (notes: String, specialInstructions: String) -> Unit = { _, _ -> },
@@ -2623,6 +2627,8 @@ fun BookingDetailsDialog(
     var notes              by remember(booking.id) { mutableStateOf(booking.notes) }
     var specialInstructions by remember(booking.id) { mutableStateOf(booking.specialInstructions) }
     var showArchiveDialog  by remember { mutableStateOf(false) }
+    // #1576: asked first, as on the web; a completed visit cannot be reopened.
+    var confirmComplete    by remember(booking.id) { mutableStateOf(false) }
     var archiveReason      by remember { mutableStateOf("") }
     // Reschedule prefill from the current start (wires Stage-1 rescheduleBooking, §A.9).
     var reDate by remember(booking.id) { mutableStateOf(booking.startDateTime.take(10)) }
@@ -2747,6 +2753,10 @@ fun BookingDetailsDialog(
                         AuntieTextBtn(onClick = onCancel, contentColor = AuntieTheme.colors.error) {
                             Text("Cancel Booking")
                         }
+                        if (onMarkCompleted != null && booking.status == BookingStatus.ACCEPTED) {
+                            Spacer(Modifier.width(4.dp))
+                            AuntieTextBtn(onClick = { confirmComplete = true }) { Text("Mark Completed") }
+                        }
                     }
                     Spacer(Modifier.width(4.dp))
                     AuntieTextBtn(onClick = onDismiss) { Text("Close") }
@@ -2759,6 +2769,20 @@ fun BookingDetailsDialog(
         }
     }
 
+    if (confirmComplete && onMarkCompleted != null) {
+        AuntieModal(
+            onDismissRequest = { confirmComplete = false },
+            title            = "Mark this visit completed?",
+            confirmButton    = {
+                AuntieTextBtn(onClick = { confirmComplete = false; onMarkCompleted() }) { Text("Yes, mark it completed") }
+            },
+            dismissButton    = {
+                AuntieTextBtn(onClick = { confirmComplete = false }) { Text("Keep it") }
+            },
+        ) {
+            Text("${booking.kinfolkName.ifBlank { "This household" }}'s visit will be marked Completed and leave the scheduled list.")
+        }
+    }
     if (showArchiveDialog) {
         AuntieModal(
             onDismissRequest = { showArchiveDialog = false; archiveReason = "" },
@@ -2860,7 +2884,7 @@ fun AddEventDialog(onDismiss: () -> Unit, onAdd: (Event) -> Unit) {
             Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Add Event", style = AuntieTheme.typography.titleLarge, color = AuntieTheme.colors.textPrimary)
                 AuntieField(value = title, onValueChange = { title = it }, label = "EVENT TITLE", modifier = Modifier.fillMaxWidth())
-                Text("Type: Kin Care / Holiday / Blocked", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                Text("Type: KinCare / Holiday / Blocked", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     AuntieTextBtn(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))

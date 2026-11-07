@@ -1,3 +1,4 @@
+import { KIN_AGE_MAX_YEARS, validateKinWeight } from '../lib/kinMeasures';
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
@@ -32,7 +33,7 @@ const KinPayload = z.object({
     .refine((s) => s.trim().length > 0, { message: 'name cannot be whitespace-only' }),
   species: z.string().max(40).nullable().optional(),
   breed: z.string().max(80).nullable().optional(),
-  ageYears: z.number().nonnegative().nullable().optional(),
+  ageYears: z.number().nonnegative().max(KIN_AGE_MAX_YEARS).nullable().optional(),
   photoUrl: SafeUrl.nullable().optional(),
   feedingInstructions: z.string().max(2000).nullable().optional(),
   walkingInstructions: z.string().max(2000).nullable().optional(),
@@ -226,6 +227,9 @@ export async function addKinHandler(req: CallableRequest<unknown>): Promise<{ ki
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = AddArgs.parse(req.data);
+  // #1583: weight is a number with an optional unit.
+  const weightProblem = args.kin.weight === undefined ? null : validateKinWeight(args.kin.weight);
+  if (weightProblem !== null) throw new HttpsError('invalid-argument', weightProblem);
   const hasAdminClaim = householdStaffFlag(req.auth, 'addKin');
   const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'addKin');
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'addKin');
@@ -249,6 +253,15 @@ export async function updateKinHandler(req: CallableRequest<unknown>): Promise<{
   const hasAdminClaim = householdStaffFlag(req.auth, 'updateKin');
   const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'updateKin');
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'updateKin');
+  // #1583: weight is a number with an optional unit. A weight the pet already
+  // carries is let through unchanged, so an old free-text value does not block
+  // an unrelated edit that happens to re-send it.
+  if (args.kin.weight !== undefined) {
+    const current = await db().doc(`families/${kinfolkId}/kin/${args.kinId}`).get();
+    const stored = (current.data() as { weight?: unknown } | undefined)?.weight;
+    const weightProblem = validateKinWeight(args.kin.weight, typeof stored === 'string' ? stored : null);
+    if (weightProblem !== null) throw new HttpsError('invalid-argument', weightProblem);
+  }
 
   await db().doc(`families/${kinfolkId}/kin/${args.kinId}`).set(
     {

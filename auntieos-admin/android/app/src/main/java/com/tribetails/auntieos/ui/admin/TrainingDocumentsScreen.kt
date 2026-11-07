@@ -151,7 +151,7 @@ fun TrainingDocumentsScreen(
                         kicker = "The Den · Tribal Intel",
                         title = "Tribal",
                         accentTail = "Intel.",
-                        subtitle = "Guides and educational resources for care delivery",
+                        subtitle = TRIBAL_INTEL_SUBTITLE,
                         trailing = {
                             if (flags.trainingDocsCreate) {
                                 AuntieDashedAddButton(
@@ -308,7 +308,7 @@ fun TrainingDocumentsScreen(
                             title = "No Tribal Intel yet",
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            EmptyHint("Training materials and guides will appear here once uploaded.")
+                            EmptyHint(TRIBAL_INTEL_EMPTY_MESSAGE)
                         }
                     }
                 }
@@ -551,15 +551,10 @@ private fun AddDocumentForm(
 
     DenPanel(
         title = if (editingDoc == null) "New Tribal Intel" else "Edit Tribal Intel",
+        // #1595: the explanation is the title's info tip, not standing copy.
+        subtitle = TRIBAL_INTEL_FORM_TIP,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(
-            text = "Saved intel is queued for the next reconcile pass, then folded into the " +
-                "targeted client's dossier and the pet's 411. Attachments are cited as provenance " +
-                "only (the AI does not read image contents).",
-            style = AuntieTheme.typography.bodySmall,
-            color = AuntieTheme.colors.textDim,
-        )
 
         error?.let { msg ->
             Spacer(Modifier.height(AuntieTheme.dims.space3))
@@ -735,3 +730,11 @@ private fun AddDocumentForm(
         }
     }
 }
+/**
+ * The Tribal Intel form's info tip (#1595). It used to stand under the title as
+ * a paragraph that also spoke of "the next reconcile pass" and "provenance".
+ * Same words as the admin web form.
+ */
+internal const val TRIBAL_INTEL_FORM_TIP =
+    "Saved notes are folded into the household's dossier and the pet's 411 overnight. " +
+        "Attachments are listed as sources: only their names and links are read, never what an image shows."

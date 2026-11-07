@@ -41,6 +41,10 @@ import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.ReceiptText
 import com.composables.icons.lucide.X
+import com.tribetails.auntieos.web.data.CheckedSend
+import com.tribetails.auntieos.web.data.SendCheckAction
+import com.tribetails.auntieos.web.data.SilenceKind
+import com.tribetails.auntieos.web.data.checkedSend
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
@@ -111,7 +115,7 @@ fun InvoiceDetailScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "Invoices · The Den",
+            kicker     = "Care Ops · Invoices",
             title      = "Invoice",
             accentTail = "Detail.",
             subtitle   = "Full billing record.",
@@ -486,10 +490,17 @@ private fun InvoiceDetailBody(
                     if (receiptLoading || reminderLoading) return@GhostButton
                     receiptLoading = true
                     scope.launch {
-                        when (val r = client.generateReceipt(invoice._id)) {
-                            is WriteResult.Err -> showToast("Couldn't generate receipt: ${r.message}", true)
-                            // #1511: honest about where the notice went, and not green when app-only.
-                            is WriteResult.Ok  -> showToast(receiptGeneratedMessage(r.value.appOnly), r.value.appOnly)
+                        // #1567: a send that times out is re-read, never reported as failed.
+                        val checked = checkedSend(SendCheckAction.RECEIPT, { client.invoiceSendMarks(invoice._id) }) {
+                            client.generateReceipt(invoice._id)
+                        }
+                        when (checked) {
+                            is CheckedSend.Silent -> showToast(checked.outcome.message, checked.outcome.kind != SilenceKind.SENT)
+                            is CheckedSend.Answered -> when (val r = checked.result) {
+                                is WriteResult.Err -> showToast("Couldn't generate receipt: ${r.message}", true)
+                                // #1511: honest about where the notice went, and not green when app-only.
+                                is WriteResult.Ok  -> showToast(receiptGeneratedMessage(r.value.appOnly), r.value.appOnly)
+                            }
                         }
                         receiptLoading = false
                     }
@@ -505,7 +516,12 @@ private fun InvoiceDetailBody(
                     if (receiptLoading || reminderLoading) return@GhostButton
                     reminderLoading = true
                     scope.launch {
-                        when (val r = client.sendInvoiceReminder(invoice._id)) {
+                        val checked = checkedSend(SendCheckAction.REMINDER, { client.invoiceSendMarks(invoice._id) }) {
+                            client.sendInvoiceReminder(invoice._id)
+                        }
+                        if (checked is CheckedSend.Silent) {
+                            showToast(checked.outcome.message, checked.outcome.kind != SilenceKind.SENT)
+                        } else when (val r = (checked as CheckedSend.Answered).result) {
                             is WriteResult.Err -> showToast("Couldn't send reminder: ${r.message}", true)
                             // #832: a refusal inside the server's window is not a
                             // failure, but it is not "sent" either. Say which,
@@ -553,7 +569,17 @@ private fun InvoiceDetailBody(
             Column {
                 DetailRow("Client",   invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
-                DetailRow("Due date", invoice.dueDate.ifBlank { "-" })
+                // #1570: a stored due date that names no day is never counted
+                // overdue, so the row says so beside it.
+                DetailRow(
+                    "Due date",
+                    when {
+                        invoice.dueDate.isBlank() -> "-"
+                        isUnreadableDueDate(invoice.dueDate) ->
+                            "${invoice.dueDate.trim()} (not a date this app can read, so it is never counted overdue)"
+                        else -> invoice.dueDate
+                    },
+                )
                 DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)

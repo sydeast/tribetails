@@ -42,21 +42,21 @@ test('the members deep link trails back to the Directory list', async ({ page })
 });
 
 /**
- * The route's own gap, asserted rather than papered over: `/household-members/`
- * carries only an id, so nothing on a cold deep link knows the household's
- * name. The crumb shows the id. That is honest; a stand-in name would not be.
+ * #1589: `/household-members/` carries only an id, and the walk found the
+ * title, avatar and breadcrumb reading that database id. The route now reads
+ * the household and names it, so a cold deep link shows the household's name
+ * and never its id.
  *
  * The step is a `link`, not a button: this mount IS a route, so the household
- * step goes to a real `/directory/{id}` address whether or not it has a name
- * to show, the same as the Directory step above.
+ * step goes to a real `/directory/{id}` address, the same as the Directory
+ * step above.
  */
-test('a cold members deep link names the household by id rather than inventing one', async ({
-  page,
-}) => {
+test('a cold members deep link names the household, never its id (#1589)', async ({ page }) => {
   await page.goto(`/household-members/${HOUSEHOLD_ID}`);
-  const householdStep = trail(page).getByRole('link', { name: HOUSEHOLD_ID });
+  const householdStep = trail(page).getByRole('link', { name: HOUSEHOLD_NAME });
   await expect(householdStep).toBeVisible();
   await expect(householdStep).toHaveAttribute('href', `/directory/${HOUSEHOLD_ID}`);
+  await expect(trail(page).getByText(HOUSEHOLD_ID)).toHaveCount(0);
 });
 
 test('the household profile trails back to the Directory list', async ({ page }) => {

@@ -37,6 +37,7 @@ import { Dialog } from '../components/Dialog';
 // it offers while a fan-out is still running. Imported here rather than copied
 // into MarketingBlasts.css so the two cannot drift apart.
 import '../components/SlowWaitNotice.css';
+import { navKicker } from '../lib/nav';
 import './MarketingBlasts.css';
 
 /**
@@ -412,7 +413,7 @@ export function MarketingBlasts() {
   return (
     <div className="blasts">
       <DenScreenHeading
-        kicker="The Den"
+        kicker={navKicker('marketingBlasts')}
         title="Marketing"
         accentTail="blasts"
         subtitle="A blast is scheduled. Communicate's broadcast sends immediately."

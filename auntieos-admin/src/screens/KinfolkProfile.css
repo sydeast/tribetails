@@ -188,3 +188,13 @@
   align-items: center;
   margin-left: auto;
 }
+
+/* #1603: why Invite to portal is off, beside it. */
+.kinfolk-profile__action-note {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kinfolk-profile__invite-error {
+  color: var(--color-error);
+}

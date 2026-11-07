@@ -78,6 +78,7 @@ function render(ui: ReactElement) {
 function member(over: Partial<HouseholdMember> = {}): HouseholdMember {
   return {
     uid: 'u1',
+    displayName: null,
     secondaryLabel: 'Spouse',
     role: 'SECONDARY',
     status: 'ACTIVE',
@@ -136,12 +137,19 @@ function mount(
   over: {
     members?: HouseholdMember[];
     invites?: HouseholdInvite[];
+    /** #1602: the household email the invite confirm names. */
+    email?: string;
   } = {},
 ) {
   api.listHouseholdMembers.mockResolvedValue(over.members ?? [member()]);
   api.listHouseholdInvites.mockResolvedValue(over.invites ?? [invite()]);
   return render(
-    <HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />,
+    <HouseholdMembers
+      kinfolkId="fam1"
+      kinfolkName="the Walls"
+      kinfolkEmail={over.email ?? 'catch@hanasamku.com'}
+      onBack={() => {}}
+    />,
   );
 }
 
@@ -215,6 +223,10 @@ describe('HouseholdMembers HAPPY', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Invite to portal' }),
     );
+    // #1602: it asks first, naming the address, and sends only on Send invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: 'Invite to portal' })).toHaveTextContent('catch@hanasamku.com');
+    await user.click(screen.getByRole('button', { name: 'Send invite' }));
 
     await waitFor(() => expect(api.inviteKinfolkToPortal).toHaveBeenCalledWith('fam1'));
     expect(await screen.findByText(/Portal invite sent to the Walls/)).toBeInTheDocument();
@@ -292,6 +304,8 @@ describe('HouseholdMembers PRIMARY entitlements are not switches', () => {
     // The sentence moved into the Primary contact panel's tooltip (#758): it
     // is in the DOM for the accessible description, hidden until hovered.
     expect(await screen.findByText(/Held by role, not by setting/)).toBeInTheDocument();
+    // #1592: the tip says what the operator can do, not how the server decides.
+    expect(screen.queryByText(/the server reads the role/)).toBeNull();
     // The mock's `.cbar` chip stands where the six "Granted" rows stood: one
     // capsule that reads as state rather than as six controls.
     const row = (await screen.findByText('loretta@example.com')).closest('li');
@@ -401,11 +415,37 @@ describe('HouseholdMembers NEGATIVE', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Invite to portal' }),
     );
+    // #1602: it asks first, naming the address, and sends only on Send invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: 'Invite to portal' })).toHaveTextContent('catch@hanasamku.com');
+    await user.click(screen.getByRole('button', { name: 'Send invite' }));
 
     // A success response that emailed nobody must never read as an invite sent.
     expect(await screen.findByText(/No invite sent/)).toBeInTheDocument();
     expect(screen.getByText(/already has an active portal account/)).toBeInTheDocument();
     expect(screen.queryByText(/Portal invite sent/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * #1602: the walk's invite looked usable when it could not succeed, then
+   * said Dre already had an account. It is off, with the reason, when the
+   * roster already has an ACTIVE primary or there is no email on file.
+   */
+  it('#1602: is off, and says why, when a primary is already on the portal', async () => {
+    mount({
+      members: [member({ uid: 'u-p', role: 'PRIMARY', status: 'ACTIVE', invitedEmail: 'lost@example.com', secondaryLabel: null })],
+    });
+    await screen.findByText('lost@example.com');
+    const hero = document.querySelector('.hmembers__actions') as HTMLElement;
+    expect(within(hero).getByRole('button', { name: 'Invite to portal' })).toBeDisabled();
+    expect(within(hero).getByText('Already on the portal.')).toBeInTheDocument();
+  });
+
+  it('#1602: is off, and says why, when the household has no email on file', async () => {
+    mount({ members: [], email: '' });
+    const hero = await waitFor(() => document.querySelector('.hmembers__actions') as HTMLElement);
+    expect(within(hero).getByRole('button', { name: 'Invite to portal' })).toBeDisabled();
+    expect(within(hero).getByText(/No email on file/)).toBeInTheDocument();
   });
 
   it('says nothing was sent when the household record carries no email', async () => {
@@ -416,6 +456,10 @@ describe('HouseholdMembers NEGATIVE', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Invite to portal' }),
     );
+    // #1602: it asks first, naming the address, and sends only on Send invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: 'Invite to portal' })).toHaveTextContent('catch@hanasamku.com');
+    await user.click(screen.getByRole('button', { name: 'Send invite' }));
 
     expect(await screen.findByText(/no email address on file/)).toBeInTheDocument();
     expect(screen.queryByText(/Portal invite sent/)).not.toBeInTheDocument();
@@ -469,8 +513,12 @@ describe('HouseholdMembers ERROR', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Invite to portal' }),
     );
+    // #1602: it asks first, naming the address, and sends only on Send invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: 'Invite to portal' })).toHaveTextContent('catch@hanasamku.com');
+    await user.click(screen.getByRole('button', { name: 'Send invite' }));
 
-    expect(await screen.findByText(/inviteKinfolkToPortal failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/The portal invite was not sent: internal/)).toBeInTheDocument();
   });
 
   it('reports a failed removal and keeps the confirm dialog open', async () => {
@@ -645,6 +693,13 @@ describe('inviteMetaLine', () => {
     expect(inviteMetaLine(invite({ effectiveStatus: 'EXPIRED' }))).toContain('expired 2026-06-09');
   });
 
+  // #1603: an accepted invite is spent, so its expiry date says nothing.
+  it('#1603: drops the expiry date once the invite is accepted', () => {
+    const line = inviteMetaLine(invite({ status: 'ACCEPTED', effectiveStatus: 'ACCEPTED' }));
+    expect(line).toContain('Sent 2026-05-26');
+    expect(line).not.toContain('expire');
+  });
+
   it('omits a date the server did not return instead of substituting today', () => {
     const line = inviteMetaLine(
       invite({ sentToInviteeAt: null, createdAt: null, expiresAt: null }),
@@ -689,15 +744,15 @@ describe('HouseholdMembers breadcrumbs', () => {
     );
   });
 
-  // Pre-existing: the /household-members/{id} route passes no name, so a cold
-  // deep link genuinely has only the id to show. Showing it is honest; showing
-  // a placeholder household name would not be.
-  it('falls back to the id when the household name has not been passed down', async () => {
+  // #1589: the route reads the household and passes its name; if none reaches
+  // the screen it says "This household", never the database id.
+  it('#1589: says "This household", never the id, when no name was passed down', async () => {
     api.listHouseholdMembers.mockResolvedValue([member()]);
     api.listHouseholdInvites.mockResolvedValue([invite()]);
     render(<HouseholdMembers kinfolkId="fam1" onBack={() => {}} />);
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
-    expect(within(nav).getByRole('link', { name: 'fam1' })).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: 'This household' })).toBeInTheDocument();
+    expect(within(nav).queryByText('fam1')).toBeNull();
   });
 });
 
@@ -752,10 +807,35 @@ describe('HouseholdMembers mock structure', () => {
     expect(householdInitial('fam1')).toBe('F');
   });
 
+  /**
+   * #1602: the walk added a secondary kinfolk (no portal account) and the
+   * panel still read 0 with its empty sentence, even after reload. The people
+   * added here count, and the empty sentence goes once there are any.
+   */
+  it('#1602: counts a secondary added with no portal account, and drops the empty sentence', async () => {
+    api.listSecondaryKinfolk.mockResolvedValue([
+      { personId: 'p1', name: 'Rae East', phone: null, email: null, access: 'NONE', memberUid: null },
+    ]);
+    mount({ members: [primary()] });
+    await screen.findByText('Rae East');
+    const panel = (await screen.findByText('Secondary kinfolk')).closest('.den-panel') as HTMLElement;
+    await waitFor(() => expect(within(panel).getByText('1 of role: SECONDARY')).toBeInTheDocument());
+    expect(within(panel).queryByText(/No secondary kinfolk yet/)).toBeNull();
+  });
+
+  it('#1602: says there are none only when neither list has anybody', async () => {
+    mount({ members: [primary()] });
+    const panel = (await screen.findByText('Secondary kinfolk')).closest('.den-panel') as HTMLElement;
+    expect(await within(panel).findByText(/No secondary kinfolk yet/)).toBeInTheDocument();
+    expect(within(panel).getByText('0 of role: SECONDARY')).toBeInTheDocument();
+  });
+
   // Q4 (operator, 2026-09-27): the panel is "Secondary kinfolk".
   it('splits the roster by role into Primary contact and Secondary kinfolk, then Invites, with the mock meta', async () => {
     mount({ members: [primary(), member()] });
     await screen.findByText('marcus@example.com');
+    // #1602: the count waits for the no-portal list as well.
+    await screen.findByText('1 of role: SECONDARY');
     const titles = Array.from(document.querySelectorAll('.den-panel-title')).map(
       (el) => el.textContent,
     );
@@ -777,22 +857,22 @@ describe('HouseholdMembers mock structure', () => {
     expect(screen.queryByText(/Hand the primary role/)).toBeNull();
   });
 
-  it('draws each member as the mock block: circle, name, compact capsules, the uid in mono', async () => {
-    mount({ members: [primary(), member()] });
-    const row = (await screen.findByText('marcus@example.com')).closest('li') as HTMLElement;
+  it('draws each member as the mock block: circle, name, compact capsules, the email in mono, never the uid (#1589)', async () => {
+    mount({ members: [primary(), member({ displayName: 'Marcus Webb' })] });
+    const row = (await screen.findByText('Marcus Webb')).closest('li') as HTMLElement;
     expect(row).toHaveClass('hmembers__member');
     expect(row).toHaveAttribute('data-role', 'secondary');
-    expect(within(row).getByRole('img', { name: 'marcus@example.com' })).toHaveTextContent('M');
+    expect(within(row).getByRole('img', { name: 'Marcus Webb' })).toHaveTextContent('M');
     const role = within(row).getByText('Secondary');
     expect(role).toHaveClass('den-statuspill', 'den-statuspill--compact');
     expect(role).toHaveAttribute('data-tone', 'teal');
     expect(within(row).getByText('Active')).toHaveAttribute('data-tone', 'teal');
-    expect(within(row).getByText('u1')).toHaveClass('hmembers__member-contact');
+    expect(within(row).getByText('marcus@example.com')).toHaveClass('hmembers__member-contact');
+    expect(within(row).queryByText('u1')).toBeNull();
     // The label, read-only: `updateMemberLabel` is PRIMARY-only on the server.
     expect(within(row).getByText('secondaryLabel')).toHaveClass('hmembers__labeled');
     expect(within(row).getByText('Spouse')).toHaveClass('hmembers__labelval');
     expect(within(row).queryByRole('textbox')).toBeNull();
-
     const prow = (await screen.findByText('lost@example.com')).closest('li') as HTMLElement;
     expect(within(prow).getByText('Primary')).toHaveAttribute('data-tone', 'purple');
     expect(within(prow).queryByText('secondaryLabel')).toBeNull();
@@ -891,14 +971,13 @@ describe('HouseholdMembers Back', () => {
     expect(routerHistory.back).not.toHaveBeenCalled();
   });
 
-  // The `/household-members/{id}` route passes no name, so a cold deep link has
-  // only the id. The button shows it, matching the trail step directly above it
-  // under the same ruling: the id is honest and a stand-in household name is not.
-  it('shows the id in the fallback label when no name was passed down', async () => {
+  // #1589: the route now reads the household and passes its name. If no name
+  // reaches the screen it says "This household", never the database id.
+  it('#1589: never puts the id in the fallback label when no name was passed down', async () => {
     api.listHouseholdMembers.mockResolvedValue([member()]);
     api.listHouseholdInvites.mockResolvedValue([invite()]);
     render(<HouseholdMembers kinfolkId="fam1" onBack={vi.fn()} />);
-    expect(await screen.findByRole('button', { name: 'Back to fam1' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Back to This household' })).toBeInTheDocument();
   });
 
   it('steps back through history, under a plain label, when the operator walked here', async () => {

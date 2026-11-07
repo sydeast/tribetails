@@ -73,7 +73,7 @@ fun AdminDataScreen(
         ),
         AdminDataCard(
             title       = "Auntie Time",
-            description = "Day-of view - Kin Cares in flight, scheduled, and just completed",
+            description = "Day-of view - KinCares in flight, scheduled, and just completed",
             icon        = Lucide.Clock3,
             count       = sessions.size.toString(),
             route       = "auntie_time"

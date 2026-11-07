@@ -7,13 +7,14 @@ import {
   bookingState,
   bookingStateInfo,
   initialsFor,
+  isBookingInFlight,
   EMPTY_BOOKING_CATALOG,
   type BookingCatalog,
   type BookingState,
 } from '../lib/bookingFormat';
 import { getBusinessSettings } from '../api/settings';
 import { useCollection, useDocById } from '../lib/firestore';
-import { DenScreenHeading, EmptyHint, StatusPill, type DenTone } from '../components/DenScreenKit';
+import { DenScreenHeading, EmptyHint, InfoTip, StatusPill, type DenTone } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
@@ -54,6 +55,7 @@ import {
 import { BulkRescheduleDialog } from '../components/BulkRescheduleDialog';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
+import { navKicker } from '../lib/nav';
 import './Bookings.css';
 
 /**
@@ -115,7 +117,7 @@ interface SectionDef {
 const SECTIONS: readonly SectionDef[] = [
   {
     key: 'pending',
-    label: 'Pending approval',
+    label: 'Visit requests',
     test: (s) => s === 'draft' || s === 'pending',
     emptyHint: 'Nothing is waiting on a reply.',
     // Matches the Android counterpart (`groupBookingsByStatus` in
@@ -128,7 +130,10 @@ const SECTIONS: readonly SectionDef[] = [
   {
     key: 'scheduled',
     label: 'Scheduled',
-    test: (s) => s === 'scheduled',
+    // #1578: a visit the Auntie is on her way to, at, or has just left is
+    // still on the books until it is completed or cancelled, so it stays here
+    // rather than falling into History as an unknown status.
+    test: (s) => s === 'scheduled' || isBookingInFlight(s),
     emptyHint: 'Nothing on the books. A request moves here once you approve it.',
     // #699: a to-do list reads soonest first. `BOOKINGS_QUERY` orders by
     // `createdAt` (the one field every row genuinely carries), so the streamed
@@ -164,6 +169,10 @@ const BOOKING_STATE_TONE: Record<BookingState, DenTone> = {
   draft: 'error',
   pending: 'orange',
   scheduled: 'teal',
+  // #1578: the in-visit pills Auntie Time wears (`SESSION_STATE_TONE`).
+  onMyWay: 'orange',
+  arrived: 'teal',
+  departed: 'purple',
   completed: 'purple',
   cancelled: 'muted',
   unknown: 'warning',
@@ -578,7 +587,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
     setShowCreate(false);
     setCreateNotice(
       `Booking request created: ${result.visitCount} visit${result.visitCount === 1 ? '' : 's'} submitted for approval. ` +
-        `It enters the Incoming-requests queue and appears in this list once approved.`,
+        `It enters Visit requests and appears in this list once approved.`,
     );
   }
 
@@ -638,7 +647,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Bookings"
+        kicker={navKicker('bookings')}
         title="Bookings"
         subtitle="Pending requests and scheduled visits"
         trailing={
@@ -687,10 +696,9 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           screen's name; repeating "Bookings" here as a second heading would
           announce a section that is the whole page. */}
       <div className="bookings__toolbar" role="group" aria-label="Bookings list">
-        <p className="bookings__toolbar-note">
-          Pending: newest request first. Scheduled: soonest visit first. History: most recent
-          first. Capped at 200.
-        </p>
+        <span className="bookings__toolbar-note">
+          Order <InfoTip text="Visit requests: newest request first. Scheduled: soonest visit first. History: most recent first. Up to 200 bookings." />
+        </span>
         {selectToggle}
       </div>
 
@@ -1167,6 +1175,11 @@ const CARD_ACTIONS: Record<BookingState, readonly { kind: BookingActionKind; lab
     { kind: 'reject', label: 'Reject' },
   ],
   scheduled: [{ kind: 'cancel', label: 'Cancel' }],
+  // #1578: a visit in flight can still be completed or called off; the card
+  // offers Cancel, the sheet offers both, the same as a scheduled one.
+  onMyWay: [{ kind: 'cancel', label: 'Cancel' }],
+  arrived: [{ kind: 'cancel', label: 'Cancel' }],
+  departed: [{ kind: 'cancel', label: 'Cancel' }],
   completed: [],
   cancelled: [],
   unknown: [],
