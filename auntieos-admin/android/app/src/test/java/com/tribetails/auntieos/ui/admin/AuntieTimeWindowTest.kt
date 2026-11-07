@@ -116,6 +116,24 @@ class AuntieTimeWindowTest {
         )
     }
 
+    // #1590: Home's Today's Pack count must be the Overdue heading's count.
+    @Test
+    fun `overdueOnAuntieTime counts what the board files under Overdue and nothing else`() {
+        val sessions = listOf(
+            session(id = "a", startTime = "2026-07-14T09:00:00Z"),
+            session(id = "b", startTime = "2026-07-01T09:00:00Z"),
+            // yesterday is Upcoming, not Overdue
+            session(id = "c", startTime = "2026-07-15T09:00:00Z"),
+            // past the thirty-day reach: not on the board, so not counted
+            session(id = "d", startTime = "2026-06-01T09:00:00Z"),
+            // booking queue and wrapped rows are never Overdue
+            session(id = "e", startTime = "2026-07-01T09:00:00Z", status = "PENDING"),
+            session(id = "f", startTime = "2026-07-01T09:00:00Z", status = "COMPLETED", completedAt = "2026-07-01T14:00:00Z"),
+            session(id = "g", startTime = "2026-07-20T09:00:00Z"),
+        )
+        assertEquals(2, overdueOnAuntieTime(sessions, today))
+        assertEquals(0, overdueOnAuntieTime(emptyList(), today))
+    }
     @Test
     fun `upcoming stops at the fourteen-day horizon`() {
         assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-07-30T09:00:00Z"), today))

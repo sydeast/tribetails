@@ -112,6 +112,13 @@ internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean
 }
 
 /**
+ * How many sessions Auntie Time files under its Overdue heading: visible on
+ * the board AND [isOverdueScheduled]. Home's Today's Pack reads this, so the
+ * count on Home is the count on the board by construction (#1590).
+ */
+internal fun overdueOnAuntieTime(sessions: List<KinCareSession>, today: String): Int =
+    sessions.count { isVisibleOnAuntieTime(it, today) && isOverdueScheduled(it, today) }
+/**
  * One phase's sessions in reading order: ascending by startTime, since a run
  * sheet reads forwards. The soonest/latest switch #17 added was removed in
  * #755 with the chip row that drove it (the mock has no sort control).
