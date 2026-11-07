@@ -137,6 +137,11 @@ interface KinTalesProps {
   onSelect?: (kinTaleId: string) => void;
   /** The window the list opens in. Home's draft count links with `all` (#1601). */
   initialRange?: DateRangeKey;
+  /**
+   * Told when the operator picks another window (#1594), so the route can keep
+   * it in `?range=` and a KinTale opened from this list closes back onto it.
+   */
+  onRangeChange?: (range: DateRangeKey) => void;
 }
 
 /**
@@ -198,7 +203,7 @@ interface KinTalesProps {
  * list's date-windowed, 25-per-page query is the wrong source for them (see
  * `NeedsTriageSection.tsx`'s own header for why).
  */
-export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE }: KinTalesProps) {
+export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeChange }: KinTalesProps) {
   // #1707: template writes are owner-only in the rules, so "Edit templates"
   // is the owner's control. Anyone else reaches the read-only list from the rail.
   const access = useAdminAccess();
@@ -353,7 +358,10 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE }: KinTal
           onSearchChange={setSearch}
           searchLabel="Search KinTales"
           range={range}
-          onRangeChange={setRange}
+          onRangeChange={(next) => {
+            setRange(next);
+            onRangeChange?.(next);
+          }}
           facets={[
             {
               id: 'household',
