@@ -600,7 +600,10 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   ],
   enableGPSTrackingForAllVisits: true,
   enablePhotoLocationTagging: true,
-  requireArrivalDepartureVerification: true,
+  // #1620: absent means OFF, as the server reads it (`=== true` in
+  // functions/src/lib/arrivalVerification.ts). A default of true showed the switch
+  // on while Complete went through, and the next Settings save turned it on.
+  requireArrivalDepartureVerification: false,
   // 150 m. Android's dormant geofence constants are 50 m and 100 m, which are
   // too tight for a fix taken indoors, where an Auntie usually is when she
   // presses the button. See ARRIVAL_RADIUS_DEFAULT_METERS in
@@ -847,8 +850,8 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
       (r.enableGPSTrackingForAllVisits as boolean) ?? d.enableGPSTrackingForAllVisits,
     enablePhotoLocationTagging:
       (r.enablePhotoLocationTagging as boolean) ?? d.enablePhotoLocationTagging,
-    requireArrivalDepartureVerification:
-      (r.requireArrivalDepartureVerification as boolean) ?? d.requireArrivalDepartureVerification,
+    // #1620: only a stored `true` is on, the server's reading.
+    requireArrivalDepartureVerification: r.requireArrivalDepartureVerification === true,
     arrivalRadiusMeters: (r.arrivalRadiusMeters as number) ?? d.arrivalRadiusMeters,
     autoStartTrackingOnVisitStart:
       (r.autoStartTrackingOnVisitStart as boolean) ?? d.autoStartTrackingOnVisitStart,

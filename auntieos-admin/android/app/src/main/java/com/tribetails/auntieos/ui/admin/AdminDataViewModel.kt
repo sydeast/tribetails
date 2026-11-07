@@ -255,6 +255,9 @@ class AdminDataViewModel(
     val businessTimeZone: StateFlow<String> = _businessTimeZone.asStateFlow()
     private val _timeBlocks = MutableStateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>>(emptyList())
     val timeBlocks: StateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>> = _timeBlocks.asStateFlow()
+    // #1608: "Verify arrival and departure", read raw (absent is off). Null until read.
+    private val _arrivalRule = MutableStateFlow<Boolean?>(null)
+    val arrivalRule: StateFlow<Boolean?> = _arrivalRule.asStateFlow()
 
     // KinTale (visit recap report) Management
     private val _kinCareReports = MutableStateFlow<List<KinCareReport>>(emptyList())
@@ -551,6 +554,9 @@ class AdminDataViewModel(
             // absence/no-Firebase just means no block labels). Wrapped so a missing
             // FirebaseApp in tests can't crash.
             runCatchingCancellable { repository.getBusinessSettings().onSuccess { _timeBlocks.value = it.timeBlocks } }
+            // #1608: the arrival rule, so Complete can say what is missing before
+            // it is sent. A failed read leaves it null and the server decides.
+            runCatchingCancellable { repository.getArrivalRuleRequired().onSuccess { _arrivalRule.value = it } }
 
             _isLoading.value = false
         }
