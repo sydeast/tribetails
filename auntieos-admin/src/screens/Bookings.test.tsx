@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement, ReactNode } from 'react';
@@ -166,9 +166,9 @@ beforeEach(() => {
 });
 
 /**
- * The Select toggle, of which there are now TWO on the screen and ONE mode
- * behind them (#701): one in the page heading, one on the list toolbar directly
- * above the sections it picks rows from. `index` says which control to press.
+ * The Select toggle. #701 put one on the list toolbar, directly above the
+ * sections it picks rows from; #1607 removed the second copy from the page
+ * heading, since two buttons doing one thing read as two modes.
  */
 function selectToggle(index = 0): HTMLElement {
   return screen.getAllByRole('button', { name: 'Select' })[index] as HTMLElement;
@@ -268,10 +268,7 @@ describe('Bookings screen', () => {
     render(<Bookings />);
     expect(selectToggle()).toHaveAttribute('aria-pressed', 'false');
     await userEvent.click(selectToggle());
-    // BOTH controls report the mode, because there is only one mode (#701).
-    for (const toggle of screen.getAllByRole('button', { name: 'Select' })) {
-      expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    }
+    expect(selectToggle()).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('#704: there is no filter tab row, and every status still renders under its own section', () => {
@@ -1099,6 +1096,16 @@ describe('Bookings deep link', () => {
  * `lib/bookingReschedule.test.ts`.
  */
 describe('Bookings bulk reschedule', () => {
+  // #1574: these visits are July 2026 and a visit is never moved into the
+  // past, so the clock stands before them (Date only; userEvent runs as normal).
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   // #1155: the DEVICE is America/Los_Angeles and the business (no timeZone in
   // TEST_SETTINGS) is the default America/Chicago, so the prefill below has to
   // come out on the business clock whatever zone the runner is in.
@@ -1157,5 +1164,63 @@ describe('Bookings bulk reschedule', () => {
     expect(screen.getByText(/permission-denied/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Select Household Two/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /Select Household One/ })).not.toBeChecked();
+  });
+});
+
+describe('Bookings, the #1607 walk', () => {
+  it('has ONE Select, on the list toolbar', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    render(<Bookings />);
+    const selects = screen.getAllByRole('button', { name: 'Select' });
+    expect(selects).toHaveLength(1);
+    expect(within(screen.getByRole('group', { name: 'Bookings list' })).getByRole('button', { name: 'Select' })).toBe(
+      selects[0],
+    );
+  });
+
+  it('a selection of scheduled visits is offered Cancel and Reschedule, never Approve or Reject', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 's1', kinfolkName: 'Household One', status: 'SCHEDULED', kinCareVisitId: 'v1' }),
+        entry({ _id: 's2', kinfolkName: 'Household Two', status: 'SCHEDULED', kinCareVisitId: 'v2' }),
+      ],
+    });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    const bar = screen.getByRole('group', { name: 'Bulk actions' });
+    expect(within(bar).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Reschedule' })).toBeInTheDocument();
+    expect(within(bar).queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(within(bar).queryByRole('button', { name: 'Reject' })).toBeNull();
+  });
+
+  it('a selection of requests is offered Approve and Reject, and no Reschedule', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 's1', kinfolkName: 'Household One', status: 'PENDING', kinCareVisitId: 'v1' })],
+    });
+    render(<Bookings />);
+    await pick('Household One');
+    const bar = screen.getByRole('group', { name: 'Bulk actions' });
+    expect(within(bar).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+    expect(within(bar).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(within(bar).queryByRole('button', { name: 'Reschedule' })).toBeNull();
+  });
+
+  it('a scheduled visit left behind is marked OVERDUE, by the rule Auntie Time uses', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 'old', kinfolkName: 'Left Behind', status: 'SCHEDULED', startTime: '2026-07-16T14:00:00.000Z' }),
+        entry({ _id: 'new', kinfolkName: 'Still Ahead', status: 'SCHEDULED', startTime: '2099-07-16T14:00:00.000Z' }),
+      ],
+    });
+    render(<Bookings />);
+    const scheduled = screen.getByRole('group', { name: /^Scheduled/ });
+    const row = (name: string) => within(scheduled).getByText(name).closest('li') as HTMLElement;
+    expect(within(row('Left Behind')).getByText('OVERDUE')).toBeInTheDocument();
+    expect(within(row('Still Ahead')).queryByText('OVERDUE')).toBeNull();
   });
 });

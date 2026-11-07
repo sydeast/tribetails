@@ -13,6 +13,7 @@ import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { validateResponse } from '../lib/callableResponse';
 import { mirrorSessionTimesToEnvelope } from '../lib/visitTimeMirror';
+import { assertRescheduleStartAhead, businessTimeZoneReader } from '../lib/pastVisit';
 
 /**
  * 1E §A.9: server-bound reschedule of a kin_care_sessions doc. Shared by Schedule
@@ -74,6 +75,11 @@ export async function rescheduleBookingHandler(
     }
     throw err;
   }
+
+  // #1574: a visit is never moved into the past. Checked before the document is
+  // read or any guard runs, so a past drop says that, not a busy or overlap
+  // refusal about a window that could never be written anyway.
+  await assertRescheduleStartAhead(args.startTime, Date.now(), businessTimeZoneReader());
 
   const ref = db().doc(`kin_care_sessions/${args.sessionId}`);
   const snap = await ref.get();

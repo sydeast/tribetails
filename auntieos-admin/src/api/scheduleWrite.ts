@@ -200,6 +200,8 @@ export interface CreateKinCareSessionArgs {
   /** Set only on an explicit retry after the matching refusal. The two are separate decisions and are audited separately. */
   overrideVisitConflict?: boolean;
   overrideBusyConflict?: boolean;
+  /** #1574: the window has ended, so the visit is written down as already Completed (never Scheduled). The server refuses it for a window that has not ended. */
+  recordAsCompleted?: boolean;
 }
 
 export interface CreateKinCareSessionResult {
@@ -209,7 +211,8 @@ export interface CreateKinCareSessionResult {
 
 /**
  * createKinCareSession (admin callable): puts a `SCHEDULED` visit straight on
- * the calendar.
+ * the calendar, or, for a window that has already ended, records it as
+ * `COMPLETED` (#1574).
  *
  * THIS IS NOT THE BOOKING WIZARD, and the difference matters to the operator.
  * `NewBookingDialog` (`createMultiDateBookingRequest`) mints a REQUEST envelope

@@ -91,13 +91,80 @@ export function blastBlocker(
   fireAtMs: number | null,
   nowMs: number,
   reachable: number | undefined,
+  missingFields: readonly string[] = [],
 ): string | null {
   if (audience === null) return 'Choose an audience first.';
   if (fireAtMs === null) return 'Pick a date and a time to send.';
   // The server's own window: anything more than a minute in the past is refused.
   if (fireAtMs < nowMs - 60_000) return 'That send time has already passed.';
   if (reachable === 0) return 'This audience reaches nobody. Widen it, or check who has opted in.';
+  // #1587: a field the template names and nothing fills renders as a gap in an
+  // email to real households. Naming the fields is what lets the operator fix it.
+  if (missingFields.length > 0) {
+    return `Fill in ${missingFields.map(fieldLabel).join(', ')} before scheduling. The email would go out with a gap there.`;
+  }
   return null;
+}
+/**
+ * A merge field's name as the operator reads it: `firstName` -> "First name",
+ * `nextVisit.date` -> "Next visit date". The raw token is the template author's
+ * spelling; the operator filling it in is owed a label, not the spelling.
+ */
+export function fieldLabel(name: string): string {
+  const spaced = name
+    .replace(/[._-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .trim()
+    .toLowerCase();
+  return spaced === '' ? name : spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+/**
+ * The `data` record for the blast: the values typed for the fields the template
+ * names, and nothing else. A blank value is left out so the field reads as
+ * missing, not as an intentional empty string, and a value for a field the
+ * template no longer names (the operator switched campaigns) is not sent.
+ */
+export function fieldValuesToData(
+  values: Readonly<Record<string, string>>,
+  fieldNames: readonly string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const name of fieldNames) {
+    const v = (values[name] ?? '').trim();
+    if (v !== '') out[name] = v;
+  }
+  return out;
+}
+/** An account the Pick accounts list offers: a household with a linked MyTribe login, by name. */
+export interface PickableAccount {
+  uid: string;
+  name: string;
+  email: string;
+}
+/**
+ * The households an operator can pick as accounts, by name.
+ *
+ * A blast addresses a MyTribe account (`uid`), not a household, so a household
+ * with no linked login cannot receive one. It is listed separately so the
+ * operator can see who is missing and why, instead of the household silently
+ * not being there. Archived households are neither.
+ */
+export function pickableAccounts(
+  kinfolk: ReadonlyArray<{ firstName?: string | undefined; lastName?: string | undefined; email?: string | undefined; uid?: string | undefined; status?: string | undefined }>,
+): { accounts: PickableAccount[]; withoutAccount: string[] } {
+  const accounts: PickableAccount[] = [];
+  const withoutAccount: string[] = [];
+  for (const k of kinfolk) {
+    if ((k.status ?? '').toLowerCase() === 'archived') continue;
+    const name = `${(k.firstName ?? '').trim()} ${(k.lastName ?? '').trim()}`.trim() || (k.email ?? '').trim() || 'Unnamed household';
+    const uid = (k.uid ?? '').trim();
+    if (uid === '') withoutAccount.push(name);
+    else accounts.push({ uid, name, email: (k.email ?? '').trim() });
+  }
+  const byName = (a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase());
+  accounts.sort((a, b) => byName(a.name, b.name));
+  withoutAccount.sort(byName);
+  return { accounts, withoutAccount };
 }
 /**
  * What the operator is told after pressing Schedule (#814, extended by #823).

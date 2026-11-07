@@ -1,11 +1,6 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { ScheduleSessionEntry, BusySlotEntry } from '../api/schedule';
 import {
-  GRID_END_HOUR,
-  GRID_END_MINUTE,
-  GRID_HOURS,
-  GRID_START_HOUR,
-  GRID_START_MINUTE,
   HOUR_HEIGHT_PX,
   MIN_BLOCK_MINUTES,
   busyPlacement,
@@ -13,10 +8,12 @@ import {
   businessMinutesOfDay,
   clampDropMinute,
   gridPlacement,
+  gridWindowFor,
   hhmmFromMinutes,
   hourLabel,
   minuteFromOffsetPx,
   snapMinuteOfDay,
+  type GridWindow,
 } from '../lib/scheduleGrid';
 import { visitDurationMinutes } from '../lib/bookingDetailFormat';
 import { sessionHousehold } from '../lib/sessionFormat';
@@ -81,6 +78,8 @@ export interface ScheduleDrop {
   targetDayIso: string;
   /** Already clamped into the drawn window and snapped to the operator's granularity. */
   dropMinuteOfDay: number;
+  /** #1606: the hours this week drew, so the write clamps to the same window the drop was made in. */
+  window: GridWindow;
 }
 
 interface ScheduleWeekGridProps {
@@ -185,7 +184,23 @@ export function ScheduleWeekGrid({
   // Only when today is one of the seven columns AND the clock is inside the
   // drawn window. Outside it there is no honest place to put the line, and
   // pinning it to the top or bottom edge would claim a time that is not now.
-  const drawNowLine = nowMinute >= GRID_START_MINUTE && nowMinute < GRID_END_MINUTE;
+  // #1606: the week's own hours, 8a to 6p widened to reach every visit in it,
+  // so nothing hides behind a footer line.
+  const gridWindow = useMemo(
+    () =>
+      gridWindowFor(
+        days.flatMap((day) =>
+          (byDay.get(day) ?? []).flatMap((r) => {
+            const startMinute = businessMinutesOfDay(r.startTime, businessZone);
+            if (startMinute === null) return [];
+            return [{ startMinute, endMinute: startMinute + visitDurationMinutes(r) }];
+          }),
+        ),
+      ),
+    [days, byDay, businessZone],
+  );
+  const gridHours = gridWindow.endHour - gridWindow.startHour;
+  const drawNowLine = nowMinute >= gridWindow.startHour * 60 && nowMinute < gridWindow.endHour * 60;
 
   // #697: the click that asked for this lands on the day (`onSelectDay`
   // upstream), the scroll here just brings that day's first busy block into
@@ -252,7 +267,7 @@ export function ScheduleWeekGrid({
       const shift = colWidth > 0 ? Math.round(dx / colWidth) : 0;
       const dayIndex = Math.min(Math.max(prev.fromDayIndex + shift, 0), days.length - 1);
       const minute = snapMinuteOfDay(
-        clampDropMinute(minuteFromOffsetPx(prev.originTopPx + dy)),
+        clampDropMinute(minuteFromOffsetPx(prev.originTopPx + dy, gridWindow), gridWindow),
         snapMinutes,
       );
       return { ...prev, moved, dayIndex, minute, dxPx: dx };
@@ -270,7 +285,7 @@ export function ScheduleWeekGrid({
     }
     const targetDayIso = days[current.dayIndex];
     if (targetDayIso === undefined) return;
-    onDrop({ session, targetDayIso, dropMinuteOfDay: current.minute });
+    onDrop({ session, targetDayIso, dropMinuteOfDay: current.minute, window: gridWindow });
   }
 
   // Only rows whose start is READABLE but falls outside the drawn hours. A row
@@ -282,7 +297,7 @@ export function ScheduleWeekGrid({
       sum +
       rows.filter((r) => {
         const minute = businessMinutesOfDay(r.startTime, businessZone);
-        return minute !== null && gridPlacement(minute, MIN_BLOCK_MINUTES) === null;
+        return minute !== null && gridPlacement(minute, MIN_BLOCK_MINUTES, gridWindow) === null;
       }).length
     );
   }, 0);
@@ -309,9 +324,9 @@ export function ScheduleWeekGrid({
 
       <div className="schedule-grid__body" ref={bodyRef}>
         <div className="schedule-grid__times" aria-hidden="true">
-          {Array.from({ length: GRID_HOURS }, (_, i) => (
+          {Array.from({ length: gridHours }, (_, i) => (
             <span key={i} className="schedule-grid__time" style={{ height: `${HOUR_HEIGHT_PX}px` }}>
-              {hourLabel(GRID_START_HOUR + i)}
+              {hourLabel(gridWindow.startHour + i)}
             </span>
           ))}
         </div>
@@ -320,13 +335,13 @@ export function ScheduleWeekGrid({
           <div
             key={day}
             className={day === today ? 'schedule-grid__day schedule-grid__day--today' : 'schedule-grid__day'}
-            style={{ height: `${HOUR_HEIGHT_PX * GRID_HOURS}px` }}
+            style={{ height: `${HOUR_HEIGHT_PX * gridHours}px` }}
             data-day={day}
           >
             {day === today && drawNowLine && (
               <div
                 className="schedule-grid__now"
-                style={{ top: `${previewTopPx(nowMinute)}px` }}
+                style={{ top: `${previewTopPx(nowMinute, gridWindow)}px` }}
                 aria-hidden="true"
               >
                 <span className="schedule-grid__now-label">now {hhmmFromMinutes(nowMinute)}</span>
@@ -334,7 +349,7 @@ export function ScheduleWeekGrid({
             )}
 
             {(busyByDate.get(day) ?? []).map((slot) => {
-              const place = busyPlacement(slot.startTime, slot.endTime);
+              const place = busyPlacement(slot.startTime, slot.endTime, gridWindow);
               if (place === null) return null;
               return (
                 <div
@@ -364,16 +379,16 @@ export function ScheduleWeekGrid({
             {(byDay.get(day) ?? []).map((entry) => {
               const startMinute = businessMinutesOfDay(entry.startTime, businessZone);
               if (startMinute === null) return null;
-              const place = gridPlacement(startMinute, visitDurationMinutes(entry));
+              const place = gridPlacement(startMinute, visitDurationMinutes(entry), gridWindow);
               if (place === null) return null;
               const dragging = drag?.sessionId === entry._id && drag.moved;
-              const previewTop = dragging ? previewTopPx(drag.minute) : place.topPx;
+              const previewTop = dragging ? previewTopPx(drag.minute, gridWindow) : place.topPx;
               const pending = pendingSessionId === entry._id;
               return (
                 <button
                   key={entry._id}
                   type="button"
-                  className={blockClass(dragging, pending)}
+                  className={blockClass(dragging, pending, place.heightPx < COMPACT_BLOCK_PX)}
                   style={{
                     top: `${previewTop}px`,
                     height: `${place.heightPx}px`,
@@ -420,7 +435,7 @@ export function ScheduleWeekGrid({
           visit the drawn window cannot show is still counted and named. */}
       {offWindow > 0 && (
         <p className="schedule-grid__note">
-          {`${offWindow} visit${offWindow === 1 ? '' : 's'} outside the ${hourLabel(GRID_START_HOUR)} to ${hourLabel(GRID_END_HOUR)} window. Open that day below to see all of its visits.`}
+          {`${offWindow} visit${offWindow === 1 ? '' : 's'} outside the ${hourLabel(gridWindow.startHour)} to ${hourLabel(gridWindow.endHour)} window. Open that day below to see all of its visits.`}
         </p>
       )}
     </div>
@@ -428,12 +443,20 @@ export function ScheduleWeekGrid({
 }
 
 /** Top offset for a previewed minute, the inverse of `minuteFromOffsetPx`. */
-function previewTopPx(minuteOfDay: number): number {
-  return (HOUR_HEIGHT_PX * (minuteOfDay - GRID_START_MINUTE)) / 60;
+function previewTopPx(minuteOfDay: number, window: GridWindow): number {
+  return (HOUR_HEIGHT_PX * (minuteOfDay - window.startHour * 60)) / 60;
 }
 
-function blockClass(dragging: boolean, pending: boolean): string {
+/**
+ * #1606: below this height the block's time and household go on ONE line. At
+ * 30 minutes (27px) the stacked time used to push the household's name out of
+ * the block entirely, so a half-hour visit read as a bare time.
+ */
+const COMPACT_BLOCK_PX = 44;
+
+function blockClass(dragging: boolean, pending: boolean, compact: boolean): string {
   const classes = ['schedule-grid__block'];
+  if (compact) classes.push('schedule-grid__block--compact');
   if (dragging) classes.push('schedule-grid__block--dragging');
   if (pending) classes.push('schedule-grid__block--pending');
   return classes.join(' ');

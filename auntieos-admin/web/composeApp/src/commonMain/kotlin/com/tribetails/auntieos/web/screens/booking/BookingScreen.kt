@@ -168,6 +168,8 @@ private fun BookingListScreen(
     val selectedIds = remember { mutableStateMapOf<String, Boolean>() }
     // Display name per selected id, so a refused id is reported by kinfolk name.
     val selectedNames = remember { mutableStateMapOf<String, String>() }
+    // #1607: each picked row's status, so the bar offers only what fits them.
+    val selectedStatuses = remember { mutableStateMapOf<String, String>() }
     var bulkBusy by remember { mutableStateOf(false) }
     var bulkNotice by remember { mutableStateOf<String?>(null) }
     // 1025: a landed single approve/reject used to report nothing -- the card
@@ -185,10 +187,14 @@ private fun BookingListScreen(
     fun batchVisitId(b: KinCareSession): String = bulkVisitId(b)
     fun toggleSelect(b: KinCareSession) {
         val id = batchVisitId(b)
-        if (selectedIds[id] == true) { selectedIds.remove(id); selectedNames.remove(id) }
-        else { selectedIds[id] = true; selectedNames[id] = b.kinfolkName.ifBlank { b.kinfolkId } }
+        if (selectedIds[id] == true) { selectedIds.remove(id); selectedNames.remove(id); selectedStatuses.remove(id) }
+        else {
+            selectedIds[id] = true
+            selectedNames[id] = b.kinfolkName.ifBlank { b.kinfolkId }
+            selectedStatuses[id] = b.status
+        }
     }
-    fun clearSelection() { selectedIds.clear(); selectedNames.clear() }
+    fun clearSelection() { selectedIds.clear(); selectedNames.clear(); selectedStatuses.clear() }
 
     // 1025: the single-row confirmations. Each awaits the ViewModel write (which
     // owns errorMessage) and only sets actionNotice when nothing failed, so a
@@ -354,18 +360,27 @@ private fun BookingListScreen(
                         color = c.textPrimary,
                         modifier = Modifier.weight(1f),
                     )
-                    PrimaryButton(
-                        label   = if (bulkBusy) "Working..." else "Approve",
-                        onClick = { if (!bulkBusy) runBulk("APPROVE") },
-                    )
-                    GhostButton(
-                        label   = "Reject",
-                        onClick = { if (!bulkBusy) runBulk("REJECT") },
-                    )
-                    GhostButton(
-                        label   = "Cancel",
-                        onClick = { if (!bulkBusy) runBulk("CANCEL") },
-                    )
+                    // #1607: only the transitions at least one picked row can take.
+                    // Approve and Reject on scheduled visits could only ever skip.
+                    val offered = bulkActionsForStatuses(selectedStatuses.values)
+                    if ("APPROVE" in offered) {
+                        PrimaryButton(
+                            label   = if (bulkBusy) "Working..." else "Approve",
+                            onClick = { if (!bulkBusy) runBulk("APPROVE") },
+                        )
+                    }
+                    if ("REJECT" in offered) {
+                        GhostButton(
+                            label   = "Reject",
+                            onClick = { if (!bulkBusy) runBulk("REJECT") },
+                        )
+                    }
+                    if ("CANCEL" in offered) {
+                        GhostButton(
+                            label   = "Cancel",
+                            onClick = { if (!bulkBusy) runBulk("CANCEL") },
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -1451,4 +1466,19 @@ private class FirestoreClientBookingDataSource(
         client.kinTaleCommentsStream(taleId, kinfolkId)
     override suspend fun addKinTaleComment(taleId: String, kinfolkId: String, body: String, parentCommentId: String?) =
         client.addKinTaleComment(taleId, kinfolkId, body, parentCommentId)
+}
+
+/**
+ * #1607: the bulk transitions worth offering for a selection, in the bar's
+ * order: Approve and Reject for a request (DRAFT / PENDING), Cancel for a visit
+ * on the books (SCHEDULED, or under way). The web's `bulkActionsFor`.
+ */
+internal fun bulkActionsForStatuses(statuses: Collection<String>): List<String> {
+    val up = statuses.map { it.trim().uppercase() }
+    val request = up.any { it == "DRAFT" || it == "PENDING" }
+    val onTheBooks = up.any { it == "SCHEDULED" || it == "ON_MY_WAY" || it == "ARRIVED" || it == "DEPARTED" }
+    return buildList {
+        if (request) { add("APPROVE"); add("REJECT") }
+        if (onTheBooks) add("CANCEL")
+    }
 }
