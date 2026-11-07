@@ -394,6 +394,7 @@ private fun MessagesPanel(client: FirestoreClient) {
     var threadError by remember { mutableStateOf<String?>(null) }
     var reply by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+    var markingUnread by remember { mutableStateOf(false) }
 
     fun loadList() {
         scope.launch {
@@ -430,6 +431,21 @@ private fun MessagesPanel(client: FirestoreClient) {
                 is WriteResult.Err -> threadError = r.message
             }
             sending = false
+        }
+    }
+
+    // #1611: back to the unread pile, then close the thread (reading it again
+    // would clear the flag). The dot comes from the re-read list, never a local flip.
+    fun markUnread() {
+        val id = selectedId ?: return
+        if (markingUnread) return
+        markingUnread = true
+        scope.launch {
+            when (val r = client.markConversationUnread(id)) {
+                is WriteResult.Ok -> { threadError = null; if (selectedId == id) selectedId = null; loadList() }
+                is WriteResult.Err -> threadError = "Couldn't mark unread: ${r.message}"
+            }
+            markingUnread = false
         }
     }
 
@@ -470,6 +486,8 @@ private fun MessagesPanel(client: FirestoreClient) {
                             onReply = { reply = it },
                             sending = sending,
                             onSend = { sendReply() },
+                            markingUnread = markingUnread,
+                            onMarkUnread = { markUnread() },
                         )
                     }
                 }
@@ -520,6 +538,8 @@ private fun ThreadView(
     onReply: (String) -> Unit,
     sending: Boolean,
     onSend: () -> Unit,
+    markingUnread: Boolean,
+    onMarkUnread: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     Column(
@@ -564,6 +584,11 @@ private fun ThreadView(
             onClick = onSend,
             loading = sending,
             leading = { Icon(Lucide.MessageSquare, contentDescription = null, tint = c.background, modifier = Modifier.height(14.dp).width(14.dp)) },
+        )
+        GhostButton(
+            label = if (markingUnread) "Marking unread…" else "Mark unread",
+            onClick = onMarkUnread,
+            enabled = !markingUnread && !loading,
         )
     }
 }

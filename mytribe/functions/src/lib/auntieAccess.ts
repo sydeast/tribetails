@@ -127,6 +127,7 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'getConversationThread',
   'replyToConversation',
   'markConversationRead',
+  'markConversationUnread',
   'markAllThreadsRead',
 
   // ── Herself ────────────────────────────────────────────────────────────

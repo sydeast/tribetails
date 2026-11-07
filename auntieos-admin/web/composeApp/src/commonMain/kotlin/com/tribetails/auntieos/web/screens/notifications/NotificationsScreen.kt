@@ -323,7 +323,12 @@ fun NotificationsScreen(
                         FilterRow(
                             categories = categories,
                             active = activeFilter,
-                            onSelect = { activeFilter = it },
+                            onSelect = {
+                                // #1611: a selection made under one chip must not
+                                // ride into a bulk action on rows the next hides.
+                                if (it != activeFilter) selectedIds.clear()
+                                activeFilter = it
+                            },
                         )
                         Spacer(Modifier.height(16.dp))
 

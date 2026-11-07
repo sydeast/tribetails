@@ -199,7 +199,10 @@ fun NotificationsScreen(
                 // decides which rows show Approve/Deny, so the tile and the
                 // buttons cannot disagree.
                 val actionableCount = all.count { applicableNotificationActions(it).canApproveDeny }
-                val allIds = all.map { it.id }.toSet()
+                // #1611: Select all reaches only the rows the active filter chip
+                // shows. It used to take the whole feed, so "Select all" under
+                // the Unread chip also picked every read row hidden behind it.
+                val allIds = selectAllTargets(all, activeFilter)
                 val unreadSelected = selectedIds.filter { id -> all.any { it.id == id && isNotificationUnread(it) } }
 
                 Heading(unreadCount = unreadCount)
@@ -328,7 +331,13 @@ fun NotificationsScreen(
                             FilterRow(
                                 categories = categories,
                                 active = activeFilter,
-                                onSelect = { activeFilter = it },
+                                onSelect = {
+                                    // A selection made under one chip must not
+                                    // ride into a bulk action on rows the next
+                                    // chip hides.
+                                    if (it != activeFilter) selectedIds = emptySet()
+                                    activeFilter = it
+                                },
                             )
                             Spacer(Modifier.height(16.dp))
 
@@ -794,6 +803,9 @@ internal const val NOTIF_UNREAD_FILTER = " unread"
  * Visible notifications for the active filter: null = All, [NOTIF_UNREAD_FILTER] =
  * real (readAt-based) unread, else a category match (spec 21 item 2). Pure; unit-tested.
  */
+/** What "Select all" picks: the ids the active filter shows, never the whole feed (#1611). Pure. */
+internal fun selectAllTargets(all: List<NotificationEntry>, filter: String?): Set<String> =
+    notificationsForFilter(all, filter).map { it.id }.toSet()
 internal fun notificationsForFilter(all: List<NotificationEntry>, filter: String?): List<NotificationEntry> =
     when (filter) {
         null -> all

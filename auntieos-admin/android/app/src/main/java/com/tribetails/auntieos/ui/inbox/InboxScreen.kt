@@ -98,6 +98,7 @@ fun InboxScreen(
     val threadLoading by viewModel.threadLoading.collectAsState()
     val conversationError by viewModel.conversationError.collectAsState()
     val isReplying by viewModel.isReplying.collectAsState()
+    val markingUnread by viewModel.markingUnread.collectAsState()
     val bulkReadResult by viewModel.bulkReadResult.collectAsState()
     val bulkReadInFlight by viewModel.bulkReadInFlight.collectAsState()
 
@@ -156,11 +157,13 @@ fun InboxScreen(
                         threadLoading = threadLoading,
                         error = conversationError,
                         isReplying = isReplying,
+                        markingUnread = markingUnread,
                         bulkReadResult = bulkReadResult,
                         bulkReadInFlight = bulkReadInFlight,
                         onOpen = viewModel::openConversation,
                         onReply = viewModel::sendReply,
                         onMarkAllRead = viewModel::markAllThreadsRead,
+                        onMarkUnread = viewModel::markConversationUnread,
                     )
                 }
 
@@ -692,11 +695,13 @@ private fun MessagesSection(
     threadLoading: Boolean,
     error: String?,
     isReplying: Boolean,
+    markingUnread: Boolean,
     bulkReadResult: String?,
     bulkReadInFlight: Boolean,
     onOpen: (String) -> Unit,
     onReply: (String) -> Unit,
     onMarkAllRead: () -> Unit,
+    onMarkUnread: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -832,6 +837,12 @@ private fun MessagesSection(
                                 enabled = !isReplying,
                                 loading = isReplying,
                                 leading = { Icon(Lucide.MessageSquare, contentDescription = null, tint = c.background, modifier = Modifier.size(14.dp)) },
+                            )
+                            // #1611: back to the unread pile; closes the thread.
+                            GhostButton(
+                                label = if (markingUnread) "Marking unread…" else "Mark unread",
+                                onClick = onMarkUnread,
+                                enabled = !markingUnread && !threadLoading,
                             )
                         }
                     }

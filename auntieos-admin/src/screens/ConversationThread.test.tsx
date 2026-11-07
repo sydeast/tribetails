@@ -14,14 +14,16 @@ afterAll(() => {
   else process.env.TZ = originalTz;
 });
 
-const { getConversationThread, replyToConversation } = vi.hoisted(() => ({
+const { getConversationThread, replyToConversation, markConversationUnread } = vi.hoisted(() => ({
   getConversationThread: vi.fn(),
   replyToConversation: vi.fn(),
+  markConversationUnread: vi.fn(),
 }));
 vi.mock('../api/inboxThread', async (orig) => ({
   ...(await orig<typeof import('../api/inboxThread')>()),
   getConversationThread,
   replyToConversation,
+  markConversationUnread,
 }));
 
 import { ConversationThread } from './ConversationThread';
@@ -33,6 +35,7 @@ function msg(over: Partial<ThreadMessage> = {}): ThreadMessage {
 beforeEach(() => {
   getConversationThread.mockReset();
   replyToConversation.mockReset();
+  markConversationUnread.mockReset();
 });
 
 describe('ConversationThread', () => {
@@ -132,5 +135,27 @@ describe('ConversationThread reply guards', () => {
     fireEvent.change(screen.getByLabelText(/reply to this household/i), { target: { value: body } });
     await userEvent.click(screen.getByRole('button', { name: /send reply/i }));
     await waitFor(() => expect(replyToConversation).toHaveBeenCalledWith('k1', body));
+  });
+
+  it('Mark unread puts the thread back in the unread pile, then leaves it (#1611)', async () => {
+    getConversationThread.mockResolvedValue([msg()]);
+    markConversationUnread.mockResolvedValue(undefined);
+    const onBack = vi.fn();
+    render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={onBack} />);
+    await screen.findByText('hello');
+    await userEvent.click(screen.getByRole('button', { name: 'Mark unread' }));
+    await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
+    expect(markConversationUnread).toHaveBeenCalledWith('k1');
+  });
+  it('a failed Mark unread says why and stays on the thread', async () => {
+    getConversationThread.mockResolvedValue([msg()]);
+    markConversationUnread.mockRejectedValue(new Error('permission-denied'));
+    const onBack = vi.fn();
+    render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={onBack} />);
+    await screen.findByText('hello');
+    await userEvent.click(screen.getByRole('button', { name: 'Mark unread' }));
+    expect(await screen.findByText(/markConversationUnread failed: permission-denied/)).toBeInTheDocument();
+    expect(onBack).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Mark unread' })).toBeEnabled();
   });
 });

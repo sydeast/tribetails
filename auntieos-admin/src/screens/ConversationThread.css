@@ -93,3 +93,9 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-warning);
 }
+
+.thread__heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

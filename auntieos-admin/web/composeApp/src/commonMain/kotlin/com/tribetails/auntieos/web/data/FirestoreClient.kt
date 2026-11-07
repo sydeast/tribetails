@@ -703,6 +703,15 @@ class FirestoreClient {
         }
     }
 
+    /** #1611: puts one thread back in the unread pile (admin flag only; read receipts stay). */
+    suspend fun markConversationUnread(kinfolkId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("markConversationUnread", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
     /**
      * Stage 3 / 16.2: generates a downloadable PDF of an invoice via the
      * admin-gated generateInvoicePdf callable (MyTribe renders with pdf-lib,

@@ -150,6 +150,7 @@ mapboxRetrieve
 mapboxSearch
 markAllThreadsRead
 markConversationRead
+markConversationUnread
 markInvoicePaid
 markNotificationRead
 markNotificationUnread
