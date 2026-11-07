@@ -1122,6 +1122,16 @@ service cloud.firestore {
             allow read: if isStaff();
             allow write: if false;
           }
+ // #1580: ADMIN-ONLY internal notes, server-written by addInternalBookingNote
+ // with visibility 'adminOnly' and read through listVisitInternalNotes.
+ // Operator ruling, 2026-11-05 docket: two kinds of internal note, shared and
+ // admin-only, and Aunties see only shared ones. A rule gates a document, never
+ // a field, so a flag on `internalNotes` would still hand the text to any
+ // Auntie who listened; the kind is this separate path, owner-only.
+          match /adminNotes/{noteId} {
+            allow read: if isOwner();
+            allow write: if false;
+          }
         }
       }
 

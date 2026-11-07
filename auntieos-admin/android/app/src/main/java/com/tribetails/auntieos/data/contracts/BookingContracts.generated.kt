@@ -213,31 +213,45 @@ internal fun decodeGetBookingNotesResult(raw: Map<String, Any?>?): GetBookingNot
  * a payload that satisfies these types can still be refused.
  */
 data class AddInternalBookingNoteArgs(
-    val kinfolkId: String,
+    /** Optional: omitted from the payload when null. */
+    val kinfolkId: String? = null,
     /** Optional: omitted from the payload when null. */
     val batchId: String? = null,
     /** Optional: omitted from the payload when null. */
     val visitId: String? = null,
     /** Optional: omitted from the payload when null. */
     val bookingId: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val sessionId: String? = null,
     val body: String,
+    /**
+     * One of `shared`, `adminOnly`.
+     * Optional: omitted from the payload when null.
+     */
+    val visibility: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
      * a pure map, no Firebase types, so a test can assert it without static init.
      */
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
-        put("kinfolkId", kinfolkId)
+        if (kinfolkId != null) put("kinfolkId", kinfolkId)
         if (batchId != null) put("batchId", batchId)
         if (visitId != null) put("visitId", visitId)
         if (bookingId != null) put("bookingId", bookingId)
+        if (sessionId != null) put("sessionId", sessionId)
         put("body", body)
+        if (visibility != null) put("visibility", visibility)
     }
 }
 
 /** Response from the `addInternalBookingNote` callable. */
 data class AddInternalBookingNoteResult(
     val noteId: String,
+    /** One of `shared`, `adminOnly`. `""` when the payload omits it. */
+    val visibility: String,
+    /** One of `thread`, `visitRecord`. `""` when the payload omits it. */
+    val storedOn: String,
 )
 
 /**
@@ -248,6 +262,86 @@ data class AddInternalBookingNoteResult(
 internal fun decodeAddInternalBookingNoteResult(raw: Map<String, Any?>?): AddInternalBookingNoteResult =
     AddInternalBookingNoteResult(
         noteId = (raw?.get("noteId") as? String).orEmpty(),
+        visibility = (raw?.get("visibility") as? String).orEmpty(),
+        storedOn = (raw?.get("storedOn") as? String).orEmpty(),
+    )
+
+// ---------- listVisitInternalNotes ----------
+
+/**
+ * Request payload for the `listVisitInternalNotes` callable.
+ * The server also enforces a cross-field rule this class cannot express (zod .refine);
+ * a payload that satisfies these types can still be refused.
+ */
+data class ListVisitInternalNotesArgs(
+    /** Optional: omitted from the payload when null. */
+    val sessionId: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val kinfolkId: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val batchId: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val visitId: String? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        if (sessionId != null) put("sessionId", sessionId)
+        if (kinfolkId != null) put("kinfolkId", kinfolkId)
+        if (batchId != null) put("batchId", batchId)
+        if (visitId != null) put("visitId", visitId)
+    }
+}
+
+/** Nested in the `listVisitInternalNotes` contract. */
+data class ListVisitInternalNotesResultNote(
+    val id: String,
+    val body: String,
+    /** One of `admin`, `auntie`, `unknown`. `""` when the payload omits it. */
+    val authorRole: String,
+    val authorName: String?,
+    val createdAtMs: Double?,
+    /** One of `shared`, `adminOnly`. `""` when the payload omits it. */
+    val visibility: String,
+    /** One of `thread`, `visitRecord`. `""` when the payload omits it. */
+    val source: String,
+)
+
+/**
+ * Fail-soft decode of `ListVisitInternalNotesResultNote` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListVisitInternalNotesResultNote(raw: Map<String, Any?>?): ListVisitInternalNotesResultNote =
+    ListVisitInternalNotesResultNote(
+        id = (raw?.get("id") as? String).orEmpty(),
+        body = (raw?.get("body") as? String).orEmpty(),
+        authorRole = (raw?.get("authorRole") as? String).orEmpty(),
+        authorName = raw?.get("authorName") as? String,
+        createdAtMs = (raw?.get("createdAtMs") as? Number)?.toDouble(),
+        visibility = (raw?.get("visibility") as? String).orEmpty(),
+        source = (raw?.get("source") as? String).orEmpty(),
+    )
+
+/** Response from the `listVisitInternalNotes` callable. */
+data class ListVisitInternalNotesResult(
+    val notes: List<ListVisitInternalNotesResultNote>,
+    val canMarkAdminOnly: Boolean,
+    val hasBookingRecord: Boolean,
+)
+
+/**
+ * Fail-soft decode of `ListVisitInternalNotesResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListVisitInternalNotesResult(raw: Map<String, Any?>?): ListVisitInternalNotesResult =
+    ListVisitInternalNotesResult(
+        notes = (raw?.get("notes") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListVisitInternalNotesResultNote(nested) } },
+        canMarkAdminOnly = raw?.get("canMarkAdminOnly") as? Boolean ?: false,
+        hasBookingRecord = raw?.get("hasBookingRecord") as? Boolean ?: false,
     )
 
 // ---------- batchUpdateBookings ----------

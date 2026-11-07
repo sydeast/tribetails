@@ -147,6 +147,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * with `await import()` inside the handlers that use them. Measured at 428
  * after merging onto #1577 (433 without this change), so the bound did not
  * move.
+ *
+ * #1580 adds `admin/listVisitInternalNotes.ts`, the visit's one
+ * internal-notes list, and `lib/visitNotes.ts`, the path and target
+ * resolution it shares with `addInternalBookingNote`. Two modules whose
+ * imports are all already resident, inside the 440 already allowed, so the
+ * bound did not move.
  */
 const MAX_OWN_EAGER_MODULES = 440;
 
