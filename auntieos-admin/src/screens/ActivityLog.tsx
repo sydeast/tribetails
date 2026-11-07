@@ -20,11 +20,13 @@ import {
   activityMatchesStatus,
   activityPayloadRows,
   humanizeAction,
-  localDayKey,
+  activityWhen,
   type ActivityCategory,
   type ActivityStatusFilter,
 } from '../lib/activityDetail';
-import { formatTime } from '../lib/denFormat';
+import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
+import { businessTodayIso } from '../lib/businessZoneTime';
+import { getBusinessSettings } from '../api/settings';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -48,11 +50,12 @@ function anomalyDetail(a: VerifyAnomaly): string {
   }
 }
 
-function byDay(rows: ActivityLogEntry[]): [string, ActivityLogEntry[]][] {
+/** Groups by the BUSINESS day (#1585): a 9:34 pm Chicago event stamped 02:34Z belongs to the day before. */
+function byDay(rows: ActivityLogEntry[], zone: string): [string, ActivityLogEntry[]][] {
   const groups = new Map<string, ActivityLogEntry[]>();
   for (const r of rows) {
     const ts = str(r.timestamp);
-    const day = /^\d{4}-\d{2}-\d{2}/.test(ts) ? ts.slice(0, 10) : 'Undated';
+    const day = activityWhen(ts, zone)?.dayKey ?? (/^\d{4}-\d{2}-\d{2}/.test(ts) ? ts.slice(0, 10) : 'Undated');
     (groups.get(day) ?? groups.set(day, []).get(day)!).push(r);
   }
   return [...groups.entries()];
@@ -144,8 +147,24 @@ export function ActivityLog() {
   useEffect(() => {
     void verify();
   }, []);
+  // The business's zone (#1585): America/Chicago until the settings read lands or if it fails.
+  const [zone, setZone] = useState<string>(DEFAULT_BUSINESS_TIME_ZONE);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve()
+      .then(() => getBusinessSettings())
+      .then((settings) => {
+        if (live) setZone(resolveBusinessTimeZone(settings.timeZone));
+      })
+      .catch(() => {
+        // The default zone is the fallback; a failed read must not blank a log that reads fine without it.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
-  const today = localDayKey(new Date());
+  const today = businessTodayIso(zone);
 
   return (
     <div className="screen">
@@ -213,7 +232,7 @@ export function ActivityLog() {
                 {visible.length === 0 ? (
                   <EmptyHint>No entries match this filter.</EmptyHint>
                 ) : (
-                  byDay(visible).map(([day, group]) => (
+                  byDay(visible, zone).map(([day, group]) => (
                     <section key={day} className="activity__day">
                       <h3 className="activity__day-label">{activityDayLabel(day, today)}</h3>
                       <ul className="activity__rows">
@@ -221,6 +240,7 @@ export function ActivityLog() {
                           <ActivityRow
                             key={e._id}
                             entry={e}
+                            zone={zone}
                             open={openIds.has(e._id)}
                             onToggle={() => toggleOpen(e._id)}
                           />
@@ -460,21 +480,23 @@ function rowContext(entry: ActivityLogEntry): string {
  */
 function ActivityRow({
   entry,
+  zone,
   open,
   onToggle,
 }: {
   entry: ActivityLogEntry;
+  zone: string;
   open: boolean;
   onToggle: () => void;
 }) {
   const detailId = `log-detail-${entry._id}`;
-  const detail = activityDetailRows(entry);
+  const detail = activityDetailRows(entry, zone);
   const chain = activityChainRows(entry);
   const payload = activityPayloadRows(entry);
   const tile = rowTile(entry);
   const context = rowContext(entry);
   const timestamp = str(entry.timestamp);
-  const clock = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(timestamp) ? formatTime(timestamp) : '';
+  const clock = activityWhen(timestamp, zone)?.clock ?? '';
   // A row can carry a seq but no entryHash; slicing that undefined would blank
   // the screen, so read the hash through str().
   const hash = str(entry.entryHash).slice(0, 8);
