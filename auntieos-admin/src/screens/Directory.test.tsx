@@ -64,6 +64,8 @@ vi.mock('./KinView', () => ({
 // Firestore of their own, each covered by its own suite. Unmocked here they
 // went to production (#1138), so each is answered at its api seam, the way
 // KinfolkProfile.test.tsx and AddKinDialog.test.tsx answer them.
+// #1603: the profile's Invite to portal reads listMembers; its own suite covers it.
+vi.mock('../components/PortalInviteButton', () => ({ PortalInviteButton: () => null }));
 vi.mock('../api/accountCredit', () => ({
   getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'kf1', accountBalanceCents: 0, credits: [], uses: [] }),
   giveAccountCredit: vi.fn(),

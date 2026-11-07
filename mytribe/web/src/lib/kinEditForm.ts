@@ -1,3 +1,4 @@
+import { KIN_AGE_MAX_YEARS, validateKinWeight } from './kinMeasures';
 import type { AddKinRequest, KinDto, KinPayloadPartial } from '../api/types';
 
 /**
@@ -141,12 +142,12 @@ export function parseAge(raw: string): number | null | 'invalid' {
   const trimmed = raw.trim();
   if (trimmed === '') return null;
   const n = Number(trimmed);
-  if (!Number.isFinite(n) || n < 0) return 'invalid';
+  if (!Number.isFinite(n) || n < 0 || n > KIN_AGE_MAX_YEARS) return 'invalid';
   return n;
 }
 
 /** Field-keyed validation errors; an empty object means the form is valid. */
-export function validateKinForm(form: KinEditForm): KinFormErrors {
+export function validateKinForm(form: KinEditForm, kin?: Pick<KinDto, 'weight'>): KinFormErrors {
   const errors: KinFormErrors = {};
 
   const name = form.name.trim();
@@ -156,7 +157,7 @@ export function validateKinForm(form: KinEditForm): KinFormErrors {
   if (form.species.trim().length > KIN_MAX.species) errors.species = `Species must be ${KIN_MAX.species} characters or fewer.`;
   if (form.breed.trim().length > KIN_MAX.breed) errors.breed = `Breed must be ${KIN_MAX.breed} characters or fewer.`;
 
-  if (parseAge(form.ageYears) === 'invalid') errors.ageYears = 'Age must be a number of 0 or more.';
+  if (parseAge(form.ageYears) === 'invalid') errors.ageYears = `Age must be a number of years, 0 to ${KIN_AGE_MAX_YEARS}.`;
 
 
   for (const key of LONG_TEXT_FIELDS) {
@@ -165,6 +166,12 @@ export function validateKinForm(form: KinEditForm): KinFormErrors {
 
   if (form.sex.trim().length > KIN_MAX.sex) errors.sex = `Sex must be ${KIN_MAX.sex} characters or fewer.`;
   if (form.weight.trim().length > KIN_MAX.weight) errors.weight = `Weight must be ${KIN_MAX.weight} characters or fewer.`;
+  else {
+    // #1583: weight is a number with an optional unit. A weight the pet already
+    // carries passes unchanged, so old free text does not block an edit.
+    const weightProblem = validateKinWeight(form.weight, kin?.weight ?? '');
+    if (weightProblem !== null) errors.weight = weightProblem;
+  }
   if (form.colorMarkings.trim().length > KIN_MAX.colorMarkings) errors.colorMarkings = `Keep this to ${KIN_MAX.colorMarkings} characters or fewer.`;
   if (form.vetInfo.trim().length > KIN_MAX.longText) errors.vetInfo = `Keep this to ${KIN_MAX.longText} characters or fewer.`;
 

@@ -27,7 +27,11 @@ import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Workflow
 import com.composables.icons.lucide.X
+import com.tribetails.auntieos.web.data.CatalogKeyRow
 import com.tribetails.auntieos.web.data.TemplateService
+import com.tribetails.auntieos.web.data.failingKeysWithRepoCopy
+import com.tribetails.auntieos.web.data.keysAwaitingImport
+import com.tribetails.auntieos.web.data.keysFailingOnSend
 import com.tribetails.auntieos.web.data.computeUnboundCatalogKeys
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -103,6 +107,8 @@ fun TemplateAssignmentBody(
     var bindings by remember { mutableStateOf<List<TemplateService.TemplateBinding>>(emptyList()) }
     var templates by remember { mutableStateOf<List<TemplateService.EmailTemplate>>(emptyList()) }
     var catalogKeys by remember { mutableStateOf<List<String>>(emptyList()) }
+    // #1586: the routing rows, so the screen can name the keys that really fail.
+    var catalogRows by remember { mutableStateOf<List<CatalogKeyRow>>(emptyList()) }
     var catalogKeysError by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     // Two distinct error channels so a bindings failure and a templates failure are
@@ -131,8 +137,11 @@ fun TemplateAssignmentBody(
             is WriteResult.Err -> templatesError = r.message
         }
         catalogKeysError = null
-        when (val r = templateService.listCatalogKeys()) {
-            is WriteResult.Ok -> catalogKeys = r.value
+        when (val r = templateService.listCatalogKeyRows()) {
+            is WriteResult.Ok -> {
+                catalogRows = r.value
+                catalogKeys = r.value.map { it.key }
+            }
             is WriteResult.Err -> catalogKeysError = r.message
         }
         loading = false
@@ -220,6 +229,42 @@ fun TemplateAssignmentBody(
                 modifier = Modifier.padding(bottom = dims.space3),
             ) {
                 Text(msg, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            }
+        }
+        if (!loading && catalogKeysError == null && catalogRows.isNotEmpty()) {
+            val bankIds = templates.map { it.templateId }.toSet()
+            val bankLoaded = templatesError == null && templates.isNotEmpty()
+            val failing = keysFailingOnSend(catalogRows, bankIds, bankLoaded)
+            val loadable = failingKeysWithRepoCopy(catalogRows, bankIds, bankLoaded)
+            val awaiting = keysAwaitingImport(catalogRows, bankIds, bankLoaded)
+            if (failing.isNotEmpty()) {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Error,
+                    title = "${failing.size} ${if (failing.size == 1) "key fails" else "keys fail"} on the next send",
+                    icon = Lucide.Workflow,
+                    modifier = Modifier.padding(bottom = dims.space3),
+                ) {
+                    Text(
+                        "The template does not exist: ${failing.joinToString(", ")}." +
+                            if (loadable.isEmpty()) "" else " The repo has a copy of ${loadable.joinToString(", ")}. Load it from Template Import.",
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textPrimary,
+                    )
+                }
+            }
+            if (awaiting.isNotEmpty()) {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Warning,
+                    title = "Not in the bank yet, still delivered",
+                    icon = Lucide.Workflow,
+                    modifier = Modifier.padding(bottom = dims.space3),
+                ) {
+                    Text(
+                        "${awaiting.joinToString(", ")}. Load them from Template Import.",
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textPrimary,
+                    )
+                }
             }
         }
         if (!loading && catalogKeysError == null && catalogKeys.isNotEmpty()) {
