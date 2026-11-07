@@ -281,6 +281,26 @@ describe('listCancelRequestsHandler', () => {
     });
   });
 
+  it('#1577: names the household on each row, one family read per household', async () => {
+    const ctx = buildDbMock({
+      docs: { 'families/f1': { displayName: 'The Devlins' } },
+      collectionGroupDocs: {
+        kinCares: [
+          { id: 'v1', path: VISIT, data: pendingVisit() },
+          { id: 'v4', path: 'families/f1/bookings/b2/kinCares/v4', data: pendingVisit() },
+          { id: 'v5', path: 'families/f7/bookings/b7/kinCares/v5', data: pendingVisit() },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { listCancelRequestsHandler } = await import('../src/admin/cancelRequests');
+    const res = await listCancelRequestsHandler(callableRequest({}, operator));
+    expect(res.requests.map((r) => [r.visitId, r.kinfolkName])).toEqual([
+      ['v1', 'The Devlins'],
+      ['v4', 'The Devlins'],
+      ['v5', null],
+    ]);
+  });
   it('lists the July backlog: a request with the stamp and no status field', async () => {
     const ctx = buildDbMock({
       collectionGroupDocs: {
