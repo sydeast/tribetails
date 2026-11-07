@@ -410,20 +410,27 @@ class MembersRepositoryTest {
     }
 
     @Test
+    fun `the member name from the server is decoded and heads the row (#1589)`() {
+        val rows = decodeMembers(mapOf("members" to listOf(mapOf("uid" to "u1", "displayName" to "Dre East", "invitedEmail" to "d@e.com"))))
+        assertEquals("Dre East", rows.single().displayName)
+        assertEquals("Dre East", rows.single().label)
+    }
+    @Test
     fun `a member with no uid is dropped, since the UI could not address it`() {
         val rows = decodeMembers(mapOf("members" to listOf(mapOf("uid" to ""), mapOf("uid" to "u2"))))
         assertEquals(listOf("u2"), rows.map { it.uid })
     }
 
     @Test
-    fun `a member label falls back email then label then uid, and is never blank`() {
+    fun `a member label falls back name then email then label then a plain word, never the uid`() {
         val base = MembersRepository.Member(
             uid = "u1", secondaryLabel = null, role = MembersRepository.MemberRole.SECONDARY,
             status = MembersRepository.MemberStatus.ACTIVE,
             permissions = MembersRepository.MemberPermissions(), invitedEmail = null,
         )
-        assertEquals("u1", base.label)
+        assertEquals("Unnamed member", base.label)
         assertEquals("Spouse", base.copy(secondaryLabel = "Spouse").label)
+        assertEquals("Dre East", base.copy(displayName = "Dre East", invitedEmail = "a@b.com").label)
         assertEquals("a@b.com", base.copy(secondaryLabel = "Spouse", invitedEmail = "a@b.com").label)
     }
 
@@ -579,3 +586,4 @@ class MembersRepositoryTest {
         io.mockk.verify(exactly = 0) { functions.getHttpsCallable(any()) }
     }
 }
+

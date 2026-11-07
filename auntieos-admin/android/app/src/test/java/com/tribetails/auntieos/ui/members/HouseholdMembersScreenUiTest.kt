@@ -44,8 +44,10 @@ class HouseholdMembersScreenUiTest {
         email: String,
         label: String? = null,
         status: MembersRepository.MemberStatus = MembersRepository.MemberStatus.ACTIVE,
+        name: String? = null,
     ) = MembersRepository.Member(
         uid = uid,
+        displayName = name,
         secondaryLabel = label,
         role = role,
         status = status,
@@ -81,7 +83,7 @@ class HouseholdMembersScreenUiTest {
         setContent(
             listOf(
                 member("p1", MembersRepository.MemberRole.PRIMARY, "lost@example.com"),
-                member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com", label = "Spouse"),
+                member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com", label = "Spouse", name = "Marcus Webb"),
             ),
         )
 
@@ -101,13 +103,16 @@ class HouseholdMembersScreenUiTest {
         // The old single Members panel and its "on file" pill are gone.
         assertEquals(0, composeRule.onAllNodesWithText("2 on file").fetchSemanticsNodes().size)
 
-        // Each member: the name, the compact role and status capsules, the uid.
+        // Each member: the name, the compact role and status capsules, the email
+        // (#1589: never the database id). A member with no name is headed by
+        // their email, printed once.
         composeRule.onNodeWithText("lost@example.com").assertIsDisplayed()
+        composeRule.onNodeWithText("Marcus Webb").assertIsDisplayed()
         composeRule.onNodeWithText("marcus@example.com").assertIsDisplayed()
         composeRule.onNodeWithText("PRIMARY").assertIsDisplayed()
         composeRule.onNodeWithText("SECONDARY").assertIsDisplayed()
         assertEquals(2, composeRule.onAllNodesWithText("ACTIVE").fetchSemanticsNodes().size)
-        composeRule.onNodeWithText("u1").assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("u1").fetchSemanticsNodes().size)
         // The secondary's label, read-only, in the mock's shape.
         composeRule.onNodeWithText("SECONDARYLABEL").assertIsDisplayed()
         composeRule.onNodeWithText("Spouse").assertIsDisplayed()

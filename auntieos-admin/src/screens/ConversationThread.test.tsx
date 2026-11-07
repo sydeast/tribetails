@@ -50,6 +50,15 @@ describe('ConversationThread', () => {
     expect(getConversationThread).toHaveBeenCalledWith('k1');
   });
 
+  it('renders a kinfolk rich-text message as formatting, not raw tags (#1571)', async () => {
+    getConversationThread.mockResolvedValue([
+      msg({ body: '<p>Hi Auntie, <strong>please give Sandbox Dog</strong> an extra treat!</p>' }),
+    ]);
+    render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={vi.fn()} />);
+    const strong = await screen.findByText('please give Sandbox Dog');
+    expect(strong.tagName).toBe('STRONG');
+    expect(screen.queryByText(/<p>/)).toBeNull();
+  });
   it('sends a reply, then reloads the thread', async () => {
     getConversationThread.mockResolvedValue([msg({ body: 'hi' })]);
     replyToConversation.mockResolvedValue('m_new');

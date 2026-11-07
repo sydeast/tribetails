@@ -66,7 +66,7 @@ fun RouteMap(
     ) {
         if (breadcrumbs.isEmpty()) {
             Text(
-                text  = if (live) "Waiting for first GPS ping…" else "No GPS breadcrumbs recorded for this Kin Care.",
+                text  = if (live) "Waiting for first GPS ping…" else "No GPS breadcrumbs recorded for this KinCare.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textFaint,
             )

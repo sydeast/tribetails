@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -53,6 +54,7 @@ import com.tribetails.auntieos.data.model.NotificationMatrix
 import com.tribetails.auntieos.data.model.UserProfile
 import com.tribetails.auntieos.data.model.accountChannelScopes
 import com.tribetails.auntieos.data.model.applyChannelToggle
+import com.tribetails.auntieos.data.model.businessEmailNotice
 import com.tribetails.auntieos.data.model.businessNameError
 import com.tribetails.auntieos.data.model.channelMasterCount
 import com.tribetails.auntieos.data.model.channelMasterOn
@@ -474,6 +476,15 @@ internal fun BusinessProfilePanel(
                 modifier = Modifier.fillMaxWidth(),
             )
             BottomBorderField(value = email, onValueChange = { email = it }, label = "Email", modifier = Modifier.fillMaxWidth())
+            // #1564: every business email goes to this address; blank means nowhere.
+            businessEmailNotice(email)?.let { notice ->
+                Text(
+                    notice,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.warning,
+                    modifier = Modifier.testTag("business-email-notice"),
+                )
+            }
             BottomBorderField(value = phone, onValueChange = { phone = it }, label = "Phone", modifier = Modifier.fillMaxWidth())
             BottomBorderField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.fillMaxWidth())
             BottomBorderField(

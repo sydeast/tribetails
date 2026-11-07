@@ -18,6 +18,7 @@ import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKi
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
+import { RichText } from '../components/RichText';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './ConversationThread.css';
 
@@ -167,7 +168,7 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
                       return (
                         <li key={m.id} className={mine ? 'thread__msg thread__msg--mine' : 'thread__msg'}>
                           <div className="thread__bubble">
-                            <span className="thread__body">{m.body}</span>
+                            <RichText className="thread__body" body={m.body} />
                             <time className="thread__time" dateTime={threadMachineTime(m.createdAtMs)}>
                               {threadClock(m.createdAtMs)}
                             </time>

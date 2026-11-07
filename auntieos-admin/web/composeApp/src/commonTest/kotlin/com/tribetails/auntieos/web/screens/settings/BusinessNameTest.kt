@@ -36,4 +36,11 @@ class BusinessNameTest {
         assertEquals("Enter the business name.", businessNameError(""))
         assertEquals("Enter the business name.", businessNameError("   "))
     }
+
+    /** #1564: blank business email means business emails go nowhere. */
+    @Test
+    fun `a blank business email is warned about and a filled one is not`() {
+        assertTrue(businessEmailNotice("  ")!!.contains("nowhere to go until this is filled"))
+        assertNull(businessEmailNotice("pawsome@hanasamku.com"))
+    }
 }

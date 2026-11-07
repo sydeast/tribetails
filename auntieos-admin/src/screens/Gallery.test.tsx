@@ -7,6 +7,9 @@ import { type MediaFile } from '../api/gallery';
 import { type Kinfolk, type Kin } from '../api/directory';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+// #1564: the uploader line resolves a staff uid to a name through listStaff.
+const { staffNames } = vi.hoisted(() => ({ staffNames: new Map<string, string>() }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
 // The tag dialog's only write path (#447). Mocked at the api seam, not at
@@ -118,6 +121,19 @@ describe('Gallery screen, media stream', () => {
     expect(within(tile).getByText('Rufus at the park')).toBeInTheDocument();
     expect(within(tile).getByText('Jamie Halbrook')).toBeInTheDocument();
     expect(within(tile).getByText('2026-07-16 · Jamie')).toBeInTheDocument();
+  });
+
+  it('#1564: shows a staff uploader by name, never by uid', () => {
+    staffNames.set('nppJNdMNYJfUigibGKUQj3n4obt2', 'E2E Admin');
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ description: 'Rufus at the park', uploadedBy: 'nppJNdMNYJfUigibGKUQj3n4obt2' })],
+    };
+    render(<Gallery />);
+    const tile = tileFor('Rufus at the park');
+    expect(within(tile).getByText('2026-07-16 · E2E Admin')).toBeInTheDocument();
+    expect(within(tile).queryByText(/nppJNdMNYJfUigibGKUQj3n4obt2/)).not.toBeInTheDocument();
+    staffNames.clear();
   });
 
   it('falls back to originalFileName when description is blank', () => {
@@ -457,6 +473,32 @@ describe('Gallery screen, filters', () => {
   });
 });
 
+describe('Gallery screen, upload to a kin (#1588)', () => {
+  it('feeds the Upload dialog a household picker and that household\u2019s active kin, never a typed id', async () => {
+    mediaAsync = { status: 'ready', data: [] };
+    kinfolkAsync = {
+      status: 'ready',
+      data: [kinfolkRow({ _id: 'kf1' }), kinfolkRow({ _id: 'kf2', firstName: 'Dre', lastName: 'East' })],
+    };
+    kinAsync = {
+      status: 'ready',
+      data: [
+        kinRow({ _id: 'k1', name: 'Waddles', kinfolkId: 'kf1' }),
+        kinRow({ _id: 'k2', name: 'Old Boy', kinfolkId: 'kf1', status: 'archived' }),
+        kinRow({ _id: 'k3', name: 'Mochi', kinfolkId: 'kf2' }),
+      ],
+    };
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Upload media' }));
+    const dialog = screen.getByRole('dialog');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Target type'), 'KIN');
+    await userEvent.selectOptions(within(dialog).getByLabelText('Kin\u2019s household'), 'kf1');
+    expect(within(dialog).getByRole('option', { name: 'Waddles' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('option', { name: 'Old Boy' })).toBeNull();
+    expect(within(dialog).queryByRole('option', { name: 'Mochi' })).toBeNull();
+    expect(within(dialog).queryByLabelText('Kin ID')).toBeNull();
+  });
+});
 describe('Gallery screen, kin tagging (#447)', () => {
   function withOnePhoto(taggedKinIds?: string[]) {
     mediaAsync = {

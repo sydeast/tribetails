@@ -1156,8 +1156,11 @@ class FirestoreClient {
         entityId: String,
         entityType: String,
         max: Int = 10,
+        // #1588: the household of a "kin" upload, stamped as `kinfolkId` so Tag kin
+        // scopes to it. Blank for every other target.
+        kinfolkId: String = "",
     ): WriteResult<List<MediaFile>> =
-        platformPickAndUploadMedia(entityId, entityType, max)
+        platformPickAndUploadMedia(entityId, entityType, max, kinfolkId)
 
     /**
      * ISSUE #577: server-bound delete, through the `deleteMediaFile` callable,
@@ -1472,6 +1475,13 @@ class FirestoreClient {
      * stamps) are refused with a message naming markInvoicePaid /
      * recordPayment / updateInvoice, and every refusal surfaces verbatim.
      */
+    /**
+     * #1567: one invoice's send marks, read from the server, for [checkedSend].
+     * Null when the read fails or the invoice is gone; the caller says it cannot
+     * tell rather than guessing either way.
+     */
+    suspend fun invoiceSendMarks(invoiceId: String): SendMarks? =
+        runCatchingCancellable { platformInvoiceDocPlain(invoiceId)?.let { sendMarksOf(it) } }.getOrNull()
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<SendAck> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)
         val payload = buildJsonObject {
@@ -1733,16 +1743,28 @@ class FirestoreClient {
         bookingTransition(bookingId, visitId, "REJECT")
     suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         bookingTransition(bookingId, visitId, "CANCEL")
+
+    /**
+     * #1617: Mark Completed on one `kin_care_sessions` row, through
+     * transitionBookingStatus. The rules refuse a client write of COMPLETED or
+     * `completedAt`, so this callable is the only way a visit is completed, and
+     * its refusal (the operator's arrival rule, an illegal transition) comes
+     * back as the Err message.
+     */
+    suspend fun completeKinCare(sessionId: String, completedAt: String): WriteResult<Unit> =
+        bookingTransition(sessionId, null, "COMPLETE", completedAt = completedAt)
     private suspend fun bookingTransition(
         bookingId: String,
         visitId: String?,
         action: String,
         override: ScheduleOverride? = null,
+        completedAt: String? = null,
     ): WriteResult<Unit> {
         if (visitId.isNullOrBlank()) {
             val payload = buildJsonObject {
                 put("sessionId", JsonPrimitive(bookingId))
                 put("action", JsonPrimitive(action))
+                if (!completedAt.isNullOrBlank()) put("completedAt", JsonPrimitive(completedAt))
                 // #1145: APPROVE checks the visit's window. The flag goes only when the operator chose it.
                 when (override) {
                     ScheduleOverride.BUSY -> put("overrideBusyConflict", JsonPrimitive(true))
@@ -2554,6 +2576,8 @@ internal expect fun platformCallsStream():      Flow<FirestoreResult<List<CallLo
 internal expect fun platformSmsStream():        Flow<FirestoreResult<List<SmsMessage>>>
 internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailMessage>>>
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
+/** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
+internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>
@@ -2625,7 +2649,7 @@ internal expect suspend fun platformUploadMedia(entityId: String, entityType: St
 
 // Run-4 #4b: multi-file variant for general/business/gallery media. wasm picks up to
 // [max] files and writes one media_files doc each; jvm is the mobile-only stub.
-internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>>
+internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int, kinfolkId: String): WriteResult<List<MediaFile>>
 internal expect fun platformAllMediaStream(): Flow<FirestoreResult<List<MediaFile>>>
 internal expect fun platformMediaForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<MediaFile>>>
 internal expect suspend fun platformUpdateMediaTags(mediaId: String, taggedKinIds: List<String>): WriteResult<Unit>
@@ -2899,6 +2923,13 @@ data class StaffMember(
 }
 
 /**
+ * #1564: uid -> the name the Gallery's uploader line shows (name, else email).
+ * A uid with neither is left out, so the caller keeps whatever it showed before.
+ */
+fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+
+/**
  * Pure decode of the listStaff body `{staff:[{uid, displayName, email}]}`.
  * Lenient: entries without a uid are dropped (a row we can't assign is
  * useless), missing/null name + email decode as null, and an omitted `staff`
@@ -2913,8 +2944,10 @@ internal fun decodeStaffList(dataJson: String): List<StaffMember> =
                 ?: return@mapNotNull null
             StaffMember(
                 uid = uid,
-                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull,
-                email = o["email"]?.jsonPrimitive?.contentOrNull,
+                // A blank name or email is no name or email: the picker falls
+                // through to the next label rather than showing an empty row.
+                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+                email = o["email"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
 
