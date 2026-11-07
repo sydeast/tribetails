@@ -85,8 +85,12 @@ internal val KINTALE_TEMPLATE_DIFF_FIELDS: Map<String, (KinTaleTemplate) -> Any?
  * - `id`         the document id (`@DocumentId`, never serialised anyway)
  * - `createdAt`  stamped once at create; round-tripping it is how it gets lost
  * - `updatedAt`  stamped at write time by the repository, never round-tripped
+ * - `archived`, `archivedAt`  #1591: written only by
+ *   `AuntieRepository.removeKinTaleTemplate` (Remove / Restore). An editor save
+ *   must never touch them, or saving an open template could pull it back out of
+ *   the archive, or put it in.
  */
-internal val KINTALE_TEMPLATE_SERVER_OWNED = setOf("id", "createdAt", "updatedAt")
+internal val KINTALE_TEMPLATE_SERVER_OWNED = setOf("id", "createdAt", "updatedAt", "archived", "archivedAt")
 
 /**
  * Fields another writer puts on `kintale_templates/{id}` that [KinTaleTemplate]

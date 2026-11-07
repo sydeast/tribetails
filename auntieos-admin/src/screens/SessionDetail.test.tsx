@@ -877,3 +877,43 @@ describe('SessionDetail: the route header strip', () => {
     expect(panels.indexOf('Route')).toBe(panels.indexOf('Visit lifecycle') + 1);
   });
 });
+
+/**
+ * #1581: Auntie Time > visit > Details read "Visit length 0" for a 20:00 to
+ * 20:30 visit, and "Kin covered: 1 (names not on file)" directly above the
+ * named, ticked Kin.
+ */
+describe('SessionDetail visit facts (#1581)', () => {
+  it('a stored length of 0 shows the visit window instead', () => {
+    render(
+      <SessionDetail
+        entry={entry({
+          startTime: '2026-07-16T01:00:00.000Z',
+          endTime: '2026-07-16T01:30:00.000Z',
+          serviceDurationMinutes: 0,
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText('Visit length (minutes)')).toHaveValue(30);
+  });
+
+  it('a real stored length is shown as stored', () => {
+    render(<SessionDetail entry={entry({ serviceDurationMinutes: 45 })} onBack={vi.fn()} />);
+    expect(screen.getByLabelText('Visit length (minutes)')).toHaveValue(45);
+  });
+
+  it('names a Kin the record holds no name for from the household roster', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [{ _id: 'p1', name: 'QA-Pup' }] });
+    render(<SessionDetail entry={entry({ kinIds: ['p1'], kinNames: [] })} onBack={vi.fn()} />);
+    // Once in Kin covered, once beside its tick in the picker below.
+    expect(screen.getAllByText('QA-Pup')).toHaveLength(2);
+    expect(screen.queryByText('1 (names not on file)')).toBeNull();
+  });
+
+  it('still counts a Kin neither the record nor the roster can name', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [{ _id: 'p1', name: 'QA-Pup' }] });
+    render(<SessionDetail entry={entry({ kinIds: ['p1', 'p9'], kinNames: [] })} onBack={vi.fn()} />);
+    expect(screen.getByText('QA-Pup · 1 without a name on file')).toBeInTheDocument();
+  });
+});

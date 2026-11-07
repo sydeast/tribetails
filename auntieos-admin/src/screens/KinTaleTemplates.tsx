@@ -60,9 +60,19 @@ import { DenScreenHeading, DenPanel, EmptyHint, StatusPill } from '../components
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { WizardModal, type WizardStep } from '../components/WizardModal';
-import { GhostButton, IconButton } from '../components/Buttons';
+import { GhostButton, IconButton, PrimaryButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { Banner } from '../components/Banner';
+import { Dialog } from '../components/Dialog';
+import {
+  archiveImpact,
+  deleteHeadline,
+  getKinTaleTemplateUsage,
+  removalImpact,
+  removeKinTaleTemplate,
+  restoreClearsDefault,
+  type KinTaleTemplateUsage,
+} from '../api/kinTaleTemplateRemoval';
 import './KinTaleTemplates.css';
 
 /**
@@ -135,6 +145,12 @@ export function KinTaleTemplates() {
   const stream = useCollection<Record<string, unknown>>(KINTALE_TEMPLATES_QUERY);
   const templates: KinTaleTemplate[] =
     stream.status === 'ready' ? stream.data.map(decodeKinTaleTemplate) : [];
+  // #1591: an archived template is out of the list and out of new KinTales;
+  // it lives in the Archive panel until it is restored or deleted for good.
+  const liveTemplates = templates.filter((t) => t.archived !== true);
+  const archivedTemplates = templates.filter((t) => t.archived === true);
+  const [removing, setRemoving] = useState<KinTaleTemplate | null>(null);
+  const [deleting, setDeleting] = useState<KinTaleTemplate | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<EditorTarget | null>(null);
@@ -237,6 +253,19 @@ export function KinTaleTemplates() {
     setBanner({ tone: 'success', text: 'Template saved.' });
   }
 
+  async function handleRestore(tpl: KinTaleTemplate) {
+    setBanner(null);
+    try {
+      await removeKinTaleTemplate(tpl._id, 'restore', { clearDefault: restoreClearsDefault(tpl, templates) });
+      setBanner({ tone: 'success', text: `${templateLabel(tpl)} is back in the template list.` });
+    } catch (err) {
+      setBanner({
+        tone: 'error',
+        text: `Couldn't restore the template: ${err instanceof Error ? err.message : 'unknown error'}`,
+      });
+    }
+  }
+
   return (
     <div className="screen kintale-templates">
       {/* The template-editor mock's trail, "KinTales / Templates": this screen
@@ -263,14 +292,52 @@ export function KinTaleTemplates() {
         loading={<LoadingRow label="Loading templates…" className="ktt__hint" />}
       >
         {() => (
-          <TemplatePicker
-            templates={templates}
-            selectedId={selectedId}
-            onSelect={selectTemplate}
-            onAddNew={startNewTemplate}
-          />
+          <>
+            <TemplatePicker
+              templates={liveTemplates}
+              selectedId={selectedId}
+              onSelect={selectTemplate}
+              onAddNew={startNewTemplate}
+              onRemove={(tpl) => {
+                setBanner(null);
+                setRemoving(tpl);
+              }}
+            />
+            {archivedTemplates.length > 0 && (
+              <ArchivePanel
+                templates={archivedTemplates}
+                onRestore={(tpl) => void handleRestore(tpl)}
+                onDelete={(tpl) => {
+                  setBanner(null);
+                  setDeleting(tpl);
+                }}
+              />
+            )}
+          </>
         )}
       </AsyncRegion>
+
+      {removing && (
+        <RemoveTemplateDialog
+          template={removing}
+          onClose={() => setRemoving(null)}
+          onDone={() => {
+            if (selectedId === removing._id) setSelectedId('');
+            setBanner({ tone: 'success', text: `${templateLabel(removing)} moved to the archive.` });
+            setRemoving(null);
+          }}
+        />
+      )}
+      {deleting && (
+        <DeleteTemplateDialog
+          template={deleting}
+          onClose={() => setDeleting(null)}
+          onDone={() => {
+            setBanner({ tone: 'success', text: `${templateLabel(deleting)} deleted for good.` });
+            setDeleting(null);
+          }}
+        />
+      )}
 
       {editing && (
         /*
@@ -301,9 +368,15 @@ interface TemplatePickerProps {
   selectedId: string | null;
   onSelect: (tpl: KinTaleTemplate) => void;
   onAddNew: () => void;
+  /** #1591: moves a template to the archive, after a confirm. */
+  onRemove: (tpl: KinTaleTemplate) => void;
 }
 
-function TemplatePicker({ templates, selectedId, onSelect, onAddNew }: TemplatePickerProps) {
+function templateLabel(tpl: { name: string }): string {
+  return tpl.name.trim() || 'Untitled template';
+}
+
+function TemplatePicker({ templates, selectedId, onSelect, onAddNew, onRemove }: TemplatePickerProps) {
   return (
     <DenPanel
       title="Templates"
@@ -320,26 +393,185 @@ function TemplatePicker({ templates, selectedId, onSelect, onAddNew }: TemplateP
           {templates.map((tpl) => {
             const active = tpl._id === selectedId;
             return (
-              <li key={tpl._id}>
+              <li key={tpl._id} className="ktt__picker-item">
                 <button
                   type="button"
                   className={`ktt__picker-row${active ? ' ktt__picker-row--active' : ''}`}
                   aria-pressed={active}
                   onClick={() => onSelect(tpl)}
                 >
-                  <span className="ktt__picker-name">{tpl.name.trim() || 'Untitled template'}</span>
+                  <span className="ktt__picker-name">{templateLabel(tpl)}</span>
                   {/* The mock's `.tag.def` / `.tag.ina`: the kit capsule at
                       the compact size, orange for the default, muted for an
                       inactive one. */}
                   {tpl.isDefault && <StatusPill label="Default" tone="orange" size="compact" />}
                   {!tpl.isActive && <StatusPill label="Inactive" tone="muted" size="compact" />}
                 </button>
+                <GhostButton
+                  label="Remove"
+                  ariaLabel={`Remove ${templateLabel(tpl)}`}
+                  onClick={() => onRemove(tpl)}
+                />
               </li>
             );
           })}
         </ul>
       )}
     </DenPanel>
+  );
+}
+
+// ── the archive (#1591) ──────────────────────────────────────────────────────
+
+interface ArchivePanelProps {
+  templates: readonly KinTaleTemplate[];
+  onRestore: (tpl: KinTaleTemplate) => void;
+  onDelete: (tpl: KinTaleTemplate) => void;
+}
+
+/**
+ * Removed templates. Each can go back into the list, or be deleted for good,
+ * which is the only place a template is ever deleted (operator ruling,
+ * 2026-11-05 docket).
+ */
+function ArchivePanel({ templates, onRestore, onDelete }: ArchivePanelProps) {
+  return (
+    <DenPanel title="Archive" meta={String(templates.length)}>
+      <ul className="ktt__picker">
+        {templates.map((tpl) => (
+          <li key={tpl._id} className="ktt__picker-item ktt__archive-row">
+            <span className="ktt__picker-name">{templateLabel(tpl)}</span>
+            <GhostButton label="Restore" ariaLabel={`Restore ${templateLabel(tpl)}`} onClick={() => onRestore(tpl)} />
+            <GhostButton
+              label="Delete for good"
+              ariaLabel={`Delete ${templateLabel(tpl)} for good`}
+              onClick={() => onDelete(tpl)}
+            />
+          </li>
+        ))}
+      </ul>
+    </DenPanel>
+  );
+}
+
+interface RemovalDialogProps {
+  template: KinTaleTemplate;
+  onClose: () => void;
+  onDone: () => void;
+}
+
+/** Remove = move to the archive. Says it is restorable before anything is written. */
+function RemoveTemplateDialog({ template, onClose, onDone }: RemovalDialogProps) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function run() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await removeKinTaleTemplate(template._id, 'archive');
+      setBusy(false);
+      onDone();
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : 'unknown error');
+    }
+  }
+  return (
+    <Dialog
+      title={`Remove ${templateLabel(template)}?`}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+      footer={
+        <>
+          <GhostButton label="Cancel" onClick={onClose} disabled={busy} />
+          <PrimaryButton
+            label={busy ? 'Moving…' : 'Move to archive'}
+            onClick={() => void run()}
+            disabled={busy}
+            busy={busy}
+          />
+        </>
+      }
+    >
+      {archiveImpact(template).map((line) => (
+        <p key={line}>{line}</p>
+      ))}
+      {error !== null && <Banner tone="error">{`Couldn't remove the template: ${error}`}</Banner>}
+    </Dialog>
+  );
+}
+
+/**
+ * Delete for good, from the archive only. Reads the usage count first and leads
+ * with it; the button stays off until the count has loaded, so nobody deletes
+ * past a warning they never saw.
+ */
+function DeleteTemplateDialog({ template, onClose, onDone }: RemovalDialogProps) {
+  const [usage, setUsage] = useState<Async<KinTaleTemplateUsage>>({ status: 'loading' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getKinTaleTemplateUsage(template._id)
+      .then((u) => live && setUsage({ status: 'ready', data: u }))
+      .catch(
+        (err: unknown) =>
+          live && setUsage({ status: 'error', message: err instanceof Error ? err.message : 'unknown error' }),
+      );
+    return () => {
+      live = false;
+    };
+  }, [template._id]);
+  async function run() {
+    if (busy || usage.status !== 'ready') return;
+    setBusy(true);
+    setError(null);
+    try {
+      await removeKinTaleTemplate(template._id, 'delete');
+      setBusy(false);
+      onDone();
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : 'unknown error');
+    }
+  }
+  return (
+    <Dialog
+      title={`Delete ${templateLabel(template)} for good?`}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+      footer={
+        <>
+          <GhostButton label="Cancel" onClick={onClose} disabled={busy} />
+          <PrimaryButton
+            label={busy ? 'Deleting…' : 'Delete for good'}
+            onClick={() => void run()}
+            disabled={busy || usage.status !== 'ready'}
+            busy={busy}
+          />
+        </>
+      }
+    >
+      {usage.status === 'loading' && <LoadingRow label="Counting the KinTales that used it…" />}
+      {usage.status === 'error' && (
+        <Banner tone="error">{`Couldn't count the KinTales that used it: ${usage.message}`}</Banner>
+      )}
+      {usage.status === 'ready' && (
+        <>
+          <p>
+            <strong>{deleteHeadline(usage.data)}</strong>
+          </p>
+          {removalImpact(usage.data).map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+          <p>This cannot be undone.</p>
+        </>
+      )}
+      {error !== null && <Banner tone="error">{`Couldn't delete the template: ${error}`}</Banner>}
+    </Dialog>
   );
 }
 

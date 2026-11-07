@@ -37,6 +37,17 @@ vi.mock('../api/checklistBank', () => ({ listChecklistBank, saveChecklistBankIte
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
 vi.mock('../api/settings', () => ({ getBusinessSettings }));
 
+// #1591: archive, restore and delete-for-good. The pure halves stay real.
+const { removeKinTaleTemplate, getKinTaleTemplateUsage } = vi.hoisted(() => ({
+  removeKinTaleTemplate: vi.fn(),
+  getKinTaleTemplateUsage: vi.fn(),
+}));
+vi.mock('../api/kinTaleTemplateRemoval', async (orig) => ({
+  ...(await orig<typeof import('../api/kinTaleTemplateRemoval')>()),
+  removeKinTaleTemplate,
+  getKinTaleTemplateUsage,
+}));
+
 import { KinTaleTemplates } from './KinTaleTemplates';
 
 /** The catalog the Service types checkboxes draw from: the real KinCare types (#373). */
@@ -81,6 +92,8 @@ beforeEach(() => {
   ]);
   saveChecklistBankItem.mockReset().mockResolvedValue({ id: 'meds', text: 'Meds', scope: 'PER_PET' });
   getBusinessSettings.mockReset().mockResolvedValue({ serviceRates: KINCARE_TYPES, serviceDurations: {} });
+  removeKinTaleTemplate.mockReset().mockResolvedValue(undefined);
+  getKinTaleTemplateUsage.mockReset();
   mockStream({ status: 'ready', data: [tpl()] });
 });
 
@@ -91,7 +104,7 @@ beforeEach(() => {
  */
 
 /** Opens a saved template from the picker. The picker stays on screen behind it. */
-async function openEditor(name: RegExp = /walk recap/i): Promise<HTMLElement> {
+async function openEditor(name: RegExp = /^walk recap/i): Promise<HTMLElement> {
   await user.click(await screen.findByRole('button', { name }));
   return await screen.findByRole('dialog');
 }
@@ -126,7 +139,7 @@ async function saveTemplate(): Promise<void> {
 describe('KinTaleTemplates: the workflow modal', () => {
   it('leaves the picker on screen and opens no editor until a template is picked', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByRole('button', { name: /walk recap/i });
+    await screen.findByRole('button', { name: /^walk recap/i });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByDisplayValue('Walk recap')).toBeNull();
 
@@ -265,7 +278,7 @@ describe('KinTaleTemplates: the workflow modal', () => {
 
   it('opens a new template clean, so backing straight out asks nothing', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByRole('button', { name: /walk recap/i });
+    await screen.findByRole('button', { name: /^walk recap/i });
     await openNewTemplate();
     expect(screen.getByLabelText('Template name')).toHaveValue('New template');
     // Mark 23 of the 2026-08-17 walk: no canned default message on a fresh draft.
@@ -334,7 +347,7 @@ describe('KinTaleTemplates: load + picker', () => {
     // modal the whole time, and the other row is still there to pick.
     await user.click(screen.getByRole('button', { name: /^cancel$/i }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    await openEditor(/sit recap/i);
+    await openEditor(/^sit recap/i);
     expect(screen.getByDisplayValue('Sit recap')).toBeInTheDocument();
   });
 
@@ -363,7 +376,7 @@ describe('KinTaleTemplates: create-from-default', () => {
 
   it('New template starts a fresh, non-default draft', async () => {
     render(<KinTaleTemplates />);
-    await screen.findByRole('button', { name: /walk recap/i });
+    await screen.findByRole('button', { name: /^walk recap/i });
     await openNewTemplate();
     expect(screen.getByDisplayValue('New template')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Make default template' })).not.toBeChecked();
@@ -403,7 +416,8 @@ describe('KinTaleTemplates: Service types are a catalog, not a text box', () => 
 
     await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
-    expect(saveKinTaleTemplate.mock.calls[0]![2]).toEqual(stored);
+    // The decoded row: the stored doc plus the #1591 archive fields at their defaults.
+    expect(saveKinTaleTemplate.mock.calls[0]![2]).toEqual({ ...stored, archived: false, archivedAt: '' });
   });
 
   it('unticking a stale key removes only that key', async () => {
@@ -689,7 +703,7 @@ describe('KinTaleTemplates: default exclusivity', () => {
       data: [tpl({ _id: 't1', name: 'Walk recap', isDefault: true }), tpl({ _id: 't2', name: 'Sit recap', isDefault: false })],
     });
     render(<KinTaleTemplates />);
-    await openEditor(/sit recap/i);
+    await openEditor(/^sit recap/i);
     expect(screen.getByDisplayValue('Sit recap')).toBeInTheDocument();
     await user.click(screen.getByRole('switch', { name: 'Make default template' }));
 
@@ -712,7 +726,7 @@ describe('KinTaleTemplates: default exclusivity', () => {
       data: [tpl({ _id: 't1', name: 'Walk recap', isDefault: true }), tpl({ _id: 't2', name: 'Sit recap', isDefault: false })],
     });
     render(<KinTaleTemplates />);
-    await openEditor(/sit recap/i);
+    await openEditor(/^sit recap/i);
     expect(screen.getByDisplayValue('Sit recap')).toBeInTheDocument();
     await user.click(screen.getByRole('switch', { name: 'Make default template' }));
     expect(screen.getByText(/only one template can be the default/i)).toBeInTheDocument();
@@ -796,5 +810,96 @@ describe('KinTaleTemplates: the built-in default’s per-Kin rows', () => {
     expect(
       screen.getAllByRole('textbox', { name: /item text/i }).map((el) => (el as HTMLInputElement).value),
     ).toEqual(['Trash taken out', 'Lights turned off']);
+  });
+});
+
+/**
+ * #1591, operator ruling 2026-11-05 docket: "both". Remove moves a template to
+ * an archive (restorable, hidden from the list and from new KinTales); delete
+ * for good happens only from inside the archive, with the warning that says how
+ * many KinTales used it.
+ */
+describe('KinTaleTemplates: remove, archive, delete for good (#1591)', () => {
+  it('Remove asks first, says it is restorable, then archives (never deletes)', async () => {
+    render(<KinTaleTemplates />);
+    await user.click(await screen.findByRole('button', { name: 'Remove Walk recap' }));
+    const dialog = screen.getByRole('dialog', { name: 'Remove Walk recap?' });
+    expect(within(dialog).getByText(/restore it from the archive/)).toBeInTheDocument();
+    expect(removeKinTaleTemplate).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Move to archive' }));
+    await waitFor(() => expect(removeKinTaleTemplate).toHaveBeenCalledWith('t1', 'archive'));
+    expect(await screen.findByText('Walk recap moved to the archive.')).toBeInTheDocument();
+  });
+
+  it('an archived template leaves the list and sits in the Archive, with no Delete in the list', () => {
+    mockStream({
+      status: 'ready',
+      data: [tpl({ _id: 't1', name: 'Walk recap' }), tpl({ _id: 't2', name: 'Old sit', isDefault: false, archived: true })],
+    });
+    render(<KinTaleTemplates />);
+    expect(screen.queryByRole('button', { name: /^old sit/i })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Archive' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Restore Old sit' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Old sit for good' })).toBeInTheDocument();
+    // The live row offers Remove only; deleting is the archive's.
+    expect(screen.queryByRole('button', { name: 'Delete Walk recap for good' })).toBeNull();
+  });
+
+  it('shows no Archive panel when nothing is archived', () => {
+    render(<KinTaleTemplates />);
+    expect(screen.queryByRole('heading', { name: 'Archive' })).toBeNull();
+  });
+
+  it('Restore puts it back, dropping its default flag when another template took the default', async () => {
+    mockStream({
+      status: 'ready',
+      data: [
+        tpl({ _id: 't1', name: 'Walk recap', isDefault: true }),
+        tpl({ _id: 't2', name: 'Old sit', isDefault: true, archived: true }),
+      ],
+    });
+    render(<KinTaleTemplates />);
+    await user.click(screen.getByRole('button', { name: 'Restore Old sit' }));
+    await waitFor(() =>
+      expect(removeKinTaleTemplate).toHaveBeenCalledWith('t2', 'restore', { clearDefault: true }),
+    );
+    expect(await screen.findByText('Old sit is back in the template list.')).toBeInTheDocument();
+  });
+
+  it('Delete for good leads with how many KinTales used it, and only then deletes', async () => {
+    getKinTaleTemplateUsage.mockResolvedValue({
+      templateId: 't2',
+      exists: true,
+      name: 'Old sit',
+      isDefault: false,
+      isActive: true,
+      archived: true,
+      kintaleCount: 3,
+      otherActiveTemplateCount: 1,
+    });
+    mockStream({
+      status: 'ready',
+      data: [tpl({ _id: 't1', name: 'Walk recap' }), tpl({ _id: 't2', name: 'Old sit', isDefault: false, archived: true })],
+    });
+    render(<KinTaleTemplates />);
+    await user.click(screen.getByRole('button', { name: 'Delete Old sit for good' }));
+    const dialog = screen.getByRole('dialog', { name: 'Delete Old sit for good?' });
+    expect(await within(dialog).findByText('3 KinTales were written from this template.')).toBeInTheDocument();
+    expect(within(dialog).getByText(/ticked checklist items stop showing to the household/)).toBeInTheDocument();
+    expect(getKinTaleTemplateUsage).toHaveBeenCalledWith('t2');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete for good' }));
+    await waitFor(() => expect(removeKinTaleTemplate).toHaveBeenCalledWith('t2', 'delete'));
+    expect(await screen.findByText('Old sit deleted for good.')).toBeInTheDocument();
+  });
+
+  it('will not delete past a count it could not read', async () => {
+    getKinTaleTemplateUsage.mockRejectedValue(new Error('permission-denied'));
+    mockStream({ status: 'ready', data: [tpl({ _id: 't2', name: 'Old sit', isDefault: false, archived: true })] });
+    render(<KinTaleTemplates />);
+    await user.click(screen.getByRole('button', { name: 'Delete Old sit for good' }));
+    const dialog = screen.getByRole('dialog');
+    expect(await within(dialog).findByText(/Couldn't count the KinTales that used it: permission-denied/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Delete for good' })).toBeDisabled();
+    expect(removeKinTaleTemplate).not.toHaveBeenCalled();
   });
 });
