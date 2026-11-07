@@ -1071,6 +1071,18 @@ fun KinCareReport.isUntriagedOrphan(): Boolean =
     triageStatus.isBlank() &&
     sentVia in setOf("legacy_orphan", "legacy_visit_logs")
 
+/**
+ * #1631: whether this report may offer Delete. A saved (has an id), unsent
+ * draft: status DRAFT, no `sentAt`, not an untriaged orphan. The same three
+ * refusals `deleteKinTaleReportDraft` makes on the server, so the control never
+ * appears where it can only be refused. Pure; tested.
+ */
+fun KinCareReport.canDeleteAsDraft(): Boolean =
+    id.isNotBlank() &&
+    status.trim().uppercase() == ReportStatus.DRAFT.name &&
+    sentAt.isNullOrBlank() &&
+    !isUntriagedOrphan()
+
 enum class ReportStatus {
     DRAFT,
     SENT,

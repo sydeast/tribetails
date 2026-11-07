@@ -143,6 +143,10 @@ interface AuntieDataSource {
      * error returns [WriteResult.Err] and the report is NOT flipped to SENT.
      */
     suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit>
+    /** #1631: delete an unsent report draft (`deleteKinTaleReportDraft`). The server refuses a sent one. */
+    // Defaulted so the screen-scoped data sources that never show a KinTale need not implement it.
+    suspend fun deleteReportDraft(reportId: String): WriteResult<Unit> =
+        WriteResult.Err("Deleting a KinTale draft is not available here.")
 
     fun trainingDocsStream(): Flow<FirestoreResult<List<TrainingDocument>>>
 

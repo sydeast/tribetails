@@ -89,6 +89,33 @@ function isoDayPrefix(raw: string): string | null {
   return next === 'T' || next === ' ' ? head : null;
 }
 
+/**
+ * #1602: what a household profile says about its join date, the same shape for
+ * every household. The walk found one profile reading "Jun 1" with a tenure
+ * badge and another reading a stored "March 5" with none, because a value
+ * `formatJoinDate` cannot read was printed as stored. Now a readable day from
+ * 2025 through today is formatted and earns the tenure badge; anything else
+ * (unreadable text, 1900, 2099) says it needs fixing and gets no badge.
+ * Blank says nothing.
+ */
+export type ProfileJoinDate =
+  | { kind: 'none' }
+  | { kind: 'joined'; label: string }
+  | { kind: 'needsFixing'; label: string };
+
+export const JOIN_DATE_NEEDS_FIXING = 'Join date needs fixing: pick it in Edit';
+
+export function profileJoinDate(
+  raw: string,
+  today: string = localIsoToday(),
+  locale?: string | string[],
+): ProfileJoinDate {
+  if (raw.trim() === '') return { kind: 'none' };
+  const day = isoDayPrefix(raw);
+  if (day === null || !isJoinDateInRange(day, today)) return { kind: 'needsFixing', label: JOIN_DATE_NEEDS_FIXING };
+  return { kind: 'joined', label: `Joined ${formatJoinDate(day, locale)}` };
+}
+
 export interface JoinDateForEdit {
   /** What the date input should hold: an ISO day, or blank. */
   value: string;

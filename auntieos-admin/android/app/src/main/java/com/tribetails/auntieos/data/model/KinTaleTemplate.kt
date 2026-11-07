@@ -31,6 +31,12 @@ data class KinTaleTemplate(
     var serviceTypeKeys: List<String> = emptyList(),
     var isActive: Boolean = true,
     var isDefault: Boolean = false,            // exactly one default template per workspace
+    // #1591: in the archive. Hidden from the template list and never picked for a
+    // new KinTale; KinTales already written from it keep reading it. Written only
+    // by AuntieRepository.removeKinTaleTemplate (not in KINTALE_TEMPLATE_DIFF_FIELDS,
+    // so an editor save never touches it).
+    var archived: Boolean = false,
+    var archivedAt: String = "",
 
     // Typed display section toggles
     var photoShowcaseEnabled: Boolean = true,

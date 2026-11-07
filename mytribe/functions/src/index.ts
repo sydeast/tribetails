@@ -605,10 +605,14 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   ingestKinTale: () => require('./admin/ingestKinTale'),
   listFormSchemas: () => require('./admin/listFormSchemas'),
   deleteFormSchema: () => require('./admin/deleteFormSchema'),
+  // #1591: what a KinTale template is used by, for the delete / archive confirm.
+  getKinTaleTemplateUsage: () => require('./admin/getKinTaleTemplateUsage'),
   // Run-4 #7b: shared bank of common KinTale checklist items (list + save-to-bank).
   listChecklistBank: () => require('./admin/checklistBank'),
   saveChecklistBankItem: () => require('./admin/checklistBank'),
   triageOrphanReport: () => require('./admin/triageOrphanReport'),
+  // #1631: delete an unsent kin_care_reports draft (owner only).
+  deleteKinTaleReportDraft: () => require('./admin/deleteKinTaleReportDraft'),
   // #1563: send a generated KinTale draft to its household, or delete an unsent one.
   publishGeneratedDraft: () => require('./admin/kinTaleDrafts'),
   deleteGeneratedDraft: () => require('./admin/kinTaleDrafts'),
