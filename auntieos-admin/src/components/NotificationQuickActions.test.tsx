@@ -104,6 +104,35 @@ describe('NotificationQuickActions', () => {
     expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
   });
 
+  // #1647: a request booked or declined anywhere stops offering a decision and
+  // says how it ended.
+  it.each([
+    ['booked', 'Booked'],
+    ['declined', 'Declined'],
+    ['cancelled', 'Cancelled'],
+  ])('an answered request (%s) shows "%s" and no Approve/Deny', (requestResolution, label) => {
+    render(
+      <NotificationQuickActions
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', requestResolution })}
+        read={false}
+        {...handlers()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+    expect(screen.getByText(label)).toBeInTheDocument();
+  });
+  it('a waiting request shows no outcome', () => {
+    render(
+      <NotificationQuickActions
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1' })}
+        read={false}
+        {...handlers()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.queryByText('Booked')).toBeNull();
+  });
   it('Create quote jumps to the composer seeded with the household', async () => {
     const h = handlers();
     render(
