@@ -122,6 +122,8 @@ vi.mock('../components/BookingDetailModal', () => ({
   ),
 }));
 
+// #1608: BookingStatusActions reads the arrival rule; keep it off Firestore.
+vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule: () => null }));
 import { Bookings, groupBookingsByStatus } from './Bookings';
 
 function fakeTs(iso: string): Timestamp {

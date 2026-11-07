@@ -26,6 +26,7 @@ import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.coroutines.flow.Flow
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import com.tribetails.auntieos.web.observability.rememberReportingScope
@@ -145,6 +146,11 @@ private fun AuntieTimeListScreen(
     // §A.8: Business-Settings time blocks drive the "Evening block" descriptor on cards.
     val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val timeBlocks = remember(settingsState) { (settingsState as? FirestoreResult.Data)?.value?.timeBlocks.orEmpty() }
+    // #1608: "Verify arrival and departure", read raw (absent is off, as on the
+    // server). Null until read, or when the read fails: then the server decides.
+    val arrivalRule by produceState<Boolean?>(initialValue = null) {
+        value = (client.arrivalRuleRequired() as? WriteResult.Ok)?.value
+    }
     // Resolve a session's start time onto its block label.
     val timeBlockLabelFor: (KinCareSession) -> String? = { s ->
         resolveTimeBlock(s.startTime, timeBlocks)?.label
@@ -325,6 +331,8 @@ private fun AuntieTimeListScreen(
                                     sessions = items,
                                     kinfolkById = kinfolkById,
                                     kinById = kinById,
+                                    arrivalRule = arrivalRule,
+                                    onRefused = { msg -> showToast("Couldn't complete: $msg", ToastKind.Error) },
                                     breadcrumbsFor = { client.breadcrumbsStream(it) },
                                     timeBlockLabelFor = timeBlockLabelFor,
                                     onOpenDetail = onOpenDetail,
@@ -404,6 +412,8 @@ private fun PhaseGroup(
     sessions: List<KinCareSession>,
     kinfolkById: (String) -> Kinfolk?,
     kinById: Map<String, Kin>,
+    arrivalRule: Boolean?,
+    onRefused: (String) -> Unit,
     breadcrumbsFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
     timeBlockLabelFor: (KinCareSession) -> String?,
     onOpenDetail: (String) -> Unit,
@@ -431,6 +441,8 @@ private fun PhaseGroup(
                     address     = kinfolk?.serviceAddress.orEmpty(),
                     photoUrl    = kinfolk?.profilePictureUrl.orEmpty(),
                     kinAvatars  = kinAvatarsForSession(session, kinById),
+                    arrivalRule = arrivalRule,
+                    onRefused   = onRefused,
                     breadcrumbsFor = breadcrumbsFor,
                     timeBlockLabel = timeBlockLabelFor(session),
                     onOpenDetail = { onOpenDetail(session._id) },
@@ -448,6 +460,8 @@ private fun KinCareCard(
     address: String,
     photoUrl: String,
     kinAvatars: List<KinAvatar>,
+    arrivalRule: Boolean?,
+    onRefused: (String) -> Unit,
     breadcrumbsFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
     timeBlockLabel: String?,
     onOpenDetail: () -> Unit,
@@ -551,7 +565,7 @@ private fun KinCareCard(
                     tone  = tone,
                     mono  = true,
                 )
-                KebabMenu(session = session, onWrite = onWrite)
+                KebabMenu(session = session, arrivalRule = arrivalRule, onRefused = onRefused, onWrite = onWrite)
             }
 
             // ---- Live GPS indicator (only while ARRIVED + tracking) ----
@@ -696,6 +710,8 @@ private fun ActionRow(
 @Composable
 private fun KebabMenu(
     session: KinCareSession,
+    arrivalRule: Boolean?,
+    onRefused: (String) -> Unit,
     onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -724,8 +740,16 @@ private fun KebabMenu(
                 text = { Text("Mark Completed") },
                 onClick = {
                     open = false
-                    val a = AuntieTimeAction.MarkCompleted
-                    onWrite(session._id, kinCareWrite(session, a, nowIso()), kinCareSuccessMessage(a))
+                    // #1608: a Mark Completed the server is certain to refuse is
+                    // not sent; the operator reads the same sentence straight away.
+                    // #1617: one that may land goes through transitionBookingStatus.
+                    val refusal = completeRefusal(arrivalRule, session)
+                    if (refusal != null) {
+                        onRefused(refusal)
+                    } else {
+                        val a = AuntieTimeAction.MarkCompleted
+                        onWrite(session._id, kinCareWrite(session, a, nowIso()), kinCareSuccessMessage(a))
+                    }
                 },
                 leadingIcon = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(16.dp)) },
             )
