@@ -10,6 +10,9 @@ import {
   gapWarnings,
   minutesToTime,
   normalizePackage,
+  parseMaxGapHours,
+  sanitizeStoredRules,
+  storedMaxGapRefusal,
   packagesFromPatterns,
   priceDay,
   pricePackage,
@@ -318,5 +321,47 @@ describe('quoteText', () => {
     expect(text).toContain('Balance · 2 days');
     expect(text).toContain('Lunch (45-min visit)');
     expect(text).toContain('Total');
+  });
+});
+
+describe('parseMaxGapHours (#1582)', () => {
+  it('reads whole and fractional hours', () => {
+    expect(parseMaxGapHours('6')).toEqual({ ok: true, value: 6 });
+    expect(parseMaxGapHours(' 4.5 ')).toEqual({ ok: true, value: 4.5 });
+    expect(parseMaxGapHours('1')).toEqual({ ok: true, value: 1 });
+    // No upper bound: how long a gap the client accepts is the operator's call.
+    expect(parseMaxGapHours('30')).toEqual({ ok: true, value: 30 });
+  });
+  it('refuses a minus sign, a bare minus, and anything that is not a plain number', () => {
+    for (const bad of ['-5', '-', '+5', '1e3', 'abc', '4.', '.5', '5h', '1,5']) {
+      expect(parseMaxGapHours(bad).ok, bad).toBe(false);
+    }
+    expect(parseMaxGapHours('-5')).toMatchObject({ ok: false, message: expect.stringMatching(/minus sign/) });
+  });
+  it('refuses blank, zero and under one hour', () => {
+    expect(parseMaxGapHours('')).toMatchObject({ ok: false, message: expect.stringMatching(/Enter the longest gap/) });
+    for (const out of ['0', '0.5']) {
+      expect(parseMaxGapHours(out), out).toMatchObject({ ok: false, message: 'Max gap must be at least 1 hour.' });
+    }
+  });
+});
+describe('sanitizeStoredRules (#1582)', () => {
+  it('keeps a readable max gap as it is', () => {
+    for (const gap of [4.5, 30]) {
+      const rules = { ...DEFAULT_COVERAGE_RULES, maxGapHours: gap };
+      expect(sanitizeStoredRules(rules)).toBe(rules);
+      expect(storedMaxGapRefusal(rules)).toBeNull();
+    }
+  });
+  it('names why a stored gap is refused', () => {
+    expect(storedMaxGapRefusal({ ...DEFAULT_COVERAGE_RULES, maxGapHours: -5 })).toMatch(/minus sign/);
+    expect(storedMaxGapRefusal({ ...DEFAULT_COVERAGE_RULES, maxGapHours: 0 })).toBe('Max gap must be at least 1 hour.');
+  });
+  it('prices an unreadable stored max gap at the default', () => {
+    for (const bad of [-5, 0, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(sanitizeStoredRules({ ...DEFAULT_COVERAGE_RULES, maxGapHours: bad }).maxGapHours, String(bad)).toBe(
+        DEFAULT_COVERAGE_RULES.maxGapHours,
+      );
+    }
   });
 });
