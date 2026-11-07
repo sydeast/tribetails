@@ -13,6 +13,10 @@ import {
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+// #1707: template writes are owner-only. Every test runs as the owner unless
+// it says otherwise.
+const access = vi.hoisted(() => ({ current: { status: 'admin' } as { status: string } | null }));
+vi.mock('../lib/access', () => ({ useAdminAccess: () => access.current }));
 
 // The trail's KinTales step is a real route link, and a real `Link` wants a
 // RouterProvider no suite in this tree mounts (HouseholdData.test.tsx idiom).
@@ -95,6 +99,48 @@ beforeEach(() => {
   removeKinTaleTemplate.mockReset().mockResolvedValue(undefined);
   getKinTaleTemplateUsage.mockReset();
   mockStream({ status: 'ready', data: [tpl()] });
+  access.current = { status: 'admin' };
+});
+describe('KinTaleTemplates: owner-only writes (#1707)', () => {
+  const live = tpl();
+  const archived = tpl({ _id: 't2', name: 'Old recap', isDefault: false, archived: true });
+  it.each([
+    ['an Auntie', { status: 'caretaker' }],
+    ['a test admin', { status: 'testAdmin', testTribeId: 'tribe-x' }],
+  ])('offers %s no New template, Remove, Restore, Delete for good or editor', async (_who, a) => {
+    access.current = a;
+    mockStream({ status: 'ready', data: [live, archived] });
+    render(<KinTaleTemplates />);
+    // The templates are still listed, read-only.
+    expect(await screen.findByText('Walk recap')).toBeInTheDocument();
+    expect(screen.getByText('Old recap')).toBeInTheDocument();
+    expect(screen.getByText('Only the owner can change KinTale templates.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /new template/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^remove/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^restore/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /for good/i })).toBeNull();
+    // The row is not a button, so no editor (whose only exit is Save template) opens.
+    expect(screen.queryByRole('button', { name: /^walk recap/i })).toBeNull();
+    await user.click(screen.getByText('Walk recap'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('offers nothing while access is still resolving, and no owner-only line either', async () => {
+    access.current = null;
+    mockStream({ status: 'ready', data: [live] });
+    render(<KinTaleTemplates />);
+    expect(await screen.findByText('Walk recap')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /new template/i })).toBeNull();
+    expect(screen.queryByText('Only the owner can change KinTale templates.')).toBeNull();
+  });
+  it('still offers the owner every control', async () => {
+    mockStream({ status: 'ready', data: [live, archived] });
+    render(<KinTaleTemplates />);
+    expect(await screen.findByRole('button', { name: /new template/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Walk recap' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Restore Old recap' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Old recap for good' })).toBeInTheDocument();
+    expect(screen.queryByText('Only the owner can change KinTale templates.')).toBeNull();
+  });
 });
 
 /**
