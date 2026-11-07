@@ -84,6 +84,11 @@ fun KinCareDetailScreen(
     val sessions by remember(reload.generation) { client.sessionsStream().settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolks by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
     val reports  by remember { client.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #1580: the internal notes' dates read on the business clock, like the booking sheet's.
+    val settings by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val businessZone = com.tribetails.auntieos.web.screens.booking.NewBookingMath.businessTimeZone(
+        (settings as? FirestoreResult.Data)?.value?.timeZone,
+    )
 
     val session = remember(sessions, kinCareId) {
         (sessions as? FirestoreResult.Data)?.value?.firstOrNull { it._id == kinCareId }
@@ -189,24 +194,11 @@ fun KinCareDetailScreen(
         }
         Spacer(Modifier.height(18.dp))
 
-        DenPanel {
-            PanelHeadingWithTag(
-                title = "Admin-internal note",
-                icon  = Lucide.NotebookPen,
-                tag   = "private",
-                tone  = AuntieStatusTone.Orange,
-            )
-            Spacer(Modifier.height(10.dp))
-            if (session.notes.isNotBlank()) {
-                AuntieNoteCallout(text = session.notes, dashed = false, italic = false)
-            } else {
-                AuntieNoteCallout(text = "No admin-internal note for this KinCare.", dashed = true, italic = true)
-            }
-            Spacer(Modifier.height(8.dp))
-            EmptyHint("Only you see this. Edit anytime.")
-        }
+        // #1580: the visit's one internal-notes list, the same one the booking
+        // sheet, web and Android show. This box used to show the session's own
+        // notes text only ("Admin-internal note"), a second store.
+        com.tribetails.auntieos.web.screens.schedule.VisitInternalNotesPanel(client = client, sessionId = session._id, zone = businessZone)
         Spacer(Modifier.height(18.dp))
-
         // ---- Details key/value list ----
         DenPanel {
             PanelHeading("Details", Lucide.PawPrint)

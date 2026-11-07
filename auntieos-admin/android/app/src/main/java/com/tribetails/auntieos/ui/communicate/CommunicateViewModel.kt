@@ -69,6 +69,44 @@ internal fun validateExternalSend(
     return null
 }
 
+/**
+ * #1625: the channel an approved draft of [commType] goes out on, or null when
+ * approving sends nothing (a KinTale, a blog or social post, a push or general
+ * note). Mirrors `deliverable` in the React admin's src/lib/personalizeCompose.ts,
+ * so the three clients agree on which approvals reach a household. Pure.
+ */
+internal fun approveDeliveryChannel(commType: String): ExternalChannel? = when (commType) {
+    "email" -> ExternalChannel.Email
+    "sms" -> ExternalChannel.Sms
+    else -> null
+}
+
+/**
+ * #1625: why an approve cannot go ahead yet, or null when it can. Mirrors the
+ * React admin's `approveBlocker`: an empty draft never approves, and a draft
+ * that SENDS needs a subject (email) and an address on file for the household.
+ * A type that sends nothing is not held up by a missing phone number it never
+ * uses. Pure.
+ */
+internal fun approveSendBlocker(
+    channel: ExternalChannel?,
+    kinfolk: Kinfolk?,
+    subject: String,
+    copy: String,
+): String? {
+    if (copy.isBlank()) return "The message is empty. Write something before approving."
+    if (channel == null) return null
+    if (channel == ExternalChannel.Email && subject.isBlank()) return "Email needs a subject."
+    val name = kinfolk?.displayName ?: "This household"
+    if (channel == ExternalChannel.Email && kinfolk?.email.isNullOrBlank()) {
+        return "$name has no email address on file. Add one in Directory before sending."
+    }
+    if (channel == ExternalChannel.Sms && kinfolk?.phoneNumber.isNullOrBlank()) {
+        return "$name has no phone number on file. Add one in Directory before sending."
+    }
+    return null
+}
+
 data class CommunicateUiState(
     // Form
     val commType: String = "visit_report",
@@ -108,6 +146,8 @@ data class CommunicateUiState(
     // Approval
     val isSaving: Boolean = false,
     val savedDraftId: String? = null,
+    /** #1625: the "send this to the household?" confirm for a Text or Email approve. */
+    val approveConfirmOpen: Boolean = false,
     // #1563: a stored `generated_drafts` doc opened from KinTales or Home.
     val draftLoading: Boolean = false,
     val draftLoadError: String? = null,
@@ -440,6 +480,37 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
     }
 
+    /** The household the draft was written for: the one generation resolved, else the picker's. */
+    private fun approveRecipient(state: CommunicateUiState): Kinfolk? =
+        state.kinfolkList.firstOrNull { it.id == state.kinfolkId && state.kinfolkId != null } ?: state.selectedKinfolk
+
+    /**
+     * The Approve button (#1625). A Text or Email approve SENDS to a household,
+     * so it is checked first and then confirmed; any other type approves at once.
+     * Mirrors `handleApproveClick` in the React admin's CommunicatePersonalize.tsx.
+     */
+    fun requestApprove() {
+        val state = _uiState.value
+        if (state.isSaving) return
+        if (state.draftId == null) {
+            _uiState.value = state.copy(error = "This draft was not saved, so there is nothing to approve. Regenerate and try again.")
+            return
+        }
+        val channel = approveDeliveryChannel(state.commType)
+        val blocker = approveSendBlocker(channel, approveRecipient(state), state.subject, state.generatedCopy)
+        if (blocker != null) {
+            _uiState.value = state.copy(error = blocker)
+            return
+        }
+        if (channel != null) {
+            _uiState.value = state.copy(error = null, approveConfirmOpen = true)
+            return
+        }
+        approveDraft()
+    }
+
+    fun cancelApproveConfirm() { _uiState.value = _uiState.value.copy(approveConfirmOpen = false) }
+
     /**
      * #1563: open a stored `generated_drafts` doc for review: its type, its
      * household, its title and its copy, ready to edit and send, or to delete.
@@ -563,13 +634,25 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
         val draftId = state.draftId ?: run {
             AuntieLog.w("Approval attempted without draft ID")
-            _uiState.value = state.copy(error = "No draft to save.")
+            _uiState.value = state.copy(error = "No draft to save.", approveConfirmOpen = false)
             return
+        }
+        if (state.isSaving) return
+        // Resolved BEFORE the write, from the state the operator confirmed, so a
+        // type or recipient change while the write is in flight cannot redirect it.
+        val channel = approveDeliveryChannel(state.commType)
+        val recipient = approveRecipient(state)
+        if (channel != null) {
+            val blocker = approveSendBlocker(channel, recipient, state.subject, state.generatedCopy)
+            if (blocker != null) {
+                _uiState.value = state.copy(error = blocker, approveConfirmOpen = false)
+                return
+            }
         }
 
         AuntieLog.i("Approving and saving draft: $draftId")
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            _uiState.value = _uiState.value.copy(isSaving = true, error = null, approveConfirmOpen = false)
             repo.approveDraft(draftId, state.generatedCopy, state.kinfolkId)
                 .onSuccess {
                     AuntieLog.i("Draft #$draftId saved successfully")
@@ -621,16 +704,57 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     if (auditFailure != null) {
                         AuntieLog.e("Audit entry for draft $draftId failed", auditFailure)
                     }
-                    _uiState.value = _uiState.value.copy(
-                        isSaving       = false,
-                        savedDraftId   = draftId,
-                        successMessage = if (auditFailure == null) {
-                            "Draft #$draftId approved and logged to the audit trail."
-                        } else {
-                            "Draft #$draftId approved. The audit entry could not be written: " +
-                                (auditFailure.message ?: "unknown error")
-                        },
-                    )
+                    val auditNote = auditFailure?.let {
+                        " The audit entry could not be written: " + (it.message ?: "unknown error")
+                    }.orEmpty()
+                    // #1625: the send, AFTER the approve write landed, the same
+                    // order as the web admin. A Text or Email approve that sent
+                    // nothing left the household unreached while the screen said
+                    // the draft was done.
+                    if (channel == null || recipient == null) {
+                        _uiState.value = _uiState.value.copy(
+                            isSaving       = false,
+                            savedDraftId   = draftId,
+                            successMessage = if (auditFailure == null) {
+                                "Draft #$draftId approved and logged to the audit trail."
+                            } else {
+                                "Draft #$draftId approved.$auditNote"
+                            },
+                        )
+                        return@onSuccess
+                    }
+                    val sent = try {
+                        repo.sendExternalMessage(
+                            channel = channel.wire,
+                            to = if (channel == ExternalChannel.Email) recipient.email.trim() else recipient.phoneNumber.trim(),
+                            subject = state.subject.trim().takeIf { channel == ExternalChannel.Email },
+                            body = state.generatedCopy,
+                            transactional = true,
+                        )
+                    } catch (t: Throwable) {
+                        t.rethrowIfCancellation()
+                        Result.failure(t)
+                    }
+                    sent.onSuccess { result ->
+                        _uiState.value = _uiState.value.copy(
+                            isSaving       = false,
+                            savedDraftId   = draftId,
+                            successMessage = "Draft #$draftId approved and sent by " +
+                                (if (channel == ExternalChannel.Email) "email" else "text") +
+                                " to ${result.recipientRedacted}.$auditNote",
+                        )
+                    }.onFailure { e ->
+                        AuntieLog.e("Approved draft $draftId but the send failed", e)
+                        // Approved stays approved: the write landed. The error
+                        // says the household did not get it, so nobody assumes
+                        // it went out.
+                        _uiState.value = _uiState.value.copy(
+                            isSaving     = false,
+                            savedDraftId = draftId,
+                            error        = "The draft is approved, but the send failed: " +
+                                externalSendErrorText(e.message) + auditNote,
+                        )
+                    }
                 }
                 .onFailure { e ->
                     AuntieLog.e("Failed to save draft", e)

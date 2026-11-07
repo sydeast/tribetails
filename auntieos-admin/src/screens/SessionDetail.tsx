@@ -6,13 +6,8 @@ import { getBusinessSettings } from '../api/settings';
 import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { useCollection, useDocById } from '../lib/firestore';
 import { updateKinCareSession } from '../api/sessionsWrite';
-import {
-  appendOfficeNote,
-  lifecycleActionsFor,
-  lifecycleNowIso,
-  readableVisitNotes,
-  savedVisitFieldsMessage,
-} from '../lib/sessionLifecycle';
+import { lifecycleActionsFor, savedVisitFieldsMessage } from '../lib/sessionLifecycle';
+import { VisitInternalNotes } from '../components/VisitInternalNotes';
 import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useVisitTracking } from '../lib/visitTracking';
@@ -201,8 +196,8 @@ function messageOf(err: unknown): string {
  *                       "Undo Arrival" (`ui/admin/KinCareSessionsScreen.kt`).
  *                       Which buttons appear from which state lives in
  *                       `lib/sessionLifecycle.ts#lifecycleActionsFor`.
- *   note to office      `KinCareSessionsScreen.kt#appendOfficeNote`, format and
- *                       newest-first ordering included.
+ *   internal notes      #1580: `components/VisitInternalNotes`, the one list per
+ *                       visit Bookings shows too (shared or admin-only).
  *   the route           `ui/components/RouteMap.kt` + `LiveTrackingScreen.kt`:
  *                       a polyline over the breadcrumb subcollection, live only
  *                       while ARRIVED. Since #760 that polyline is drawn over a
@@ -312,9 +307,8 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
     setKinSelection(null);
     setEditWrite({ status: 'idle' });
     // The visit clock's own reset lives in `useVisitLifecycle`, keyed on the
-    // same id, so it is not repeated here.
-    setNoteText('');
-    setNoteWrite({ status: 'idle' });
+    // same id, so it is not repeated here; nor is the internal-notes panel's,
+    // which keys its own state on the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -386,26 +380,9 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
     }
   }
 
-  // ── note to office ─────────────────────────────────────────────────────────
-  const [noteText, setNoteText] = useState('');
-  const [noteWrite, setNoteWrite] = useState<WriteState>({ status: 'idle' });
-
-  async function sendOfficeNote() {
-    if (sessionId === null) return;
-    const typed = noteText.trim();
-    if (typed === '') return;
-    setNoteWrite({ status: 'saving' });
-    try {
-      await updateKinCareSession(sessionId, {
-        notes: appendOfficeNote(str(entry?.notes), typed, lifecycleNowIso()),
-      });
-      setNoteText('');
-      setNoteWrite({ status: 'done', message: 'Note added to this visit.' });
-    } catch (err) {
-      setNoteWrite({ status: 'error', message: messageOf(err) });
-    }
-  }
-
+  // #1580: internal notes are `VisitInternalNotes`, the same list Bookings
+  // shows. This screen used to append to the session's own `notes` text, a
+  // second store Bookings never read.
   // ── GPS ────────────────────────────────────────────────────────────────────
   // Live pings while a visit is in flight; the durable `gpsSummary` copy once it
   // is not. Both are needed: `purgeOldVisitRoutes` deletes breadcrumbs past the
@@ -500,7 +477,6 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
           // helpers already classify honestly ('unknown', 'Undated'), rather than
           // throwing and blanking the view.
           const info = sessionStateInfo(state);
-          const notes = str(entry.notes).trim();
           const kinfolkNotes = str(entry.kinfolkNotes).trim();
           // R1: a KinCare session covers EVERY Kin in the home, so the Kin row
           // is always shown. It used to be hidden whenever `kinIds` was empty,
@@ -682,45 +658,14 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                   )}
                 </DenPanel>
 
-                <DenPanel
-                  title="Admin-internal note"
-                  className="d3"
-                  meta="private"
-                  subtitle="Only staff see this. A note is stamped and kept; nothing here is overwritten."
-                >
-                  {notes === '' ? (
-                    <p className="sdetail__nbox sdetail__nbox--empty">No notes on this visit yet.</p>
-                  ) : (
-                    <p className="sdetail__nbox">{readableVisitNotes(notes, noteZone)}</p>
-                  )}
-                  <label className="sdetail__field">
-                    <span className="sdetail__field-label">Note to office</span>
-                    <textarea
-                      className="sdetail__input sdetail__textarea"
-                      rows={3}
-                      placeholder="What does the office need to know?"
-                      value={noteText}
-                      onChange={(e) => setNoteText(e.target.value)}
-                    />
-                  </label>
-                  <div className="sdetail__actions">
-                    <GhostButton
-                      label={noteWrite.status === 'saving' ? 'Sending…' : 'Add note'}
-                      onClick={() => void sendOfficeNote()}
-                      disabled={noteText.trim() === '' || noteWrite.status === 'saving'}
-                    />
-                  </div>
-                  {noteWrite.status === 'error' && (
-                    <ErrorHint>
-                      Couldn&rsquo;t add the note. {noteWrite.message}
-                    </ErrorHint>
-                  )}
-                  {noteWrite.status === 'done' && (
-                    <p className="sdetail__ok" role="status">
-                      {noteWrite.message}
-                    </p>
-                  )}
-                </DenPanel>
+                {sessionId !== null && (
+                  <VisitInternalNotes
+                    target={{ sessionId }}
+                    businessZone={noteZone}
+                    className="d3"
+                    headingLevel={2}
+                  />
+                )}
               </div>
 
               {/* The mock's Details: key on the left, value on the right, one

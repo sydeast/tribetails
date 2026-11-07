@@ -90,6 +90,8 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'submitVetClinic', // propose a clinic; curating the catalog stays with the owner
   'addBookingNote',
   'addInternalBookingNote',
+  // #1580: filtered on her claim, so an Auntie's list never carries an admin-only note.
+  'listVisitInternalNotes',
   // #1408: a household's pending request to remove a Kin, read on the Kin's
   // admin profile. Answering it (resolveKinRemovalRequest) archives a Kin,
   // which is destructive (rule 6), so that half stays with the owner.

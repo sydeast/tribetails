@@ -147,6 +147,7 @@ listTemplateBindings
 listTemplates
 listUnappliedPayments
 listUninvoicedSessions
+listVisitInternalNotes
 logActivity
 logExpense
 manageBookingSeries

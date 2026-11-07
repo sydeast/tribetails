@@ -471,6 +471,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   listMarketingBlasts: () => require('./admin/marketingBlasts'),
   cancelMarketingBlast: () => require('./admin/marketingBlasts'),
   addInternalBookingNote: () => require('./admin/addInternalBookingNote'),
+  // #1580: the one internal-notes list on a visit, filtered by the caller's role.
+  listVisitInternalNotes: () => require('./admin/listVisitInternalNotes'),
   saveTemplate: () => require('./admin/saveTemplate'),
   previewEmailTemplate: () => require('./admin/previewEmailTemplate'),
   getEmailFrame: () => require('./admin/emailFrameSettings'),
