@@ -1443,7 +1443,11 @@ service cloud.firestore {
  // composer renders), never write. Writes stay admin-only.
     match /kintale_templates/{id} {
       allow read: if isStaff() || isTestAdmin();
-      allow write: if isOwner();
+      allow create, update: if isOwner();
+      // #1591 (operator ruling 2026-11-05): a template is deleted for good only
+      // from the archive. Remove sets `archived: true` (an update); a delete of
+      // a template that was never archived is refused for every client.
+      allow delete: if isOwner() && resource.data.get('archived', false) == true;
     }
     match /location_checkpoints/{id}            { allow read, write: if isStaff(); }
  // #944: read is staff, because an Auntie has to know whether a household's

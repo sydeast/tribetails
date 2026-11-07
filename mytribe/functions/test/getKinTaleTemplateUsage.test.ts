@@ -55,8 +55,22 @@ describe('getKinTaleTemplateUsage (#1591)', () => {
       name: 'Dog walk recap',
       isDefault: true,
       isActive: true,
+      archived: false,
       kintaleCount: 2,
     });
+    expect(res.otherActiveTemplateCount).toBe(1);
+  });
+  it('HAPPY: says when the template is archived, and never counts an archived one as a fallback', async () => {
+    seed({
+      templates: [
+        { id: 't1', data: { name: 'Old walk', isActive: true, archived: true } },
+        { id: 't2', data: { name: 'Cat visit', isActive: true, archived: true } },
+        { id: 't3', data: { name: 'Drop-in', isActive: true } },
+      ],
+      reports: [{ id: 'r1', data: { templateId: 't1' } }],
+    });
+    const res = await getKinTaleTemplateUsageHandler(req({ templateId: 't1' }));
+    expect(res).toMatchObject({ archived: true, kintaleCount: 1 });
     expect(res.otherActiveTemplateCount).toBe(1);
   });
   it('a template that is already gone says so instead of throwing', async () => {

@@ -111,6 +111,14 @@ export interface KinTaleTemplate {
   serviceTypeKeys: string[];
   isActive: boolean;
   isDefault: boolean;
+  /**
+   * #1591: in the archive. Hidden from the template list and never picked for a
+   * new KinTale; KinTales already written from it keep reading it. Optional so
+   * every built-in and scaffolded template reads as live without saying so.
+   */
+  archived?: boolean;
+  /** #1591: when it was archived, ISO. Blank once restored. */
+  archivedAt?: string;
 
   photoShowcaseEnabled: boolean;
   checklistEnabled: boolean;

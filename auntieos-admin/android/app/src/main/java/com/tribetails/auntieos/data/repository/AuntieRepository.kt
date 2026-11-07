@@ -2866,17 +2866,41 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to delete KinTale template $templateId", it) }
 
     /**
-     * #1591: the one entry point that takes a KinTale template out of service.
-     * Which modes exist is the operator's ruling (see [KinTaleTemplateRemoval]);
-     * the editor's delete goes through here, never to the collection directly.
+     * #1591: the one entry point that archives, restores or deletes a KinTale
+     * template (operator ruling 2026-11-05: "both"). ARCHIVE keeps the doc and
+     * sets `archived`; RESTORE clears it, and drops `isDefault` when
+     * [clearDefault] says another template took the default meanwhile; DELETE
+     * removes the doc, which `firestore.rules` allows only for an archived one.
      */
     suspend fun removeKinTaleTemplate(
         templateId: String,
-        mode: com.tribetails.auntieos.data.model.KinTaleTemplateRemoval =
-            com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.DELETE,
+        mode: com.tribetails.auntieos.data.model.KinTaleTemplateRemoval,
+        clearDefault: Boolean = false,
+        now: () -> String = { java.time.Instant.now().toString() },
     ): Result<Unit> = when (mode) {
         com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.DELETE -> deleteKinTaleTemplate(templateId)
+        com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.ARCHIVE -> updateTemplateArchive(
+            templateId,
+            mapOf("archived" to true, "archivedAt" to now(), "updatedAt" to now()),
+        )
+        com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.RESTORE -> updateTemplateArchive(
+            templateId,
+            buildMap {
+                put("archived", false)
+                put("archivedAt", "")
+                put("updatedAt", now())
+                if (clearDefault) put("isDefault", false)
+            },
+        )
     }
+
+    private suspend fun updateTemplateArchive(templateId: String, fields: Map<String, Any>): Result<Unit> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            require(templateId.isNotBlank()) { "templateId required" }
+            firestore.collection("kintale_templates").document(templateId).update(fields).await()
+            Unit
+        }.onFailure { AuntieLog.e("Failed to change archive state of KinTale template $templateId", it) }
     /** #1591: what uses this template, for a confirm that names what breaks. Owner-only on the server. */
     suspend fun getKinTaleTemplateUsage(
         templateId: String,
@@ -2895,7 +2919,8 @@ class AuntieRepository(
         val snapshot = firestore.collection("kintale_templates")
             .whereEqualTo("isActive", true)
             .get().await()
-        val templates = snapshot.toObjects(KinTaleTemplate::class.java)
+        // #1591: an archived template is never picked for a new KinTale.
+        val templates = snapshot.toObjects(KinTaleTemplate::class.java).filterNot { it.archived }
         val needle = serviceType.lowercase().trim()
         val match = templates.firstOrNull { tpl ->
             tpl.serviceTypeKeys.any { it.lowercase().trim() == needle }

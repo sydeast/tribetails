@@ -154,6 +154,23 @@
   font-size: var(--type-title-md-size);
 }
 
+/* #1591: a row is the picker button plus its Remove control. */
+.ktt__picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ktt__picker-item > .ktt__picker-row {
+  flex: 1 1 auto;
+}
+/* An archived row is not a button: its name, then Restore and Delete for good. */
+.ktt__archive-row {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-11);
+  color: var(--color-text-dim);
+}
+
 /* ── toggle rows ─────────────────────────────────────────────────────────── */
 
 .ktt__toggle-row {

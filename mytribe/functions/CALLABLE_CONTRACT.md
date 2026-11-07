@@ -301,8 +301,9 @@ must say "next reconcile pass", never "instantly".
 
 ### getKinTaleTemplateUsage
 - req `{ templateId: string /* 1..200 */ }`
-- res `{ templateId: string, exists: boolean, name: string, isDefault: boolean, isActive: boolean, kintaleCount: number, otherActiveTemplateCount: number }`
-- Read only, owner-only. `kintaleCount` counts `kin_care_reports` docs whose `templateId` is this id (sent and draft). The built-in default has no doc and no id on a report, so it is never counted. Every client's delete or archive confirm for a KinTale template reads this to name what breaks before the operator commits (#1591).
+- res `{ templateId: string, exists: boolean, name: string, isDefault: boolean, isActive: boolean, archived: boolean, kintaleCount: number, otherActiveTemplateCount: number }`
+- Read only, owner-only. `kintaleCount` counts `kin_care_reports` docs whose `templateId` is this id (sent and draft). The built-in default has no doc and no id on a report, so it is never counted. `otherActiveTemplateCount` leaves out archived templates.
+- #1591 (operator ruling 2026-11-05, "both"): Remove archives a template (`archived: true`, `archivedAt`; restorable, hidden from the list and from new KinTales). Deleting for good happens only from the archive, and every client's delete-for-good confirm reads this count first. `firestore.rules` refuses deleting a `kintale_templates` doc that is not archived.
 
 ## Invoices (admin-gated; the W2-1 pair also admits a scoped test admin, see each section's GATE line)
 
