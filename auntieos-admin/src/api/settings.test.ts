@@ -83,6 +83,19 @@ describe('mergeBusinessSettings', () => {
     expect(result.businessName).toBe('');
   });
 
+  it('reads an absent requireArrivalDepartureVerification as OFF, the server reading (#1620)', () => {
+    // functions/src/lib/arrivalVerification.ts: `=== true`. The editor showed ON while
+    // Complete went through, and the next Settings save turned the rule on.
+    expect(mergeBusinessSettings({}).requireArrivalDepartureVerification).toBe(false);
+    expect(mergeBusinessSettings(undefined).requireArrivalDepartureVerification).toBe(false);
+    expect(DEFAULT_BUSINESS_SETTINGS.requireArrivalDepartureVerification).toBe(false);
+    expect(mergeBusinessSettings({ requireArrivalDepartureVerification: true }).requireArrivalDepartureVerification).toBe(true);
+    expect(mergeBusinessSettings({ requireArrivalDepartureVerification: false }).requireArrivalDepartureVerification).toBe(false);
+    // Anything but a real true is off, as on the server.
+    expect(
+      mergeBusinessSettings({ requireArrivalDepartureVerification: 'true' as unknown as boolean }).requireArrivalDepartureVerification,
+    ).toBe(false);
+  });
   it('defaults both tag vocabularies to [] when the doc has neither field', () => {
     const result = mergeBusinessSettings({ businessName: 'Tribe Tails' });
     expect(result.householdTags).toEqual([]);

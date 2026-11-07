@@ -623,7 +623,7 @@ internal fun VisitsTrackingPanel(
     var autoStart by remember(s) { mutableStateOf(s?.autoStartTrackingOnVisitStart != false) }
     var accuracy by remember(s) { mutableStateOf(s?.trackingAccuracy ?: "HIGH") }
     var photoTagging by remember(s) { mutableStateOf(s?.enablePhotoLocationTagging != false) }
-    var arrivalCheck by remember(s) { mutableStateOf(s?.requireArrivalDepartureVerification != false) }
+    var arrivalCheck by remember(s) { mutableStateOf(s?.requireArrivalDepartureVerification == true) }
     var arrivalRadius by remember(s) { mutableStateOf((s?.arrivalRadiusMeters ?: 150).toString()) }
     var clientSharing by remember(s) { mutableStateOf(s?.allowClientLocationSharing != false) }
     var routeDays by remember(s) { mutableStateOf((s?.saveRoutesForDays ?: 90).toString()) }

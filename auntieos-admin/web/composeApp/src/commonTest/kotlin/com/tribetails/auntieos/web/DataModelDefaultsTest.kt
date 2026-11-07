@@ -216,7 +216,9 @@ class DataModelDefaultsTest {
         // GPS / tracking
         assertTrue(s.enableGPSTrackingForAllVisits)
         assertTrue(s.enablePhotoLocationTagging)
-        assertTrue(s.requireArrivalDepartureVerification)
+        // #1620: absent is OFF, the server's reading (`=== true` in arrivalVerification.ts).
+        // A default of true showed the switch ON while Complete went through.
+        assertFalse(s.requireArrivalDepartureVerification)
         // #582. Must equal ARRIVAL_RADIUS_DEFAULT_METERS on the server, which is
         // what a settings document with no key falls back to. If the two drift,
         // a save from this console silently changes the rule for everyone.
