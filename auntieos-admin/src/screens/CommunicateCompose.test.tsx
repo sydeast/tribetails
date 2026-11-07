@@ -5,16 +5,18 @@ import userEvent from '@testing-library/user-event';
 import { splitList, buildCriteria } from './CommunicateCompose';
 import { type SendBroadcastResult } from '../api/communicateWrite';
 
-const { sendBroadcast, getBroadcastProgress, stopBroadcast } = vi.hoisted(() => ({
+const { sendBroadcast, getBroadcastProgress, stopBroadcast, previewBroadcastAudience } = vi.hoisted(() => ({
   sendBroadcast: vi.fn(),
   getBroadcastProgress: vi.fn(),
   stopBroadcast: vi.fn(),
+  previewBroadcastAudience: vi.fn(),
 }));
 vi.mock('../api/communicateWrite', async (orig) => ({
   ...(await orig<typeof import('../api/communicateWrite')>()),
   sendBroadcast,
   getBroadcastProgress,
   stopBroadcast,
+  previewBroadcastAudience,
 }));
 
 const { listAudienceSegments, saveAudienceSegment, deleteAudienceSegment } = vi.hoisted(() => ({
@@ -36,6 +38,15 @@ beforeEach(() => {
   // Default: the segment list loads and is empty, so the ad-hoc builder shows.
   // Individual tests override it.
   listAudienceSegments.mockResolvedValue([]);
+  previewBroadcastAudience.mockReset().mockResolvedValue({
+    ok: true,
+    description: 'All active kinfolk',
+    targeted: 12,
+    withEmail: 10,
+    withPhone: 11,
+    withApp: 4,
+    withoutFirstName: 0,
+  });
 });
 
 // ── pure helpers ─────────────────────────────────────────────────────────
@@ -123,7 +134,7 @@ describe('CommunicateCompose screen', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'By status' }));
     expect(screen.getByRole('button', { name: /review broadcast/i })).toBeDisabled();
 
-    await userEvent.type(screen.getByLabelText(/statuses/i), 'active');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
     expect(screen.getByRole('button', { name: /review broadcast/i })).toBeEnabled();
   });
 
@@ -560,7 +571,7 @@ describe('saved segments', () => {
     saveAudienceSegment.mockResolvedValue('s2');
     render(<CommunicateCompose />);
     await userEvent.click(screen.getByRole('radio', { name: 'By status' }));
-    await userEvent.type(screen.getByLabelText(/statuses/i), 'active');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
     await userEvent.type(screen.getByLabelText(/save this audience as/i), 'Actives');
     await userEvent.click(screen.getByRole('button', { name: /save segment/i }));
     await waitFor(() =>
@@ -623,23 +634,68 @@ describe('CommunicateCompose: live preview', () => {
     expect(preview).toHaveTextContent('Holiday hours');
     expect(preview).toHaveTextContent('We close at noon.');
   });
-  it('warns that a merge field typed into a broadcast binds to nothing', async () => {
+  it('fills the merge fields a broadcast supports in the preview (#1610)', async () => {
     render(<CommunicateCompose />);
     // fireEvent, not userEvent.type: `{{` is userEvent's escape for a literal
     // brace, so typing a Handlebars token through it needs doubling up and the
     // test then reads as being about userEvent rather than about merge fields.
-    fireEvent.change(screen.getByLabelText(/message/i), { target: { value: 'Hi {{kinfolkName}}' } });
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      '1 merge field has no sample value: kinfolkName',
-    );
+    fireEvent.change(screen.getByLabelText(/message/i), { target: { value: 'Hi {{firstName}}, from {{kinfolkName}}' } });
+    const preview = await screen.findByRole('region', { name: 'Live preview' });
+    expect(preview).toHaveTextContent('Hi Sandy, from Sandy Wren');
+    expect(screen.queryByText(/has no sample value/)).toBeNull();
   });
-  it('states what each channel actually does with an unresolved token', async () => {
+  it('says a household with no first name reads "Kinfolk" (operator ruling)', async () => {
     render(<CommunicateCompose />);
     expect(
-      await screen.findByText(
-        /A broadcast carries no merge data\. Email sends these blank; in-app, SMS and push send the braces as typed\./i,
-      ),
+      await screen.findByText(/A household with no first name on file reads "Kinfolk"\./),
     ).toBeInTheDocument();
+  });
+  it('refuses a merge field a broadcast cannot fill before Review (#1610)', async () => {
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Hi');
+    fireEvent.change(screen.getByLabelText(/message/i), { target: { value: 'Hi {{firstname}}, {{kinName}} says hi' } });
+    expect(screen.getByRole('button', { name: /review broadcast/i })).toBeDisabled();
+    expect(await screen.findByText(/Remove or fix: firstname, kinName\./)).toBeInTheDocument();
+  });
+  it('the confirm says how many kinfolk the broadcast reaches before sending (#1610)', async () => {
+    previewBroadcastAudience.mockResolvedValue({
+      ok: true,
+      description: 'All active kinfolk',
+      targeted: 12,
+      withEmail: 10,
+      withPhone: 11,
+      withApp: 4,
+      withoutFirstName: 2,
+    });
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Hi');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/12 kinfolk match this audience/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/2 have no first name on file and will read "Kinfolk"/)).toBeInTheDocument();
+    expect(previewBroadcastAudience).toHaveBeenCalledWith({ criteria: { kind: 'all' } });
+    expect(sendBroadcast).not.toHaveBeenCalled();
+  });
+  it('a count that fails to load says so and still lets the operator decide', async () => {
+    previewBroadcastAudience.mockRejectedValue(new Error('unavailable'));
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Hi');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/The count did not load \(unavailable\)/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /send now/i })).toBeEnabled();
+  });
+  it('By status is a picker of the Directory statuses, not a text box (#1610)', async () => {
+    render(<CommunicateCompose />);
+    await userEvent.click(screen.getByRole('radio', { name: 'By status' }));
+    expect(screen.queryByPlaceholderText('active, prospect')).toBeNull();
+    for (const name of ['Active', 'Prospect', 'Inactive']) {
+      expect(screen.getByRole('checkbox', { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole('checkbox', { name: 'Archived' })).toBeNull();
   });
   it('does not warn about ordinary copy with no merge fields', async () => {
     render(<CommunicateCompose />);

@@ -1114,19 +1114,17 @@ class EnhancedSchedulingViewModel(
             }
 
             // No conflicts, create the booking
-            val result = bookingRepository.createBooking(booking)
+            // #1630: the dialog's internal note rides on the booking itself until
+            // it is approved. It used to go to `addInternalBookingNote` against
+            // the `enhanced_bookings` id, which names no booking record, so the
+            // note had nowhere to land. Approval now adds it to the visit's
+            // internal notes ([approveBooking]).
+            val result = bookingRepository.createBooking(
+                if (internalNote.isNotBlank()) booking.copy(internalNotes = internalNote.trim()) else booking,
+            )
 
             if (result.isSuccess) {
                 val newBookingId = result.getOrNull().orEmpty()
-                if (internalNote.isNotBlank() && newBookingId.isNotBlank() && booking.kinfolkId.isNotBlank()) {
-                    val notesRepo = com.tribetails.auntieos.data.repository.BookingNotesRepository()
-                    notesRepo.addInternalNote(booking.kinfolkId, newBookingId, internalNote)
-                        .onFailure { t ->
-                            _state.value = _state.value.copy(
-                                errorMessage = "Booking created but internal note save failed: ${t.message}",
-                            )
-                        }
-                }
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
@@ -1341,7 +1339,38 @@ class EnhancedSchedulingViewModel(
                     serviceDurationMinutes = durationMinutes,
                     notes = booking.notes
                 )
-                kinCareRepository.createKinCareSession(session)
+                // #1630: a native booking (no MyTribe request behind it) is
+                // approved through the `createKinCareSession` callable, which
+                // writes the booking record with the visit, so it can be given
+                // an Auntie and notes like any other. The direct write it used
+                // made a session with no record ("This visit is not part of a
+                // booking request"). A MyTribe request's approval keeps its own
+                // path: its record already exists and the session links to it.
+                val created = if (incoming == null) {
+                    kinCareRepository.createKinCareSession(
+                        kinfolkId = booking.kinfolkId,
+                        kinIds = booking.kinIds,
+                        serviceType = session.serviceType,
+                        startTime = booking.startDateTime,
+                        endTime = booking.endDateTime,
+                        serviceDurationMinutes = durationMinutes,
+                        notes = booking.notes,
+                        enhancedBookingId = booking.id,
+                    ).onSuccess { sessionId ->
+                        if (booking.internalNotes.isNotBlank()) {
+                            com.tribetails.auntieos.data.repository.BookingNotesRepository()
+                                .addVisitInternalNote(sessionId, booking.internalNotes)
+                                .onFailure { t ->
+                                    _state.value = _state.value.copy(
+                                        errorMessage = "Visit booked, but its internal note did not save: ${t.message}",
+                                    )
+                                }
+                        }
+                    }
+                } else {
+                    kinCareRepository.createKinCareSession(session)
+                }
+                created
                     .onSuccess { kinCareSessionId ->
                         // Booking-envelope write-back: stamp the originating MyTribe
                         // kinCare doc so the kinfolk's live state resolves to confirmed

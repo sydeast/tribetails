@@ -212,6 +212,9 @@ data class CommunicateUiState(
     /** #823. What the operator was told after stopping a send part-way. */
     val stopBroadcastNotice: String? = null,
     val broadcastError: String? = null,
+    /** #1610: the confirm before a broadcast, and the count it shows. */
+    val bcConfirmOpen: Boolean = false,
+    val bcReach: BroadcastReachState = BroadcastReachState.Loading,
 
     // Recent sends + engagement (Communicate "Recent" panel; counts from the webhooks).
     val recentSends: List<RecentSend> = emptyList(),
@@ -457,9 +460,14 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
 
             repo.generate(request, useFunction).onSuccess { result ->
                 AuntieLog.i("Content generation successful")
+                // #1610: one subject. A "Subject:" line the generator wrote
+                // leaves the body, and fills the Subject field only when the
+                // operator has not typed one.
+                val split = splitSubjectLine(result.generatedCopy)
                 _uiState.value = _uiState.value.copy(
                     isGenerating          = false,
-                    generatedCopy         = result.generatedCopy,
+                    generatedCopy         = split.body,
+                    subject               = _uiState.value.subject.ifBlank { split.subject },
                     draftId               = result.draftId,
                     kinfolkId             = result.kinfolkId,
                     generatedKinfolkName  = result.kinfolkName,
@@ -920,6 +928,10 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     fun selectSegment(id: String?) { _uiState.value = _uiState.value.copy(selectedSegmentId = id, broadcastError = null) }
     fun setBcKind(kind: SegmentKind) { _uiState.value = _uiState.value.copy(bcKind = kind) }
     fun setBcStatuses(text: String) { _uiState.value = _uiState.value.copy(bcStatusesText = text) }
+    /** #1610: the By status picker. */
+    fun toggleBcStatus(status: String, on: Boolean) {
+        _uiState.value = _uiState.value.copy(bcStatusesText = toggleBroadcastStatus(_uiState.value.bcStatusesText, status, on))
+    }
     fun setBcTagMatch(m: TagMatch) { _uiState.value = _uiState.value.copy(bcTagMatch = m) }
 
     // ── "By tag" audience picker ──────────────────────────────────────────────
@@ -1133,14 +1145,45 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         s.bcBody,
     ).joinToString("\u001F") // a separator no typed field can contain
 
+    private fun broadcastProblem(s: CommunicateUiState): String? {
+        val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
+        val effective = criteria ?: s.segments.firstOrNull { it.id == s.selectedSegmentId }?.criteria ?: BroadcastCriteria()
+        return tagCapProblem(s)
+            ?: broadcastBlocker(s.bcChannels, effective, s.bcSubject, s.bcBody)
+            ?: mergeFieldBlocker(s.bcSubject, s.bcBody)
+    }
+
+    /**
+     * #1610: Review, not Send. Checks the form, opens the confirm, and asks the
+     * server how many households the audience reaches, so the operator approves
+     * a number rather than a description. The count is resolved exactly as the
+     * send resolves it.
+     */
+    fun requestBroadcast() {
+        val s = _uiState.value
+        val problem = broadcastProblem(s)
+        if (problem != null) { _uiState.value = s.copy(broadcastError = problem); return }
+        if (s.isBroadcasting) return
+        _uiState.value = s.copy(bcConfirmOpen = true, bcReach = BroadcastReachState.Loading, broadcastError = null, broadcastResult = null)
+        val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
+        viewModelScope.launch {
+            val next = repo.previewBroadcastAudience(s.selectedSegmentId, criteria).fold(
+                onSuccess = { BroadcastReachState.Ready(it) },
+                onFailure = { BroadcastReachState.Failed(it.message ?: "The count did not load.") },
+            )
+            _uiState.value = _uiState.value.copy(bcReach = next)
+        }
+    }
+
+    fun cancelBroadcastConfirm() { _uiState.value = _uiState.value.copy(bcConfirmOpen = false) }
+
     fun sendBroadcast() {
         val s = _uiState.value
         val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
-        val effective = criteria ?: s.segments.firstOrNull { it.id == s.selectedSegmentId }?.criteria ?: BroadcastCriteria()
-        val problem = tagCapProblem(s) ?: broadcastBlocker(s.bcChannels, effective, s.bcSubject, s.bcBody)
-        if (problem != null) { _uiState.value = s.copy(broadcastError = problem); return }
+        val problem = broadcastProblem(s)
+        if (problem != null) { _uiState.value = s.copy(broadcastError = problem, bcConfirmOpen = false); return }
         if (s.isBroadcasting) return
-        _uiState.value = s.copy(isBroadcasting = true, broadcastError = null, broadcastResult = null)
+        _uiState.value = s.copy(isBroadcasting = true, broadcastError = null, broadcastResult = null, bcConfirmOpen = false)
         // #814: one key per message, re-minted only when the message or its
         // audience has changed since the key was minted.
         val signature = broadcastSignature(s)

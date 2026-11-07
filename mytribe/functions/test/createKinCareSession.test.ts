@@ -355,3 +355,62 @@ describe('createKinCareSession visit length (#1581)', () => {
     expect(visitLengthMinutes(undefined, end, start)).toBe(0);
   });
 });
+
+// ── #1630: an Android booking's approval writes the record too, once ─────────
+describe('createKinCareSession for an Android booking (enhancedBookingId)', () => {
+  const start = () => new Date(Date.now() + DAY).toISOString();
+  const end = () => new Date(Date.now() + DAY + 30 * 60_000).toISOString();
+  const args = (extra: Record<string, unknown> = {}) => ({
+    kinfolkId: 'kf1',
+    kinIds: ['k1'],
+    serviceType: 'Dog Walk',
+    startTime: start(),
+    endTime: end(),
+    enhancedBookingId: 'eb123',
+    ...extra,
+  });
+
+  it('writes the booking record under ids derived from the booking, and links the session to it', async () => {
+    const ctx = buildDbMock({ docs: { 'families/kf1/kin/k1': { name: 'QA-Pup' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createKinCareSessionHandler(req(args()));
+    expect(res.sessionId).toBe('vis_enh_eb123');
+    const paths = ctx.writes.map((w) => w.path);
+    expect(paths).toContain('families/kf1/bookings/enh_eb123');
+    expect(paths).toContain('families/kf1/bookings/enh_eb123/kinCares/enh_eb123');
+    const session = ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_enh_eb123');
+    expect(session?.data).toMatchObject({
+      enhancedBookingId: 'eb123',
+      kinCareBatchId: 'enh_eb123',
+      kinCareVisitId: 'enh_eb123',
+      status: 'SCHEDULED',
+    });
+  });
+
+  it('approving the same booking again returns the first visit and writes nothing', async () => {
+    const ctx = buildDbMock({
+      docs: { 'kin_care_sessions/vis_enh_eb123': { status: 'SCHEDULED', enhancedBookingId: 'eb123' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createKinCareSessionHandler(req(args()));
+    expect(res.sessionId).toBe('vis_enh_eb123');
+    expect(ctx.writes).toHaveLength(0);
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+
+  it('a New visit without the id still mints its own ids and carries no enhancedBookingId', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createKinCareSessionHandler(req(args({ enhancedBookingId: undefined })));
+    expect(res.sessionId).not.toMatch(/enh_/);
+    const session = sessionWrites(ctx)[0];
+    expect(session?.data).not.toHaveProperty('enhancedBookingId');
+  });
+
+  it('refuses an id that is not a document id, rather than build a path from it', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({}).db);
+    await expect(createKinCareSessionHandler(req(args({ enhancedBookingId: 'a/b' })))).rejects.toMatchObject({
+      code: 'invalid-argument',
+    });
+  });
+});
