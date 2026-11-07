@@ -233,7 +233,13 @@ class HomeViewModel(
         }
     }
 
-    fun load() {
+    /**
+     * [keepActionError]: a visit action's own refusal, carried through the
+     * rebuild below. `runOnSession` reloads in its `finally`, and the rebuild
+     * clears `actionError`, so without this a server refusal (#1608) was
+     * written and then wiped before anyone could read it.
+     */
+    fun load(keepActionError: String? = null) {
         AuntieLog.d("Loading dashboard data")
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
@@ -387,7 +393,7 @@ class HomeViewModel(
                     allSessions       = allSessions,
                     kin               = allKin,
                     dashboardWidgets  = profile?.dashboardWidgets ?: emptyList(),
-                    actionError       = null,
+                    actionError       = keepActionError,
                     // ISSUE #582: CARRIED FORWARD, not defaulted. This is a
                     // whole-model REBUILD, not a `copy`, so every field left off
                     // this list is silently reset — the diff-vs-rebuild trap this
@@ -632,6 +638,7 @@ class HomeViewModel(
             }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(pendingActionSessionId = sessionId)
+            val errorBefore = _uiState.value.actionError
             try {
                 block(card)
             } catch (e: Exception) {
@@ -639,7 +646,8 @@ class HomeViewModel(
                 AuntieLog.e("Visit action failed for $sessionId", e)
             } finally {
                 _uiState.value = _uiState.value.copy(pendingActionSessionId = null)
-                load()
+                // An error this action raised survives the reload; an older one does not.
+                load(keepActionError = _uiState.value.actionError.takeIf { it != errorBefore })
             }
         }
     }
