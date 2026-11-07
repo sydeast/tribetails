@@ -8,6 +8,7 @@ import com.tribetails.auntieos.web.data.draftsAwaitingReview
 import com.tribetails.auntieos.web.screens.communicate.MessageType
 import com.tribetails.auntieos.web.screens.communicate.messageTypeOfDraft
 import com.tribetails.auntieos.web.screens.communicate.sentNoteFor
+import com.tribetails.auntieos.web.screens.home.taleRowMeta
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -140,5 +141,21 @@ class GeneratedDraftReviewTest {
         assertEquals("deleteGeneratedDraft", JvmFirestoreFixtures.lastCallableName)
         val sent = Json.parseToJsonElement(JvmFirestoreFixtures.lastCallablePayloadJson!!).jsonObject
         assertEquals("gd1", sent["draftId"]?.jsonPrimitive?.content)
+    }
+
+    /**
+     * #1598 ruling (2026-11-05): an unsent KinTale is a "Draft" everywhere, Home
+     * included. Home's rows printed the stored status (PENDING, GENERATED).
+     */
+    @Test
+    fun homeRowMetaSaysDraftWhateverTheStoredStatus() {
+        assertEquals(
+            "DRAFT · Robyn · 2026-05-23",
+            taleRowMeta(GeneratedDraft(_id = "a", status = "pending", kinfolkName = "Robyn", createdOn = "2026-05-23T22:23:00Z")),
+        )
+        assertEquals(
+            "DRAFT · Olivia",
+            taleRowMeta(GeneratedDraft(_id = "b", status = "generated", kinfolk_name = "Olivia")),
+        )
     }
 }

@@ -909,13 +909,9 @@ private fun TaleRow(draft: Draft, index: Int, onOpen: () -> Unit) {
                 maxLines = 1,
             )
             Spacer(Modifier.height(5.dp))
-            // item 6: meta = STATUS · household (name once now) · createdOn when present.
+            // item 6: meta = DRAFT · household (name once now) · createdOn when present.
             Text(
-                buildString {
-                    append(draft.status.uppercase())
-                    if (!draft.kinfolkName.isNullOrBlank()) append(" · ${draft.kinfolkName}")
-                    if (draft.createdOn.isNotBlank()) append(" · ${draft.createdOn.take(10)}")
-                },
+                taleRowMeta(draft),
                 style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp, letterSpacing = 0.4.sp),
                 color = c.textFaint,
             )
@@ -1089,3 +1085,16 @@ private fun statusColor(status: VisitStatus): Color = when (status) {
  * there is none (the button then opens a blank Communicate). Pure; tested.
  */
 internal fun reviewTarget(drafts: List<Draft>): String? = drafts.firstOrNull { it.id.isNotBlank() }?.id
+
+/**
+ * The mono meta line of a "KinTales pending" row: DRAFT, the household, the day.
+ * #1598 ruling (2026-11-05): a written but unsent KinTale is a "Draft"
+ * everywhere, Home included. Every row is unsent ([AuntieRepository.getRecentDrafts]
+ * keeps only [Draft.isUnsent]), so the word is constant; the stored status
+ * printed PENDING or GENERATED and disagreed with KinTales > Drafts. Pure; tested.
+ */
+internal fun taleRowMeta(draft: Draft): String = buildString {
+    append("DRAFT")
+    if (!draft.kinfolkName.isNullOrBlank()) append(" · ${draft.kinfolkName}")
+    if (draft.createdOn.isNotBlank()) append(" · ${draft.createdOn.take(10)}")
+}

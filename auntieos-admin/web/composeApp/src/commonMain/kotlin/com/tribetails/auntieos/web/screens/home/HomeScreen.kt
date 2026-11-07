@@ -858,17 +858,26 @@ private fun TaleRow(draft: GeneratedDraft, index: Int, onOpen: () -> Unit) {
                 maxLines = 1,
             )
             Spacer(Modifier.height(5.dp))
-            // item 6: meta = STATUS · household (name appears ONCE now). createdOn
+            // item 6: meta = DRAFT · household (name appears ONCE now). createdOn
             // appended only when present (no fabricated relative time).
             Text(
-                buildString {
-                    append(draft.status.uppercase())
-                    if (draft.household().isNotBlank()) append(" · ${draft.household()}")
-                    if (draft.created().isNotBlank()) append(" · ${draft.created().take(10)}")
-                },
+                taleRowMeta(draft),
                 style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp, letterSpacing = 0.4.sp),
                 color = c.textFaint,
             )
         }
     }
+}
+
+/**
+ * The mono meta line of a "KinTales pending" row: DRAFT, the household, the day.
+ * #1598 ruling (2026-11-05): a written but unsent KinTale is a "Draft"
+ * everywhere, Home included. Every row is unsent ([draftsAwaitingReview]), so
+ * the word is constant; the stored status printed PENDING or GENERATED and
+ * disagreed with KinTales > Drafts. Pure; tested.
+ */
+internal fun taleRowMeta(draft: GeneratedDraft): String = buildString {
+    append("DRAFT")
+    if (draft.household().isNotBlank()) append(" · ${draft.household()}")
+    if (draft.created().isNotBlank()) append(" · ${draft.created().take(10)}")
 }

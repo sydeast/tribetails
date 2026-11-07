@@ -765,7 +765,8 @@ private fun GeneratedDraftRow(draft: GeneratedDraft, onOpenDraft: (GeneratedDraf
             )
             Text(draftSubmeta(draft), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
-        AuntieStatusPill(label = draft.status.lowercase().ifBlank { "pending" }, tone = AuntieStatusTone.Neutral)
+        // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
+        AuntieStatusPill(label = "Draft", tone = AuntieStatusTone.Neutral)
     }
 }
 

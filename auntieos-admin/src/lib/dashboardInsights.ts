@@ -815,7 +815,11 @@ export function pendingTaleRows(
           .find((line) => line !== '') ?? '';
       const household = str(d.kinfolkName).trim();
       const created = str(d.createdOn).slice(0, 10);
-      const meta = [str(d.status).trim().toUpperCase() || 'DRAFT', household, created]
+      // #1598 ruling (2026-11-05): a written but unsent KinTale is a "Draft"
+      // everywhere, Home included. Every row here is unsent (filtered above),
+      // so the word is constant; the stored status (`pending`, `generated`)
+      // printed as PENDING / GENERATED and disagreed with KinTales > Drafts.
+      const meta = ['DRAFT', household, created]
         .filter((part) => part !== '')
         .join(' · ');
       return {

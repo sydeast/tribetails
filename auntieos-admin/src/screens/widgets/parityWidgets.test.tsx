@@ -218,7 +218,7 @@ describe('KinTalesPendingWidget', () => {
 
     expect(screen.getByText('visit report')).toBeInTheDocument();
     expect(screen.getByText('Biscuit had a lovely time.')).toBeInTheDocument();
-    expect(screen.getByText(`GENERATED · Sara · ${TODAY}`)).toBeInTheDocument();
+    expect(screen.getByText(`DRAFT · Sara · ${TODAY}`)).toBeInTheDocument();
   });
 
   it('#1563: every row opens its own draft', async () => {
