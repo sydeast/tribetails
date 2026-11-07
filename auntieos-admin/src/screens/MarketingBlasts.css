@@ -297,7 +297,7 @@
   flex-direction: column;
   gap: var(--space-1);
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--color-text-primary);
 }
 .blasts__copy-body {
   margin: 0;
@@ -306,7 +306,7 @@
   overflow-wrap: anywhere;
   font: inherit;
   font-size: var(--type-body-sm-size);
-  color: var(--color-text);
+  color: var(--color-text-primary);
   background: var(--color-surface-2);
   border-radius: var(--radius-card);
   max-height: 18rem;

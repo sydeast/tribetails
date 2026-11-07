@@ -242,9 +242,9 @@ class MarketingBlastTest {
     }
 
     @Test
-    fun `a row with no title falls back to its campaign key`() {
+    fun `a row with no title falls back to its campaign name, never the key (#1587)`() {
         val rows = decodeBlasts(mapOf("blasts" to listOf(mapOf("id" to "b1", "key" to "survey.event"))))
-        assertEquals("survey.event", rows.first().displayName)
+        assertEquals("Survey or event", rows.first().displayName)
     }
 
     @Test

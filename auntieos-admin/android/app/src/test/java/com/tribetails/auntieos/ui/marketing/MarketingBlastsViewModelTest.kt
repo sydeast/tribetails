@@ -190,9 +190,12 @@ class MarketingBlastsViewModelTest {
             v.setSendDate(date)
             v.setSendTime("09:00")
             v.setTitle("June newsletter")
-            coEvery { repo.previewMarketingBlastCopy(any(), any()) } returns Result.success(
-                BlastCopyPreview(fields = listOf(MergeFieldStatus("headline", MergeFieldSource.Missing))),
-            )
+            // The server classifies against the data it is sent: missing until typed.
+            coEvery { repo.previewMarketingBlastCopy(any(), any()) } coAnswers {
+                val data = secondArg<Map<String, Any?>>()
+                val source = if (data["headline"] != null) MergeFieldSource.Provided else MergeFieldSource.Missing
+                Result.success(BlastCopyPreview(fields = listOf(MergeFieldStatus("headline", source))))
+            }
             v.setCampaignKey(MarketingKey.Newsletter)
             advanceUntilIdle()
             v.setFieldValue("headline", "A little news")
