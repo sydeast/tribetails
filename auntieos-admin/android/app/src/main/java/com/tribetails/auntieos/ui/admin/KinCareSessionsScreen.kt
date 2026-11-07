@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
+import com.tribetails.auntieos.domain.addressLooksIncomplete
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -606,6 +608,14 @@ private fun KinCareCard(
             // ---- Address chip (clickable → maps) ----
             if (address.isNotBlank()) {
                 AddressChip(address = address, context = context)
+            }
+            // #1602: "18605" was all the walk's chip said, with no hint.
+            if (addressLooksIncomplete(address)) {
+                Text(
+                    INCOMPLETE_ADDRESS_HINT,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.warning,
+                )
             }
 
             // ---- One-line notes preview (kinfolk-facing first, internal fallback) ----

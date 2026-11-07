@@ -357,3 +357,32 @@ describe('GoogleCalendarSection, connected', () => {
     expect(await screen.findByText(/Google did not confirm it: network down/)).toBeInTheDocument();
   });
 });
+
+// ISSUE #1612: one shared `busy` flag drove every button's label, so loading the
+// calendar list read "Saving..." on Save calendar and "Sending..." on the push,
+// though nothing was being saved or sent.
+describe('GoogleCalendarSection, each button names only its own wait', () => {
+  beforeEach(() => {
+    api.getGoogleCalendarConnection.mockResolvedValue(connectionResult(CONNECTED));
+  });
+
+  it('loading calendars leaves Save calendar and the push button reading as themselves', async () => {
+    api.listGoogleCalendars.mockReturnValue(new Promise(() => {}));
+    render(<GoogleCalendarSection />);
+    await userEvent.click(await screen.findByRole('button', { name: /load calendars/i }));
+    expect(screen.getByRole('button', { name: 'Loading calendars…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save calendar' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Push next 30 days' })).toBeDisabled();
+    expect(screen.queryByText('Saving…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sending…')).not.toBeInTheDocument();
+  });
+
+  it('a push says Sending on the push button only', async () => {
+    api.pushVisitsToGoogleCalendar.mockReturnValue(new Promise(() => {}));
+    render(<GoogleCalendarSection />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Push next 30 days' }));
+    expect(screen.getByRole('button', { name: 'Sending…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save calendar' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /load calendars/i })).toBeDisabled();
+  });
+});
