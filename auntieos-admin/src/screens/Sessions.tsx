@@ -1,6 +1,6 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
-import { useMemo, useState } from 'react';
-import { sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
+import { useCallback, useMemo, useState } from 'react';
+import { overdueBeforeWindowQuery, sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
 import { KIN_QUERY, type Kin } from '../api/directory';
 import { transitionBookingStatus } from '../api/bookingsWrite';
 import {
@@ -159,6 +159,18 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
     [mode, archiveFrom, archiveTo, todayIso],
   );
   const { state: rows, hasMore, more, loadMore, reload } = usePagedCollection<SessionEntry>(spec);
+  // #1607: the overdue visits older than the window, so Overdue here counts the
+  // same visits the Bookings list marks OVERDUE. Board mode only.
+  const olderOverdueSpec = useMemo(() => overdueBeforeWindowQuery(todayIso), [todayIso]);
+  const olderOverdue = useCollection<SessionEntry>(olderOverdueSpec);
+  const withOlderOverdue = useCallback(
+    (data: SessionEntry[]): SessionEntry[] => {
+      if (olderOverdue.status !== 'ready') return data;
+      const seen = new Set(data.map((r) => r._id));
+      return [...data, ...olderOverdue.data.filter((r) => !seen.has(r._id))];
+    },
+    [olderOverdue],
+  );
 
   /**
    * THE TWO JOINS THE CARD NEEDS, both of them household-directory streams this
@@ -270,7 +282,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
                     stagger would clamp them inside the group instead of centring
                     them on the viewport. */}
                 <ul className="sessions__phases">
-                  {groupSessionsByPhase(data, todayIso).map((p) => (
+                  {groupSessionsByPhase(withOlderOverdue(data), todayIso).map((p) => (
                     <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
                       <h3 className="sessions__phase-header">
                         {p.label}

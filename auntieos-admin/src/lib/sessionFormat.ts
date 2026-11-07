@@ -422,6 +422,15 @@ export function sessionPhase(row: PhaseRow, todayIso: string): SessionPhase | nu
   return diff >= -1 ? 'upcoming' : 'overdue';
 }
 
+/**
+ * #1607: THE one definition of overdue, shared by Auntie Time's Overdue group
+ * and the Bookings list's OVERDUE pill: a visit still on the books whose day is
+ * more than a day behind today (`sessionPhase`'s own rule, issue #702).
+ */
+export function isOverdueSession(row: PhaseRow, todayIso: string): boolean {
+  return sessionPhase(row, todayIso) === 'overdue';
+}
+
 /** One phase's rows, still sub-grouped by local day so the day headers survive. */
 export interface SessionPhaseGroup<T> {
   phase: SessionPhase;

@@ -10,6 +10,7 @@ import {
   bulkOutcomeSummary,
   chunkEnvelopeIds,
   ENVELOPE_BATCH_LIMIT,
+  bulkActionsFor,
 } from './bookingBulk';
 
 function fakeTs(iso: string): Timestamp {
@@ -264,5 +265,14 @@ describe('bulkOutcomeSummary', () => {
       [],
     );
     expect(bulkOutcomeSummary(out)).toBe('Cancelled 1 of 1 selected booking.');
+  });
+});
+
+describe('bulkActionsFor (#1607)', () => {
+  it('offers each action that fits at least one picked row, in the bar order', () => {
+    expect(bulkActionsFor(['scheduled', 'scheduled'])).toEqual(['CANCEL']);
+    expect(bulkActionsFor(['pending'])).toEqual(['APPROVE', 'REJECT']);
+    expect(bulkActionsFor(['pending', 'scheduled'])).toEqual(['APPROVE', 'REJECT', 'CANCEL']);
+    expect(bulkActionsFor(['completed', 'cancelled'])).toEqual([]);
   });
 });

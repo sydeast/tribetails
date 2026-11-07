@@ -156,6 +156,12 @@ fun BookingDetailModal(
     // the life of the modal. A load error shows inline with a retry.
     var pickerOpen by remember(session._id) { mutableStateOf(false) }
     var staff by remember { mutableStateOf<List<StaffMember>?>(null) }
+    // #1607: the notes name their staff writer, so the roster is read for them too.
+    // A failed read leaves the byline at "Staff", never a guessed role.
+    var noteStaff by remember { mutableStateOf<List<StaffMember>?>(null) }
+    LaunchedEffect(session._id) {
+        noteStaff = (client.listStaff() as? WriteResult.Ok)?.value
+    }
     var staffError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(pickerOpen, staffError) {
         if (pickerOpen && staff == null && staffError == null) {
@@ -450,7 +456,7 @@ fun BookingDetailModal(
                     subtitle = "Visible to kinfolk. Editable until 3 hours before the visit.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        NotesList(state = kinfolkNotes, emptyMsg = "No kinfolk-facing notes yet.")
+                        NotesList(state = kinfolkNotes, emptyMsg = "No kinfolk-facing notes yet.", staff = noteStaff)
                         MultilineField(
                             value = kinfolkInput,
                             onValueChange = { kinfolkInput = it },
@@ -500,7 +506,7 @@ fun BookingDetailModal(
                     subtitle = "Hidden from kinfolk. Visible to staff on every session of this booking.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        NotesList(state = internalNotes, emptyMsg = "No internal notes yet.")
+                        NotesList(state = internalNotes, emptyMsg = "No internal notes yet.", staff = noteStaff)
                         MultilineField(
                             value = internalInput,
                             onValueChange = { internalInput = it },
@@ -559,7 +565,7 @@ private fun FactRow(label: String, value: String) {
 }
 
 @Composable
-private fun NotesList(state: FirestoreResult<List<BookingNote>>, emptyMsg: String) {
+private fun NotesList(state: FirestoreResult<List<BookingNote>>, emptyMsg: String, staff: List<StaffMember>?) {
     val c = AuntieTheme.colors
     when (state) {
         is FirestoreResult.Loading -> Text("Loading notes", style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -582,7 +588,7 @@ private fun NotesList(state: FirestoreResult<List<BookingNote>>, emptyMsg: Strin
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(note.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary, modifier = Modifier.weight(1f).padding(end = 8.dp))
-                            Text(note.authorRole, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+                            Text(bookingNoteAuthorLabel(note, staff), style = AuntieTheme.typography.labelSmall, color = c.textDim)
                         }
                     }
                 }
@@ -650,4 +656,16 @@ private fun displayDateTime(iso: String, zone: TimeZone): String {
     val hour12 = when (ldt.hour % 12) { 0 -> 12; else -> ldt.hour % 12 }
     val minute = ldt.minute.toString().padStart(2, '0')
     return "$dow, $month ${ldt.date.day} at $hour12:$minute $ampm"
+}
+
+/**
+ * #1607: who wrote a note. `authorRole` is "admin" for EVERY staff caller (the
+ * server cannot tell an admin from an Auntie by it), so a staff note is named by
+ * its writer from the staff roster, and reads "Staff" until that is known; a
+ * household's note reads "Kinfolk". Never the raw role, never "Auntie" by default.
+ */
+internal fun bookingNoteAuthorLabel(note: BookingNote, staff: List<StaffMember>?): String = when (note.authorRole.trim().lowercase()) {
+    "admin" -> staff?.firstOrNull { it.uid == note.authorUid && note.authorUid.isNotBlank() }?.pickerLabel ?: "Staff"
+    "kinfolk" -> "Kinfolk"
+    else -> "Unknown"
 }

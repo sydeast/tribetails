@@ -34,6 +34,7 @@ import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { DenPanel, EmptyHint, ServicePill } from './DenScreenKit';
 import { useToast } from './Toast';
+import { useStaffNames } from '../lib/useStaffNames';
 import './BookingDetailModal.css';
 
 /** Whatever a rejected callable or Firestore read gave us, as operator copy. */
@@ -598,6 +599,8 @@ interface NotesPanelProps {
  * conditional hook in the parent would be illegal.
  */
 function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPanelProps) {
+  // #1607: a staff note names its writer, not a role.
+  const staffNames = useStaffNames();
   const state = useCollection<BookingNoteEntry>(
     bookingNotesQuery(kinfolkId, batchId, visitId, internal),
   );
@@ -652,7 +655,7 @@ function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPane
             {sortNotes(state.data).map((note) => (
               <li key={note._id} className="bdm__note">
                 <span className="bdm__note-body">{noteBody(note)}</span>
-                <span className="bdm__note-author">{noteAuthorLabel(note)}</span>
+                <span className="bdm__note-author">{noteAuthorLabel(note, staffNames)}</span>
               </li>
             ))}
           </ul>

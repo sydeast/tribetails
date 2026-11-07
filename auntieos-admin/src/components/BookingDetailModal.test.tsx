@@ -39,6 +39,9 @@ vi.mock('../api/staff', async (orig) => ({
   ...(await orig<typeof import('../api/staff')>()),
   listStaff,
 }));
+// #1607: the notes name their staff writer through the shared roster read.
+const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() } }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames.current }));
 
 const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
 vi.mock('../api/kinfolkProfile', async (orig) => ({

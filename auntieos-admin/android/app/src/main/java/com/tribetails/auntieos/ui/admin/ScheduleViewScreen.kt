@@ -434,6 +434,12 @@ private fun ScheduleViewScreenContent(
                 item {
                     BulkBookingActionBar(
                         selectedCount = selectedBookingIds.size,
+                        // #1607: only what the picked rows can take.
+                        offered = com.tribetails.auntieos.ui.admin.scheduling.bulkActionsForSelection(
+                            selected = selectedBookingIds,
+                            requestIds = pendingBookings.map { it.id }.toSet(),
+                            scheduledIds = scheduledBookings.map { it.id }.toSet(),
+                        ),
                         inFlight = state.bulkBookingInFlight,
                         allSelected = selectableIds.isNotEmpty() && selectedBookingIds == selectableIds,
                         onSelectAll = {
@@ -1112,6 +1118,8 @@ private fun ScheduleControls(
 @Composable
 private fun BulkBookingActionBar(
     selectedCount: Int,
+    /** #1607: the transitions at least one picked row can take, plus "RESCHEDULE" when any can move. */
+    offered: List<String>,
     inFlight: Boolean,
     allSelected: Boolean,
     onSelectAll: () -> Unit,
@@ -1141,15 +1149,16 @@ private fun BulkBookingActionBar(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PrimaryButton(label = "Approve", enabled = canAct, onClick = { onAction("APPROVE") })
-                GhostButton(label = "Reject", onClick = { if (canAct) onAction("REJECT") }, enabled = canAct)
-                GhostButton(label = "Cancel", onClick = { if (canAct) onAction("CANCEL") }, enabled = canAct)
+                // #1607: Approve and Reject on scheduled visits could only ever skip.
+                if ("APPROVE" in offered) PrimaryButton(label = "Approve", enabled = canAct, onClick = { onAction("APPROVE") })
+                if ("REJECT" in offered) GhostButton(label = "Reject", onClick = { if (canAct) onAction("REJECT") }, enabled = canAct)
+                if ("CANCEL" in offered) GhostButton(label = "Cancel", onClick = { if (canAct) onAction("CANCEL") }, enabled = canAct)
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                GhostButton(label = "Reschedule", onClick = { if (canAct) onReschedule() }, enabled = canAct)
+                if ("RESCHEDULE" in offered) GhostButton(label = "Reschedule", onClick = { if (canAct) onReschedule() }, enabled = canAct)
             }
         }
     }
