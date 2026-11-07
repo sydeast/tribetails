@@ -57,6 +57,8 @@ import com.tribetails.auntieos.web.data.LocalTestMode
 import com.tribetails.auntieos.web.data.NewBookingVisitInput
 import com.tribetails.auntieos.web.data.TestMode
 import com.tribetails.auntieos.web.screens.schedule.BookingDetailModal
+import com.tribetails.auntieos.web.screens.schedule.NO_KINCARE_TYPES_MESSAGE
+import com.tribetails.auntieos.web.screens.schedule.rateCardServiceTypes
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
 import com.tribetails.auntieos.web.data.resolveTimeBlock
@@ -945,9 +947,6 @@ private fun bookingDateLabel(b: KinCareSession): String {
     return raw.take(10).ifBlank { "Date pending" }
 }
 
-private val SERVICE_TYPES = listOf(
-    "Pet Sitting", "Dog Walking", "Overnight", "Daycare", "Drop-In", "Other",
-)
 
 /**
  * B9: order KinCare-type chips by parsed duration (ascending) instead of the
@@ -1019,12 +1018,12 @@ internal fun BookingCreateScreen(
     // households with nothing to explain why.
     val kinfolkRead = rememberLiveRead { client.kinfolkStream() }
     // KinCare types are sourced from Business Settings serviceRates (NOT hardcoded), per the
-    // create-booking mockup. Falls back to SERVICE_TYPES when settings have no rates yet.
+    // create-booking mockup. #1703: no fallback names, which priced nothing at invoice time.
     val settingsResult by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
 
     var kinfolkSearch   by remember { mutableStateOf("") }
     var selectedKinfolk by remember { mutableStateOf<Kinfolk?>(null) }
-    var serviceType     by remember { mutableStateOf(SERVICE_TYPES[0]) }
+    var serviceType     by remember { mutableStateOf("") }
     var startDate       by remember { mutableStateOf("") }
     var startTime       by remember { mutableStateOf("") }
     var showDatePicker  by remember { mutableStateOf(false) }
@@ -1081,9 +1080,13 @@ internal fun BookingCreateScreen(
 
     val serviceRates: Map<String, String> =
         (settingsResult as? FirestoreResult.Data)?.value?.serviceRates ?: emptyMap()
-    val serviceOptions: List<String> = sortServiceTypesByDuration(
-        if (serviceRates.isNotEmpty()) serviceRates.keys.toList() else SERVICE_TYPES,
-    )
+    val serviceOptions: List<String> = rateCardServiceTypes(serviceRates)
+    // The first KinCare type is picked once the rates land, as the hardcoded first
+    // one used to be; a pick the operator made is kept while it is still a key.
+    LaunchedEffect(serviceOptions) {
+        if (serviceType !in serviceOptions) serviceType = serviceOptions.firstOrNull().orEmpty()
+    }
+    val hasService = serviceType in serviceOptions
 
     ScreenScaffold {
         DenScreenHeading(
@@ -1173,6 +1176,12 @@ internal fun BookingCreateScreen(
 
             // ── KinCare type (from Business Settings serviceRates, NOT hardcoded) ──
             AuntieFieldLabel(text = "KinCare type", optionalNote = "Managed in Business Settings")
+            when {
+                settingsResult is FirestoreResult.Loading -> EmptyHint("Loading KinCare types...")
+                settingsResult is FirestoreResult.Error ->
+                    EmptyHint("Couldn't load KinCare types: ${(settingsResult as FirestoreResult.Error).message}", error = true)
+                serviceOptions.isEmpty() -> EmptyHint(NO_KINCARE_TYPES_MESSAGE, error = true)
+            }
             AuntieChipGroup(
                 options           = serviceOptions,
                 selected          = setOf(serviceType),
@@ -1373,7 +1382,7 @@ internal fun BookingCreateScreen(
             // (e.g. Weekly with no weekday selected yields none).
             val requestVisits = if (repeatMode == BookingRepeat.SINGLE) emptyList()
                 else buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks, businessZone)
-            val canSubmit   = hasKinfolk && hasDate && (repeatMode == BookingRepeat.SINGLE || requestVisits.isNotEmpty())
+            val canSubmit   = hasKinfolk && hasService && hasDate && (repeatMode == BookingRepeat.SINGLE || requestVisits.isNotEmpty())
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1382,7 +1391,7 @@ internal fun BookingCreateScreen(
                 GhostButton(label = "Cancel", onClick = onBack, modifier = Modifier.weight(1f))
                 GhostButton(
                     label   = "Save draft",
-                    enabled = hasKinfolk && !saving,
+                    enabled = hasKinfolk && hasService && !saving,
                     onClick = {
                         scope.launch {
                             saving = true
