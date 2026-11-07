@@ -94,6 +94,9 @@ export function bulkActionApplies(state: BookingState, action: BatchBookingActio
     case 'pending':
       return action === 'APPROVE' || action === 'REJECT';
     case 'scheduled':
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
       return action === 'CANCEL';
     case 'completed':
     case 'cancelled':
@@ -111,6 +114,10 @@ function skipReason(state: BookingState, action: BatchBookingAction): string {
       return `Still awaiting a reply, so it cannot be ${verb}. Approve or reject it instead.`;
     case 'scheduled':
       return `Already on the books, so it cannot be ${verb}. Cancel it instead.`;
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
+      return `The visit is under way, so it cannot be ${verb}. Cancel or complete it instead.`;
     case 'completed':
       return 'Already completed.';
     case 'cancelled':
