@@ -198,7 +198,38 @@ class FakeAuntieDataSource(
         return WriteResult.Ok(Unit)
     }
 
+    /** #1674: every direct session write New booking makes, so a test can say there was none. */
+    val createdBookings = mutableListOf<KinCareSession>()
+    /** #1674: every request New booking files, in order. */
+    data class FiledRequest(
+        val kinfolkId: String,
+        val visits: List<com.tribetails.auntieos.web.data.NewBookingVisitInput>,
+        val notes: String?,
+        val pattern: String,
+        val weeklyDays: List<Int>?,
+        val staffNotes: String?,
+    )
+    val filedRequests = mutableListOf<FiledRequest>()
+    override suspend fun createMultiDateBookingRequest(
+        kinfolkId: String,
+        visits: List<com.tribetails.auntieos.web.data.NewBookingVisitInput>,
+        notes: String?,
+        pattern: String,
+        weeklyDays: List<Int>?,
+        idempotencyKey: String?,
+        staffNotes: String?,
+    ): WriteResult<com.tribetails.auntieos.web.data.MultiDateBookingResult> {
+        filedRequests += FiledRequest(kinfolkId, visits, notes, pattern, weeklyDays, staffNotes)
+        return WriteResult.Ok(
+            com.tribetails.auntieos.web.data.MultiDateBookingResult(
+                batchId = "req_fake_${filedRequests.size}",
+                visitCount = visits.size,
+                visitIds = visits.indices.map { "v$it" },
+            ),
+        )
+    }
     override suspend fun createBooking(booking: KinCareSession): WriteResult<String> {
+        createdBookings += booking
         val current = _sessions.value
         val newList = if (current is FirestoreResult.Data) current.value + booking else listOf(booking)
         _sessions.value = FirestoreResult.Data(newList)
