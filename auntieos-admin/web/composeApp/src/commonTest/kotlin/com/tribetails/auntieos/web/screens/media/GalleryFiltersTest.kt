@@ -86,4 +86,20 @@ class GalleryFiltersTest {
         assertEquals(listOf(UNKNOWN_HOUSEHOLD_LABEL, UNKNOWN_HOUSEHOLD_LABEL), groups.drop(1).map { it.label })
         assertEquals(false, groups.any { it.label.contains("k-gone") })
     }
+    // #1588: the Upload dialog's kin picker.
+    private fun pet(id: String, name: String, kinfolk: String, status: String = "active") =
+        Kin(_id = id, name = name, kinfolkId = kinfolk, status = status)
+    @Test fun uploadableKinIsOnlyTheChosenHouseholdsActiveKinByName() {
+        val roster = listOf(
+            pet("p1", "gravy", "k1"),
+            pet("p2", "Biscuit", "k1"),
+            pet("p3", "Old Boy", "k1", status = "archived"),
+            pet("p4", "Mochi", "k2"),
+        )
+        assertEquals(listOf("p2", "p1"), uploadableKin(roster, "k1").map { it._id })
+        assertEquals(listOf("p4"), uploadableKin(roster, "k2").map { it._id })
+    }
+    @Test fun uploadableKinOffersNothingUntilAHouseholdIsChosen() {
+        assertEquals(emptyList(), uploadableKin(listOf(pet("p1", "Gravy", "k1")), ""))
+    }
 }

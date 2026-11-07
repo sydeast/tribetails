@@ -70,6 +70,7 @@ import com.tribetails.auntieos.domain.galleryKinfolkIds
 import com.tribetails.auntieos.domain.galleryMonths
 import com.tribetails.auntieos.domain.taggableKin
 import com.tribetails.auntieos.domain.taggedKinNames
+import com.tribetails.auntieos.domain.uploadableKin
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieCard
@@ -135,47 +136,21 @@ fun GalleryScreen(
         GalleryBody(viewModel = viewModel, onUpload = { showTargetPicker = true })
     }
 
-    // #3 / operator ruling 2026-07-31: choose which household this upload belongs
-    // to, or Company for media unrelated to any household. Company is always
-    // listed first and is always selectable, even with zero households on file
-    // (kinfolk do not "own" media, so Upload is never blocked on the roster).
+    // #3 / operator ruling 2026-07-31 / #1588: choose where this upload goes. A
+    // household, a kin (household first, then one of ITS kin; the kin id is never
+    // typed), or Company for media unrelated to any household. Company is always
+    // offered, even with zero households on file (kinfolk do not "own" media, so
+    // Upload is never blocked on the roster).
     if (showTargetPicker) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showTargetPicker = false },
-            confirmButton = {},
-            title = { Text("Where should this upload go?") },
-            text = {
-                androidx.compose.foundation.lazy.LazyColumn(
-                    modifier = Modifier.heightIn(max = 360.dp),
-                ) {
-                    item {
-                        Text(
-                            text = "Company (no household)",
-                            style = AuntieTheme.typography.bodyLarge,
-                            color = AuntieTheme.colors.textPrimary,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showTargetPicker = false; uploadTarget = UploadTarget.Company }
-                                .padding(vertical = 12.dp),
-                        )
-                    }
-                    items(state.kinfolk.size) { i ->
-                        val kf = state.kinfolk[i]
-                        Text(
-                            text = kf.displayName,
-                            style = AuntieTheme.typography.bodyLarge,
-                            color = AuntieTheme.colors.textPrimary,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showTargetPicker = false; uploadTarget = UploadTarget.Household(kf) }
-                                .padding(vertical = 12.dp),
-                        )
-                    }
-                }
-            },
+        UploadTargetDialog(
+            kinfolk = state.kinfolk,
+            kin = state.kin,
+            loading = state.isLoading,
+            kinLoadFailed = state.kinLoadFailed,
+            onDismiss = { showTargetPicker = false },
+            onPick = { showTargetPicker = false; uploadTarget = it },
         )
     }
-
     // #3: once a target is chosen, the system media picker + upload runs. A
     // household stamps kinfolkId (entityId is the kinfolkId); Company (BUSINESS)
     // leaves it absent (operator ruling 2026-07-31).
@@ -184,6 +159,7 @@ fun GalleryScreen(
             entityId = target.entityId,
             entityType = target.entityType,
             entityName = target.entityName,
+            kinfolkId = target.kinfolkId,
             onDismiss = { uploadTarget = null },
             onMediaUploaded = { uploadTarget = null; viewModel.load() },
             viewModel = uploadViewModel,
@@ -487,6 +463,8 @@ private sealed class UploadTarget {
     abstract val entityId: String
     abstract val entityType: MediaEntityType
     abstract val entityName: String
+    /** The household stamped on the saved row for a KIN target (#1588); blank for every other. */
+    open val kinfolkId: String get() = ""
 
     data class Household(val kinfolk: Kinfolk) : UploadTarget() {
         override val entityId get() = kinfolk.id
@@ -494,6 +472,13 @@ private sealed class UploadTarget {
         override val entityName get() = kinfolk.displayName
     }
 
+    /** A pet (#1588). The entity is the kin; the household rides along as `kinfolkId`. */
+    data class PetKin(val pet: Kin, val household: Kinfolk) : UploadTarget() {
+        override val entityId get() = pet.id
+        override val entityType get() = MediaEntityType.KIN
+        override val entityName get() = pet.name.ifBlank { "Unnamed" }
+        override val kinfolkId get() = household.id
+    }
     object Company : UploadTarget() {
         override val entityId = BUSINESS_ENTITY_ID
         override val entityType = MediaEntityType.BUSINESS
@@ -502,6 +487,103 @@ private sealed class UploadTarget {
 }
 
 
+/** Where the Upload dialog is: the three choices, a household list, or a household's kin list. */
+private sealed class UploadStep {
+    object Type : UploadStep()
+    /** [forKin] true: picking the household a pet belongs to; false: picking the household to upload to. */
+    data class Household(val forKin: Boolean) : UploadStep()
+    data class PetOf(val household: Kinfolk) : UploadStep()
+}
+/**
+ * "Where should this upload go?" (#3, #1588). Household, Kin (pet) or Company,
+ * the same three targets the web dialog offers. A kin is reached through its
+ * household, so what the operator reads on screen is a name, never a database id.
+ */
+@Composable
+private fun UploadTargetDialog(
+    kinfolk: List<Kinfolk>,
+    kin: List<Kin>,
+    loading: Boolean,
+    kinLoadFailed: Boolean,
+    onDismiss: () -> Unit,
+    onPick: (UploadTarget) -> Unit,
+) {
+    var step by remember { mutableStateOf<UploadStep>(UploadStep.Type) }
+    val title = when (val st = step) {
+        UploadStep.Type -> "Where should this upload go?"
+        is UploadStep.Household -> if (st.forKin) "Which household is the kin in?" else "Which household?"
+        is UploadStep.PetOf -> "Which kin in ${st.household.displayName}?"
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {},
+        dismissButton = {
+            if (step != UploadStep.Type) {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        step = when (val st = step) {
+                            is UploadStep.PetOf -> UploadStep.Household(forKin = true)
+                            else -> UploadStep.Type
+                        }
+                    },
+                ) { Text("Back") }
+            }
+        },
+        title = { Text(title) },
+        text = {
+            androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                when (val st = step) {
+                    UploadStep.Type -> {
+                        item { UploadChoiceRow("Household") { step = UploadStep.Household(forKin = false) } }
+                        item { UploadChoiceRow("Kin (pet)") { step = UploadStep.Household(forKin = true) } }
+                        item { UploadChoiceRow("Company (no household)") { onPick(UploadTarget.Company) } }
+                    }
+                    is UploadStep.Household -> {
+                        if (loading) item { UploadHint("Loading households…") }
+                        else if (kinfolk.isEmpty()) item { UploadHint("No households on file yet. Add one in Directory first.") }
+                        else items(kinfolk.size) { i ->
+                            val kf = kinfolk[i]
+                            UploadChoiceRow(kf.displayName) {
+                                if (st.forKin) step = UploadStep.PetOf(kf) else onPick(UploadTarget.Household(kf))
+                            }
+                        }
+                    }
+                    is UploadStep.PetOf -> {
+                        val pets = uploadableKin(kin, st.household.id)
+                        if (loading) item { UploadHint("Loading kin…") }
+                        else if (kinLoadFailed) item { UploadHint("Couldn't load the kin roster, so there is nothing to choose from.") }
+                        else if (pets.isEmpty()) item { UploadHint("No kin on this household yet.") }
+                        else items(pets.size) { i ->
+                            val pet = pets[i]
+                            UploadChoiceRow(pet.name.ifBlank { "Unnamed" }) { onPick(UploadTarget.PetKin(pet, st.household)) }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+@Composable
+private fun UploadChoiceRow(label: String, onClick: () -> Unit) {
+    Text(
+        text = label,
+        style = AuntieTheme.typography.bodyLarge,
+        color = AuntieTheme.colors.textPrimary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+    )
+}
+@Composable
+private fun UploadHint(text: String) {
+    Text(
+        text = text,
+        style = AuntieTheme.typography.bodyMedium,
+        color = AuntieTheme.colors.textDim,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+    )
+}
 /**
  * A1 (A8): full-size media viewer. Tapping a tile opens this (instead of jumping
  * straight to tag-editing). Images render full-res; for video we show the poster and

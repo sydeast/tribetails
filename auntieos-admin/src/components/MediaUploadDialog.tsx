@@ -1,4 +1,4 @@
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { uploadMediaFile, BUSINESS_ENTITY_ID, type UploadEntityType, type UploadStage } from '../api/mediaUpload';
 import { uploadFileError, MAX_UPLOAD_BYTES, formatMegabytes } from '../lib/mediaUploadLimits';
 import { Dialog } from './Dialog';
@@ -8,6 +8,17 @@ import './MediaUploadDialog.css';
 export interface KinfolkOption {
   id: string;
   label: string;
+}
+/**
+ * One pet the KIN target can attach a file to (#1588). `kinfolkId` is its
+ * household, which does two jobs: it narrows the kin picker to the household
+ * chosen above it, and it is stamped on the saved `media_files` row so the
+ * tag dialog later scopes to that household instead of the whole roster.
+ */
+export interface KinOption {
+  id: string;
+  label: string;
+  kinfolkId: string;
 }
 
 /**
@@ -37,6 +48,15 @@ interface MediaUploadDialogProps {
    * set: there is nothing left to pick.
    */
   kinfolkOptions?: KinfolkOption[];
+  /**
+   * The kin roster, for the KIN target's second picker (#1588). Narrowed to the
+   * household picked above it, here, so the rule lives in one place.
+   */
+  kinOptions?: KinOption[];
+  /** True while the kin stream is still resolving: an empty list then is "not loaded yet", not "no kin". */
+  kinLoading?: boolean;
+  /** Non-null when the kin stream FAILED, so an empty list is unknown rather than "this household has no kin". */
+  kinError?: string | null;
   /** Uploads straight to this entity, with no target picker at all. See {@link FixedUploadTarget}. */
   fixedTarget?: FixedUploadTarget;
   onClose: () => void;
@@ -77,11 +97,12 @@ function stageLabel(stage: UploadStage): string {
  *             picker, never free-text, since the whole roster is on hand).
  *             Starts unchosen (#1604): a default household is a wrong-family
  *             upload waiting for a hurried click.
- *   KIN       free-text kin document id: Gallery.tsx does not stream the
- *             `kin` collection (its own header explicitly scopes out a
- *             household filter's *sibling* concept), so there is no roster
- *             here to pick from yet. Disclosed via a hint under the field,
- *             not silently narrowed to KINFOLK-only.
+ *   KIN       a household picker, then a picker of THAT household's kin
+ *             (#1588). The kin document id was a typed box until then, and no
+ *             screen showed an id to type. The household starts unchosen on
+ *             purpose, so a pet cannot be filed under the wrong family by
+ *             accepting a default. The saved row carries the household's id
+ *             as `kinfolkId`, which is what scopes Tag kin later.
  *   BUSINESS  labeled "Company (no household)": the fixed `business_settings`
  *             id (Android's own `AdminSettingsViewModel#uploadLogo`
  *             constant), shown read-only since there is nothing to pick. This
@@ -108,6 +129,9 @@ function stageLabel(stage: UploadStage): string {
  */
 export function MediaUploadDialog({
   kinfolkOptions = [],
+  kinOptions = [],
+  kinLoading = false,
+  kinError = null,
   fixedTarget,
   onClose,
   onUploaded,
@@ -117,6 +141,7 @@ export function MediaUploadDialog({
   // roster, so an upload accepted with the default filed a photo under whichever
   // family sorted first.
   const [kinfolkId, setKinfolkId] = useState('');
+  const [kinHouseholdId, setKinHouseholdId] = useState('');
   const [kinId, setKinId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   /**
@@ -143,11 +168,19 @@ export function MediaUploadDialog({
         ? kinId.trim()
         : BUSINESS_ENTITY_ID;
 
+  const householdKin = useMemo(
+    () => (kinHouseholdId === '' ? [] : kinOptions.filter((k) => k.kinfolkId === kinHouseholdId)),
+    [kinOptions, kinHouseholdId],
+  );
   const entityIdError =
     touched && entityId === ''
-      ? entityType === 'KINFOLK'
-        ? 'Choose a household before uploading.'
-        : 'Choose a target before uploading.'
+      ? entityType === 'KIN'
+        ? kinHouseholdId === ''
+          ? 'Choose a household, then a kin.'
+          : 'Choose a kin before uploading.'
+        : entityType === 'KINFOLK'
+          ? 'Choose a household before uploading.'
+          : 'Choose a target before uploading.'
       : null;
   const fileError =
     rejectedFileError ?? (touched && file === null ? 'Choose a photo or video to upload.' : null);
@@ -180,7 +213,8 @@ export function MediaUploadDialog({
   const fileInputId = useId();
   const entityTypeId = useId();
   const kinfolkSelectId = useId();
-  const kinIdInputId = useId();
+  const kinHouseholdSelectId = useId();
+  const kinSelectId = useId();
   const businessIdInputId = useId();
 
   const closeUnlessBusy = useCallback(() => {
@@ -193,7 +227,13 @@ export function MediaUploadDialog({
     setUploadError(null);
     setStage('signing');
     try {
-      const mediaFileId = await uploadMediaFile({ file, entityType, entityId, onStage: setStage });
+      const mediaFileId = await uploadMediaFile({
+        file,
+        entityType,
+        entityId,
+        ...(entityType === 'KIN' ? { kinfolkId: kinHouseholdId } : {}),
+        onStage: setStage,
+      });
       setStage(null);
       onUploaded(mediaFileId);
     } catch (err) {
@@ -241,7 +281,13 @@ export function MediaUploadDialog({
               id={entityTypeId}
               className="media-upload__select"
               value={entityType}
-              onChange={(e) => setPickedType(e.target.value as UploadEntityType)}
+              onChange={(e) => {
+                setPickedType(e.target.value as UploadEntityType);
+                // The "Choose a target" message belongs to the type that was
+                // showing when Upload was pressed; carrying it over to a new
+                // type said the operator had picked nothing when they just had.
+                setTouched(false);
+              }}
             >
               <option value="KINFOLK">Household (Kinfolk)</option>
               <option value="KIN">Kin (pet)</option>
@@ -279,23 +325,69 @@ export function MediaUploadDialog({
         )}
 
         {fixedTarget === undefined && entityType === 'KIN' && (
-          <div className="media-upload__field">
-            <label className="media-upload__label" htmlFor={kinIdInputId}>
-              Kin ID
-            </label>
-            <input
-              id={kinIdInputId}
-              type="text"
-              className="media-upload__input"
-              value={kinId}
-              onChange={(e) => setKinId(e.target.value)}
-              aria-invalid={entityIdError !== null}
-              placeholder="e.g. pet_abc123"
-            />
-            <p className="media-upload__hint">Enter the kin&rsquo;s document ID (no picker for Kin yet).</p>
-          </div>
+          <>
+            <div className="media-upload__field">
+              <label className="media-upload__label" htmlFor={kinHouseholdSelectId}>
+                Kin&rsquo;s household
+              </label>
+              {kinfolkOptions.length === 0 ? (
+                <p className="media-upload__hint" role="alert">
+                  No households on file yet. Add one in Directory first.
+                </p>
+              ) : (
+                <select
+                  id={kinHouseholdSelectId}
+                  className="media-upload__select"
+                  value={kinHouseholdId}
+                  onChange={(e) => {
+                    setKinHouseholdId(e.target.value);
+                    setKinId('');
+                  }}
+                  aria-invalid={entityIdError !== null && kinHouseholdId === ''}
+                >
+                  <option value="">Choose a household</option>
+                  {kinfolkOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="media-upload__field">
+              <label className="media-upload__label" htmlFor={kinSelectId}>
+                Kin
+              </label>
+              {kinLoading ? (
+                <p className="media-upload__hint" aria-live="polite">
+                  Loading kin…
+                </p>
+              ) : kinError !== null ? (
+                <p className="media-upload__error" role="alert">
+                  Couldn&rsquo;t load the kin roster: {kinError}
+                </p>
+              ) : kinHouseholdId !== '' && householdKin.length === 0 ? (
+                <p className="media-upload__hint">No kin on this household yet.</p>
+              ) : (
+                <select
+                  id={kinSelectId}
+                  className="media-upload__select"
+                  value={kinId}
+                  disabled={kinHouseholdId === ''}
+                  onChange={(e) => setKinId(e.target.value)}
+                  aria-invalid={entityIdError !== null && kinHouseholdId !== ''}
+                >
+                  <option value="">{kinHouseholdId === '' ? 'Choose a household first' : 'Choose a kin'}</option>
+                  {householdKin.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </>
         )}
-
         {fixedTarget === undefined && entityType === 'BUSINESS' && (
           <div className="media-upload__field">
             <label className="media-upload__label" htmlFor={businessIdInputId}>

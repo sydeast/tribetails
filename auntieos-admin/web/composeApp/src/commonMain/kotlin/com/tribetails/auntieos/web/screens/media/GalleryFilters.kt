@@ -69,3 +69,14 @@ fun groupKinByHousehold(kin: List<Kin>, labelFor: (String) -> String?): List<Kin
             compareBy<KinHouseholdGroup> { it.label == UNKNOWN_HOUSEHOLD_LABEL }
                 .thenBy { it.label.lowercase() },
         )
+/**
+ * The kin the Gallery's Upload dialog offers once a household is chosen (#1588):
+ * that household's kin that are not archived, by name. A blank [kinfolkId]
+ * matches nothing, so no household chosen means no kin offered. Mirrors the web
+ * `MediaUploadDialog` and Android's `uploadableKin`.
+ */
+fun uploadableKin(allKin: List<Kin>, kinfolkId: String): List<Kin> =
+    if (kinfolkId.isBlank()) emptyList()
+    else allKin
+        .filter { it.kinfolkId == kinfolkId && !it.status.equals("archived", ignoreCase = true) }
+        .sortedBy { it.name.lowercase() }
