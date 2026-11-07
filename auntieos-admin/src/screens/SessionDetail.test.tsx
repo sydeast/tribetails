@@ -507,7 +507,7 @@ describe('SessionDetail: editing the visit', () => {
     await userEvent.type(minutes, '45');
     await userEvent.click(screen.getByRole('button', { name: /save details/i }));
     expect(updateKinCareSession).toHaveBeenCalledWith('sess1', { serviceDurationMinutes: 45 });
-    expect(await screen.findByText(/saved: serviceDurationMinutes/i)).toBeInTheDocument();
+    expect(await screen.findByText(/saved: visit length\./i)).toBeInTheDocument();
   });
   it('refuses an out-of-range visit length before it reaches the server', async () => {
     render(<SessionDetail entry={entry({ serviceDurationMinutes: 30 })} onBack={vi.fn()} />);

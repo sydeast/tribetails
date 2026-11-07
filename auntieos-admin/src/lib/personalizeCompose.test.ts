@@ -293,13 +293,13 @@ describe('buildGeneratePayload', () => {
 });
 
 describe('draftSubtitle', () => {
-  it('names the pieces the archive named, joined the archive way', () => {
+  it('#1592: names who it is for and the message type by its label, never the model or the draft id', () => {
     expect(draftSubtitle({ kinfolk_name: 'Dana Reyes', communication_type: 'visit_report', model: 'claude-sonnet-4-5', draft_id: 'd7' })).toBe(
-      'for Dana Reyes · visit_report · claude-sonnet-4-5 · draft #d7',
+      'for Dana Reyes · KinTale',
     );
   });
 
   it('drops the pieces that are missing instead of printing null', () => {
-    expect(draftSubtitle({ kinfolk_name: null, communication_type: 'blog_post', model: null, draft_id: null })).toBe('blog_post');
+    expect(draftSubtitle({ kinfolk_name: null, communication_type: 'blog_post', model: null, draft_id: null })).toBe('Blog');
   });
 });
