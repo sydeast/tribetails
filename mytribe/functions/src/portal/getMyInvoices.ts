@@ -29,6 +29,7 @@ import {
   NullableInvoiceEditScopeSchema,
   SignedCentsSchema,
 } from '../lib/invoiceResponseSchema';
+import { invoiceDayOf } from '../lib/invoiceDay';
 
 interface GetMyInvoicesRequest {
   kinfolkId?: string;
@@ -570,10 +571,10 @@ export async function getMyInvoicesHandler(
   // doc comment for the per-state reasoning; `cancelled` lands in no bucket.
   const open = all
     .filter((i) => i.status === 'open' || i.status === 'draft' || i.status === 'quote' || i.status === 'zero')
-    .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''));
+    .sort((a, b) => sortDay(a.dueDate).localeCompare(sortDay(b.dueDate)));
   const paid = all
     .filter((i) => i.status === 'paid')
-    .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+    .sort((a, b) => sortDay(b.date).localeCompare(sortDay(a.date)));
   const credits = all
     .filter((i) => i.status === 'credit' || i.status === 'redeemed')
     .sort((a, b) => (b.creditRedeemedAtMs ?? 0) - (a.creditRedeemedAtMs ?? 0));
@@ -871,3 +872,11 @@ export const getMyInvoices = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
   wrapCallable('getMyInvoices', getMyInvoicesHandler),
 );
+/**
+ * #1570: the day a stored `date`/`dueDate` names, for sorting. The imported
+ * "July 14, 2026" form compared as text put it after every ISO day; read as
+ * its day, it sorts where it belongs. Text no reader can date sorts by itself.
+ */
+function sortDay(raw: string | null): string {
+  return invoiceDayOf(raw) ?? raw ?? '';
+}
