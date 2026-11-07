@@ -167,6 +167,7 @@ notificationDebounceSweep
 notificationScheduledSweep
 onAuthUserCreate
 onBookingEnvelopeCreate
+onBookingEnvelopeResolve
 onBookingNoteCreate
 onBookingsWrite
 onBusinessSettingsWrite
