@@ -98,14 +98,9 @@ fun BookingDetailModal(
     val kinfolkNotes by remember(session.kinfolkId, bookingId) {
         client.bookingNotesStream(session.kinfolkId, bookingId, internal = false)
     }.collectAsState(initial = FirestoreResult.Loading)
-    val internalNotes by remember(session.kinfolkId, bookingId) {
-        client.bookingNotesStream(session.kinfolkId, bookingId, internal = true)
-    }.collectAsState(initial = FirestoreResult.Loading)
 
     var kinfolkInput by remember { mutableStateOf("") }
-    var internalInput by remember { mutableStateOf("") }
     var savingKinfolk by remember { mutableStateOf(false) }
-    var savingInternal by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
 
     // Reschedule (wires the Stage-1 rescheduleBooking callable, §A.9). Prefilled from
@@ -494,46 +489,8 @@ fun BookingDetailModal(
                     }
                 }
 
-                // ── Internal note ──
-                DenPanel(
-                    title = "Internal note (admin only)",
-                    subtitle = "Hidden from kinfolk. Visible to staff on every session of this booking.",
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        NotesList(state = internalNotes, emptyMsg = "No internal notes yet.")
-                        MultilineField(
-                            value = internalInput,
-                            onValueChange = { internalInput = it },
-                            label = "Add internal note",
-                            placeholder = "Context for staff",
-                            minLines = 3,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        PrimaryButton(
-                            label = if (savingInternal) "Saving" else "Save internal note",
-                            enabled = !savingInternal && internalInput.isNotBlank(),
-                            onClick = {
-                                scope.launch {
-                                    savingInternal = true
-                                    saveError = null
-                                    val r = client.addBookingNote(
-                                        kinfolkId = session.kinfolkId,
-                                        bookingId = bookingId,
-                                        body = internalInput.trim(),
-                                        internal = true,
-                                    )
-                                    when (r) {
-                                        is WriteResult.Ok -> internalInput = ""
-                                        is WriteResult.Err -> saveError = r.message
-                                    }
-                                    savingInternal = false
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
-
+                // ── Internal notes (#1580): the visit's one list, by session ──
+                VisitInternalNotesPanel(client = client, sessionId = session._id, zone = zone)
                 // Fail loud: surface any write error inline rather than swallowing it.
                 saveError?.let { err ->
                     AuntieBanner(tone = AuntieBannerTone.Error, title = "Couldn't save note") {

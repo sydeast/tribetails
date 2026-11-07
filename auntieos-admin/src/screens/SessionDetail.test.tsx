@@ -13,6 +13,12 @@ const { patchVisitLifecycle, updateKinCareSession } = vi.hoisted(() => ({
   updateKinCareSession: vi.fn(),
 }));
 vi.mock('../api/sessionsWrite', () => ({ patchVisitLifecycle, updateKinCareSession }));
+// #1580: the internal-notes panel reads and writes through these two callables.
+const { listVisitInternalNotes, addInternalBookingNote } = vi.hoisted(() => ({
+  listVisitInternalNotes: vi.fn(),
+  addInternalBookingNote: vi.fn(),
+}));
+vi.mock('../api/bookingsWrite', () => ({ listVisitInternalNotes, addInternalBookingNote }));
 // `useDocById` joined the list with #760: the Route panel's purple house marker
 // reads `kinfolk/{id}.serviceLocation` through `lib/householdLocation.ts`, which
 // subscribes to that document. Mocked at `lib/firestore` rather than at
@@ -49,6 +55,9 @@ beforeEach(() => {
   useVisitTracking.mockReturnValue({ phase: 'idle' });
   patchVisitLifecycle.mockReset();
   updateKinCareSession.mockReset();
+  listVisitInternalNotes.mockReset();
+  listVisitInternalNotes.mockResolvedValue({ notes: [], canMarkAdminOnly: false, hasBookingRecord: true });
+  addInternalBookingNote.mockReset();
   useCollection.mockReset();
   useCollection.mockReturnValue({ status: 'ready', data: [] });
   useDocById.mockReset();
@@ -93,7 +102,12 @@ function panelTitles(container: HTMLElement): (string | null)[] {
 }
 
 describe('SessionDetail', () => {
-  it('renders the session fields from the passed entry (by value, no fetch)', () => {
+  it('renders the session fields from the passed entry, and its internal notes from the one list', async () => {
+    listVisitInternalNotes.mockResolvedValue({
+      notes: [{ id: 'session:sess1', body: 'Bring the long leash.', authorRole: 'unknown', authorName: null, createdAtMs: null, visibility: 'shared', source: 'visitRecord' }],
+      canMarkAdminOnly: true,
+      hasBookingRecord: false,
+    });
     render(<SessionDetail entry={entry({ notes: 'Bring the long leash.' })} onBack={vi.fn()} />);
     // The mock's hero names the visit by its Kin and its service, not by the
     // household: "Biscuit & Gravy · 30-min walk". The household moves to the
@@ -101,7 +115,7 @@ describe('SessionDetail', () => {
     expect(screen.getByRole('heading', { name: 'Biscuit & Gravy · Dog Walk' })).toBeInTheDocument();
     expect(screen.getByText('SCHEDULED')).toBeInTheDocument();
     expect(screen.getByText('Kin covered')).toBeInTheDocument();
-    expect(screen.getByText('Bring the long leash.')).toBeInTheDocument();
+    expect(await screen.findByText('Bring the long leash.')).toBeInTheDocument();
   });
 
   /**
@@ -117,7 +131,7 @@ describe('SessionDetail', () => {
       'Visit lifecycle',
       'Route',
       'Kinfolk-facing note',
-      'Admin-internal note',
+      'Internal notes',
       'Details',
     ]);
   });
@@ -181,7 +195,7 @@ describe('SessionDetail', () => {
     expect(screen.getByText(/Every Kin in the home/i)).toBeInTheDocument();
   });
 
-  it('keeps the lifecycle and both note boxes on a record with nothing in them', () => {
+  it('keeps the lifecycle and both note boxes on a record with nothing in them', async () => {
     render(
       <SessionDetail
         entry={entry({ startTime: '', endTime: '', arrivedAt: '', completedAt: '', kinIds: [], kinNames: [], notes: '' })}
@@ -195,8 +209,8 @@ describe('SessionDetail', () => {
     // carries the composer, and a panel that vanished when there was nothing
     // to read would take the only way to write one with it. Each says it is
     // empty instead.
-    expect(screen.getByText('Admin-internal note')).toBeInTheDocument();
-    expect(screen.getByText(/no notes on this visit yet/i)).toBeInTheDocument();
+    expect(screen.getByText('Internal notes')).toBeInTheDocument();
+    expect(await screen.findByText(/no internal notes yet/i)).toBeInTheDocument();
     expect(screen.getByText('Kinfolk-facing note')).toBeInTheDocument();
     expect(screen.getByText(/no note from the household/i)).toBeInTheDocument();
   });
@@ -207,7 +221,7 @@ describe('SessionDetail', () => {
     );
     expect(screen.getByText('Side gate, harness on the hook.')).toHaveClass('sdetail__nbox');
     expect(screen.getByText('visible to The Whitfields')).toHaveClass('den-panel-meta');
-    expect(screen.getByText('private')).toHaveClass('den-panel-meta');
+    expect(screen.getByText('staff only')).toHaveClass('den-panel-meta');
   });
 
   it('prices the visit from the rate card by exact service name, and says nothing when there is no match', async () => {
@@ -575,27 +589,47 @@ describe('SessionDetail: editing the visit', () => {
     expect(screen.getByText(/nothing ticked means the whole household/i)).toBeInTheDocument();
   });
 });
-describe('SessionDetail: note to office', () => {
-  it('prepends a stamped (office) line and keeps the earlier notes', async () => {
-    updateKinCareSession.mockResolvedValue({ ok: true, sessionId: 'sess1', updated: ['notes'] });
+describe('SessionDetail: internal notes (#1580)', () => {
+  it('adds a note to the visit\'s one internal list, by session, and re-reads it', async () => {
+    addInternalBookingNote.mockResolvedValue({ noteId: 'n9', visibility: 'shared', storedOn: 'thread' });
     render(<SessionDetail entry={entry({ notes: 'Gate sticks.' })} onBack={vi.fn()} />);
-    await userEvent.type(screen.getByLabelText(/note to office/i), 'Key was under the mat.');
+    await screen.findByText(/no internal notes yet/i);
+    await userEvent.type(screen.getByLabelText(/add an internal note/i), 'Key was under the mat.');
     await userEvent.click(screen.getByRole('button', { name: /add note/i }));
-    expect(updateKinCareSession).toHaveBeenCalledTimes(1);
-    const notes = updateKinCareSession.mock.calls[0]![1].notes as string;
-    expect(notes).toMatch(/^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] \(office\) Key was under the mat\.\nGate sticks\.$/);
+    expect(addInternalBookingNote).toHaveBeenCalledWith({ sessionId: 'sess1' }, 'Key was under the mat.', 'shared');
+    // It no longer writes the session's own notes text, the second store Bookings never read.
+    expect(updateKinCareSession).not.toHaveBeenCalled();
+    expect(await screen.findByText('Note added for staff.')).toBeInTheDocument();
+    expect(listVisitInternalNotes).toHaveBeenCalledTimes(2);
   });
-  it('cannot send a blank note', () => {
+  it('offers the owner the admin-only mark and sends it', async () => {
+    listVisitInternalNotes.mockResolvedValue({ notes: [], canMarkAdminOnly: true, hasBookingRecord: true });
+    addInternalBookingNote.mockResolvedValue({ noteId: 'n9', visibility: 'adminOnly', storedOn: 'thread' });
     render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    await userEvent.click(await screen.findByRole('checkbox', { name: /admin only/i }));
+    await userEvent.type(screen.getByLabelText(/add an internal note/i), 'Rate goes up in January.');
+    await userEvent.click(screen.getByRole('button', { name: /add note/i }));
+    expect(addInternalBookingNote).toHaveBeenCalledWith({ sessionId: 'sess1' }, 'Rate goes up in January.', 'adminOnly');
+  });
+  it('does not offer an Auntie the mark', async () => {
+    listVisitInternalNotes.mockResolvedValue({ notes: [], canMarkAdminOnly: false, hasBookingRecord: true });
+    render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    await screen.findByText(/no internal notes yet/i);
+    expect(screen.queryByRole('checkbox', { name: /admin only/i })).toBeNull();
+  });
+  it('cannot send a blank note', async () => {
+    render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    await screen.findByText(/no internal notes yet/i);
     expect(screen.getByRole('button', { name: /add note/i })).toBeDisabled();
   });
   it('reports a failed note rather than clearing the box as though it landed', async () => {
-    updateKinCareSession.mockRejectedValue(new Error('permission denied'));
+    addInternalBookingNote.mockRejectedValue(new Error('permission denied'));
     render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
-    await userEvent.type(screen.getByLabelText(/note to office/i), 'Something happened.');
+    await screen.findByText(/no internal notes yet/i);
+    await userEvent.type(screen.getByLabelText(/add an internal note/i), 'Something happened.');
     await userEvent.click(screen.getByRole('button', { name: /add note/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/permission denied/i);
-    expect(screen.getByLabelText(/note to office/i)).toHaveValue('Something happened.');
+    expect(screen.getByLabelText(/add an internal note/i)).toHaveValue('Something happened.');
   });
 });
 describe('SessionDetail: GPS', () => {

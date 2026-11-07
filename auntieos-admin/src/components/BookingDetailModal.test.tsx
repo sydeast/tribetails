@@ -17,12 +17,13 @@ function render(ui: ReactElement) {
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
-const { rescheduleBooking, assignAuntie, addBookingNote, addInternalBookingNote, getVisitAssignment } =
+const { rescheduleBooking, assignAuntie, addBookingNote, addInternalBookingNote, listVisitInternalNotes, getVisitAssignment } =
   vi.hoisted(() => ({
     rescheduleBooking: vi.fn(),
     assignAuntie: vi.fn(),
     addBookingNote: vi.fn(),
     addInternalBookingNote: vi.fn(),
+    listVisitInternalNotes: vi.fn(),
     getVisitAssignment: vi.fn(),
   }));
 vi.mock('../api/bookingsWrite', async (orig) => ({
@@ -31,6 +32,7 @@ vi.mock('../api/bookingsWrite', async (orig) => ({
   assignAuntie,
   addBookingNote,
   addInternalBookingNote,
+  listVisitInternalNotes,
   getVisitAssignment,
 }));
 
@@ -104,6 +106,8 @@ beforeEach(() => {
   assignAuntie.mockReset();
   addBookingNote.mockReset();
   addInternalBookingNote.mockReset();
+  listVisitInternalNotes.mockReset();
+  listVisitInternalNotes.mockResolvedValue({ notes: [], canMarkAdminOnly: true, hasBookingRecord: true });
   getVisitAssignment.mockReset();
   getVisitAssignment.mockResolvedValue({ assignedAuntieUid: null, auntieDisplayName: null });
   listStaff.mockReset();
@@ -217,17 +221,33 @@ describe('BookingDetailModal notes', () => {
     );
   });
 
-  it('adds an internal note through the admin callable', async () => {
-    addInternalBookingNote.mockResolvedValue({ noteId: 'n2' });
+  it('adds an internal note to the visit\'s one list, by its session (#1580)', async () => {
+    addInternalBookingNote.mockResolvedValue({ noteId: 'n2', visibility: 'shared', storedOn: 'thread' });
     open();
+    await screen.findByText('No internal notes yet.');
     await user.type(screen.getByLabelText('Add an internal note'), 'Gate code changed.');
-    await user.click(screen.getByRole('button', { name: 'Save internal note' }));
+    await user.click(screen.getByRole('button', { name: 'Add note' }));
     await waitFor(() =>
-      expect(addInternalBookingNote).toHaveBeenCalledWith('kf1', 'b1', 'v1', 'Gate code changed.'),
+      expect(addInternalBookingNote).toHaveBeenCalledWith({ sessionId: 'vis_v1' }, 'Gate code changed.', 'shared'),
     );
   });
+  it('shows the same internal list Auntie Time shows, admin-only notes marked (#1580)', async () => {
+    listVisitInternalNotes.mockResolvedValue({
+      notes: [
+        { id: 'session:vis_v1', body: 'Note from Auntie Time', authorRole: 'unknown', authorName: null, createdAtMs: null, visibility: 'shared', source: 'visitRecord' },
+        { id: 'a1', body: 'Rate goes up', authorRole: 'admin', authorName: 'Syd', createdAtMs: 1_000, visibility: 'adminOnly', source: 'thread' },
+      ],
+      canMarkAdminOnly: true,
+      hasBookingRecord: true,
+    });
+    open();
+    const list = await screen.findByRole('list', { name: 'Internal notes' });
+    expect(within(list).getByText('Note from Auntie Time')).toBeInTheDocument();
+    expect(within(list).getByText('Admin only')).toBeInTheDocument();
+    expect(listVisitInternalNotes).toHaveBeenCalledWith({ sessionId: 'vis_v1' });
+  });
 
-  it('renders both existing threads oldest first', () => {
+  it('renders the kinfolk-facing thread oldest first', () => {
     mockNotes({
       kinfolk: {
         status: 'ready',
@@ -236,7 +256,6 @@ describe('BookingDetailModal notes', () => {
           { _id: 'n1', body: 'First note', createdAt: '2026-07-15T09:00:00.000Z' },
         ],
       },
-      internal: { status: 'ready', data: [{ _id: 'i1', body: 'Staff only' }] },
     });
     open();
     const thread = screen.getByRole('list', { name: 'Kinfolk-facing notes' });
@@ -244,20 +263,15 @@ describe('BookingDetailModal notes', () => {
       expect.stringContaining('First note'),
       expect.stringContaining('Second note'),
     ]);
-    expect(
-      within(screen.getByRole('list', { name: 'Internal notes' })).getByText('Staff only'),
-    ).toBeInTheDocument();
   });
 
-  it('locks BOTH composers inside the three hour cutoff and says why', async () => {
+  it('locks the kinfolk-facing composer inside the three hour cutoff and says why; internal notes stay open (#1580)', async () => {
     open({}, { nowMs: () => INSIDE_CUTOFF });
     expect(screen.getByLabelText('Add a kinfolk-facing note')).toBeDisabled();
-    expect(screen.getByLabelText('Add an internal note')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Save kinfolk-facing note' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Save internal note' })).toBeDisabled();
-    // The reason, not just a grey control: one banner per locked composer.
-    expect(screen.getAllByText(/locked/i).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText(/3 hours/i).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/3 hours/i).length).toBeGreaterThanOrEqual(1);
+    await screen.findByText('No internal notes yet.');
+    expect(screen.getByLabelText('Add an internal note')).toBeEnabled();
   });
 
   it('surfaces a note callable rejection fail-loud rather than a silent no-op', async () => {
@@ -381,6 +395,14 @@ describe('BookingDetailModal on a non-envelope (legacy flat) visit', () => {
     expect(useCollection).not.toHaveBeenCalled();
     expect(screen.getAllByText(/no visit record to attach notes to/i).length).toBeGreaterThan(0);
     expect(screen.queryByLabelText('Add a kinfolk-facing note')).toBeNull();
+  });
+  it('#1580: still lists and takes internal notes, which the server keeps on its visit record', async () => {
+    listVisitInternalNotes.mockResolvedValue({ notes: [], canMarkAdminOnly: true, hasBookingRecord: false });
+    open(legacy);
+    await screen.findByText('No internal notes yet.');
+    expect(screen.getByLabelText('Add an internal note')).toBeEnabled();
+    // An admin-only note cannot be kept apart from Aunties on such a visit, so it is not offered.
+    expect(screen.queryByRole('checkbox', { name: /admin only/i })).toBeNull();
   });
 
   it('still offers reschedule, which acts on the flat session doc', async () => {

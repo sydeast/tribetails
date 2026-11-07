@@ -10,6 +10,8 @@ import type {
   BatchUpdateBookingsResult,
   CreateMultiDateBookingRequestArgs,
   CreateMultiDateBookingRequestResult,
+  ListVisitInternalNotesArgs,
+  ListVisitInternalNotesResult,
   RescheduleBookingArgs,
   RescheduleBookingResult,
 } from '../contracts/bookingContracts.generated';
@@ -413,31 +415,40 @@ export async function addBookingNote(
 }
 
 /**
- * addInternalBookingNote (admin callable): append a STAFF-ONLY note to
- * `.../kinCares/{visitId}/internalNotes`, a separate subcollection whose read
- * rule is `isAuntie()` alone.
+ * addInternalBookingNote (admin callable): add an internal note to a visit.
  *
- * SAME 3-HOUR CUTOFF as `addBookingNote`, enforced SERVER-SIDE since
- * 2026-07-25 through the shared `functions/src/lib/bookingNoteCutoff.ts`. Both
- * threads reject identically: `failed-precondition` with
- * `details.code === 'booking_note_cutoff'`.
+ * #1580: one store, two kinds. A `shared` note (the default) goes to
+ * `.../kinCares/{visitId}/internalNotes`, which every staff member reads; an
+ * `adminOnly` note goes to `.../adminNotes`, which rules give the owner alone.
+ * Operator ruling, 2026-11-05 docket: the writer marks each note, and Aunties
+ * see only shared ones. The server refuses an Auntie an admin-only note on her
+ * claim.
  *
- * It did not always: the rule was private to `addBookingNote`, so this thread
- * was guarded by client code alone and any other caller, a stale bundle, or a
- * direct invocation wrote straight past it. The composer lock in the sheet is
- * now a courtesy so the operator is not surprised by a rejection, not the
- * enforcement.
+ * The visit is named either by its booking record (Bookings) or by its
+ * session (Auntie Time), and both land in the same thread. The internal thread
+ * has no 3-hour cutoff any more: staff notes are written during and after a
+ * visit. The household thread (`addBookingNote`) keeps its cutoff.
  */
+export type VisitNoteTarget =
+  | { sessionId: string }
+  | { kinfolkId: string; batchId: string; visitId: string };
 export async function addInternalBookingNote(
-  kinfolkId: string,
-  batchId: string,
-  visitId: string,
+  target: VisitNoteTarget,
   body: string,
+  visibility: 'shared' | 'adminOnly' = 'shared',
 ): Promise<AddInternalBookingNoteResult> {
   return call<AddInternalBookingNoteArgs, AddInternalBookingNoteResult>('addInternalBookingNote', {
-    kinfolkId,
-    batchId,
-    visitId,
+    ...target,
     body: body.trim(),
+    visibility,
   });
+}
+/**
+ * listVisitInternalNotes (admin callable, #1580): the visit's one list of
+ * internal notes as the signed-in staff member may see it. The server filters
+ * on the caller's claim, so an Auntie's list never carries an admin-only note,
+ * and `canMarkAdminOnly` says whether to offer the mark.
+ */
+export async function listVisitInternalNotes(target: VisitNoteTarget): Promise<ListVisitInternalNotesResult> {
+  return call<ListVisitInternalNotesArgs, ListVisitInternalNotesResult>('listVisitInternalNotes', target);
 }

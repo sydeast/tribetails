@@ -9,7 +9,6 @@ import {
 } from '../api/bookingNotes';
 import {
   addBookingNote,
-  addInternalBookingNote,
   assignAuntie,
   getVisitAssignment,
   rescheduleBooking,
@@ -34,6 +33,7 @@ import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { DenPanel, EmptyHint, ServicePill } from './DenScreenKit';
 import { useToast } from './Toast';
+import { VisitInternalNotes } from './VisitInternalNotes';
 import './BookingDetailModal.css';
 
 /** Whatever a rejected callable or Firestore read gave us, as operator copy. */
@@ -104,7 +104,9 @@ export interface BookingDetailModalProps {
  *   rescheduleBooking        the flat `kin_care_sessions` row (any session)
  *   assignAuntie             the envelope visit doc (envelope sessions only)
  *   addBookingNote           kinfolk-facing thread   (envelope sessions only)
- *   addInternalBookingNote   staff-only thread       (envelope sessions only)
+ *   addInternalBookingNote   internal notes, through `VisitInternalNotes` (#1580): one list
+ *                            per visit, shared or admin-only, keyed by the session so a
+ *                            visit with no booking record still has its notes
  *
  * THE ENVELOPE SPLIT is the one thing to understand before changing anything
  * here. A session created by approving a booking request carries
@@ -122,10 +124,10 @@ export interface BookingDetailModalProps {
  *  - The note threads read the nested `kinCares/{visitId}` path the server
  *    actually writes to; the archive read the flat parent path and so never
  *    displayed a note back. See `api/bookingNotes.ts`.
- *  - Both composers lock at the 3-hour cutoff, and BOTH callables enforce it
- *    server-side (`functions/src/lib/bookingNoteCutoff.ts`). The lock here is
- *    a courtesy so the operator is not surprised by a rejection; it is not the
- *    guard. A rejection is surfaced verbatim either way.
+ *  - The kinfolk-facing composer locks at the 3-hour cutoff, which
+ *    `addBookingNote` enforces server-side (`functions/src/lib/bookingNoteCutoff.ts`).
+ *    The lock here is a courtesy; it is not the guard. Internal notes have no
+ *    cutoff since #1580: staff write them during and after a visit.
  */
 export function BookingDetailModal({
   entry,
@@ -240,22 +242,18 @@ export function BookingDetailModal({
               kinfolkId={kinfolkId}
               batchId={batchId}
               visitId={visitId}
-              internal={false}
-              locked={locked}
-            />
-            <NotesPanel
-              kinfolkId={kinfolkId}
-              batchId={batchId}
-              visitId={visitId}
-              internal
               locked={locked}
             />
           </>
         ) : (
-          <DenPanel title="Notes" subtitle="Kinfolk-facing and internal threads." headingLevel={3}>
+          <DenPanel title="Kinfolk-facing notes" subtitle="The household sees these on the booking." headingLevel={3}>
             <EmptyHint>{NO_ENVELOPE_NOTES}</EmptyHint>
           </DenPanel>
         )}
+        {/* #1580: the visit's one internal-notes list, the same panel Auntie
+            Time shows. Read by session id, so an older visit with no booking
+            record still lists the notes on its visit record. */}
+        <VisitInternalNotes target={{ sessionId: entry._id }} businessZone={businessZone} />
       </div>
     </Dialog>
   );
@@ -586,8 +584,6 @@ interface NotesPanelProps {
   kinfolkId: string;
   batchId: string;
   visitId: string;
-  /** True reads/writes the staff-only `internalNotes` subcollection. */
-  internal: boolean;
   locked: boolean;
 }
 
@@ -597,17 +593,18 @@ interface NotesPanelProps {
  * subscribe to: a legacy flat session has no `kinCares/{visitId}` doc, and a
  * conditional hook in the parent would be illegal.
  */
-function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPanelProps) {
+function NotesPanel({ kinfolkId, batchId, visitId, locked }: NotesPanelProps) {
   const state = useCollection<BookingNoteEntry>(
-    bookingNotesQuery(kinfolkId, batchId, visitId, internal),
+    bookingNotesQuery(kinfolkId, batchId, visitId, false),
   );
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const noun = internal ? 'internal note' : 'kinfolk-facing note';
-  const composerLabel = internal ? 'Add an internal note' : 'Add a kinfolk-facing note';
-  const listLabel = internal ? 'Internal notes' : 'Kinfolk-facing notes';
+  // #1580: the household's thread only. Internal notes are `VisitInternalNotes`.
+  const noun = 'kinfolk-facing note';
+  const composerLabel = 'Add a kinfolk-facing note';
+  const listLabel = 'Kinfolk-facing notes';
 
   async function save() {
     const body = draft.trim();
@@ -615,8 +612,7 @@ function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPane
     setSaving(true);
     setError(null);
     try {
-      if (internal) await addInternalBookingNote(kinfolkId, batchId, visitId, body);
-      else await addBookingNote(kinfolkId, batchId, visitId, body);
+      await addBookingNote(kinfolkId, batchId, visitId, body);
       setDraft('');
     } catch (err) {
       // Fail loud. The kinfolk-facing callable rejects late notes server-side
@@ -631,11 +627,7 @@ function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPane
   return (
     <DenPanel
       title={listLabel}
-      subtitle={
-        internal
-          ? 'Staff only. The household never sees these.'
-          : 'The household sees these on the booking.'
-      }
+      subtitle="The household sees these on the booking."
       headingLevel={3}
     >
       {state.status === 'loading' && <EmptyHint>Loading the notes…</EmptyHint>}

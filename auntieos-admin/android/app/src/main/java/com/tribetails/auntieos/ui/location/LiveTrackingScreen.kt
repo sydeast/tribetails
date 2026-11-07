@@ -176,10 +176,11 @@ fun LiveTrackingScreen(
             )
         }
 
-        // Add note: timestamped prepend onto the session.notes admin field
-        // via the repository's patchKinCareSession path so the note shows up
-        // in admin & KinTale composer immediately. Errors surface fail-loud
-        // into the dialog body.
+        // Add note: #1580, a shared note on the visit's ONE internal-notes list
+        // (`addInternalBookingNote` by session), the list Bookings, Auntie Time
+        // and the session detail all show. It used to prepend onto the
+        // session's own `notes` text, which web Bookings never read. Errors
+        // surface fail-loud into the dialog body.
         if (showAddNoteDialog) {
             AuntieModal(
                 onDismissRequest = {
@@ -198,13 +199,9 @@ fun LiveTrackingScreen(
                             noteSubmitting = true
                             noteError      = null
                             scope.launch {
-                                val repo = AuntieOSApp.instance.kinCareRepository
-                                val current = repo.getKinCareSession(sessionId).getOrNull()
-                                val merged  = buildVisitNoteAppendix(current?.notes.orEmpty(), typed)
-                                repo.patchKinCareSession(
-                                    sessionId,
-                                    mapOf("notes" to merged, "updatedAt" to liveNowIso()),
-                                ).onSuccess {
+                                com.tribetails.auntieos.data.repository.BookingNotesRepository()
+                                    .addVisitInternalNote(sessionId, typed)
+                                    .onSuccess {
                                     AuditLog.fire(
                                         scope            = scope,
                                         repository       = AuntieOSApp.instance.repository,
@@ -236,7 +233,7 @@ fun LiveTrackingScreen(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text  = "Capture what you're seeing right now - visible to the office and used in the KinTale recap.",
+                        text  = "Capture what you're seeing right now. It goes on the visit's internal notes, which staff see and the household never does.",
                         style = AuntieTheme.typography.bodySmall,
                         color = AuntieTheme.colors.textDim,
                     )

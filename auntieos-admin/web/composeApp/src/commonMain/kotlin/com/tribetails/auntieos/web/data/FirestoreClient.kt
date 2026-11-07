@@ -2312,6 +2312,41 @@ class FirestoreClient {
     suspend fun addBookingNote(kinfolkId: String, bookingId: String, body: String, internal: Boolean): WriteResult<String> =
         platformAddBookingNote(kinfolkId, bookingId, body, internal)
 
+    /**
+     * #1580: the visit's ONE list of internal notes, by session, as the signed-in
+     * staff member may see it (`listVisitInternalNotes`). The same list web
+     * Bookings, web Auntie Time and Android show. Operator ruling 2026-11-05:
+     * two kinds, shared and admin-only; the server filters on the caller's
+     * claim, so an Auntie's list never carries an admin-only note.
+     */
+    suspend fun listVisitInternalNotes(sessionId: String): WriteResult<VisitInternalNotes> {
+        val payload = buildJsonObject { put("sessionId", JsonPrimitive(sessionId)) }
+        return when (val r = platformInvokeCallable("listVisitInternalNotes", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeVisitInternalNotes(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+    /**
+     * #1580: add an internal note to the visit, by session
+     * (`addInternalBookingNote`). [adminOnly] keeps it from Aunties; the server
+     * refuses that mark from an Auntie. Returns the stored visibility.
+     */
+    suspend fun addVisitInternalNote(sessionId: String, body: String, adminOnly: Boolean): WriteResult<String> {
+        val payload = buildJsonObject {
+            put("sessionId", JsonPrimitive(sessionId))
+            put("body", JsonPrimitive(body.trim()))
+            put("visibility", JsonPrimitive(if (adminOnly) "adminOnly" else "shared"))
+        }
+        return when (val r = platformInvokeCallable("addInternalBookingNote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                val obj = callableJson.parseToJsonElement(r.value).jsonObject
+                WriteResult.Ok(obj["visibility"]?.jsonPrimitive?.contentOrNull ?: "shared")
+            }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     // ---- KinTale comment thread ----
     /**
      * Live stream of comments under a SENT KinTale report, ordered chronologically.
@@ -4435,6 +4470,48 @@ data class BookingNote(
     val body: String = "",
     val createdAtMs: Long? = null,
 )
+
+/** #1580: one note in a visit's internal list (`listVisitInternalNotes`). */
+data class VisitInternalNote(
+    val id: String,
+    val body: String,
+    /** 'admin', 'auntie' or 'unknown'. */
+    val authorRole: String,
+    val authorName: String?,
+    val createdAtMs: Long?,
+    /** 'shared' or 'adminOnly'. */
+    val visibility: String,
+    /** 'thread', or 'visitRecord' for the session's older notes text. */
+    val source: String,
+)
+/** #1580: a visit's internal list, and whether the caller may mark a note admin only. */
+data class VisitInternalNotes(
+    val notes: List<VisitInternalNote>,
+    val canMarkAdminOnly: Boolean,
+    val hasBookingRecord: Boolean,
+)
+/** Pure decode of the `listVisitInternalNotes` reply; never throws on a missing field. */
+internal fun decodeVisitInternalNotes(json: String): VisitInternalNotes {
+    val obj = Json.parseToJsonElement(json).jsonObject
+    val notes = (obj["notes"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val n = el as? JsonObject ?: return@mapNotNull null
+        fun str(k: String) = n[k]?.jsonPrimitive?.contentOrNull
+        VisitInternalNote(
+            id = str("id").orEmpty(),
+            body = str("body").orEmpty(),
+            authorRole = str("authorRole").orEmpty(),
+            authorName = str("authorName"),
+            createdAtMs = n["createdAtMs"]?.jsonPrimitive?.doubleOrNull?.toLong(),
+            visibility = str("visibility") ?: "shared",
+            source = str("source") ?: "thread",
+        )
+    }
+    return VisitInternalNotes(
+        notes = notes,
+        canMarkAdminOnly = obj["canMarkAdminOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
+        hasBookingRecord = obj["hasBookingRecord"]?.jsonPrimitive?.booleanOrNull ?: false,
+    )
+}
 
 /**
  * One KinTale comment read from kin_care_reports/{taleId}/comments. authorRole is

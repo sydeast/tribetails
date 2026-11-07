@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -12,6 +13,8 @@ import com.tribetails.auntieos.data.model.GpsSummary
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
+import com.tribetails.auntieos.data.contracts.ListVisitInternalNotesResult
+import com.tribetails.auntieos.data.contracts.ListVisitInternalNotesResultNote
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
@@ -58,6 +61,8 @@ class KinCareDetailScreenTest {
 
     @Before fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
     @After fun tearDown() = Dispatchers.resetMain()
+    /** #1580: what `listVisitInternalNotes` answers in [mount]; a test sets it first. */
+    private var internalNotes = ListVisitInternalNotesResult(notes = emptyList(), canMarkAdminOnly = false, hasBookingRecord = true)
 
     private fun mount(
         kinCareRepo: KinCareRepository,
@@ -80,7 +85,8 @@ class KinCareDetailScreenTest {
         coEvery { kinCareRepo.getBreadcrumbs(any()) } returns Result.success(emptyList())
         val notesRepo = mockk<BookingNotesRepository>(relaxed = true)
         every { notesRepo.streamKinfolkFacingNotes(any(), any()) } returns flowOf(emptyList())
-        every { notesRepo.streamInternalNotes(any(), any()) } returns flowOf(emptyList())
+        // #1580: the internal list is read through the callable, by session.
+        coEvery { notesRepo.listVisitInternalNotes(any()) } returns Result.success(internalNotes)
         rule.setContent {
             AuntieOSTheme {
                 KinCareDetailScreen(
@@ -139,7 +145,39 @@ class KinCareDetailScreenTest {
         rule.onNodeWithText("Visit lifecycle").assertIsDisplayed()
         rule.onNodeWithText("Completed").assertIsDisplayed()
         rule.onNodeWithText("Kinfolk-facing note").assertIsDisplayed()
-        rule.onNodeWithText("Admin-internal note").assertIsDisplayed()
+        rule.onNodeWithText("Internal notes").assertIsDisplayed()
+    }
+    /**
+     * #1580: the one internal list, as the server hands it over. Operator ruling
+     * 2026-11-05: two kinds, shared and admin-only; the writer marks each note.
+     */
+    @Test
+    fun `the internal panel lists the visit's one list, admin-only notes marked, and offers the owner the mark`() {
+        val session = KinCareSession(id = "vis_ses1", kinfolkId = "fam1", kinfolkName = "The Wrens", serviceType = "Dog walk")
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(session)
+        internalNotes = ListVisitInternalNotesResult(
+            notes = listOf(
+                ListVisitInternalNotesResultNote("session:vis_ses1", "Gate sticks", "unknown", null, null, "shared", "visitRecord"),
+                ListVisitInternalNotesResultNote("a1", "Rate goes up in January", "admin", "Syd", 1_000.0, "adminOnly", "thread"),
+            ),
+            canMarkAdminOnly = true,
+            hasBookingRecord = true,
+        )
+        mount(kinCareRepo)
+        rule.onNodeWithText("Gate sticks").assertIsDisplayed()
+        rule.onNodeWithText("Rate goes up in January").assertIsDisplayed()
+        rule.onNodeWithText("Admin only (Aunties will not see it)").assertIsDisplayed()
+    }
+    @Test
+    fun `an Auntie is not offered the admin-only mark`() {
+        val session = KinCareSession(id = "vis_ses1", kinfolkId = "fam1", kinfolkName = "The Wrens", serviceType = "Dog walk")
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(session)
+        internalNotes = ListVisitInternalNotesResult(notes = emptyList(), canMarkAdminOnly = false, hasBookingRecord = true)
+        mount(kinCareRepo)
+        rule.onNodeWithText("No internal notes yet.").assertIsDisplayed()
+        rule.onAllNodesWithText("Admin only (Aunties will not see it)").assertCountEquals(0)
     }
 
     @Test

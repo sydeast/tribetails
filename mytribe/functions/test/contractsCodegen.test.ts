@@ -335,9 +335,11 @@ describe('the committed booking Contracts module (ADR-0003 follow-up)', () => {
   // had no office-facing surface at all: the admin's Bookings list streams
   // kin_care_sessions, and a `requested` envelope has no session yet.
   // 16 since #1283 added getBookingNotes: the household's own notes, read back.
-  it('covers all 16 booking callables, both directions where a schema exists', () => {
+  // 17 since #1580 added listVisitInternalNotes: the visit's one internal-notes list.
+  it('covers all 17 booking callables, both directions where a schema exists', () => {
     const model = readModel(BOOKING_CONTRACT_REGISTRY);
-    expect(model.callables).toHaveLength(16);
+    expect(model.callables).toHaveLength(17);
+    expect(model.callables.map((c) => c.name)).toContain('listVisitInternalNotes');
     // getMyBookings is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

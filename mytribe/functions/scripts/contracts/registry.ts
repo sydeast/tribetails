@@ -21,6 +21,10 @@
 import type { z } from 'zod';
 
 import { Args as AddInternalBookingNoteArgs, Result as AddInternalBookingNoteResult } from '../../src/admin/addInternalBookingNote';
+import {
+  Args as ListVisitInternalNotesArgs,
+  Result as ListVisitInternalNotesResult,
+} from '../../src/admin/listVisitInternalNotes';
 import { Args as ArchiveInvoiceArgs, Result as ArchiveInvoiceResult } from '../../src/admin/archiveInvoice';
 import { Args as BatchUpdateBookingsArgs, Result as BatchUpdateBookingsResult } from '../../src/admin/batchUpdateBookings';
 import { Args as CreateMultiDateBookingRequestArgs, Result as CreateMultiDateBookingRequestResult } from '../../src/admin/createMultiDateBookingRequest';
@@ -220,6 +224,7 @@ export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'addBookingNote', args: AddBookingNoteArgs, result: AddBookingNoteResult },
     { name: 'getBookingNotes', args: GetBookingNotesArgs, result: GetBookingNotesResult },
     { name: 'addInternalBookingNote', args: AddInternalBookingNoteArgs, result: AddInternalBookingNoteResult },
+    { name: 'listVisitInternalNotes', args: ListVisitInternalNotesArgs, result: ListVisitInternalNotesResult },
     { name: 'batchUpdateBookings', args: BatchUpdateBookingsArgs, result: BatchUpdateBookingsResult },
     {
       name: 'createMultiDateBookingRequest',
