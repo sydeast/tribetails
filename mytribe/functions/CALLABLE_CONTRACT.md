@@ -299,6 +299,12 @@ must say "next reconcile pass", never "instantly".
   into a Dossier or Kin411 is NOT unmerged; the handler's audit payload records
   that, and every client's delete confirm must state it before committing.
 
+### getKinTaleTemplateUsage
+- req `{ templateId: string /* 1..200 */ }`
+- res `{ templateId: string, exists: boolean, name: string, isDefault: boolean, isActive: boolean, archived: boolean, kintaleCount: number, otherActiveTemplateCount: number }`
+- Read only, owner-only. `kintaleCount` counts `kin_care_reports` docs whose `templateId` is this id (sent and draft). The built-in default has no doc and no id on a report, so it is never counted. `otherActiveTemplateCount` leaves out archived templates.
+- #1591 (operator ruling 2026-11-05, "both"): Remove archives a template (`archived: true`, `archivedAt`; restorable, hidden from the list and from new KinTales). Deleting for good happens only from the archive, and every client's delete-for-good confirm reads this count first. `firestore.rules` refuses deleting a `kintale_templates` doc that is not archived.
+
 ## Invoices (admin-gated; the W2-1 pair also admits a scoped test admin, see each section's GATE line)
 
 All three write the FLAT top-level `invoices` collection, the same one the
@@ -2684,6 +2690,18 @@ callable is the enforcement.
   collection.
 - Write side is `triageOrphanReport` (ASSIGN, DUPLICATE, ARCHIVE), which both
   clients share.
+
+### deleteKinTaleReportDraft (#1631, owner only)
+- req `{ reportId: string }`, the bare `kin_care_reports` doc id (a slash is
+  `invalid-argument`).
+- res `{ ok: true, reportId }`.
+- Deletes one unsent KinTale draft. Refuses, as `failed-precondition`, the same
+  rows `purgeOldDrafts` refuses: a status other than DRAFT, any `sentAt`, and an
+  untriaged migration orphan (`isUntriagedOrphan`, shared with the purge). A
+  missing doc is `not-found`. Read and deleted in one transaction.
+- Media and comments are not cascaded. Audited as
+  `KINTALE_REPORT_DRAFT_DELETED`. Not in `AUNTIE_ALLOWED_CALLABLES`
+  (destructive). Admin web, Android and the desktop console all call it.
 
 ## Generated KinTale drafts (#1563, staff)
 
