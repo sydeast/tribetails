@@ -75,7 +75,7 @@ describe('NotificationQuickActions', () => {
     const h = handlers();
     const { rerender } = render(
       <NotificationQuickActions
-        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } })}
         read={false}
         {...h}
       />,
@@ -113,7 +113,7 @@ describe('NotificationQuickActions', () => {
   ])('an answered request (%s) shows "%s" and no Approve/Deny', (requestResolution, label) => {
     render(
       <NotificationQuickActions
-        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', requestResolution })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' }, requestResolution })}
         read={false}
         {...handlers()}
       />,
@@ -125,7 +125,7 @@ describe('NotificationQuickActions', () => {
   it('a waiting request shows no outcome', () => {
     render(
       <NotificationQuickActions
-        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1' })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } })}
         read={false}
         {...handlers()}
       />,
@@ -169,7 +169,7 @@ describe('NotificationQuickActions, pending state (issue #707)', () => {
   it('disables only Mark read, with an inline indicator, while a read write is pending', () => {
     render(
       <NotificationQuickActions
-        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } })}
         read={false}
         {...handlers()}
         pending={new Set(['read'])}
@@ -187,7 +187,7 @@ describe('NotificationQuickActions, pending state (issue #707)', () => {
   it('disables only Approve/Deny, leaving Mark read and Archive live, while a booking write is pending', () => {
     render(
       <NotificationQuickActions
-        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } })}
         read={false}
         {...handlers()}
         pending={new Set(['booking'])}
@@ -279,7 +279,7 @@ describe('NotificationQuickActions, the archive direction', () => {
   it('keeps the read toggle and the conditional actions on an archived row', () => {
     render(
       <NotificationQuickActions
-        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } })}
         read={false}
         {...handlers()}
         archived

@@ -366,8 +366,13 @@ fun NotificationsScreen(
                                     },
                                     onCreateQuote = { entry -> onCreateQuote(notificationKinfolkId(entry)) },
                                     onDismiss = { entry -> viewModel.archiveNotification(entry.id) },
-                                    onApprove = { entry -> viewModel.quickBookingAction(entry.targetId, "APPROVE") },
-                                    onDeny = { entry -> viewModel.quickBookingAction(entry.targetId, "REJECT") },
+                                    // #1675: the row names the request (targetId = batchId) and its household.
+                                    onApprove = { entry ->
+                                        viewModel.answerBookingRequest(notificationKinfolkId(entry), entry.targetId, approve = true)
+                                    },
+                                    onDeny = { entry ->
+                                        viewModel.answerBookingRequest(notificationKinfolkId(entry), entry.targetId, approve = false)
+                                    },
                                 )
                             }
                         }
@@ -954,8 +959,11 @@ internal fun requestOutcomeLabel(entry: NotificationEntry): String? {
  * household offered Create quote, regardless of what the event was or what had
  * already happened to it.
  *
- * APPROVE/DENY calls the batch booking callable with APPROVE/REJECT, and that
- * is only the right action for a FRESH request: a reschedule ask resolves
+ * APPROVE/DENY answers the whole request through `manageBookingSeries`
+ * (#1675): the row's targetId is the request's envelope id, and the batch
+ * booking callable these used to call only knows visit ids. It needs the
+ * household too, so a row naming none offers no Approve/Deny. Only a FRESH
+ * request takes this path: a reschedule ask resolves
  * through a different callable and a cancellation ask through the #438
  * accept/decline path. Pendency is read off the key PLUS the server's answer
  * stamp: [PENDING_BOOKING_REQUEST_KEY] only ever fires once, at the moment of
@@ -981,7 +989,8 @@ internal fun applicableNotificationActions(entry: NotificationEntry): Notificati
     val outcome = requestOutcomeLabel(entry)
 
     val isPendingBookingRequest =
-        key == PENDING_BOOKING_REQUEST_KEY && outcome == null && type == "booking" && targetId.isNotBlank()
+        key == PENDING_BOOKING_REQUEST_KEY && outcome == null && type == "booking" && targetId.isNotBlank() &&
+            notificationKinfolkId(entry).isNotBlank()
 
     val hasInvoiceReference = type == "invoice" || dataString(entry, "invoiceId").isNotBlank()
     val isQuoteDenial = key == QUOTE_DENIED_KEY

@@ -87,7 +87,8 @@ import kotlinx.coroutines.launch
  *   - open linked item    -> navigate by targetType/targetId via [onOpenTarget],
  *   - dismiss/archive      -> archiveNotification (single) + bulkArchiveNotifications
  *     (multi-select), with archived rows filtered out of the default list,
- *   - approve / deny       -> batchUpdateBookings([targetId], APPROVE|REJECT),
+ *   - approve / deny       -> manageBookingSeries(APPROVE|CANCEL, kinfolkId, targetId)
+ *     on the whole request (#1675; targetId is the request's batchId),
  *     shown ONLY on a `kincare.requested` row still waiting on a decision
  *     (#706, #1647); an answered request shows its outcome instead.
  * Every action is fail-loud: a WriteResult.Err surfaces the server message in an
@@ -153,19 +154,9 @@ fun NotificationsScreen(
     }
     val onBookingAction: (NotificationEntry, String) -> Unit = { entry, action ->
         scope.launch {
-            when (val r = client.batchUpdateBookings(listOf(entry.targetId), action)) {
-                is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> {
-                    val refused = com.tribetails.auntieos.web.data.batchFailureText(r.value)
-                    if (refused != null) {
-                        actionNotice = null
-                        actionError = "Booking ${if (action == "APPROVE") "approval" else "denial"} failed: $refused"
-                    } else {
-                        actionError = null
-                        actionNotice = if (action == "APPROVE") "Booking approved." else "Booking denied."
-                    }
-                }
-            }
+            val answer = answerBookingRequest(client, entry, approve = action == "APPROVE")
+            actionError = answer.error
+            actionNotice = answer.notice
         }
     }
     val onBulkArchive: () -> Unit = {
