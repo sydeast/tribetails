@@ -17,6 +17,7 @@ import {
   type MediaKind,
 } from '../lib/mediaFormat';
 import { useCollection } from '../lib/firestore';
+import { useStaffNames } from '../lib/useStaffNames';
 import { deleteMediaFile, setMediaProfilePhoto, mediaWriteErrorMessage } from '../api/mediaWrite';
 import { type UploadEntityType } from '../api/mediaUpload';
 import { str } from '../lib/coerce';
@@ -500,7 +501,8 @@ function MediaTile({ media, onOpen, onDelete, onSetProfile, promoting, actionsLo
   const kind = mediaKindOf(media.fileType ?? '');
   const previewUrl = mediaPreviewUrl(media);
   const caption = mediaCaption(media);
-  const meta = mediaMetaLine(media.uploadedAt ?? '', media.uploadedBy ?? '');
+  const staffNames = useStaffNames();
+  const meta = mediaMetaLine(media.uploadedAt ?? '', media.uploadedBy ?? '', staffNames);
   const duration = kind === 'video' ? mediaDurationLabel(media.durationSeconds) : undefined;
   const accessibleLabel = caption !== '' ? caption : 'Media';
 
