@@ -30,6 +30,19 @@ import { type SendCounts } from '../lib/communicateFormat';
  */
 export interface RecentSend {
   id: string;
+  /**
+   * #1610: which ledger the row came from. `external` is a 1:1 email or text,
+   * `broadcast` one broadcast, `reply` the latest Auntie reply in an Inbox
+   * thread. Absent on a server older than the field, which only ever sent
+   * external rows.
+   */
+  kind?: 'external' | 'broadcast' | 'reply';
+  /** Broadcast only: households targeted. */
+  recipientCount?: number;
+  /** Broadcast only: the channels it went out on. */
+  channels?: string[];
+  /** Reply only: the start of what Auntie wrote. */
+  preview?: string;
   channel: string;
   recipientRedacted: string;
   subject: string | null;

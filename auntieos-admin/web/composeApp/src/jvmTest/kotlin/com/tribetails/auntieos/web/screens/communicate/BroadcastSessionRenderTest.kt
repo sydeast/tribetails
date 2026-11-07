@@ -48,15 +48,21 @@ class BroadcastSessionRenderTest {
 
     private fun ComposeUiTest.openBroadcast() {
         onNode(hasText("Broadcast") and hasClickAction()).performClick()
-        waitUntil(timeoutMillis = 10_000) { shown("Send broadcast") }
+        waitUntil(timeoutMillis = 10_000) { shown("Review broadcast") }
         waitForIdle()
     }
 
     /** Presses Send and returns the idempotency key the broadcastMessage call carried. */
     private fun ComposeUiTest.sendAndReadKey(): String {
         JvmFirestoreFixtures.lastCallableName = null
-        onNode(hasText("Send broadcast") and hasClickAction()).performScrollTo().performClick()
+        onNode(hasText("Review broadcast") and hasClickAction()).performScrollTo().performClick()
+        // #1610: Review opens the confirm; Send now sends.
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Send now", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        onNode(hasText("Send now") and hasClickAction()).performClick()
         waitUntil(timeoutMillis = 10_000) { JvmFirestoreFixtures.lastCallableName == "broadcastMessage" }
+        // The confirm closes on Send now; wait for it to leave so it cannot take the next click.
+        waitUntil(timeoutMillis = 10_000) { !shown("Send now") }
+        waitForIdle()
         val payload = Json.parseToJsonElement(JvmFirestoreFixtures.lastCallablePayloadJson!!).jsonObject
         return payload["idempotencyKey"]!!.jsonPrimitive.content
     }
@@ -73,8 +79,11 @@ class BroadcastSessionRenderTest {
         val first = sendAndReadKey()
         waitUntil(timeoutMillis = 10_000) { shown("Send may still be running") }
 
-        onNode(hasText("Personalize") and hasClickAction()).performClick()
-        waitUntil(timeoutMillis = 10_000) { !shown("Send broadcast") }
+        // #1610: the form is a little taller now (the merge-field line), so the
+        // mode picker can sit above the viewport after the scroll to Review.
+        onNode(hasText("Personalize") and hasClickAction()).performScrollTo().performClick()
+        waitForIdle()
+        waitUntil(timeoutMillis = 10_000) { !shown("Review broadcast") }
         openBroadcast()
 
         assertTrue(shown("Send may still be running"), "the timeout notice did not survive the mode switch")

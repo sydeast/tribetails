@@ -153,6 +153,11 @@ const ALLOWED_EAGER_PACKAGES = [
  * resolution it shares with `addInternalBookingNote`. Two modules whose
  * imports are all already resident, inside the 440 already allowed, so the
  * bound did not move.
+ *
+ * #1610 adds `lib/broadcastMerge.ts`, the per-household merge-field fill the
+ * broadcast sender and its resume sweep share. Its imports are all already
+ * resident through `lib/email.ts`, so it costs one module, inside the 440
+ * already allowed, and the bound did not move.
  */
 const MAX_OWN_EAGER_MODULES = 440;
 

@@ -56,6 +56,9 @@ export interface KinfolkLike {
   phoneNumber?: string;
   /** Auth uid of the linked MyTribe install; '' when not onboarded. */
   uid?: string;
+  /** #1610: filled into a broadcast's merge fields; never used to match. */
+  firstName?: string;
+  lastName?: string;
 }
 
 /**
