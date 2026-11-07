@@ -329,7 +329,7 @@ describe('createKinCareSession visit length (#1581)', () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
     await createKinCareSessionHandler(req({ kinfolkId: 'kf1', serviceType: 'Walk', startTime: start, endTime: end }));
-    expect(ctx.adds[0]!.data.serviceDurationMinutes).toBe(30);
+    expect(sessionWrites(ctx)[0]!.data.serviceDurationMinutes).toBe(30);
   });
 
   it('stores the window when the stated length is 0', async () => {
@@ -338,7 +338,7 @@ describe('createKinCareSession visit length (#1581)', () => {
     await createKinCareSessionHandler(
       req({ kinfolkId: 'kf1', serviceType: 'Walk', startTime: start, endTime: end, serviceDurationMinutes: 0 }),
     );
-    expect(ctx.adds[0]!.data.serviceDurationMinutes).toBe(30);
+    expect(sessionWrites(ctx)[0]!.data.serviceDurationMinutes).toBe(30);
   });
 
   it('keeps a stated length as stated', async () => {
@@ -347,7 +347,7 @@ describe('createKinCareSession visit length (#1581)', () => {
     await createKinCareSessionHandler(
       req({ kinfolkId: 'kf1', serviceType: 'Walk', startTime: start, endTime: end, serviceDurationMinutes: 45 }),
     );
-    expect(ctx.adds[0]!.data.serviceDurationMinutes).toBe(45);
+    expect(sessionWrites(ctx)[0]!.data.serviceDurationMinutes).toBe(45);
   });
 
   it('a window it cannot read stays 0 rather than a guess', () => {
