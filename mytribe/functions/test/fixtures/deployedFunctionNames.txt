@@ -96,6 +96,7 @@ getMyPaymentMethod
 getMyTribeProfile
 getMyVisits
 getNotificationCatalog
+getRecordingAudio
 getServiceCatalog
 getShareLink
 getSharedKinTalePage

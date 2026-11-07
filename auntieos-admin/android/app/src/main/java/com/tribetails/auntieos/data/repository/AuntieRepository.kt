@@ -1384,6 +1384,22 @@ class AuntieRepository(
             ?: error("markAllThreadsRead returned no count")
     }.onFailure { AuntieLog.e("markAllThreadsRead failed", it) }
 
+    /**
+     * The audio behind a voicemail or call recording (#1573). Twilio's stored
+     * link needs the account's credentials, so the `getRecordingAudio` callable
+     * fetches it server-side and returns the bytes; the app plays those. A
+     * response with nothing playable fails the Result with the reason instead of
+     * handing the player an empty file.
+     */
+    suspend fun getRecordingAudio(kind: String, id: String): Result<com.tribetails.auntieos.ui.inbox.RecordingAudio> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("getRecordingAudio")
+                .call(mapOf("kind" to kind, "id" to id)).awaitCallable().data as? Map<String, Any?>
+            com.tribetails.auntieos.ui.inbox.decodeRecordingAudio(raw)
+                ?: error("This recording has no audio to play.")
+        }.onFailure { AuntieLog.e("getRecordingAudio failed for $kind/$id", it) }
     // ── Dashboard widget callables (AO-35/39/40/41) ──────────────────────────
     // Admin-gated MyTribe callables backing the hidden-by-default Home widgets.
     // Fail-loud: every failure (missing Mapbox key, missing supply, etc) rides the

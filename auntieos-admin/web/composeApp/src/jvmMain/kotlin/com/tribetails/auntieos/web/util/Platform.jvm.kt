@@ -38,3 +38,24 @@ actual fun copyToClipboard(text: String) {
         clip.setContents(java.awt.datatransfer.StringSelection(text), null)
     }
 }
+
+// Desktop (JVM): write the audio to a temp file and hand it to the OS default
+// player. The name is reduced to letters and digits so a recording id can never
+// steer the path. Fail-loud to stderr, like [openUrl]; the caller has already
+// shown the operator a result for the fetch itself.
+actual fun openAudioBytes(bytes: ByteArray, fileName: String) {
+    if (bytes.isEmpty()) return
+    runCatchingCancellable {
+        val ext = fileName.substringAfterLast('.', "mp3").filter { it.isLetterOrDigit() }.ifBlank { "mp3" }
+        val stem = fileName.substringBeforeLast('.').filter { it.isLetterOrDigit() }.ifBlank { "recording" }
+        val file = java.io.File.createTempFile("auntieos-$stem-", ".$ext")
+        file.deleteOnExit()
+        file.writeBytes(bytes)
+        val desktop = java.awt.Desktop.getDesktop()
+        if (java.awt.Desktop.isDesktopSupported() && desktop.isSupported(java.awt.Desktop.Action.OPEN)) {
+            desktop.open(file)
+        } else {
+            System.err.println("[AuntieOS] openAudioBytes unsupported on this desktop: ${file.absolutePath}")
+        }
+    }.onFailure { System.err.println("[AuntieOS] openAudioBytes failed for $fileName: ${it.message}") }
+}
