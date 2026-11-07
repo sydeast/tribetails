@@ -323,11 +323,11 @@ function cloneDefaultTemplate(): KinTaleTemplate {
  * seed `DefaultKinTaleTemplate.template.copy(_id = "")`.
  */
 export function seedTemplateDraft(): KinTaleTemplate {
-  return { ...cloneDefaultTemplate(), _id: '', createdAt: '', updatedAt: '' };
+  return { ...cloneDefaultTemplate(), _id: '', description: '', createdAt: '', updatedAt: '' };
 }
 
 /**
- * The draft "New template" creates: the built-in default shape, unsaved, renamed,
+ * The draft "New template" creates: the built-in default shape, unsaved, renamed, with a blank description,
  * and NOT default (a brand-new template should not silently steal the default
  * flag). Mirrors the Compose `onAddNew` copy.
  */
@@ -336,6 +336,9 @@ export function newTemplateDraft(): KinTaleTemplate {
     ...cloneDefaultTemplate(),
     _id: '',
     name: 'New template',
+    // #1614: the built-in's "Built-in default. Used when..." line describes the
+    // fallback, not the template the operator is creating.
+    description: '',
     isDefault: false,
     createdAt: '',
     updatedAt: '',

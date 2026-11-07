@@ -50,7 +50,7 @@ function schema(over: Partial<FormSchemaSummary>): FormSchemaSummary {
 }
 
 function roster(members: BusinessAdminRoster['members']): BusinessAdminRoster {
-  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null };
+  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null, businessEmail: '' };
 }
 
 beforeEach(() => {

@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ActivityLogEntry } from '../api/activityLog';
 import {
   activityCategoryOf,
@@ -12,6 +14,7 @@ import {
   activityPayloadRows,
   humanizeAction,
   localDayKey,
+  activityWhen,
 } from './activityDetail';
 
 function entry(over: Partial<ActivityLogEntry> = {}): ActivityLogEntry {
@@ -245,14 +248,42 @@ describe('activityMatchesCategory', () => {
     expect(activityMatchesCategory(entry({ actionType: 'LOGIN' }), 'bookings')).toBe(false);
   });
 
-  it('lets one entry answer two chips, since a category is a question and not a partition', () => {
+  it('files every action under exactly one chip (#1613)', () => {
     const triage = entry({ actionType: 'ADMIN_TRIAGE_ORPHAN_REPORT' });
     expect(activityMatchesCategory(triage, 'admin')).toBe(true);
-    expect(activityMatchesCategory(triage, 'kintales')).toBe(true);
-    // The tile takes the first match in the fixed order, which is what Android paints.
-    expect(activityCategoryOf(triage)).toBe('kintales');
+    expect(activityMatchesCategory(triage, 'kintales')).toBe(false);
+    expect(activityCategoryOf(triage)).toBe('admin');
   });
-
+  it('puts billing events under Billing, not KinTales or Bookings (#1613)', () => {
+    for (const a of ['BILLING_DRAFT_INVOICE_SENT', 'BILLING_SESSION_DO_NOT_INVOICE_SET', 'BILLING_PAYMENT_RECORDED', 'BILLING_QUOTE_ACCEPTED', 'EXPENSE_LOGGED']) {
+      expect(activityCategoryOf(entry({ actionType: a })), a).toBe('billing');
+      expect(activityMatchesCategory(entry({ actionType: a }), 'kintales'), a).toBe(false);
+    }
+  });
+  it('gives Admin the settings, membership, permission and retention events it never matched (#1613)', () => {
+    for (const a of ['THEME_BRAND_TOKENS_UPDATED', 'MEMBERSHIP_INVITE_SENT', 'PERM_GRANTED', 'RETENTION_DRAFTS_PURGED', 'ADMIN_FEATURE_FLAGS_UPDATED', 'SAVE_FORM_SCHEMA', 'CREATE_KINFOLK', 'INTEGRATION_CALENDAR_PUSH', 'VET_CLINIC_UPDATED']) {
+      expect(activityCategoryOf(entry({ actionType: a })), a).toBe('admin');
+    }
+  });
+  it('keeps the other chips on their own events', () => {
+    const cat = (a: string) => activityCategoryOf(entry({ actionType: a }));
+    expect(cat('SECRETS_TRIBEPIN_SET')).toBe('auth');
+    expect(cat('KINCARE_ARRIVED')).toBe('bookings');
+    expect(cat('RESCHEDULE_BOOKING')).toBe('bookings');
+    expect(cat('CREATE_BLOCKED_TIME_SLOT')).toBe('bookings');
+    expect(cat('CONTENT_KINTALE_PHOTO_UPLOADED')).toBe('kintales');
+    expect(cat('AI_TALE_TITLES_APPLIED')).toBe('kintales');
+    expect(cat('MEDIA_FILE_DELETED')).toBe('kintales');
+    expect(cat('BROADCAST_SENT')).toBe('notifications');
+    expect(cat('CONVERSATION_REPLIED')).toBe('notifications');
+  });
+  it('claims every action type the server writes (guard against a new event with no chip)', () => {
+    const src = readFileSync(resolve(__dirname, '../../../mytribe/functions/src/lib/auditEvents.ts'), 'utf8');
+    const events = [...src.matchAll(/^\s+([A-Z][A-Z0-9_]+):/gm)].map((m) => m[1]!);
+    expect(events.length).toBeGreaterThan(100);
+    const unclaimed = events.filter((e) => activityCategoryOf(entry({ actionType: e })) === null);
+    expect(unclaimed).toEqual([]);
+  });
   it('claims nothing for an action no chip recognises', () => {
     expect(activityCategoryOf(entry({ actionType: 'RECONCILE_RUN' }))).toBeNull();
   });
@@ -292,6 +323,39 @@ describe('the collapsed row, per the mock', () => {
   });
 });
 
+describe('activityWhen (#1585)', () => {
+  it('reads a UTC stamp on the Chicago clock, standard time', () => {
+    expect(activityWhen('2026-11-04T21:34:00Z', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '3:34p' });
+  });
+  it('reads it in daylight time too', () => {
+    expect(activityWhen('2026-07-16T21:34:00Z', 'America/Chicago')).toEqual({ dayKey: '2026-07-16', clock: '4:34p' });
+  });
+  it('moves the day back when UTC has already rolled over', () => {
+    expect(activityWhen('2026-11-05T02:34:00.123Z', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '8:34p' });
+  });
+  it('moves the day forward when the zone is ahead of UTC', () => {
+    expect(activityWhen('2026-11-04T23:30:00Z', 'Asia/Tokyo')).toEqual({ dayKey: '2026-11-05', clock: '8:30a' });
+  });
+  it('defaults to America/Chicago when no zone is given', () => {
+    expect(activityWhen('2026-11-04T21:34:00Z')?.clock).toBe('3:34p');
+  });
+  it('reads a stamp with an offset as the instant it names', () => {
+    expect(activityWhen('2026-11-04T16:34:00-05:00', 'America/Chicago')?.clock).toBe('3:34p');
+  });
+  it('keeps a zone-less stamp as the business wall clock', () => {
+    expect(activityWhen('2026-11-04T09:00:00', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '9:00a' });
+  });
+  it('returns null for a stamp with no readable time', () => {
+    expect(activityWhen('')).toBeNull();
+    expect(activityWhen('2026-11-04')).toBeNull();
+    expect(activityWhen('not a date')).toBeNull();
+  });
+  it('adds the business reading beside the raw stamp in the opened entry', () => {
+    const rows = activityDetailRows(entry({ timestamp: '2026-11-04T21:34:00Z' }), 'America/Chicago');
+    expect(rows[0]).toEqual({ label: 'When', value: '2026-11-04T21:34:00Z' });
+    expect(rows[1]).toEqual({ label: 'Business time', value: '2026-11-04 3:34p' });
+  });
+});
 // #1049: saveEmergencyContacts audits every refused save. The Activity Log has no
 // per-event formatter; this pins that the generic one reads the new event well.
 describe('EMERGENCY_CONTACT_SAVE_REFUSED (#1049)', () => {

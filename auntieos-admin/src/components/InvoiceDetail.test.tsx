@@ -99,7 +99,12 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   linkInvoiceSessions,
 }));
 
+// #1567: the server re-read after a send got no answer.
+const { readInvoiceSendMarks } = vi.hoisted(() => ({ readInvoiceSendMarks: vi.fn() }));
+vi.mock('../api/invoiceSendCheck', () => ({ readInvoiceSendMarks }));
 import { InvoiceDetail, paymentSplit, parseOptionalMoney } from './InvoiceDetail';
+import { CallableTimeoutError } from '../lib/fns';
+import { sendMarksOf } from '../lib/invoiceSendCheck';
 import { formatUsd } from '../lib/invoiceFormat';
 import { formatReminderTime, type ReminderOutcome } from '../lib/invoiceReminder';
 
@@ -255,6 +260,7 @@ function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
 }
 
 beforeEach(() => {
+  readInvoiceSendMarks.mockReset();
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
   // #1511: both answer whether the household's copy reached them in the app only.
@@ -479,6 +485,59 @@ describe('InvoiceDetail', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * #1567: the walk's send. The call got no answer, the server sent the invoice
+   * anyway, and the panel said "Action failed". Now it re-reads the invoice and
+   * reports what the server did.
+   */
+  describe('a send that got no answer (#1567)', () => {
+    async function pressSend(id: string) {
+      render(<InvoiceDetail invoice={entry({ _id: id, status: 'draft', total: 40, amountDue: 40 })} onClose={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    }
+    it('reports the draft as sent when the re-read shows it open', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'open' }));
+      await pressSend('inv-late');
+      expect(
+        await screen.findByText('Draft sent. The answer came late, so this was confirmed by re-reading the invoice.'),
+      ).toBeInTheDocument();
+      expect(readInvoiceSendMarks).toHaveBeenCalledWith('inv-late');
+      expect(screen.queryByText('Action failed')).toBeNull();
+    });
+    it('says not sent, and why, when the re-read still shows a draft', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'draft' }));
+      await pressSend('inv-lost');
+      expect(await screen.findByText(/did not answer within 70 seconds\. The invoice is still a draft/)).toBeInTheDocument();
+      expect(screen.getByText('Not sent')).toBeInTheDocument();
+      expect(screen.queryByText('Action failed')).toBeNull();
+    });
+    it('says it cannot tell when the re-read fails too', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new CallableTimeoutError('reviewAndSendDraftInvoice'));
+      readInvoiceSendMarks.mockResolvedValue(null);
+      await pressSend('inv-dark');
+      expect(await screen.findByText(/no way to tell from here whether the draft went/)).toBeInTheDocument();
+      expect(screen.getByText('No answer')).toBeInTheDocument();
+    });
+    it('confirms a reminder by its stamp moving', async () => {
+      sendInvoiceReminder.mockRejectedValue(new CallableTimeoutError('sendInvoiceReminder'));
+      readInvoiceSendMarks.mockResolvedValue(sendMarksOf({ status: 'open', reminderNotifiedAtMs: 5 }));
+      render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+      expect(
+        await screen.findByText('Reminder sent. The answer came late, so this was confirmed by re-reading the invoice.'),
+      ).toBeInTheDocument();
+    });
+    it('leaves a real refusal alone: no re-read, the server sentence stands', async () => {
+      reviewAndSendDraftInvoice.mockRejectedValue(new Error('Invoice is not a draft; nothing to send.'));
+      await pressSend('inv-refused');
+      expect(await screen.findByText(/reviewAndSendDraftInvoice failed:.*not a draft/)).toBeInTheDocument();
+      expect(readInvoiceSendMarks).not.toHaveBeenCalled();
+    });
+  });
   it('gates Send reminder behind an inline confirm before calling the callable', async () => {
     render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
@@ -1192,6 +1251,44 @@ describe('the payments panel', () => {
       await screen.findByText(/The ledger shows money this balance does not/i),
     ).toBeInTheDocument();
   });
+  it('#1568: says nothing about "no payment" when the payment exists only in history (invoice #1018)', async () => {
+    // $10.29 card payment in the root ledger, nothing in the settlement rows.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 12750,
+        amountDueCents: 11750,
+        ledgerPayments: [ledgerPayment({ amountCents: 1029, tipCents: 0, recordedBy: null })],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 127.5, amountDue: 117.5 })} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Payment history/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No payment has been recorded/i)).toBeNull();
+    expect(screen.queryByText(/Use Record payment below to log one/i)).toBeNull();
+    // No settlement table either: there is nothing in it to total.
+    expect(screen.queryByText('Collected')).toBeNull();
+  });
+  it('#1568: a PAID invoice with only migrated history shows its caveat and no empty sentence (invoice #1010)', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 4000,
+        amountDueCents: 0,
+        ledgerPayments: [ledgerPayment({ tipCents: 500, reconciles: false, tipBasis: 'unknown' })],
+      }),
+    );
+    render(
+      <InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, editScope: 'none' })} onClose={vi.fn()} />,
+    );
+    expect(await screen.findByText(/Some of these rows cannot be reconciled/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No payment has been recorded/i)).toBeNull();
+  });
+  it('#1568: with no rows anywhere and nothing owed, drops the "nothing has come off" clause', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 4000, amountDueCents: 0 }));
+    render(
+      <InvoiceDetail invoice={entry({ status: 'paid', amountDue: 0, editScope: 'none' })} onClose={vi.fn()} />,
+    );
+    expect(await screen.findByText(/No payment has been recorded against this invoice\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing has come off its balance/i)).toBeNull();
+  });
   it('fails loud on a refused read, verbatim, and offers a retry', async () => {
     getInvoiceLedger.mockRejectedValueOnce(new Error('Invoice not found.'));
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
@@ -1530,6 +1627,11 @@ describe('InvoiceDetail initialAction', () => {
  * $2.71 that nothing on the record could account for.
  */
 describe('the record-payment form: fee, gross tip, notes and the two switches', () => {
+  // #1566: the ledger agrees with the $127.50 invoice these cases open, since
+  // the applied part now stops at the ledger's balance.
+  beforeEach(() => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 12750, amountDueCents: 12750 }));
+  });
   async function openForm(invoice = entry({ amountDue: 127.5, total: 127.5 })) {
     render(<InvoiceDetail invoice={invoice} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
@@ -1653,6 +1755,11 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
   });
 });
 describe('the record-payment form: refusals it makes before any money moves', () => {
+  // #1566: the ledger agrees with the $127.50 invoice these cases open, since
+  // the applied part now stops at the ledger's balance.
+  beforeEach(() => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 12750, amountDueCents: 12750 }));
+  });
   async function openForm() {
     render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
@@ -1728,6 +1835,11 @@ describe('the record-payment form: refusals it makes before any money moves', ()
   });
 });
 describe('#988 where the payment goes, shown before Save', () => {
+  // #1566: the ledger agrees with the $127.50 invoice these cases open, since
+  // the applied part now stops at the ledger's balance.
+  beforeEach(() => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 12750, amountDueCents: 12750 }));
+  });
   async function openForm(amountDue = 127.5) {
     render(<InvoiceDetail invoice={entry({ amountDue, total: amountDue })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
@@ -1772,7 +1884,14 @@ describe('#988 where the payment goes, shown before Save', () => {
   });
 });
 describe('#988 paymentSplit, the arithmetic behind that line', () => {
-  const base = { paymentTotal: '', applied: '127.50', tip: '', credit: '', fallbackApplied: 127.5 };
+  const base = {
+    paymentTotal: '',
+    applied: '127.50',
+    tip: '',
+    credit: '',
+    fallbackApplied: 127.5,
+    amountDueCents: 12750 as number | null,
+  };
   it('blank payment amount: paid is applied + tip + credit', () => {
     expect(paymentSplit({ ...base, tip: '10' })).toEqual({
       ok: true,
@@ -1780,6 +1899,7 @@ describe('#988 paymentSplit, the arithmetic behind that line', () => {
       appliedCents: 12750,
       tipCents: 1000,
       creditCents: 0,
+      overCents: 0,
     });
   });
   it('blank tip takes the rest after applied and credit', () => {
@@ -1789,6 +1909,7 @@ describe('#988 paymentSplit, the arithmetic behind that line', () => {
       appliedCents: 12750,
       tipCents: 5250,
       creditCents: 2000,
+      overCents: 0,
     });
   });
   it('the whole leftover can be credit, leaving no tip', () => {
@@ -1814,6 +1935,124 @@ describe('#988 paymentSplit, the arithmetic behind that line', () => {
   it('null for anything half-typed', () => {
     expect(paymentSplit({ ...base, credit: 'x' })).toBeNull();
     expect(paymentSplit({ ...base, tip: '-1' })).toBeNull();
+  });
+});
+describe('#1566 an amount over the balance is tip, never applied to the invoice', () => {
+  // The walk: INV-2026-0001, $78.50 owed, Amount collected 100, Fees 2.
+  const due = {
+    paymentTotal: '',
+    applied: '100',
+    tip: '',
+    credit: '',
+    fallbackApplied: 78.5,
+    amountDueCents: 7850 as number | null,
+  };
+  it('blank payment amount: the invoice takes $78.50 and the $21.50 over is tip', () => {
+    expect(paymentSplit(due)).toEqual({
+      ok: true,
+      paidCents: 10000,
+      appliedCents: 7850,
+      tipCents: 2150,
+      creditCents: 0,
+      overCents: 2150,
+    });
+  });
+  it('a typed tip is added to the part over the balance', () => {
+    expect(paymentSplit({ ...due, tip: '5' })).toMatchObject({
+      ok: true,
+      paidCents: 10500,
+      appliedCents: 7850,
+      tipCents: 2650,
+    });
+  });
+  it('typed payment amount, blank tip: the tip is everything past the balance', () => {
+    expect(paymentSplit({ ...due, paymentTotal: '100' })).toMatchObject({
+      ok: true,
+      paidCents: 10000,
+      appliedCents: 7850,
+      tipCents: 2150,
+      creditCents: 0,
+    });
+  });
+  it('credit she types comes out of the part over the balance', () => {
+    expect(paymentSplit({ ...due, paymentTotal: '100', credit: '10' })).toMatchObject({
+      ok: true,
+      appliedCents: 7850,
+      tipCents: 1150,
+      creditCents: 1000,
+    });
+  });
+  it('a typed tip that no longer adds up is refused, and says why', () => {
+    const split = paymentSplit({ ...due, paymentTotal: '100', tip: '21.50' });
+    expect(split).toMatchObject({ ok: false });
+    if (split === null || split.ok) return;
+    expect(split.error).toContain('add up to $121.50, not the $100.00 paid');
+    expect(split.error).toContain('The invoice owes $78.50, so $21.50 of the amount collected counts as tip.');
+  });
+  it('exactly the balance is unchanged', () => {
+    expect(paymentSplit({ ...due, applied: '78.50' })).toEqual({
+      ok: true,
+      paidCents: 7850,
+      appliedCents: 7850,
+      tipCents: 0,
+      creditCents: 0,
+      overCents: 0,
+    });
+  });
+  it('a blank amount settles the known balance, not the dollar scalar', () => {
+    expect(paymentSplit({ ...due, applied: '', fallbackApplied: 0 })).toMatchObject({
+      ok: true,
+      appliedCents: 7850,
+      tipCents: 0,
+    });
+  });
+  it('an unknown balance caps nothing; the server refusal then says what is owed', () => {
+    // A stale $0 scalar must never turn the whole payment into tip.
+    expect(paymentSplit({ ...due, amountDueCents: null })).toMatchObject({
+      ok: true,
+      appliedCents: 10000,
+      tipCents: 0,
+      overCents: 0,
+    });
+  });
+  it('an invoice that owes nothing takes no payment', () => {
+    expect(paymentSplit({ ...due, amountDueCents: 0 })).toEqual({
+      ok: false,
+      error: 'This invoice owes nothing, so no payment can be recorded against it.',
+    });
+  });
+});
+describe('#1566 the record-payment dialog on a $78.50 balance', () => {
+  beforeEach(() => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 7850, amountDueCents: 7850 }));
+  });
+  const line = () => screen.getByRole('status', { name: /where this payment goes/i });
+  async function openAndType() {
+    render(<InvoiceDetail invoice={entry({ amountDue: 78.5, total: 78.5 })} onClose={vi.fn()} />);
+    await screen.findByText(/Collected|No payment has been recorded/i);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '100');
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2');
+  }
+  it('the summary line says the invoice takes $78.50 and the rest is tip, fee out of it', async () => {
+    await openAndType();
+    await waitFor(() => expect(line()).toHaveTextContent('$100.00 paid'));
+    expect(line()).toHaveTextContent(
+      '$78.50 to this invoice, $21.50 tip (the $2.00 fee comes out of it), $0.00 account credit.',
+    );
+    expect(line()).toHaveTextContent('The invoice owes $78.50, so the $21.50 over it is tip.');
+  });
+  it('settles with $78.50 and books the $21.50 as gross tip with the $2 fee', async () => {
+    markInvoicePaid.mockResolvedValue({ ...settledResult(), totalCents: 7850, paidCents: 7850 });
+    await openAndType();
+    await userEvent.type(screen.getByLabelText(/payment method/i), 'venmo');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(markInvoicePaid).toHaveBeenCalledWith('inv1', expect.objectContaining({ amount: 78.5 }));
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 100, tip: 21.5, fee: 2, creditToAccountCents: 0, autoApply: false }),
+    );
   });
 });
 describe('what the operator is told after the payment lands', () => {
@@ -2734,6 +2973,11 @@ describe('InvoiceDetail and a quote the household has answered (issue #448)', ()
  * note after the payment repeats only the credit the server says it gave.
  */
 describe('#977 and #988 Mark paid, two-step, with and without a chosen credit', () => {
+  // #1566: the ledger agrees with the $127.50 invoice these cases open, since
+  // the applied part now stops at the ledger's balance.
+  beforeEach(() => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 12750, amountDueCents: 12750 }));
+  });
   const ledgerAnswer = (creditedToAccountCents: number, amountCents: number) => ({
     ok: true,
     paymentId: 'led1',
@@ -3042,7 +3286,21 @@ describe('record-payment amount boxes read a typed thousands comma (#1495)', () 
     expect(parseOptionalMoney(formatUsd(1234.5))).toBe(1234.5);
   });
   it('splits a payment typed with commas', () => {
-    const split = paymentSplit({ paymentTotal: '$1,500.00', applied: '1,234.50', tip: '', credit: '', fallbackApplied: 0 });
-    expect(split).toEqual({ ok: true, paidCents: 150000, appliedCents: 123450, tipCents: 26550, creditCents: 0 });
+    const split = paymentSplit({
+      paymentTotal: '$1,500.00',
+      applied: '1,234.50',
+      tip: '',
+      credit: '',
+      fallbackApplied: 0,
+      amountDueCents: null,
+    });
+    expect(split).toEqual({
+      ok: true,
+      paidCents: 150000,
+      appliedCents: 123450,
+      tipCents: 26550,
+      creditCents: 0,
+      overCents: 0,
+    });
   });
 });

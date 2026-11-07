@@ -5,10 +5,12 @@ import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type ActivityLogEntry, type VerifyResult } from '../api/activityLog';
 
-const { useCollection, verifyActivityLogChain } = vi.hoisted(() => ({
+const { useCollection, verifyActivityLogChain, getBusinessSettings } = vi.hoisted(() => ({
   useCollection: vi.fn(),
   verifyActivityLogChain: vi.fn(),
+  getBusinessSettings: vi.fn(),
 }));
+vi.mock('../api/settings', () => ({ getBusinessSettings }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 vi.mock('../api/activityLog', async (orig) => ({
   ...(await orig<typeof import('../api/activityLog')>()),
@@ -16,6 +18,7 @@ vi.mock('../api/activityLog', async (orig) => ({
 }));
 
 import { ActivityLog } from './ActivityLog';
+import { businessTodayIso } from '../lib/businessZoneTime';
 
 function entry(over: Partial<ActivityLogEntry>): ActivityLogEntry {
   return {
@@ -30,6 +33,7 @@ const OK: VerifyResult = { ok: true, scanned: 40, firstSeq: 1, lastSeq: 40, unch
 beforeEach(() => {
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<ActivityLogEntry[]>);
   verifyActivityLogChain.mockReset().mockResolvedValue(OK);
+  getBusinessSettings.mockReset().mockResolvedValue({ timeZone: '' });
 });
 
 describe('ActivityLog', () => {
@@ -269,6 +273,7 @@ describe('ActivityLog filtering', () => {
       'Bookings',
       'KinTales',
       'Notifications',
+      'Billing',
       'Admin',
     ]);
     expect(within(list).getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
@@ -292,6 +297,29 @@ describe('ActivityLog filtering', () => {
     expect(screen.queryByText('BOOKING_SUBMITTED')).toBeNull();
     expect(screen.getByText('KINCARE_ARRIVED')).toBeInTheDocument();
     expect(screen.getByText(/1 of 3 loaded/i)).toBeInTheDocument();
+  });
+  it('has a Billing chip that holds the billing events and an Admin chip that is not empty (#1613)', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 'p1', actionType: 'BILLING_DRAFT_INVOICE_SENT' }),
+        entry({ _id: 'p2', actionType: 'BILLING_PAYMENT_RECORDED' }),
+        entry({ _id: 'a1', actionType: 'THEME_BRAND_TOKENS_UPDATED' }),
+        entry({ _id: 'a2', actionType: 'MEMBERSHIP_INVITE_SENT' }),
+        entry({ _id: 'k1', actionType: 'CONTENT_KINTALE_NOTE_ADDED' }),
+      ],
+    });
+    render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Billing' }));
+    expect(screen.getByText('BILLING_DRAFT_INVOICE_SENT')).toBeInTheDocument();
+    expect(screen.getByText('BILLING_PAYMENT_RECORDED')).toBeInTheDocument();
+    expect(screen.queryByText('THEME_BRAND_TOKENS_UPDATED')).toBeNull();
+    await userEvent.click(screen.getByRole('tab', { name: 'KinTales' }));
+    expect(screen.queryByText('BILLING_DRAFT_INVOICE_SENT')).toBeNull();
+    expect(screen.getByText('CONTENT_KINTALE_NOTE_ADDED')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Admin' }));
+    expect(screen.getByText('THEME_BRAND_TOKENS_UPDATED')).toBeInTheDocument();
+    expect(screen.getByText('MEMBERSHIP_INVITE_SENT')).toBeInTheDocument();
   });
 });
 
@@ -331,7 +359,7 @@ describe('ActivityLog against its mock', () => {
     });
     render(<ActivityLog />);
     const row = screen.getByRole('button', { name: /KINCARE_ARRIVED/ });
-    expect(within(row).getByText('2:14p')).toHaveClass('activity__time');
+    expect(within(row).getByText('9:14a')).toHaveClass('activity__time');
     expect(within(row).getByText('Kincare arrived')).toHaveClass('activity__title');
     expect(within(row).getByText('KINCARE_ARRIVED')).toHaveClass('activity__code');
     const tile = row.querySelector('.icon-tile');
@@ -362,22 +390,48 @@ describe('ActivityLog against its mock', () => {
     expect(row.querySelector('.activity__hash')).toBeNull();
   });
   it('labels today and yesterday by name, the way the mock separates its days', () => {
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const key = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    // The business's days (#1585), not the device's.
+    const todayKey = businessTodayIso('America/Chicago');
+    const yesterdayKey = new Date(Date.parse(`${todayKey}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
     useCollection.mockReturnValue({
       status: 'ready',
       data: [
-        entry({ _id: 't', timestamp: `${key(today)}T09:00:00`, seq: 3 }),
-        entry({ _id: 'y', timestamp: `${key(yesterday)}T09:00:00`, seq: 2 }),
+        entry({ _id: 't', timestamp: `${todayKey}T09:00:00`, seq: 3 }),
+        entry({ _id: 'y', timestamp: `${yesterdayKey}T09:00:00`, seq: 2 }),
       ],
     });
     render(<ActivityLog />);
     const labels = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
     expect(labels[0]).toMatch(/^Today · [A-Z][a-z]{2} \d{1,2}$/);
     expect(labels[1]).toMatch(/^Yesterday · [A-Z][a-z]{2} \d{1,2}$/);
+  });
+  it('prints a UTC stamp on the business clock and files it under the business day (#1585)', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        // 21:34 UTC on Nov 4 is 3:34 pm in Chicago (CST).
+        entry({ _id: 'a', timestamp: '2026-11-04T21:34:00Z', seq: 5 }),
+        // 02:34 UTC on Nov 5 is still Nov 4, 8:34 pm, in Chicago.
+        entry({ _id: 'b', timestamp: '2026-11-05T02:34:00Z', seq: 4 }),
+      ],
+    });
+    render(<ActivityLog />);
+    const labels = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+    expect(labels).toHaveLength(1);
+    expect(labels[0]).toMatch(/Nov 4$/);
+    const times = Array.from(document.querySelectorAll('time.activity__time')).map((t) => t.textContent);
+    expect(times).toEqual(['3:34p', '8:34p']);
+  });
+  it('reads the stored business zone once the settings land (#1585)', async () => {
+    getBusinessSettings.mockResolvedValue({ timeZone: 'America/Denver' });
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'a', timestamp: '2026-11-04T21:34:00Z', seq: 5 })],
+    });
+    render(<ActivityLog />);
+    await waitFor(() => {
+      expect(document.querySelector('time.activity__time')?.textContent).toBe('2:34p');
+    });
   });
   it('draws the log as one untitled kit panel with the count as its meta', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });

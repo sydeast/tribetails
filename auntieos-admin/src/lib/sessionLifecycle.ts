@@ -197,3 +197,48 @@ export function appendOfficeNote(existing: string, addition: string, nowIso: str
 export function lifecycleNowIso(now: Date = new Date()): string {
   return `${now.toISOString().split('.')[0]}Z`;
 }
+
+/** The `[2026-11-05T21:32:52Z]` stamp `appendOfficeNote` (and Android) writes. */
+const NOTE_STAMP = /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\]/g;
+
+/**
+ * The visit notes as the operator reads them (#1592): each stored
+ * `[2026-11-05T21:32:52Z]` stamp shows as `[Nov 5, 3:32 PM]` in `timeZone`
+ * (the business zone), with the year when it is not this year. The STORED
+ * text is untouched: both clients write and parse that format.
+ */
+export function readableVisitNotes(notes: string, timeZone: string, now: Date = new Date()): string {
+  const yearOf = (d: Date) => new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric' }).format(d);
+  const thisYear = yearOf(now);
+  return notes.replace(NOTE_STAMP, (whole, iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return whole;
+    const sameYear = yearOf(d) === thisYear;
+    const label = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' }),
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(d);
+    return `[${label}]`;
+  });
+}
+
+/** Field keys `updateKinCareSession` reports back, as the operator names them. */
+const SESSION_FIELD_LABELS: Readonly<Record<string, string>> = {
+  serviceType: 'service',
+  serviceDurationMinutes: 'visit length',
+  kinIds: 'kin on this visit',
+};
+
+/**
+ * "Saved: visit length." for a save of the visit's details (#1592). It used
+ * to print the server's field keys ("Saved: serviceDurationMinutes."). A key
+ * with no label is left out rather than shown raw.
+ */
+export function savedVisitFieldsMessage(updated: readonly string[]): string {
+  const labels = updated.map((k) => SESSION_FIELD_LABELS[k]).filter((l): l is string => l !== undefined);
+  return labels.length === 0 ? 'Saved.' : `Saved: ${labels.join(', ')}.`;
+}

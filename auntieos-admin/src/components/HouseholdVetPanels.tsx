@@ -1,11 +1,10 @@
+import { useVetClinics } from '../lib/useVetClinics';
 import { AsyncRegion } from './AsyncRegion';
 import { Banner } from './Banner';
 import { DenPanel } from './DenScreenKit';
 import { useOneShot } from '../lib/useOneShot';
-import { useCollection } from '../lib/firestore';
 import { getHouseholdData, type HouseholdRecord } from '../api/householdData';
 import { directionsHref } from '../lib/directions';
-import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
 import { resolveHouseholdVet, hasVet, type ResolvedVet } from '../lib/householdVet';
 
 /**
@@ -23,7 +22,7 @@ export function HouseholdVetPanels({ kinfolkId }: { kinfolkId: string }) {
     () => getHouseholdData(kinfolkId),
     'getHouseholdData',
   );
-  const clinics = useCollection<VetClinic>(VET_CLINICS_QUERY);
+  const clinics = useVetClinics();
 
   return (
     <AsyncRegion
