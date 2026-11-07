@@ -47,3 +47,21 @@ fun joinDateRangeError(value: String, stored: String, today: LocalDate): String?
 /** Today in the machine's own time zone. */
 @OptIn(ExperimentalTime::class)
 fun localToday(): LocalDate = Clock.System.todayIn(TimeZone.currentSystemDefault())
+
+private val MONTH_ABBR = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+/** #1602: the profile's line for a join date it cannot stand behind. Same words as the admin web. */
+const val JOIN_DATE_NEEDS_FIXING = "Join date needs fixing: pick it in Edit"
+
+/**
+ * #1602: a sound join date in the admin web's medium style ("Jun 1, 2026"),
+ * or null when the stored value is blank, unreadable or outside 2025 through
+ * [today]. The console used to print the stored string raw, so profiles read
+ * "since 2026-06-01" on one household and "since March 5" on another. Pure.
+ */
+fun profileJoinDateLabel(raw: String, today: LocalDate): String? {
+    val head = raw.trim().take(10)
+    val day = isoDayOrNull(head) ?: return null
+    if (!isJoinDateInRange(head, today)) return null
+    return "${MONTH_ABBR[day.month.ordinal]} ${day.day}, ${day.year}"
+}

@@ -137,12 +137,19 @@ function mount(
   over: {
     members?: HouseholdMember[];
     invites?: HouseholdInvite[];
+    /** #1602: the household email the invite confirm names. */
+    email?: string;
   } = {},
 ) {
   api.listHouseholdMembers.mockResolvedValue(over.members ?? [member()]);
   api.listHouseholdInvites.mockResolvedValue(over.invites ?? [invite()]);
   return render(
-    <HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />,
+    <HouseholdMembers
+      kinfolkId="fam1"
+      kinfolkName="the Walls"
+      kinfolkEmail={over.email ?? 'catch@hanasamku.com'}
+      onBack={() => {}}
+    />,
   );
 }
 
@@ -216,6 +223,10 @@ describe('HouseholdMembers HAPPY', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Invite to portal' }),
     );
+    // #1602: it asks first, naming the address, and sends only on Send invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: 'Invite to portal' })).toHaveTextContent('catch@hanasamku.com');
+    await user.click(screen.getByRole('button', { name: 'Send invite' }));
 
     await waitFor(() => expect(api.inviteKinfolkToPortal).toHaveBeenCalledWith('fam1'));
     expect(await screen.findByText(/Portal invite sent to the Walls/)).toBeInTheDocument();
@@ -404,11 +415,37 @@ describe('HouseholdMembers NEGATIVE', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Invite to portal' }),
     );
+    // #1602: it asks first, naming the address, and sends only on Send invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: 'Invite to portal' })).toHaveTextContent('catch@hanasamku.com');
+    await user.click(screen.getByRole('button', { name: 'Send invite' }));
 
     // A success response that emailed nobody must never read as an invite sent.
     expect(await screen.findByText(/No invite sent/)).toBeInTheDocument();
     expect(screen.getByText(/already has an active portal account/)).toBeInTheDocument();
     expect(screen.queryByText(/Portal invite sent/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * #1602: the walk's invite looked usable when it could not succeed, then
+   * said Dre already had an account. It is off, with the reason, when the
+   * roster already has an ACTIVE primary or there is no email on file.
+   */
+  it('#1602: is off, and says why, when a primary is already on the portal', async () => {
+    mount({
+      members: [member({ uid: 'u-p', role: 'PRIMARY', status: 'ACTIVE', invitedEmail: 'lost@example.com', secondaryLabel: null })],
+    });
+    await screen.findByText('lost@example.com');
+    const hero = document.querySelector('.hmembers__actions') as HTMLElement;
+    expect(within(hero).getByRole('button', { name: 'Invite to portal' })).toBeDisabled();
+    expect(within(hero).getByText('Already on the portal.')).toBeInTheDocument();
+  });
+
+  it('#1602: is off, and says why, when the household has no email on file', async () => {
+    mount({ members: [], email: '' });
+    const hero = await waitFor(() => document.querySelector('.hmembers__actions') as HTMLElement);
+    expect(within(hero).getByRole('button', { name: 'Invite to portal' })).toBeDisabled();
+    expect(within(hero).getByText(/No email on file/)).toBeInTheDocument();
   });
 
   it('says nothing was sent when the household record carries no email', async () => {
@@ -419,6 +456,10 @@ describe('HouseholdMembers NEGATIVE', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Invite to portal' }),
     );
+    // #1602: it asks first, naming the address, and sends only on Send invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: 'Invite to portal' })).toHaveTextContent('catch@hanasamku.com');
+    await user.click(screen.getByRole('button', { name: 'Send invite' }));
 
     expect(await screen.findByText(/no email address on file/)).toBeInTheDocument();
     expect(screen.queryByText(/Portal invite sent/)).not.toBeInTheDocument();
@@ -472,8 +513,12 @@ describe('HouseholdMembers ERROR', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Invite to portal' }),
     );
+    // #1602: it asks first, naming the address, and sends only on Send invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog', { name: 'Invite to portal' })).toHaveTextContent('catch@hanasamku.com');
+    await user.click(screen.getByRole('button', { name: 'Send invite' }));
 
-    expect(await screen.findByText(/inviteKinfolkToPortal failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/The portal invite was not sent: internal/)).toBeInTheDocument();
   });
 
   it('reports a failed removal and keeps the confirm dialog open', async () => {
@@ -762,10 +807,35 @@ describe('HouseholdMembers mock structure', () => {
     expect(householdInitial('fam1')).toBe('F');
   });
 
+  /**
+   * #1602: the walk added a secondary kinfolk (no portal account) and the
+   * panel still read 0 with its empty sentence, even after reload. The people
+   * added here count, and the empty sentence goes once there are any.
+   */
+  it('#1602: counts a secondary added with no portal account, and drops the empty sentence', async () => {
+    api.listSecondaryKinfolk.mockResolvedValue([
+      { personId: 'p1', name: 'Rae East', phone: null, email: null, access: 'NONE', memberUid: null },
+    ]);
+    mount({ members: [primary()] });
+    await screen.findByText('Rae East');
+    const panel = (await screen.findByText('Secondary kinfolk')).closest('.den-panel') as HTMLElement;
+    await waitFor(() => expect(within(panel).getByText('1 of role: SECONDARY')).toBeInTheDocument());
+    expect(within(panel).queryByText(/No secondary kinfolk yet/)).toBeNull();
+  });
+
+  it('#1602: says there are none only when neither list has anybody', async () => {
+    mount({ members: [primary()] });
+    const panel = (await screen.findByText('Secondary kinfolk')).closest('.den-panel') as HTMLElement;
+    expect(await within(panel).findByText(/No secondary kinfolk yet/)).toBeInTheDocument();
+    expect(within(panel).getByText('0 of role: SECONDARY')).toBeInTheDocument();
+  });
+
   // Q4 (operator, 2026-09-27): the panel is "Secondary kinfolk".
   it('splits the roster by role into Primary contact and Secondary kinfolk, then Invites, with the mock meta', async () => {
     mount({ members: [primary(), member()] });
     await screen.findByText('marcus@example.com');
+    // #1602: the count waits for the no-portal list as well.
+    await screen.findByText('1 of role: SECONDARY');
     const titles = Array.from(document.querySelectorAll('.den-panel-title')).map(
       (el) => el.textContent,
     );
