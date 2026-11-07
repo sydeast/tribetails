@@ -43,6 +43,13 @@ class InvoiceRowDateLineTest {
     }
 
     @Test
+    fun aRowFromAnotherYearCarriesItsYear() {
+        // #1599: "paid Jul 2" on a 2025 invoice read as this summer.
+        assertEquals("paid Jul 2, 2025", invoiceRowDateLine(inv("paid", date = "2025-07-02"), today))
+        assertEquals("due Jan 5, 2027", invoiceRowDateLine(inv("open", dueDate = "2027-01-05", amountDue = 40.0), today))
+    }
+
+    @Test
     fun quotesDraftsAndUndatedRows() {
         assertEquals("quote", invoiceRowDateLine(inv("quote", dueDate = "2026-10-01"), today))
         assertEquals("draft", invoiceRowDateLine(inv("draft", dueDate = "2026-10-01"), today))

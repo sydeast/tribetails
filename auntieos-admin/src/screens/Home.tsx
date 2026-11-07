@@ -99,7 +99,8 @@ export const DASH_LABELS: Readonly<Record<DashKey, string>> = {
 interface WidgetProps {
   onOpenInbox: () => void;
   onOpenSessions: () => void;
-  onOpenCommunicate: () => void;
+  /** Communicate, on one stored draft when an id is given (#1563). */
+  onOpenCommunicate: (draftId: string | null) => void;
 }
 
 /**
@@ -366,7 +367,9 @@ export function Home() {
                 widgetKey={w.key}
                 onOpenInbox={() => void navigate({ to: '/inbox' })}
                 onOpenSessions={() => void navigate({ to: '/sessions' })}
-                onOpenCommunicate={() => void navigate({ to: '/communicate' })}
+                onOpenCommunicate={(draftId) =>
+                  void navigate({ to: '/communicate', search: draftId !== null ? { draftId } : {} })
+                }
               />
             </div>
           ))

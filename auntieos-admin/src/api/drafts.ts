@@ -85,6 +85,14 @@ export interface GeneratedDraftRow {
    * doc carrying both (or one backfilled later) still dates correctly.
    */
   generated_at?: string | undefined;
+  /**
+   * #1563: the `kin_care_reports` id this draft was sent as, stamped by the
+   * `publishGeneratedDraft` callable together with `status: 'published'`. Set
+   * means the household already has this KinTale, so the draft is history: the
+   * KinTales list shows the sent report in its place and Home stops offering it
+   * for review. See `api/kinTaleDraftActions.ts`.
+   */
+  publishedReportId?: string | undefined;
 }
 
 /**
