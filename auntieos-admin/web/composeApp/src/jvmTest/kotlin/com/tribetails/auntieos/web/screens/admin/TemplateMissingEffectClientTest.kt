@@ -18,8 +18,9 @@ import kotlin.test.assertTrue
  * #1586: Manage assignments said five keys had no template and would fail. Only
  * a direct send with no template can fail (invite.verify-email): the email
  * channel sends generic wording and a broadcast never reads a template. A
- * direct send never falls back to its repo copy, so the screen says to load it. The desktop console now reads the server's
- * `whenTemplateMissing` and names only the keys that really fail.
+ * direct send never falls back to its repo copy, so the screen says to load it.
+ * The desktop console now reads the server's `whenTemplateMissing` and names
+ * only the keys that really fail.
  */
 class TemplateMissingEffectClientTest {
 
@@ -49,14 +50,16 @@ class TemplateMissingEffectClientTest {
     )
 
     @Test
-    fun noneOfTheFiveWalkedKeysFailsOnSend() {
-        assertEquals(emptyList(), keysFailingOnSend(walked, emptySet(), bankLoaded = true))
+    fun onlyInviteVerifyEmailOfTheFiveWalkedKeysFailsOnSend() {
+        assertEquals(listOf("invite.verify-email"), keysFailingOnSend(walked, emptySet(), bankLoaded = true))
+        // The repo has its copy, so the banner points at Template Import.
+        assertEquals(listOf("invite.verify-email"), failingKeysWithRepoCopy(walked, emptySet(), bankLoaded = true))
     }
 
     @Test
-    fun theFourWithARepoCopyAreListedForTemplateImport() {
+    fun theThreeStillDeliveredAreListedForTemplateImport() {
         assertEquals(
-            listOf("invite.verify-email", "kin.removal.archived", "kin.removal.declined", "kin.removal.requested"),
+            listOf("kin.removal.archived", "kin.removal.declined", "kin.removal.requested"),
             keysAwaitingImport(walked, emptySet(), bankLoaded = true),
         )
     }
