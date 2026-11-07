@@ -23,6 +23,11 @@ sealed interface VisitRequestRow {
 
     /** What the row is about, for the title line. */
     val title: String
+    /**
+     * #1577: the household asking, from `families/{kinfolkId}.displayName`.
+     * Null when the server could not read the household record.
+     */
+    val householdName: String?
 
     /** The kin this visit is for, already joined for display. Blank when unknown. */
     val kinNames: String
@@ -38,6 +43,7 @@ sealed interface VisitRequestRow {
         override val batchId: String get() = dto.batchId
         override val visitId: String get() = dto.visitId
         override val title: String get() = dto.title ?: dto.serviceType ?: "Visit"
+        override val householdName: String? get() = dto.kinfolkName
         override val kinNames: String get() = dto.kinNames.joinToString(", ")
         override val reason: String? get() = dto.reason
         override val requestedAtMs: Long? get() = dto.requestedAtMs
@@ -48,6 +54,7 @@ sealed interface VisitRequestRow {
         override val batchId: String get() = dto.batchId
         override val visitId: String get() = dto.visitId
         override val title: String get() = dto.title ?: dto.serviceType ?: "Visit"
+        override val householdName: String? get() = dto.kinfolkName
         override val kinNames: String get() = dto.kinNames.joinToString(", ")
         override val reason: String? get() = dto.reason
         override val requestedAtMs: Long? get() = dto.requestedAtMs
@@ -103,3 +110,28 @@ fun VisitRequestRow.acceptLabel(): String = when (this) {
  * on top of the decline the household already sees.
  */
 fun VisitRequestRow.declineNoteLabel(): String = "Anything to add for the household (optional)"
+
+/** What a request card says when the household record did not read. */
+const val HOUSEHOLD_NOT_ON_FILE = "Household name not on file"
+/** " for The Wrens" / " from The Wrens", or nothing when the name did not read. */
+internal fun householdSuffix(name: String?, preposition: String): String =
+    name?.trim()?.takeIf { it.isNotEmpty() }?.let { " $preposition $it" }.orEmpty()
+/**
+ * #1577: WHO is asking, the card's title. The web queue
+ * (`VisitRequestsSection.tsx`) names its rows the same way.
+ */
+fun VisitRequestRow.householdLabel(): String =
+    householdName?.trim()?.takeIf { it.isNotEmpty() } ?: HOUSEHOLD_NOT_ON_FILE
+/** What the request is about: the visit's title, then the Kin it covers. */
+fun VisitRequestRow.subject(): String =
+    if (kinNames.isBlank()) title else "$title · $kinNames"
+/** #1577: the confirm step for Accept, titled with the household. */
+fun VisitRequestRow.acceptConfirmTitle(): String = when (this) {
+    is VisitRequestRow.Cancel -> "Cancel this visit${householdSuffix(householdName, "for")}"
+    is VisitRequestRow.Reschedule -> "Move this visit${householdSuffix(householdName, "for")}"
+}
+/** #1577: the decline step, titled with the household. */
+fun VisitRequestRow.declineConfirmTitle(): String = when (this) {
+    is VisitRequestRow.Cancel -> "Keep this visit${householdSuffix(householdName, "for")}"
+    is VisitRequestRow.Reschedule -> "Decline this new time${householdSuffix(householdName, "from")}"
+}

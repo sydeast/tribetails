@@ -27,6 +27,16 @@ export function isSessionCompleted(status: unknown): boolean {
 }
 
 /**
+ * #1609: true when this visit was called off. A cancelled visit is work that
+ * did not happen, so it is never billable: the link picker greys it out and
+ * `linkInvoiceSessions` refuses to add one. Both spellings, any case.
+ */
+export function isSessionCancelled(status: unknown): boolean {
+  if (typeof status !== 'string') return false;
+  const s = status.trim().toUpperCase();
+  return s === 'CANCELLED' || s === 'CANCELED';
+}
+/**
  * True when no invoice has claimed this visit.
  *
  * Absent, null, empty and whitespace are ONE state: unclaimed. `createKinCareSession`

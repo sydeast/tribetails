@@ -77,6 +77,17 @@ internal fun invoiceSessionLinksSavedText(outcome: InvoiceSessionLinkOutcome): S
 }
 
 /**
+ * #1609: a CANCELLED visit is work that did not happen, so the picker shows it
+ * but will not newly tick it, and `linkInvoiceSessions` refuses it with
+ * `session_cancelled`. One already in [storedIds] stays togglable so it can be
+ * unlinked. Same rule as admin web and admin Android.
+ */
+internal fun linkPickerCancelled(session: KinCareSession, storedIds: Collection<String>): Boolean {
+    if (session._id in storedIds) return false
+    val s = session.status.trim().uppercase()
+    return s == "CANCELLED" || s == "CANCELED"
+}
+/**
  * #1254: true when this visit's own back-link names an invoice OTHER than
  * [invoiceId] and the visit is not already in [storedIds], the invoice's saved
  * set. The Link Sessions picker shows such a visit but will not tick it, and
@@ -111,6 +122,8 @@ internal fun toggleLinkPick(
 ): Set<String> {
     if (sessionId in pending) return pending - sessionId
     val session = sessions.firstOrNull { it._id == sessionId }
-    if (session != null && linkPickerOnOtherInvoice(session, invoiceId, storedIds)) return pending
+    if (session != null && (linkPickerOnOtherInvoice(session, invoiceId, storedIds) || linkPickerCancelled(session, storedIds))) {
+        return pending
+    }
     return pending + sessionId
 }
