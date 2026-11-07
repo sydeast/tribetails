@@ -274,3 +274,41 @@
     flex-wrap: wrap;
   }
 }
+/* #1587. Accounts are picked by name from a scrolling checklist, and the
+   campaign's email is shown as it will read. */
+.blasts__accounts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.blasts__copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.blasts__copy-subject {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.blasts__copy-body {
+  margin: 0;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-card);
+  max-height: 18rem;
+  overflow-y: auto;
+}

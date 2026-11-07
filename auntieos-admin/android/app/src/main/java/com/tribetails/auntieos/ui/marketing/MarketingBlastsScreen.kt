@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.LinearProgressIndicator
@@ -128,6 +129,11 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                     color = c.textDim,
                 )
             }
+            // #1587: the operator reads what goes out before it is scheduled.
+            state.copy?.let { copy ->
+                Text("Subject: ${copy.subject}", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                Text(copy.text, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
         }
     }
 
@@ -158,11 +164,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
             }
 
             // ── compose ──────────────────────────────────────────────────────
-            DenPanel(
-                title = "Schedule a blast",
-                subtitle = "The copy comes from your template for this campaign key, authored in Template Bank. " +
-                    "The merge fields below fill its tokens.",
-            ) {
+            DenPanel(title = "Schedule a blast") {
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
                     AuntieFieldLabel(text = "Campaign")
                     AuntieChipGroup(
@@ -170,7 +172,6 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                         selected = setOf(state.campaignKey),
                         onSelectionChange = { next -> next.firstOrNull()?.let(viewModel::setCampaignKey) },
                         label = { it.label },
-                        monoSuffix = { it.wire },
                         singleSelect = true,
                     )
 
@@ -249,51 +250,22 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                             }
                         }
 
-                        AudienceMode.Uids -> {
-                            AuntieField(
-                                value = state.uidsText,
-                                onValueChange = viewModel::setUidsText,
-                                label = "Account ids",
-                                placeholder = "One per line, or comma-separated",
-                                singleLine = false,
-                                minLines = 3,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            val n = state.explicitUids.size
-                            Text(
-                                text = "$n ${if (n == 1) "account" else "accounts"}",
-                                style = AuntieTheme.typography.bodySmall,
-                                color = c.textDim,
-                            )
-                        }
+                        AudienceMode.Uids -> AccountPicker(state = state, viewModel = viewModel)
                     }
 
-                    AuntieFieldLabel(text = "Merge fields")
-                    state.mergeFields.forEachIndexed { i, row ->
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(dims.space3),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
+                    // #1587: the fields this campaign's email names, asked for by
+                    // name. Which fields exist comes from the copy preview.
+                    if (state.fieldNames.isNotEmpty()) {
+                        AuntieFieldLabel(text = "Fill in the email")
+                        state.fieldNames.forEach { name ->
                             AuntieField(
-                                value = row.key,
-                                onValueChange = { viewModel.setMergeFieldKey(i, it) },
-                                placeholder = "token",
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .semantics { contentDescription = "Merge field ${i + 1} name" },
-                            )
-                            AuntieField(
-                                value = row.value,
-                                onValueChange = { viewModel.setMergeFieldValue(i, it) },
-                                placeholder = "value",
-                                modifier = Modifier
-                                    .weight(1.4f)
-                                    .semantics { contentDescription = "Merge field ${i + 1} value" },
+                                value = state.fieldValues[name].orEmpty(),
+                                onValueChange = { viewModel.setFieldValue(name, it) },
+                                label = fieldLabel(name),
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }
-                    GhostButton(label = "Add a field", onClick = viewModel::addMergeField)
 
                     AuntieFieldLabel(text = "Send time")
                     Row(
@@ -343,6 +315,11 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                         Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                 }
+            }
+
+            // ── copy (#1587) ─────────────────────────────────────────────────
+            DenPanel(title = "What it will say") {
+                CopyPreviewBlock(state)
             }
 
             // ── reach ────────────────────────────────────────────────────────
@@ -528,9 +505,13 @@ private fun BlastRow(
     }
 }
 
-/** The second line of a campaign row. Pure; unit-tested. */
+/**
+ * The second line of a campaign row. Pure; unit-tested. #1587: names the
+ * campaign when the row's title does not already, and never prints the wire key.
+ */
 internal fun blastMeta(blast: MarketingBlastRow, zone: ZoneId): String {
-    val head = "${blast.key} ${blast.audienceDescription} ${fireLabel(blast.fireAtMs, zone)}".trim()
+    val campaign = if (blast.title.isBlank()) "" else "${campaignName(blast.key)} \u00b7 "
+    val head = "$campaign${blast.audienceDescription} ${fireLabel(blast.fireAtMs, zone)}".trim()
     return when (blast.status) {
         BlastStatus.Scheduled -> head
         // #823: the mock's "256 of 410 dispatched". A stalled fan-out says it
@@ -587,7 +568,7 @@ internal fun confirmLine(state: MarketingBlastsUiState): String {
     val who = when (state.mode) {
         AudienceMode.Uids -> {
             val n = state.explicitUids.size
-            "$n chosen ${if (n == 1) "account" else "accounts"}"
+            "$n chosen ${if (n == 1) "household" else "households"}"
         }
         AudienceMode.Segment ->
             state.segments.firstOrNull { it.id == state.selectedSegmentId }?.description ?: "a saved segment"
@@ -595,4 +576,108 @@ internal fun confirmLine(state: MarketingBlastsUiState): String {
     }
     val when_ = state.fireAtMs?.let { fireLabel(it, state.zone) } ?: "no time yet"
     return "${state.campaignKey.label} to $who, firing $when_."
+}
+
+/**
+ * #1587: Pick accounts, by name. A blast addresses a MyTribe account, so only a
+ * household with a linked login can be picked; the rest are counted so the
+ * operator sees who is missing and why.
+ */
+@Composable
+private fun AccountPicker(state: MarketingBlastsUiState, viewModel: MarketingBlastsViewModel) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val roster = state.kinfolk
+    when {
+        state.kinfolkError != null -> EmptyHint(state.kinfolkError, error = true)
+        roster == null -> EmptyHint("Loading households...")
+        else -> {
+            val pick = state.pickable
+            if (pick.accounts.isEmpty()) {
+                EmptyHint("No household has a linked account yet, so there is nobody to pick.")
+            } else {
+                AuntieField(
+                    value = state.accountSearch,
+                    onValueChange = viewModel::setAccountSearch,
+                    label = "Find a household",
+                    placeholder = "Name or email",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                val shown = filterAccounts(pick.accounts, state.accountSearch)
+                Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
+                    shown.forEach { a ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(dims.space2),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Checkbox(
+                                checked = a.uid in state.pickedUids,
+                                onCheckedChange = { viewModel.toggleAccount(a.uid) },
+                                modifier = Modifier.semantics { contentDescription = "Pick ${a.name}" },
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(a.name, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                                if (a.email.isNotBlank()) {
+                                    Text(a.email, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                }
+                            }
+                        }
+                    }
+                    if (shown.isEmpty()) EmptyHint("No household matches that.")
+                }
+            }
+            Text(
+                text = accountCountLine(state.pickedUids.size, pick.withoutAccount.size),
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
+    }
+}
+
+/** The households a search keeps, by name or email, case-insensitive. Pure; unit-tested. */
+internal fun filterAccounts(accounts: List<PickableAccount>, search: String): List<PickableAccount> {
+    val needle = search.trim().lowercase()
+    if (needle.isEmpty()) return accounts
+    return accounts.filter { it.name.lowercase().contains(needle) || it.email.lowercase().contains(needle) }
+}
+
+/** "2 households chosen. 1 household has no linked account and cannot be picked." Pure; unit-tested. */
+internal fun accountCountLine(picked: Int, withoutAccount: Int): String {
+    val head = "$picked ${if (picked == 1) "household" else "households"} chosen"
+    if (withoutAccount == 0) return head
+    val tail = if (withoutAccount == 1) "household has" else "households have"
+    return "$head. $withoutAccount $tail no linked account and cannot be picked."
+}
+
+/** #1587: the campaign's email as the send renders it, so nothing is scheduled unread. */
+@Composable
+private fun CopyPreviewBlock(state: MarketingBlastsUiState) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val copy = state.copy
+    Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
+        state.copyError?.let { EmptyHint(it, error = true) }
+        when {
+            copy == null && state.copyError == null -> EmptyHint("Loading the email...")
+            copy != null -> {
+                if (copy.usedFallback) {
+                    AuntieBanner(tone = AuntieBannerTone.Warning) {
+                        Text(
+                            "No email is written for this campaign yet, so this plain wording is what would go out. " +
+                                "Write it in Template Bank.",
+                            style = AuntieTheme.typography.bodyMedium,
+                            color = c.textDim,
+                        )
+                    }
+                }
+                AuntieKeyValueRow(label = "Subject", value = copy.subject, showDivider = false)
+                Text(copy.text, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                if (state.copyLoading) {
+                    Text("Updating...", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
+        }
+    }
 }

@@ -6,23 +6,27 @@ import {
   cancelMarketingBlast,
   listMarketingBlasts,
   previewBlastAudience,
+  previewBlastCopy,
   scheduleBlast,
+  type BlastCopyPreview,
   type BlastReach,
   type MarketingBlast,
   type MarketingKey,
 } from '../api/marketingBlasts';
 import { listAudienceSegments, type AudienceSegment } from '../api/audienceSegments';
+import { KINFOLK_QUERY, type Kinfolk } from '../api/directory';
+import { useCollection } from '../lib/firestore';
 import { describeAudience, type BroadcastCriteria } from '../api/communicateWrite';
 import {
   blastBlocker,
   cancelNotice,
+  fieldLabel,
+  fieldValuesToData,
   fireAtMsFrom,
   fireLabelInZone,
-  mergeFieldsToData,
-  parseUidList,
+  pickableAccounts,
   scheduleNotice,
   sendingLabel,
-  type MergeFieldRow,
 } from '../lib/marketingBlastEdit';
 import { mintBlastIdempotencyKey } from '../lib/sendIdempotency';
 import { sendTimeOf } from '../lib/communicateFormat';
@@ -164,9 +168,10 @@ function CampaignRow({
   return (
     <li className="blasts__row">
       <div className="blasts__row-main">
-        <span className="blasts__row-name">{blast.title === '' ? blast.key : blast.title}</span>
+        <span className="blasts__row-name">{blast.title === '' ? campaignName(blast.key) : blast.title}</span>
         <span className="blasts__row-meta">
-          <code className="blasts__code">{blast.key}</code> {blast.audienceDescription} &middot;{' '}
+          {blast.title === '' ? '' : `${campaignName(blast.key)} \u00b7 `}
+          {blast.audienceDescription} &middot;{' '}
           <time dateTime={machineWhen(sendTimeOf(blast.fireAtMs))}>{fireLabelInZone(blast.fireAtMs, businessZone)}</time>
           {detail}
         </span>
@@ -186,6 +191,14 @@ function CampaignRow({
   );
 }
 
+/**
+ * A campaign's name as the operator reads it (#1587). The key is the wire spelling
+ * (`newsletter.announcement`); a row from a key this build does not know yet falls
+ * back to a plain sentence instead of printing the spelling.
+ */
+function campaignName(key: string): string {
+  return (MARKETING_KEY_LABEL as Record<string, string | undefined>)[key] ?? 'Marketing email';
+}
 function errText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
@@ -201,13 +214,21 @@ export function MarketingBlasts() {
   const [statusesRaw, setStatusesRaw] = useState('');
   const [tagsRaw, setTagsRaw] = useState('');
   const [tagMatch, setTagMatch] = useState<'any' | 'all'>('any');
-  const [uidsRaw, setUidsRaw] = useState('');
+  // #1587: accounts are picked by name from the household roster, never typed.
+  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const [pickedUids, setPickedUids] = useState<string[]>([]);
+  const [accountSearch, setAccountSearch] = useState('');
 
   const [segments, setSegments] = useState<AudienceSegment[]>([]);
   const [segmentsError, setSegmentsError] = useState<string | null>(null);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
 
-  const [mergeFields, setMergeFields] = useState<MergeFieldRow[]>([{ key: '', value: '' }]);
+  // #1587: the values for the fields the campaign's template names. Which fields
+  // exist comes from the copy preview, so there is no free-form token box.
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [copy, setCopy] = useState<BlastCopyPreview | null>(null);
+  const [copyLoading, setCopyLoading] = useState(true);
+  const [copyError, setCopyError] = useState<string | null>(null);
 
   const [sendDate, setSendDate] = useState('');
   const [sendTime, setSendTime] = useState('');
@@ -256,10 +277,13 @@ export function MarketingBlasts() {
   const [refreshes, setRefreshes] = useState(0);
 
   const adhocCriteria = buildBlastCriteria(criteriaKind, statusesRaw, tagsRaw, tagMatch);
-  const explicitUids = parseUidList(uidsRaw);
+  const explicitUids = pickedUids;
+  const fieldNames = (copy?.fields ?? []).filter((f) => f.source !== 'automatic').map((f) => f.name);
+  const mergeData = fieldValuesToData(fieldValues, fieldNames);
+  const missingFields = (copy?.fields ?? []).filter((f) => f.source === 'missing').map((f) => f.name);
   const audience = blastAudienceArgs(selectedSegmentId, adhocCriteria, explicitUids, mode);
   const fireAtMs = fireAtMsFrom(sendDate, sendTime, businessZone);
-  const blocker = blastBlocker(audience, fireAtMs, Date.now(), reach?.reachable);
+  const blocker = blastBlocker(audience, fireAtMs, Date.now(), reach?.reachable, missingFields);
   const busy = scheduling || previewing;
 
   const loadSegments = useCallback(() => {
@@ -302,7 +326,35 @@ export function MarketingBlasts() {
   useEffect(() => {
     setReach(null);
     setPreviewError(null);
-  }, [mode, criteriaKind, statusesRaw, tagsRaw, tagMatch, uidsRaw, selectedSegmentId, campaignKey]);
+  }, [mode, criteriaKind, statusesRaw, tagsRaw, tagMatch, pickedUids, selectedSegmentId, campaignKey]);
+  // The copy the operator is about to send (#1587). Re-read whenever the campaign
+  // or a field value changes, after a short pause so typing a value is one read
+  // and not one per keystroke. The previous copy stays on screen while the next
+  // one loads, with a loading line, so the panel never flashes empty.
+  const dataForCopy = JSON.stringify(mergeData);
+  useEffect(() => {
+    let live = true;
+    setCopyLoading(true);
+    const timer = setTimeout(() => {
+      previewBlastCopy(campaignKey, JSON.parse(dataForCopy) as Record<string, unknown>)
+        .then((res) => {
+          if (!live) return;
+          setCopy(res);
+          setCopyError(null);
+        })
+        .catch((err: unknown) => {
+          if (!live) return;
+          setCopyError(`previewMarketingBlastCopy failed: ${errText(err, 'Preview failed')}`);
+        })
+        .finally(() => {
+          if (live) setCopyLoading(false);
+        });
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [campaignKey, dataForCopy]);
 
   /**
    * #814: the key that makes pressing Schedule twice safe.
@@ -330,9 +382,9 @@ export function MarketingBlasts() {
     statusesRaw,
     tagsRaw,
     tagMatch,
-    uidsRaw,
+    pickedUids,
     selectedSegmentId,
-    mergeFields,
+    fieldValues,
     sendDate,
     sendTime,
   ]);
@@ -361,7 +413,7 @@ export function MarketingBlasts() {
         key: campaignKey,
         fireAtMs,
         audience,
-        data: mergeFieldsToData(mergeFields),
+        data: mergeData,
         title,
         idempotencyKey: submissionKey.current,
       });
@@ -393,8 +445,14 @@ export function MarketingBlasts() {
     }
   }
 
-  function setMergeField(index: number, patch: Partial<MergeFieldRow>) {
-    setMergeFields((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  const { accounts, withoutAccount } = pickableAccounts(kinfolkState.status === 'ready' ? kinfolkState.data : []);
+  const accountNeedle = accountSearch.trim().toLowerCase();
+  const shownAccounts =
+    accountNeedle === ''
+      ? accounts
+      : accounts.filter((a) => a.name.toLowerCase().includes(accountNeedle) || a.email.toLowerCase().includes(accountNeedle));
+  function toggleAccount(uid: string) {
+    setPickedUids((cur) => (cur.includes(uid) ? cur.filter((u) => u !== uid) : [...cur, uid]));
   }
 
   /**
@@ -447,7 +505,6 @@ export function MarketingBlasts() {
                         onChange={() => setCampaignKey(k)}
                       />
                       {MARKETING_KEY_LABEL[k]}
-                      <code className="blasts__code">{k}</code>
                     </label>
                   ))}
                 </div>
@@ -619,62 +676,76 @@ export function MarketingBlasts() {
 
                 {mode === 'uids' && (
                   <>
-                    <label className="blasts__field">
-                      <span className="blasts__field-label">Account ids</span>
-                      <textarea
-                        className="blasts__textarea"
-                        rows={4}
-                        value={uidsRaw}
-                        disabled={busy}
-                        onChange={(e) => setUidsRaw(e.target.value)}
-                        placeholder="One per line, or comma-separated"
-                      />
-                    </label>
-                    {/* Outside the label on purpose: text inside a <label>
+                    {kinfolkState.status === 'loading' && <EmptyHint>Loading households...</EmptyHint>}
+                    {kinfolkState.status === 'error' && (
+                      <ErrorHint>{`Couldn't load the households: ${kinfolkState.message}`}</ErrorHint>
+                    )}
+                    {kinfolkState.status === 'ready' && accounts.length === 0 && (
+                      <EmptyHint>No household has a linked account yet, so there is nobody to pick.</EmptyHint>
+                    )}
+                    {kinfolkState.status === 'ready' && accounts.length > 0 && (
+                      <>
+                        <label className="blasts__field">
+                          <span className="blasts__field-label">Find a household</span>
+                          <input
+                            type="search"
+                            className="blasts__text-input"
+                            value={accountSearch}
+                            disabled={busy}
+                            onChange={(e) => setAccountSearch(e.target.value)}
+                            placeholder="Name or email"
+                          />
+                        </label>
+                        <ul className="blasts__accounts" aria-label="Households with an account">
+                          {shownAccounts.map((a) => (
+                            <li key={a.uid}>
+                              <label className="blasts__radio">
+                                <input
+                                  type="checkbox"
+                                  checked={pickedUids.includes(a.uid)}
+                                  disabled={busy}
+                                  onChange={() => toggleAccount(a.uid)}
+                                />
+                                {a.name}
+                                {a.email !== '' && <span className="blasts__hint">{a.email}</span>}
+                              </label>
+                            </li>
+                          ))}
+                        </ul>
+                        {shownAccounts.length === 0 && <EmptyHint>No household matches that.</EmptyHint>}
+                      </>
+                    )}
+                    {/* Outside the labels on purpose: text inside a <label>
                         joins the control's accessible name, so a running count
-                        there would rename the field on every keystroke. */}
+                        there would rename the field on every tick. */}
                     <p className="blasts__hint">
-                      {explicitUids.length} {explicitUids.length === 1 ? 'account' : 'accounts'}
+                      {pickedUids.length} {pickedUids.length === 1 ? 'household' : 'households'} chosen
+                      {withoutAccount.length > 0 &&
+                        `. ${withoutAccount.length} ${withoutAccount.length === 1 ? 'household has' : 'households have'} no linked account and cannot be picked.`}
                     </p>
                   </>
                 )}
               </fieldset>
 
-              <fieldset className="blasts__fieldset" aria-labelledby={`${legendId}-merge`}>
-                <legend id={`${legendId}-merge`} className="blasts__legend">
-                  Merge fields
-                </legend>
-                {mergeFields.map((row, i) => (
-                  <div className="blasts__merge-row" key={i}>
-                    <input
-                      type="text"
-                      className="blasts__text-input"
-                      value={row.key}
-                      disabled={busy}
-                      aria-label={`Merge field ${i + 1} name`}
-                      onChange={(e) => setMergeField(i, { key: e.target.value })}
-                      placeholder="token"
-                    />
-                    <input
-                      type="text"
-                      className="blasts__text-input"
-                      value={row.value}
-                      disabled={busy}
-                      aria-label={`Merge field ${i + 1} value`}
-                      onChange={(e) => setMergeField(i, { value: e.target.value })}
-                      placeholder="value"
-                    />
-                  </div>
-                ))}
-                <div className="blasts__actions">
-                  <GhostButton
-                    label="Add a field"
-                    disabled={busy}
-                    onClick={() => setMergeFields((rows) => [...rows, { key: '', value: '' }])}
-                  />
-                </div>
-              </fieldset>
-
+              {fieldNames.length > 0 && (
+                <fieldset className="blasts__fieldset" aria-labelledby={`${legendId}-merge`}>
+                  <legend id={`${legendId}-merge`} className="blasts__legend">
+                    Fill in the email
+                  </legend>
+                  {fieldNames.map((name) => (
+                    <label className="blasts__field" key={name}>
+                      <span className="blasts__field-label">{fieldLabel(name)}</span>
+                      <input
+                        type="text"
+                        className="blasts__text-input"
+                        value={fieldValues[name] ?? ''}
+                        disabled={busy}
+                        onChange={(e) => setFieldValues((cur) => ({ ...cur, [name]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </fieldset>
+              )}
               <fieldset className="blasts__fieldset" aria-labelledby={`${legendId}-when`}>
                 <legend id={`${legendId}-when`} className="blasts__legend">
                   Send time
@@ -726,6 +797,26 @@ export function MarketingBlasts() {
         </div>
 
         <div className="blasts__col">
+          <DenPanel title="What it will say">
+            {copyError !== null && <ErrorHint>{copyError}</ErrorHint>}
+            {copyLoading && copy === null && copyError === null && <EmptyHint>Loading the email...</EmptyHint>}
+            {copy !== null && (
+              <div className="blasts__copy" aria-busy={copyLoading}>
+                {copy.usedFallback && (
+                  <Banner tone="warning">
+                    No email is written for this campaign yet, so this plain wording is what would go out. Write it in
+                    Template Bank.
+                  </Banner>
+                )}
+                <p className="blasts__copy-subject">
+                  <span className="blasts__field-label">Subject</span>
+                  {copy.subject}
+                </p>
+                <pre className="blasts__copy-body">{copy.text}</pre>
+                {copyLoading && <p className="blasts__hint">Updating...</p>}
+              </div>
+            )}
+          </DenPanel>
           <DenPanel title="Who this reaches">
             {previewError !== null && <ErrorHint>{previewError}</ErrorHint>}
             {previewError === null && reach === null && (
@@ -909,6 +1000,15 @@ export function MarketingBlasts() {
           , firing {fireAtMs === null ? 'at no time yet' : fireLabel(fireAtMs)}.
         </p>
         {reach !== null && <p>{reach.reachable} of {reach.matched} will receive it.</p>}
+        {copy !== null && (
+          <>
+            <p className="blasts__copy-subject">
+              <span className="blasts__field-label">Subject</span>
+              {copy.subject}
+            </p>
+            <pre className="blasts__copy-body">{copy.text}</pre>
+          </>
+        )}
       </Dialog>
       )}
     </div>

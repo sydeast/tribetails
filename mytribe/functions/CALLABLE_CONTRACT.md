@@ -3057,6 +3057,17 @@ the callable originally took.
 - Four counted facts, none derived from another by subtraction, so a screen
   rendering them is never showing arithmetic dressed as data.
 
+### previewMarketingBlastCopy (net-new 2026-11-05, #1587)
+- req `{ key: <same enum>, data?: Record<string, unknown> }`
+- res `{ ok: true, subject: string, text: string, html: string | null, usedFallback: boolean, fields: Array<{ name: string, source: 'automatic'|'provided'|'missing' }> }`
+- Writes nothing and takes no audience. Renders the campaign's `emailTemplates/{key}`
+  with the same `renderEmailParts` the sender uses, against `data` plus the business
+  tokens the pipeline fills itself, so the preview cannot disagree with the inbox.
+- `fields` names every merge field the template uses. `automatic` is filled by the
+  pipeline for every send, `provided` has a non-blank value in `data`, `missing` is
+  named by the template and supplied by nothing (a send would render it blank).
+- A template document that does not exist is not an error: the sender falls back to
+  generic wording, and so does this, with `usedFallback: true`.
 ### listMarketingBlasts (net-new 2026-09-12)
 - req `{ limit?: number /* 1-200, default 100 */ }`
 - res `{ ok: true, blasts: Array<{ id, key, title, fireAtMs, status: 'scheduled'|'sent'|'cancelled', audienceDescription, matched, noLinkedAccount, dispatched, suppressed, failed, cancelledAtMs: number|null, createdAtMs }> }`

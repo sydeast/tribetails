@@ -43,6 +43,11 @@ class MarketingBlastsViewModelTest {
         coEvery { repo.listAudienceSegments() } returns Result.success(emptyList())
         coEvery { repo.listMarketingBlasts() } returns Result.success(emptyList())
         coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings(timeZone = "America/Chicago"))
+        // #1587: the screen reads the roster (Pick accounts) and the copy preview on open.
+        coEvery { repo.getKinfolk() } returns Result.success(emptyList())
+        coEvery { repo.previewMarketingBlastCopy(any(), any()) } returns Result.success(
+            BlastCopyPreview(subject = "A little news", text = "Hello", fields = emptyList()),
+        )
     }
 
     @After
@@ -185,8 +190,13 @@ class MarketingBlastsViewModelTest {
             v.setSendDate(date)
             v.setSendTime("09:00")
             v.setTitle("June newsletter")
-            v.setMergeFieldKey(0, "headline")
-            v.setMergeFieldValue(0, "A little news")
+            coEvery { repo.previewMarketingBlastCopy(any(), any()) } returns Result.success(
+                BlastCopyPreview(fields = listOf(MergeFieldStatus("headline", MergeFieldSource.Missing))),
+            )
+            v.setCampaignKey(MarketingKey.Newsletter)
+            advanceUntilIdle()
+            v.setFieldValue("headline", "A little news")
+            advanceUntilIdle()
 
             v.schedule()
             advanceUntilIdle()
@@ -308,7 +318,8 @@ class MarketingBlastsViewModelTest {
         advanceUntilIdle()
 
         v.setMode(AudienceMode.Uids)
-        v.setUidsText("u1, u2")
+        v.toggleAccount("u1")
+        v.toggleAccount("u2")
         v.setSendDate(java.time.LocalDate.now().plusDays(2).toString())
         v.setSendTime("09:00")
 
@@ -436,5 +447,86 @@ class MarketingBlastsViewModelTest {
 
         assertEquals(listOf("b1"), v.uiState.value.scheduled.map { it.id })
         assertEquals(listOf("b2", "b3"), v.uiState.value.history.map { it.id })
+    }
+
+    // ── #1587: accounts by name, campaign copy before scheduling ───────────
+
+    @Test
+    fun `the roster becomes pickable accounts by name, and households without a login are counted`() =
+        runTest(testDispatcher) {
+            coEvery { repo.getKinfolk() } returns Result.success(
+                listOf(
+                    com.tribetails.auntieos.data.model.Kinfolk(id = "k1", firstName = "Dana", lastName = "Wren", uid = "u1", email = "catch@hanasamku.com"),
+                    com.tribetails.auntieos.data.model.Kinfolk(id = "k2", firstName = "Ari", lastName = "Mercer", uid = ""),
+                ),
+            )
+            val v = vm()
+            advanceUntilIdle()
+            val pick = v.uiState.value.pickable
+            assertEquals(listOf(PickableAccount("u1", "Dana Wren", "catch@hanasamku.com")), pick.accounts)
+            assertEquals(listOf("Ari Mercer"), pick.withoutAccount)
+            v.toggleAccount("u1")
+            assertEquals(listOf("u1"), v.uiState.value.explicitUids)
+            v.toggleAccount("u1")
+            assertTrue(v.uiState.value.explicitUids.isEmpty())
+        }
+
+    @Test
+    fun `a failed roster read is said, not shown as an empty picker`() = runTest(testDispatcher) {
+        coEvery { repo.getKinfolk() } returns Result.failure(RuntimeException("PERMISSION_DENIED"))
+        val v = vm()
+        advanceUntilIdle()
+        assertTrue(v.uiState.value.kinfolkError!!.contains("PERMISSION_DENIED"))
+        assertNull(v.uiState.value.kinfolk)
+    }
+
+    @Test
+    fun `the copy preview loads on open and follows the campaign`() = runTest(testDispatcher) {
+        val v = vm()
+        advanceUntilIdle()
+        assertEquals("A little news", v.uiState.value.copy?.subject)
+        assertFalse(v.uiState.value.copyLoading)
+        v.setCampaignKey(MarketingKey.Survey)
+        advanceUntilIdle()
+        coVerify { repo.previewMarketingBlastCopy(MarketingKey.Survey, any()) }
+    }
+
+    @Test
+    fun `a field the email names and nothing fills blocks scheduling, by its label`() = runTest(testDispatcher) {
+        coEvery { repo.previewMarketingBlastCopy(any(), any()) } returns Result.success(
+            BlastCopyPreview(
+                fields = listOf(
+                    MergeFieldStatus("business", MergeFieldSource.Automatic),
+                    MergeFieldStatus("eventDate", MergeFieldSource.Missing),
+                ),
+            ),
+        )
+        val v = vm()
+        advanceUntilIdle()
+        v.setSendDate(java.time.LocalDate.now().plusDays(2).toString())
+        v.setSendTime("09:00")
+        assertEquals(listOf("eventDate"), v.uiState.value.fieldNames)
+        assertTrue(v.uiState.value.blocker(System.currentTimeMillis())!!.startsWith("Fill in Event date"))
+    }
+
+    @Test
+    fun `a typed value re-reads the copy with that value`() = runTest(testDispatcher) {
+        coEvery { repo.previewMarketingBlastCopy(any(), any()) } returns Result.success(
+            BlastCopyPreview(fields = listOf(MergeFieldStatus("eventDate", MergeFieldSource.Missing))),
+        )
+        val v = vm()
+        advanceUntilIdle()
+        v.setFieldValue("eventDate", "June 3")
+        advanceUntilIdle()
+        coVerify { repo.previewMarketingBlastCopy(MarketingKey.Newsletter, mapOf("eventDate" to "June 3")) }
+    }
+
+    @Test
+    fun `a failed copy preview says why`() = runTest(testDispatcher) {
+        coEvery { repo.previewMarketingBlastCopy(any(), any()) } returns Result.failure(RuntimeException("unavailable"))
+        val v = vm()
+        advanceUntilIdle()
+        assertTrue(v.uiState.value.copyError!!.contains("unavailable"))
+        assertFalse(v.uiState.value.copyLoading)
     }
 }

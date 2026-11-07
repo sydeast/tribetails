@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { previewBlastAudience, scheduleBlast, listMarketingBlasts, cancelMarketingBlast } = vi.hoisted(() => ({
+const { previewBlastAudience, previewBlastCopy, scheduleBlast, listMarketingBlasts, cancelMarketingBlast } = vi.hoisted(() => ({
   previewBlastAudience: vi.fn(),
+  previewBlastCopy: vi.fn(),
   scheduleBlast: vi.fn(),
   listMarketingBlasts: vi.fn(),
   cancelMarketingBlast: vi.fn(),
@@ -12,10 +13,15 @@ const { previewBlastAudience, scheduleBlast, listMarketingBlasts, cancelMarketin
 vi.mock('../api/marketingBlasts', async (orig) => ({
   ...(await orig<typeof import('../api/marketingBlasts')>()),
   previewBlastAudience,
+  previewBlastCopy,
   scheduleBlast,
   listMarketingBlasts,
   cancelMarketingBlast,
 }));
+
+// #1587: accounts are picked by name from the household roster.
+const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useCollection }));
 
 const { listAudienceSegments } = vi.hoisted(() => ({ listAudienceSegments: vi.fn() }));
 vi.mock('../api/audienceSegments', () => ({ listAudienceSegments }));
@@ -49,7 +55,22 @@ function futureDateTime(): { date: string; time: string } {
   return { date: businessTodayIso(BIZ, Date.now() + 48 * HOUR), time: '09:00' };
 }
 
+const HOUSEHOLDS = [
+  { _id: 'kf1', firstName: 'Dre', lastName: 'East', email: 'dre@hanasamku.com', uid: 'uid-dre', status: 'active' },
+  { _id: 'kf2', firstName: 'Paula', lastName: 'Brandt', email: 'paula@hanasamku.com', uid: 'uid-paula', status: 'active' },
+  { _id: 'kf3', firstName: 'Sam', lastName: 'Okafor', email: '', uid: '', status: 'active' },
+  { _id: 'kf4', firstName: 'Old', lastName: 'Timer', email: '', uid: 'uid-old', status: 'archived' },
+];
+const BASIC_COPY = {
+  subject: 'A little news from Pawsome Auntie',
+  text: 'Hello from Pawsome Auntie.',
+  html: null,
+  usedFallback: false,
+  fields: [{ name: 'business', source: 'automatic' }],
+};
 beforeEach(() => {
+  useCollection.mockReset().mockReturnValue({ status: 'ready', data: HOUSEHOLDS });
+  previewBlastCopy.mockReset().mockResolvedValue(BASIC_COPY);
   previewBlastAudience.mockReset();
   scheduleBlast.mockReset();
   listMarketingBlasts.mockReset().mockResolvedValue([]);
@@ -177,15 +198,22 @@ describe('MarketingBlasts', () => {
       suppressed: 0,
       failed: 0,
     });
+    // The template names a `headline` field; it reads as missing until typed.
+    previewBlastCopy.mockImplementation(async (_key: string, data: Record<string, unknown>) => ({
+      ...BASIC_COPY,
+      fields: [
+        { name: 'business', source: 'automatic' },
+        { name: 'headline', source: data.headline ? 'provided' : 'missing' },
+      ],
+    }));
     const when = futureDateTime();
     render(<MarketingBlasts />);
     await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
-
     await userEvent.type(screen.getByLabelText('Date'), when.date);
     await userEvent.type(screen.getByLabelText('Time'), when.time);
     await userEvent.type(screen.getByLabelText('Name this campaign'), 'June newsletter');
-    await userEvent.type(screen.getByLabelText('Merge field 1 name'), 'headline');
-    await userEvent.type(screen.getByLabelText('Merge field 1 value'), 'A little news');
+    await userEvent.type(await screen.findByLabelText('Headline'), 'A little news');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule blast' })).toBeEnabled());
 
     await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
@@ -310,14 +338,157 @@ describe('MarketingBlasts', () => {
     await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
 
     await userEvent.click(screen.getByRole('radio', { name: 'Pick accounts' }));
-    await userEvent.type(screen.getByLabelText('Account ids'), 'u1, u2');
+    await userEvent.click(screen.getByRole('checkbox', { name: /Dre East/ }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Paula Brandt/ }));
     await userEvent.type(screen.getByLabelText('Date'), when.date);
     await userEvent.type(screen.getByLabelText('Time'), when.time);
     await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
 
     await waitFor(() => expect(scheduleBlast).toHaveBeenCalledTimes(1));
-    expect((scheduleBlast.mock.calls[0]?.[0] as { audience: unknown }).audience).toEqual({ audienceUids: ['u1', 'u2'] });
+    expect((scheduleBlast.mock.calls[0]?.[0] as { audience: unknown }).audience).toEqual({
+      audienceUids: ['uid-dre', 'uid-paula'],
+    });
+  });
+
+  describe('#1587: no database ids, no raw keys, and the email is shown', () => {
+    it('picks accounts by household name and never asks for an account id', async () => {
+      render(<MarketingBlasts />);
+      await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+      await userEvent.click(screen.getByRole('radio', { name: 'Pick accounts' }));
+
+      expect(screen.queryByLabelText('Account ids')).toBeNull();
+      expect(screen.getByRole('checkbox', { name: /Dre East/ })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: /Paula Brandt/ })).toBeInTheDocument();
+      // No linked login and archived households are not offered, and no uid is printed.
+      expect(screen.queryByRole('checkbox', { name: /Sam Okafor/ })).toBeNull();
+      expect(screen.queryByRole('checkbox', { name: /Old Timer/ })).toBeNull();
+      expect(screen.queryByText(/uid-dre|uid-paula/)).toBeNull();
+      expect(screen.getByText(/1 household has no linked account and cannot be picked/)).toBeInTheDocument();
+      expect(screen.getByText(/0 households chosen/)).toBeInTheDocument();
+    });
+
+    it('finds a household by name or email', async () => {
+      render(<MarketingBlasts />);
+      await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+      await userEvent.click(screen.getByRole('radio', { name: 'Pick accounts' }));
+      await userEvent.type(screen.getByLabelText('Find a household'), 'paula@');
+      expect(screen.getByRole('checkbox', { name: /Paula Brandt/ })).toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: /Dre East/ })).toBeNull();
+    });
+
+    it('says why the list is empty when the household read fails, rather than showing an empty picker', async () => {
+      useCollection.mockReturnValue({ status: 'error', message: 'permission-denied' });
+      render(<MarketingBlasts />);
+      await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+      await userEvent.click(screen.getByRole('radio', { name: 'Pick accounts' }));
+      expect(screen.getByText(/Couldn't load the households: permission-denied/)).toBeInTheDocument();
+    });
+
+    it('shows campaigns by their names, never the raw key', async () => {
+      render(<MarketingBlasts />);
+      await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+      expect(screen.getByRole('radio', { name: 'Newsletter' })).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: 'Survey or event' })).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: 'Opt-in nudge' })).toBeInTheDocument();
+      expect(screen.queryByText('newsletter.announcement')).toBeNull();
+      expect(screen.queryByText('survey.event')).toBeNull();
+    });
+
+    it('lists a campaign by name in the campaign list, with no raw key', async () => {
+      listMarketingBlasts.mockResolvedValue([
+        {
+          id: 'b1',
+          key: 'survey.event',
+          title: '',
+          audienceDescription: 'All active kinfolk',
+          fireAtMs: Date.now() + 48 * HOUR,
+          status: 'scheduled',
+          matched: 3,
+          noLinkedAccount: 0,
+          dispatched: 3,
+          suppressed: 0,
+          failed: 0,
+          cancelledAtMs: null,
+          createdAtMs: Date.now(),
+          audienceSize: 3,
+          queued: 3,
+          fanoutState: 'done',
+        },
+      ]);
+      const { container } = render(<MarketingBlasts />);
+      await waitFor(() => expect(container.querySelector('.blasts__row')).not.toBeNull());
+      const row = container.querySelector('.blasts__row') as HTMLElement;
+      expect(within(row).getByText('Survey or event')).toBeInTheDocument();
+      expect(screen.queryByText('survey.event')).toBeNull();
+    });
+
+    it('shows the subject and body the campaign will send', async () => {
+      render(<MarketingBlasts />);
+      expect(await screen.findByText('A little news from Pawsome Auntie')).toBeInTheDocument();
+      expect(screen.getByText('Hello from Pawsome Auntie.')).toBeInTheDocument();
+      await waitFor(() => expect(previewBlastCopy).toHaveBeenCalledWith('newsletter.announcement', {}));
+    });
+
+    it('says plainly when no email is written yet and the generic wording is what sends', async () => {
+      previewBlastCopy.mockResolvedValue({ ...BASIC_COPY, usedFallback: true, subject: 'An update about your care' });
+      render(<MarketingBlasts />);
+      expect(await screen.findByText(/No email is written for this campaign yet/)).toBeInTheDocument();
+      expect(screen.getByText('An update about your care')).toBeInTheDocument();
+    });
+
+    it('re-reads the copy for the chosen campaign', async () => {
+      render(<MarketingBlasts />);
+      await waitFor(() => expect(previewBlastCopy).toHaveBeenCalled());
+      await userEvent.click(screen.getByRole('radio', { name: 'Survey or event' }));
+      await waitFor(() => expect(previewBlastCopy).toHaveBeenCalledWith('survey.event', {}));
+    });
+
+    it('asks for each missing field by a readable name and holds the schedule until it is filled', async () => {
+      previewBlastCopy.mockImplementation(async (_key: string, data: Record<string, unknown>) => ({
+        ...BASIC_COPY,
+        fields: [
+          { name: 'business', source: 'automatic' },
+          { name: 'eventDate', source: data.eventDate ? 'provided' : 'missing' },
+        ],
+      }));
+      const when = futureDateTime();
+      render(<MarketingBlasts />);
+      await userEvent.type(screen.getByLabelText('Date'), when.date);
+      await userEvent.type(screen.getByLabelText('Time'), when.time);
+
+      const field = await screen.findByLabelText('Event date');
+      // The pipeline fills the business name itself, so it is never asked for.
+      expect(screen.queryByLabelText('Business')).toBeNull();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule blast' })).toBeDisabled());
+      expect(screen.getByText(/Fill in Event date before scheduling/)).toBeInTheDocument();
+
+      await userEvent.type(field, 'June 14');
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule blast' })).toBeEnabled());
+      expect(previewBlastCopy).toHaveBeenLastCalledWith('newsletter.announcement', { eventDate: 'June 14' });
+    });
+
+    it('does not hold the schedule when the copy preview itself fails, and says so', async () => {
+      previewBlastCopy.mockRejectedValue(new Error('unavailable'));
+      const when = futureDateTime();
+      render(<MarketingBlasts />);
+      await userEvent.type(screen.getByLabelText('Date'), when.date);
+      await userEvent.type(screen.getByLabelText('Time'), when.time);
+      expect(await screen.findByText(/previewMarketingBlastCopy failed: unavailable/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Schedule blast' })).toBeEnabled();
+    });
+
+    it('repeats the subject and body in the confirm, so it is read before it is sent', async () => {
+      const when = futureDateTime();
+      render(<MarketingBlasts />);
+      await screen.findByText('A little news from Pawsome Auntie');
+      await userEvent.type(screen.getByLabelText('Date'), when.date);
+      await userEvent.type(screen.getByLabelText('Time'), when.time);
+      await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText('A little news from Pawsome Auntie')).toBeInTheDocument();
+      expect(within(dialog).getByText('Hello from Pawsome Auntie.')).toBeInTheDocument();
+    });
   });
 
   it('offers Cancel on a scheduled campaign and not on a sent one', async () => {

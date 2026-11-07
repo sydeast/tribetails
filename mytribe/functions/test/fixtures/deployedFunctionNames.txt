@@ -195,6 +195,7 @@ postInvoiceEvent
 previewEmailFrame
 previewEmailTemplate
 previewMarketingBlastAudience
+previewMarketingBlastCopy
 provisionBusinessAdmins
 provisionTribe
 purgeOldDrafts
