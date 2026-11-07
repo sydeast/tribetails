@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement, ReactNode } from 'react';
@@ -1088,6 +1088,16 @@ describe('Bookings deep link', () => {
  * `lib/bookingReschedule.test.ts`.
  */
 describe('Bookings bulk reschedule', () => {
+  // #1574: these visits are July 2026 and a visit is never moved into the
+  // past, so the clock stands before them (Date only; userEvent runs as normal).
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   // #1155: the DEVICE is America/Los_Angeles and the business (no timeZone in
   // TEST_SETTINGS) is the default America/Chicago, so the prefill below has to
   // come out on the business clock whatever zone the runner is in.
