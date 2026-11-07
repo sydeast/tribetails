@@ -4,7 +4,7 @@ import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
-import { resolveBusinessTimeZone } from '../../lib/businessOperations';
+import { VISIT_REMINDER_TIMING, resolveBusinessTimeZone } from '../../lib/businessOperations';
 import '../SettingsEdit.css';
 
 /**
@@ -250,7 +250,7 @@ export function NotificationScheduleSection({ data, onSave }: NotificationSchedu
             time of day, so there is no hour to set for them and the switch that
             does govern them lives elsewhere. */}
         <p className="settingsEdit__hint">
-          Visit reminders are not on a clock: they go out 24 to 48 hours before each visit. Turn
+          Visit reminders are not on a clock: they go out {VISIT_REMINDER_TIMING} each visit. Turn
           them on or off under Booking rules.
         </p>
       </div>

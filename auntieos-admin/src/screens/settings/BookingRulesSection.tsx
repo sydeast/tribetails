@@ -7,10 +7,14 @@ import { Toggle } from '../../components/Toggle';
 import {
   BOOKING_MODES,
   CALENDAR_VIEWS,
+  HHMM_REGEX,
   NUMBER_FIELDS,
+  VISIT_REMINDER_TIMING,
+  blockOverlaps,
   compareBlocksByStart,
   defaultBlockEnd,
   optionsIncluding,
+  overlapNote,
   parseWholeNumber,
   slugifyBlockId,
   timeBlockDraft,
@@ -171,6 +175,7 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
   const built = bookingRulesPatch(draft);
   const problem = 'error' in built ? built.error : null;
   const dirty = isDirty(draft, data);
+  const overlaps = blockOverlaps(draft.blocks);
 
   // ISSUE #710: the default-mode picker only offers modes that are on, so
   // there is no way to pick the mode the toggles above already forbid. The
@@ -216,23 +221,40 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
     edit(patch);
   }
 
+  /**
+   * ISSUE #1612: a start typed into a row whose end is still empty fills the
+   * end from "Default block length". That is the operator's own setting doing
+   * what its hint says; the app never picks the start.
+   */
   function editBlock(index: number, next: Partial<TimeBlockDraft>) {
     setDraft((d) => ({
       ...d,
-      blocks: d.blocks.map((row, i) => (i === index ? { ...row, ...next } : row)),
+      blocks: d.blocks.map((row, i) => {
+        if (i !== index) return row;
+        const merged = { ...row, ...next };
+        if (next.startTime !== undefined && merged.endTime === '' && HHMM_REGEX.test(merged.startTime)) {
+          const hours = parseWholeNumber(
+            d.defaultTimeBlockDurationHours,
+            NUMBER_FIELDS.defaultTimeBlockDurationHours,
+          );
+          merged.endTime = defaultBlockEnd(merged.startTime, 'value' in hours ? hours.value : 4);
+        }
+        return merged;
+      }),
     }));
     setJustSaved(false);
   }
 
+  /**
+   * ISSUE #1612: a new row opens with no start and no end. It used to open at
+   * 09:00, an hour the app chose, which landed on top of Midday with nothing on
+   * screen saying so. Blank, the HH:mm check asks for both times, and the
+   * operator's own default length fills the end once a start is in.
+   */
   function addBlock() {
     setDraft((d) => {
-      const hours = parseWholeNumber(
-        d.defaultTimeBlockDurationHours,
-        NUMBER_FIELDS.defaultTimeBlockDurationHours,
-      );
       const label = 'New block';
       const taken = d.blocks.map((b) => b.id);
-      const start = '09:00';
       return {
         ...d,
         blocks: [
@@ -240,8 +262,8 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
           {
             id: slugifyBlockId(`${label} ${taken.length + 1}`, taken),
             label: '',
-            startTime: start,
-            endTime: defaultBlockEnd(start, 'value' in hours ? hours.value : 4),
+            startTime: '',
+            endTime: '',
             active: true,
           },
         ],
@@ -318,9 +340,9 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
         <span className="settingsEdit__groupHeading">Defaults</span>
         <ul className="settingsEdit__toggleList">
           <li className="settingsEdit__toggleRow">
-            <span className="settingsEdit__toggleLabel">Remind kinfolk 24 hours before a visit</span>
+            <span className="settingsEdit__toggleLabel">Remind kinfolk {VISIT_REMINDER_TIMING} a visit</span>
             <Toggle
-              label="Toggle the 24-hour visit reminder"
+              label="Toggle the visit reminder"
               checked={draft.enableAutoReminder24h}
               disabled={busy}
               onChange={(next) => edit({ enableAutoReminder24h: next })}
@@ -379,7 +401,7 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
               />
             </label>
             <span id="blockLength-hint" className="settingsEdit__hint">
-              How long a block runs when you add one below.
+              How long a new block runs from the start time you give it.
             </span>
           </div>
 
@@ -459,6 +481,14 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
                 />
                 <GhostButton label="Remove" onClick={() => removeBlock(index)} disabled={busy} />
               </div>
+              {/* ISSUE #1612: on the row itself, named or not, so the clash is
+                  seen where it is fixed. The banner above still names the
+                  first thing blocking the save. */}
+              {(overlaps[index] ?? []).length > 0 ? (
+                <p className="settingsEdit__hint bookingRules__overlap" role="alert">
+                  {overlapNote(overlaps[index] ?? [])}
+                </p>
+              ) : null}
             </li>
           ))}
         </ul>
