@@ -27,9 +27,9 @@ enum class NotificationAction {
     OpenTarget,
     /** Archive out of the active inbox (archiveNotification). Always available. */
     Archive,
-    /** Approve the linked booking (batchUpdateBookings APPROVE). booking-only. */
+    /** Book the waiting request (manageBookingSeries APPROVE, #1675). */
     ApproveBooking,
-    /** Deny the linked booking (batchUpdateBookings REJECT). booking-only. */
+    /** Decline the waiting request (manageBookingSeries CANCEL, #1675). */
     DenyBooking,
     /** Compose a quote for the linked kinfolk (createQuote). kinfolk-target only. */
     CreateQuote,
@@ -58,7 +58,8 @@ fun notificationIsRead(entry: NotificationEntry): Boolean = entry.isRead
  *   - OpenTarget only when targetType is navigable AND targetId is non-blank,
  *   - ApproveBooking + DenyBooking only on a booking request still waiting on a
  *     decision: key `kincare.requested`, targetType "booking" with a targetId,
- *     and no `requestResolution` stamp ([requestOutcomeLabel] is null),
+ *     a household ([notificationRequestKinfolkId], #1675), and no
+ *     `requestResolution` stamp ([requestOutcomeLabel] is null),
  *   - Archive is always offered.
  *
  * Approve/Deny used to be offered on EVERY booking-targeted row, a booking
@@ -90,7 +91,8 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
         entry.key.trim() == PENDING_BOOKING_REQUEST_KEY &&
         requestOutcomeLabel(entry) == null &&
         entry.targetType.trim().lowercase() == "booking" &&
-        entry.targetId.isNotBlank()
+        entry.targetId.isNotBlank() &&
+        notificationRequestKinfolkId(entry).isNotEmpty()
     ) {
         actions += NotificationAction.ApproveBooking
         actions += NotificationAction.DenyBooking
@@ -123,6 +125,51 @@ fun requestOutcomeLabel(entry: NotificationEntry): String? {
         "declined" -> "Declined"
         "cancelled" -> "Cancelled"
         else -> "Answered"
+    }
+}
+
+/**
+ * #1675: the household a waiting request's row belongs to, from `data.kinfolkId`
+ * (`onBookingEnvelopeCreate` always writes it), else `data.familyId`. "" when the
+ * row names none, and then Approve/Deny are not offered: the request is answered
+ * by household and request id. Pure; unit-tested.
+ */
+fun notificationRequestKinfolkId(entry: NotificationEntry): String =
+    entry.dataString("kinfolkId").ifEmpty { entry.dataString("familyId") }
+
+/** What answering a waiting request from its row left on screen: one of the two is set. */
+data class RequestAnswer(val error: String?, val notice: String?)
+
+/**
+ * #1675: Approve / Deny on a waiting request's row answer the WHOLE request, the
+ * `manageBookingSeries` call Bookings' incoming requests make (APPROVE books it,
+ * CANCEL declines it). The row's targetId is the request's envelope id
+ * (`batchId`); these used to send it to `batchUpdateBookings`, which only knows
+ * visit ids, so every press came back not-found. A refusal is the server's own
+ * sentence; a partial approval is a failure, not a success.
+ */
+suspend fun answerBookingRequest(
+    client: com.tribetails.auntieos.web.data.FirestoreClient,
+    entry: NotificationEntry,
+    approve: Boolean,
+): RequestAnswer {
+    val action = if (approve) com.tribetails.auntieos.web.data.BookingSeriesAction.APPROVE
+    else com.tribetails.auntieos.web.data.BookingSeriesAction.CANCEL
+    return when (val r = client.manageBookingSeries(action, notificationRequestKinfolkId(entry), entry.targetId.trim())) {
+        is com.tribetails.auntieos.web.data.WriteResult.Err -> RequestAnswer(error = r.message, notice = null)
+        is com.tribetails.auntieos.web.data.WriteResult.Ok -> {
+            val res = r.value
+            if (res.failedVisits > 0) {
+                RequestAnswer(
+                    error = "${if (approve) "Approved" else "Declined"} ${res.affectedVisits} of " +
+                        "${res.affectedVisits + res.failedVisits} visits. The rest did not go through and the " +
+                        "household has not been told. Open the request in Bookings to finish it.",
+                    notice = null,
+                )
+            } else {
+                RequestAnswer(error = null, notice = if (approve) "Request approved." else "Request declined.")
+            }
+        }
     }
 }
 
