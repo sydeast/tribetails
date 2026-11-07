@@ -193,7 +193,7 @@ private fun BasicSettingsSection(
 
             LabeledField(
                 label = "Default message to kinfolk",
-                helper = "No default on purpose: the message is the story of the visit, and Auntie writes it fresh each time.",
+                helper = "Left empty on a new template. Anything typed here opens the recap's note; Auntie can still change it for each visit.",
             ) {
                 AuntieField(
                     value = state.template.defaultEmailMessage,

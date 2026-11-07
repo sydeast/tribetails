@@ -224,6 +224,23 @@ describe('Settings — section nav shell', () => {
     expect(screen.queryByLabelText('Business name')).not.toBeInTheDocument();
   });
 
+  /**
+   * #1564. Operator ruling, 2026-11-05 docket: every business email goes to
+   * `businessEmail`; while it is blank, Settings says they have nowhere to go.
+   */
+  it('#1564: says business emails have nowhere to go while the business email is blank', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(screen.getByText(/Business emails have nowhere to go until this is filled/)).toBeInTheDocument();
+  });
+
+  it('#1564: drops the warning once a business email is stored', async () => {
+    getBusinessSettings.mockResolvedValue({ ...DEFAULT_BUSINESS_SETTINGS, businessEmail: 'pawsome@hanasamku.com' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    expect(screen.queryByText(/Business emails have nowhere to go/)).not.toBeInTheDocument();
+  });
   it('offers Retry on a failed load and re-fetches on click', async () => {
     getBusinessSettings.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
@@ -320,6 +337,38 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
     // The open row paints cream; the modifier is what the stylesheet keys on.
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveClass('settings__nav-item--active');
     expect(screen.getByRole('tab', { name: 'Business hours' })).not.toHaveClass('settings__nav-item--active');
+  });
+
+  it('#1594: opening a section reports it to the route, and the route opens it again on reload or Back', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    const onSectionChange = vi.fn();
+    const { rerender } = render(<Settings onSectionChange={onSectionChange} />);
+    await screen.findByLabelText('Business name');
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Business hours' }));
+    expect(onSectionChange).toHaveBeenLastCalledWith('businessHours');
+
+    // The URL says Booking rules (a reload of a bookmark, or Back): the screen follows.
+    rerender(<Settings initialSection="bookingRules" onSectionChange={onSectionChange} />);
+    expect(screen.getByRole('tab', { name: 'Booking rules' })).toHaveClass('settings__nav-item--active');
+    expect(screen.getByRole('tab', { name: 'Business hours' })).not.toHaveClass('settings__nav-item--active');
+  });
+
+  it('#1597: moving through the nav with the arrow keys leaves exactly one section highlighted', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Business profile' }));
+    await userEvent.keyboard('{ArrowDown}');
+
+    const tablist = screen.getByRole('tablist', { name: /settings sections/i });
+    const highlighted = within(tablist)
+      .getAllByRole('tab')
+      .filter((t) => t.classList.contains('settings__nav-item--active'));
+    expect(highlighted).toHaveLength(1);
+    expect(highlighted[0]).toHaveFocus();
+    expect(highlighted[0]).not.toHaveAccessibleName('Business profile');
   });
 
   it('titles the toggle panel Scheduling and draws the mock rows, in the mock order, each with its note', async () => {
@@ -1120,7 +1169,10 @@ describe('Settings: Integrations is a report, and its Google row opens Calendar 
 
     // Only the row with a flow of its own carries a control, in the foot.
     expect(within(google).getByRole('button', { name: 'Open Google Calendar settings' })).toBeInTheDocument();
-    expect(within(stripe).queryByRole('button')).not.toBeInTheDocument();
+    // #1595: the purpose line is the name's info tip now, so its button is the only other one.
+    expect(within(stripe).queryAllByRole('button').filter((b) => b.getAttribute('aria-label') !== 'About this section')).toHaveLength(0);
+    expect(within(stripe).getByRole('tooltip', { hidden: true })).toHaveTextContent('Card payments on invoices.');
+    expect(stripe.querySelector('.integrations__purpose')).toBeNull();
 
     // The panel header owns the report's stamp and the re-check.
     const integrationsPanel = panelOwning(google);

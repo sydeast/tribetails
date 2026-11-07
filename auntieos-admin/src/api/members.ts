@@ -117,6 +117,13 @@ export function permissionsFollowRole(role: MemberRole): boolean {
 
 export interface HouseholdMember {
   uid: string;
+  /**
+   * The person's name as the server resolved it (#1589): the member doc's
+   * `displayName`, or for a primary with none the household's contact name.
+   * Null when nothing on file names them; a screen then falls back to their
+   * email and never to the uid.
+   */
+  displayName: string | null;
   secondaryLabel: string | null;
   role: MemberRole;
   status: MemberStatus;
@@ -210,6 +217,7 @@ export async function listHouseholdMembers(kinfolkId: string): Promise<Household
     .filter((row) => typeof row['uid'] === 'string' && row['uid'] !== '')
     .map((row) => ({
       uid: row['uid'] as string,
+      displayName: str(row['displayName']),
       secondaryLabel: str(row['secondaryLabel']),
       role: asRole(row['role']),
       status: asMemberStatus(row['status']),
@@ -419,9 +427,13 @@ export async function getInvite(inviteId: string): Promise<AdminInviteDetail> {
   };
 }
 
-/** Display name for a member row. Never blank: falls back to the uid. */
+/**
+ * Display name for a member row. Never blank and never a database id (#1589):
+ * name, then email, then the secondary's label, then a plain "Unnamed member".
+ */
+export const UNNAMED_MEMBER = 'Unnamed member';
 export function memberLabel(member: HouseholdMember): string {
-  return member.invitedEmail ?? member.secondaryLabel ?? member.uid;
+  return member.displayName ?? member.invitedEmail ?? member.secondaryLabel ?? UNNAMED_MEMBER;
 }
 
 /**

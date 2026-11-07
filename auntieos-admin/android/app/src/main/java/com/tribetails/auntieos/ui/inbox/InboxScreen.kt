@@ -806,7 +806,7 @@ private fun MessagesSection(
                                             style = AuntieTheme.typography.bodySmall,
                                             color = if (m.isFromAuntie) c.primary else c.accent,
                                         )
-                                        Text(m.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                                        MessageBody(m.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary, linkColor = c.accent)
                                     }
                                 }
                             }

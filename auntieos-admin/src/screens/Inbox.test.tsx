@@ -370,7 +370,7 @@ describe('Inbox screen', () => {
 describe('Inbox waiting/answered sections', () => {
   it('sorts the list into Waiting on a reply above Answered', async () => {
     listConversations.mockResolvedValue([
-      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', lastSenderRole: 'auntie', unreadForAdmin: false }),
       thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
     ]);
     render(<Inbox />);
@@ -379,9 +379,20 @@ describe('Inbox waiting/answered sections', () => {
     expect(sections).toEqual(['Waiting on a reply', 'Answered']);
   });
 
+  it('keeps a read thread nobody has answered under Waiting on a reply (#1572)', async () => {
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k-opened', kinfolkName: 'Opened Household', lastSenderRole: 'kinfolk', unreadForAdmin: false }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText('Opened Household');
+    const waiting = screen.getByRole('heading', { level: 3, name: 'Waiting on a reply' }).closest('li');
+    expect(waiting).toHaveTextContent('Opened Household');
+    expect(screen.queryByText('Nothing is waiting on a reply.')).toBeNull();
+    expect(screen.getByText('No answered threads yet.')).toBeInTheDocument();
+  });
   it('says a section is empty rather than dropping its header', async () => {
     listConversations.mockResolvedValue([
-      thread({ kinfolkId: 'k1', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k1', kinfolkName: 'Answered Household', lastSenderRole: 'auntie', unreadForAdmin: false }),
     ]);
     render(<Inbox />);
     await screen.findByText('Answered Household');
@@ -392,7 +403,7 @@ describe('Inbox waiting/answered sections', () => {
   it('drops the Answered header under the Unread chip rather than claiming nothing was answered', async () => {
     listConversations.mockResolvedValue([
       thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
-      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', lastSenderRole: 'auntie', unreadForAdmin: false }),
     ]);
     render(<Inbox />);
     await screen.findByText('Answered Household');
@@ -429,7 +440,7 @@ describe('Inbox arrangement flag (auntieos.inbox.waitingSections)', () => {
   it('OFF: draws one flat list with no waiting/answered headers', async () => {
     arrangement(false);
     listConversations.mockResolvedValue([
-      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', lastSenderRole: 'auntie', unreadForAdmin: false }),
       thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
     ]);
     render(<Inbox />);

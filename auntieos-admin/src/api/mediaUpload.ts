@@ -319,6 +319,13 @@ export function cloudinaryThumbnailUrl(cloudName: string, publicId: string, isVi
 export interface WriteMediaFileInput {
   entityId: string;
   entityType: UploadEntityType;
+  /**
+   * The household a KIN upload belongs to (#1588). Stamped as `kinfolkId` so the
+   * tag dialog, which scopes to the file's household, offers that household's
+   * kin and not the whole roster. Ignored for every other target: a KINFOLK
+   * upload's household IS its entityId, and company media has none.
+   */
+  kinfolkId?: string | undefined;
   originalFileName: string;
   cloud: CloudinaryUploadResult;
   cloudName: string;
@@ -389,6 +396,9 @@ export async function writeMediaFileDoc(input: WriteMediaFileInput): Promise<str
     fields.gpsStripError = '';
   }
   if (input.entityType === 'KINFOLK') fields.kinfolkId = input.entityId;
+  else if (input.entityType === 'KIN' && (input.kinfolkId ?? '').trim() !== '') {
+    fields.kinfolkId = (input.kinfolkId ?? '').trim();
+  }
   if (typeof input.cloud.width === 'number') fields.width = input.cloud.width;
   if (typeof input.cloud.height === 'number') fields.height = input.cloud.height;
 
@@ -404,6 +414,8 @@ export interface UploadMediaInput {
   file: File;
   entityType: UploadEntityType;
   entityId: string;
+  /** The household of a KIN target (#1588); see {@link WriteMediaFileInput.kinfolkId}. */
+  kinfolkId?: string | undefined;
   /** Fires once per stage transition, in order, so the dialog can show real progress rather than a fabricated percentage. */
   onStage?: (stage: UploadStage) => void;
 }
@@ -431,6 +443,7 @@ export async function uploadMediaFile(input: UploadMediaInput): Promise<string> 
   return writeMediaFileDoc({
     entityId,
     entityType: input.entityType,
+    kinfolkId: input.kinfolkId,
     originalFileName: input.file.name,
     cloud,
     cloudName: sign.cloudName,

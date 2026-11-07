@@ -6,6 +6,9 @@ import { type MediaFile } from '../api/gallery';
 // #397 S3. Mocked at the api seam, not at `firebase/firestore`: these tests
 // cover the dialog's wiring, and `api/mediaWrite.test.ts` covers the write.
 const { updateMediaCaption } = vi.hoisted(() => ({ updateMediaCaption: vi.fn() }));
+// #1564: the uploader line resolves a staff uid to a name through listStaff.
+const { staffNames } = vi.hoisted(() => ({ staffNames: new Map<string, string>() }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames }));
 vi.mock('../api/mediaWrite', async () => {
   const actual = await vi.importActual<typeof import('../api/mediaWrite')>('../api/mediaWrite');
   return { ...actual, updateMediaCaption };

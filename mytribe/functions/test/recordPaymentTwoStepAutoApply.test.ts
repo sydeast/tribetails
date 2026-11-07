@@ -155,7 +155,9 @@ async function androidRecordPayment(opts: { applied: number; tip: number; fee: n
   const settled = await markInvoicePaidHandler(
     adminReq({
       invoiceId: 'inv1',
-      amount: paymentAmount,
+      // #982: Android settles with the APPLIED part, as admin web does. Before
+      // #982 it sent the whole payment here; #1566 now refuses that shape.
+      amount: opts.applied,
       method: 'venmo',
       reference: 'VN-1029',
       idempotencyKey: 'ipay_1759000000001_def456',
@@ -274,6 +276,18 @@ describe('#977 admin Android two-step recordPayment, auto-apply ticked', () => {
     const { res } = await androidRecordPayment({ applied: 127.5, tip: 10, fee: 2.71, autoApply: true });
     expect(res.creditedToAccountCents).toBe(0);
     expect(creditedToFamily()).toBe(0);
+  });
+  it('#1566: the whole payment sent as the settlement is refused, and nothing is written', async () => {
+    // The pre-#982 Android shape: $137.50 (bill plus tip) put on a $127.50 bill.
+    // The $10 over is tip, and markInvoicePaid has no tip to put it in.
+    const before = ctx.writes.length;
+    await expect(
+      markInvoicePaidHandler(adminReq({ invoiceId: 'inv1', amount: 137.5, method: 'venmo' })),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_amount_exceeds_balance' },
+    });
+    expect(ctx.writes.length).toBe(before);
   });
 });
 

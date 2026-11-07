@@ -19,6 +19,12 @@ data class GalleryUiState(
     val kin: List<Kin> = emptyList(),
     val kinfolk: List<Kinfolk> = emptyList(),
     val isLoading: Boolean = true,
+    /**
+     * The kin read FAILED (#1588). The load keeps the grid up on a kin failure,
+     * but the Upload dialog's kin picker must not read an unknown roster as
+     * "this household has no kin".
+     */
+    val kinLoadFailed: Boolean = false,
     val error: String? = null,
     /**
      * A refused ACTION (a delete the callable turned down), shown as a banner
@@ -53,6 +59,7 @@ class GalleryViewModel(
                 _uiState.value = _uiState.value.copy(
                     media = m,
                     kin = kinR.getOrDefault(emptyList()),
+                    kinLoadFailed = kinR.isFailure,
                     kinfolk = kinfolkR.getOrDefault(emptyList()),
                     isLoading = false,
                 )

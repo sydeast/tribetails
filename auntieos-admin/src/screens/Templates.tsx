@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { listTemplatesPage, listTemplateCategories, type TemplateSummary } from '../api/templates';
 import {
   categoryCount,
@@ -34,6 +34,12 @@ import './Templates.css';
  * full-collection total the paged read never fetched.
  */
 const TEMPLATE_PAGE_SIZE = 50;
+/**
+ * #1614: the key legend names the key this machine's operator presses. The
+ * handler below accepts Ctrl and Cmd both; the legend used to say Ctrl on a Mac.
+ */
+const SHORTCUT_LABEL =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform ?? '') ? '\u2318 K' : 'Ctrl K';
 
 /**
  * Loaded on demand, not at module scope: TipTap and its extensions only ride
@@ -111,7 +117,19 @@ export interface TemplatesProps {
    * reason as `onSelect` above.
    */
   onNew?: () => void;
+  /**
+   * Which editor the URL says is open (#1594): a template id, `'new'`, or
+   * absent for the bank. `routes/TemplatesView.tsx` reads it from
+   * `?template=`, so a reload or a pasted link returns to the editor, and Back
+   * from the editor returns to the bank.
+   */
+  editorTemplateId?: string;
+  /** Told when the editor opens (`id` or `'new'`) or closes (`null`). */
+  onEditorChange?: (templateId: string | null) => void;
 }
+
+/** The `?template=` value that means the create-mode editor. */
+export const NEW_TEMPLATE_PARAM = 'new';
 
 const ALL_FILTER = null;
 
@@ -266,7 +284,7 @@ function HeaderOverflowMenu({ items }: { items: readonly OverflowItem[] }) {
   );
 }
 
-export function Templates({ onSelect, onNew }: TemplatesProps) {
+export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }: TemplatesProps) {
   const [templates, setTemplates] = useState<Async<TemplateSummary[]>>({ status: 'loading' });
   const [categories, setCategories] = useState<Async<string[]>>({ status: 'loading' });
   const [query, setQuery] = useState('');
@@ -277,6 +295,8 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  // #1614: the whole bank's size from the server, so "All N" is not the page size.
+  const [total, setTotal] = useState<number | null>(null);
   // I9 New Binding dialog + its success notice.
   const [bindingOpen, setBindingOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -303,6 +323,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         if (!live) return;
         setTemplates({ status: 'ready', data: page.templates });
         setNextCursor(page.nextCursor);
+        setTotal(page.total);
       })
       .catch(
         (err: unknown) =>
@@ -331,6 +352,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
           prev.status === 'ready' ? { status: 'ready', data: [...prev.data, ...page.templates] } : prev,
         );
         setNextCursor(page.nextCursor);
+        if (page.total !== null) setTotal(page.total);
         setLoadingMore(false);
       })
       .catch((err: unknown) => {
@@ -362,6 +384,14 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
 
   useEffect(() => load(), [load]);
   useEffect(() => loadCategories(), [loadCategories]);
+  // #1614: a search that only sees the loaded page lies about the rest of the
+  // bank. Typing into the box reads the remaining pages so the filter covers
+  // every template; a failed page stops the chase and shows the same inline
+  // error as "Load more".
+  const searching = query.trim() !== '';
+  useEffect(() => {
+    if (searching && nextCursor !== null && !loadingMore && loadMoreError === null) loadMore();
+  }, [searching, nextCursor, loadingMore, loadMoreError, loadMore]);
 
   // The mock draws a "Ctrl K" kbd hint inside the search box (l.228) and lists
   // the shortcut as its own SUGGESTION (l.31). The hint ships WITH the binding,
@@ -408,19 +438,54 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
       const row = templates.data.find((t) => t.templateId === templateId);
       if (!row) return;
       setEditor({ mode: 'edit', template: row });
+      onEditorChange?.(templateId);
     },
-    [templates],
+    [templates, onEditorChange],
   );
 
+  const closeEditor = useCallback(() => {
+    setEditor(null);
+    onEditorChange?.(null);
+  }, [onEditorChange]);
+
+  // The URL is the source of truth for which editor is open (#1594). It opens
+  // the editor on a reload or a pasted link once the bank has loaded the row,
+  // and closes it when Back takes `?template=` away.
+  // Only when a route drives it: a caller with no onEditorChange (the tests,
+  // an embed) keeps the editor as plain local state.
+  const urlDriven = onEditorChange !== undefined;
+  useEffect(() => {
+    if (!urlDriven) return;
+    if (editorTemplateId === undefined) {
+      setEditor(null);
+      return;
+    }
+    if (editorTemplateId === NEW_TEMPLATE_PARAM) {
+      setEditor((prev) => (prev?.mode === 'create' ? prev : { mode: 'create' }));
+      return;
+    }
+    if (templates.status !== 'ready') return;
+    const row = templates.data.find((t) => t.templateId === editorTemplateId);
+    if (!row) return;
+    setEditor((prev) =>
+      prev?.mode === 'edit' && prev.template.templateId === row.templateId ? prev : { mode: 'edit', template: row },
+    );
+  }, [urlDriven, editorTemplateId, templates]);
+
   const handleSelect = onSelect ?? openEditorFor;
-  const handleNew = onNew ?? (() => setEditor({ mode: 'create' }));
+  const handleNew =
+    onNew ??
+    (() => {
+      setEditor({ mode: 'create' });
+      onEditorChange?.(NEW_TEMPLATE_PARAM);
+    });
 
   // Reload after a save so the row reflects exactly what the server has,
   // rather than optimistically patching local state: the same
   // reload-over-optimistic-splice convention FormSchemas.tsx's confirmDelete()
   // uses for its own write.
   function handleSaved() {
-    setEditor(null);
+    closeEditor();
     load();
   }
 
@@ -428,7 +493,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   // optimistically splicing the row out, the same convention
   // FormSchemas.tsx's confirmDelete() uses for its own write.
   function handleDeleted() {
-    setEditor(null);
+    closeEditor();
     load();
   }
 
@@ -471,7 +536,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
           key={editor.mode === 'edit' ? `edit:${editor.template.templateId}` : 'new'}
           template={editor.mode === 'edit' ? editor.template : null}
           categories={categoryList}
-          onClose={() => setEditor(null)}
+          onClose={closeEditor}
           onSaved={handleSaved}
           onDeleted={handleDeleted}
         />
@@ -555,7 +620,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                     onClick={() => setFilter(ALL_FILTER)}
                     {...getTabProps(0)}
                   >
-                    All <span className="templates__tab-count">{rows.length}</span>
+                    All <span className="templates__tab-count">{total ?? rows.length}</span>
                   </button>
                   {categoryList.map((cat, index) => (
                     <button
@@ -567,7 +632,15 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                       onClick={() => setFilter(cat)}
                       {...getTabProps(index + 1)}
                     >
-                      {cat} <span className="templates__tab-count">{categoryCount(rows, cat)}</span>
+                      {cat}
+                      {/* A category's count is only true once every page is
+                          read; a partial count would be the page-size bug again. */}
+                      {nextCursor === null ? (
+                        <>
+                          {' '}
+                          <span className="templates__tab-count">{categoryCount(rows, cat)}</span>
+                        </>
+                      ) : null}
                     </button>
                   ))}
                 </div>
@@ -588,11 +661,17 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                       on the input already names the box for a screen reader,
                       and this legend is a mouse/keyboard affordance. */}
                   <kbd className="templates__search-kbd" aria-hidden="true">
-                    Ctrl K
+                    {SHORTCUT_LABEL}
                   </kbd>
                 </div>
               </div>
 
+              {searching && nextCursor !== null && loadMoreError === null ? (
+                <LoadingRow
+                  label={`Searching all ${total ?? 'your'} templates…`}
+                  className="templates__hint"
+                />
+              ) : null}
               {visible.length === 0 ? (
                 <EmptyHint>
                   {/*
@@ -651,6 +730,13 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   );
 }
 
+/**
+ * #1614: a key like `booking.confirmed.notice` wrapped mid-word. A break
+ * opportunity after each separator lets it wrap between its parts instead.
+ */
+export function keyWithBreaks(id: string): ReactNode[] {
+  return id.split(/(?<=[._-])/).flatMap((part, i) => (i === 0 ? [part] : [<wbr key={i} />, part]));
+}
 interface TemplateCardProps {
   tpl: TemplateSummary;
   /**
@@ -728,7 +814,7 @@ function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
             <StatusPill label="Not editable here" tone="muted" size="compact" />
           </span>
         ) : null}
-        <code className="templates__card-id">{tpl.templateId}</code>
+        <code className="templates__card-id">{keyWithBreaks(tpl.templateId)}</code>
       </span>
 
       <span className="templates__card-subject" title={subject}>
