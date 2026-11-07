@@ -21,6 +21,7 @@ import {
   type MediaKind,
 } from '../lib/mediaFormat';
 import { useCollection } from '../lib/firestore';
+import { useStaffNames } from '../lib/useStaffNames';
 import { str } from '../lib/coerce';
 import { DenScreenHeading, StatusPill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -698,7 +699,8 @@ function GalleryTile({ media, householdName, taggedNames, onOpen, onDelete }: Ga
   const kind = mediaKindOf(str(media.fileType));
   const previewUrl = mediaPreviewUrl(media);
   const caption = mediaCaption(media);
-  const meta = mediaMetaLine(str(media.uploadedAt), str(media.uploadedBy));
+  const staffNames = useStaffNames();
+  const meta = mediaMetaLine(str(media.uploadedAt), str(media.uploadedBy), staffNames);
   const duration = kind === 'video' ? mediaDurationLabel(media.durationSeconds) : undefined;
   // #593. Only the FAILED state gets a badge. Pending is ordinary progress
   // measured in seconds and badging it would put a scary label on every video

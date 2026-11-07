@@ -27,7 +27,9 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.*
+import com.tribetails.auntieos.data.repository.staffNamesByUid
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -50,6 +52,14 @@ fun MediaGalleryScreen(
 
     LaunchedEffect(entityId, entityType) {
         viewModel.loadMedia(entityId, entityType)
+    }
+
+    // #1564: `uploadedBy` is a uid. Loaded once; a failure leaves the uid lines
+    // as they were rather than hiding the gallery.
+    var uploaderNames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    LaunchedEffect(Unit) {
+        AuntieOSApp.instance.kinCareRepository.listStaff()
+            .onSuccess { uploaderNames = staffNamesByUid(it) }
     }
 
     AuntieScreenScaffold(
@@ -113,6 +123,7 @@ fun MediaGalleryScreen(
                             // #397 S3: the caption a file was uploaded with is no
                             // longer permanent on either client.
                             onSaveCaption = { id, caption -> viewModel.updateCaption(id, caption) },
+                            uploaderNames = uploaderNames,
                         )
                     }
                 }
@@ -189,6 +200,8 @@ internal fun MediaThumbnail(
     onSetProfile: (MediaFile) -> Unit = {},
     /** (mediaFileId, newCaption). Default no-op keeps every existing preview/test call site valid. */
     onSaveCaption: (String, String) -> Unit = { _, _ -> },
+    /** #1564: uploader uid -> name, so the caption never shows a bare uid. */
+    uploaderNames: Map<String, String> = emptyMap(),
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showFullscreen by remember { mutableStateOf(false) }
@@ -418,7 +431,7 @@ internal fun MediaThumbnail(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        val meta = mediaMetaLine(mediaFile.uploadedAt, mediaFile.uploadedBy)
+        val meta = mediaMetaLine(mediaFile.uploadedAt, mediaFile.uploadedBy, uploaderNames)
         if (meta.isNotBlank()) {
             Text(
                 text = meta,
@@ -749,12 +762,22 @@ private fun formatFileSize(bytes: Long): String {
  * omitted rather than shown as a real author. Returns "" when nothing real
  * remains. Pure; unit-tested.
  */
-internal fun mediaMetaLine(uploadedAt: String, uploadedBy: String): String {
+internal fun mediaMetaLine(
+    uploadedAt: String,
+    uploadedBy: String,
+    /**
+     * #1564: uploader uid -> name (from `listStaff`, via [staffNamesByUid]).
+     * `uploadedBy` is the uploader's uid, which the line showed raw. A uid not
+     * in the map stays as it was.
+     */
+    uploaderNames: Map<String, String> = emptyMap(),
+): String {
     val date = uploadedAt.trim().take(10)
         .takeIf { it.length == 10 && it[4] == '-' && it[7] == '-' }
         .orEmpty()
     val author = uploadedBy.trim()
         .takeIf { it.isNotBlank() && !it.equals("auntie", ignoreCase = true) }
+        ?.let { uploaderNames[it] ?: it }
         .orEmpty()
     return listOf(date, author).filter { it.isNotBlank() }.joinToString(" · ")
 }
