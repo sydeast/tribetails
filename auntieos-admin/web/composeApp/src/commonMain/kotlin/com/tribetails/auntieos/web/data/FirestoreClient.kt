@@ -1463,6 +1463,13 @@ class FirestoreClient {
      * stamps) are refused with a message naming markInvoicePaid /
      * recordPayment / updateInvoice, and every refusal surfaces verbatim.
      */
+    /**
+     * #1567: one invoice's send marks, read from the server, for [checkedSend].
+     * Null when the read fails or the invoice is gone; the caller says it cannot
+     * tell rather than guessing either way.
+     */
+    suspend fun invoiceSendMarks(invoiceId: String): SendMarks? =
+        runCatchingCancellable { platformInvoiceDocPlain(invoiceId)?.let { sendMarksOf(it) } }.getOrNull()
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<SendAck> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)
         val payload = buildJsonObject {
@@ -2557,6 +2564,8 @@ internal expect fun platformCallsStream():      Flow<FirestoreResult<List<CallLo
 internal expect fun platformSmsStream():        Flow<FirestoreResult<List<SmsMessage>>>
 internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailMessage>>>
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
+/** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
+internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>

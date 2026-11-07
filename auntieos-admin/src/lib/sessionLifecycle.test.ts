@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   appendOfficeNote,
+  readableVisitNotes,
+  savedVisitFieldsMessage,
   cardLifecycleActionsFor,
   lifecycleActionsFor,
   lifecycleNowIso,
@@ -157,5 +159,28 @@ describe('lifecycleNowIso', () => {
 
   it('defaults to now and still has no sub-second part', () => {
     expect(lifecycleNowIso()).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+});
+
+describe("#1592: visit notes and saves read in the operator's words", () => {
+  const NOW = new Date('2026-11-06T18:00:00Z');
+
+  it('shows a stored stamp as a business-zone time, and leaves the stored text alone', () => {
+    const stored = '[2026-11-05T21:32:52Z] (office) Gate code changed';
+    expect(readableVisitNotes(stored, 'America/Chicago', NOW)).toBe('[Nov 5, 3:32 PM] (office) Gate code changed');
+    expect(stored).toContain('2026-11-05T21:32:52Z');
+  });
+
+  it('adds the year to a stamp from another year, and reads every stamp in the notes', () => {
+    const stored = '[2026-11-05T21:32:52Z] (office) b\n[2025-03-01T15:00:00Z] (field) a';
+    expect(readableVisitNotes(stored, 'America/Chicago', NOW)).toBe(
+      '[Nov 5, 3:32 PM] (office) b\n[Mar 1, 2025, 9:00 AM] (field) a',
+    );
+  });
+
+  it('names saved fields the way the form does, never by their keys', () => {
+    expect(savedVisitFieldsMessage(['serviceDurationMinutes'])).toBe('Saved: visit length.');
+    expect(savedVisitFieldsMessage(['serviceType', 'kinIds'])).toBe('Saved: service, kin on this visit.');
+    expect(savedVisitFieldsMessage(['somethingNew'])).toBe('Saved.');
   });
 });

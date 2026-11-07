@@ -9,7 +9,10 @@ import {
   appendOfficeNote,
   lifecycleActionsFor,
   lifecycleNowIso,
+  readableVisitNotes,
+  savedVisitFieldsMessage,
 } from '../lib/sessionLifecycle';
+import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useVisitTracking } from '../lib/visitTracking';
 import {
@@ -313,12 +316,15 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
 
   const [catalog, setCatalog] = useState<ServiceOption[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  // The zone note stamps are read in (#1592). Chicago until settings land.
+  const [noteZone, setNoteZone] = useState<string>(resolveBusinessTimeZone(null));
   useEffect(() => {
     let cancelled = false;
     void getBusinessSettings()
       .then((s) => {
         if (cancelled) return;
         setCatalog(serviceOptionsFromRates(s.serviceRates, s.serviceDurations));
+        setNoteZone(resolveBusinessTimeZone(s.timeZone));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -370,7 +376,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
         ...(kinDirty && kinSelection !== null ? { kinIds: kinSelection } : {}),
       });
       setKinSelection(null);
-      setEditWrite({ status: 'done', message: `Saved: ${res.updated.join(', ')}.` });
+      setEditWrite({ status: 'done', message: savedVisitFieldsMessage(res.updated) });
     } catch (err) {
       setEditWrite({ status: 'error', message: messageOf(err) });
     }
@@ -674,7 +680,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                   {notes === '' ? (
                     <p className="sdetail__nbox sdetail__nbox--empty">No notes on this visit yet.</p>
                   ) : (
-                    <p className="sdetail__nbox">{notes}</p>
+                    <p className="sdetail__nbox">{readableVisitNotes(notes, noteZone)}</p>
                   )}
                   <label className="sdetail__field">
                     <span className="sdetail__field-label">Note to office</span>

@@ -185,10 +185,11 @@ function roleWord(role: MemberRole): string {
 
 export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMembersProps) {
   const { showToast } = useToast();
-  const householdName = (kinfolkName ?? '').trim() === '' ? kinfolkId : (kinfolkName as string);
+  // #1589: never the database id. The route reads the household and passes its
+  // name; a household with no name on file reads "This household".
+  const householdName = (kinfolkName ?? '').trim() === '' ? 'This household' : (kinfolkName as string);
   // #689. Named after the household rather than "household" so the fallback
-  // wording still points at something the operator can picture; the cold-arrival
-  // route has no name to use, so it falls back to the id it does have.
+  // wording still points at something the operator can picture.
   const back = useHistoryBack({ fallbackLabel: householdName, onFallback: onBack });
 
   const [members, setMembers] = useState<Async<HouseholdMember[]>>({ status: 'loading' });
@@ -511,7 +512,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
         className="d1"
         title="Primary contact"
         meta="role: PRIMARY"
-        subtitle="The household account owner. Held by role, not by setting: full billing, home access, kin edits and messaging come with being the primary, and the server reads the role rather than these flags, so there is nothing here to switch off. Swap primary suspends them and mails a claim link to a verified member you pick."
+        subtitle="The household account owner. Held by role, not by setting: full billing, home access, kin edits and messaging come with being the primary, so there is nothing here to switch off. Swap primary suspends them and emails a claim link to a verified member you pick."
       >
         <AsyncRegion
           state={members}
@@ -595,7 +596,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
         className="d3"
         title="Invites"
         meta={inviteCount === null ? '' : `${inviteCount} total`}
-        subtitle="Every invite this household has been sent. An invite past its expiry reads Expired here from the moment it lapses, even though the nightly sweep has not stamped it yet."
+        subtitle="Every invite this household has been sent. An invite reads Expired the moment it lapses."
       >
         <AsyncRegion
           state={invites}
@@ -800,7 +801,10 @@ function MemberBlock({
               size="compact"
             />
           </div>
-          <span className="hmembers__member-contact">{member.uid}</span>
+          {member.invitedEmail !== null && member.invitedEmail !== label && (
+            // The email is the heading when nothing names the person; do not print it twice.
+            <span className="hmembers__member-contact">{member.invitedEmail}</span>
+          )}
           {member.role === 'SECONDARY' && member.secondaryLabel !== null && (
             // Read-only. `updateMemberLabel` is PRIMARY-only on the server, so
             // the mock's input would be a control the admin cannot use.
