@@ -13,7 +13,7 @@ import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { serviceDurationsReader, storedVisitEndIso } from './approveBookingSeriesCore';
 import { validateResponse } from '../lib/callableResponse';
-import { RESCHEDULE_ASK_PASSED_MESSAGE, RESCHEDULE_IN_PAST_CODE } from '../lib/pastVisit';
+import { householdNamesFor } from '../lib/householdNames';
 
 /**
  * The office's half of the kinfolk reschedule ask (issue #399, item 2).
@@ -162,6 +162,9 @@ export async function resolveBookingRescheduleRequestHandler(
   // past proposal), but it may have passed while the ask waited. Accepting it
   // now would move the visit into the past, which stays blocked.
   if (newStart.toMillis() < Date.now()) {
+    // Loaded on the refusal path only, not at file scope (#1714): see
+    // coldStartImportGraph.test.ts.
+    const { RESCHEDULE_ASK_PASSED_MESSAGE, RESCHEDULE_IN_PAST_CODE } = await import('../lib/pastVisit.js');
     throw new HttpsError('failed-precondition', RESCHEDULE_ASK_PASSED_MESSAGE, {
       code: RESCHEDULE_IN_PAST_CODE,
     });
@@ -343,6 +346,8 @@ export const RescheduleRequestDto = z
     kinfolkId: z.string().min(1),
     batchId: z.string().min(1),
     visitId: z.string().min(1),
+    /** #1577: the household asking, from `families/{kinfolkId}.displayName`. Null when unreadable. */
+    kinfolkName: z.string().nullable(),
     title: z.string().nullable(),
     serviceType: z.string().nullable(),
     kinNames: z.array(z.string()),
@@ -395,7 +400,7 @@ export async function listRescheduleRequestsHandler(
     .limit(args.limit ?? 50)
     .get();
 
-  const requests = snap.docs
+  const rows = snap.docs
     .map((doc) => {
       const path = doc.ref.path.split('/');
       // families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}
@@ -419,7 +424,10 @@ export async function listRescheduleRequestsHandler(
         requestedAtMs: millisOf(d['rescheduleRequestedAt'] as Timestamp | null | undefined),
       };
     })
-    .filter((r): r is z.infer<typeof RescheduleRequestDto> => r !== null);
+    .filter((r): r is Omit<z.infer<typeof RescheduleRequestDto>, 'kinfolkName'> => r !== null);
+  // #1577: name the household on every row, one family read per household.
+  const names = await householdNamesFor(rows.map((r) => r.kinfolkId));
+  const requests = rows.map((r) => ({ ...r, kinfolkName: names.get(r.kinfolkId) ?? null }));
 
   logEvent({
     severity: 'info',
