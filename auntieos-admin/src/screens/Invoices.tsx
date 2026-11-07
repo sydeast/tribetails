@@ -23,6 +23,7 @@ import {
   type InvoiceAction,
   type InvoicePartialPayment,
   isInvoiceOverdue,
+  invoiceDayOrNull,
   isUnreadableDueDate,
   localDateIso,
   unstampedStateInfo,
@@ -116,6 +117,10 @@ const ARCHIVED_OPTIONS = [
   { value: 'only', label: 'Only archived' },
 ] as const;
 
+/** #1609: a draft or a quote is not money billed. */
+export function isUnbilledState(state: InvoiceState | null): boolean {
+  return state === 'draft' || state === 'quote';
+}
 function archivedAllows(mode: ArchivedMode, entry: InvoiceEntry): boolean {
   if (mode === 'hide') return !isArchivedInvoice(entry);
   if (mode === 'only') return isArchivedInvoice(entry);
@@ -129,7 +134,10 @@ function archivedAllows(mode: ArchivedMode, entry: InvoiceEntry): boolean {
  */
 function rangeLabel(range: DateRangeKey): string {
   const preset = DATE_RANGE_PRESETS.find((p) => p.key === range);
-  if (preset === undefined || preset.days === null) return 'the archive';
+  // #1609: not "the archive". That word belongs to the Archived facet, and
+  // "all 0 invoices in the archive" under Only archived read as a claim about
+  // archived invoices when it meant every date.
+  if (preset === undefined || preset.days === null) return 'the full date range';
   return `the ${preset.label.toLowerCase()}`;
 }
 
@@ -192,6 +200,28 @@ interface RowView {
   partial: InvoicePartialPayment | null;
 }
 
+/** #1609: the day an invoice date names, for sorting. */
+function invoiceSortDay(raw: string): string | null {
+  // #1570's reader: an imported "July 14, 2026" sorts by the day it names.
+  return invoiceDayOrNull(raw);
+}
+
+/** #1609: the loaded rows by invoice day, newest first; ties by creation, undated last. */
+function newestFirst(views: RowView[]): RowView[] {
+  const day = (v: RowView) => invoiceSortDay(v.entry.date);
+  const made = (v: RowView) => v.entry.createdAt?.toMillis?.() ?? 0;
+  return [...views].sort((a, b) => {
+    const da = day(a);
+    const db = day(b);
+    if (da !== db) {
+      if (da === null) return 1;
+      if (db === null) return -1;
+      return da < db ? 1 : -1;
+    }
+    return made(b) - made(a);
+  });
+}
+
 /**
  * #1569: do the page's copy of an invoice and the sheet's live copy say the same
  * thing? Compared field by field with the keys sorted, so two reads of one
@@ -210,6 +240,7 @@ function stableJson(value: unknown): string {
     return Object.fromEntries(Object.keys(rec).sort().map((k) => [k, rec[k]]));
   });
 }
+
 function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
   // Normalize BEFORE anything reads a field. InvoiceEntry is a cast over raw
   // Firestore data, not a guarantee, and real docs ARE missing keys it declares.
@@ -451,8 +482,13 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // AND the list off the SAME views, rather than re-walking the page per stat.
   // asyncScalar's projector runs only in the `ready` branch, where `views` holds
   // the ready data; AsyncRegion likewise renders its children only when ready.
+  // #1609: NEWEST FIRST, AS THE SUBTITLE PROMISES. The page arrives in
+  // Firestore's `date desc`, which is a TEXT order: a stored "July 14, 2026"
+  // outranks every ISO day, so the walk's list was not newest first. The loaded
+  // rows are put in day order here, newest first, ties by when each was made,
+  // and rows whose date names no day last.
   const views = useMemo(
-    () => (rows.status === 'ready' ? rowViewsFor(rows.data, todayIso) : []),
+    () => (rows.status === 'ready' ? newestFirst(rowViewsFor(rows.data, todayIso)) : []),
     [rows, todayIso],
   );
 
@@ -487,7 +523,12 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   const outstandingTotal = asyncScalar(rows, () =>
     openRows.reduce((sum, r) => sum + r.entry.amountDue, 0),
   );
-  const billedTotal = asyncScalar(rows, () => inScope.reduce((sum, r) => sum + r.entry.total, 0));
+  // #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
+  // estimate the household has not agreed to, so neither is money billed; the
+  // walk's Billed total counted an unsent draft. Both still list below.
+  const billedRows = useMemo(() => inScope.filter((r) => !isUnbilledState(r.state)), [inScope]);
+  const unbilledCount = inScope.length - billedRows.length;
+  const billedTotal = asyncScalar(rows, () => billedRows.reduce((sum, r) => sum + r.entry.total, 0));
   const overdueCount = asyncScalar(rows, () => overdueRows.length);
   // #1570: open invoices whose due date names no day. Each could be overdue
   // and none can be counted, so the Overdue card says how many.
@@ -527,9 +568,19 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
       ? null
       : (hasMore
           ? `These totals cover the ${String(loaded)} invoice${plural} loaded so far, not all of ${windowLabel}.`
-          : `These totals cover ${everyOne} invoice${plural} in ${windowLabel}.`) +
+          : loaded === 0
+            ? // #1609: "all 0 invoices" is not a sentence anyone writes either.
+              `No invoices in ${windowLabel} are counted in these totals.`
+            : `These totals cover ${everyOne} invoice${plural} in ${windowLabel}.`) +
+        // #1609: under Only archived the rows left out are the ones NOT
+        // archived, and the sentence used to call them archived.
         (archivedHidden > 0
-          ? ` ${String(archivedHidden)} archived invoice${archivedHidden === 1 ? '' : 's'} excluded, counted within the invoices loaded here rather than across the books.`
+          ? archived === 'only'
+            ? ` ${String(archivedHidden)} invoice${archivedHidden === 1 ? '' : 's'} not archived excluded, counted within the invoices loaded here rather than across the books.`
+            : ` ${String(archivedHidden)} archived invoice${archivedHidden === 1 ? '' : 's'} excluded, counted within the invoices loaded here rather than across the books.`
+          : '') +
+        (unbilledCount > 0
+          ? ` Billed total leaves out ${String(unbilledCount)} unsent draft${unbilledCount === 1 ? '' : 's'} or quote${unbilledCount === 1 ? '' : 's'}.`
           : '');
 
   // THE HONESTY LINE. What the search box actually reaches, plus the two costs of
@@ -885,7 +936,13 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
 
   const body = (
     <>
-      <span className="invoices__row-number">#{entry.invoiceNumber || '(none)'}</span>
+      {entry.invoiceNumber.trim() === '' ? (
+        <span className="invoices__row-number invoices__row-number--missing">No number</span>
+      ) : (
+        <span className="invoices__row-number" title={`#${entry.invoiceNumber}`}>
+          #{entry.invoiceNumber}
+        </span>
+      )}
 
       <span className="invoices__row-who">
         <span className="invoices__row-name">{household}</span>

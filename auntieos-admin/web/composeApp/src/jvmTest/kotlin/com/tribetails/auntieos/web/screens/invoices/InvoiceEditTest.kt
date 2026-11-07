@@ -181,7 +181,42 @@ class InvoiceEditTest {
             invoiceEditPatchOf(inv, base.copy(invoiceDiscountText = "100")).error,
         )
         assertEquals("The due date needs to be a date like 2026-10-23.", invoiceEditPatchOf(inv, base.copy(dueDate = "soon")).error)
-        assertEquals("The invoice number cannot be empty.", invoiceEditPatchOf(inv, base.copy(invoiceNumber = " ")).error)
+        assertEquals(
+            "An invoice needs a number. Type one, or put the old one back.",
+            invoiceEditPatchOf(inv, base.copy(invoiceNumber = " ")).error,
+        )
+    }
+
+    // ── #1609: terms from the same picker New invoice uses ─────────────────────
+    @Test
+    fun aPickedTermsCodeIsSentAsTermsCodeAndItsDueDateIsLeftToTheServer() {
+        val inv = itemized(scope = "metadataOnly")
+        val base = invoiceEditDraftOf(inv)!!
+        assertNull(base.termsCode)
+        val patch = invoiceEditPatchOf(inv, base.copy(termsCode = InvoiceTermsCode.NET_30, dueDate = "2026-12-01")).patch!!
+        assertEquals("net_30", patch["termsCode"]!!.jsonPrimitive.content)
+        assertFalse(patch.containsKey("dueDate"))
+        assertFalse(patch.containsKey("terms"))
+    }
+    @Test
+    fun customTermsSendTheTypedDueDateWithTheCode() {
+        val inv = itemized(scope = "metadataOnly")
+        val base = invoiceEditDraftOf(inv)!!
+        val patch = invoiceEditPatchOf(inv, base.copy(termsCode = InvoiceTermsCode.CUSTOM, dueDate = "2026-12-01")).patch!!
+        assertEquals("custom", patch["termsCode"]!!.jsonPrimitive.content)
+        assertEquals("2026-12-01", patch["dueDate"]!!.jsonPrimitive.content)
+    }
+    @Test
+    fun billedTotalLeavesOutDraftsAndQuotes() {
+        val open = itemized().copy(status = "open", total = 40.0)
+        val draft = itemized().copy(status = "draft", total = 25.0)
+        val quote = itemized().copy(status = "quote", total = 90.0)
+        assertEquals(40.0, invoiceBilledTotal(listOf(open, draft, quote)))
+    }
+    @Test
+    fun aMissingNumberReadsAsWordsNotNone() {
+        assertEquals("No number", invoiceNumberLabel(" "))
+        assertEquals("#INV-2027-0001", invoiceNumberLabel("INV-2027-0001"))
     }
 
     // ── #1198: household, client, address and the legacy discount text ────────

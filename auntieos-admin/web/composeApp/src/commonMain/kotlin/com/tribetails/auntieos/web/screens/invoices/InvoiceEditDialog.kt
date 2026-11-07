@@ -13,6 +13,7 @@ import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
+import com.tribetails.auntieos.web.ui.components.AuntieSelectField
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
@@ -50,12 +51,9 @@ internal fun InvoiceEditDialog(
         },
     ) {
         if (draft == null) return@AuntieDialog
+        val termsSetDueDate = draft.termsCode != null && draft.termsCode != draft.storedTermsCode &&
+            draft.termsCode != InvoiceTermsCode.CUSTOM
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (error != null) {
-                AuntieBanner(tone = AuntieBannerTone.Error, title = "Can't save") {
-                    Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                }
-            }
             if (!draft.moneyEditable) {
                 AuntieBanner(tone = AuntieBannerTone.Warning, title = "Money is locked") {
                     Text(
@@ -87,15 +85,23 @@ internal fun InvoiceEditDialog(
                     value = draft.dueDate,
                     onValueChange = { onChange(draft.copy(dueDate = it)) },
                     label = "Due date",
-                    placeholder = "YYYY-MM-DD",
-                    enabled = enabled,
+                    // #1609: picked terms other than custom set the due date on save.
+                    placeholder = if (termsSetDueDate) "set by the terms" else "YYYY-MM-DD",
+                    enabled = enabled && !termsSetDueDate,
                     modifier = Modifier.weight(1f),
                 )
             }
-            BottomBorderField(
-                value = draft.terms,
-                onValueChange = { onChange(draft.copy(terms = it)) },
+            // #1609: the same choices as New invoice, not free text. Terms that
+            // carry no code are offered as stored, first.
+            AuntieSelectField<InvoiceTermsCode?>(
                 label = "Terms",
+                options = (if (draft.storedTermsCode == null) listOf<InvoiceTermsCode?>(null) else emptyList()) +
+                    invoiceTermsDefs(),
+                selected = draft.termsCode,
+                onSelect = { onChange(draft.copy(termsCode = it)) },
+                optionLabel = { code ->
+                    code?.label ?: if (draft.terms.isBlank()) "Not set" else "As stored: ${draft.terms.trim()}"
+                },
                 enabled = enabled,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -132,6 +138,13 @@ internal fun InvoiceEditDialog(
             )
             Text("Line items", style = AuntieTheme.typography.labelSmall, color = c.textDim)
             if (draft.moneyEditable) EditableLines(draft, enabled, onChange) else LockedLines(draft)
+            // #1609: beside Save, where the eye is when it is pressed. At the top
+            // of the dialog it sat out of view of the button.
+            if (error != null) {
+                AuntieBanner(tone = AuntieBannerTone.Error, title = "Can't save") {
+                    Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
         }
     }
 }

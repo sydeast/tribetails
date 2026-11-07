@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { householdNamesFor } from '../lib/householdNames';
 import { pendingAskOn } from '../portal/requestBookingCancellation';
 
 /**
@@ -250,6 +251,8 @@ export const CancelRequestDto = z
     kinfolkId: z.string().min(1),
     batchId: z.string().min(1),
     visitId: z.string().min(1),
+    /** #1577: the household asking, from `families/{kinfolkId}.displayName`. Null when unreadable. */
+    kinfolkName: z.string().nullable(),
     title: z.string().nullable(),
     serviceType: z.string().nullable(),
     kinNames: z.array(z.string()),
@@ -314,7 +317,7 @@ export async function listCancelRequestsHandler(
     .limit(SCAN_CAP)
     .get();
 
-  const requests = snap.docs
+  const rows = snap.docs
     .map((doc) => {
       const d = doc.data() as Record<string, unknown>;
       if (!pendingAskOn(d)) return null;
@@ -337,8 +340,11 @@ export async function listCancelRequestsHandler(
         requestedAtMs: millisOf(d['cancelRequestedAt'] as Timestamp | null | undefined),
       };
     })
-    .filter((r): r is z.infer<typeof CancelRequestDto> => r !== null)
+    .filter((r): r is Omit<z.infer<typeof CancelRequestDto>, 'kinfolkName'> => r !== null)
     .slice(0, limit);
+  // #1577: name the household on every row, one family read per household.
+  const names = await householdNamesFor(rows.map((r) => r.kinfolkId));
+  const requests = rows.map((r) => ({ ...r, kinfolkName: names.get(r.kinfolkId) ?? null }));
 
   if (snap.size >= SCAN_CAP) {
     logEvent({

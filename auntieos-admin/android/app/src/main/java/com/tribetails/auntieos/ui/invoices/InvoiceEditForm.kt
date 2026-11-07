@@ -5,6 +5,8 @@ import com.tribetails.auntieos.data.contracts.UpdateInvoiceArgsPatchLineItem
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.InvoiceLineItem
 import com.tribetails.auntieos.domain.InvoiceEditScope
+import com.tribetails.auntieos.domain.InvoiceTermsCode
+import com.tribetails.auntieos.domain.parseInvoiceTermsCode
 import com.tribetails.auntieos.domain.MAX_QTY
 import com.tribetails.auntieos.domain.MAX_UNIT_CENTS
 import com.tribetails.auntieos.domain.centsToInputDollars
@@ -60,6 +62,14 @@ data class InvoiceEditDraft(
     val date: String,
     val dueDate: String,
     val terms: String,
+    /**
+     * #1609: the terms as the same picker New invoice uses. Null for an invoice
+     * whose terms carry no code (typed or imported); those stay as stored until
+     * a code is picked.
+     */
+    val termsCode: InvoiceTermsCode? = null,
+    /** #1609: the code the invoice carried when the form opened, to tell a new pick from none. */
+    val storedTermsCode: InvoiceTermsCode? = null,
     val lines: List<InvoiceEditLine>,
     val invoiceDiscountText: String,
     /**
@@ -115,6 +125,8 @@ fun invoiceEditDraftOf(invoice: Invoice): InvoiceEditDraft? {
         date = invoice.date,
         dueDate = invoice.dueDate,
         terms = invoice.terms,
+        termsCode = parseInvoiceTermsCode(invoice.termsCode),
+        storedTermsCode = parseInvoiceTermsCode(invoice.termsCode),
         lines = stored.orEmpty().map(::invoiceEditLineOf),
         invoiceDiscountText = if (invoice.invoiceDiscountCents > 0L) centsToInputDollars(invoice.invoiceDiscountCents) else "",
         wasItemized = stored != null,
@@ -213,12 +225,20 @@ fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPa
     var date: String? = null
     var dueDate: String? = null
     var terms: String? = null
+    var termsCode: String? = null
 
-    if (draft.invoiceNumber != invoice.invoiceNumber) {
-        val trimmed = draft.invoiceNumber.trim()
-        if (trimmed.isEmpty()) return InvoiceEditPatchOutcome(null, "The invoice number cannot be empty.")
-        invoiceNumber = trimmed
+    // #1609: the same sentence the server and web use.
+    if (draft.invoiceNumber.trim().isEmpty()) {
+        return InvoiceEditPatchOutcome(null, "An invoice needs a number. Type one, or put the old one back.")
     }
+    if (draft.invoiceNumber != invoice.invoiceNumber) {
+        invoiceNumber = draft.invoiceNumber.trim()
+    }
+    // #1609: a newly picked code. A non-custom one works out its own due date on
+    // the server, so the due date is not sent alongside it.
+    val pickedTerms = draft.termsCode?.takeIf { it != parseInvoiceTermsCode(invoice.termsCode) }
+    if (pickedTerms != null) termsCode = pickedTerms.wire
+    val dueDateFromTerms = pickedTerms != null && pickedTerms != InvoiceTermsCode.CUSTOM
     if (draft.date != invoice.date) {
         val trimmed = draft.date.trim()
         if (!isValidNewInvoiceIsoDate(trimmed)) {
@@ -226,14 +246,14 @@ fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPa
         }
         date = trimmed
     }
-    if (draft.dueDate != invoice.dueDate) {
+    if (!dueDateFromTerms && draft.dueDate != invoice.dueDate) {
         val trimmed = draft.dueDate.trim()
         if (!isValidNewInvoiceIsoDate(trimmed)) {
             return InvoiceEditPatchOutcome(null, "The due date needs to be a date like 2026-10-23.")
         }
         dueDate = trimmed
     }
-    if (draft.terms != invoice.terms) terms = draft.terms
+    if (pickedTerms == null && draft.terms != invoice.terms) terms = draft.terms
     // #1198: sent as typed, like `terms`, and only when changed. An emptied
     // field is a real edit (a wrong address cleared) and goes as "".
     val header = linkedMapOf<String, String>()
@@ -267,6 +287,7 @@ fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPa
         date = date,
         dueDate = dueDate,
         terms = terms,
+        termsCode = termsCode,
         kinfolkName = header["kinfolkName"],
         client = header["client"],
         address = header["address"],

@@ -37,6 +37,7 @@ import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/busi
 import { businessInstantMs, businessTodayIso, sessionsByBusinessDay } from '../lib/businessZoneTime';
 import { kinfolkDisplayName } from '../api/directory';
 import { rescheduleBooking } from '../api/bookingsWrite';
+import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import {
   deleteBlockedTimeSlot,
   isOperatorBlock,
@@ -331,6 +332,13 @@ export function Schedule({ onSelect }: ScheduleProps) {
     const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone, drop.window);
     if (times === null) {
       setDropError('That visit could not be moved: its record has no readable start time.');
+      return;
+    }
+    // #1574: a drop onto an hour that has passed is refused here, before the
+    // callable, and the block stays where it was.
+    const pastRefusal = rescheduleIntoPastRefusal(times.startTime, Date.now());
+    if (pastRefusal !== null) {
+      setDropError(pastRefusal);
       return;
     }
     setPendingSessionId(drop.session._id);

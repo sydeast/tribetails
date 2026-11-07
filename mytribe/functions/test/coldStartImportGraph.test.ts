@@ -133,13 +133,16 @@ const ALLOWED_EAGER_PACKAGES = [
  * whole. Measured at 423 after merging onto #1316, inside the 430
  * already allowed, so the bound did not move.
  *
- * 440 since #1610 (#1715: main itself had reached 431 after the 2026-11-07
- * merges, so the cap was red on every PR): that change also adds
- * `lib/broadcastMerge.ts`, the per-household merge-field fill the broadcast
- * sender and its resume sweep share. Its imports (handlebars,
- * `notifications/templateParsers.ts`, `lib/businessName.ts`) are all already
- * resident through `lib/email.ts`, so it costs one module and no new edges.
- * Not a structural change.
+ * 440 since #1577 (main had reached 431): that change adds
+ * `lib/householdNames.ts`, the one read of `families/{id}.displayName` that
+ * `listRescheduleRequests` and `listCancelRequests` share so a visit request
+ * names its household. One module whose imports are already resident; not a
+ * structural change.
+ *
+ * #1610 adds `lib/broadcastMerge.ts`, the per-household merge-field fill the
+ * broadcast sender and its resume sweep share. Its imports are all already
+ * resident through `lib/email.ts`, so it costs one module, inside the 440
+ * already allowed, and the bound did not move.
  */
 const MAX_OWN_EAGER_MODULES = 440;
 

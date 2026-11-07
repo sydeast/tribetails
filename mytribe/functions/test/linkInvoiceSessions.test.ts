@@ -220,6 +220,23 @@ describe('linkInvoiceSessions atomicity', () => {
     expect(ctx.writes).toEqual([]);
   });
 
+  it('#1609: an added cancelled visit is refused and nothing is written', async () => {
+    const ctx = seed({ sessions: { s1: session('fam1', { status: 'cancelled' }), s2: session() } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const err = await linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1', 's2'] })).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({ code: 'failed-precondition', details: { code: 'session_cancelled', sessionIds: ['s1'] } });
+    expect(ctx.writes).toEqual([]);
+  });
+  it('#1609: a cancelled visit already on this invoice can stay linked, or be unlinked', async () => {
+    const ctx = seed({
+      invoice: { kinfolkId: 'fam1', invoiceNumber: 'INV-9', status: 'open', amountDue: 40, total: 40, sessionIds: ['s1'] },
+      sessions: { s1: session('fam1', { status: 'CANCELLED', invoiceId: 'inv1' }), s2: session() },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1', 's2'] }))).resolves.toBeTruthy();
+  });
   it('#1254: the other invoice is named by its trimmed id when its doc is missing', async () => {
     const ctx = seed({ sessions: { s1: session('fam1', { invoiceId: '  gone  ' }) } });
     mocks.dbFn.mockReturnValue(ctx.db);

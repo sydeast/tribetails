@@ -198,6 +198,7 @@ postInvoiceEvent
 previewBroadcastAudience
 previewEmailFrame
 previewEmailTemplate
+previewInvoiceNotice
 previewMarketingBlastAudience
 previewMarketingBlastCopy
 provisionBusinessAdmins
