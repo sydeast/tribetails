@@ -876,7 +876,10 @@ private fun ScheduleViewScreenContent(
 
         if (state.showAddBookingDialog) {
             AddEnhancedBookingDialog(
-                baseServices = state.baseServices.filter { it.isActive },
+                // #1703: the operator's rate-card KinCare types, the catalog web's
+                // New visit uses, so the visit can be priced at invoice time.
+                serviceRates     = state.businessSettings.serviceRates,
+                serviceDurations = state.businessSettings.serviceDurations,
                 allKinfolk   = state.allKinfolk,
                 bookingMode  = state.bookingMode,
                 initialDate  = state.selectedDate,
@@ -2393,10 +2396,20 @@ data class RecordCompletedVisit(
     val notes: String,
 )
 
+/** #1703: said when Settings has no KinCare types to book a visit against. */
+internal const val NO_KINCARE_TYPES_MESSAGE = "No KinCare types yet. Add one in Settings before booking a visit."
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEnhancedBookingDialog(
-    baseServices: List<BaseService>,
+    /**
+     * #1703: `business_settings.serviceRates`. The picker offers its keys
+     * ([serviceOptionsFromRates], the same catalog web's New visit and the
+     * NewBookingWizard use), because pricing is by exact name against this map
+     * (`listUninvoicedSessions`). A base service's title is not a rate-card key,
+     * and a visit named by one landed unpriceable.
+     */
+    serviceRates: Map<String, String>,
+    serviceDurations: Map<String, String> = emptyMap(),
     allKinfolk: List<Kinfolk>,
     bookingMode: BookingMode,
     initialDate: LocalDate,
@@ -2416,7 +2429,8 @@ fun AddEnhancedBookingDialog(
 ) {
     val businessZone = LocalBusinessZone.current
     var selectedKinfolk by remember { mutableStateOf<Kinfolk?>(null) }
-    var selectedService by remember { mutableStateOf<BaseService?>(baseServices.firstOrNull()) }
+    val serviceOptions = remember(serviceRates, serviceDurations) { serviceOptionsFromRates(serviceRates, serviceDurations) }
+    var selectedService by remember(serviceOptions) { mutableStateOf<ServiceOption?>(serviceOptions.firstOrNull()) }
     // Phase 14: answers to BOOKING-placed custom fields; persisted into EnhancedBooking.formValues.
     val formValues = remember { mutableStateMapOf<String, String>() }
 
@@ -2475,12 +2489,21 @@ fun AddEnhancedBookingDialog(
                 item {
                     AuntieDropdownField(
                         value       = selectedService,
-                        options     = listOf<BaseService?>(null) + baseServices,
+                        options     = serviceOptions,
                         onSelect    = { selectedService = it },
-                        displayText = { it?.title ?: "Select service *" },
+                        displayText = { it.name },
                         label       = "SERVICE",
+                        placeholder = "Select service *",
+                        enabled     = serviceOptions.isNotEmpty(),
                         modifier    = Modifier.fillMaxWidth()
                     )
+                    if (serviceOptions.isEmpty()) {
+                        Text(
+                            NO_KINCARE_TYPES_MESSAGE,
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.error,
+                        )
+                    }
                 }
                 item {
                     Box(
@@ -2593,6 +2616,11 @@ fun AddEnhancedBookingDialog(
                                 if (startTime == null || endTime == null) { timeError = "Use HH:mm format (e.g. 09:00)"; return@PrimaryButton }
                                 if (!endTime.isAfter(startTime)) { timeError = "End time must be after start"; return@PrimaryButton }
                                 val svc = selectedService
+                                // #1703: a visit with no rate-card service cannot be priced.
+                                if (svc == null) {
+                                    timeError = if (serviceOptions.isEmpty()) NO_KINCARE_TYPES_MESSAGE else "Pick a service."
+                                    return@PrimaryButton
+                                }
                                 // #1574: never a booking in the past. Judged again
                                 // at the tap, on the clock as it is now.
                                 when (com.tribetails.auntieos.domain.newVisitTiming(date, startTime, endTime, now())) {
@@ -2602,15 +2630,15 @@ fun AddEnhancedBookingDialog(
                                     }
                                     com.tribetails.auntieos.domain.VisitWindowTiming.ENDED -> {
                                         val kinfolk = selectedKinfolk
-                                        if (onRecordCompleted == null || kinfolk == null || svc == null) {
-                                            timeError = "That time has already passed. Pick a household and a service to record it as completed."
+                                        if (onRecordCompleted == null || kinfolk == null) {
+                                            timeError = "That time has already passed. Pick a household to record it as completed."
                                             return@PrimaryButton
                                         }
                                         onRecordCompleted(
                                             RecordCompletedVisit(
                                                 kinfolkId = kinfolk.id,
                                                 kinfolkName = kinfolk.displayName,
-                                                serviceType = svc.title,
+                                                serviceType = svc.name,
                                                 startUtcIso = com.tribetails.auntieos.domain.wallClockToUtcIso(date, startTime, businessZone),
                                                 endUtcIso = com.tribetails.auntieos.domain.wallClockToUtcIso(date, endTime, businessZone),
                                                 durationMinutes = java.time.Duration.between(startTime, endTime).toMinutes().toInt(),
@@ -2623,9 +2651,11 @@ fun AddEnhancedBookingDialog(
                                 }
                                 onSave(
                                     EnhancedBooking(
-                                        title            = svc?.title ?: "New Booking",
-                                        baseServiceId    = svc?.id ?: "",
-                                        baseServiceTitle = svc?.title ?: "",
+                                        title            = svc.name,
+                                        // No base_services doc behind a rate-card type; the
+                                        // approval bridge names the visit by baseServiceTitle.
+                                        baseServiceId    = "",
+                                        baseServiceTitle = svc.name,
                                         kinfolkId        = selectedKinfolk?.id ?: "",
                                         kinfolkName      = selectedKinfolk?.displayName ?: "",
                                         startDateTime    = LocalDateTime.of(date, startTime).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
