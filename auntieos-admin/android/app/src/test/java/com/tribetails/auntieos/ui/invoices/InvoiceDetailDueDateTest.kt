@@ -125,8 +125,10 @@ class InvoiceDetailDueDateTest {
         // invoice is never overdue and always took the `due` branch, where ten
         // characters of it read "due February 1" - a real day, sixteen days
         // early, on the line that tells her when to chase.
+        // #1570: the month-name form is now read as its day, so this open
+        // invoice is past due, and the line still says the whole date.
         mount(invoice(dueDate = "February 17, 2026"))
-        rule.onNodeWithText("due February 17, 2026").assertExists()
+        rule.onNodeWithText("past due February 17, 2026").assertExists()
         rule.onNodeWithText("due February 1").assertDoesNotExist()
     }
 

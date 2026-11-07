@@ -82,6 +82,9 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'auth.failedLogin.attempts': ['attemptsInWindow', 'business', 'email'],
   'auth.password.reset': ['Business', 'displayName', 'link'],
   'invite.expired': ['Business', 'invitedEmail'],
+  // #1586: a direct send (membership/acceptInvite.ts), not a catalog row, so the
+  // enricher never runs on it. Every token is supplied by the sender.
+  'invite.verify-email': ['claimUrl', 'invitedEmail', 'verifyUrl'],
   'invoice.charge.failed': ['invoiceNumber', 'kinfolkName'],
   'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'kinfolkName', 'kinName'],
   'invoice.overdue': ['bookingDate', 'kinfolkName', 'kinName'],

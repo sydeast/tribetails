@@ -1388,6 +1388,10 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
     verification link flips the Firebase user record, but a token minted earlier
     still carries `email_verified: false` for up to an hour, so a plain retry is
     refused again and reads as a broken verification link.
+  - #1586: the repo now carries an `invite.verify-email` copy in the seed corpus,
+    which Template Import loads into `emailTemplates` like any other. Until it is
+    loaded, the send throws `email template missing`, as every `sendFromTemplate`
+    key does; there is no repo-copy fallback, so a deleted template stops the send.
   - Needs `SMTP2GO_API_KEY` + `EMAIL_FROM` (already created, already bound to the
     other invite functions) and the `invite.verify-email` document in the
     Firestore `emailTemplates` collection. The operator edits email templates in
@@ -2686,6 +2690,33 @@ callable is the enforcement.
   collection.
 - Write side is `triageOrphanReport` (ASSIGN, DUPLICATE, ARCHIVE), which both
   clients share.
+
+## Generated KinTale drafts (#1563, staff)
+
+`src/admin/kinTaleDrafts.ts`. A `generated_drafts` doc is a KinTale draft
+(ruling D-2026-08-04). Admin web, Android and the desktop console all call
+these two; none of them writes the send itself.
+
+| Callable | Input | Output | Gate |
+|---|---|---|---|
+| `publishGeneratedDraft` | `{ draftId, bodyCopy, title? }` | `{ ok, reportId, alreadyPublished }` | admin or Auntie |
+| `deleteGeneratedDraft` | `{ draftId }` | `{ ok, draftId }` | admin only (destructive) |
+
+- `draftId` is the BARE document id. The admin web list namespaces draft rows
+  as `generated_drafts/<id>`; a slash in `draftId` is `invalid-argument`.
+- Publish writes `kin_care_reports/{new}` with `status: 'SENT'`,
+  `sentAt: <now ISO>`, `sentVia: 'pending'`, `sessionId: ''` and
+  `sourceDraftId`, and stamps the draft `status: 'published'`,
+  `publishedReportId`, `publishedAt`, `approvedAt`, `approvedBy` and the edited
+  `generatedCopy`, in one transaction. `onKinTaleCreate` then announces
+  `kintale.published` (behind `householdNotificationsLive`) and the portal
+  lists it.
+- Idempotent on `publishedReportId`: a repeat call returns the first report's
+  id with `alreadyPublished: true` and writes nothing.
+- Refusals: `not-found` (no draft), `failed-precondition` (no household on the
+  draft, or the household doc is gone), `invalid-argument` (blank body).
+- Delete refuses a published draft (`failed-precondition`). Both write an
+  audit entry: `KINTALE_DRAFT_PUBLISHED`, `KINTALE_DRAFT_DELETED`.
 
 ## Notifications inbox (recipient or admin)
 

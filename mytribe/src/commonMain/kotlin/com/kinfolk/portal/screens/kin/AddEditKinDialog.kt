@@ -155,6 +155,10 @@ fun AddEditKinDialog(
     var sitter by remember { mutableStateOf(initial?.sitterNotes.orEmpty()) }
     var sex by remember { mutableStateOf(initial?.sex.orEmpty()) }
     var weight by remember { mutableStateOf(initial?.weight.orEmpty()) }
+    // #1583: age and weight are numbers. A value left as it loaded passes, so a
+    // pet that already holds old free text stays editable.
+    val ageProblem = validateKinAgeText(ageText, ageSeedText(initial?.ageYears))
+    val weightProblem = validateKinWeight(weight, initial?.weight)
     var markings by remember { mutableStateOf(initial?.colorMarkings.orEmpty()) }
     var fixed by remember { mutableStateOf(initial?.spayedNeutered ?: false) }
     var vet by remember { mutableStateOf(initial?.vetInfo.orEmpty()) }
@@ -316,7 +320,13 @@ fun AddEditKinDialog(
                         dogBreeds = dogBreeds,
                         catBreeds = catBreeds,
                     )
-                    KinField(value = ageText, onValueChange = { ageText = it.filter { c -> c.isDigit() } }, label = "Age (years)")
+                    KinField(
+                        value = ageText,
+                        onValueChange = { ageText = it.filter { c -> c.isDigit() } },
+                        label = "Age (years)",
+                        isError = ageProblem != null,
+                    )
+                    KinFieldProblem(ageProblem)
                     KinField(value = feed, onValueChange = { feed = it }, label = "Feeding Instructions", singleLine = false)
                     KinField(value = walk, onValueChange = { walk = it }, label = "Walking Instructions", singleLine = false)
                     KinField(value = meds, onValueChange = { meds = it }, label = "Medications", singleLine = false)
@@ -327,7 +337,8 @@ fun AddEditKinDialog(
                 // The facts shared with the admin (#1310). Outside the schema branch so a
                 // schema-driven form still carries them.
                 SexRadioGroup(selected = sex, onSelect = { sex = it })
-                KinField(value = weight, onValueChange = { weight = it }, label = "Weight")
+                KinField(value = weight, onValueChange = { weight = it }, label = "Weight", isError = weightProblem != null)
+                KinFieldProblem(weightProblem)
                 KinField(value = markings, onValueChange = { markings = it }, label = "Color / markings")
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable { fixed = !fixed },
@@ -514,7 +525,7 @@ fun AddEditKinDialog(
                     else -> "Save"
                 },
                 onClick = submit,
-                enabled = name.isNotBlank() && !busy,
+                enabled = name.isNotBlank() && ageProblem == null && weightProblem == null && !busy,
             )
         },
         dismissButton = { TextButton(onClick = { if (!busy) onClose() }) { Text("Cancel") } },
@@ -955,4 +966,12 @@ private fun BreedField(
             }
         }
     }
+}
+
+/** The reason a field was refused, in the portal's error colour, or nothing. */
+@Composable
+private fun KinFieldProblem(message: String?) {
+    if (message == null) return
+    val type = LocalKinfolkTypography.current
+    Text(text = message, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
 }
