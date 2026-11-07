@@ -218,7 +218,8 @@ describe('Schedule screen', () => {
       // session should appear in that day's agenda, not be silently absent
       // because it landed under tomorrow's UTC-sliced key instead.
       expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toBeInTheDocument();
-      expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+      // #1606: the 20:00 visit is also drawn on the grid now, so the agenda is the scope.
+      expect(within(agenda()).getByText('The Whitfields')).toBeInTheDocument();
     });
   });
 
