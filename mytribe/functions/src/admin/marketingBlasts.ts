@@ -10,7 +10,10 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 import { BLASTS_COLLECTION, MARKETING_KEYS } from './scheduleMarketingBlast';
 import { fanoutProgressState, type FanoutProgressState } from '../lib/fanoutResume';
-import { previewMarketingCopy, type MarketingCopyPreview } from './marketingCopy';
+// `previewMarketingCopy` is loaded inside its handler, not here (#1714): only
+// previewMarketingBlastCopy uses it, and a file-scope import puts it in the
+// eager graph every function loads (coldStartImportGraph.test.ts).
+import type { MarketingCopyPreview } from './marketingCopy';
 import {
   AudienceArgsShape,
   countMarketingReach,
@@ -127,6 +130,7 @@ export async function previewMarketingBlastCopyHandler(
     }
     throw err;
   }
+  const { previewMarketingCopy } = await import('./marketingCopy.js');
   return { ok: true, ...(await previewMarketingCopy(args.key, args.data ?? {})) };
 }
 export const previewMarketingBlastCopy = onCall(

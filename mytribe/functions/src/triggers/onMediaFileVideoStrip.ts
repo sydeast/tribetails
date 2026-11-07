@@ -34,7 +34,11 @@ import { defineSecret } from 'firebase-functions/params';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
-import { MediaFileDoc, needsStrip, stripVideoLocationForMedia } from '../lib/stripVideoLocationJob';
+// The job module is loaded inside the handler, not here (#1714): it and the two
+// Cloudinary/metadata modules it imports are needed only by this trigger and the
+// sweep, and a file-scope import puts them in the eager graph every function
+// loads (coldStartImportGraph.test.ts).
+import type { MediaFileDoc } from '../lib/stripVideoLocationJob';
 
 const CLOUDINARY_CLOUD_NAME = defineSecret('CLOUDINARY_CLOUD_NAME');
 const CLOUDINARY_API_KEY = defineSecret('CLOUDINARY_API_KEY');
@@ -43,6 +47,7 @@ const CLOUDINARY_API_SECRET = defineSecret('CLOUDINARY_API_SECRET');
 export async function onMediaFileVideoStripHandler(event: any): Promise<void> {
   const mediaFileId = event.params.mediaFileId as string;
   const media = event.data?.data() as MediaFileDoc | undefined;
+  const { needsStrip, stripVideoLocationForMedia } = await import('../lib/stripVideoLocationJob.js');
 
   // Images are the overwhelming majority of this collection and the photo path
   // already strips at upload. Leave immediately rather than reading secrets.
