@@ -318,6 +318,28 @@ describe('Invoices screen', () => {
     expect(screen.queryByText('OPEN')).toBeNull();
   });
 
+  it('#1570 an imported month-name due date in the past reads OVERDUE and counts', () => {
+    // The walk's #1018: OPEN, "due July 14, 2026", and the Overdue tile read 0.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ invoiceNumber: '1018', kinfolkName: 'Loretta', dueDate: 'July 14, 2020' })]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('OVERDUE')).toBeInTheDocument();
+    expect(screen.getByText(/^Loretta, \d+ days past$/)).toBeInTheDocument();
+  });
+  it('#1570 a due date that names no day is flagged on the row and counted on the Overdue card', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: '1018', dueDate: '07/14/2026' }),
+        entry({ _id: 'b', invoiceNumber: '1019', dueDate: 'Net 14' }),
+      ]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('due date cannot be read: "07/14/2026"')).toBeInTheDocument();
+    expect(screen.getByText('due date cannot be read: "Net 14"')).toBeInTheDocument();
+    expect(screen.getByText('2 open invoices have due dates that cannot be read')).toBeInTheDocument();
+    expect(screen.queryByText('all clear')).toBeNull();
+  });
   it('a doc with no recognizable stamp gets the neutral chip, and matches only the All tab', async () => {
     // The deliberate fail-soft (ADR-0002 makes this doc impossible; this is
     // what renders if one appears anyway): the chip is the doc's own word,
@@ -1282,11 +1304,11 @@ describe('Invoices row, days overdue', () => {
     expect(within(row).getByText(/^due /)).toBeInTheDocument();
     expect(within(row).queryByText(/overdue/)).toBeNull();
   });
-  it('falls back to the due date when the stored value is not a date', () => {
+  it('#1570 says, quoted, when the stored due date is not a date, rather than printing it as one', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'open', dueDate: 'Net 14' })]));
     render(<Invoices />);
     const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
-    expect(within(row).getByText('due Net 14')).toBeInTheDocument();
+    expect(within(row).getByText('due date cannot be read: "Net 14"')).toBeInTheDocument();
   });
 });
 /**
@@ -1375,10 +1397,11 @@ describe('Invoices Overdue stat subline', () => {
     // this subline; the operator has stopped chasing it.
     expect(screen.getByText('The Seeds, 6 days past')).toBeInTheDocument();
   });
-  it('is not overdue at all on free text like "Net 14", so the card stays all clear', () => {
+  it('#1570 is not overdue on free text like "Net 14", and the card says it cannot read it instead of all clear', () => {
     usePagedCollection.mockReturnValue(paged([entry({ dueDate: 'Net 14' })]));
     render(<Invoices />);
-    expect(screen.getByText('all clear')).toBeInTheDocument();
+    expect(screen.getByText('1 open invoice has a due date that cannot be read')).toBeInTheDocument();
+    expect(screen.queryByText('all clear')).toBeNull();
     expect(screen.queryByText(/NaN/)).toBeNull();
   });
   it('names the household with NO number when the date is shaped right but impossible', () => {

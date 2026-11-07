@@ -1294,7 +1294,53 @@ data class Draft(
     var createdOn: String = "",                      // ISO-8601 (legacy field name kept)
     var approvedAt: String? = "",
     var approvedBy: String = "",                     // uid
-)
+    // #1563: the generator's title (either spelling), and the kin_care_reports
+    // id the draft was sent as. Set only by `publishGeneratedDraft`, together
+    // with status "published": the household has that report now.
+    var generatedTitle: String = "",
+    var publishedReportId: String = "",
+) {
+    /** #1563: already sent to the household as a KinTale; the report is its record now. */
+    val isPublished: Boolean get() = publishedReportId.isNotBlank()
+
+    /**
+     * #1563: waiting on a decision. Not sent, and in a status that means nobody
+     * has signed it off: `pending` (n8n era), `generated` (generate.js) or blank.
+     * A positive match, the same one the web list makes; `approved` and anything
+     * unknown are not "pending".
+     */
+    val isUnsent: Boolean get() = !isPublished && status.trim().lowercase() in setOf("pending", "generated", "")
+}
+/**
+ * #1563: one `generated_drafts` doc, read from BOTH spellings the collection is
+ * written in (see [Draft]'s WRITER MISMATCH note). `toObject(Draft::class.java)`
+ * binds the camelCase names only, so a draft `generate.js` wrote came back with
+ * no household and no copy. A `@PropertyName` can bind one name, which is why
+ * this reads the raw map instead. First non-blank of the two wins.
+ *
+ * Pure (a Map in, a Draft out) so it is unit-tested without Firestore.
+ */
+fun draftFromFields(id: String, data: Map<String, Any?>): Draft {
+    fun str(key: String): String = (data[key] as? String)?.trim().orEmpty()
+    fun either(camel: String, snake: String): String = str(camel).ifBlank { str(snake) }
+    return Draft(
+        id = id,
+        status = str("status").ifBlank { "pending" },
+        generatedCopy = either("generatedCopy", "generated_copy"),
+        communicationType = either("communicationType", "communication_type"),
+        kinfolkId = either("kinfolkId", "kinfolk_id"),
+        kinfolkName = either("kinfolkName", "kinfolk_name"),
+        rawNotes = either("rawNotes", "raw_notes"),
+        toneHint = either("toneHint", "tone_hint"),
+        maxLength = either("maxLength", "max_length"),
+        model = str("model"),
+        createdOn = either("createdOn", "generated_at"),
+        approvedAt = str("approvedAt"),
+        approvedBy = str("approvedBy"),
+        generatedTitle = either("generatedTitle", "generated_title"),
+        publishedReportId = str("publishedReportId"),
+    )
+}
 
 @Keep
 data class GenerateResponse(
