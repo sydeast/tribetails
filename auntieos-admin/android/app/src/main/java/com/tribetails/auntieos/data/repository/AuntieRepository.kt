@@ -1252,6 +1252,21 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("previewMarketingBlastAudience failed", it) }
 
     /**
+     * What a campaign's email will say, rendered the way the send renders it
+     * (#1587): the subject, the body, and every merge field the template names with
+     * whether something supplies it. Writes nothing and needs no audience.
+     */
+    suspend fun previewMarketingBlastCopy(
+        key: com.tribetails.auntieos.ui.marketing.MarketingKey,
+        data: Map<String, Any?>,
+    ): Result<com.tribetails.auntieos.ui.marketing.BlastCopyPreview> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("previewMarketingBlastCopy")
+            .call(mapOf("key" to key.wire, "data" to data)).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.marketing.decodeBlastCopy(raw)
+    }.onFailure { AuntieLog.e("previewMarketingBlastCopy failed", it) }
+    /**
      * Schedules a campaign. [data] is the merge context the operator's template
      * for [key] is rendered against, not the message copy itself; [title] is the
      * operator's own name for the campaign and is omitted when blank, because
