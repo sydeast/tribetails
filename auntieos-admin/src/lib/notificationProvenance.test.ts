@@ -10,6 +10,7 @@ import {
   OFF_AND_MEANT_TO_STAY_ON,
   alwaysOnBadge,
   businessAdminLines,
+  businessEmailLine,
   businessAdminSourceNote,
   deliveryPhrase,
   hasPartialDataNote,
@@ -160,6 +161,7 @@ describe('the business admin roster, resolved to people', () => {
       source: 'roster',
       rosterPath: 'businessSettings/admins.uids',
       reason: null,
+      businessEmail: 'pawsome@hanasamku.com',
       ...over,
     };
   }
@@ -184,10 +186,21 @@ describe('the business admin roster, resolved to people', () => {
   it('does not offer it for a row that never reaches business admins', () => {
     expect(reachesBusinessAdmins(entry({ recipientResolver: 'kinfolkAcct' }))).toBe(false);
   });
-  it('names each person and how the mail reaches them', () => {
+  it('names each person, and not their own email (#1564: business email goes to businessEmail)', () => {
     const [line] = businessAdminLines(roster({ members: [member()] }));
-    expect(line).toContain('Auntie Nora');
-    expect(line).toContain('nora@tribetails.com');
+    expect(line).toBe('Auntie Nora');
+    expect(line).not.toContain('nora@tribetails.com');
+  });
+  it('#1564: says business emails go to the business contact email', () => {
+    expect(businessEmailLine(roster())).toBe('Emails go to the business email, pawsome@hanasamku.com.');
+  });
+  it('#1564: says business emails have nowhere to go while businessEmail is blank', () => {
+    const line = businessEmailLine(roster({ businessEmail: '' }));
+    expect(line).toContain('nowhere to go');
+    expect(line).toContain('Settings > Business');
+  });
+  it('#1564: words the business_email_unset skip', () => {
+    expect(deliveryPhrase('skipped', 'business_email_unset', null).detail).toContain('business email in Settings > Business was blank');
   });
   it('says which of them unassigned visits default to', () => {
     const [line] = businessAdminLines(roster({ members: [member({ defaultAssignee: true })] }));
@@ -204,7 +217,7 @@ describe('the business admin roster, resolved to people', () => {
     );
     expect(line).toContain('op8');
     expect(line).toContain('no staff record');
-    expect(line).toContain('no email on file');
+    expect(line).not.toContain('no email on file');
   });
   it('warns when the list is the allowlist fallback rather than the stored roster', () => {
     const note = businessAdminSourceNote(roster({ source: 'operatorAllowlist', members: [member()] }));

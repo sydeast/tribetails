@@ -450,6 +450,8 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
     gate ??= await loadHouseholdSendGate(db());
     return gate;
   };
+  /** #1564: a roster copy has already been written carrying the business email. */
+  let businessEmailCarried = false;
   let gateSuppressed = 0;
   /** The state the gate reported when it last held a copy back, for the summary line. */
   let gateSuppressedState: HouseholdSendGateState = 'absent';
@@ -495,7 +497,17 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
       continue;
     }
 
-    const channels = resolveChannels(def, userPrefs, businessOverride, stream);
+    let channels = resolveChannels(def, userPrefs, businessOverride, stream);
+    /**
+     * ONE BUSINESS EMAIL PER EVENT (#1564). Operator ruling, 2026-11-05 docket:
+     * every business email goes to the business contact email in settings, so
+     * each roster admin's copy would land in the same inbox. The first roster
+     * copy written with email on carries it; later roster copies keep their
+     * record (the bell) and their push and SMS, without the email.
+     */
+    if (recipient.businessRoster === true && channels.email && businessEmailCarried) {
+      channels = { ...channels, email: false };
+    }
     const recordOnly = !hasAnyChannel(channels);
     if (recordOnly) {
       logEvent({
@@ -566,6 +578,7 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
     const routed = await routeByDeliveryMode(def, args, recipient.uid, channels, actor, stream);
     if (routed.kind === 'written') {
       outcome.written.push(routed.id);
+      if (recipient.businessRoster === true && channels.email) businessEmailCarried = true;
       // Reported only for a record that was actually written (#1507): a gated
       // copy logged `record-only` above and then wrote nothing, and a duplicate
       // wrote nothing new. Both are already in `suppressed`.

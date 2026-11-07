@@ -9,7 +9,7 @@ import {
   isUsableTimeZone,
   timeZoneOptions,
 } from '../../lib/businessOperations';
-import { BUSINESS_PROFILE_FIELDS, FieldErrorNote, textFieldErrors, type StringFieldKey } from './sections';
+import { BUSINESS_PROFILE_FIELDS, FieldErrorNote, FieldNotice, textFieldErrors, type StringFieldKey } from './sections';
 import '../SettingsEdit.css';
 
 /**
@@ -142,6 +142,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
               </span>
             ) : null}
             <FieldErrorNote fieldKey={f.key} message={fieldErrors[f.key]} />
+            <FieldNotice spec={f} value={draft.values[f.key] ?? ''} />
           </div>
         ))}
       </div>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { type BusinessSettings } from '../../api/settings';
-import { DenPanel } from '../../components/DenScreenKit';
+import { DenPanel, InfoTip } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { Toggle } from '../../components/Toggle';
 import '../SettingsEdit.css';
@@ -83,7 +83,10 @@ export function PhoneLineSection({ data, onSave }: PhoneLineSectionProps) {
       ) : null}
       <ul className="settingsEdit__toggleList">
         <li className="settingsEdit__toggleRow">
-          <span className="settingsEdit__toggleLabel">Let callers reach me live</span>
+          <span className="settingsEdit__toggleLabel">
+            Let callers reach me live{' '}
+            <InfoTip text="Outside your business hours the transfer is never offered. If you do not pick up, decline, or the call cannot be placed, the caller is offered a voicemail instead of a ringing line." />
+          </span>
           <Toggle
             label="Toggle letting callers reach me live"
             checked={enabled}
@@ -98,11 +101,6 @@ export function PhoneLineSection({ data, onSave }: PhoneLineSectionProps) {
             'rings the AuntieOS app on every device you are signed in on.'
           : 'Callers are offered a voicemail and nothing else. Press 3 is not mentioned, and a caller ' +
             'who presses it anyway is asked again for a voicemail.'}
-      </p>
-      <p className="settingsEdit__hint">
-        Business hours come first either way: outside the hours on the Business hours page, the
-        transfer is never offered. If you do not pick up, if you decline, or if the call cannot be
-        placed at all, the caller is offered a voicemail instead of being left on a ringing line.
       </p>
       {enabled ? (
         <Banner

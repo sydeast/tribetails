@@ -29,6 +29,7 @@ class MediaUploadViewModel(
         entityType: MediaEntityType,
         description: String = "",
         tags: List<String> = emptyList(),
+        kinfolkId: String = "",
         onProgress: (Float) -> Unit = {},
         onComplete: (Result<BatchMediaUploadResult>) -> Unit
     ) {
@@ -51,6 +52,7 @@ class MediaUploadViewModel(
                         entityType = entityType,
                         description = description,
                         tags = tags,
+                        kinfolkId = kinfolkId,
                         onProgress = { uploadProgress ->
                             val overallProgress = (completedFiles + uploadProgress.percentage / 100f) / totalFiles
                             onProgress(overallProgress)

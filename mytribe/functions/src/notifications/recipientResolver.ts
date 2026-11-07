@@ -5,6 +5,12 @@ import type { EnqueueArgs, NotificationDef, RecipientResolver } from './types';
 export interface ResolvedRecipient {
   uid: string;
   collection: 'clients' | 'staff';
+  /**
+   * #1564: resolved from the business roster. Every business email goes to the
+   * one business contact email, so the dispatcher lets only the first roster
+   * copy of an enqueue carry email; see `enqueueNotificationDetailed`.
+   */
+  businessRoster?: true;
 }
 
 /**
@@ -40,7 +46,7 @@ export async function resolveRecipients(
       // and did not exist in prod, so all 16 businessAdmins keys threw here and
       // the operator was never notified of a booking, message or bad rating.
       const uids = await resolveBusinessAdminUids(`recipientResolver(${def.key})`);
-      return uids.map((uid) => ({ uid, collection: 'staff' as const }));
+      return uids.map((uid) => ({ uid, collection: 'staff' as const, businessRoster: true as const }));
     }
 
     case 'auntieAssignedToKincare': {

@@ -13,12 +13,13 @@ import {
   buildSaveTemplatePayload,
   formatTagsInput,
   parseTagsInput,
-  templateFormError,
+  templateFieldErrors,
   templateToFormFields,
   type TemplateFormFields,
+  type TemplateErrorField,
   buildVisualSavePayload,
   fieldsForTemplate,
-  visualFormError,
+  visualFieldErrors,
 } from '../lib/templateFormat';
 import { getNotificationMatrix, type NotificationCatalogEntry } from '../api/myNotifications';
 import { EmailContentEditor } from '../components/emailEditor/EmailContentEditor';
@@ -178,6 +179,9 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   );
   const [view, setView] = useState<View>('edit');
   const [error, setError] = useState<string | null>(null);
+  // #1614: every blocking problem at once, drawn at its own field and cleared
+  // when that field is edited. `error` stays for what the server said.
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<TemplateErrorField, string>>>({});
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // The server's live-notification-key sentence, once it has said it. Non-null
@@ -278,6 +282,18 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   const preview = useEmailPreview(previewReq);
 
   function setField<K extends keyof TemplateFormFields>(key: K, value: TemplateFormFields[K]) {
+    if (fields[key] !== value) {
+      // An edit is the operator answering the message on screen: a stale
+      // "Couldn't save" banner must not outlive the fix (#1614).
+      setError(null);
+      if (key in fieldErrors) {
+        setFieldErrors((prev) => {
+          const next = { ...prev };
+          delete next[key as TemplateErrorField];
+          return next;
+        });
+      }
+    }
     setFields((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -433,15 +449,20 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     // unlocked one must keep the seed's repeating lists (see visualContentForSave).
     const visual = mode === 'visual' ? visualContentForSave(seed.content, withTag.content, bodyLocked) : null;
     const effective: TemplateFormFields = visual ? { ...withTag, content: visual.content } : withTag;
-    const validationError = visual
-      ? (visualFormError(effective, { isCreate }) ?? visual.error)
-      : templateFormError(effective, { isCreate });
-    if (validationError) {
-      setError(validationError);
+    const found = visual ? visualFieldErrors(effective, { isCreate }) : templateFieldErrors(effective, { isCreate });
+    if (found.length > 0) {
+      setFieldErrors(Object.fromEntries(found.map((e) => [e.field, e.message])));
+      setError(null);
+      return;
+    }
+    if (visual?.error) {
+      setFieldErrors({});
+      setError(visual.error);
       return;
     }
     setSaving(true);
     setError(null);
+    setFieldErrors({});
     try {
       const payload =
         mode === 'visual'
@@ -515,6 +536,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   const confirming = view === 'confirm-delete' && !isCreate;
   // The page's own error banner. While the confirm dialog is up the error
   // belongs to the delete and shows inside the dialog instead.
+  const fieldErrorCount = Object.keys(fieldErrors).length;
   const pageError = confirming ? null : error;
 
   return (
@@ -550,6 +572,13 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
         }
       />
 
+      {fieldErrorCount > 0 ? (
+        <Banner tone="error" title="Couldn&rsquo;t save yet" className="template-editor__error">
+          {fieldErrorCount === 1
+            ? 'One thing needs fixing. It is marked below.'
+            : `${fieldErrorCount} things need fixing. They are marked below.`}
+        </Banner>
+      ) : null}
       {pageError ? (
         <Banner tone="error" title="Couldn&rsquo;t save" className="template-editor__error">
           {pageError}
@@ -630,6 +659,8 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                   {isCreate ? (
                     <input
                       id="template-editor-id"
+                      aria-invalid={fieldErrors.templateId ? true : undefined}
+                      aria-describedby={fieldErrors.templateId ? "template-editor-id-error" : undefined}
                       type="text"
                       className="template-editor__input template-editor__input--mono"
                       value={fields.templateId}
@@ -643,6 +674,11 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                       {fields.templateId}
                     </code>
                   )}
+{fieldErrors.templateId ? (
+                  <p id="template-editor-id-error" className="template-editor__field-error" role="alert">
+                    {fieldErrors.templateId}
+                  </p>
+                ) : null}
                   {isCreate ? (
                     <p className="template-editor__hint">
                       Letters, numbers, underscore, period, and hyphen only. This becomes the document id and
@@ -693,6 +729,8 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                 </span>
                 <input
                   id="template-editor-subject"
+                      aria-invalid={fieldErrors.subject ? true : undefined}
+                      aria-describedby={fieldErrors.subject ? "template-editor-subject-error" : undefined}
                   type="text"
                   className="template-editor__input template-editor__input--mono"
                   value={fields.subject}
@@ -700,6 +738,11 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                   placeholder="Your booking is confirmed"
                   maxLength={500}
                 />
+{fieldErrors.subject ? (
+                  <p id="template-editor-subject-error" className="template-editor__field-error" role="alert">
+                    {fieldErrors.subject}
+                  </p>
+                ) : null}
               </div>
 
               {mode !== 'old' ? (
@@ -712,6 +755,8 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                   </span>
                   <input
                     id="template-editor-headline"
+                      aria-invalid={fieldErrors.headline ? true : undefined}
+                      aria-describedby={fieldErrors.headline ? "template-editor-headline-error" : undefined}
                     type="text"
                     className="template-editor__input"
                     value={fields.headline}
@@ -719,6 +764,11 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                     placeholder="Reset your password"
                     maxLength={300}
                   />
+{fieldErrors.headline ? (
+                  <p id="template-editor-headline-error" className="template-editor__field-error" role="alert">
+                    {fieldErrors.headline}
+                  </p>
+                ) : null}
                 </div>
               ) : null}
 
@@ -735,6 +785,11 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                       This email has a structure the editor can&rsquo;t edit yet. Edit its subject and headline here.
                     </Banner>
                   ) : null}
+{fieldErrors.content ? (
+                  <p id="template-editor-content-error" className="template-editor__field-error" role="alert">
+                    {fieldErrors.content}
+                  </p>
+                ) : null}
                   <EmailContentEditor
                     key={seed.key}
                     initialContent={seed.content}
@@ -788,6 +843,8 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                     </span>
                     <textarea
                       id="template-editor-body"
+                      aria-invalid={fieldErrors.body ? true : undefined}
+                      aria-describedby={fieldErrors.body ? "template-editor-body-error" : undefined}
                       ref={bodyRef}
                       className="template-editor__textarea template-editor__textarea--mono template-editor__textarea--body"
                       value={fields.body}
@@ -796,6 +853,11 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                       rows={8}
                       maxLength={20000}
                     />
+{fieldErrors.body ? (
+                  <p id="template-editor-body-error" className="template-editor__field-error" role="alert">
+                    {fieldErrors.body}
+                  </p>
+                ) : null}
                     <div className="template-editor__edmeta">
                       <span className="template-editor__hbsbadge">{'{{ }}'} handlebars</span>
                       <span>{fields.body.length} chars</span>

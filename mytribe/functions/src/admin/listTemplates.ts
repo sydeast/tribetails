@@ -40,7 +40,12 @@ const ListArgs = z.object({
 
 export async function listTemplatesHandler(
   req: CallableRequest<unknown>,
-): Promise<{ templates: Array<Record<string, unknown>>; nextCursor: string | null }> {
+): Promise<{
+  templates: Array<Record<string, unknown>>;
+  nextCursor: string | null;
+  /** #1614: the whole bank's size, so a paged client can show the true total. */
+  total: number;
+}> {
   initSentry();
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = ListArgs.parse(req.data ?? {});
@@ -52,6 +57,13 @@ export async function listTemplatesHandler(
   if (args.limit) query = query.limit(args.limit);
 
   const snap = await query.get();
+  // #1614: a paged read only knows its own page, so the web "All N" chip used
+  // to show the page size. An unbounded read already has every doc in hand.
+  const total = args.limit
+    ? Number(
+        (await db().collection('emailTemplates').count().get()).data().count ?? snap.docs.length,
+      )
+    : snap.docs.length;
   const templates = snap.docs.map((d) => {
     const data = d.data() as TemplateDoc;
     return {
@@ -85,7 +97,7 @@ export async function listTemplatesHandler(
       ? (snap.docs[snap.docs.length - 1]?.id ?? null)
       : null;
 
-  return { templates, nextCursor };
+  return { templates, nextCursor, total };
 }
 
 export async function listTemplateBindingsHandler(

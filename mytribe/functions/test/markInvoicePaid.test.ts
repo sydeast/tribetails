@@ -272,30 +272,59 @@ describe('markInvoicePaid: partial payments', () => {
     expect(invoiceWriteOf(ctx)!.data.amountDue).toBe(10.1);
   });
 });
-describe('markInvoicePaid: overpayment', () => {
-  it('settles the invoice, clamps amountDue at zero, and reports the excess', async () => {
-    // A negative amountDue is this codebase's CREDIT signal, so writing one here
-    // would silently turn an over-collected invoice into a credit owed back to
-    // the household. The excess is recorded as a fact instead.
+describe('markInvoicePaid: overpayment (#1566)', () => {
+  // Operator ruling, 2026-09-27: an overpayment is all tip, and the fee comes
+  // out of the tip. This callable has no tip, so an amount above what is still
+  // owed is refused before anything is written; the clients put the excess in
+  // the tip on the ledger row. Before #1566 it was accepted and the invoice
+  // went `overpaid` with the excess on the bill.
+  it('refuses an amount above the balance, and writes nothing', async () => {
+    const ctx = seed({ kinfolkId: 'fam1', status: 'open', amountDue: 78.5, total: 78.5 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 100 }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message:
+        '$100.00 is more than the $78.50 still owed on this invoice. Apply $78.50 and record the rest of the payment as tip.',
+      details: { code: 'invoice_amount_exceeds_balance' },
+    });
+    expect(ctx.writes).toHaveLength(0);
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+  });
+  it('refuses one cent over', async () => {
     const ctx = seed({ kinfolkId: 'fam1', status: 'open', amountDue: 39.5, total: 39.5 });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40 }));
-    expect(res.state).toBe('overpaid');
-    expect(res.amountDueCents).toBe(0);
-    expect(res.overpaidCents).toBe(50);
-    const w = invoiceWriteOf(ctx)!;
-    expect(w.data.status).toBe('paid');
-    expect(w.data.amountDue).toBe(0);
-    expect(w.data.overpaidCents).toBe(50);
+    await expect(markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 39.51 }))).rejects.toMatchObject({
+      details: { code: 'invoice_amount_exceeds_balance' },
+    });
+    expect(ctx.writes).toHaveLength(0);
   });
-  it('never writes a negative amountDue however large the overpayment', async () => {
-    const ctx = seed({ kinfolkId: 'fam1', status: 'open', amountDue: 40, total: 40 });
+  it('measures the balance from the recorded payments, not the amountDue scalar', async () => {
+    // The scalar reads 40 on this part-paid invoice; the payments leave $25.
+    const ctx = seed(
+      { kinfolkId: 'fam1', status: 'open', amountDue: 40, total: 40 },
+      [{ id: 'p1', data: { amount: 15, amountCents: 1500 } }],
+    );
     mocks.dbFn.mockReturnValue(ctx.db);
-    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 500 }));
-    const w = invoiceWriteOf(ctx)!;
-    expect(w.data.amountDue).toBe(0);
-    expect(w.data.amountDueCents).toBe(0);
-    expect(w.data.overpaidCents).toBe(46000);
+    await expect(markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 30 }))).rejects.toMatchObject({
+      details: { code: 'invoice_amount_exceeds_balance' },
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('exactly the balance still settles the invoice', async () => {
+    const ctx = seed({ kinfolkId: 'fam1', status: 'open', amountDue: 78.5, total: 78.5 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 78.5 }));
+    expect(res.state).toBe('settled');
+    expect(res.amountDueCents).toBe(0);
+    expect(res.overpaidCents).toBe(0);
+    expect(invoiceWriteOf(ctx)!.data.status).toBe('paid');
+  });
+  it('a partial under the balance is still accepted and leaves the invoice open', async () => {
+    const ctx = seed({ kinfolkId: 'fam1', status: 'open', amountDue: 78.5, total: 78.5 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 50 }));
+    expect(res.state).toBe('partial');
+    expect(res.amountDueCents).toBe(2850);
   });
 });
 describe('markInvoicePaid audit trail', () => {
@@ -326,16 +355,16 @@ describe('markInvoicePaid state stamp (ADR-0002)', () => {
     expect(w.data.status).toBe('paid');
     expect(w.data.editScope).toBe('none');
   });
-  it('an OVERPAYMENT stamps paid/none off the clamped balance, never credit', async () => {
+  it('an over-balance amount is refused before any stamp is written (#1566)', async () => {
+    // Before #1566 this payment landed and stamped paid/none off the clamped
+    // balance. The overpaid state is still reachable (a total edited down after
+    // payment) and still clamps at zero; settleInvoice's own tests cover that.
     const ctx = seed({ kinfolkId: 'fam1', status: 'open', amountDue: 39.5, total: 39.5 });
     mocks.dbFn.mockReturnValue(ctx.db);
-    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40 }));
-    const w = invoiceWriteOf(ctx)!;
-    // amountDue clamps at 0 (a negative is this codebase's credit signal), so
-    // the classifier reads the persisted doc as paid, exactly as intended.
-    expect(w.data.status).toBe('paid');
-    expect(w.data.editScope).toBe('none');
-    expect(w.data.amountDue).toBe(0);
+    await expect(markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40 }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+    expect(invoiceWriteOf(ctx)).toBeUndefined();
   });
   it('settling the SECOND HALF of a part-paid invoice stamps paid/none from the summed evidence', async () => {
     const ctx = seed(

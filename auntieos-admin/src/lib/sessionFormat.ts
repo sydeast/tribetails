@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
-import { dayKey, formatWhen, type FsTime } from './time';
+import { dayKey, formatClock, type FsTime } from './time';
 import { localDateIso } from './invoiceFormat';
 
 /**
@@ -56,17 +56,12 @@ export function sessionDayKey(iso: string): string {
 }
 
 /**
- * LOCAL `HH:mm` clock time for one session ISO field. Reuses `formatWhen`'s
- * `MM-DD HH:mm` in full and takes only the time half (`.slice(6)`), rather than
- * re-deriving hour/minute padding here, the day is already carried by the row's
- * day-group header, so repeating it per-row would be noise, not a second AO-18
- * check. The `'(no time)'` fallback is returned verbatim (it is shorter than 6
- * characters would slice cleanly to anyway, so it is special-cased rather than
- * silently truncated).
+ * LOCAL `HH:mm` clock time for one session ISO field, through `formatClock`
+ * (#1599). The row's day-group header already carries the day, so repeating
+ * it per-row would be noise. `'(no time)'` when unparseable.
  */
 export function sessionClock(iso: string): string {
-  const full = formatWhen(sessionTimeOf(iso));
-  return full === '(no time)' ? full : full.slice(6);
+  return formatClock(sessionTimeOf(iso));
 }
 
 /**
