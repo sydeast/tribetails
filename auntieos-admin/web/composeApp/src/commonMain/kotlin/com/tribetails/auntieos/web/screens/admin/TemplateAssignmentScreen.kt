@@ -23,7 +23,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Workflow
 import com.composables.icons.lucide.X
@@ -152,6 +151,9 @@ fun TemplateAssignmentBody(
     val activeCount = bindings.count { it.active }
     val pausedCount = bindings.size - activeCount
     val templatesMissing = !loading && templatesError == null && templates.isEmpty()
+    // #1592: the operator reads names, never a template id or a catalog key.
+    val templateNames = templates.associate { it.templateId to bankTemplateName(it) }
+    val bankLoaded = templatesError == null && templates.isNotEmpty()
 
     Column(Modifier.fillMaxWidth()) {
         DenScreenHeading(
@@ -233,7 +235,6 @@ fun TemplateAssignmentBody(
         }
         if (!loading && catalogKeysError == null && catalogRows.isNotEmpty()) {
             val bankIds = templates.map { it.templateId }.toSet()
-            val bankLoaded = templatesError == null && templates.isNotEmpty()
             val failing = keysFailingOnSend(catalogRows, bankIds, bankLoaded)
             val loadable = failingKeysWithRepoCopy(catalogRows, bankIds, bankLoaded)
             val awaiting = keysAwaitingImport(catalogRows, bankIds, bankLoaded)
@@ -245,8 +246,7 @@ fun TemplateAssignmentBody(
                     modifier = Modifier.padding(bottom = dims.space3),
                 ) {
                     Text(
-                        "The template does not exist: ${failing.joinToString(", ")}." +
-                            if (loadable.isEmpty()) "" else " The repo has a copy of ${loadable.joinToString(", ")}. Load it from Template Import.",
+                        failingKeysLine(failing, loadable, catalogRows),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )
@@ -260,7 +260,7 @@ fun TemplateAssignmentBody(
                     modifier = Modifier.padding(bottom = dims.space3),
                 ) {
                     Text(
-                        "${awaiting.joinToString(", ")}. Load them from Template Import.",
+                        awaitingImportLine(awaiting, catalogRows),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )
@@ -272,19 +272,24 @@ fun TemplateAssignmentBody(
             if (unbound.isNotEmpty()) {
                 AuntieBanner(
                     tone = AuntieBannerTone.Warning,
-                    title = "${unbound.size} unbound catalog ${if (unbound.size == 1) "key" else "keys"}",
+                    title = "${unbound.size} ${if (unbound.size == 1) "notification has" else "notifications have"} no binding",
                     icon = Lucide.Workflow,
                     modifier = Modifier.padding(bottom = dims.space3),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                         Text(
-                            "These catalog keys have no template binding yet, so they fall back to catalog defaults:",
+                            "These send their own template, matched by name, until you bind another:",
                             style = AuntieTheme.typography.bodyMedium,
                             color = c.textPrimary,
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             unbound.forEach { key ->
-                                AuntieChip(label = key, selected = false, onClick = {}, tone = AuntieChipTone.Orange)
+                                AuntieChip(
+                                    label = catalogKeyNameFor(key, catalogRows),
+                                    selected = false,
+                                    onClick = {},
+                                    tone = AuntieChipTone.Orange,
+                                )
                             }
                         }
                     }
@@ -329,7 +334,7 @@ fun TemplateAssignmentBody(
                     AuntieSearchField(
                         value = query,
                         onValueChange = { query = it },
-                        placeholder = "Search by catalog key or template...",
+                        placeholder = "Search by notification or template...",
                         onClear = { query = "" },
                         modifier = Modifier.fillMaxWidth().widthIn(min = 240.dp),
                     )
@@ -341,7 +346,9 @@ fun TemplateAssignmentBody(
                         val q = query.trim().lowercase()
                         bindings.filter {
                             it.catalogKey.lowercase().contains(q) ||
-                                it.templateId.lowercase().contains(q)
+                                catalogKeyNameFor(it.catalogKey, catalogRows).lowercase().contains(q) ||
+                                it.templateId.lowercase().contains(q) ||
+                                templateNames[it.templateId].orEmpty().lowercase().contains(q)
                         }
                     }
 
@@ -353,7 +360,12 @@ fun TemplateAssignmentBody(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             visible.forEach { binding ->
-                                BindingCard(binding = binding, onEdit = { selected = binding })
+                                BindingCard(
+                                    binding = binding,
+                                    name = catalogKeyNameFor(binding.catalogKey, catalogRows),
+                                    templateName = routedTemplateName(binding.templateId, templateNames, bankLoaded),
+                                    onEdit = { selected = binding },
+                                )
                             }
                         }
                     }
@@ -385,6 +397,7 @@ fun TemplateAssignmentBody(
         BindingEditorOverlay(
             binding = current,
             templates = templates,
+            catalogRows = catalogRows,
             // catalogKey is the Firestore doc ID. On an existing binding it is
             // immutable here: editing it would orphan the old doc and create a new
             // one. The field is locked on edit; removing the binding entirely goes
@@ -434,6 +447,8 @@ fun TemplateAssignmentBody(
 @Composable
 private fun BindingCard(
     binding: TemplateService.TemplateBinding,
+    name: String,
+    templateName: String,
     onEdit: () -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -448,10 +463,10 @@ private fun BindingCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // catalogKey is the card title; mono face since these are dotted keys.
+                // The notification's name is the card title (#1592), never the dotted key.
                 Text(
-                    binding.catalogKey,
-                    style = AuntieTheme.typography.mono.copy(fontSize = 15.sp),
+                    name,
+                    style = AuntieTheme.typography.titleSmall,
                     color = c.textPrimary,
                 )
                 // ACTIVE / PAUSED pill, success when active, muted when paused.
@@ -461,9 +476,9 @@ private fun BindingCard(
                     mono = true,
                 )
             }
-            // "→ {templateId}" reproduced verbatim from source (a plain right arrow,
-            // not an em dash).
-            Text("→ ${binding.templateId}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            // "→ {template}" (a plain right arrow, not an em dash): the template's
+            // name, never its id (#1592).
+            Text("→ $templateName", style = AuntieTheme.typography.bodySmall, color = c.textDim)
             // Optional "Audience: {a}", only rendered when binding.audience != null.
             binding.audience?.let { a ->
                 Text("Audience: $a", style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -472,9 +487,8 @@ private fun BindingCard(
             // catalogKey, so this only renders for a GENUINE override (triggerKey present
             // AND different from catalogKey). Without that guard the line would fire on
             // every binding echoing the catalogKey.
-            val genuineOverride = genuineTriggerOverride(binding.triggerKey, binding.catalogKey)
-            if (genuineOverride != null) {
-                Text("override: $genuineOverride", style = AuntieTheme.typography.bodySmall, color = c.accent)
+            triggerLine(binding)?.let { line ->
+                Text(line, style = AuntieTheme.typography.bodySmall, color = c.accent)
             }
             Box(modifier = Modifier.padding(top = dims.space1)) {
                 GhostButton(label = "Edit", onClick = onEdit)
@@ -488,6 +502,7 @@ private fun BindingCard(
 private fun BindingEditorOverlay(
     binding: TemplateService.TemplateBinding,
     templates: List<TemplateService.EmailTemplate>,
+    catalogRows: List<CatalogKeyRow>,
     isNew: Boolean,
     onDismiss: () -> Unit,
     onSave: (TemplateService.TemplateBinding) -> Unit,
@@ -507,8 +522,8 @@ private fun BindingEditorOverlay(
 
     AuntieDialog(
         visible = true,
-        // "New Binding" when catalogKey is blank, else "Edit: {catalogKey}".
-        title = if (isNew) "New Binding" else "Edit: ${binding.catalogKey}",
+        // "New Binding" when catalogKey is blank, else "Edit: {the notification's name}".
+        title = bindingDialogTitle(binding, isNew, catalogRows),
         onDismiss = onDismiss,
         maxWidth = 560.dp,
         closeIcon = Lucide.X,
@@ -516,8 +531,9 @@ private fun BindingEditorOverlay(
             AuntieIconTile(icon = Lucide.Workflow, tone = AuntieStatusTone.Purple, size = 38.dp)
         },
         // Backend reality: catalog key (+ optional audience / trigger override) maps
-        // onto a Firestore email template; the dispatcher resolves per trigger.
-        hint = "Catalog key + optional audience / trigger override binds to a Firestore email template. The dispatcher resolves the right template per notification trigger.",
+        // onto an email template; the dispatcher resolves per trigger. The hint
+        // names no database (#1592).
+        hint = BINDING_DIALOG_HINT,
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
             if (onUnassign != null) {
@@ -562,15 +578,15 @@ private fun BindingEditorOverlay(
             // catalogKey is the immutable doc ID on an existing binding. Editing it
             // here would create a second orphaned doc (no delete callable to clean up),
             // so it is shown read-only with a note instead of an editable field.
-            AuntieFieldLabel(text = "Catalog Key")
+            AuntieFieldLabel(text = "Notification")
             Text(
-                binding.catalogKey,
-                style = AuntieTheme.typography.mono.copy(fontSize = 14.sp),
+                catalogKeyNameFor(binding.catalogKey, catalogRows),
+                style = AuntieTheme.typography.bodyMedium,
                 color = c.textPrimary,
                 modifier = Modifier.padding(top = dims.space1, bottom = dims.space1),
             )
             Text(
-                "Catalog key is the binding's identity and cannot be changed. To rebind a different key, add a new binding.",
+                "The notification cannot be changed here. To bind a different one, add a new binding.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -596,7 +612,7 @@ private fun BindingEditorOverlay(
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space1)) {
                     templates.forEach { tpl ->
                         AuntieChip(
-                            label = tpl.title,
+                            label = bankTemplateName(tpl),
                             secondaryLabel = tpl.category,
                             selected = tpl.templateId == templateId,
                             onClick = { templateId = tpl.templateId },
