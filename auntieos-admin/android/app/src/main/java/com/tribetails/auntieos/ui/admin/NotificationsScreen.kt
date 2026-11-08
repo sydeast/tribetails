@@ -572,7 +572,7 @@ private fun NotificationRow(
     val actions = applicableNotificationActions(entry)
     // Computed here, not inside the Column's content, because issue #705 needs
     // it to decide the Column's OWN modifier (whether the whole body toggles).
-    val detailRows = notificationDetailRows(entry)
+    val detailRows = notificationDetailRows(entry, rememberServiceCatalog())
     val canOpenDetail = detailRows.isNotEmpty()
 
     val border = if (unread) c.accent.copy(alpha = 0.4f) else c.border
@@ -1067,13 +1067,21 @@ internal fun unappliedPaymentNotice(entry: NotificationEntry): UnappliedPaymentN
  *
  * Blank fields are DROPPED, never rendered as a labelled empty. Pure; unit-tested.
  */
-internal fun notificationDetailRows(entry: NotificationEntry): List<Pair<String, String>> {
+internal fun notificationDetailRows(
+    entry: NotificationEntry,
+    // #1749: the operator's KinCare list. A card written before the server named
+    // the service carries the visit's stored key (`visit_60`); through the
+    // catalog it reads as the KinCare, the way Bookings and the Schedule name
+    // it. A value that does not resolve still shows as written.
+    catalog: ServiceCatalog? = null,
+): List<Pair<String, String>> {
     val d = entry.detail ?: return emptyList()
+    val service = d.serviceType.trim().let { if (it.isEmpty() || catalog == null) it else catalog.nameOf(it) }
     return listOf(
         "Requested by" to d.requestedBy,
         "Household" to d.kinfolkName,
         "Kin" to d.kinName,
-        "Service" to d.serviceType,
+        "Service" to service,
         "Date" to d.bookingDate,
         "Time" to d.bookingTime,
         "Invoice" to d.invoiceNumber,
