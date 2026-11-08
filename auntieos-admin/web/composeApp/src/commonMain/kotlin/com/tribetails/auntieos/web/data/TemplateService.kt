@@ -255,6 +255,8 @@ data class CatalogKeyRow(
     val whenTemplateMissing: String = "fails",
     /** Whether the repo carries a copy Template Import can load. */
     val inRepoCorpus: Boolean = false,
+    /** The catalog's name for the key ("New invoice"), what the operator reads (#1592). */
+    val label: String = "",
 )
 
 private val MISSING_TEMPLATE_EFFECTS = setOf("fails", "repoCopy", "generic", "unused")
@@ -280,6 +282,7 @@ internal fun decodeCatalogKeyRows(body: String): List<CatalogKeyRow> {
             resolvedTemplateId = str("resolvedTemplateId") ?: default,
             whenTemplateMissing = str("whenTemplateMissing")?.takeIf { it in MISSING_TEMPLATE_EFFECTS } ?: "fails",
             inRepoCorpus = bool("inRepoCorpus") ?: false,
+            label = str("label").orEmpty(),
         )
     }
 }
