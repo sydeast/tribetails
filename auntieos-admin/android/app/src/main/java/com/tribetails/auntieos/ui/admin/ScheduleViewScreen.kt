@@ -417,7 +417,13 @@ private fun ScheduleViewScreenContent(
             // length parsed out of the name as fallback.
             val bookingsInView = bookingsInScheduleView(filteredBookings, state.selectedDate, state.viewMode)
             val legendTypes = sortServiceTypesByDuration(
-                distinctServiceTypes(bookingsInView.map { it.baseServiceTitle }),
+                // #1592: named against the KinCare catalog, so `visit_60` reads as the
+                // operator's own name and two spellings of one service are one row.
+                distinctServiceTypes(
+                    bookingsInView.map {
+                        if (it.baseServiceTitle.isBlank()) "" else bookingServiceName(it.baseServiceTitle, state.businessSettings.serviceRates, state.businessSettings.serviceDurations)
+                    },
+                ),
                 state.businessSettings.serviceDurations,
             )
             // #755: a bare row, not a "Service key" panel. The mock draws the
@@ -697,6 +703,7 @@ private fun ScheduleViewScreenContent(
                                 val dragged = state.dragState?.draggedBooking?.id == booking.id
                                 AdminBookingAgendaRow(
                                     booking = booking,
+                                    serviceRates = state.businessSettings.serviceRates,
                                     onClick = { viewModel.selectBooking(booking) },
                                     // #9 already made this operator choice for the
                                     // reschedule FORM; the drag reads the same
@@ -792,6 +799,7 @@ private fun ScheduleViewScreenContent(
                     val booking = pendingBookings[i]
                     BookingSectionCard(
                         booking = booking,
+                        serviceRates = state.businessSettings.serviceRates,
                         onClick = { viewModel.selectBooking(booking) },
                         onApprove = { viewModel.approveBooking(booking) },
                         onReject = { viewModel.cancelBooking(booking) },
@@ -829,6 +837,7 @@ private fun ScheduleViewScreenContent(
                     val booking = scheduledBookings[i]
                     BookingSectionCard(
                         booking = booking,
+                        serviceRates = state.businessSettings.serviceRates,
                         onClick = { viewModel.selectBooking(booking) },
                         onApprove = null,
                         onReject = null,
@@ -858,8 +867,8 @@ private fun ScheduleViewScreenContent(
             } else {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        HistorySubsection("Completed", completedHistory, timeBlockLabelFor) { viewModel.selectBooking(it) }
-                        HistorySubsection("Cancelled", cancelledHistory, timeBlockLabelFor) { viewModel.selectBooking(it) }
+                        HistorySubsection("Completed", completedHistory, timeBlockLabelFor, state.businessSettings.serviceRates) { viewModel.selectBooking(it) }
+                        HistorySubsection("Cancelled", cancelledHistory, timeBlockLabelFor, state.businessSettings.serviceRates) { viewModel.selectBooking(it) }
                     }
                 }
             }
@@ -1439,6 +1448,8 @@ private fun BookingSectionHead(
 private fun AdminBookingAgendaRow(
     booking: EnhancedBooking,
     onClick: () -> Unit,
+    /** #1592: the KinCare catalog the service is named against. */
+    serviceRates: Map<String, String> = emptyMap(),
     /** 15 when the operator turned on "Snap drag-to-reschedule to 15 min", else 1. Parity with web. */
     snapMinutes: Int = DRAG_MINUTE_SNAP,
     isDragging: Boolean = false,
@@ -1451,7 +1462,8 @@ private fun AdminBookingAgendaRow(
 ) {
     val c = AuntieTheme.colors
     val accent = bookingServiceTint(booking)
-    val serviceText = booking.baseServiceTitle.ifBlank { booking.title.ifBlank { "KinCare Visit" } }
+    val serviceName = booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { bookingServiceName(it, serviceRates) }
+    val serviceText = serviceName ?: booking.title.ifBlank { "KinCare Visit" }
     val bookingStart = parseIsoDateTimeOrNull(booking.startDateTime)
     // No start time we can read is no window we can move: the row still opens,
     // it just cannot be dragged onto a time nobody could name.
@@ -1528,8 +1540,8 @@ private fun AdminBookingAgendaRow(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (booking.baseServiceTitle.isNotBlank()) {
-                    ServicePill(booking.baseServiceTitle, serviceTone(booking.baseServiceTitle))
+                if (serviceName != null) {
+                    ServicePill(serviceName, serviceTone(booking.baseServiceTitle))
                 }
                 Text(text = bookingSubtitle(booking), style = AuntieTheme.typography.bodySmall, color = c.textDim)
             }
@@ -1569,6 +1581,7 @@ private fun HistorySubsection(
     label: String,
     bookings: List<EnhancedBooking>,
     timeBlockLabelFor: (EnhancedBooking) -> String?,
+    serviceRates: Map<String, String>,
     onSelect: (EnhancedBooking) -> Unit,
 ) {
     if (bookings.isEmpty()) return
@@ -1585,6 +1598,7 @@ private fun HistorySubsection(
         visible.forEach { booking ->
             BookingSectionCard(
                 booking = booking,
+                serviceRates = serviceRates,
                 onClick = { onSelect(booking) },
                 onApprove = null,
                 onReject = null,
@@ -1621,6 +1635,8 @@ private fun HistorySubsection(
 private fun BookingSectionCard(
     booking: EnhancedBooking,
     onClick: () -> Unit,
+    /** #1592: the KinCare catalog the service is named against. */
+    serviceRates: Map<String, String> = emptyMap(),
     onApprove: (() -> Unit)?,
     onReject: (() -> Unit)?,
     onCancel: (() -> Unit)?,
@@ -1671,7 +1687,7 @@ private fun BookingSectionCard(
                         color = if (hasName) c.textPrimary else c.textFaint,
                     )
                     Text(
-                        text = "${booking.baseServiceTitle.ifBlank { booking.title.ifBlank { "Visit" } }} · ${bookingDateLabel(booking)}" +
+                        text = "${booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { bookingServiceName(it, serviceRates) } ?: booking.title.ifBlank { "Visit" }} · ${bookingDateLabel(booking)}" +
                             (timeBlockLabel?.let { " · $it block" } ?: ""),
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,

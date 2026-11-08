@@ -1,5 +1,10 @@
 import { formatWhen, machineWhen, type NotificationEntry } from '../api/notifications';
-import { unreadNotifications, unreadNotificationCount } from '../lib/notificationsFeed';
+import {
+  notificationCategoryLabel,
+  notificationTitle,
+  unreadNotifications,
+  unreadNotificationCount,
+} from '../lib/notificationsFeed';
 import { notificationDetailSummary } from '../lib/notificationDetail';
 import { useBulkMarkRead } from '../lib/useBulkMarkRead';
 import { inboxSection } from '../lib/inboxSections';
@@ -85,15 +90,15 @@ export function NotificationsDigest({ state, limit = 6 }: NotificationsDigestPro
             <>
               <ul className="notif-digest__rows">
                 {shown.map((entry) => {
-                  // AO-28: prefer the human title (catalog label); fall back to
-                  // the raw key for rows dispatched before titles existed.
-                  const label = entry.title || entry.key || '(no key)';
+                  // AO-28: prefer the human title (catalog label). #1592: a row
+                  // dispatched before titles existed reads its key as words.
+                  const label = notificationTitle(entry);
                   // R5: the meta line was `category · status`, and `status` was
                   // the dispatcher's own pipeline state leaking onto a card.
                   // What replaces it is the notification's OWN subject: kin,
                   // date, time, resolved server-side, which is what a digest
                   // row needs to be worth glancing at.
-                  const meta = [entry.category, notificationDetailSummary(entry)]
+                  const meta = [notificationCategoryLabel(entry.category), notificationDetailSummary(entry)]
                     .filter((v) => (v ?? '') !== '')
                     .join(' · ');
                   return (

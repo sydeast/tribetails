@@ -452,7 +452,8 @@ private fun FilterRow(
         )
         categories.forEach { category ->
             AuntieChip(
-                label = category,
+                // #1592: the chip says the word; the filter value stays the stored category.
+                label = notificationCategoryLabel(category),
                 selected = active == category,
                 onClick = { onSelect(category) },
             )
@@ -712,7 +713,7 @@ private fun NotificationRow(
             Text(
                 text = buildString {
                     entry.actorName?.takeIf { it.isNotBlank() }?.let { append("$it · ") }
-                    append(entry.category.ifBlank { "uncategorized" })
+                    append(notificationCategoryLabel(entry.category))
                 },
                 style = typo.bodySmall,
                 color = c.textDim,
@@ -914,9 +915,16 @@ internal fun notificationTargetLabel(entry: NotificationEntry): String {
     }
 }
 
-/** The row's headline: the catalog title, falling back to the raw key (AO-28). */
-internal fun notificationHeadline(entry: NotificationEntry): String =
-    entry.title.ifBlank { entry.key }.ifBlank { "(no key)" }
+/**
+ * The row's headline: the catalog title (AO-28). #1592: a row without one, or
+ * whose title is only its key, reads the key as words, never the key itself.
+ */
+internal fun notificationHeadline(entry: NotificationEntry): String {
+    val key = entry.key.trim()
+    val title = entry.title.trim()
+    if (title.isNotEmpty() && title != key) return title
+    return humanizeKey(key).ifEmpty { "Notification" }
+}
 
 /**
  * The one catalog key that means "a booking request is waiting on a decision"

@@ -1,5 +1,8 @@
 package com.tribetails.auntieos.web.screens.schedule
 
+import com.tribetails.auntieos.web.screens.bookingServiceName
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -309,18 +312,21 @@ fun ScheduleScreen() {
                     title = agendaLabel.ifBlank { "Day agenda" },
                     subtitle = "Tap a visit to open its booking detail and notes.",
                 ) {
-                    DayAgenda(
-                        selected = selected,
-                        sessions = selectedItems,
-                        localZone = localZone,
-                        onSessionClick = { selectedSession = it },
-                    )
+                    CompositionLocalProvider(LocalKinCareRates provides scheduleSettings?.serviceRates.orEmpty()) {
+                        DayAgenda(
+                            selected = selected,
+                            sessions = selectedItems,
+                            localZone = localZone,
+                            onSessionClick = { selectedSession = it },
+                        )
+                    }
                 }
                 Spacer(Modifier.height(18.dp))
 
                 when (viewMode) {
                     ScheduleView.Day -> { /* day view: the agenda above is the detail */ }
                     ScheduleView.Week -> GlassSurface(cornerRadius = 22.dp) {
+                        CompositionLocalProvider(LocalKinCareRates provides scheduleSettings?.serviceRates.orEmpty()) {
                         WeekCalendar(
                             days = selected?.let(::weekStripDays).orEmpty(),
                             today = today,
@@ -333,6 +339,7 @@ fun ScheduleScreen() {
                             onReschedule = ::onRescheduleDrop,
                             snapMinutes = dragSnapMinutes,
                         )
+                        }
                     }
                     ScheduleView.Month -> GlassSurface(cornerRadius = 18.dp) {
                         MonthGrid(
@@ -898,7 +905,8 @@ private fun EventBlock(
         }
         if (blockHeight >= 56.dp && session.serviceType.isNotBlank()) {
             Text(
-                text = session.serviceType,
+                // #1592: the operator's KinCare name, never the stored key.
+                text = bookingServiceName(session.serviceType, LocalKinCareRates.current),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
                 maxLines = 1,
@@ -1034,6 +1042,9 @@ private fun MonthGrid(
     }
 }
 
+/** #1592: the KinCare catalog a stored `serviceType` is named against, for the agenda and week blocks. */
+internal val LocalKinCareRates = staticCompositionLocalOf<Map<String, String>> { emptyMap() }
+
 @Composable
 private fun DayAgenda(
     selected: LocalDate?,
@@ -1096,8 +1107,10 @@ private fun DayAgenda(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        val rates = LocalKinCareRates.current
                         Text(
-                            text = session.serviceType.ifBlank { "KinCare Visit" },
+                            // #1592: the operator's KinCare name, never the stored key.
+                            text = if (session.serviceType.isBlank()) "KinCare Visit" else bookingServiceName(session.serviceType, rates),
                             style = AuntieTheme.typography.titleLarge,
                             color = c.textPrimary,
                         )
@@ -1105,7 +1118,7 @@ private fun DayAgenda(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            ServicePill(session.serviceType, serviceTone(session.serviceType))
+                            ServicePill(bookingServiceName(session.serviceType, rates), serviceTone(session.serviceType))
                             AuntieStatusPill(
                                 label = statusBadge(session.status),
                                 tone = statusTone(session.status),

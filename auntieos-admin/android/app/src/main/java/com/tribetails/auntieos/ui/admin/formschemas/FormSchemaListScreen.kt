@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin.formschemas
 
 import androidx.compose.foundation.background
+import com.tribetails.auntieos.ui.admin.schemaCountLabel
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -506,7 +507,7 @@ private fun SchemaCountChip(count: Int) {
             .padding(horizontal = 13.dp, vertical = 10.dp),
     ) {
         Text(
-            text = "$count schemas",
+            text = schemaCountLabel(count),
             style = AuntieTheme.typography.mono.copy(fontSize = 11.sp, letterSpacing = 0.6.sp),
             color = c.textDim,
         )

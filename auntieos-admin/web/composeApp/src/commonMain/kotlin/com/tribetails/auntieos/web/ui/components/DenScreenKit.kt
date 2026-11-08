@@ -299,7 +299,9 @@ fun ServicePill(serviceType: String, tone: AuntieStatusTone = serviceTone(servic
             .padding(horizontal = 9.dp, vertical = 4.dp),
     ) {
         Text(
-            serviceType.ifBlank { "visit" }.lowercase(),
+            // #1592: shown as written. A KinCare name is the operator's own, and
+            // lowercasing it made "30Minute" read as the key "30minute".
+            serviceType.ifBlank { "Visit" },
             style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp), color = t,
         )
     }

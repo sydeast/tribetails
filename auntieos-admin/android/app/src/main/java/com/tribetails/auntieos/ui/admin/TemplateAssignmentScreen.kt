@@ -106,6 +106,17 @@ private data class EditTarget(
     val binding: TemplateRepository.TemplateBinding?,
 )
 
+/** #1592: Template Routing copy, with no database path and no function name. */
+internal const val TEMPLATE_MISSING_LINE = "The template this sends is missing, so its next send fails."
+
+internal const val ROUTING_TABLE_EMPTY =
+    "No notifications came back. This list comes with the app, so an empty one means something " +
+        "is broken. Reload, and report it if it stays empty."
+
+internal fun overrideDialogHint(): String =
+    "Without an override this sends its own template, matched by name. Saving here points it at " +
+        "another one, for email only."
+
 /**
  * Standalone Template Routing screen. Kept for direct use; the merged two-tab
  * [TemplatesScreen] renders [TemplateAssignmentBody] inside its shared scaffold.
@@ -298,9 +309,7 @@ fun TemplateAssignmentBody(
                 ) {
                     when {
                         loading -> EmptyHint("Loading the routing table…")
-                        catalogRows.isEmpty() -> EmptyHint(
-                            "listCatalogKeys returned no keys. The catalog is compiled into the backend, so treat this as a broken deploy rather than an empty setup.",
-                        )
+                        catalogRows.isEmpty() -> EmptyHint(ROUTING_TABLE_EMPTY)
                         else -> {
                             Text(
                                 buildString {
@@ -442,7 +451,7 @@ private fun RoutingRow(
         binding?.audience?.let { append("\nAudience: $it (stored, no sender reads it)") }
         genuineOverride?.let { append("\noverride: $it") }
         if (missing) {
-            append("\nNo emailTemplates/${row.resolvedTemplateId} document. This key throws \"email template missing\" on its next send.")
+            append("\n$TEMPLATE_MISSING_LINE")
         }
         missingNote?.let { append("\n$it") }
     }
@@ -503,7 +512,7 @@ private fun BindingEditorDialog(
         leadingIcon = {
             AuntieIconTile(icon = Lucide.Workflow, tone = AuntieStatusTone.Purple, size = 38.dp)
         },
-        hint = "Without an override this key sends emailTemplates/${row.defaultTemplateId}, matched by name. Saving here points it somewhere else, for email only.",
+        hint = overrideDialogHint(),
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
             if (onUnassign != null) {

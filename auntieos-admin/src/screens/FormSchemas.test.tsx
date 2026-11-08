@@ -382,6 +382,13 @@ describe('FormSchemas screen', () => {
     // The explanation is the heading's tooltip, never a line of copy.
     expect(screen.queryByText('Author the dynamic forms kinfolk fill out.')).toHaveAttribute('role', 'tooltip');
   });
+  it('#1592: counts a single schema in the singular', async () => {
+    listFormSchemas.mockResolvedValue([schema({})]);
+    const { container } = render(<FormSchemas />);
+    await screen.findByText('Tribe Profile');
+    expect(container.querySelector('.schemas__count')).toHaveTextContent(/^1 schema$/);
+  });
+
   it('lays the mock controls row out: the filter box with its magnifier, then the count chip, then the table, then Reload', async () => {
     listFormSchemas.mockResolvedValue([schema({}), schema({ id: 'other', name: 'Other' })]);
     const { container } = render(<FormSchemas />);

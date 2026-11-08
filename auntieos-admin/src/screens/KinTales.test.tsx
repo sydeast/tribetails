@@ -53,6 +53,19 @@ vi.mock('../api/kinTaleTriage', () => ({
   archiveOrphanReportAsBadData: vi.fn(),
 }));
 
+/**
+ * #1592: the row names its service from the operator's KinCare catalog. Empty
+ * by default, so every pre-existing row keeps its stored text.
+ */
+const catalogRef = vi.hoisted(() => ({
+  current: { serviceRates: {}, serviceDurations: {}, timeBlocks: [] } as {
+    serviceRates: Record<string, string>;
+    serviceDurations: Record<string, string>;
+    timeBlocks: never[];
+  },
+}));
+vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => catalogRef.current }));
+
 import { KinTales } from './KinTales';
 
 /**
@@ -198,6 +211,23 @@ describe('KinTales screen', () => {
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
     expect(within(row).getByText('Dog Walk')).toBeInTheDocument();
     expect(within(row).getByText('DRAFT')).toHaveClass('den-statuspill', 'den-statuspill--compact');
+  });
+
+  it('#1592: names the service from the KinCare catalog, never the stored key', () => {
+    catalogRef.current = {
+      serviceRates: { '60Minute': '45', '30Minute': '30' },
+      serviceDurations: {},
+      timeBlocks: [],
+    };
+    try {
+      usePagedCollection.mockReturnValue(paged([entry({ serviceType: 'visit_60' })]));
+      render(<KinTales />);
+      const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
+      expect(within(row).getByText('60Minute')).toBeInTheDocument();
+      expect(within(row).queryByText('visit_60')).toBeNull();
+    } finally {
+      catalogRef.current = { serviceRates: {}, serviceDurations: {}, timeBlocks: [] };
+    }
   });
 
   it('draws the row as the mock does: a status tile, no headline line', () => {

@@ -56,9 +56,14 @@ class InviteDetailScreenUiTest {
         composeRule.onNodeWithText("Dora Demo (dora@example.com), household primary").assertIsDisplayed()
         composeRule.onNodeWithText("Not claimed").assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("Revoke").fetchSemanticsNodes().size)
-        // The invite id IS the claim token: the handle shows, the full id never.
+        // The invite id IS the claim token, and a database id (#1592): no part
+        // of it shows, not even the truncated handle.
         assertTrue(
-            composeRule.onAllNodesWithText("rq_8fk29aLONGTAIL", substring = true)
+            composeRule.onAllNodesWithText("rq_8fk29", substring = true)
+                .fetchSemanticsNodes().isEmpty(),
+        )
+        assertTrue(
+            composeRule.onAllNodesWithText("inviteId", substring = true)
                 .fetchSemanticsNodes().isEmpty(),
         )
         composeRule.onNode(hasScrollAction())

@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin.formschemas
 
 import androidx.compose.foundation.layout.Arrangement
+import com.tribetails.auntieos.ui.admin.appliesToLabel
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -380,7 +381,8 @@ private fun SchemaMetaFields(
                 options = FormSchemaAppliesTo.ALL,
                 selected = setOf(state.appliesTo),
                 onSelectionChange = { sel -> sel.firstOrNull()?.let { viewModel.updateAppliesTo(it) } },
-                label = { it },
+                // #1592: words, never the stored NONE / KINFOLK constants.
+                label = { appliesToLabel(it) },
                 singleSelect = true,
                 modifier = Modifier.fillMaxWidth(),
             )

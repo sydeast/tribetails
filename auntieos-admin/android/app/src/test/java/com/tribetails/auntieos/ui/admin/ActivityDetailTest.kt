@@ -128,13 +128,25 @@ class ActivityDetailTest {
     }
 
     /**
-     * A recorded null is a decision the writer made; blanking it hides that, and
-     * in an audit trail "the writer recorded null here" is evidence.
+     * #1592: AUNTIE is written for every staff caller, the owner included, so an
+     * admin sign-in read "AUNTIE". The row says the role in words.
+     */
+    @Test
+    fun detailNamesTheActorRoleInWords() {
+        fun role(r: String) = activityDetailRows(entry(actorRole = r)).first { it.first == "Actor role" }.second
+        assertEquals("Staff", role("AUNTIE"))
+        assertEquals("Primary kinfolk", role("PRIMARY"))
+        assertEquals("Secondary kinfolk", role("SECONDARY"))
+    }
+
+    /**
+     * A recorded null is a decision the writer made; blanking it hides that, so it
+     * stays on the list, as the word "none" rather than the literal "null" (#1592).
      */
     @Test
     fun payloadPrintsARecordedNullAndAnEmptyMap() {
         assertEquals(
-            listOf("providerMessageId" to "null"),
+            listOf("providerMessageId" to "none"),
             activityPayloadRows(entry(payload = mapOf("providerMessageId" to null))),
         )
         assertEquals(

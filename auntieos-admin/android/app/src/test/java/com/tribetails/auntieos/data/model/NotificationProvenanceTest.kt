@@ -152,7 +152,7 @@ class NotificationProvenanceTest {
     @Test
     fun appendsTheLiveRosterSize() {
         assertTrue(
-            notifRecipientLines(businessRow, 3, "businessSettings/admins.uids")[0]
+            notifRecipientLines(businessRow, 3)[0]
                 .contains("3 people"),
         )
     }
@@ -160,22 +160,24 @@ class NotificationProvenanceTest {
     @Test
     fun saysOnePersonNotOnePeople() {
         assertTrue(
-            notifRecipientLines(businessRow, 1, "businessSettings/admins.uids")[0]
+            notifRecipientLines(businessRow, 1)[0]
                 .contains("1 person today"),
         )
     }
 
     @Test
     fun reportsAnUnreadableRosterAsUnknownNeverAsZero() {
-        val line = notifRecipientLines(businessRow, null, "businessSettings/admins.uids")[0]
+        val line = notifRecipientLines(businessRow, null)[0]
         assertTrue(line.contains("unknown"))
         assertFalse(line.contains("0 people"))
+        // #1592: no database path in the sentence.
+        assertFalse(line.contains("businessSettings"))
     }
 
     @Test
     fun saysWhereAnEmptyRosterActuallySends() {
         assertTrue(
-            notifRecipientLines(businessRow, 0, "businessSettings/admins.uids")[0]
+            notifRecipientLines(businessRow, 0)[0]
                 .contains("operator allowlist"),
         )
     }
@@ -185,21 +187,22 @@ class NotificationProvenanceTest {
         val row = entry(whoReceives = listOf("The household's own portal account."))
         assertEquals(
             listOf("The household's own portal account."),
-            notifRecipientLines(row, 3, "x"),
+            notifRecipientLines(row, 3),
         )
     }
 
     // ── templates and merge fields ──────────────────────────────────────────
 
     @Test
-    fun buildsTheTemplatePathPerChannel() {
+    fun namesTheTemplatePerChannelInWordsNeverAPath() {
+        // #1592: the row's own template carries the row's name; another id reads as words.
         val row = entry(
             allowedChannels = listOf("email", "sms"),
-            templates = mapOf("email" to "invoice.new", "sms" to "invoice.new"),
+            templates = mapOf("email" to "invoice.new", "sms" to "invoice.reminder"),
         )
         assertEquals(
-            listOf("emailTemplates/invoice.new", "smsTemplates/invoice.new"),
-            notifTemplateLines(row).map { it.path },
+            listOf(row.displayTitle(), "Invoice reminder"),
+            notifTemplateLines(row).map { it.name },
         )
     }
 
@@ -222,8 +225,8 @@ class NotificationProvenanceTest {
             emailTemplateRetargetedFrom = "invoice.new",
         )
         val lines = notifTemplateLines(row)
-        assertEquals("emailTemplates/invoice.new.v2", lines[0].path)
-        assertEquals("invoice.new", lines[0].retargetedFrom)
+        assertEquals("Invoice new v2", lines[0].name)
+        assertEquals(row.displayTitle(), lines[0].retargetedFrom)
         assertNull(lines[1].retargetedFrom)
     }
     @Test

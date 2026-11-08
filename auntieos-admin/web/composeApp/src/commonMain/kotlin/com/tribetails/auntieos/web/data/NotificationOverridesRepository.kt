@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.screens.humanizeKey
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -263,7 +264,8 @@ fun NotificationCatalogEntry.alwaysEnabledFor(stream: String): Boolean =
     alwaysEnabled && (alwaysEnabledStreams.isEmpty() || stream in alwaysEnabledStreams)
 
 /** The row title shown in the gate matrix and My Notifications: label, else description, else key. */
-fun NotificationCatalogEntry.displayTitle(): String = label.ifBlank { description.ifBlank { key } }
+fun NotificationCatalogEntry.displayTitle(): String =
+    label.ifBlank { description.ifBlank { humanizeKey(key).ifEmpty { "Notification" } } }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Workflow sections (the ONE grouping for the gate matrix + My Notifications)

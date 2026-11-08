@@ -25,6 +25,14 @@ describe('FeatureFlags screen', () => {
     expect(t).toHaveAttribute('aria-checked', 'true');
   });
 
+  it('#1592: shows no database path and no flag keys to the operator', async () => {
+    getFeatureFlags.mockResolvedValue({});
+    render(<FeatureFlags />);
+    await screen.findByRole('switch', { name: /comms recap/i });
+    expect(document.body.textContent).not.toContain('business_settings');
+    expect(document.body.textContent).not.toContain('auntieos.');
+  });
+
   it('optimistically flips a toggle and persists via setFeatureFlags', async () => {
     getFeatureFlags.mockResolvedValue({});
     setFeatureFlags.mockResolvedValue({});

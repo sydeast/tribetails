@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   formatInviteDate,
-  inviteHandle,
   inviteStatusLabel,
   listAllInvites,
   type AdminInvite,
@@ -224,8 +223,8 @@ function InviteCard({ invite }: { invite: AdminInvite }) {
           {inviteDateParts(invite).map((part) => (
             <span key={part}>{part}</span>
           ))}
-          {/* Truncated on purpose. The full id is the claim token. */}
-          <span className="invites__handle">inviteId {inviteHandle(invite.inviteId)}</span>
+          {/* #1592: no invite id, not even truncated. It is a database id (and
+              the claim token); the address and household name the invite. */}
         </p>
         <div className="invites__pills">
           <StatusPill label={inviteStatusLabel(invite.effectiveStatus)} tone={tone} />

@@ -42,7 +42,6 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.ShieldAlert
 import com.tribetails.auntieos.data.repository.MembersRepository
 import com.tribetails.auntieos.data.repository.inviteDate
-import com.tribetails.auntieos.data.repository.inviteHandle
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -999,7 +998,7 @@ internal fun inviteMetaLine(invite: MembersRepository.Invite): String {
             }
         }
     }
-    parts += inviteHandle(invite.inviteId)
+    // #1592: no invite id on the row. It is a database id; the address names it.
     return parts.joinToString(" · ")
 }
 /** The state label on a secondary kinfolk person row (2026-09-27 Q3). */

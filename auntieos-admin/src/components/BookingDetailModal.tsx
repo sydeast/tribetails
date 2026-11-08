@@ -28,6 +28,7 @@ import {
   visitDurationMinutes,
 } from '../lib/bookingDetailFormat';
 import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
+import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
 import { sessionHousehold, sessionState, sessionStateInfo } from '../lib/sessionFormat';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
@@ -64,6 +65,12 @@ export interface BookingDetailModalProps {
   entry: ScheduleSessionEntry;
   /** `business_settings.timeZone`: the clock the visit is shown and rescheduled on (#1155). */
   businessZone: string;
+  /**
+   * The operator's KinCare catalog, so "Requested services" names the service
+   * (`bookingServiceName`) instead of printing the stored key (#1592). Omitted,
+   * the stored text shows, as it always did.
+   */
+  catalog?: BookingCatalog;
   onClose: () => void;
   /**
    * Route to the household record. Omit and the kinfolk name renders as static
@@ -135,6 +142,7 @@ export interface BookingDetailModalProps {
 export function BookingDetailModal({
   entry,
   businessZone,
+  catalog = EMPTY_BOOKING_CATALOG,
   onClose,
   onOpenKinfolk,
   onOpenKinTale,
@@ -188,7 +196,10 @@ export function BookingDetailModal({
               <AddressValue kinfolkId={kinfolkId} />
             </Fact>
             <Fact label="Requested services">
-              <ServicePill serviceType={str(entry.serviceType)} />
+              <ServicePill
+                serviceType={str(entry.serviceType)}
+                label={bookingServiceName(str(entry.serviceType), catalog)}
+              />
             </Fact>
             <Fact label="Duration">{durationLabel(durationMinutes)}</Fact>
             <Fact label="When">{bookingWhenLabel(startTime, businessZone)}</Fact>

@@ -145,6 +145,58 @@ export function unreadAmong(
 /** The bucket a row with a blank or absent `category` falls into. */
 const UNCATEGORIZED = 'uncategorized';
 
+/**
+ * A dotted or underscored key as words: `account.welcome.kinfolk` becomes
+ * "Account welcome kinfolk". The last resort for a value with no label of its
+ * own, so the operator reads words instead of a key (#1592).
+ */
+export function humanizeKey(raw: string): string {
+  const words = raw
+    .trim()
+    .split(/[._\-\s]+/)
+    .filter((w) => w !== '')
+    .join(' ')
+    .toLowerCase();
+  return words === '' ? '' : words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * The card's headline (#1592). The dispatcher writes the catalog label as
+ * `title`; a row without one, or whose title is only its key, reads the key as
+ * words rather than printing `account.welcome.kinfolk`.
+ */
+export function notificationTitle(entry: Pick<NotificationEntry, 'title' | 'key'>): string {
+  const key = (entry.key ?? '').trim();
+  const title = (entry.title ?? '').trim();
+  if (title !== '' && title !== key) return title;
+  return humanizeKey(key) || 'Notification';
+}
+
+/**
+ * Category words, in the vocabulary the notification settings already use for
+ * their sections (`notifSections` in myNotificationsFormat.ts). The filter VALUE
+ * stays the stored category; only the chip and the card say these.
+ */
+const CATEGORY_LABELS: Record<string, string> = {
+  account: 'Account',
+  home: 'Home and pets',
+  invoice: 'Billing',
+  kintale: 'KinTales',
+  marketing: 'Newsletters',
+  messages: 'Messages',
+  ratings: 'Ratings',
+  schedule: 'Schedule',
+  security: 'Security',
+  visit: 'Visits',
+  [UNCATEGORIZED]: 'Other',
+};
+
+/** A stored notification category as the operator reads it (#1592). */
+export function notificationCategoryLabel(category: string | undefined): string {
+  const key = (category ?? '').trim() || UNCATEGORIZED;
+  return CATEGORY_LABELS[key.toLowerCase()] ?? humanizeKey(key);
+}
+
 /** Sentinel filter value for the "Unread" chip. Never a real category name. */
 export const NOTIF_UNREAD_FILTER = ' unread';
 

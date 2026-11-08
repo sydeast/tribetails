@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.data.model
 
+import com.tribetails.auntieos.ui.admin.humanizeKey
+
 /**
  * Phase 15.2 + notification-settings revamp, admin notification-type x channel matrix
  * (Android mirror of the web model). Backed by the businessNotificationOverride
@@ -110,8 +112,9 @@ data class NotificationCatalogEntry(
     fun alwaysEnabledFor(stream: String): Boolean =
         alwaysEnabled && (alwaysEnabledStreams.isEmpty() || stream in alwaysEnabledStreams)
 
-    /** Row title for the UI: the catalog label, else the description, else the key. */
-    fun displayTitle(): String = label.ifBlank { description.ifBlank { key } }
+    /** Row title for the UI: the catalog label, else the description, else the key as words (#1592). */
+    fun displayTitle(): String =
+        label.ifBlank { description.ifBlank { humanizeKey(key).ifEmpty { "Notification" } } }
 
     /** A channel toggle is locked when the catalog marks that channel required. */
     fun channelLocked(channel: String): Boolean = required[channel] == true

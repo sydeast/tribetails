@@ -124,6 +124,17 @@ describe('Invites', () => {
     expect(link.closest('li')).toHaveClass('invites__card');
   });
 
+  /** #1592: the invite id is a database id; the row names the invite by its address and household. */
+  it('#1592: a row never shows the invite id', async () => {
+    api.listAllInvites.mockResolvedValue([
+      invite({ inviteId: 'rq_8fk29abc', householdName: 'the Demos', status: 'PENDING' }),
+    ]);
+    render(<Invites />);
+    const row = (await screen.findByText('the Demos')).closest('li')!;
+    expect(row.textContent).not.toContain('inviteId');
+    expect(row.textContent).not.toContain('rq_8fk29');
+  });
+
   it('shows the accepted ones when that filter is chosen', async () => {
     api.listAllInvites.mockResolvedValue([
       invite({ inviteId: 'i1', householdName: 'the Demos', status: 'PENDING' }),
@@ -298,8 +309,8 @@ describe('Invites', () => {
     ]);
   });
 
-  /** The invite id is the claim-link bearer token. */
-  it('shows a truncated handle and never the full id or a claim URL', async () => {
+  /** The invite id is the claim-link bearer token, and a database id (#1592). */
+  it('shows no part of the invite id and never a claim URL', async () => {
     api.listAllInvites.mockResolvedValue([
       invite({ inviteId: 'rq_8fk29aLONGTAIL', householdName: 'the Demos' }),
     ]);
@@ -307,8 +318,7 @@ describe('Invites', () => {
     render(<Invites />);
     await screen.findByText('the Demos');
 
-    expect(screen.getByText(/rq_8fk29…/)).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain('rq_8fk29aLONGTAIL');
+    expect(document.body.textContent).not.toContain('rq_8fk29');
     expect(document.body.innerHTML).not.toContain('?invite=');
   });
 });

@@ -130,16 +130,32 @@ beforeEach(() => {
 });
 
 describe('Notifications screen', () => {
-  it('renders streamed rows grouped by day, with the key and the category', () => {
+  it('renders streamed rows grouped by day, with the title and the category in words', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Notifications />);
     expect(screen.getByText('2026-07-16')).toBeInTheDocument();
-    expect(screen.getByText('kincare.booking.confirm')).toBeInTheDocument();
-    // Scoped to the ROW: "bookings" is also the text of the category filter
+    // #1592: a row with no title reads its key as words, never the key itself.
+    expect(screen.getByText('Kincare booking confirm')).toBeInTheDocument();
+    expect(screen.queryByText('kincare.booking.confirm')).toBeNull();
+    // Scoped to the ROW: "Bookings" is also the text of the category filter
     // chip, and an unscoped getByText now matches both. It used to be unique
     // only because the meta line read "bookings · trigger", i.e. because the
     // delivery mode was on the card.
-    expect(within(screen.getByRole('listitem')).getByText('bookings')).toBeInTheDocument();
+    expect(within(screen.getByRole('listitem')).getByText('Bookings')).toBeInTheDocument();
+  });
+
+  it('#1592: shows the catalog category as a word on the chip and the card', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ key: 'account.welcome.kinfolk', title: 'account.welcome.kinfolk', category: 'visit' })],
+    });
+    render(<Notifications />);
+    expect(screen.getByRole('tab', { name: 'Visits' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'visit' })).toBeNull();
+    expect(within(screen.getByRole('listitem')).getByText('Visits')).toBeInTheDocument();
+    expect(screen.getByText('Account welcome kinfolk')).toBeInTheDocument();
+    expect(screen.queryByText('account.welcome.kinfolk')).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Select Account welcome kinfolk' })).toBeInTheDocument();
   });
 
   /**
@@ -388,7 +404,7 @@ describe('Notifications feed context (issue #20)', () => {
       ],
     });
     render(<Notifications />);
-    await userEvent.click(screen.getByRole('tab', { name: 'payments' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Payments' }));
     expect(screen.queryByText('Booking row')).toBeNull();
     expect(screen.getByText('Payment row')).toBeInTheDocument();
   });
@@ -416,7 +432,7 @@ describe('Notifications feed context (issue #20)', () => {
     mockStreams({ status: 'ready', data: [entry({ category: 'bookings' })] });
     render(<Notifications />);
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(tabs).toEqual(['All', 'Unread', 'bookings']);
+    expect(tabs).toEqual(['All', 'Unread', 'Bookings']);
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -438,7 +454,7 @@ describe('Notifications feed context (issue #20)', () => {
     mockStreams({ status: 'ready', data: [entry({ category: 'bookings' })] });
     render(<Notifications />);
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('tabindex', '0');
-    expect(screen.getByRole('tab', { name: 'bookings' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Bookings' })).toHaveAttribute('tabindex', '-1');
   });
 });
 
@@ -739,7 +755,7 @@ describe('Notifications bulk bar', () => {
     bulkArchiveNotifications.mockResolvedValue(2);
     render(<Notifications />);
     expect(screen.getByRole('button', { name: 'Select all 3' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('tab', { name: 'payments' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Payments' }));
     await userEvent.click(screen.getByRole('button', { name: 'Select all 2' }));
     expect(screen.getByText('2 selected')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clear selection' })).toBeInTheDocument();
@@ -754,7 +770,7 @@ describe('Notifications bulk bar', () => {
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Select all 2' }));
     expect(screen.getByText('2 selected')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('tab', { name: 'payments' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Payments' }));
     expect(screen.queryByText(/selected$/)).toBeNull();
     expect(screen.getByRole('button', { name: 'Select all 1' })).toBeInTheDocument();
   });

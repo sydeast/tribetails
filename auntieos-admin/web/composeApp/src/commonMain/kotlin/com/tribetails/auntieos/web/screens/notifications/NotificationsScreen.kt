@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.notifications
 
+import com.tribetails.auntieos.web.screens.notificationHeadline
+import com.tribetails.auntieos.web.screens.notificationCategoryLabel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -412,7 +414,8 @@ private fun FilterRow(
         )
         categories.forEach { category ->
             AuntieChip(
-                label = category,
+                // #1592: the chip says the word; the filter value stays the stored category.
+                label = notificationCategoryLabel(category),
                 selected = active == category,
                 onClick = { onSelect(category) },
                 tone = AuntieChipTone.Accent,
@@ -545,12 +548,14 @@ private fun NotificationRow(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
-                text = entry.key.ifBlank { "(no key)" },
+                // #1592: the catalog title, else the key as words, never the key.
+                text = notificationHeadline(entry.key, entry.title),
                 style = typo.titleMedium,
                 color = c.textPrimary,
             )
             Text(
-                text = "${entry.category.ifBlank { "uncategorized" }} · ${entry.mode.ifBlank { "trigger" }}",
+                // #1592: the category in words. The delivery mode was a key too.
+                text = notificationCategoryLabel(entry.category),
                 style = typo.bodySmall,
                 color = c.textDim,
             )

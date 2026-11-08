@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.admin.formschemas
 
+import com.tribetails.auntieos.web.screens.schemaCountLabel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -263,7 +264,7 @@ fun FormSchemaListScreen(
                 if (!loading && loadError == null && sorted.isNotEmpty()) {
                     // Row-count chip reflecting the visible (filtered) count.
                     AuntieChip(
-                        label = "${visible.size} schemas",
+                        label = schemaCountLabel(visible.size),
                         tone  = AuntieChipTone.Neutral,
                         mono  = true,
                     )

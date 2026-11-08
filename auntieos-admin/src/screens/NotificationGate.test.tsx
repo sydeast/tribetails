@@ -307,17 +307,19 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
     await open();
     expect(await screen.findByText(/That is 4 people today/)).toBeInTheDocument();
   });
-  it('names what fires it and where that code lives', async () => {
+  it('names what fires it, and never the source file (#1592)', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
     await open();
     expect(await screen.findByText(/An admin creates an invoice/)).toBeInTheDocument();
-    expect(screen.getByText('src/admin/createInvoice.ts')).toBeInTheDocument();
+    expect(screen.queryByText('src/admin/createInvoice.ts')).toBeNull();
+    expect(document.body.textContent).not.toContain('createInvoice.ts');
   });
-  it('names the template document behind each channel', async () => {
+  it('names the template behind each channel in words, never a database path (#1592)', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
     await open();
-    expect(await screen.findByText('emailTemplates/invoice.new')).toBeInTheDocument();
-    expect(screen.getByText('smsTemplates/invoice.new')).toBeInTheDocument();
+    expect(await screen.findByText('Email: New invoice')).toBeInTheDocument();
+    expect(screen.getByText('Text (SMS): New invoice')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('Templates/');
   });
   it('says when the email has been retargeted, and names the catalog default', async () => {
     getNotificationMatrix.mockResolvedValue(
@@ -332,8 +334,8 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
       }),
     );
     await open();
-    expect(await screen.findByText('emailTemplates/invoice.new.v2')).toBeInTheDocument();
-    expect(screen.getByText(/the catalog default is invoice\.new/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Email: Invoice new v2/)).toBeInTheDocument();
+    expect(screen.getByText(/the default is New invoice/)).toBeInTheDocument();
   });
   /**
    * The gate REPORTS the routing; Template Assignments (#439) owns changing it.
@@ -482,7 +484,10 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
     );
     render(<NotificationGate />);
     expect(await screen.findByText(/ALSO SENT, BUT NOT GATED HERE/)).toBeInTheDocument();
-    expect(screen.getByText('emailTemplates/invite.primary')).toBeInTheDocument();
+    // #1592: the email is named in words, with no database path or source file.
+    expect(screen.getByText('Invite primary email, sent when: A household is invited to the portal.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('emailTemplates/');
+    expect(document.body.textContent).not.toContain('inviteKinfolkToPortal.ts');
   });
   it('says nothing about ungated mail when there is none to warn about', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented], ungated: [] }));

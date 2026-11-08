@@ -64,6 +64,10 @@ internal val FLAGS: List<FlagMeta> = listOf(
 internal fun flagRowValue(overrides: Map<String, Boolean>, key: String): Boolean =
     FeatureFlags.fromOverrides(overrides).toMap()[key] ?: false
 
+/** #1592: the heading tip, with no database path and no key prefix. */
+internal const val FEATURE_FLAGS_SUBTITLE =
+    "Turn a feature on or off. A change takes effect the next time the app loads."
+
 /**
  * Admin Feature Flags screen (Android parity with web `FeatureFlagsScreen`). Lists the
  * central `auntieos.*` flags with live toggles, reading current values via getFeatureFlags
@@ -97,7 +101,7 @@ fun FeatureFlagsScreen(onBack: () -> Unit) {
                 kicker = "The Den · Admin",
                 title = "Feature",
                 accentTail = "flags.",
-                subtitle = "Toggle the central auntieos.* flags. Writes business_settings/feature_flags; takes effect on the next app load.",
+                subtitle = FEATURE_FLAGS_SUBTITLE,
             )
             Spacer(Modifier.height(20.dp))
 
@@ -126,7 +130,7 @@ fun FeatureFlagsScreen(onBack: () -> Unit) {
                             ) {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(meta.label, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                                    Text(meta.key, style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+                                    // #1592: no flag key here; the label is the flag's name.
                                     Text(meta.detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                                 }
                                 AuntieToggle(

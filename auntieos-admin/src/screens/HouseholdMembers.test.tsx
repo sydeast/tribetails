@@ -620,6 +620,8 @@ describe('HouseholdMembers PRIMARY RECOVERY', () => {
       }),
     );
     await waitFor(() => expect(api.listHouseholdMembers).toHaveBeenCalledTimes(2));
+    // #1592: the toast names the address, never the new invite's id.
+    expect(document.body.textContent).not.toContain('rq_1234');
   });
 
   it('will not send until an address is picked', async () => {
@@ -675,12 +677,11 @@ describe('HouseholdMembers PRIMARY RECOVERY', () => {
 });
 
 describe('inviteMetaLine', () => {
-  it('shows sent and expiry dates plus a truncated handle, never the claim link', () => {
+  it('shows sent and expiry dates, never the invite id or the claim link (#1592)', () => {
     const line = inviteMetaLine(invite());
     expect(line).toContain('Sent 2026-05-26');
     expect(line).toContain('expires 2026-06-09');
-    expect(line).toContain('rq_8fk29…');
-    expect(line).not.toContain('rq_8fk29abc');
+    expect(line).not.toContain('rq_8fk29');
     expect(line).not.toContain('?invite=');
   });
 
@@ -704,7 +705,7 @@ describe('inviteMetaLine', () => {
     const line = inviteMetaLine(
       invite({ sentToInviteeAt: null, createdAt: null, expiresAt: null }),
     );
-    expect(line).toBe('rq_8fk29…');
+    expect(line).toBe('');
   });
 });
 

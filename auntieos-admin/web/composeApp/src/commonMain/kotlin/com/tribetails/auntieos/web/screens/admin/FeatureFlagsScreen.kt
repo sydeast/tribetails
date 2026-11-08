@@ -73,7 +73,7 @@ fun FeatureFlagsScreen() {
             kicker = "The Den · Admin",
             title = "Feature",
             accentTail = "flags.",
-            subtitle = "Toggle the central auntieos.* flags. Writes business_settings/feature_flags; takes effect on the next app load.",
+            subtitle = "Turn a feature on or off. A change takes effect the next time the app loads.",
         )
         Spacer(Modifier.height(20.dp))
 
@@ -101,7 +101,7 @@ fun FeatureFlagsScreen() {
                         ) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(meta.label, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                                Text(meta.key, style = AuntieTheme.typography.mono, color = c.textFaint)
+                                // #1592: no flag key here; the label is the flag's name.
                                 Text(meta.detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             }
                             AuntieToggle(

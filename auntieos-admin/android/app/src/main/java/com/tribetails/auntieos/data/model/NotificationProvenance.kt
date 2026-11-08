@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.data.model
 
+import com.tribetails.auntieos.ui.admin.humanizeKey
+
 /**
  * Android mirror of `auntieos-admin/src/lib/notificationProvenance.ts` (#396).
  *
@@ -143,12 +145,12 @@ fun notifRowBadges(
 fun notifRecipientLines(
     entry: NotificationCatalogEntry,
     businessAdminCount: Int?,
-    rosterPath: String,
 ): List<String> = entry.whoReceives.map { sentence ->
     when {
         !sentence.contains("business admin") -> sentence
         businessAdminCount == null ->
-            "$sentence The roster at $rosterPath could not be read just now, so the number is unknown."
+            // #1592: the roster is named, never its database path.
+            "$sentence The roster could not be read just now, so the number is unknown."
         businessAdminCount == 0 ->
             "$sentence Nobody is on that roster right now, so sends fall back to the operator allowlist."
         businessAdminCount == 1 -> "$sentence That is 1 person today."
@@ -222,14 +224,18 @@ fun businessEmailNotice(value: String): String? =
  */
 fun businessAdminSourceNote(roster: BusinessAdminRoster): String? {
     if (roster.source != BusinessAdminRosterSource.OperatorAllowlist) return null
-    return "Nobody is stored at ${roster.rosterPath}, so these are the operator allowlist accounts " +
-        "the next business notification would fall back to. Call provisionBusinessAdmins to make " +
-        "the roster explicit."
+    // #1592: no database path and no function name in what the operator reads.
+    return "The business admin roster is empty, so these are the operator allowlist accounts " +
+        "the next business notification would fall back to."
 }
-/** One "channel -> template document" line for a channel the row offers. */
+/** One "channel -> template" line for a channel the row offers. */
 data class NotifTemplateLine(
     val channel: String,
-    val path: String,
+    /**
+     * The template in words (#1592: it was the database path `emailTemplates/<id>`).
+     * The row's own template carries the row's own name; another id reads as words.
+     */
+    val name: String,
     /** True when the row offers this channel with nothing to render it. */
     val missing: Boolean,
     /**
@@ -241,14 +247,22 @@ data class NotifTemplateLine(
     val retargetedFrom: String? = null,
 )
 
+/** A template id as the operator reads it: the row's own name, or the id as words. */
+fun notifTemplateName(id: String, entry: NotificationCatalogEntry): String =
+    if (id == entry.key) entry.displayTitle() else humanizeKey(id).ifEmpty { "a template" }
+
 fun notifTemplateLines(entry: NotificationCatalogEntry): List<NotifTemplateLine> =
     NOTIF_CHANNEL_ORDER.filter { it in entry.allowedChannels }.map { channel ->
         val id = entry.templates[channel]
         NotifTemplateLine(
             channel = channel,
-            path = if (id.isNullOrBlank()) "no template recorded" else "${channel}Templates/$id",
+            name = if (id.isNullOrBlank()) "no template recorded" else notifTemplateName(id, entry),
             missing = id.isNullOrBlank(),
-            retargetedFrom = if (channel == "email") entry.emailTemplateRetargetedFrom else null,
+            retargetedFrom = if (channel == "email") {
+                entry.emailTemplateRetargetedFrom?.let { notifTemplateName(it, entry) }
+            } else {
+                null
+            },
         )
     }
 

@@ -24,6 +24,8 @@ import {
   actionableNotificationCount,
   isNotificationArchived,
   notificationCategories,
+  notificationCategoryLabel,
+  notificationTitle,
   notificationsByDay,
   notificationsForArchived,
   notificationsForFilter,
@@ -626,7 +628,11 @@ function NotificationFilters({ categories, filter, onFilter }: NotificationFilte
           onClick={() => onFilter(value)}
           {...getTabProps(index)}
         >
-          {value === null ? 'All' : value === NOTIF_UNREAD_FILTER ? 'Unread' : value}
+          {value === null
+            ? 'All'
+            : value === NOTIF_UNREAD_FILTER
+              ? 'Unread'
+              : notificationCategoryLabel(value)}
         </button>
       ))}
     </div>
@@ -668,9 +674,9 @@ function NotificationRow({
   // comment names it.
   const archived = isNotificationArchived(entry);
   const targetLabel = notificationTargetLabel(entry);
-  // AO-28: prefer the human title (catalog label); fall back to the raw key for
-  // pre-AO-28 rows.
-  const title = entry.title || entry.key || '(no key)';
+  // AO-28: prefer the human title (catalog label). #1592: a row without one
+  // reads its key as words, never the key itself.
+  const title = notificationTitle(entry);
 
   // R5: the card opens. Collapsed by default because triage is a scanning task
   // and eight open cards is not a feed; the inline summary below is what makes
@@ -698,7 +704,7 @@ function NotificationRow({
       <input
         type="checkbox"
         className="notif-row__select"
-        aria-label={`Select ${entry.key || 'notification'}`}
+        aria-label={`Select ${title}`}
         checked={selected}
         onChange={(e) => onToggleSelect(e.target.checked)}
       />
@@ -771,7 +777,7 @@ function NotificationRow({
 
         <span className="notif-row__meta">
           {entry.actorName ? `${entry.actorName} · ` : ''}
-          {entry.category || 'uncategorized'}
+          {notificationCategoryLabel(entry.category)}
         </span>
 
         <NotificationQuickActions

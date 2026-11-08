@@ -52,20 +52,22 @@ describe('NotificationsDigest', () => {
       />,
     );
     expect(screen.getByText('Booking confirmed')).toBeInTheDocument();
-    expect(screen.getByText('bookings · Rex · Mon, Jun 15')).toBeInTheDocument();
+    expect(screen.getByText('Bookings · Rex · Mon, Jun 15')).toBeInTheDocument();
   });
   it('falls back to the category alone when the server resolved no detail', () => {
     render(<NotificationsDigest state={ready([entry({})])} />);
-    expect(screen.getByText('bookings')).toBeInTheDocument();
+    // #1592: the category reads as a word, not the stored slug.
+    expect(screen.getByText('Bookings')).toBeInTheDocument();
     expect(screen.queryByText(/dispatched/)).toBeNull();
   });
 
-  it('falls back to the raw catalog key when a row has no title', () => {
+  it('reads the catalog key as words when a row has no title (#1592)', () => {
     // Rows dispatched before AO-28 have no `title` AT ALL (absent, not
     // undefined), which is what exactOptionalPropertyTypes models here.
     const { title: _absent, ...untitled } = entry({});
     render(<NotificationsDigest state={ready([untitled])} />);
-    expect(screen.getByText('kincare.booking.confirm')).toBeInTheDocument();
+    expect(screen.getByText('Kincare booking confirm')).toBeInTheDocument();
+    expect(screen.queryByText('kincare.booking.confirm')).toBeNull();
   });
 
   it('shows only unread rows: a read notification never reaches the digest', () => {

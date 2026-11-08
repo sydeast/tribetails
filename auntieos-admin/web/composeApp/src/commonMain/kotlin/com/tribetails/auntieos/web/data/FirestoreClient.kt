@@ -4152,6 +4152,8 @@ data class ActivityLogEntry(
 data class NotificationEntry(
     val _id: String = "",
     val key: String = "",            // catalog key, e.g. 'kincare.booking.confirm'
+    // AO-28: the catalog label the dispatcher writes; blank on older rows (#1592).
+    val title: String = "",
     val category: String = "",
     val recipientUid: String = "",
     val actorUid: String? = null,

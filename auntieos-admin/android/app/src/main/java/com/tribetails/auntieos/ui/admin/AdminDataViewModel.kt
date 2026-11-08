@@ -255,6 +255,10 @@ class AdminDataViewModel(
     val businessTimeZone: StateFlow<String> = _businessTimeZone.asStateFlow()
     private val _timeBlocks = MutableStateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>>(emptyList())
     val timeBlocks: StateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>> = _timeBlocks.asStateFlow()
+    // #1592: the KinCare catalog, so the KinTales list names a visit's service
+    // instead of printing the stored key. Empty until read, and if the read fails.
+    private val _serviceRates = MutableStateFlow<Map<String, String>>(emptyMap())
+    val serviceRates: StateFlow<Map<String, String>> = _serviceRates.asStateFlow()
     // #1608: "Verify arrival and departure", read raw (absent is off). Null until read.
     private val _arrivalRule = MutableStateFlow<Boolean?>(null)
     val arrivalRule: StateFlow<Boolean?> = _arrivalRule.asStateFlow()
@@ -572,6 +576,8 @@ class AdminDataViewModel(
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load KinTales"
             }
+            // Best-effort, like the time blocks above: a missing FirebaseApp in tests can't crash.
+            runCatchingCancellable { repository.getBusinessSettings().onSuccess { _serviceRates.value = it.serviceRates } }
 
             _isLoading.value = false
         }

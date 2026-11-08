@@ -702,15 +702,26 @@ function Chevron({ expanded }: { expanded: boolean }) {
 
 interface ServicePillProps {
   serviceType: string;
+  /**
+   * What the pill says, when the caller resolved a name for the stored
+   * `serviceType` (#1592: `bookingServiceName`, so `visit_60` reads as the
+   * operator's own KinCare name). The tone still follows `serviceType`, so a
+   * pill and the block it labels keep one colour.
+   */
+  label?: string;
   tone?: DenTone;
 }
 
-/** A small lowercase mono pill tinted to a service tone. */
-export function ServicePill({ serviceType, tone }: ServicePillProps) {
-  const label = serviceType.trim() === '' ? 'visit' : serviceType;
+/**
+ * A small mono pill tinted to a service tone. The text is shown as written:
+ * a KinCare name is the operator's own, and lowercasing it made "30Minute"
+ * read as the key "30minute" (#1592).
+ */
+export function ServicePill({ serviceType, label, tone }: ServicePillProps) {
+  const shown = (label ?? serviceType).trim() === '' ? 'Visit' : (label ?? serviceType);
   return (
     <span className="den-pill" data-tone={tone ?? serviceTone(serviceType)}>
-      {label}
+      {shown}
     </span>
   );
 }

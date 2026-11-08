@@ -1,4 +1,6 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
 import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { kinTaleMatchesSearch, kinTalesPageQuery, type KinTaleEntry } from '../api/kinTales';
@@ -244,6 +246,8 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
   // KinTales. Deriving them from the page would offer only households that are
   // already on screen, which is the opposite of what the control is for.
   const households = useKinfolkRoster();
+  // #1592: rows name their service from the catalog, never `visit_60`.
+  const catalog = useBookingCatalog();
   const householdOptions = useMemo(
     () =>
       households.status === 'ready'
@@ -463,7 +467,7 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
                       >
                         <ul className="kintales__list" aria-label={bucket.label}>
                           {members.map((entry) => (
-                            <KinTaleRow key={entry._id} entry={entry} bucket={bucket} onSelect={onSelect} />
+                            <KinTaleRow key={entry._id} entry={entry} bucket={bucket} catalog={catalog} onSelect={onSelect} />
                           ))}
                         </ul>
                       </DenPanel>
@@ -508,6 +512,7 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
 interface KinTaleRowProps {
   entry: KinTaleListRow;
   bucket: BucketDef;
+  catalog: BookingCatalog;
   onSelect?: ((kinTaleId: string) => void) | undefined;
 }
 
@@ -518,7 +523,7 @@ interface KinTaleRowProps {
  * row carries none and neither does Android's, so the tale's title is read on
  * the detail screen rather than guessed from a clamp here.
  */
-function KinTaleRow({ entry, bucket, onSelect }: KinTaleRowProps) {
+function KinTaleRow({ entry, bucket, catalog, onSelect }: KinTaleRowProps) {
   const state = kinTaleState(entry.status ?? '');
   const info = kinTaleStateInfo(state);
   const rawName = (entry.kinfolkName ?? '').trim();
@@ -536,7 +541,9 @@ function KinTaleRow({ entry, bucket, onSelect }: KinTaleRowProps) {
   const mediaCount = (entry.mediaFileIds ?? []).length;
   const kinCount = (entry.kinIds ?? []).length;
   const sentVia = entry.sentVia ?? '';
-  const serviceType = (entry.serviceType ?? '').trim();
+  // Blank stays blank (no "Visit" stand-in on a row that names no service).
+  const storedService = (entry.serviceType ?? '').trim();
+  const serviceType = storedService === '' ? '' : bookingServiceName(storedService, catalog);
   const authorDisplayName = (entry.authorDisplayName ?? '').trim();
   // Only a SENT (or otherwise dispatched) row carries a real channel; a
   // draft's blank sentVia would otherwise read as the misleading "imported"
