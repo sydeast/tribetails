@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.ui.components.AuntieStatusTone
+import com.tribetails.auntieos.ui.components.serviceTone
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -37,5 +39,23 @@ class ServiceNameTest {
     @Test fun `a stored duration counts for the length match`() {
         val named = mapOf("Consultation" to "20", "Walk" to "30")
         assertEquals("Walk", bookingServiceName("visit_45", named, mapOf("Walk" to "45")))
+    }
+
+    @Test fun `a stored key is coloured by the KinCare it resolves to, the legend swatch's key`() {
+        val catalog = ServiceCatalog(mapOf("Dog walk" to "45"), mapOf("Dog walk" to "60"))
+        assertEquals(AuntieStatusTone.Orange, serviceTone("visit_60"))
+        assertEquals(AuntieStatusTone.Teal, bookingServiceTone("visit_60", catalog))
+        assertEquals(serviceTone(catalog.nameOf("visit_60")), bookingServiceTone("visit_60", catalog))
+    }
+    @Test fun `the catalog names with both maps, as the legend does`() {
+        // The rows used the rates alone, so a length kept only in
+        // `serviceDurations` named the legend and left the row raw.
+        val catalog = ServiceCatalog(mapOf("Dog walk" to "45"), mapOf("Dog walk" to "60"))
+        assertEquals("Dog walk", catalog.nameOf("visit_60"))
+        assertEquals("visit_60", bookingServiceName("visit_60", catalog.serviceRates))
+    }
+    @Test fun `an unresolved service keeps its own colour`() {
+        val catalog = ServiceCatalog(mapOf("Dog walk" to "45"))
+        assertEquals(AuntieStatusTone.Purple, bookingServiceTone("Overnight sit", catalog))
     }
 }

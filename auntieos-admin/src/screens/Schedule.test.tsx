@@ -752,6 +752,30 @@ describe('Schedule screen', () => {
     expect(within(agenda()).getAllByText('60Minute')).toHaveLength(2);
   });
 
+  it('#1592: the legend swatch, the agenda pill and the week and month blocks share the resolved name\'s tone', async () => {
+    // The stored `visit_60` tones purple on its own (it contains "sit"); the
+    // KinCare it resolves to is "Dog walk", which tones teal. Every mark must
+    // follow the name.
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: { 'Dog walk': '45' },
+      serviceDurations: { 'Dog walk': '60' },
+    });
+    mockCollections({ sessions: { status: 'ready', data: [todaySession({ _id: 'a', serviceType: 'visit_60' })] } });
+    const { container } = render(<Schedule />);
+    await waitFor(() => {
+      const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
+      expect(items).toEqual(['Dog walk', 'Busy']);
+    });
+    const swatch = container.querySelector('.schedule__legend-item') as HTMLElement;
+    expect(swatch).toHaveAttribute('data-tone', 'teal');
+    expect(within(agenda()).getByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
+    const week = screen.getByRole('group', { name: 'Week' });
+    expect(week.querySelector('[data-session-id="a"]')).toHaveAttribute('data-tone', 'teal');
+    await user.click(screen.getByRole('tab', { name: 'Month' }));
+    const month = screen.getByRole('group', { name: 'Month' });
+    expect(month.querySelector('[data-session-id="a"]')).toHaveAttribute('data-tone', 'teal');
+  });
+
   it('the "in view" stat counts only sessions within the visible week, honestly reflecting a listener error as unknown (not zero)', () => {
     mockCollections({ sessions: { status: 'error', message: 'permission-denied' } });
     render(<Schedule />);

@@ -20,7 +20,8 @@ import { sessionHousehold } from '../lib/sessionFormat';
 import { busyWindowLabel, weekdayAbbrev } from '../lib/scheduleFormat';
 import { isOperatorBlock } from '../api/scheduleWrite';
 import { str } from '../lib/coerce';
-import { serviceTone } from './DenScreenKit';
+import { bookingServiceTone } from './DenScreenKit';
+import type { BookingCatalog } from '../lib/bookingFormat';
 import './ScheduleWeekGrid.css';
 
 /**
@@ -94,6 +95,11 @@ interface ScheduleWeekGridProps {
   selected: string;
   byDay: Map<string, ScheduleSessionEntry[]>;
   busyByDate: Map<string, BusySlotEntry[]>;
+  /**
+   * The KinCare catalog a block's stored `serviceType` is named against
+   * (#1592), so a block is tinted by the same name its legend swatch is.
+   */
+  catalog: BookingCatalog;
   /** 15 when the operator turned on "Snap drag-to-reschedule to 15 min", else 1. */
   snapMinutes: number;
   /** The session currently being written, so its block reads as in-flight and cannot be grabbed again. */
@@ -154,6 +160,7 @@ export function ScheduleWeekGrid({
   selected,
   byDay,
   busyByDate,
+  catalog,
   snapMinutes,
   pendingSessionId,
   scrollToBusyRequestId,
@@ -396,11 +403,11 @@ export function ScheduleWeekGrid({
                   }}
                   data-session-id={entry._id}
                   data-start-minute={startMinute}
-                  // The mock tints every block by its service type, and the
-                  // month cell and the legend swatch already read the same
-                  // `serviceTone`; a week block in plain orange was the one
-                  // mark on the calendar the legend did not describe.
-                  data-tone={serviceTone(str(entry.serviceType))}
+                  // The mock tints every block by its service type. It is the
+                  // tone of the NAME the legend shows (`bookingServiceTone`,
+                  // #1592), so the swatch describes the block even when the
+                  // stored type is a key like `visit_60`.
+                  data-tone={bookingServiceTone(str(entry.serviceType), catalog)}
                   aria-label={`${sessionHousehold(str(entry.kinfolkName))} at ${hhmmFromMinutes(startMinute)}. Open to reschedule.`}
                   disabled={pending}
                   onPointerDown={(e) => onBlockPointerDown(e, entry, dayIndex, place.topPx, startMinute)}

@@ -1,4 +1,6 @@
 package com.tribetails.auntieos.web.screens
+import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
+import com.tribetails.auntieos.web.ui.components.serviceTone
 
 /**
  * #1592: what the operator reads in place of a stored key. Display only; every
@@ -109,3 +111,25 @@ fun bookingServiceName(
     }
     return label
 }
+/**
+ * The KinCare catalog a stored service is named and coloured against:
+ * `business_settings.serviceRates` and `serviceDurations` together (#1592), one
+ * value for every Schedule mark so the agenda, the week blocks and the legend
+ * resolve a stored `visit_60` the same way. Same shape as Android's.
+ */
+data class ServiceCatalog(
+    val serviceRates: Map<String, String> = emptyMap(),
+    val serviceDurations: Map<String, String> = emptyMap(),
+) {
+    /** [bookingServiceName] against this catalog. */
+    fun nameOf(rawServiceType: String?): String = bookingServiceName(rawServiceType, serviceRates, serviceDurations)
+}
+/**
+ * THE tone of a stored booking service, for every mark that colours a visit:
+ * the legend swatch, the agenda pill, the week block (#1592). Keyed on the
+ * NAME [bookingServiceName] resolves, never the stored text, so a block and the
+ * legend row for its KinCare are one colour and a rename moves both. Same rule
+ * as the web `bookingServiceTone` and Android's.
+ */
+fun bookingServiceTone(rawServiceType: String?, catalog: ServiceCatalog): AuntieStatusTone =
+    serviceTone(catalog.nameOf(rawServiceType))

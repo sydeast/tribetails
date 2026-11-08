@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens
 
+import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
+import com.tribetails.auntieos.web.ui.components.serviceTone
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -42,5 +44,22 @@ class OperatorWordsTest {
         assertEquals("Off-Book Visit", bookingServiceName("Off-Book Visit", rates))
         assertEquals("Visit", bookingServiceName(" ", rates))
         assertEquals("visit_60", bookingServiceName("visit_60", null))
+    }
+
+    @Test
+    fun aStoredKeyIsColouredByTheKinCareItResolvesTo() {
+        val catalog = ServiceCatalog(mapOf("Dog walk" to "45"), mapOf("Dog walk" to "60"))
+        assertEquals(AuntieStatusTone.Orange, serviceTone("visit_60"))
+        assertEquals(AuntieStatusTone.Teal, bookingServiceTone("visit_60", catalog))
+        // The legend swatch for that KinCare is `serviceTone(name)`.
+        assertEquals(serviceTone(catalog.nameOf("visit_60")), bookingServiceTone("visit_60", catalog))
+    }
+    @Test
+    fun theCatalogNamesWithBothMaps() {
+        // The agenda named with the rates alone, so a length kept only in
+        // `serviceDurations` left the row raw.
+        val catalog = ServiceCatalog(mapOf("Dog walk" to "45"), mapOf("Dog walk" to "60"))
+        assertEquals("Dog walk", catalog.nameOf("visit_60"))
+        assertEquals("visit_60", bookingServiceName("visit_60", catalog.serviceRates))
     }
 }
