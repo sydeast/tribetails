@@ -1007,6 +1007,27 @@ private fun RecordPaymentDialog(
     }
 }
 @OptIn(ExperimentalLayoutApi::class)
+/**
+ * #1744: a linked visit's row names its KinCare off the catalog, never the
+ * stored `visit_60`. A blank service keeps its "Service" stand-in.
+ */
+internal fun linkedSessionServiceLabel(serviceType: String, catalog: com.tribetails.auntieos.web.screens.ServiceCatalog): String =
+    if (serviceType.isBlank()) "Service" else catalog.nameOf(serviceType)
+
+/** #1744: one link-picker chip: the visit's KinCare name, its day, and why it cannot be ticked. */
+internal fun linkPickerChipLabel(
+    serviceType: String,
+    dateLabel: String,
+    elsewhere: Boolean,
+    cancelled: Boolean,
+    catalog: com.tribetails.auntieos.web.screens.ServiceCatalog,
+): String {
+    val service = if (serviceType.isBlank()) "Session" else catalog.nameOf(serviceType)
+    return "$service · $dateLabel" +
+        (if (elsewhere) " · on another invoice" else "") +
+        (if (cancelled) " · cancelled, not billable" else "")
+}
+
 @Composable
 private fun LinkSessionsDialog(
     visible: Boolean,
@@ -1067,9 +1088,9 @@ private fun LinkSessionsDialog(
                             val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
                             // #1609: a cancelled visit is not billable.
                             val cancelled = linkPickerCancelled(session, storedIds)
-                            val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel" +
-                                (if (elsewhere) " · on another invoice" else "") +
-                                (if (cancelled) " · cancelled, not billable" else "")
+                            val chipLabel = linkPickerChipLabel(
+                                session.serviceType, dateLabel, elsewhere, cancelled, com.tribetails.auntieos.web.screens.LocalServiceCatalog.current,
+                            )
                             AuntieChip(
                                 label    = chipLabel,
                                 selected = session._id in pendingIds,
@@ -1187,7 +1208,7 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                session.serviceType.ifBlank { "Service" },
+                linkedSessionServiceLabel(session.serviceType, com.tribetails.auntieos.web.screens.LocalServiceCatalog.current),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textPrimary,
             )

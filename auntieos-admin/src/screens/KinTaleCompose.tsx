@@ -874,11 +874,10 @@ function ComposeForm({
           <dt>Service</dt>
           <dd>{serviceName}</dd>
         </div>
+        {/* #1744: the visit by its day, never its session id. */}
         <div className="kintale-compose__meta-row">
-          <dt>Session</dt>
-          <dd>
-            <code>{draft.sessionId}</code>
-          </dd>
+          <dt>Visit</dt>
+          <dd>{kinTaleWhen({ visitDate: draft.visitDate, arrivedAt: draft.arrivedAt, sentAt: '', createdAt: '' })}</dd>
         </div>
         <div className="kintale-compose__meta-row">
           <dt>Template</dt>

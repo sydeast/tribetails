@@ -58,6 +58,15 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   setSessionDoNotInvoice,
 }));
 
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+const CATALOG = vi.hoisted(() => ({
+  serviceRates: { 'Long walk': '45' },
+  serviceDurations: { 'Long walk': '45' },
+  timeBlocks: [],
+}));
+vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => CATALOG }));
+
 import { UninvoicedVisitsPicker, visitLineDescription } from './UninvoicedVisitsPicker';
 
 function session(over: Partial<ListUninvoicedSessionsResultSession> = {}): ListUninvoicedSessionsResultSession {
@@ -124,6 +133,34 @@ describe('visitLineDescription', () => {
 
   it('falls back to a generic label rather than an empty description', () => {
     expect(visitLineDescription(session({ serviceType: '' }))).toContain('Visit');
+  });
+
+  it('#1744: names the KinCare off the catalog, never the stored key the household would read', () => {
+    expect(visitLineDescription(session({ serviceType: 'visit_45' }), CATALOG)).toBe('Long walk, 2026-07-10');
+  });
+});
+
+describe('UninvoicedVisitsPicker service names (#1744)', () => {
+  it('names each billable and excluded visit by its KinCare, labels included', async () => {
+    listUninvoicedSessions.mockResolvedValue(
+      result({
+        sessions: [session({ serviceType: 'visit_45', unitCents: null })],
+        excluded: [
+          {
+            sessionId: 'gone1',
+            kinfolkId: 'kf1',
+            serviceType: 'visit_45',
+            startTime: '2026-07-02T14:00:00.000Z',
+            reason: '',
+          },
+        ],
+      }),
+    );
+    render(<Harness />);
+    expect(await screen.findByRole('checkbox', { name: 'Bill Long walk on 2026-07-10' })).toBeInTheDocument();
+    expect(screen.getAllByText('Long walk')).toHaveLength(2);
+    expect(screen.getByRole('textbox', { name: 'Price for Long walk on 2026-07-10' })).toBeInTheDocument();
+    expect(screen.queryByText(/visit_45/)).toBeNull();
   });
 });
 

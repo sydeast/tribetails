@@ -41,8 +41,23 @@ vi.mock('../api/bookingRequests', () => ({
 }));
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
 vi.mock('../api/settings', () => ({ getBusinessSettings }));
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+const CATALOG = vi.hoisted(() => ({
+  serviceRates: { 'Long walk': '45' },
+  serviceDurations: { 'Long walk': '45' },
+  timeBlocks: [],
+}));
+vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => CATALOG }));
 
-import { VisitRequestsSection, mergeQueues, requestKey, whenLabel } from './VisitRequestsSection';
+import {
+  VisitRequestsSection,
+  mergeQueues,
+  requestKey,
+  requestVisitLines,
+  rowSubject,
+  whenLabel,
+} from './VisitRequestsSection';
 
 /** `useToast()` throws outside a provider; render the real one, the NeedsTriageSection.test convention. */
 function render(ui: ReactElement) {
@@ -1071,6 +1086,44 @@ describe('requestKey: envelope rows (#533)', () => {
  * The cards named the service, never the household; the card body did not
  * open; and Accept did not say who the answer was for.
  */
+describe('VisitRequestsSection: service names (#1744)', () => {
+  it('names the KinCare on the row subject and the visit lines, never the stored key', () => {
+    const row = { kind: 'newBooking' as const, request: newBooking({ serviceType: 'visit_45' }) };
+    expect(rowSubject(row, CATALOG)).toBe('Long walk · Rex');
+    const cancel = { kind: 'cancel' as const, request: cancellation({ title: null, serviceType: 'visit_45' }) };
+    expect(rowSubject(cancel, CATALOG)).toBe('Long walk · Nutmeg');
+    const lines = requestVisitLines(
+      newBooking({
+        visits: [
+          {
+            visitId: 'v1',
+            serviceId: 's1',
+            serviceType: 'visit_45',
+            startTimeMs: CURRENT_MS,
+            startTimePending: false,
+            requestedDate: null,
+            timeBlockLabel: null,
+            lengthMinutes: null,
+          },
+        ],
+      }),
+      CATALOG,
+    );
+    expect(lines[0]).toMatch(/ · Long walk$/);
+  });
+
+  it('the card and the opened request say the KinCare name', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking({ serviceType: 'visit_45' })] });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    expect(await screen.findByText('Long walk · Rex')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Long walk · Rex'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Service').nextElementSibling).toHaveTextContent('Long walk');
+    expect(screen.queryByText(/visit_45/)).toBeNull();
+  });
+});
+
 describe('VisitRequestsSection: whose request it is (#1577)', () => {
   it('names the household on every kind of card', async () => {
     listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });

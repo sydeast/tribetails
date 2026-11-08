@@ -105,6 +105,11 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
 // #1567: the server re-read after a send got no answer.
 const { readInvoiceSendMarks } = vi.hoisted(() => ({ readInvoiceSendMarks: vi.fn() }));
 vi.mock('../api/invoiceSendCheck', () => ({ readInvoiceSendMarks }));
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
+}));
 import { InvoiceDetail, paymentSplit, parseOptionalMoney } from './InvoiceDetail';
 import { CallableTimeoutError } from '../lib/fns';
 import { sendMarksOf } from '../lib/invoiceSendCheck';
@@ -1383,6 +1388,12 @@ describe('the payments panel', () => {
   });
 });
 describe('the linked visits panel', () => {
+  it('#1744: names each visit by its KinCare, never the stored key', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ sessions: [ledgerSession({ serviceType: 'visit_45' })] }));
+    render(<InvoiceDetail invoice={entry({ sessionIds: ['s1'] })} onClose={vi.fn()} />);
+    expect(await screen.findByRole('link', { name: 'Long walk' })).toBeInTheDocument();
+    expect(screen.queryByText('visit_45')).toBeNull();
+  });
   it('renders the visits the invoice bills', async () => {
     getInvoiceLedger.mockResolvedValue(
       ledgerResult({ sessions: [ledgerSession()] }),
