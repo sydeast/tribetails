@@ -863,7 +863,7 @@ private fun TemplateViewOverlay(
         title = template.title.ifBlank { template.templateId.ifBlank { "Template" } },
         onDismiss = onDismiss,
         closeIcon = Lucide.X,
-        hint = "Stored in Firestore, rendered with Handlebars. SendGrid delivers as a dumb pipe.",
+        hint = TEMPLATE_PREVIEW_HINT,
         footer = {
             GhostButton(label = "Close", onClick = onDismiss, modifier = Modifier.weight(1f))
             PrimaryButton(

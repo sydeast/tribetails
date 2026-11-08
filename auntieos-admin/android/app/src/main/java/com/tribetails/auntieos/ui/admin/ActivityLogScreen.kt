@@ -249,9 +249,7 @@ private fun LogPanel(
                         dashed = true,
                     ) {
                         Text(
-                            "$unparseable of ${sortedAll.size} entries have a timestamp this screen can't read as ISO-8601. " +
-                                "The audit writer may be storing a Firestore Timestamp object instead of a string, " +
-                                "which breaks day-grouping and ordering. Day/time shown as best-effort below.",
+                            unreadableTimesNote(unparseable, sortedAll.size),
                             style = AuntieTheme.typography.bodySmall,
                             color = AuntieTheme.colors.textDim,
                         )

@@ -285,10 +285,7 @@ fun HouseholdMembersBody(
             DenPanel(
                 title = "Primary contact",
                 meta = "role: PRIMARY",
-                subtitle = "The household account owner. Held by role, not by setting: full " +
-                    "billing, home access, kin edits and messaging come with being the primary, " +
-                    "and the server reads the role rather than these flags, so there is nothing " +
-                    "here to switch off.",
+                subtitle = PRIMARY_PANEL_TIP,
             ) {
                 when {
                     state.membersError != null -> {
@@ -383,9 +380,7 @@ fun HouseholdMembersBody(
             DenPanel(
                 title = "Invites",
                 meta = if (state.invitesLoaded) "${state.invites.size} total" else null,
-                subtitle = "Every invite this household has been sent. An invite past its expiry " +
-                    "reads Expired here from the moment it lapses, even though the nightly sweep " +
-                    "has not stamped it yet.",
+                subtitle = INVITES_PANEL_TIP,
             ) {
                 when {
                     state.invitesError != null -> {
@@ -1117,3 +1112,14 @@ internal fun portalInviteBlockerFor(state: HouseholdMembersUiState): String? {
     val email = if (state.householdEmailLoaded) state.householdEmail else "unread"
     return com.tribetails.auntieos.ui.directory.portalInviteBlocker(email, hasActivePrimary)
 }
+/**
+ * The Primary contact panel's tip. #1592: it also said "the server reads the
+ * role rather than these flags", which is how the code works, not what the
+ * operator does. Same words as web.
+ */
+internal const val PRIMARY_PANEL_TIP =
+    "The household account owner. Held by role, not by setting: full billing, home access, " +
+        "kin edits and messaging come with being the primary, so there is nothing here to switch off."
+/** The Invites panel's tip. #1592: "even though the nightly sweep has not stamped it yet" is gone. */
+internal const val INVITES_PANEL_TIP =
+    "Every invite this household has been sent. An invite reads Expired the moment it lapses."

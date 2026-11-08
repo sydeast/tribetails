@@ -167,6 +167,19 @@ internal fun communicateMessageTypeOptions(): List<String> = commTypeOptions
  */
 internal fun communicateMessageTypeLabel(wire: String): String = commTypeDisplayMap[wire] ?: wire
 
+/**
+ * The draft callout's detail line: who it is for and what kind of message it
+ * is, by its chip label. #1592: it also printed the model name and the draft
+ * id ("for Dana · visit_report · claude-sonnet-4-5 · draft #d7"), which are
+ * the generator's and the database's, not the operator's. Same line as web's
+ * `draftSubtitle`.
+ */
+internal fun draftCalloutSubtitle(kinfolkName: String, commType: String): String =
+    listOfNotNull(
+        kinfolkName.trim().takeIf { it.isNotEmpty() }?.let { "for $it" },
+        commType.trim().takeIf { it.isNotEmpty() }?.let(::communicateMessageTypeLabel),
+    ).joinToString(" · ")
+
 // The archive's Tone enum, verbatim. The previous Android set
 // (warm/casual/celebratory/urgent/professional) was invented here and shared
 // only one value with the archive and with web, so the same tone chip produced
@@ -465,12 +478,7 @@ private fun ComposePanel(
             // ── Generated draft callout + editor ───────────────────────────────
             if (state.generatedCopy.isNotBlank()) {
                 DraftCallout(
-                    subtitle = listOf(
-                        state.generatedKinfolkName.takeIf { it.isNotBlank() }?.let { "for $it" },
-                        state.generatedCommType.takeIf { it.isNotBlank() },
-                        state.generatedModel.takeIf { it.isNotBlank() },
-                        state.draftId?.let { "draft #$it" },
-                    ).filterNotNull().joinToString(" · "),
+                    subtitle = draftCalloutSubtitle(state.generatedKinfolkName, state.generatedCommType),
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                     AuntieFieldLabel(text = "Edit before approving")
