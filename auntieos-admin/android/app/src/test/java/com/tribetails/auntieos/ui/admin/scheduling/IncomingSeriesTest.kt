@@ -241,6 +241,22 @@ class IncomingSeriesTest {
         assertEquals("Book this request", series.approveConfirmTitle())
     }
     @Test
+    fun `#1744 the request names its KinCare, never the stored key`() {
+        val catalog = com.tribetails.auntieos.ui.admin.ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "45"))
+        val series = groupIncomingBySeries(
+            listOf(
+                ikc("b1", "v1", "2026-06-03T14:00:00Z").copy(serviceType = "visit_45", kinNames = listOf("Rex")),
+                ikc("b1", "v2", "2026-06-10T14:00:00Z").copy(serviceType = "Bath time"),
+            ),
+        ).single()
+        assertEquals("Long walk", series.serviceName(catalog))
+        assertEquals("2 visits · recurring series · Long walk · Rex", series.subject(catalog))
+        assertEquals(
+            listOf("Wed, Jun 3 at 9:00 AM", "Wed, Jun 10 at 9:00 AM · Bath time"),
+            series.visitLines(ZoneId.of("America/Chicago"), catalog),
+        )
+    }
+    @Test
     fun theDetailListsEveryVisitOnTheBusinessClock() {
         val series = groupIncomingBySeries(
             listOf(

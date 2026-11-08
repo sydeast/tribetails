@@ -73,6 +73,11 @@ vi.mock('../lib/visitTracking', () => ({
  */
 const { useArrivalRule } = vi.hoisted(() => ({ useArrivalRule: vi.fn<() => boolean | null>(() => null) }));
 vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
+}));
 import { Sessions } from './Sessions';
 
 /**
@@ -420,6 +425,14 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(within(card).getByRole('button', { name: 'Undo arrived' })).toBeInTheDocument();
   });
 
+  it('#1744: the card line names the KinCare, never the stored key', () => {
+    usePagedCollection.mockReturnValue(paged([{ ...populated, serviceType: 'visit_45' }]));
+    directory(households, kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).getByText('Long walk · Biscuit & Gravy · Today · 09:00 to 09:30')).toBeInTheDocument();
+    expect(within(card).queryByText(/visit_45/)).toBeNull();
+  });
   it('wears the kit status pill in the state tone, not a chip of its own', () => {
     // The #755 fidelity pass: one capsule for every screen that shows a visit.
     // The tone is the mock's own per-state palette (arrived is teal), resolved

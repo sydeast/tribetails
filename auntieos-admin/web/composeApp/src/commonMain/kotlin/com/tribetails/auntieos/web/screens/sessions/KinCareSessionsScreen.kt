@@ -550,7 +550,8 @@ private fun KinCareCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         if (session.serviceType.isNotBlank()) {
-                            Text(session.serviceType, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            // #1744: the KinCare's name, never the stored `visit_60`.
+                            Text(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current.nameOf(session.serviceType), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             Text("·", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
                         }
                         Text(sessionWindow(session), style = AuntieTheme.typography.bodySmall, color = c.textDim)

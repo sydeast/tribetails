@@ -8,7 +8,8 @@ import {
   markBookingCompleted,
   rescheduleBooking,
 } from '../api/bookingsWrite';
-import { bookingState, bookingStateInfo, bookingWhen, type BookingState } from '../lib/bookingFormat';
+import { bookingServiceName, bookingState, bookingStateInfo, bookingWhen, type BookingState } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { completeRefusal } from '../lib/completeRule';
 import { useArrivalRule } from '../lib/useArrivalRule';
 import { Dialog } from '../components/Dialog';
@@ -195,6 +196,8 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   // #1154: the override a reschedule refusal offers, or null. Cleared once taken,
   // so the same losing move is never offered twice.
   const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
+  // #1744: the Service row names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
 
   if (!entry) {
     return (
@@ -397,7 +400,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       <dl className="booking-actions__meta">
         <div>
           <dt>Service</dt>
-          <dd>{(booking.serviceType ?? '').trim() !== '' ? booking.serviceType : 'Visit'}</dd>
+          <dd>{bookingServiceName(booking.serviceType ?? '', catalog)}</dd>
         </div>
         <div>
           <dt>When</dt>

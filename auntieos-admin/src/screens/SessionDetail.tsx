@@ -3,6 +3,8 @@ import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressC
 import { type SessionEntry } from '../api/sessions';
 import { kinForHouseholdQuery, type Kin, type Kinfolk } from '../api/directory';
 import { getBusinessSettings } from '../api/settings';
+import { bookingServiceName } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { useCollection, useDocById } from '../lib/firestore';
 import { updateKinCareSession } from '../api/sessionsWrite';
@@ -250,12 +252,17 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   const kinNames = arr<string>(entry?.kinNames).filter((n) => n.trim() !== '');
   const kinLabel = kinNames.join(' & ');
   const serviceTypeNow = str(entry?.serviceType);
+  // #1744: the title names the KinCare, never the stored `visit_60`. The Rate
+  // row below still matches the stored text: it shows what the rate card holds
+  // for that exact name, and a guessed match would show a price billing may not use.
+  const namingCatalog = useBookingCatalog();
+  const serviceNameNow = serviceTypeNow.trim() === '' ? '' : bookingServiceName(serviceTypeNow, namingCatalog);
   const sessionLabel =
     entry === null ? 'KinCare session' : kinLabel !== '' ? kinLabel : household;
   const heroTitle =
     entry === null
       ? 'KinCare session'
-      : [kinLabel, serviceTypeNow].filter((p) => p.trim() !== '').join(' · ') || household;
+      : [kinLabel, serviceNameNow].filter((p) => p.trim() !== '').join(' · ') || household;
   // The door comes off the household record, the one field this screen reads
   // from it. A live subscription for the reason `useHouseholdLocation` gives:
   // the address is edited from the Kinfolk profile, and a frozen copy would

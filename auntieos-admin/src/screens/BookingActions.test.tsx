@@ -33,6 +33,11 @@ vi.mock('../api/bookingsWrite', () => ({
 // #1608: the arrival rule, mocked at the hook so nothing reaches Firestore.
 const { useArrivalRule } = vi.hoisted(() => ({ useArrivalRule: vi.fn<() => boolean | null>(() => null) }));
 vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
+}));
 import { BookingActions, BookingStatusActions } from './BookingActions';
 
 // #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
@@ -105,6 +110,12 @@ describe('BookingActions: detail view', () => {
     expect(screen.getByText(/Jul 16, 9:00 AM/)).toBeInTheDocument();
     expect(screen.getByText('Leave the gate latched.')).toBeInTheDocument();
     expect(screen.getByText('SCHEDULED')).toBeInTheDocument();
+  });
+
+  it('#1744: the Service row names the KinCare, never the stored key', () => {
+    render(<BookingActions entry={entry({ serviceType: 'visit_45' })} onClose={vi.fn()} />);
+    expect(screen.getByText('Long walk')).toBeInTheDocument();
+    expect(screen.queryByText('visit_45')).toBeNull();
   });
 
   it('an unnamed kinfolk renders "Unnamed Kinfolk" rather than a blank title', () => {

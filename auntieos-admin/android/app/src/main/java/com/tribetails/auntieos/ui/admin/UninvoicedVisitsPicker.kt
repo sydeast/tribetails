@@ -88,6 +88,8 @@ fun UninvoicedVisitsPicker(
     load: suspend (String, String?, String?) -> Result<ListUninvoicedSessionsResult>,
     setDoNotInvoice: suspend (List<String>, Boolean, String) -> Result<SetSessionDoNotInvoiceResult>,
     disabled: Boolean = false,
+    /** #1744: each row names the KinCare, never the stored `visit_60`. */
+    catalog: ServiceCatalog = rememberServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
     val scope = rememberCoroutineScope()
@@ -375,7 +377,7 @@ fun UninvoicedVisitsPicker(
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    s.serviceType.ifBlank { "Visit" },
+                                    catalog.nameOf(s.serviceType),
                                     style = AuntieTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = c.textPrimary,
@@ -503,7 +505,7 @@ fun UninvoicedVisitsPicker(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    e.serviceType.ifBlank { "Visit" },
+                                    catalog.nameOf(e.serviceType),
                                     style = AuntieTheme.typography.bodyMedium,
                                     color = c.textPrimary,
                                 )

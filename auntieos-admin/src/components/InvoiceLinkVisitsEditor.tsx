@@ -4,6 +4,8 @@ import { sessionsForKinfolkQuery, type SessionEntry } from '../api/sessions';
 import type { LinkInvoiceSessionsResult } from '../contracts/invoiceContracts.generated';
 import { useCollection } from '../lib/firestore';
 import { humanizeDate, localDateIso } from '../lib/invoiceFormat';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { sessionState, sessionStateInfo } from '../lib/sessionFormat';
 import { AsyncRegion } from './AsyncRegion';
 import { Banner } from './Banner';
@@ -181,6 +183,8 @@ function HouseholdVisits({
   onToggle,
 }: RowsProps & { invoiceId: string; kinfolkId: string; initial: readonly string[] }) {
   const visits = useCollection<SessionEntry>(sessionsForKinfolkQuery(kinfolkId));
+  // #1744: each row names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
   return (
     <AsyncRegion state={visits} what="the household's visits" isEmpty={() => false} empty={null}>
       {(rows) => {
@@ -196,6 +200,7 @@ function HouseholdVisits({
                   <VisitRow
                     key={s._id}
                     session={s}
+                    catalog={catalog}
                     checked={pending.has(s._id)}
                     // Already in this invoice's set: always togglable, even when
                     // its back-link points elsewhere, so a half-link can be undone.
@@ -220,6 +225,7 @@ function HouseholdVisits({
 
 function VisitRow({
   session,
+  catalog,
   checked,
   elsewhere,
   cancelled,
@@ -227,13 +233,14 @@ function VisitRow({
   onToggle,
 }: {
   session: SessionEntry;
+  catalog: BookingCatalog;
   checked: boolean;
   elsewhere: boolean;
   cancelled: boolean;
   disabled: boolean;
   onToggle: (id: string) => void;
 }) {
-  const service = session.serviceType?.trim() || 'Visit';
+  const service = bookingServiceName(session.serviceType, catalog);
   const start = session.startTime ?? '';
   const day = start.trim() === '' ? 'no date' : humanizeDate(start.slice(0, 10), localDateIso(new Date()));
   const status = sessionStateInfo(sessionState(session.status ?? '')).label;

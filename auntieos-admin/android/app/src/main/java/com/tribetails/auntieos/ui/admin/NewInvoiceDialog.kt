@@ -153,7 +153,9 @@ fun NewInvoiceDialog(
     val dueDateForSubmit = if (termsCode == InvoiceTermsCode.CUSTOM) customDueDate.trim() else due.dueDate.orEmpty()
 
     /** The lines this invoice would carry, and the live total under them. */
-    val money = if (onWork) composerMoney(sessions, selected, prices, extraLines, invoiceDiscountText) else null
+    // #1744: each visit line names its KinCare, never the stored `visit_60`.
+    val catalog = rememberServiceCatalog()
+    val money = if (onWork) composerMoney(sessions, selected, prices, extraLines, invoiceDiscountText, catalog) else null
 
     val blocked = composerBlockedReason(
         kinfolkId = pick.id,
@@ -320,6 +322,7 @@ fun NewInvoiceDialog(
                 load = loadUninvoiced,
                 setDoNotInvoice = setDoNotInvoice,
                 disabled = submitting,
+                catalog = catalog,
             )
 
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

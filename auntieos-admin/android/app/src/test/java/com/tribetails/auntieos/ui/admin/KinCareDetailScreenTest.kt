@@ -67,6 +67,7 @@ class KinCareDetailScreenTest {
     private fun mount(
         kinCareRepo: KinCareRepository,
         repo: AuntieRepository = mockk(relaxed = true),
+        settings: BusinessSettings = BusinessSettings(timeZone = "America/Chicago"),
     ) {
         // Explicit, not relaxed-default: `Result<T>` is a value class and the
         // relaxed default is not a return value these call sites can safely
@@ -75,7 +76,7 @@ class KinCareDetailScreenTest {
         coEvery { repo.getKinfolk() } returns Result.success(emptyList())
         coEvery { repo.getKinByIds(any()) } returns Result.success(emptyMap())
         coEvery { repo.get411ByKinIds(any()) } returns Result.success(emptyMap())
-        coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings(timeZone = "America/Chicago"))
+        coEvery { repo.getBusinessSettings() } returns Result.success(settings)
         coEvery { kinCareRepo.getReportsForSession(any()) } returns Result.success(emptyList())
         // #760's route panel reads the breadcrumb subcollection, so this joins
         // the list above for the reason stated above rather than as
@@ -113,6 +114,30 @@ class KinCareDetailScreenTest {
      * into this screen; this proves that contract resolves to a real visit
      * via the by-id fetch, not the collection scan it replaces.
      */
+    @Test
+    fun `#1744 the title and Service row name the KinCare, never the stored key`() {
+        val session = KinCareSession(
+            id = "vis_ses1",
+            kinfolkId = "fam1",
+            kinfolkName = "The Wrens",
+            serviceType = "visit_45",
+            startTime = "2026-08-19T14:00:00",
+            endTime = "2026-08-19T14:45:00",
+        )
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(session)
+        // "Long walk" runs 45 minutes, so a stored `visit_45` reads as "Long walk".
+        mount(
+            kinCareRepo,
+            settings = BusinessSettings(
+                timeZone = "America/Chicago",
+                serviceRates = mapOf("Long walk" to "45"),
+                serviceDurations = mapOf("Long walk" to "45"),
+            ),
+        )
+        rule.onAllNodesWithText("Long walk").onFirst().assertIsDisplayed()
+        rule.onAllNodesWithText("visit_45").assertCountEquals(0)
+    }
     @Test
     fun `an entry point's session id fetches by id and renders the visit`() {
         val session = KinCareSession(
