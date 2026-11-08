@@ -177,7 +177,7 @@ export async function setKinArchivedHandler(
     targetUid: args.kinId,
     targetCollection: 'kin',
     ...(outcome.kinfolkId ? { familyId: outcome.kinfolkId } : {}),
-    description: `${args.archived ? 'Archived' : 'Restored'} kin ${outcome.kinName ?? args.kinId}`,
+    description: (await import('../lib/activityWords.js')).kinArchivedWords(args.archived, outcome.kinName),
     payload: {
       kinId: args.kinId,
       kinfolkId: outcome.kinfolkId,

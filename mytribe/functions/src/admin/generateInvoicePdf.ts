@@ -58,9 +58,10 @@ export async function generateInvoicePdfHandler(
     throw new HttpsError('not-found', `Invoice ${args.invoiceId} does not exist.`);
   }
 
+  const invoice = snap.data() as Record<string, unknown>;
   let pdfUrl: string;
   try {
-    pdfUrl = await generateAndStoreInvoicePdf(args.invoiceId, snap.data() as Record<string, unknown>);
+    pdfUrl = await generateAndStoreInvoicePdf(args.invoiceId, invoice);
   } catch (err) {
     // Surface a user-fault code (not a Sentry-captured 'internal') so a render/
     // store failure is a clear, non-noisy error.
@@ -74,8 +75,11 @@ export async function generateInvoicePdfHandler(
     severity: 'info',
     actorRole: 'AUNTIE',
     actorUid: uid,
+    // #1752: the invoice is the target and the sentence names its number, not its id.
+    targetUid: args.invoiceId,
     targetCollection: 'invoices',
-    description: `Invoice PDF generated for ${args.invoiceId}`,
+    ...(typeof invoice['kinfolkId'] === 'string' && invoice['kinfolkId'] !== '' ? { familyId: invoice['kinfolkId'] } : {}),
+    description: (await import('../lib/activityWords.js')).invoicePdfMadeWords(invoice['invoiceNumber']),
     payload: { invoiceId: args.invoiceId },
   }).catch((err) => {
     logEvent({ severity: 'warn', function: 'generateInvoicePdf', event: 'audit.write.failed', uid, errorMessage: (err as Error)?.message });

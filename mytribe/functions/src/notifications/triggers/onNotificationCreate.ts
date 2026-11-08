@@ -92,7 +92,11 @@ export async function onNotificationDispatchCreateHandler(event: any): Promise<v
       actorRole: 'SYSTEM',
       targetUid: notificationId,
       targetCollection: 'notifications',
-      description: `Notification ${data.key ?? '(unknown key)'} dispatched to ${channels.join(', ')}`,
+      // #1752: the notification's name, not its catalog key.
+      description: (await import('../../lib/activityWords.js')).notificationDispatchedWords(
+        (await import('../notificationName.js')).notificationName(data.key),
+        channels,
+      ),
       payload: {
         notificationId,
         key: data.key ?? '',

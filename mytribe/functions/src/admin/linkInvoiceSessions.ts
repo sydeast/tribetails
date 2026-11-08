@@ -333,7 +333,10 @@ export async function linkInvoiceSessionsHandler(
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId: outcome.data.kinfolkId,
-    description: `Invoice ${outcome.data.invoiceNumber ?? args.invoiceId} session links set to ${newIds.length} session(s) (${outcome.added.length} linked, ${outcome.removed.length} unlinked)`,
+    description: (await import('../lib/activityWords.js')).invoiceSentence(
+      outcome.data.invoiceNumber,
+      `session links set to ${newIds.length} session(s) (${outcome.added.length} linked, ${outcome.removed.length} unlinked)`,
+    ),
     payload: {
       invoiceId: args.invoiceId,
       sessionCount: newIds.length,
