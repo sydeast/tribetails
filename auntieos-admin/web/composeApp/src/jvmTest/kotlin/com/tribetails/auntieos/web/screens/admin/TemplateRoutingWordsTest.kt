@@ -92,14 +92,22 @@ class TemplateRoutingWordsTest {
 
     @Test
     fun theTriggerAndTheEditorTitleCarryNoKey() {
-        val rows = listOf(row("invoice.paid", "Invoice paid"))
-        assertEquals("Trigger: Invoice sent", triggerLine(binding("invoice.paid", "t", trigger = "invoice.sent")))
-        assertNull(triggerLine(binding("invoice.paid", "t", trigger = "invoice.paid")))
-        assertEquals("Edit: Invoice paid", bindingDialogTitle(binding("invoice.paid", "t"), isNew = false, rows = rows))
-        assertEquals("New Binding", bindingDialogTitle(binding("", "t"), isNew = true, rows = rows))
-        assertFalse(BINDING_DIALOG_HINT.contains("Firestore"))
+        val r = row("invoice.paid", "Invoice paid")
+        val subtitle = routingRowSubtitle(
+            row = r,
+            binding = binding("invoice.paid", "t", trigger = "invoice.sent"),
+            namesById = emptyMap(),
+            bankLoaded = false,
+            missing = false,
+            missingNote = null,
+        )
+        assertTrue(subtitle.contains("Trigger: Invoice sent"))
+        val plain = routingRowSubtitle(r, binding("invoice.paid", "t", trigger = "invoice.paid"), emptyMap(), false, false, null)
+        assertFalse(plain.contains("Trigger"))
+        assertEquals("Override: Invoice paid", overrideDialogTitle(r))
+        assertEquals("Change override: Invoice paid", overrideDialogTitle(r.copy(bound = true)))
+        assertFalse(OVERRIDE_DIALOG_HINT.contains("Firestore"))
     }
-
     @Test
     fun theBannersNameTheNotifications() {
         val rows = listOf(row("invite.verify-email"), row("invoice.paid", "Invoice paid"))
