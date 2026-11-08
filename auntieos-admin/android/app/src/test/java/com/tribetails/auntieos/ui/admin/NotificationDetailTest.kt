@@ -146,4 +146,26 @@ class NotificationDetailTest {
             notificationDetailRows(entry(everyField)).map { it.first },
         )
     }
+    // #1749: a card written before the server named the service carries the
+    // visit's stored key. Read through the KinCare list it names the KinCare;
+    // the stored card is not rewritten.
+    private val catalog = ServiceCatalog(
+        serviceRates = mapOf("30Minute" to "25", "60Minute" to "40"),
+        serviceDurations = mapOf("30Minute" to "30", "60Minute" to "60"),
+    )
+    @Test
+    fun aStoredVisitKeyReadsAsTheKinCare() {
+        val rows = notificationDetailRows(entry(NotificationDetail(kinName = "Biscuit", serviceType = "visit_60")), catalog)
+        assertEquals("60Minute", rows.toMap()["Service"])
+    }
+    @Test
+    fun aNameTheServerResolvedStaysTheKinCareName() {
+        val rows = notificationDetailRows(entry(NotificationDetail(serviceType = "30 Minute")), catalog)
+        assertEquals("30Minute", rows.toMap()["Service"])
+    }
+    @Test
+    fun theCatalogTouchesNoOtherRow() {
+        val rows = notificationDetailRows(entry(NotificationDetail(kinName = "visit_60")), catalog)
+        assertEquals(listOf("Kin" to "visit_60"), rows)
+    }
 }

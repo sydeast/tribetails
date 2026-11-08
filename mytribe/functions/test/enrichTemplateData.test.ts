@@ -550,3 +550,62 @@ describe('TEMPLATE_FIELDS mirrors the on-disk seed tokens (drift guard)', () => 
     });
   }
 });
+/**
+ * #1749: a household read "All wrapped up with your visit_60". The stored
+ * `serviceType` is a code; {{serviceType}} must carry the KinCare's name, the
+ * same name the portal schedule shows (`lib/serviceDisplayName.ts`).
+ */
+describe('enrichTemplateData: {{serviceType}} names the KinCare (#1749)', () => {
+  const SETTINGS = {
+    timeZone: 'America/New_York',
+    serviceRates: { '30Minute': '25', '60Minute': '40', Overnight: '90' },
+    serviceDurations: { '30Minute': '30', '60Minute': '60', Overnight: '720' },
+  };
+  it('resolves a code the emitter passed as serviceType (the auntie departed push)', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'business_settings/business_settings': SETTINGS } }).db);
+    const out = await enrichTemplateData('kincare.auntie.departed', 'cli1', {
+      kinfolkId: 'fam1',
+      serviceType: 'visit_60',
+    });
+    expect(out.serviceType).toBe('60 Minute');
+  });
+  it('resolves a code that arrived as serviceName (the booking trigger and the reminder cron)', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'business_settings/business_settings': SETTINGS } }).db);
+    const out = await enrichTemplateData('kincare.booking.cancel', 'cli1', {
+      kinfolkId: 'fam1',
+      serviceName: '30minute',
+      startTimeMs: Date.UTC(2026, 10, 7, 15, 0),
+    });
+    expect(out.serviceType).toBe('30 Minute');
+  });
+  it('resolves the code stored on the visit when the emitter sent none', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'business_settings/business_settings': SETTINGS,
+          'families/fam1/bookings/b1/kinCares/v1': { serviceType: 'visit_60', kinNames: ['Biscuit'] },
+        },
+      }).db,
+    );
+    const out = await enrichTemplateData('kincare.changed', 'cli1', {
+      kinfolkId: 'fam1',
+      batchId: 'b1',
+      visitId: 'v1',
+    });
+    expect(out.serviceType).toBe('60 Minute');
+  });
+  it('a code the catalog cannot place reads "visit", never the code', async () => {
+    const twoHours = {
+      serviceRates: { Walk: '20', Sit: '30' },
+      serviceDurations: { Walk: '60', Sit: '60' },
+    };
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'business_settings/business_settings': twoHours } }).db);
+    const out = await enrichTemplateData('kincare.auntie.arrived', 'cli1', { serviceType: 'visit_60' });
+    expect(out.serviceType).toBe('visit');
+  });
+  it('keeps a label that is already a name', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'business_settings/business_settings': SETTINGS } }).db);
+    const out = await enrichTemplateData('kincare.auntie.on_my_way', 'cli1', { serviceType: 'Drop-in visit' });
+    expect(out.serviceType).toBe('Drop-in visit');
+  });
+});

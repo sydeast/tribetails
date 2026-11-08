@@ -1,5 +1,6 @@
 import { rec, str } from './coerce';
 import { type NotificationEntry } from '../api/notifications';
+import { bookingServiceName, type BookingCatalog } from './bookingFormat';
 
 /**
  * Turns a notification's server-resolved `detail` into the labelled rows a card
@@ -61,15 +62,25 @@ const DETAIL_LABELS: readonly (readonly [string, string])[] = [
  * card that opens onto nothing is a worse answer than a card that says there is
  * nothing to open.
  */
-export function notificationDetailRows(entry: NotificationEntry): NotificationDetailRow[] {
+export function notificationDetailRows(
+  entry: NotificationEntry,
+  /**
+   * #1749: the operator's KinCare list. A card written before the server named
+   * the service carries the visit's stored key (`visit_60`) on its Service row;
+   * with the catalog that key reads as the KinCare it is, the way Bookings and
+   * the Schedule name it. A value that does not resolve still shows as written.
+   */
+  catalog?: BookingCatalog,
+): NotificationDetailRow[] {
   // Read through `rec` rather than `entry.detail` directly: this interface is a
   // cast over raw Firestore data, so a hand-seeded doc can put a string here and
   // property access on it would silently yield undefined for every field.
   const detail = rec(entry.detail);
   const rows: NotificationDetailRow[] = [];
   for (const [field, label] of DETAIL_LABELS) {
-    const value = str(detail[field]).trim();
-    if (value === '') continue;
+    const raw = str(detail[field]).trim();
+    if (raw === '') continue;
+    const value = field === 'serviceType' && catalog ? bookingServiceName(raw, catalog) : raw;
     rows.push(field === 'notes' ? { field, label, value, multiline: true } : { field, label, value });
   }
   return rows;
