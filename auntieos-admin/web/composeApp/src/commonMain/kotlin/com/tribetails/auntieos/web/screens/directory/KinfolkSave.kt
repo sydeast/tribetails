@@ -104,7 +104,7 @@ fun kinfolkRetryId(
 /**
  * #829 review items 4 and 14: the line under the contact editor once a save has
  * come back, or null when there is nothing to say. The server's own message,
- * never a "saveEmergencyContacts failed: " prefix.
+ * never a "Could not save: " prefix.
  *
  * - Saved, with a [contactProblem] the pre-check found: the household is saved,
  *   the contact still needs fixing, and the screen stays open.

@@ -94,7 +94,7 @@ class DirectoryViewModelEmergencyContactsTest {
         assertEquals("kf-new", vm.addKinfolkState.value.createdKinfolkId)
         // #829 review item 4: the server's message first, no call-name prefix.
         assertTrue(vm.addKinfolkState.value.error.orEmpty().startsWith("offline The household was created"))
-        assertFalse(vm.addKinfolkState.value.error.orEmpty().contains("saveEmergencyContacts failed"))
+        assertFalse(vm.addKinfolkState.value.error.orEmpty().contains("Could not save"))
         vm.saveKinfolk()
         coVerify(exactly = 1) { repo.createKinfolkComplete(any(), any()) }
         assertTrue(vm.addKinfolkState.value.isSuccess)

@@ -49,6 +49,6 @@ class KinfolkContactGateTest {
         assertEquals(refused, contactErrorAfterSave(KinfolkSaveOutcome.ContactsFailed("kf1", refused), isNew = false, contactProblem = null))
         val onAdd = contactErrorAfterSave(KinfolkSaveOutcome.ContactsFailed("kf-new", refused), isNew = true, contactProblem = null)
         assertEquals("$refused The household was created and shows No Emergency Contact until this is saved.", onAdd)
-        assertFalse(onAdd.orEmpty().contains("saveEmergencyContacts failed"))
+        assertFalse(onAdd.orEmpty().contains("Could not save"))
     }
 }

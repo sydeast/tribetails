@@ -351,7 +351,7 @@ describe('CommunicateCompose screen', () => {
     await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
     await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
 
-    expect(await screen.findByText(/sendBroadcast failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not send: permission-denied/)).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
     // Body/subject survive the failure.
     expect(screen.getByLabelText(/message/i)).toHaveValue('Hello kinfolk');
@@ -371,7 +371,7 @@ describe('CommunicateCompose screen', () => {
     await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
     await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
     await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
-    expect(await screen.findByText(/sendBroadcast failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not send/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
     await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
@@ -394,7 +394,7 @@ describe('CommunicateCompose screen', () => {
     await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
     await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
     await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
-    expect(await screen.findByText(/sendBroadcast failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not send/)).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText(/message/i), ' and more');
     await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
@@ -602,7 +602,7 @@ describe('saved segments', () => {
   it('says the segment list failed to load, and still lets an ad-hoc broadcast go out', async () => {
     listAudienceSegments.mockRejectedValueOnce(new Error('permission-denied'));
     render(<CommunicateCompose />);
-    expect(await screen.findByText(/listAudienceSegments failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'All active kinfolk' })).toBeInTheDocument();
   });
   it('surfaces a save failure rather than claiming a segment that was never stored', async () => {
@@ -610,7 +610,7 @@ describe('saved segments', () => {
     render(<CommunicateCompose />);
     await userEvent.type(screen.getByLabelText(/save this audience as/i), 'Actives');
     await userEvent.click(screen.getByRole('button', { name: /save segment/i }));
-    expect(await screen.findByText(/saveAudienceSegment failed: invalid-argument/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save: invalid-argument/)).toBeInTheDocument();
     // Scoped to the exact success sentence: "Saved audience" is the fieldset's
     // own legend and would match a looser /^Saved/ query.
     expect(screen.queryByText('Saved "Actives".')).toBeNull();

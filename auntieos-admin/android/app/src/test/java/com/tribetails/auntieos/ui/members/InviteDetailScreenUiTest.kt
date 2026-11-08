@@ -86,7 +86,7 @@ class InviteDetailScreenUiTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("getInvite failed: No invite with that id.").assertIsDisplayed()
+        composeRule.onNodeWithText("Could not load: No invite with that id.").assertIsDisplayed()
         composeRule.onNodeWithText("Retry").assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("Not claimed").fetchSemanticsNodes().size)
     }

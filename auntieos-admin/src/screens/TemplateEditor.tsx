@@ -487,7 +487,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
         );
         return;
       }
-      setError(`saveTemplate failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
   }
 
@@ -529,7 +529,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
         setLiveKeyWarning(err instanceof Error ? err.message : 'This template is still in use.');
         return;
       }
-      setError(`deleteTemplate failed: ${err instanceof Error ? err.message : 'Delete failed'}`);
+      setError(`Could not delete: ${err instanceof Error ? err.message : 'Delete failed'}`);
     }
   }
 

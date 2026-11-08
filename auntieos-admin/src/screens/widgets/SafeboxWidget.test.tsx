@@ -111,7 +111,7 @@ describe('SafeboxWidget', () => {
     getKinfolkProfile.mockRejectedValue(new Error('permission-denied'));
     render(<SafeboxWidget />);
     expect(
-      await screen.findByText(/getKinfolkProfile:k1 failed:.*permission-denied/i),
+      await screen.findByText(/Could not load:.*permission-denied/i),
     ).toBeInTheDocument();
   });
 

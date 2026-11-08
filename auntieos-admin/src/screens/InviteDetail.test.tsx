@@ -118,7 +118,7 @@ describe('InviteDetail screen', () => {
 
     render(<InviteDetail inviteId="rq_1" />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('getInvite failed: No invite with that id.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load: No invite with that id.');
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'jane@example.com' })).toBeInTheDocument();
     expect(api.getInvite).toHaveBeenCalledTimes(2);

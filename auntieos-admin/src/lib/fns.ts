@@ -4,6 +4,24 @@ import { E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT, E2E_FUNCTIONS_SERVED, functions 
 import { OfflineSessionError, isReadOnlySession } from './readOnlySession';
 import { LostSignalError, OfflineCallError, isConnected } from './offlineWrite';
 import { noteSessionAlive, reactToCallableError } from './revokedSession';
+import { plainCallableMessage } from './callableErrorText';
+import { noteCallableFailure } from './sentry';
+
+/**
+ * #1592: the operator's copy of a callable's refusal, made plain in place.
+ * The error stays the SDK's own `FirebaseError` with its `code` and `details`,
+ * so every `err.code === 'functions/...'` branch and every machine-token match
+ * still works; only `message` changes, and only when it was written for a
+ * developer. The raw text goes to the console and a Sentry breadcrumb first.
+ */
+function plainForOperator(name: string, err: FirebaseError): void {
+  const raw = err.message;
+  const plain = plainCallableMessage(err.code, raw);
+  if (plain === raw) return;
+  console.warn(`[callable] ${name} ${err.code}: ${raw}`);
+  noteCallableFailure(name, err.code, raw, (err as { details?: unknown }).details);
+  err.message = plain;
+}
 
 /**
  * Typed callables client, lifted from MyTribe/web/src/lib/fns.ts (the plan's
@@ -250,6 +268,8 @@ export async function call<TReq, TRes>(
       // under way before the caller's own error handling paints anything, and it
       // rethrows regardless: this reacts to the error, it does not consume it.
       await reactToCallableError(err);
+      // #1592: after the revocation check, which reads the server's own text.
+      if (err instanceof FirebaseError) plainForOperator(name, err);
       // #807: the signal went between the preflight above and this answer, so
       // the request WAS away and its fate is not knowable from here. Relabel
       // at the one moment that is true, rather than leaving a screen to ask a

@@ -61,7 +61,7 @@ describe('SuppliesTrackerWidget', () => {
     await screen.findByText('Poop bags');
 
     fireEvent.click(screen.getByRole('button', { name: '+1' }));
-    expect(await screen.findByText(/adjustSupply failed:.*missing-supply/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save:.*missing-supply/i)).toBeInTheDocument();
   });
 
   it('shows the stocked empty state when nothing is low', async () => {

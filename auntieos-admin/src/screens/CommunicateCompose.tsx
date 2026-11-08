@@ -192,7 +192,7 @@ export function CommunicateCompose() {
         // Fail loud but non-blocking: saved segments are an accelerator, and an
         // ad-hoc broadcast is still perfectly sendable without them.
         setSegmentsError(
-          `listAudienceSegments failed: ${err instanceof Error ? err.message : 'Load failed'}. You can still build an audience below.`,
+          `Could not load: ${err instanceof Error ? err.message : 'Load failed'}. You can still build an audience below.`,
         );
       });
     return () => {
@@ -258,7 +258,7 @@ export function CommunicateCompose() {
       submissionKey.current = null;
       setConfirmOpen(false);
     } catch (err) {
-      setSendError(`sendBroadcast failed: ${friendlySendError(err)}`);
+      setSendError(`Could not send: ${friendlySendError(err)}`);
       setConfirmOpen(false);
     } finally {
       setSending(false);
@@ -282,7 +282,7 @@ export function CommunicateCompose() {
       setSelectedSegmentId(id);
       loadSegments();
     } catch (err) {
-      setSegmentsError(`saveAudienceSegment failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setSegmentsError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     } finally {
       setSegmentBusy(false);
     }
@@ -299,7 +299,7 @@ export function CommunicateCompose() {
       setSegmentsError(null);
       loadSegments();
     } catch (err) {
-      setSegmentsError(`deleteAudienceSegment failed: ${err instanceof Error ? err.message : 'Delete failed'}`);
+      setSegmentsError(`Could not delete: ${err instanceof Error ? err.message : 'Delete failed'}`);
     } finally {
       setSegmentBusy(false);
     }
@@ -791,7 +791,7 @@ function StillSending({ broadcastId }: { broadcastId: string }) {
         // gone out" are different facts, and a progress bar cannot tell them
         // apart.
         setProgress(null);
-        setError(`getBroadcastProgress failed: ${err instanceof Error ? err.message : 'Read failed'}`);
+        setError(`Could not load: ${err instanceof Error ? err.message : 'Read failed'}`);
       });
   }, [broadcastId]);
 

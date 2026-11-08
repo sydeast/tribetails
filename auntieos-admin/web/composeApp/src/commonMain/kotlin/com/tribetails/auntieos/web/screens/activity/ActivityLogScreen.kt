@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.activity
 
+import com.tribetails.auntieos.web.screens.media.rememberUploaderNames
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -116,6 +117,8 @@ private fun ActivityFilter.chipTone(): AuntieChipTone = when (this) {
 @Composable
 fun ActivityLogScreen() {
     val client = remember { FirestoreClient() }
+    // #1592: uid -> name from listStaff (#1564's fallback), the Gallery's read.
+    val staffNames = rememberUploaderNames(client)
     // P0-FLICKER: hoist the Flow via remember so it survives recomposition.
     val state by remember { client.activityStream() }.collectAsState(initial = FirestoreResult.Loading)
 
@@ -195,13 +198,14 @@ fun ActivityLogScreen() {
                     query      = query,
                     zone       = zone,
                     onRowClick = { selectedEntry = it },
+                    staffNames = staffNames,
                 )
             }
         }
     }
 
     selectedEntry?.let { entry ->
-        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null })
+        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null }, names = staffNames)
     }
 }
 
@@ -212,6 +216,7 @@ private fun LogPanel(
     query: String,
     zone: TimeZone,
     onRowClick: (ActivityLogEntry) -> Unit,
+    staffNames: Map<String, String> = emptyMap(),
 ) {
     DenPanel(
         title    = "Sealed events",
@@ -270,7 +275,7 @@ private fun LogPanel(
 
         val visible = capped
             .filter { filter.matches(it.actionType) }
-            .filter { matchesQuery(it, query) }
+            .filter { matchesQuery(it, query, staffNames) }
 
         if (visible.isEmpty()) {
             NoMatchesState()
@@ -290,7 +295,7 @@ private fun LogPanel(
                     label = relativeDayLabel(dateIso, todayKey, yesterdayKey),
                     count = entries.size,
                 )
-                entries.forEach { entry -> ActivityRow(entry, zone = zone, onClick = { onRowClick(entry) }) }
+                entries.forEach { entry -> ActivityRow(entry, zone = zone, names = staffNames, onClick = { onRowClick(entry) }) }
             }
         }
     }
@@ -460,7 +465,12 @@ internal fun seqHashLabel(seq: Int?, entryHash: String): String? {
 }
 
 @Composable
-internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit, zone: TimeZone = NewBookingMath.businessTimeZone(null)) {
+internal fun ActivityRow(
+    entry: ActivityLogEntry,
+    onClick: () -> Unit,
+    zone: TimeZone = NewBookingMath.businessTimeZone(null),
+    names: Map<String, String> = emptyMap(),
+) {
     val c = AuntieTheme.colors
     val isFailure = entry.status.equals("FAILURE", ignoreCase = true) ||
         entry.status.equals("ERROR", ignoreCase = true)
@@ -512,7 +522,7 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit, zone: Tim
                     )
                 }
             }
-            val context = rowContext(entry)
+            val context = rowContext(entry, names)
             if (context.isNotBlank()) {
                 Text(
                     text     = context,
@@ -542,7 +552,12 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit, zone: Tim
  * on the model; no fabricated data, no dead deep-link.
  */
 @Composable
-private fun ActivityDetailModal(entry: ActivityLogEntry, zone: TimeZone, onDismiss: () -> Unit) {
+private fun ActivityDetailModal(
+    entry: ActivityLogEntry,
+    zone: TimeZone,
+    onDismiss: () -> Unit,
+    names: Map<String, String> = emptyMap(),
+) {
     val target = listOf(entry.targetCollection, entry.targetId).filter { it.isNotBlank() }.joinToString("/")
     AuntieDialog(
         visible = true,
@@ -560,7 +575,15 @@ private fun ActivityDetailModal(entry: ActivityLogEntry, zone: TimeZone, onDismi
             }
             AuntieKeyValueRow(label = "Action", value = entry.actionType.ifBlank { "-" }, valueMono = true)
             AuntieKeyValueRow(label = "Status", value = entry.status.ifBlank { "-" })
-            AuntieKeyValueRow(label = "Actor", value = entry.actorId.ifBlank { "-" }, valueMono = true)
+            // #1592: the person by name; the uid stays beside it, because this is
+            // the evidence log and the uid is what the record holds.
+            val actorName = names[entry.actorId.trim()]
+            if (actorName != null) {
+                AuntieKeyValueRow(label = "Actor", value = actorName)
+                AuntieKeyValueRow(label = "Actor id", value = entry.actorId, valueMono = true)
+            } else {
+                AuntieKeyValueRow(label = "Actor", value = entry.actorId.ifBlank { "-" }, valueMono = true)
+            }
             if (entry.description.isNotBlank()) {
                 AuntieKeyValueRow(label = "Detail", value = entry.description)
             }
@@ -607,7 +630,7 @@ private fun NoMatchesState() {
 
 // ---------- styling + formatting helpers (pure, JVM-testable) ----------
 
-private fun matchesQuery(entry: ActivityLogEntry, query: String): Boolean {
+internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<String, String> = emptyMap()): Boolean {
     val q = query.trim()
     if (q.isBlank()) return true
     val hay = listOf(
@@ -615,6 +638,7 @@ private fun matchesQuery(entry: ActivityLogEntry, query: String): Boolean {
         humanizeAction(entry.actionType),
         entry.description,
         entry.actorId,
+        names[entry.actorId.trim()].orEmpty(),
         entry.targetId,
         entry.targetCollection,
         entry.status,
@@ -623,10 +647,11 @@ private fun matchesQuery(entry: ActivityLogEntry, query: String): Boolean {
 }
 
 /** Actor + target context line built only from real fields. */
-private fun rowContext(entry: ActivityLogEntry): String {
+internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = emptyMap()): String {
     val parts = buildList {
         if (entry.description.isNotBlank()) add(entry.description)
-        if (entry.actorId.isNotBlank()) add(entry.actorId)
+        // #1592: the actor's name, not their uid, once listStaff has answered.
+        if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
         val target = when {
             entry.targetCollection.isNotBlank() && entry.targetId.isNotBlank() ->
                 "${entry.targetCollection}/${entry.targetId}"

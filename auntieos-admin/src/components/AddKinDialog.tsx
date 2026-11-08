@@ -98,7 +98,7 @@ export function AddKinDialog({ kinfolkOptions, initialKinfolkId, onClose, onCrea
       onCreated(id);
     } catch (err) {
       setSaving(false);
-      setSaveError(`createKin failed: ${err instanceof Error ? err.message : 'Create failed'}`);
+      setSaveError(`Could not create: ${err instanceof Error ? err.message : 'Create failed'}`);
     }
   }
 

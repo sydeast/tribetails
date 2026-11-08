@@ -390,7 +390,7 @@ describe('HouseholdMembers REVOKED and EXPIRED invites (the case that matters mo
 
     await user.click(await screen.findByRole('button', { name: 'Revoke' }));
 
-    expect(await screen.findByText(/revokeInvite failed for jane@example.com/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not cancel the invite for jane@example.com/)).toBeInTheDocument();
     expect(screen.getByText(/invite not found/)).toBeInTheDocument();
     // The row is untouched: still Pending, still revocable.
     expect(screen.getByText('Pending')).toBeInTheDocument();
@@ -496,7 +496,7 @@ describe('HouseholdMembers ERROR', () => {
     await user.click(toggle);
 
     expect(
-      await screen.findByText(/setMemberPermissions failed for marcus@example.com/),
+      await screen.findByText(/Could not save the access for marcus@example.com/),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(
@@ -532,7 +532,7 @@ describe('HouseholdMembers ERROR', () => {
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }));
 
-    expect(await screen.findByText(/removeMember failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not remove/)).toBeInTheDocument();
     // Still open, so the operator sees the failure attached to what they asked
     // for rather than a dialog that closed as though it worked.
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -546,7 +546,7 @@ describe('HouseholdMembers UNAUTHORIZED and unreadable', () => {
     api.listHouseholdInvites.mockResolvedValue([]);
     render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />);
 
-    expect(await screen.findByText(/listMembers failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load/)).toBeInTheDocument();
     expect(screen.getByText(/Admin claim required/)).toBeInTheDocument();
     expect(screen.queryByText(/Nobody has claimed this household yet/)).not.toBeInTheDocument();
   });
@@ -556,7 +556,7 @@ describe('HouseholdMembers UNAUTHORIZED and unreadable', () => {
     api.listHouseholdInvites.mockRejectedValue(new Error('not-found: kinfolkId not found.'));
     render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />);
 
-    expect(await screen.findByText(/listInvites failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load/)).toBeInTheDocument();
     expect(screen.getByText('marcus@example.com')).toBeInTheDocument();
     expect(screen.queryByText(/No invite has ever been sent/)).not.toBeInTheDocument();
   });
@@ -664,7 +664,7 @@ describe('HouseholdMembers PRIMARY RECOVERY', () => {
     await user.click(await screen.findByRole('button', { name: 'Swap primary' }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(await within(dialog).findByText(/listRecoveryCandidates failed/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/Could not load/)).toBeInTheDocument();
     expect(within(dialog).queryAllByRole('radio')).toHaveLength(0);
   });
 
@@ -942,7 +942,7 @@ describe('HouseholdMembers mock structure', () => {
     api.listHouseholdMembers.mockRejectedValue(new Error('permission-denied'));
     api.listHouseholdInvites.mockResolvedValue([]);
     render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />);
-    expect(await screen.findByText(/listMembers failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load/)).toBeInTheDocument();
     expect(screen.getByText(/Secondary kinfolk with portal access are unavailable/)).toBeInTheDocument();
     expect(screen.queryByText(/No secondary contacts yet/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Swap primary' })).toBeNull();
@@ -1114,6 +1114,6 @@ describe('HouseholdMembers secondary kinfolk with no portal access (Q3)', () => 
   it('a failed read says so by name, never an empty list', async () => {
     api.listSecondaryKinfolk.mockRejectedValue(new Error('permission-denied'));
     mount();
-    expect(await screen.findByText(/listSecondaryKinfolk failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
   });
 });

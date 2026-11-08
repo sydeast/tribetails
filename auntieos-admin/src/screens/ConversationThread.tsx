@@ -79,7 +79,7 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
           live &&
           setMessages({
             status: 'error',
-            message: `getConversationThread failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );
@@ -107,7 +107,7 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
       load(); // reload so the new message (and cleared unread) reflect the server truth
     } catch (err) {
       setSending(false);
-      setSendError(`replyToConversation failed: ${err instanceof Error ? err.message : 'Send failed'}`);
+      setSendError(`Could not send: ${err instanceof Error ? err.message : 'Send failed'}`);
     }
   }
 
@@ -123,7 +123,7 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
       onBack();
     } catch (err) {
       setMarkingUnread(false);
-      setUnreadError(`markConversationUnread failed: ${err instanceof Error ? err.message : 'Mark unread failed'}`);
+      setUnreadError(`Could not save: ${err instanceof Error ? err.message : 'Mark unread failed'}`);
     }
   }
   return (

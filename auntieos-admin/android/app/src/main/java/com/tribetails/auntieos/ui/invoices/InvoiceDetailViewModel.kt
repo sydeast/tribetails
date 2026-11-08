@@ -1108,7 +1108,7 @@ class InvoiceDetailViewModel(
                 .onFailure { err ->
                     _uiState.value = _uiState.value.copy(
                         savingInvoiceEdit = false,
-                        invoiceEditError = "updateInvoice failed: ${err.message ?: "Save failed"}",
+                        invoiceEditError = "Could not save: ${err.message ?: "Save failed"}",
                     )
                 }
         }

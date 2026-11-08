@@ -448,8 +448,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
       onClose();
     } catch (caught) {
       setSubmitting(false);
-      const name = isQuote ? 'createQuote' : 'createInvoice';
-      setSubmitError(`${name} failed: ${caught instanceof Error ? caught.message : 'Create failed'}`);
+      setSubmitError(`Could not create the ${isQuote ? 'quote' : 'invoice'}: ${caught instanceof Error ? caught.message : 'Create failed'}`);
     }
   }
 

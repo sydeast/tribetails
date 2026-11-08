@@ -161,7 +161,7 @@ export function MyNotificationsEdit() {
       setJustSaved(true);
     } catch (err) {
       setSaveError(
-        `saveMyAdminNotificationPrefs failed: ${err instanceof Error ? err.message : 'Save failed'}`,
+        `Could not save: ${err instanceof Error ? err.message : 'Save failed'}`,
       );
     } finally {
       setSaving(false);

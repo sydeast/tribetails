@@ -152,7 +152,7 @@ export function InviteDetail({ inviteId }: { inviteId: string }) {
         if (live) {
           setState({
             status: 'error',
-            message: `getInvite failed: ${errText(err, 'Load failed')}`,
+            message: `Could not load: ${errText(err, 'Load failed')}`,
             retry: load,
           });
         }

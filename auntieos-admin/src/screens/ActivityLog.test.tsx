@@ -16,6 +16,9 @@ vi.mock('../api/activityLog', async (orig) => ({
   ...(await orig<typeof import('../api/activityLog')>()),
   verifyActivityLogChain,
 }));
+// #1592: the shared staff-name read (`listStaff`), stubbed so no test dials it.
+const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() as ReadonlyMap<string, string> } }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames.current }));
 
 import { ActivityLog } from './ActivityLog';
 import { businessTodayIso } from '../lib/businessZoneTime';
@@ -34,6 +37,25 @@ beforeEach(() => {
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<ActivityLogEntry[]>);
   verifyActivityLogChain.mockReset().mockResolvedValue(OK);
   getBusinessSettings.mockReset().mockResolvedValue({ timeZone: '' });
+  staffNames.current = new Map();
+});
+
+describe('ActivityLog actor names (#1592)', () => {
+  it('names the actor instead of printing the uid, and finds them by that name', async () => {
+    staffNames.current = new Map([['u1', 'Syd East']]);
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    render(<ActivityLog />);
+    expect(screen.getByText(/signed in · Syd East/)).toBeInTheDocument();
+    expect(screen.queryByText(/signed in · u1/)).toBeNull();
+    await userEvent.type(screen.getByPlaceholderText(/Search actor/), 'syd');
+    expect(screen.getByText(/signed in · Syd East/)).toBeInTheDocument();
+  });
+
+  it('keeps a uid nobody on staff answers to, rather than showing nothing', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ actorId: 'gone-uid' })] });
+    render(<ActivityLog />);
+    expect(screen.getByText(/signed in · gone-uid/)).toBeInTheDocument();
+  });
 });
 
 describe('ActivityLog', () => {

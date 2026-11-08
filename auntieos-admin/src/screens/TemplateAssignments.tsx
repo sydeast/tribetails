@@ -145,7 +145,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           live &&
           setBindings({
             status: 'error',
-            message: `listTemplateBindings failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadBindings,
           }),
       );
@@ -164,7 +164,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           live &&
           setTemplates({
             status: 'error',
-            message: `listTemplates failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadTemplates,
           }),
       );
@@ -183,7 +183,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           live &&
           setCatalog({
             status: 'error',
-            message: `listCatalogKeys failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadCatalog,
           }),
       );
@@ -309,7 +309,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       setActionError(
         code === 'functions/invalid-argument'
           ? `assignTemplate refused this catalog key: ${message}`
-          : `assignTemplate failed: ${message}`,
+          : `Could not save: ${message}`,
       );
     }
   }
@@ -334,7 +334,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       loadCatalog();
     } catch (err) {
       setUnassigning(false);
-      setActionError(`unassignTemplate failed: ${err instanceof Error ? err.message : 'Unassign failed'}`);
+      setActionError(`Could not save: ${err instanceof Error ? err.message : 'Unassign failed'}`);
     }
   }
 

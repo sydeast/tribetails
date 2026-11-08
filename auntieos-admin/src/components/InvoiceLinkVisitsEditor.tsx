@@ -109,7 +109,7 @@ export function InvoiceLinkVisitsEditor({
       setSaving(false);
       onBusyChange?.(false);
       const message = caught instanceof Error && caught.message ? caught.message : 'Save failed';
-      setError(`linkInvoiceSessions failed: ${message}`);
+      setError(`Could not save: ${message}`);
     }
   }
 

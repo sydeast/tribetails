@@ -58,8 +58,8 @@ import './Invites.css';
  * invite under Pending would send the operator chasing something that is over.
  *
  * THE INVITE ID IS A BEARER TOKEN. The claim link is `?invite=<inviteId>`, so
- * the document id doubles as the secret. Cards show `inviteHandle`'s truncated
- * form, for matching a row against the activity log, and never the full id or
+ * the document id doubles as the secret. Cards show no part of it (#1592: it
+ * is a database id; the address and household name the invite), and never
  * anything resembling a claim URL.
  *
  * FAIL LOUD. A failed read renders `AsyncRegion`'s error, never an empty
@@ -251,7 +251,7 @@ export function Invites() {
         if (live) {
           setInvites({
             status: 'error',
-            message: `listAllInvites failed: ${errText(err, 'Load failed')}`,
+            message: `Could not load: ${errText(err, 'Load failed')}`,
             retry: load,
           });
         }

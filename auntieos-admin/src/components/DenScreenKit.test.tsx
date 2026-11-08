@@ -98,6 +98,11 @@ describe('StatCard', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t load open bookings: listBookings failed.');
   });
 
+  it('says "could not load" once when the load error already says it (#1592)', () => {
+    renderStat({ kind: 'error', message: 'Could not load: The server could not be reached.' });
+    expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t load open bookings: The server could not be reached.');
+  });
+
   it('drops the trend claim on an error, rather than pairing it with a dash', () => {
     // The second half of the live bug. "needs a reply" beside an unreadable count
     // is a claim about data nobody has.
