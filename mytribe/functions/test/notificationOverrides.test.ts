@@ -198,6 +198,15 @@ describe('getBusinessNotificationOverridesHandler: provenance projection (#396)'
     const res = await fetch();
     expect(row(res, 'invoice.new').mergeFields.length).toBeGreaterThan(0);
   });
+  // #1592: words for every field the row's list shows, merge field and data key.
+  it('names each merge field and data key in words', async () => {
+    const res = await fetch();
+    const entry = row(res, 'kincare.booking.confirm');
+    const keys = [...entry.mergeFields, ...entry.emitters.flatMap((e) => e.dataKeys)];
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) expect(entry.mergeFieldLabels[key], key).toBeTruthy();
+    expect(entry.mergeFieldLabels['kinfolkId']).toBe('Household reference');
+  });
 
   it('names what fires each row, in business terms and with a source file', async () => {
     const res = await fetch();

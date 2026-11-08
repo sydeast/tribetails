@@ -975,3 +975,143 @@ export function whoReceives(def: NotificationDef): string[] {
   }
   return out;
 }
+
+/**
+ * What each merge field and emitter data key IS, in the operator's words
+ * (#1592).
+ *
+ * The notification gate's "What the body can carry" list is a leak audit: it
+ * answers "could this message tell the wrong person something". It printed the
+ * raw keys (`kinfolkId`, `startTimeMsList`, `ip`), which only a developer can
+ * read. The keys are server constants (`TEMPLATE_FIELDS` in
+ * enrichTemplateData.ts and the emitters' `dataKeys` in provenance.ts), so
+ * their words live here beside the emitters, and `test/mergeFieldLabels.test.ts` fails
+ * the build when a key is added without one.
+ *
+ * An id is labelled a "reference": the message can carry a pointer to the
+ * record, which is what the audit needs to know, but it is not a name.
+ *
+ * Clients read these off the gate matrix (`mergeFieldLabels` on each row) and
+ * split an unlabelled key into words themselves, so a server older than the
+ * client still shows words.
+ */
+export const MERGE_FIELD_LABELS: Readonly<Record<string, string>> = {
+  Business: 'Business name',
+  business: 'Business name',
+  actorName: 'Name of who did it',
+  actorUid: 'Reference to who did it',
+  addedMediaCount: 'Number of photos added',
+  amount: 'Amount',
+  amountDue: 'Amount due',
+  amountMinor: 'Amount',
+  assignedAuntieUid: 'Assigned Auntie reference',
+  attemptsInWindow: 'Failed sign-in count',
+  audienceUid: 'Recipient reference',
+  auntieDisplayName: "Auntie's name",
+  authorDisplayName: "Author's name",
+  authorRole: "Author's role",
+  authorUid: 'Author reference',
+  batchId: 'Booking request reference',
+  blastId: 'Marketing blast reference',
+  body: 'Message text',
+  bodyChanged: 'Whether the text changed',
+  bookingDate: 'Visit date',
+  bookingDates: 'Visit dates',
+  bookingId: 'Visit reference',
+  bookingTime: 'Visit time',
+  budgetExhaustedAtMs: 'When sign-in attempts ran out',
+  changeKind: 'What kind of change',
+  changedFields: 'What changed',
+  claimUrl: 'Claim link',
+  comment: 'Comment text',
+  commentId: 'Comment reference',
+  count: 'Count',
+  currency: 'Currency',
+  daysPastDue: 'Days past due',
+  displayName: "Recipient's name",
+  disputeAmount: 'Disputed amount',
+  disputeId: 'Dispute reference',
+  disputeReason: 'Dispute reason',
+  disputeStatus: 'Dispute status',
+  dueDate: 'Due date',
+  email: 'Email address',
+  etaMinutes: 'Minutes until arrival',
+  event: 'What happened',
+  familyId: 'Household reference',
+  flatKinId: 'Kin reference',
+  incidentId: 'Incident reference',
+  inviteId: 'Invite reference',
+  invitedEmail: 'Invited email address',
+  invoiceDueDate: 'Invoice due date',
+  invoiceId: 'Invoice reference',
+  invoiceNumber: 'Invoice number',
+  ip: 'Sign-in IP address',
+  isQuote: 'Whether it is a quote',
+  items: 'Line items',
+  kinId: 'Kin reference',
+  kinName: "Kin's name",
+  kinfolkEmail: 'Kinfolk email',
+  kinfolkId: 'Household reference',
+  kinfolkName: 'Kinfolk name',
+  kinfolkUid: 'Kinfolk account reference',
+  link: 'Link',
+  lockStartedAtMs: 'When the lock started',
+  lockedAccounts: 'Locked accounts',
+  mediaAdded: 'Photos added',
+  messageId: 'Message reference',
+  nextVisit: 'Next visit',
+  'nextVisit.date': 'Next visit date',
+  'nextVisit.time': 'Next visit time',
+  'nextVisit.weekday': 'Next visit weekday',
+  note: 'Note text',
+  noteId: 'Note reference',
+  paymentId: 'Payment reference',
+  portalUrl: 'Portal link',
+  preview: 'Message preview',
+  ratingId: 'Rating reference',
+  reason: 'Reason',
+  recipientDisplayName: "Recipient's name",
+  removed: 'Visits taken off the request',
+  removedCount: 'Number removed',
+  reportLimit: 'Alert threshold',
+  reportPreviewUrl: 'Report preview link',
+  requestId: 'Request reference',
+  requestedDateList: 'Requested dates',
+  resent: 'Whether it was sent again',
+  role: 'Role',
+  scheduledAtMs: 'Scheduled time',
+  score: 'Rating score',
+  serviceName: 'Service name',
+  serviceType: 'Service',
+  spikeStartedAtMs: 'When the spike started',
+  staffEmail: 'Staff email',
+  startTimeMs: 'Start time',
+  startTimeMsList: 'Start times',
+  status: 'Status',
+  stripeEventId: 'Stripe event reference',
+  subject: 'Subject',
+  submittedByUid: 'Submitter reference',
+  taleId: 'KinTale reference',
+  timestampIso: 'Time',
+  unappliedAmount: 'Unapplied amount',
+  unappliedReason: 'Why it was not applied',
+  userAgent: 'Browser and device',
+  verifyUrl: 'Verification link',
+  visitCount: 'Number of visits',
+  visitId: 'Visit reference',
+  visits: 'Visits',
+  warnStartedAtMs: 'When the warning started',
+  windowEndMs: 'Window end',
+  windowMinutes: 'Window length in minutes',
+  windowStartMs: 'Window start',
+};
+
+/** The labels for these keys, only those this table has. */
+export function mergeFieldLabelsFor(keys: Iterable<string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    const label = MERGE_FIELD_LABELS[key];
+    if (label) out[key] = label;
+  }
+  return out;
+}

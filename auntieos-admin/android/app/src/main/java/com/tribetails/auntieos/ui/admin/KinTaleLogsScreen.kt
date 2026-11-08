@@ -346,7 +346,7 @@ private fun NeedsTriageSection(
 ) {
     DenPanel(
         title    = "Needs triage",
-        subtitle = "Pre-cutover visit_logs migrated without a Kinfolk link. Assign, mark duplicate, or archive each.",
+        subtitle = "Pre-cutover visit logs migrated without a Kinfolk link. Assign, mark duplicate, or archive each.",
         trailing = {
             AuntieStatusPill(
                 label = "${orphans.size} orphan${if (orphans.size == 1) "" else "s"}",
@@ -401,7 +401,7 @@ private fun OrphanRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text  = report.id.ifBlank { "(no id)" },
+                text  = orphanWhen(report, java.time.LocalDate.now().year),
                 style = AuntieTheme.typography.mono.copy(fontWeight = FontWeight.SemiBold),
                 color = c.textDim,
             )
@@ -478,7 +478,7 @@ private fun AssignKinfolkDialog(
 
     AuntieDialog(
         visible = true,
-        title = "Assign Kinfolk to KinTale ${report.id}",
+        title = TRIAGE_ASSIGN_TITLE,
         onDismiss = onCancel,
         maxWidth = 520.dp,
         closeIcon = Lucide.X,
@@ -553,7 +553,7 @@ private fun MarkDuplicateDialog(
 
     AuntieDialog(
         visible = true,
-        title = "Mark ${report.id} as duplicate",
+        title = TRIAGE_DUPLICATE_TITLE,
         onDismiss = onCancel,
         maxWidth = 520.dp,
         closeIcon = Lucide.X,
@@ -571,7 +571,7 @@ private fun MarkDuplicateDialog(
         AuntieField(
             value = query,
             onValueChange = { query = it },
-            placeholder = "Search by kinfolk name, body, or report ID",
+            placeholder = "Search by kinfolk name or body",
             leading = { Icon(Lucide.Search, contentDescription = null) },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -585,9 +585,8 @@ private fun MarkDuplicateDialog(
                 EmptyHint("No matching reports.")
             } else {
                 filtered.forEach { canon ->
-                    // id and name joined with a plain hyphen per the no-em-dash rule.
                     AuntieEntityRow(
-                        title = "${canon.id} - ${canon.kinfolkName.ifBlank { "Unnamed" }}",
+                        title = duplicateCandidateLabel(canon, java.time.LocalDate.now().year),
                         subtitle = bodyPreview(canon.bodyCopy),
                         selected = selectedId == canon.id,
                         onClick = { selectedId = canon.id },
@@ -612,11 +611,11 @@ private fun ArchiveBadDataDialog(
 
     AuntieDialog(
         visible = true,
-        title = "Archive ${report.id} as bad data",
+        title = TRIAGE_ARCHIVE_TITLE,
         onDismiss = onCancel,
         maxWidth = 520.dp,
         closeIcon = Lucide.X,
-        hint = "Soft-archive: the report stays in Firestore for audit but is hidden from the active buckets. Reason is recorded in activity_log.",
+        hint = TRIAGE_ARCHIVE_HINT,
         leadingIcon = { AuntieIconTile(icon = Lucide.Archive, tone = AuntieStatusTone.Error, size = 36.dp) },
         footer = {
             GhostButton(label = "Cancel", onClick = onCancel)
@@ -1043,6 +1042,27 @@ internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
         r.bodyCopy.lowercase().contains(q)
 }
 
+/**
+ * #1592: Needs triage named each orphan, and each duplicate candidate, by its
+ * document id (`legacy_79`). The operator reads when it was written and whose
+ * it is instead; the id still keys every write. Same words as web.
+ */
+internal const val TRIAGE_ASSIGN_TITLE = "Assign kinfolk to this KinTale"
+internal const val TRIAGE_DUPLICATE_TITLE = "Mark this KinTale as a duplicate"
+internal const val TRIAGE_ARCHIVE_TITLE = "Archive this KinTale as bad data"
+/** Web's archive hint. It said the report "stays in Firestore" and the reason "is recorded in activity_log". */
+internal const val TRIAGE_ARCHIVE_HINT =
+    "Archiving hides the report from these lists and keeps it on file. The reason is recorded in the activity log."
+/** An orphan row's lead: when it was written, never its id. */
+internal fun orphanWhen(r: KinCareReport, currentYear: Int): String = reportWhen(r, currentYear)
+/** A duplicate candidate: whose KinTale and when, never its id. */
+internal fun duplicateCandidateLabel(r: KinCareReport, currentYear: Int): String =
+    "${r.kinfolkName.trim().ifBlank { "Unnamed Kinfolk" }} · ${reportWhen(r, currentYear)}"
+private fun reportWhen(r: KinCareReport, currentYear: Int): String {
+    val raw = sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt)
+        .firstOrNull { !it.isNullOrBlank() } ?: return "Date TBD"
+    return kinTaleShortDateTime(raw, currentYear)
+}
 private fun visitTimestamp(r: KinCareReport): String {
     val raw = sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt)
         .firstOrNull { !it.isNullOrBlank() } ?: return "Date TBD"

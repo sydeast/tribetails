@@ -13,6 +13,8 @@ import {
   businessEmailLine,
   businessAdminSourceNote,
   deliveryPhrase,
+  deliveryRecipient,
+  fieldWords,
   hasPartialDataNote,
   mergeFieldNames,
   reachesBusinessAdmins,
@@ -290,7 +292,25 @@ describe('mergeFieldNames merges the two halves of the leak surface', () => {
         { trigger: 'y', source: 'src/b.ts', dataKeys: ['stripeEventId'] },
       ],
     });
-    expect(mergeFieldNames(row)).toEqual(['amount', 'invoiceId', 'kinfolkName', 'stripeEventId']);
+    // #1592: in words, not keys. No server labels here, so the client splits them.
+    expect(mergeFieldNames(row)).toEqual([
+      'Amount',
+      'Invoice reference',
+      'Kinfolk name',
+      'Stripe event reference',
+    ]);
+  });
+  it('#1592: uses the server words when it sends them, and folds two keys that mean one thing', () => {
+    const row = entry({
+      mergeFields: ['Business', 'business', 'ip'],
+      emitters: [{ trigger: 'x', source: 'src/a.ts', dataKeys: ['startTimeMsList'] }],
+      mergeFieldLabels: {
+        Business: 'Business name',
+        business: 'Business name',
+        ip: 'Sign-in IP address',
+      },
+    });
+    expect(mergeFieldNames(row)).toEqual(['Business name', 'Sign-in IP address', 'Start time']);
   });
 
   it('reports when an emitter admits the list is incomplete', () => {
@@ -309,6 +329,19 @@ describe('mergeFieldNames merges the two halves of the leak surface', () => {
  * this repo ever writes a receipt back to a notification's channel subdoc, so
  * a green "Delivered" here would be a guess printed as a fact.
  */
+describe('fieldWords and deliveryRecipient (#1592)', () => {
+  it('splits a key the server sent no words for', () => {
+    expect(fieldWords('startTimeMs')).toBe('Start time');
+    expect(fieldWords('nextVisit.date')).toBe('Next visit date');
+    expect(fieldWords('kinfolkId')).toBe('Kinfolk reference');
+    expect(fieldWords('portalUrl')).toBe('Portal link');
+  });
+  it('names the recipient, and keeps the uid only when nobody answers to it', () => {
+    expect(deliveryRecipient({ recipientName: 'Dre East', recipientUid: 'kin1' })).toBe('Dre East');
+    expect(deliveryRecipient({ recipientName: null, recipientUid: 'ghost' })).toBe('ghost');
+    expect(deliveryRecipient({ recipientName: null, recipientUid: '' })).toBe('an unknown recipient');
+  });
+});
 describe('deliveryPhrase never promises a delivery it cannot prove', () => {
   it('calls a successful send handed over, not delivered', () => {
     const phrase = deliveryPhrase('sent', null, null);
@@ -316,8 +349,21 @@ describe('deliveryPhrase never promises a delivery it cannot prove', () => {
     expect(phrase.detail).toContain('not proof it arrived');
   });
 
-  it('carries the skip reason', () => {
-    expect(deliveryPhrase('skipped', 'no-email-on-file', null).detail).toContain('no-email-on-file');
+  it('carries the skip reason, in words (#1592)', () => {
+    expect(deliveryPhrase('skipped', 'no-email-on-file', null).detail).toContain('no email on file');
+    expect(deliveryPhrase('skipped', 'recipient_no_phone', null).detail).toBe(
+      'Not sent on this channel: the recipient has no phone number on file.',
+    );
+    for (const code of [
+      'recipient_no_email',
+      'recipient_no_phone',
+      'recipient_hard_bounced',
+      'template_missing',
+      'template_text_empty',
+      'unknown',
+    ]) {
+      expect(deliveryPhrase('skipped', code, null).detail).not.toContain(code);
+    }
   });
 
   it('carries the failure text', () => {

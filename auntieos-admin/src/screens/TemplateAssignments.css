@@ -77,8 +77,8 @@
 }
 
 .tassign__row-key {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
+  font-weight: 600;
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-primary);
 }
 

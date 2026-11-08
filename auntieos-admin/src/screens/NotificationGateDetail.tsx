@@ -7,6 +7,7 @@ import {
   businessAdminSourceNote,
   businessEmailLine,
   deliveryPhrase,
+  deliveryRecipient,
   hasPartialDataNote,
   mergeFieldNames,
   reachesBusinessAdmins,
@@ -35,6 +36,10 @@ import { humanizeKey } from '../lib/notificationsFeed';
  */
 
 const pad = (n: number): string => String(n).padStart(2, '0');
+/** A channel as a word ("Email", "SMS", "Push"); an unknown one as it is. */
+function channelWord(channel: string): string {
+  return channel === 'email' || channel === 'sms' || channel === 'push' ? channelLabel(channel) : channel;
+}
 
 /** LOCAL `MM-DD HH:mm`, matching `lib/time.ts` formatWhen but from epoch ms. */
 function whenMs(ms: number | null): string {
@@ -147,13 +152,12 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
               Anything on this list can appear in the message, and therefore reach whoever the
               recipient rule above resolves to.
             </p>
-            <p className="notifgate__detail-fields">
+            {/* #1592: what each field is, in words; the keys were developer text. */}
+            <ul className="notifgate__detail-list" aria-label="What the body can carry">
               {fields.map((field) => (
-                <code key={field} className="notifgate__code">
-                  {field}
-                </code>
+                <li key={field}>{field}</li>
               ))}
-            </p>
+            </ul>
             {hasPartialDataNote(entry) && (
               <p className="notifgate__detail-note">
                 {entry.emitters
@@ -306,7 +310,8 @@ export function DeliveryEvidencePanel({ notificationKey }: { notificationKey: st
             {evidence.deliveries.map((row) => (
               <li key={row.dispatchId}>
                 <span className="notifgate__delivery-when">{whenMs(row.createdAtMs)}</span>{' '}
-                to <code className="notifgate__code">{row.recipientUid || 'unknown recipient'}</code>
+                {/* #1592: the recipient by name, never the bare uid when a name exists. */}
+                to <span className="notifgate__delivery-to">{deliveryRecipient(row)}</span>
                 {row.attempts.length === 0 ? (
                   <>: no channel was attempted (the gate resolved to nothing for them).</>
                 ) : (
@@ -319,14 +324,11 @@ export function DeliveryEvidencePanel({ notificationKey }: { notificationKey: st
                       );
                       return (
                         <li key={attempt.channel} className={`notifgate__attempt notifgate__attempt--${phrase.tone}`}>
-                          <strong>{attempt.channel}</strong>: {phrase.label}. {phrase.detail}
-                          {attempt.providerMessageId && (
-                            <>
-                              {' '}
-                              Provider id{' '}
-                              <code className="notifgate__code">{attempt.providerMessageId}</code>.
-                            </>
-                          )}
+                          {/* #1592: the provider's message id is not shown. Nothing
+                              in the app looks a message up by it, and the provider's
+                              own log is searchable by address and time; it stays on
+                              the dispatch record for a developer. */}
+                          <strong>{channelWord(attempt.channel)}</strong>: {phrase.label}. {phrase.detail}
                           {attempt.attempts > 1 && <> Tried {attempt.attempts} times.</>}
                         </li>
                       );
