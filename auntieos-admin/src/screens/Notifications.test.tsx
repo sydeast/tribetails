@@ -8,6 +8,10 @@ import { type NotificationEntry } from '../api/notifications';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+// #1749: the KinCare list the Service row is named against.
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: { '60Minute': '40' }, serviceDurations: { '60Minute': '60' }, timeBlocks: [] }),
+}));
 
 const { markNotificationRead, markNotificationUnread, bulkMarkNotificationsRead } = vi.hoisted(() => ({
   markNotificationRead: vi.fn(),
@@ -1048,6 +1052,14 @@ describe('Notifications card detail', () => {
     render(<Notifications />);
     expect(screen.queryByRole('button', { name: /Something happened/ })).toBeNull();
     expect(screen.getByText('Something happened')).toBeInTheDocument();
+  });
+  it('names the KinCare on a card stored with the visit key (#1749)', async () => {
+    mockStreams({ status: 'ready', data: [detailed({ detail: { kinName: 'Biscuit', serviceType: 'visit_60' } })] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: /A KinCare visit was assigned/ }));
+    expect(screen.getByText('Service')).toBeInTheDocument();
+    expect(screen.getByText('60Minute')).toBeInTheDocument();
+    expect(screen.queryByText('visit_60')).toBeNull();
   });
   it('shows only the fields that resolved, never a labelled blank', async () => {
     mockStreams({

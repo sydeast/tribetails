@@ -1,5 +1,5 @@
 import { logEvent } from '../lib/logger';
-import { enrichTemplateData } from './enrichTemplateData';
+import { enrichTemplateData, SERVICE_FALLBACK_WORD } from './enrichTemplateData';
 import type { AudienceStream, NotificationDetail } from './types';
 
 /**
@@ -159,7 +159,10 @@ export async function buildNotificationDetail(
 
   assign('kinfolkName', present(ctx.kinfolkName));
   assign('kinName', present(ctx.kinName));
-  assign('serviceType', present(ctx.serviceType));
+  // #1749: the KinCare's name, resolved by the enricher. The fallback word it
+  // puts in a template for an unplaceable code is not a service, so no row.
+  const service = present(ctx.serviceType);
+  assign('serviceType', service === SERVICE_FALLBACK_WORD ? undefined : service);
   assign('bookingDate', present(ctx.bookingDate));
   assign('bookingTime', present(ctx.bookingTime));
   // Staff-only, per issue #380. Guarded on the WRITE and not only on the

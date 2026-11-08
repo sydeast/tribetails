@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { NotificationEntry } from '../api/notifications';
+import type { BookingCatalog } from './bookingFormat';
 import {
   hasNotificationDetail,
   notificationDetailRows,
@@ -137,5 +138,29 @@ describe('notificationDetailSummary', () => {
   it('is empty when there is nothing worth summarising', () => {
     expect(notificationDetailSummary(entry())).toBe('');
     expect(notificationDetailSummary(entry({ detail: { requestedBy: 'Dana Ruiz' } }))).toBe('');
+  });
+});
+/**
+ * #1749: a card written before the server named the service carries the
+ * visit's stored key. Read through the operator's KinCare list it names the
+ * KinCare, the way Bookings and the Schedule do; the stored card is not rewritten.
+ */
+describe('notificationDetailRows names a stored service key (#1749)', () => {
+  const CATALOG: BookingCatalog = {
+    serviceRates: { '30Minute': '25', '60Minute': '40' },
+    serviceDurations: { '30Minute': '30', '60Minute': '60' },
+    timeBlocks: [],
+  };
+  it('reads visit_60 as the 60-minute KinCare', () => {
+    const rows = notificationDetailRows(entry({ detail: { serviceType: 'visit_60', kinName: 'Biscuit' } }), CATALOG);
+    expect(rows.find((r) => r.field === 'serviceType')?.value).toBe('60Minute');
+  });
+  it('leaves a name the server already resolved as a KinCare name', () => {
+    const rows = notificationDetailRows(entry({ detail: { serviceType: '30 Minute' } }), CATALOG);
+    expect(rows.find((r) => r.field === 'serviceType')?.value).toBe('30Minute');
+  });
+  it('touches no other row', () => {
+    const rows = notificationDetailRows(entry({ detail: { kinName: 'visit_60' } }), CATALOG);
+    expect(rows).toEqual([{ field: 'kinName', label: 'Kin', value: 'visit_60' }]);
   });
 });

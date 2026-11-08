@@ -57,6 +57,7 @@ import {
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 
 /** A row with no write in flight gets this, rather than a fresh empty Set each render. */
 const NO_PENDING: ReadonlySet<NotificationPendingKind> = new Set();
@@ -682,7 +683,8 @@ function NotificationRow({
   // and eight open cards is not a feed; the inline summary below is what makes
   // the collapsed state useful enough to leave collapsed.
   const [open, setOpen] = useState(false);
-  const detailRows = notificationDetailRows(entry);
+  const serviceCatalog = useBookingCatalog();
+  const detailRows = notificationDetailRows(entry, serviceCatalog);
   const canOpen = hasNotificationDetail(entry);
   const summary = notificationDetailSummary(entry);
   const detailId = `notif-detail-${entry._id}`;
