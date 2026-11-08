@@ -409,7 +409,7 @@ export async function resendQuoteHandler(
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId: kinfolkId,
-    description: `Declined quote ${invoiceNumber === '' ? args.invoiceId : invoiceNumber} revised and sent again`,
+    description: (await import('../lib/activityWords.js')).quoteRevisedWords(invoiceNumber),
     payload: {
       invoiceId: args.invoiceId,
       invoiceNumber,

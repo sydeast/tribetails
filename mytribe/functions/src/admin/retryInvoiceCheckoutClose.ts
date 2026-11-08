@@ -103,7 +103,7 @@ export async function retryInvoiceCheckoutCloseHandler(
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId: data.kinfolkId,
-    description: `Retried closing open payment links on invoice ${data.invoiceNumber ?? args.invoiceId}`,
+    description: `Retried closing open payment links on ${(await import('../lib/activityWords.js')).invoiceWords(data.invoiceNumber)}`,
     payload: { invoiceId: args.invoiceId, closed: run.expired.length, failed: run.failed.length },
   }).catch((err) => {
     logEvent({

@@ -311,7 +311,9 @@ export async function createMultiDateBookingRequestHandler(
     actorUid: uid,
     targetUid: batchId,
     targetCollection: `families/${args.kinfolkId}/bookings/${batchId}`,
-    description: `Admin created ${normalized.length} visit(s) (${pattern}) for ${args.kinfolkId}`,
+    // #1752: words; the household is `familyId`.
+    familyId: args.kinfolkId,
+    description: (await import('../lib/activityWords.js')).visitsCreatedWords(normalized.length, pattern),
     payload: { kinfolkId: args.kinfolkId, batchId, count: normalized.length, pattern, requestBatchId: batchId },
   }).catch((err) => {
     logEvent({
