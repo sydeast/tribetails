@@ -11,6 +11,12 @@ import {
 } from '../api/templateBindings';
 import { listTemplates, type TemplateSummary } from '../api/templates';
 import { type Async } from '../lib/async';
+import {
+  bankTemplateName,
+  catalogKeyName,
+  catalogKeyNameFor,
+  routedTemplateName,
+} from '../lib/templateRoutingFormat';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -23,10 +29,13 @@ interface TemplateAssignmentsProps {
   onClose: () => void;
 }
 
-/** The option text for one catalog key: the key, what it is, and its state. */
+/**
+ * The option text for one catalog key: its name and its state. The key stays
+ * the option's value; the operator never reads it (#1592).
+ */
 function keyOptionLabel(row: CatalogKeyRow): string {
   const tail = row.bound ? 'bound' : 'no binding, uses the catalog default';
-  return `${row.key} · ${row.label} (${tail})`;
+  return `${catalogKeyName(row)} (${tail})`;
 }
 
 /**
@@ -46,6 +55,28 @@ function routingSource(row: CatalogKeyRow): string {
   if (isOverridden(row)) return 'override, assigned by an admin';
   if (row.bound) return 'binding is paused, so the name-matched default applies';
   return 'default, matched by name';
+}
+
+/**
+ * The quiet line under a row whose template is missing (#1586), or null when
+ * there is nothing to say. A send that still goes out says what goes out; a
+ * send that fails gets the loud alert, and this line only says the repo has a
+ * copy Template Import can load.
+ */
+export function missingTemplateNote(row: CatalogKeyRow, templateMissing: boolean): string | null {
+  if (row.whenTemplateMissing === 'unused') {
+    return row.source === 'legacy' ? null : 'Written when it is sent, so no template is used.';
+  }
+  if (!templateMissing) return null;
+  const load = row.inRepoCorpus ? ' Load it from Template Import.' : '';
+  if (row.whenTemplateMissing === 'generic') {
+    return `Not in the bank yet, so this sends generic wording that cannot say what happened.${load}`;
+  }
+  if (row.whenTemplateMissing === 'repoCopy') {
+    return `Not in the bank yet, so this sends the repo copy.${load}`;
+  }
+  // A failing send gets the loud line; this only says where the fix is.
+  return row.inRepoCorpus ? 'The repo has a copy. Load it from Template Import.' : null;
 }
 
 /**
@@ -69,8 +100,11 @@ function routingSource(row: CatalogKeyRow): string {
  *
  * So the second panel is the routing table, not the collection: every catalog key,
  * the template that renders it right now, and which of the two put it there. A key
- * whose default template document does not exist is called out loudly, because
- * that key throws `email template missing` on its next send.
+ * whose template document does not exist is called out loudly only when the server
+ * says its send FAILS (`whenTemplateMissing: 'fails'`). #1586: the screen used to say
+ * that of every missing template, and of five such keys on the 2026-11-05 walk only
+ * one could fail. The rest send generic wording or the repo copy, or never read a
+ * template at all, and get a quiet line and the Template Import pointer instead.
  *
  * Two limits the screen states rather than implies:
  *  - An override applies to EMAIL only. `senders/smsChannel.ts` and
@@ -120,7 +154,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           live &&
           setBindings({
             status: 'error',
-            message: `listTemplateBindings failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadBindings,
           }),
       );
@@ -139,7 +173,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           live &&
           setTemplates({
             status: 'error',
-            message: `listTemplates failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadTemplates,
           }),
       );
@@ -158,7 +192,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           live &&
           setCatalog({
             status: 'error',
-            message: `listCatalogKeys failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: loadCatalog,
           }),
       );
@@ -171,14 +205,17 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
   useEffect(() => loadTemplates(), [loadTemplates]);
   useEffect(() => loadCatalog(), [loadCatalog]);
 
-  // templateId -> title, so a row renders "Booking confirmed", not "tmpl_x".
+  // templateId -> name, so a row renders "Booking confirmed", never "tmpl_x".
+  // An untitled bank doc is named by what it holds (#1592), never by its id.
   const titleById = useMemo(() => {
     const map = new Map<string, string>();
     if (templates.status === 'ready') {
-      for (const t of templates.data) map.set(t.templateId, t.title || t.templateId);
+      for (const t of templates.data) map.set(t.templateId, bankTemplateName(t));
     }
     return map;
   }, [templates]);
+  const bankLoaded = templates.status === 'ready';
+  const templateName = (id: string) => routedTemplateName(id, titleById, bankLoaded);
 
   const bindingByKey = useMemo(() => {
     const map = new Map<string, TemplateBinding>();
@@ -209,7 +246,27 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
     return templates.status === 'ready' && !titleById.has(row.resolvedTemplateId);
   }
 
-  const brokenCount = catalogRows.filter(resolvedTemplateMissing).length;
+  /**
+   * #1586: a missing template only breaks a send when the server says so. The
+   * email channel sends generic wording, a direct send with a repo copy sends
+   * that, and a broadcast never reads a template at all.
+   */
+  function failsOnSend(row: CatalogKeyRow): boolean {
+    return row.whenTemplateMissing === 'fails' && resolvedTemplateMissing(row);
+  }
+
+  /** Missing from the bank, still delivered, and loadable from Template Import. */
+  function awaitingImport(row: CatalogKeyRow): boolean {
+    return (
+      row.inRepoCorpus &&
+      (row.whenTemplateMissing === 'generic' || row.whenTemplateMissing === 'repoCopy') &&
+      resolvedTemplateMissing(row)
+    );
+  }
+
+  const brokenCount = catalogRows.filter(failsOnSend).length;
+  const awaitingImportNames = catalogRows.filter(awaitingImport).map(catalogKeyName);
+  const keyName = (key: string) => catalogKeyNameFor(key, catalogRows);
 
   function resetForm() {
     setEditingKey(null);
@@ -249,7 +306,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
         ...(audience !== '' && { audience }),
       });
       setSaving(false);
-      setNotice(`Assigned ${titleById.get(templateId) ?? templateId} to ${catalogKey}.`);
+      setNotice(`Assigned ${templateName(templateId)} to ${keyName(catalogKey)}.`);
       resetForm();
       loadBindings();
       // The catalog rows carry bound/resolves-to state, which this write changed.
@@ -259,13 +316,13 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       // assignTemplate rejects an unreal catalog key with invalid-argument and a
       // sentence that names it. Show that sentence rather than burying it behind
       // a generic failure line: it is the one message that tells the operator
-      // what to do next.
+      // what to do next. The lead names no function (#1592).
       const code = (err as { code?: string } | null)?.code;
       const message = err instanceof Error ? err.message : 'Assign failed';
       setActionError(
         code === 'functions/invalid-argument'
-          ? `assignTemplate refused this catalog key: ${message}`
-          : `assignTemplate failed: ${message}`,
+          ? `This notification cannot take that override: ${message}`
+          : `Could not save: ${message}`,
       );
     }
   }
@@ -281,8 +338,8 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       setPendingUnassign(null);
       setNotice(
         res.removed
-          ? `Removed the override on ${key}. It goes back to the template named after the key.`
-          : `${key} had no override to remove.`,
+          ? `Removed the override on ${keyName(key)}. It goes back to its own template.`
+          : `${keyName(key)} had no override to remove.`,
       );
       // If the form was editing the key just removed, drop back to a blank assign.
       if (editingKey === key) resetForm();
@@ -290,7 +347,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       loadCatalog();
     } catch (err) {
       setUnassigning(false);
-      setActionError(`unassignTemplate failed: ${err instanceof Error ? err.message : 'Unassign failed'}`);
+      setActionError(`Could not save: ${err instanceof Error ? err.message : 'Unassign failed'}`);
     }
   }
 
@@ -316,7 +373,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       )}
 
       <DenPanel
-        title={editingKey ? `Override: ${editingKey}` : 'Override a catalog key'}
+        title={editingKey ? `Override: ${keyName(editingKey)}` : 'Override a catalog key'}
         subtitle={
           editingKey
             ? 'Pick the template this catalog key should send instead of its name-matched default.'
@@ -349,10 +406,12 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
               {/* The key being edited may predate the catalog. Keep it visible
                   rather than showing a blank picker over a real binding. */}
               {editingKey !== null && editingRow === null && (
-                <option value={editingKey}>{editingKey} (not in the catalog)</option>
+                <option value={editingKey}>{keyName(editingKey)} (not in the catalog)</option>
               )}
               {editingRow !== null && editingRow.source === 'legacy' && (
-                <option value={editingRow.key}>{editingRow.key} (not in the catalog)</option>
+                <option value={editingRow.key}>
+                  {catalogKeyName(editingRow)} (not in the catalog)
+                </option>
               )}
               {keyOptions.map((row) => (
                 <option key={row.key} value={row.key}>
@@ -374,11 +433,13 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
               {/* Preserve a stored templateId that is no longer in the bank rather
                   than silently dropping it from the select. */}
               {templateId !== '' && !titleById.has(templateId) && (
-                <option value={templateId}>{templateId} (missing from bank)</option>
+                <option value={templateId}>
+                  {bankLoaded ? 'A template not in the bank' : 'Its current template'}
+                </option>
               )}
               {templateOptions.map((t) => (
                 <option key={t.templateId} value={t.templateId}>
-                  {t.title || t.templateId}
+                  {bankTemplateName(t)}
                 </option>
               ))}
             </select>
@@ -439,8 +500,8 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           loading={<LoadingRow label="Loading the routing table…" className="tassign__hint" />}
           empty={
             <EmptyHint>
-              listCatalogKeys returned no keys. The catalog is compiled into the backend, so this
-              should not be possible; treat it as a broken deploy rather than an empty setup.
+              No notifications came back. This list comes with the app, so an empty one means
+              something is broken. Reload, and report it if it stays empty.
             </EmptyHint>
           }
         >
@@ -450,18 +511,31 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
                 {rows.length} keys route today. {overrideCount} of them through an override, the
                 rest by name.
                 {brokenCount > 0 &&
-                  ` ${brokenCount === 1 ? '1 key resolves' : `${brokenCount} keys resolve`} to a template document that does not exist and will throw on the next send.`}
+                  ` ${brokenCount === 1 ? '1 key fails' : `${brokenCount} keys fail`} on the next send because the template does not exist.`}
               </p>
+              {awaitingImportNames.length > 0 && (
+                <p className="tassign__hint" data-testid="tassign-awaiting-import">
+                  Not in the bank yet, still delivered: {awaitingImportNames.join(', ')}. Load
+                  them from Template Import.
+                </p>
+              )}
               <ul className="tassign__list">
                 {rows.map((row) => {
                   const binding = bindingByKey.get(row.key);
-                  const missing = resolvedTemplateMissing(row);
+                  const missing = failsOnSend(row);
+                  const missingNote = missingTemplateNote(row, resolvedTemplateMissing(row));
                   return (
                     <li key={row.key} className="tassign__row">
                       <div className="tassign__row-main">
-                        <code className="tassign__row-key">{row.key}</code>
+                        <span className="tassign__row-key">{catalogKeyName(row)}</span>
                         <span className="tassign__row-template">
-                          sends {titleById.get(row.resolvedTemplateId) ?? row.resolvedTemplateId}
+                          sends{' '}
+                          {routedTemplateName(
+                            row.resolvedTemplateId,
+                            titleById,
+                            bankLoaded,
+                            !isOverridden(row) && row.hasDefaultTemplate,
+                          )}
                         </span>
                         <span className="tassign__row-meta">
                           <span
@@ -477,9 +551,11 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
                         </span>
                         {missing && (
                           <span className="tassign__row-broken" role="alert">
-                            No emailTemplates/{row.resolvedTemplateId} document. This key throws
-                            "email template missing" on its next send.
+                            The template this sends is missing, so its next send fails.
                           </span>
+                        )}
+                        {missingNote !== null && (
+                          <span className="tassign__row-meta">{missingNote}</span>
                         )}
                       </div>
 

@@ -5,6 +5,7 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -149,21 +150,42 @@ class AuntieTimeStateMachineTest {
         assertEquals("SCHEDULED", patch["status"])
     }
 
+    // #1617: the rules refuse a client write of COMPLETED / CANCELLED / completedAt,
+    // so the kebab's two terminal items are transitionBookingStatus calls.
+    private val clockActions = AuntieTimeAction.entries
+        .filter { it != AuntieTimeAction.MarkCompleted && it != AuntieTimeAction.Cancel }
+
     @Test
-    fun `kebab Mark Completed writes COMPLETED plus completedAt`() {
-        val patch = kinCarePatch(session(status = "ARRIVED"), AuntieTimeAction.MarkCompleted, now)
-        assertEquals(mapOf("status" to "COMPLETED", "completedAt" to now), patch)
+    fun `kebab Mark Completed is a COMPLETE transition carrying completedAt, not a patch`() {
+        val write = kinCareWrite(session(status = "ARRIVED"), AuntieTimeAction.MarkCompleted, now)
+        assertEquals(KinCareWrite.Transition("COMPLETE", completedAt = now), write)
     }
 
     @Test
-    fun `kebab Cancel writes only the status, no timestamp`() {
-        val patch = kinCarePatch(session(status = "SCHEDULED"), AuntieTimeAction.Cancel, now)
-        assertEquals(mapOf("status" to "CANCELLED"), patch)
+    fun `kebab Cancel is a CANCEL transition with no timestamp, not a patch`() {
+        val write = kinCareWrite(session(status = "SCHEDULED"), AuntieTimeAction.Cancel, now)
+        assertEquals(KinCareWrite.Transition("CANCEL"), write)
     }
 
     @Test
-    fun `every transition writes a status and only UndoArrived depends on the session`() {
-        AuntieTimeAction.entries.forEach { action ->
+    fun `no action can build a terminal status patch`() {
+        listOf(AuntieTimeAction.MarkCompleted, AuntieTimeAction.Cancel).forEach { action ->
+            assertFailsWith<IllegalArgumentException>("$action must not build a patch") {
+                kinCarePatch(session(), action, now)
+            }
+        }
+        clockActions.forEach { action ->
+            val write = kinCareWrite(session(), action, now)
+            assertTrue(write is KinCareWrite.Patch, "$action is an in-visit clock patch")
+            val status = write.fields["status"].orEmpty()
+            assertTrue(status !in setOf("COMPLETED", "CANCELLED"), "$action patched a terminal status")
+            assertTrue(!write.fields.containsKey("completedAt"), "$action stamped completedAt")
+        }
+    }
+
+    @Test
+    fun `every clock action writes a status and only UndoArrived depends on the session`() {
+        clockActions.forEach { action ->
             val patch = kinCarePatch(session(), action, now)
             assertTrue(patch.containsKey("status"), "$action wrote no status")
             assertTrue(patch["status"]!!.isNotBlank(), "$action wrote a blank status")
@@ -171,7 +193,7 @@ class AuntieTimeStateMachineTest {
         // Only UndoArrived reads session state; the rest are session-independent.
         val a = session(id = "a", onMyWayAt = "")
         val b = session(id = "b", onMyWayAt = "2026-07-21T14:00:00Z")
-        AuntieTimeAction.entries
+        clockActions
             .filter { it != AuntieTimeAction.UndoArrived }
             .forEach { action ->
                 assertEquals(kinCarePatch(a, action, now), kinCarePatch(b, action, now), "$action must ignore session state")
@@ -212,7 +234,7 @@ class AuntieTimeStateMachineTest {
 
     @Test
     fun `each transition pairs with the right tracker effect end to end`() {
-        fun effect(s: KinCareSession, a: AuntieTimeAction) = gpsEffectFor(kinCarePatch(s, a, now))
+        fun effect(s: KinCareSession, a: AuntieTimeAction) = gpsEffectAfter(kinCareWrite(s, a, now))
         val scheduled = session(status = "SCHEDULED")
         val arrived   = session(status = "ARRIVED", onMyWayAt = "2026-07-21T14:00:00Z")
 
@@ -248,10 +270,39 @@ class AuntieTimeStateMachineTest {
         assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-08-05T09:00:00Z"), today))
     }
 
+    // #1704: one definition of overdue with web, whose Auntie Time also reads the
+    // SCHEDULED visits older than its 30-day window (`overdueBeforeWindowQuery`).
     @Test
-    fun `SCHEDULED yesterday is in, two days ago is excluded`() {
+    fun `SCHEDULED stays on the board as Overdue however long ago its slot passed`() {
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-07-20T09:00:00Z"), today))
-        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-06-21T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-06-20T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-03-01T09:00:00Z"), today))
+        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = ""), today))
+    }
+    @Test
+    fun `isOverdueScheduled is false exactly one day late and true two days late`() {
+        assertTrue(!isOverdueScheduled(session(status = "SCHEDULED", startTime = "2026-07-20T09:00:00Z"), today))
+        assertTrue(isOverdueScheduled(session(status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"), today))
+        assertTrue(!isOverdueScheduled(session(status = "COMPLETED", startTime = "2026-07-01T09:00:00Z"), today))
+        assertTrue(!isOverdueScheduled(session(status = "PENDING", startTime = "2026-07-01T09:00:00Z"), today))
+    }
+    @Test
+    fun `overdueOnAuntieTime counts the Overdue heading and nothing else (#1590)`() {
+        val rows = listOf(
+            session(id = "a", status = "SCHEDULED", startTime = "2026-07-19T09:00:00Z"),
+            session(id = "b", status = "SCHEDULED", startTime = "2026-07-01T09:00:00Z"),
+            session(id = "c", status = "SCHEDULED", startTime = "2026-07-20T09:00:00Z"),
+            session(id = "d", status = "SCHEDULED", startTime = "2026-05-01T09:00:00Z"),
+            session(id = "e", status = "ARRIVED",   startTime = "2026-07-01T09:00:00Z"),
+            session(id = "f", status = "PENDING",   startTime = "2026-07-01T09:00:00Z"),
+            session(id = "g", status = "SCHEDULED", startTime = "2026-07-22T09:00:00Z"),
+            // #1704: older than the 30-day window is still Overdue, and counted
+            session(id = "h", status = "SCHEDULED", startTime = "2026-02-01T09:00:00Z"),
+        )
+        assertEquals(4, overdueOnAuntieTime(rows, today))
+        assertEquals(0, overdueOnAuntieTime(emptyList(), today))
     }
 
     @Test
@@ -304,12 +355,16 @@ class AuntieTimeStateMachineTest {
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-30T09:00:00Z"), nye))
         assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2027-01-14T09:00:00Z"), nye))
         assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2027-01-15T09:00:00Z"), nye))
-        assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-29T09:00:00Z"), nye))
+        // Dec 29 is Overdue now (#1590), still on the board, and since #1704 so is
+        // anything older: there is no 30-day floor any more.
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-29T09:00:00Z"), nye))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-12-01T09:00:00Z"), nye))
+        assertTrue(isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = "2026-11-30T09:00:00Z"), nye))
     }
 
     @Test
     fun `a SCHEDULED session with no startTime is excluded`() {
-        // "" never falls inside yesterday..cutoff, so undated scheduled rows stay
+        // "" never falls inside the window, so undated scheduled rows stay
         // off the day-of view rather than pinning to the top.
         assertTrue(!isVisibleOnAuntieTime(session(status = "SCHEDULED", startTime = ""), today))
     }

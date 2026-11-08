@@ -65,20 +65,21 @@ export function greetingForHour(hour: number): string {
 /**
  * Free-text service type to a brand tone for pills, swatches, and avatars.
  *
- * Substring matching in priority order, ported as-is. The order is load-bearing:
- * "walk" wins before "sit" so a "dog_walk_sitting" reads as a walk.
+ * Substring matching in priority order. The order is load-bearing: "walk" wins
+ * before "sit" so a "dog_walk_sitting" reads as a walk.
  *
- * KNOWN COLLISION, ported faithfully because Schedule's legend and the grid must
- * keep painting the same swatch: the word "visit" CONTAINS "sit", so every
- * visit-shaped key ("visit_60", "visit") resolves to Purple, the house-sitting
- * tone. DenScreenKit's own comment in ScheduleScreen.kt claims "visit_60" falls
- * through to Orange. It does not. The comment is wrong, the code is what ships.
+ * "sit" matches only at a word start (`SIT_WORD`), the AO-19 rule Android and
+ * the desktop console carry (`ui/components/DenScreenKit.kt`). A bare substring
+ * hit the "sit" inside "vi-sit", so every visit ("visit_60", "Off-Book Visit")
+ * painted house-sitting purple on the web and orange everywhere else (#1736).
  */
+const SIT_WORD = /\bsit/;
+
 export function serviceTone(serviceType: string): AuntieStatusTone {
   const s = serviceType.toLowerCase();
   if (s.includes('walk')) return 'teal';
   if (s.includes('drop')) return 'orange';
-  if (s.includes('sit') || s.includes('house') || s.includes('overnight')) return 'purple';
+  if (SIT_WORD.test(s) || s.includes('house') || s.includes('overnight')) return 'purple';
   if (s.includes('meet') || s.includes('greet')) return 'success';
   return 'orange';
 }

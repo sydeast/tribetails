@@ -3,6 +3,7 @@ import type {
   GetInvoiceLedgerResultPayment,
   GetInvoiceLedgerResultSession,
 } from '../contracts/invoiceContracts.generated';
+import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from './bookingFormat';
 
 /**
  * The pure reading rules for `getInvoiceLedger`'s answer.
@@ -71,10 +72,12 @@ export function sessionStatusLabel(status: string): string {
   return trimmed === '' ? 'no status' : trimmed.toLowerCase().replace(/_/g, ' ');
 }
 
-/** What a visit is called, or a neutral stand-in when the field is blank. */
-export function sessionServiceLabel(serviceType: string): string {
-  const trimmed = serviceType.trim();
-  return trimmed === '' ? 'Visit' : trimmed;
+/**
+ * What a visit is called: the KinCare's name off the catalog, never the stored
+ * `visit_60` (#1744), or a neutral stand-in when the field is blank.
+ */
+export function sessionServiceLabel(serviceType: string, catalog: BookingCatalog = EMPTY_BOOKING_CATALOG): string {
+  return bookingServiceName(serviceType, catalog);
 }
 
 /**
@@ -212,6 +215,22 @@ export function ledgerCoversBalance(input: {
   return ledgerTotal >= input.amountDueCents;
 }
 
+/**
+ * #1568: IS THERE NO PAYMENT AT ALL TO SHOW? Only when BOTH sources are empty.
+ *
+ * The panel lists two collections: the `invoices/{id}/payments` settlement rows
+ * and, beneath them, the root `payments` history. The empty sentence used to
+ * read the first alone, so an invoice whose only payment is in the history (a
+ * Stripe card payment, a migrated row) said "No payment has been recorded"
+ * directly above a table listing one. Invoices #1018 and #1010 on the live
+ * admin. A sentence that the same panel contradicts is worse than none.
+ */
+export function paymentsPanelIsEmpty(input: {
+  payments: readonly unknown[];
+  ledgerPayments: readonly unknown[];
+}): boolean {
+  return input.payments.length === 0 && input.ledgerPayments.length === 0;
+}
 /** Sum of the subcollection rows, for the panel's own footer. */
 export function paymentsTotalCents(
   payments: readonly Pick<GetInvoiceLedgerResultPayment, 'amountCents'>[],

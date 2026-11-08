@@ -106,7 +106,7 @@ function admin(uid: string) {
 }
 
 function roster(members: ReturnType<typeof admin>[]) {
-  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null };
+  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null, businessEmail: '' };
 }
 
 function catalogEntry(key: string): NotificationCatalogEntry {
@@ -339,7 +339,7 @@ describe('Account profile: inline editing', () => {
     await user.type(profilePanel().getByLabelText('Phone'), '555-0111');
     await user.click(screen.getByRole('button', { name: 'Save profile' }));
 
-    expect(await screen.findByText(/saveUserProfile failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save: permission-denied/)).toBeInTheDocument();
     expect(profilePanel().getByLabelText('Phone')).toHaveValue('555-0111');
   });
 

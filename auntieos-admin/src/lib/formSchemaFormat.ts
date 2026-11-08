@@ -86,3 +86,32 @@ export function formSchemaUpdatedFull(updatedAt: string | null): string | null {
   const when = formSchemaTimeOf(raw);
   return when ? formatWhenFull(when) : raw;
 }
+
+/** "1 schema", "2 schemas" (#1592: the chip read "1 schemas"). */
+export function schemaCountLabel(count: number): string {
+  return `${count} ${count === 1 ? 'schema' : 'schemas'}`;
+}
+
+/**
+ * Where a form shows up, in words (#1592: the editor read "Applies to NONE").
+ * Keyed by the stored `appliesTo` value, which is unchanged; only what the
+ * operator reads changes. An unlisted stored value reads as words, not as the
+ * constant.
+ */
+const APPLIES_TO_LABELS: Record<string, string> = {
+  NONE: 'Nothing yet',
+  KINFOLK: 'Kinfolk profiles',
+  KIN: 'Kin profiles',
+  HOUSEHOLD: 'Households',
+  SESSION: 'KinCare visits',
+  BOOKING: 'Bookings',
+  KINTALE: 'KinTales',
+};
+
+export function appliesToLabel(appliesTo: string): string {
+  const key = appliesTo.trim().toUpperCase();
+  const known = APPLIES_TO_LABELS[key];
+  if (known !== undefined) return known;
+  const words = key.toLowerCase().split(/[_\s]+/).filter(Boolean).join(' ');
+  return words === '' ? APPLIES_TO_LABELS.NONE! : words.charAt(0).toUpperCase() + words.slice(1);
+}

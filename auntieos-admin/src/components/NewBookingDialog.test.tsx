@@ -950,7 +950,9 @@ describe('NewBookingDialog steps 4 and 5: invoice options and review', () => {
     await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
     const arg = createMultiDateBookingRequest.mock.calls[0]![0];
     expect(arg.communication).toEqual({ emailConfirmation: true, timeVisibility: false });
-    expect(arg.notes).toBe('Gate code 1234');
+    // #1626: private, so it travels as staffNotes and never as the household-visible notes.
+    expect(arg.staffNotes).toBe('Gate code 1234');
+    expect(arg.notes).toBeUndefined();
   });
 
   it('an Edit link on Review goes back to the step that owns that answer', async () => {
@@ -1097,7 +1099,7 @@ describe('NewBookingDialog steps 4 and 5: invoice options and review', () => {
     await toReview();
     await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
     expect(
-      await screen.findByText(/createMultiDateBookingRequest failed:.*not found/i),
+      await screen.findByText(/Could not create:.*not found/i),
     ).toBeInTheDocument();
   });
 });
@@ -1146,7 +1148,7 @@ describe('NewBookingDialog booking idempotency key (#644)', () => {
     await pickDay(/Mon, Aug 23/);
     await toReview();
     await create();
-    await screen.findByText(/createMultiDateBookingRequest failed/i);
+    await screen.findByText(/Could not create/i);
 
     await create();
     await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(2));
@@ -1163,7 +1165,7 @@ describe('NewBookingDialog booking idempotency key (#644)', () => {
     await pickDay(/Mon, Aug 23/);
     await toReview();
     await create();
-    await screen.findByText(/createMultiDateBookingRequest failed/i);
+    await screen.findByText(/Could not create/i);
 
     // Back to the dates step and add one, which is a different booking.
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));

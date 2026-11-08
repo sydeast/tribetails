@@ -5,7 +5,9 @@ import type {
   ListUninvoicedSessionsResult,
   ListUninvoicedSessionsResultSession,
 } from '../contracts/invoiceContracts.generated';
+import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { humanizeDate, localDateIso } from '../lib/invoiceFormat';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -77,9 +79,16 @@ function defaultWindow(now: Date): { from: string; to: string } {
   return { from: localDateIso(past), to };
 }
 
-/** How a visit reads on an invoice line: the service, and the day it happened. */
-export function visitLineDescription(session: ListUninvoicedSessionsResultSession): string {
-  const label = session.serviceType.trim() === '' ? 'Visit' : session.serviceType.trim();
+/**
+ * How a visit reads on an invoice line: the service, and the day it happened.
+ * The service is the KinCare's name off the catalog, never the stored
+ * `visit_60` (#1744): this text is written onto the invoice the household reads.
+ */
+export function visitLineDescription(
+  session: ListUninvoicedSessionsResultSession,
+  catalog: BookingCatalog = EMPTY_BOOKING_CATALOG,
+): string {
+  const label = bookingServiceName(session.serviceType, catalog);
   const day = session.startTime.slice(0, 10);
   return day === '' ? label : `${label}, ${day}`;
 }
@@ -108,6 +117,10 @@ export function UninvoicedVisitsPicker({
   const [excludeError, setExcludeError] = useState<string | null>(null);
   const [excludeBusy, setExcludeBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // #1744: each row names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
+  const serviceName = (serviceType: string) => bookingServiceName(serviceType, catalog);
+  const ariaService = (serviceType: string) => (serviceType.trim() === '' ? 'visit' : serviceName(serviceType));
 
   const load = useCallback(
     async (win: { from: string; to: string } | null) => {
@@ -128,7 +141,7 @@ export function UninvoicedVisitsPicker({
         setResult(null);
         onSessionsLoaded([]);
         setError(
-          `listUninvoicedSessions failed: ${caught instanceof Error ? caught.message : 'Could not load this work'}`,
+          `Could not load: ${caught instanceof Error ? caught.message : 'Could not load this work'}`,
         );
       }
     },
@@ -180,7 +193,7 @@ export function UninvoicedVisitsPicker({
     } catch (caught) {
       setExcludeBusy(false);
       setExcludeError(
-        `setSessionDoNotInvoice failed: ${caught instanceof Error ? caught.message : 'Nothing was changed'}`,
+        `Could not save: ${caught instanceof Error ? caught.message : 'Nothing was changed'}`,
       );
     }
   }
@@ -338,10 +351,10 @@ export function UninvoicedVisitsPicker({
                           checked={isSelected}
                           onChange={() => toggle(s.sessionId)}
                           disabled={disabled}
-                          aria-label={`Bill ${s.serviceType || 'visit'} on ${s.startTime.slice(0, 10)}`}
+                          aria-label={`Bill ${ariaService(s.serviceType)} on ${s.startTime.slice(0, 10)}`}
                         />
                         <span className="visit-picker__row-main">
-                          <span className="visit-picker__row-service">{s.serviceType || 'Visit'}</span>
+                          <span className="visit-picker__row-service">{serviceName(s.serviceType)}</span>
                           <span className="visit-picker__row-meta">
                             {humanizeDate(s.startTime.slice(0, 10), localDateIso(new Date()))}
                             {s.durationMinutes > 0 ? ` · ${String(s.durationMinutes)} min` : ''}
@@ -371,7 +384,7 @@ export function UninvoicedVisitsPicker({
                               value={prices[s.sessionId] ?? ''}
                               onChange={(e) => onPriceChange(s.sessionId, e.target.value)}
                               disabled={disabled}
-                              aria-label={`Price for ${s.serviceType || 'visit'} on ${s.startTime.slice(0, 10)}`}
+                              aria-label={`Price for ${ariaService(s.serviceType)} on ${s.startTime.slice(0, 10)}`}
                             />
                           </label>
                         )}
@@ -470,7 +483,7 @@ export function UninvoicedVisitsPicker({
                   <li key={e.sessionId} className="visit-picker__row">
                     <div className="visit-picker__row-label">
                       <span className="visit-picker__row-main">
-                        <span className="visit-picker__row-service">{e.serviceType || 'Visit'}</span>
+                        <span className="visit-picker__row-service">{serviceName(e.serviceType)}</span>
                         <span className="visit-picker__row-meta">
                           {e.startTime.slice(0, 10) === ''
                             ? 'no start time'

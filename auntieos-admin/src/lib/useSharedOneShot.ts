@@ -111,7 +111,7 @@ export function useSharedOneShot<T>(
           if (live) {
             setState({
               status: 'error',
-              message: `${label} failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+              message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
               retry: () => load(true),
             });
           }

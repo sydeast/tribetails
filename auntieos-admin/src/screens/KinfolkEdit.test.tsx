@@ -386,6 +386,27 @@ describe('KinfolkEdit: secrets', () => {
   });
 });
 
+/**
+ * #1602: saving with errors showed a banner at the top of the page, off
+ * screen, and nothing near the button. The problem is now said under the Save
+ * row and the first field that needs fixing takes focus.
+ */
+describe('KinfolkEdit: a refused save is said where the operator is looking (#1602)', () => {
+  it('puts the message beside Save and focuses the first field to fix', async () => {
+    mount();
+    const first = await screen.findByLabelText('First name');
+    await userEvent.clear(first);
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    const message = await screen.findByText(/Some details still need fixing/);
+    const actions = document.querySelector('.kfedit__actions') as HTMLElement;
+    // The message follows the Save row in the document, not the page heading.
+    expect(actions.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(message.closest('.kfedit__save-error')).not.toBeNull();
+    await waitFor(() => expect(first).toHaveFocus());
+  });
+});
+
 describe('KinfolkEdit: blur validation', () => {
   it('reveals a required-field error on blur, before any save attempt', async () => {
     mount();
@@ -490,7 +511,7 @@ describe('KinfolkEdit: save', () => {
     await userEvent.type(fieldByLabel('Last name'), 's');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     expect(
-      await screen.findByText(/updateKinfolkProfile failed:.*permission-denied/i),
+      await screen.findByText(/Could not save:.*permission-denied/i),
     ).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
@@ -547,7 +568,7 @@ describe('KinfolkEdit: archive', () => {
     await screen.findByLabelText('First name');
     await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^archive$/i }));
-    expect(await screen.findByText(/archiveKinfolk failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not archive:.*permission-denied/i)).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
 });
@@ -558,7 +579,7 @@ describe('KinfolkEdit: load failure', () => {
     render(<KinfolkEdit kinfolkId="kf1" kinfolkName="Jamie Halbrook" onDone={vi.fn()} onCancel={vi.fn()} />);
 
     expect(await screen.findByText(/couldn.t load household/i)).toBeInTheDocument();
-    expect(screen.getByText(/getKinfolkProfile failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(screen.getByText(/Could not load:.*permission-denied/i)).toBeInTheDocument();
     // The forms must not render as a set of blank inputs that look saveable.
     expect(screen.queryByLabelText('First name')).not.toBeInTheDocument();
     expect(screen.queryByText(/no details on file/i)).not.toBeInTheDocument();
@@ -712,7 +733,7 @@ describe('Emergency Contacts on the edit form (#829)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     const err = await screen.findByTestId('kfedit-ec-error');
     expect(err).toHaveTextContent('An Emergency Contact has to be someone outside the household.');
-    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
+    expect(screen.queryByText(/Could not save/)).toBeNull();
   });
 
   // #858: the defect this reproduces is a SERVER rejection of the contact call

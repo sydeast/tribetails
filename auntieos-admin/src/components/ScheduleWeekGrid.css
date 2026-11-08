@@ -321,3 +321,15 @@
     min-width: 640px;
   }
 }
+/* #1606: a short block (30 minutes is 27px) puts its time and household on
+   one line; stacked, the time pushed the name out of the block entirely. */
+.schedule-grid__block--compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 7px;
+}
+.schedule-grid__block--compact .schedule-grid__block-name {
+  font-size: 12px;
+  min-width: 0;
+}

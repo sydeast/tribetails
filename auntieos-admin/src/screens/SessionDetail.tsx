@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
+import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressCompleteness';
 import { type SessionEntry } from '../api/sessions';
 import { kinForHouseholdQuery, type Kin, type Kinfolk } from '../api/directory';
 import { getBusinessSettings } from '../api/settings';
+import { bookingServiceName } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { useCollection, useDocById } from '../lib/firestore';
 import { updateKinCareSession } from '../api/sessionsWrite';
-import {
-  appendOfficeNote,
-  lifecycleActionsFor,
-  lifecycleNowIso,
-} from '../lib/sessionLifecycle';
+import { lifecycleActionsFor, savedVisitFieldsMessage } from '../lib/sessionLifecycle';
+import { VisitInternalNotes } from '../components/VisitInternalNotes';
+import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useVisitTracking } from '../lib/visitTracking';
 import {
@@ -31,6 +32,7 @@ import {
   localDateIso,
 } from '../lib/sessionFormat';
 import { str, arr } from '../lib/coerce';
+import { kinCoveredLabel, shownVisitLengthMinutes } from '../lib/visitFacts';
 import {
   DenScreenHeading,
   DenPanel,
@@ -196,8 +198,8 @@ function messageOf(err: unknown): string {
  *                       "Undo Arrival" (`ui/admin/KinCareSessionsScreen.kt`).
  *                       Which buttons appear from which state lives in
  *                       `lib/sessionLifecycle.ts#lifecycleActionsFor`.
- *   note to office      `KinCareSessionsScreen.kt#appendOfficeNote`, format and
- *                       newest-first ordering included.
+ *   internal notes      #1580: `components/VisitInternalNotes`, the one list per
+ *                       visit Bookings shows too (shared or admin-only).
  *   the route           `ui/components/RouteMap.kt` + `LiveTrackingScreen.kt`:
  *                       a polyline over the breadcrumb subcollection, live only
  *                       while ARRIVED. Since #760 that polyline is drawn over a
@@ -250,12 +252,17 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   const kinNames = arr<string>(entry?.kinNames).filter((n) => n.trim() !== '');
   const kinLabel = kinNames.join(' & ');
   const serviceTypeNow = str(entry?.serviceType);
+  // #1744: the title names the KinCare, never the stored `visit_60`. The Rate
+  // row below still matches the stored text: it shows what the rate card holds
+  // for that exact name, and a guessed match would show a price billing may not use.
+  const namingCatalog = useBookingCatalog();
+  const serviceNameNow = serviceTypeNow.trim() === '' ? '' : bookingServiceName(serviceTypeNow, namingCatalog);
   const sessionLabel =
-    entry === null ? 'Kin Care session' : kinLabel !== '' ? kinLabel : household;
+    entry === null ? 'KinCare session' : kinLabel !== '' ? kinLabel : household;
   const heroTitle =
     entry === null
-      ? 'Kin Care session'
-      : [kinLabel, serviceTypeNow].filter((p) => p.trim() !== '').join(' · ') || household;
+      ? 'KinCare session'
+      : [kinLabel, serviceNameNow].filter((p) => p.trim() !== '').join(' · ') || household;
   // The door comes off the household record, the one field this screen reads
   // from it. A live subscription for the reason `useHouseholdLocation` gives:
   // the address is edited from the Kinfolk profile, and a frozen copy would
@@ -287,7 +294,9 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
 
   // ── the details edit ───────────────────────────────────────────────────────
   const currentServiceType = str(entry?.serviceType);
-  const currentDuration = entry?.serviceDurationMinutes;
+  // #1581: the stored length when it is real, else the visit's own window, so a
+  // 20:00 to 20:30 visit stored with 0 reads (and saves) as 30.
+  const currentDuration = entry === null ? null : shownVisitLengthMinutes(entry);
   const [serviceType, setServiceType] = useState(currentServiceType);
   const [duration, setDuration] = useState(
     typeof currentDuration === 'number' ? String(currentDuration) : '',
@@ -305,20 +314,22 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
     setKinSelection(null);
     setEditWrite({ status: 'idle' });
     // The visit clock's own reset lives in `useVisitLifecycle`, keyed on the
-    // same id, so it is not repeated here.
-    setNoteText('');
-    setNoteWrite({ status: 'idle' });
+    // same id, so it is not repeated here; nor is the internal-notes panel's,
+    // which keys its own state on the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   const [catalog, setCatalog] = useState<ServiceOption[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  // The zone note stamps are read in (#1592). Chicago until settings land.
+  const [noteZone, setNoteZone] = useState<string>(resolveBusinessTimeZone(null));
   useEffect(() => {
     let cancelled = false;
     void getBusinessSettings()
       .then((s) => {
         if (cancelled) return;
         setCatalog(serviceOptionsFromRates(s.serviceRates, s.serviceDurations));
+        setNoteZone(resolveBusinessTimeZone(s.timeZone));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -370,32 +381,15 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
         ...(kinDirty && kinSelection !== null ? { kinIds: kinSelection } : {}),
       });
       setKinSelection(null);
-      setEditWrite({ status: 'done', message: `Saved: ${res.updated.join(', ')}.` });
+      setEditWrite({ status: 'done', message: savedVisitFieldsMessage(res.updated) });
     } catch (err) {
       setEditWrite({ status: 'error', message: messageOf(err) });
     }
   }
 
-  // ── note to office ─────────────────────────────────────────────────────────
-  const [noteText, setNoteText] = useState('');
-  const [noteWrite, setNoteWrite] = useState<WriteState>({ status: 'idle' });
-
-  async function sendOfficeNote() {
-    if (sessionId === null) return;
-    const typed = noteText.trim();
-    if (typed === '') return;
-    setNoteWrite({ status: 'saving' });
-    try {
-      await updateKinCareSession(sessionId, {
-        notes: appendOfficeNote(str(entry?.notes), typed, lifecycleNowIso()),
-      });
-      setNoteText('');
-      setNoteWrite({ status: 'done', message: 'Note added to this visit.' });
-    } catch (err) {
-      setNoteWrite({ status: 'error', message: messageOf(err) });
-    }
-  }
-
+  // #1580: internal notes are `VisitInternalNotes`, the same list Bookings
+  // shows. This screen used to append to the session's own `notes` text, a
+  // second store Bookings never read.
   // ── GPS ────────────────────────────────────────────────────────────────────
   // Live pings while a visit is in flight; the durable `gpsSummary` copy once it
   // is not. Both are needed: `purgeOldVisitRoutes` deletes breadcrumbs past the
@@ -428,7 +422,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
         // sit there is gone rather than crowding the pill.
         crumbs={[{ label: 'Auntie Time', onSelect: onBack }, { label: sessionLabel }]}
         title={heroTitle}
-        subtitle="Kin Care session detail."
+        subtitle="KinCare session detail."
         detail={heroDetail === '' ? undefined : heroDetail}
         trailing={
           entry === null ? undefined : (
@@ -441,24 +435,31 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
         }
       />
 
+      {/* #1602: the walk's visit read "18605" with no hint it was incomplete. */}
+      {addressLooksIncomplete(address) && (
+        <p className="sdetail__addr-hint" role="note">
+          {INCOMPLETE_ADDRESS_HINT}
+        </p>
+      )}
+
       {entry === null ? (
         // THE THREE NO-ROW ANSWERS, kept apart (#753). A refresh on
         // `/sessions/<id>` now mounts this screen with nothing resolved yet, so
         // the old single "no longer available" line would have accused every
         // reload of naming a removed visit.
         read?.status === 'loading' ? (
-          <DenPanel title="Kin Care session">
+          <DenPanel title="KinCare session">
             {/* The Bookings by-id sheet says "Looking this booking up…" for the
                 same moment, and the same voice is the point: the operator should
                 not have to learn two sentences for one wait. */}
             <p className="den-hint" role="status">
-              Looking this Kin Care session up…
+              Looking this KinCare session up…
             </p>
           </DenPanel>
         ) : read?.status === 'error' ? (
           <DenPanel title="Session unavailable">
             <ErrorHint>
-              Couldn&rsquo;t read this Kin Care session. {read.message}
+              Couldn&rsquo;t read this KinCare session. {read.message}
               {read.retry && (
                 <button type="button" className="async-retry" onClick={read.retry}>
                   Retry
@@ -469,7 +470,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
         ) : (
           <DenPanel title="Session unavailable">
             <EmptyHint>
-              No Kin Care session is on file under this id. It may have been removed. The Auntie
+              No KinCare session is on file under this id. It may have been removed. The Auntie
               Time crumb above returns to the board.
             </EmptyHint>
           </DenPanel>
@@ -483,7 +484,6 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
           // helpers already classify honestly ('unknown', 'Undated'), rather than
           // throwing and blanking the view.
           const info = sessionStateInfo(state);
-          const notes = str(entry.notes).trim();
           const kinfolkNotes = str(entry.kinfolkNotes).trim();
           // R1: a KinCare session covers EVERY Kin in the home, so the Kin row
           // is always shown. It used to be hidden whenever `kinIds` was empty,
@@ -618,12 +618,12 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                     {state === 'arrived'
                       ? routeEmptyTextWhileArrived(tracking)
                       : inFlight
-                        ? 'No GPS breadcrumbs were recorded for this Kin Care.'
+                        ? 'No GPS breadcrumbs were recorded for this KinCare.'
                         : state === 'completed' || state === 'cancelled' || state === 'unknown'
                           ? gpsSummary != null
-                            ? 'A GPS summary was saved for this Kin Care, but it has no route points to draw.'
-                            : 'No GPS breadcrumbs were recorded for this Kin Care because it was never tracked.'
-                          : 'Tracking starts once an Auntie clocks in for this Kin Care.'}
+                            ? 'A GPS summary was saved for this KinCare, but it has no route points to draw.'
+                            : 'No GPS breadcrumbs were recorded for this KinCare because it was never tracked.'
+                          : 'Tracking starts once an Auntie clocks in for this KinCare.'}
                   </EmptyHint>
                 ) : (
                   <>
@@ -665,45 +665,14 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                   )}
                 </DenPanel>
 
-                <DenPanel
-                  title="Admin-internal note"
-                  className="d3"
-                  meta="private"
-                  subtitle="Only staff see this. A note is stamped and kept; nothing here is overwritten."
-                >
-                  {notes === '' ? (
-                    <p className="sdetail__nbox sdetail__nbox--empty">No notes on this visit yet.</p>
-                  ) : (
-                    <p className="sdetail__nbox">{notes}</p>
-                  )}
-                  <label className="sdetail__field">
-                    <span className="sdetail__field-label">Note to office</span>
-                    <textarea
-                      className="sdetail__input sdetail__textarea"
-                      rows={3}
-                      placeholder="What does the office need to know?"
-                      value={noteText}
-                      onChange={(e) => setNoteText(e.target.value)}
-                    />
-                  </label>
-                  <div className="sdetail__actions">
-                    <GhostButton
-                      label={noteWrite.status === 'saving' ? 'Sending…' : 'Add note'}
-                      onClick={() => void sendOfficeNote()}
-                      disabled={noteText.trim() === '' || noteWrite.status === 'saving'}
-                    />
-                  </div>
-                  {noteWrite.status === 'error' && (
-                    <ErrorHint>
-                      Couldn&rsquo;t add the note. {noteWrite.message}
-                    </ErrorHint>
-                  )}
-                  {noteWrite.status === 'done' && (
-                    <p className="sdetail__ok" role="status">
-                      {noteWrite.message}
-                    </p>
-                  )}
-                </DenPanel>
+                {sessionId !== null && (
+                  <VisitInternalNotes
+                    target={{ sessionId }}
+                    businessZone={noteZone}
+                    className="d3"
+                    headingLevel={2}
+                  />
+                )}
               </div>
 
               {/* The mock's Details: key on the left, value on the right, one
@@ -787,15 +756,14 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                       all; each is said out loud rather than under-reported. */}
                   <FieldRow
                     label="Kin covered"
-                    value={
-                      kinNames.length > 0
-                        ? kinIds.length > kinNames.length
-                          ? `${kinNames.join(', ')} · ${String(kinIds.length - kinNames.length)} without a name on file`
-                          : kinNames.join(', ')
-                        : kinIds.length > 0
-                          ? `${String(kinIds.length)} (names not on file)`
-                          : 'Every Kin in the home (the booking named none)'
-                    }
+                    // #1581: an id the record carries no name for is named
+                    // from the household's roster, the same list the picker
+                    // below ticks it in.
+                    value={kinCoveredLabel(kinIds, kinNames, (id) => {
+                      if (roster.status !== 'ready') return null;
+                      const k = roster.data.find((r) => r._id === id);
+                      return k === undefined ? null : str(k.name);
+                    })}
                   />
 
                   <fieldset className="sdetail__row sdetail__row--stack sdetail__kin-picker">
@@ -835,7 +803,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                             to book a visit for nobody. */}
                         {effectiveKinIds.length === 0 && (
                           <p className="sdetail__hint">
-                            Nothing ticked means the whole household: a Kin Care covers every Kin in the
+                            Nothing ticked means the whole household: a KinCare covers every Kin in the
                             home unless the booking was narrowed.
                           </p>
                         )}

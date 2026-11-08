@@ -40,6 +40,7 @@
     "backfill:kintale-provenance": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillKinTaleCreatedAtProvenance.ts",
     "backfill:notif-split": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillNotificationDeliverySplit.ts",
     "backfill:broadcast-category": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillBroadcastNotificationCategory.ts",
+    "backfill:generated-draft-created-on": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillGeneratedDraftCreatedOn.ts",
     "backfill:operator-warning-override": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillOperatorFailedLoginWarningOverride.ts",
     "backfill:stripe-payment-cents": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillStripePaymentAmountCents.ts",
     "repair:blocked-slots": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/repairBlockedTimeSlotShape.ts",
@@ -66,7 +67,7 @@
     "qa:set-sandbox-password": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/qa_set_sandbox_password.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.130.0",
+    "@anthropic-ai/sdk": "^1.5.0",
     "@google-cloud/recaptcha-enterprise": "^7.3.0",
     "@googleapis/calendar": "^20.1.0",
     "@sentry/node": "^11.9.0",
@@ -85,12 +86,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@firebase/rules-unit-testing": "^5.0.2",
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@types/node": "^26.6.5",
     "@types/sanitize-html": "^2.16.2",
     "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
-    "firebase": "^12.19.0",
+    "firebase": "^13.2.0",
     "globals": "^17.13.0",
     "prettier": "^3.9.10",
     "ts-node": "^10.9.2",

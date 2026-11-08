@@ -52,7 +52,7 @@ export function CategoryBindingDialog({ categories, onClose, onBound }: Category
           live &&
           setTemplates({
             status: 'error',
-            message: `listTemplates failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );
@@ -112,7 +112,7 @@ export function CategoryBindingDialog({ categories, onClose, onBound }: Category
     } catch (err) {
       setSaving(false);
       setError(
-        `assignTemplatesToCategory failed: ${err instanceof Error ? err.message : 'Bind failed'}`,
+        `Could not save: ${err instanceof Error ? err.message : 'Bind failed'}`,
       );
     }
   }

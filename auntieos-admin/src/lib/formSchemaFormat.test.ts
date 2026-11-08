@@ -1,5 +1,24 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { formSchemaTimeOf, formSchemaUpdatedFull } from './formSchemaFormat';
+import { appliesToLabel, formSchemaTimeOf, formSchemaUpdatedFull, schemaCountLabel } from './formSchemaFormat';
+
+describe('#1592 Form Schemas words', () => {
+  it('counts one schema in the singular', () => {
+    expect(schemaCountLabel(1)).toBe('1 schema');
+    expect(schemaCountLabel(2)).toBe('2 schemas');
+  });
+
+  it('reads Applies to as a plain phrase, never the stored constant', () => {
+    expect(appliesToLabel('NONE')).toBe('Nothing yet');
+    expect(appliesToLabel('KINFOLK')).toBe('Kinfolk profiles');
+    expect(appliesToLabel('KIN')).toBe('Kin profiles');
+    expect(appliesToLabel('HOUSEHOLD')).toBe('Households');
+    expect(appliesToLabel('SESSION')).toBe('KinCare visits');
+    expect(appliesToLabel('BOOKING')).toBe('Bookings');
+    expect(appliesToLabel('KINTALE')).toBe('KinTales');
+    // A stored value nobody lists still reads as words.
+    expect(appliesToLabel('TRIBE_PROFILE')).toBe('Tribe profile');
+  });
+});
 
 // TZ pinned to a west-of-UTC zone so the AO-18 assertions below are meaningful
 // on any CI runner (identical rationale to lib/tribalIntelFormat.test.ts /

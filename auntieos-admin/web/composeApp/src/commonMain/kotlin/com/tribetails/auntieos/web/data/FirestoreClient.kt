@@ -106,6 +106,29 @@ class FirestoreClient {
      */
     suspend fun approveGeneratedDraft(draftId: String, editedCopy: String): WriteResult<Unit> =
         platformApproveGeneratedDraft(draftId, editedCopy)
+    /**
+     * #1563: send a KinTale draft to its household through the
+     * `publishGeneratedDraft` callable, which writes the SENT `kin_care_reports`
+     * doc the portal lists and marks the draft sent in one transaction, and
+     * answers a repeat with the first report. Returns that report id.
+     */
+    suspend fun publishGeneratedDraft(draftId: String, bodyCopy: String, title: String): WriteResult<String> {
+        val payload = publishGeneratedDraftPayloadOf(draftId, bodyCopy, title)
+        return when (val r = platformInvokeCallable("publishGeneratedDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> decodePublishedReportId(r.value)
+                ?.let { WriteResult.Ok(it) }
+                ?: WriteResult.Err("publishGeneratedDraft returned no reportId")
+        }
+    }
+    /** #1563: delete an unsent generated draft. The server refuses one already sent. */
+    suspend fun deleteGeneratedDraft(draftId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("draftId", JsonPrimitive(draftId.trim())) }
+        return when (val r = platformInvokeCallable("deleteGeneratedDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
     fun reportsStream():    Flow<FirestoreResult<List<KinCareReport>>>  {
         val scope = kinfolkScopeFilter(testMode)
         return if (scope != null) platformReportsForKinfolkStream(scope).scopeKinfolk(testMode) { it.kinfolkId }
@@ -596,6 +619,23 @@ class FirestoreClient {
         }
     }
 
+    /** #1610: how many households a broadcast audience reaches, before the send. Writes nothing. */
+    suspend fun previewBroadcastAudience(
+        segmentId: String?,
+        criteria: com.tribetails.auntieos.web.screens.communicate.BroadcastCriteria?,
+    ): WriteResult<com.tribetails.auntieos.web.screens.communicate.BroadcastAudiencePreview> {
+        val payload = buildJsonObject {
+            if (!segmentId.isNullOrBlank()) put("segmentId", JsonPrimitive(segmentId))
+            if (criteria != null) put("criteria", com.tribetails.auntieos.web.screens.communicate.criteriaToJson(criteria))
+        }
+        return when (val r = platformInvokeCallable("previewBroadcastAudience", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeBroadcastAudiencePreview(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "audience count decode failed") }
+        }
+    }
+
     suspend fun broadcastMessage(
         segmentId: String?,
         criteria: com.tribetails.auntieos.web.screens.communicate.BroadcastCriteria?,
@@ -703,6 +743,34 @@ class FirestoreClient {
         }
     }
 
+    /** #1611: puts one thread back in the unread pile (admin flag only; read receipts stay). */
+    suspend fun markConversationUnread(kinfolkId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("markConversationUnread", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
+    /**
+     * #1573: the audio behind a voicemail or call recording. Twilio's stored link
+     * needs the account's credentials, so the admin-gated `getRecordingAudio`
+     * callable fetches it server-side and returns the bytes (or a plain https
+     * link when the stored one is not a Twilio recording). Fail-loud: the
+     * server's reason surfaces verbatim via [WriteResult.Err].
+     */
+    suspend fun getRecordingAudio(kind: String, id: String): WriteResult<com.tribetails.auntieos.web.screens.inbox.RecordingAudio> {
+        val payload = buildJsonObject {
+            put("kind", JsonPrimitive(kind))
+            put("id", JsonPrimitive(id))
+        }
+        return when (val r = platformInvokeCallable("getRecordingAudio", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.inbox.decodeRecordingAudio(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "recording decode failed") }
+        }
+    }
     /**
      * Stage 3 / 16.2: generates a downloadable PDF of an invoice via the
      * admin-gated generateInvoicePdf callable (MyTribe renders with pdf-lib,
@@ -911,10 +979,7 @@ class FirestoreClient {
             emit(DefaultKinTaleTemplate.template)
             templatesStream().collect { res ->
                 if (res !is FirestoreResult.Data) return@collect
-                val active = res.value.filter { it.isActive }
-                val needle = serviceType.lowercase().trim()
-                val match  = active.firstOrNull { tpl -> tpl.serviceTypeKeys.any { it.lowercase().trim() == needle } }
-                emit(match ?: active.firstOrNull { it.isDefault } ?: DefaultKinTaleTemplate.template)
+                emit(pickActiveTemplate(res.value, serviceType))
             }
         }
 
@@ -982,6 +1047,20 @@ class FirestoreClient {
         reportId: String,
         reason: String,
     ): WriteResult<Unit> = platformArchiveOrphanReportAsBadData(reportId, reason)
+
+    /**
+     * #1631: delete one unsent KinTale report draft through the
+     * `deleteKinTaleReportDraft` callable, which refuses a SENT row, a row with
+     * a `sentAt` and an untriaged orphan (the `purgeOldDrafts` conditions) and
+     * audits the delete. Owner only.
+     */
+    suspend fun deleteKinTaleReportDraft(reportId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("reportId", JsonPrimitive(reportId.trim())) }
+        return when (val r = platformInvokeCallable("deleteKinTaleReportDraft", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
 
     fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> =
         kotlinx.coroutines.flow.flow {
@@ -1147,8 +1226,11 @@ class FirestoreClient {
         entityId: String,
         entityType: String,
         max: Int = 10,
+        // #1588: the household of a "kin" upload, stamped as `kinfolkId` so Tag kin
+        // scopes to it. Blank for every other target.
+        kinfolkId: String = "",
     ): WriteResult<List<MediaFile>> =
-        platformPickAndUploadMedia(entityId, entityType, max)
+        platformPickAndUploadMedia(entityId, entityType, max, kinfolkId)
 
     /**
      * ISSUE #577: server-bound delete, through the `deleteMediaFile` callable,
@@ -1437,6 +1519,22 @@ class FirestoreClient {
      * went out; that is an Ok, not an Err, because the household has been
      * reminded. See [decodeReminderOutcome] for the pre-#832 response rule.
      */
+    /**
+     * #1609: who a reminder ("reminder") or a draft send ("reviewSend") will
+     * reach, and by which channel, read before the operator confirms it.
+     */
+    suspend fun previewInvoiceNotice(invoiceId: String, action: String): WriteResult<InvoiceNoticePreview> {
+        val payload = buildJsonObject {
+            put("invoiceId", JsonPrimitive(invoiceId))
+            put("action", JsonPrimitive(action))
+        }
+        return when (val r = platformInvokeCallable("previewInvoiceNotice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeInvoiceNoticePreview(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     suspend fun sendInvoiceReminder(
         invoiceId: String,
         nowMs: Long = reminderNowMs(),
@@ -1463,6 +1561,13 @@ class FirestoreClient {
      * stamps) are refused with a message naming markInvoicePaid /
      * recordPayment / updateInvoice, and every refusal surfaces verbatim.
      */
+    /**
+     * #1567: one invoice's send marks, read from the server, for [checkedSend].
+     * Null when the read fails or the invoice is gone; the caller says it cannot
+     * tell rather than guessing either way.
+     */
+    suspend fun invoiceSendMarks(invoiceId: String): SendMarks? =
+        runCatchingCancellable { platformInvoiceDocPlain(invoiceId)?.let { sendMarksOf(it) } }.getOrNull()
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<SendAck> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)
         val payload = buildJsonObject {
@@ -1675,6 +1780,13 @@ class FirestoreClient {
 
     // ---- Business settings ----
     fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> = platformBusinessSettingsStream()
+
+    /**
+     * #1608: is "Verify arrival and departure" on, read the way the server reads
+     * it? Off the raw document: only an explicit `true` counts, while
+     * [BusinessSettings] defaults the field to `true` for the Settings editor.
+     */
+    suspend fun arrivalRuleRequired(): WriteResult<Boolean> = platformArrivalRuleRequired()
     suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> = platformSaveBusinessSettings(settings)
 
     // ---- Tag vocabulary writes ----
@@ -1724,16 +1836,28 @@ class FirestoreClient {
         bookingTransition(bookingId, visitId, "REJECT")
     suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         bookingTransition(bookingId, visitId, "CANCEL")
+
+    /**
+     * #1617: Mark Completed on one `kin_care_sessions` row, through
+     * transitionBookingStatus. The rules refuse a client write of COMPLETED or
+     * `completedAt`, so this callable is the only way a visit is completed, and
+     * its refusal (the operator's arrival rule, an illegal transition) comes
+     * back as the Err message.
+     */
+    suspend fun completeKinCare(sessionId: String, completedAt: String): WriteResult<Unit> =
+        bookingTransition(sessionId, null, "COMPLETE", completedAt = completedAt)
     private suspend fun bookingTransition(
         bookingId: String,
         visitId: String?,
         action: String,
         override: ScheduleOverride? = null,
+        completedAt: String? = null,
     ): WriteResult<Unit> {
         if (visitId.isNullOrBlank()) {
             val payload = buildJsonObject {
                 put("sessionId", JsonPrimitive(bookingId))
                 put("action", JsonPrimitive(action))
+                if (!completedAt.isNullOrBlank()) put("completedAt", JsonPrimitive(completedAt))
                 // #1145: APPROVE checks the visit's window. The flag goes only when the operator chose it.
                 when (override) {
                     ScheduleOverride.BUSY -> put("overrideBusyConflict", JsonPrimitive(true))
@@ -1757,7 +1881,13 @@ class FirestoreClient {
     // ---- Care-ops session callables (1E §A.9) + series approve/cancel (1G) ----
     private val callableJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    /** 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id. */
+    /**
+     * 1E §A.9: create a SCHEDULED kin_care_sessions doc (scheduleNewVisit). Returns the new id.
+     *
+     * #1574: [recordAsCompleted] writes down a visit whose window has already
+     * ended, as COMPLETED; the server refuses it for a window that has not, and
+     * refuses a past window without it. Sent only when true.
+     */
     suspend fun createKinCareSession(
         kinfolkId: String,
         kinIds: List<String>,
@@ -1766,6 +1896,7 @@ class FirestoreClient {
         endTime: String,
         serviceDurationMinutes: Int = 0,
         notes: String = "",
+        recordAsCompleted: Boolean = false,
     ): WriteResult<String> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
@@ -1775,6 +1906,7 @@ class FirestoreClient {
             put("endTime", JsonPrimitive(endTime))
             put("serviceDurationMinutes", JsonPrimitive(serviceDurationMinutes))
             put("notes", JsonPrimitive(notes))
+            if (recordAsCompleted) put("recordAsCompleted", JsonPrimitive(true))
         }
         return when (val r = platformInvokeCallable("createKinCareSession", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
@@ -1801,6 +1933,13 @@ class FirestoreClient {
         weeklyDays: List<Int>? = null,
         kinIds: List<String>? = null,
         /**
+         * #1626: the office's private note (the form's "Admin internal notes").
+         * Sent as `staffNotes`, which the server writes to each visit's
+         * staff-only `internalNotes` thread. [notes] is the household-facing
+         * note, stored on the envelope the portal shows them.
+         */
+        staffNotes: String? = null,
+        /**
          * #644: the id this submission will be stored under, minted once by the
          * caller and reused by every attempt at it. Optional so an older caller
          * still compiles; the server then mints its own id and dedupes nothing,
@@ -1819,6 +1958,7 @@ class FirestoreClient {
             idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
             put("pattern", JsonPrimitive(pattern))
             if (!notes.isNullOrBlank()) put("notes", JsonPrimitive(notes))
+            if (!staffNotes.isNullOrBlank()) put("staffNotes", JsonPrimitive(staffNotes))
             weeklyDays?.let { days -> put("weeklyDays", buildJsonArray { days.forEach { add(JsonPrimitive(it)) } }) }
             kinIds?.let { ids -> put("kinIds", buildJsonArray { ids.forEach { add(JsonPrimitive(it)) } }) }
             put("visits", buildJsonArray {
@@ -2295,6 +2435,46 @@ class FirestoreClient {
     suspend fun deleteKinTaleTemplate(templateId: String): WriteResult<Unit> =
         platformDeleteKinTaleTemplate(templateId)
 
+    /**
+     * #1591: the one entry point that archives, restores or deletes a KinTale
+     * template (operator ruling 2026-11-05: "both"). ARCHIVE and RESTORE go
+     * through the #994 field diff, so only `archived`, `archivedAt`,
+     * `updatedAt` (and on a restore that must give up the default, `isDefault`)
+     * are written. DELETE removes the doc, which `firestore.rules` allows only
+     * for an archived template.
+     */
+    suspend fun removeKinTaleTemplate(
+        template: KinTaleTemplate,
+        mode: KinTaleTemplateRemoval,
+        clearDefault: Boolean = false,
+        at: String = com.tribetails.auntieos.web.util.nowIso(),
+    ): WriteResult<Unit> {
+        val edited = when (mode) {
+            KinTaleTemplateRemoval.DELETE -> return deleteKinTaleTemplate(template._id)
+            KinTaleTemplateRemoval.ARCHIVE -> template.copy(archived = true, archivedAt = at, updatedAt = at)
+            KinTaleTemplateRemoval.RESTORE -> template.copy(
+                archived = false,
+                archivedAt = "",
+                updatedAt = at,
+                isDefault = template.isDefault && !clearDefault,
+            )
+        }
+        return when (val r = updateKinTaleTemplate(template, edited)) {
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+        }
+    }
+    /** #1591: what uses this template, for a confirm that names what breaks. Owner-only on the server. */
+    suspend fun getKinTaleTemplateUsage(templateId: String): WriteResult<KinTaleTemplateUsage> {
+        val payload = buildJsonObject { put("templateId", JsonPrimitive(templateId)) }
+        return when (val r = platformInvokeCallable("getKinTaleTemplateUsage", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(decodeKinTaleTemplateUsage(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "usage decode failed") }
+        }
+    }
+
     // ---- Booking notes subcollections ----
     /**
      * Live stream of notes under a booking. internal=false reads `notes/` (kinfolk-facing);
@@ -2311,6 +2491,41 @@ class FirestoreClient {
      */
     suspend fun addBookingNote(kinfolkId: String, bookingId: String, body: String, internal: Boolean): WriteResult<String> =
         platformAddBookingNote(kinfolkId, bookingId, body, internal)
+
+    /**
+     * #1580: the visit's ONE list of internal notes, by session, as the signed-in
+     * staff member may see it (`listVisitInternalNotes`). The same list web
+     * Bookings, web Auntie Time and Android show. Operator ruling 2026-11-05:
+     * two kinds, shared and admin-only; the server filters on the caller's
+     * claim, so an Auntie's list never carries an admin-only note.
+     */
+    suspend fun listVisitInternalNotes(sessionId: String): WriteResult<VisitInternalNotes> {
+        val payload = buildJsonObject { put("sessionId", JsonPrimitive(sessionId)) }
+        return when (val r = platformInvokeCallable("listVisitInternalNotes", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeVisitInternalNotes(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+    /**
+     * #1580: add an internal note to the visit, by session
+     * (`addInternalBookingNote`). [adminOnly] keeps it from Aunties; the server
+     * refuses that mark from an Auntie. Returns the stored visibility.
+     */
+    suspend fun addVisitInternalNote(sessionId: String, body: String, adminOnly: Boolean): WriteResult<String> {
+        val payload = buildJsonObject {
+            put("sessionId", JsonPrimitive(sessionId))
+            put("body", JsonPrimitive(body.trim()))
+            put("visibility", JsonPrimitive(if (adminOnly) "adminOnly" else "shared"))
+        }
+        return when (val r = platformInvokeCallable("addInternalBookingNote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                val obj = callableJson.parseToJsonElement(r.value).jsonObject
+                WriteResult.Ok(obj["visibility"]?.jsonPrimitive?.contentOrNull ?: "shared")
+            }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
 
     // ---- KinTale comment thread ----
     /**
@@ -2545,6 +2760,8 @@ internal expect fun platformCallsStream():      Flow<FirestoreResult<List<CallLo
 internal expect fun platformSmsStream():        Flow<FirestoreResult<List<SmsMessage>>>
 internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailMessage>>>
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
+/** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
+internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>
@@ -2616,7 +2833,7 @@ internal expect suspend fun platformUploadMedia(entityId: String, entityType: St
 
 // Run-4 #4b: multi-file variant for general/business/gallery media. wasm picks up to
 // [max] files and writes one media_files doc each; jvm is the mobile-only stub.
-internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>>
+internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int, kinfolkId: String): WriteResult<List<MediaFile>>
 internal expect fun platformAllMediaStream(): Flow<FirestoreResult<List<MediaFile>>>
 internal expect fun platformMediaForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<MediaFile>>>
 internal expect suspend fun platformUpdateMediaTags(mediaId: String, taggedKinIds: List<String>): WriteResult<Unit>
@@ -2637,6 +2854,7 @@ internal expect fun platformBookingTimeSlotsStream(): Flow<FirestoreResult<List<
 internal expect suspend fun platformRecordPayment(payment: Payment, idempotencyKey: String?): WriteResult<String>
 
 internal expect fun platformBusinessSettingsStream(): Flow<FirestoreResult<BusinessSettings>>
+internal expect suspend fun platformArrivalRuleRequired(): WriteResult<Boolean>
 internal expect suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit>
 
 internal expect fun platformBookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>>
@@ -2890,6 +3108,13 @@ data class StaffMember(
 }
 
 /**
+ * #1564: uid -> the name the Gallery's uploader line shows (name, else email).
+ * A uid with neither is left out, so the caller keeps whatever it showed before.
+ */
+fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+
+/**
  * Pure decode of the listStaff body `{staff:[{uid, displayName, email}]}`.
  * Lenient: entries without a uid are dropped (a row we can't assign is
  * useless), missing/null name + email decode as null, and an omitted `staff`
@@ -2904,8 +3129,10 @@ internal fun decodeStaffList(dataJson: String): List<StaffMember> =
                 ?: return@mapNotNull null
             StaffMember(
                 uid = uid,
-                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull,
-                email = o["email"]?.jsonPrimitive?.contentOrNull,
+                // A blank name or email is no name or email: the picker falls
+                // through to the next label rather than showing an empty row.
+                displayName = o["displayName"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+                email = o["email"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
 
@@ -3415,7 +3642,42 @@ data class GeneratedDraft(
     val kinfolkName: String = "",
     val createdOn: String = "",
     val approvedAt: String = "",
-)
+    // #1563: the SECOND writer's spellings. `web/functions/generate.js` writes this
+    // same collection in snake_case, so a draft it wrote decoded here with no
+    // household and no copy. Read through the accessors below, which take the
+    // first non-blank of the two.
+    val kinfolk_id: String = "",
+    val kinfolk_name: String = "",
+    val generated_copy: String = "",
+    val communication_type: String = "",
+    val generated_at: String = "",
+    val generatedTitle: String = "",
+    val generated_title: String = "",
+    /** #1563: the kin_care_reports id this draft was sent as; set by `publishGeneratedDraft`. */
+    val publishedReportId: String = "",
+) {
+    fun householdId(): String = kinfolkId.trim().ifBlank { kinfolk_id.trim() }
+    fun household(): String = kinfolkName.trim().ifBlank { kinfolk_name.trim() }
+    fun body(): String = generatedCopy.ifBlank { generated_copy }
+    fun type(): String = communicationType.trim().ifBlank { communication_type.trim() }
+    fun title(): String = generatedTitle.trim().ifBlank { generated_title.trim() }
+    fun created(): String = createdOn.trim().ifBlank { generated_at.trim() }
+    /** Already sent to the household as a KinTale. */
+    val isPublished: Boolean get() = publishedReportId.isNotBlank()
+    /**
+     * Not sent, and in a status that means nobody has signed it off: `pending`
+     * (n8n era), `generated` (generate.js) or blank. The positive match the web
+     * list makes; `approved` and anything unknown are not "waiting".
+     */
+    val isUnsent: Boolean get() = !isPublished && status.trim().lowercase() in setOf("pending", "generated", "")
+}
+/**
+ * #1563: the drafts waiting on a decision, newest first: Home's "KinTales
+ * pending" rows and its "KinTales to review" count, and the KinTales list's
+ * Drafts bucket. Pure; tested.
+ */
+fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
+    drafts.filter { it.isUnsent }.sortedByDescending { it.created() }
 
 /**
  * KinCareReport - the "KinTale" visit recap that goes home to a kinfolk after a
@@ -3478,9 +3740,32 @@ data class KinCareReport(
  * pass-1 ("legacy_orphan") or pass-2 ("legacy_visit_logs") backfill markers
  * the May-17 migration scripts wrote.
  */
+/**
+ * The template a NEW KinTale is written against: an active template whose
+ * service keys name [serviceType], else the active default, else the built-in.
+ * #1591: an archived template is never picked. Pure; tested.
+ */
+fun pickActiveTemplate(templates: List<KinTaleTemplate>, serviceType: String): KinTaleTemplate {
+    val active = templates.filter { it.isActive && !it.archived }
+    val needle = serviceType.lowercase().trim()
+    val match = active.firstOrNull { tpl -> tpl.serviceTypeKeys.any { it.lowercase().trim() == needle } }
+    return match ?: active.firstOrNull { it.isDefault } ?: DefaultKinTaleTemplate.template
+}
 fun KinCareReport.isUntriagedOrphan(): Boolean =
     kinfolkId.isBlank() && triageStatus.isBlank() &&
     sentVia in setOf("legacy_orphan", "legacy_visit_logs")
+
+/**
+ * #1631: whether this report may offer Delete. A saved (has an id), unsent
+ * draft: status DRAFT, no `sentAt`, not an untriaged orphan. The server's three
+ * refusals, so the control never appears where it can only be refused. Pure;
+ * tested.
+ */
+fun KinCareReport.canDeleteAsDraft(): Boolean =
+    _id.isNotBlank() &&
+        status.trim().uppercase() == "DRAFT" &&
+        sentAt.isBlank() &&
+        !isUntriagedOrphan()
 
 // --- Comms log models - one per channel, all written to Firestore by the
 // inbound pipeline and consumed by the four log screens. Field shape mirrors
@@ -3653,6 +3938,8 @@ data class Invoice(
     val address: String = "",
     val date: String = "",
     val terms: String = "",
+    /** #1609: the structured terms code when the terms came from the picker, else "". */
+    val termsCode: String = "",
     val dueDate: String = "",
     val discount: String = "",
     val total: Double = 0.0,
@@ -3848,6 +4135,9 @@ data class ActivityLogEntry(
     val actorId: String = "",        // user/auth uid that triggered the event
     val targetId: String = "",       // optional doc id the action applied to
     val targetCollection: String = "",
+    // #1747: the household the entry is about. `logActivity` seals it onto the
+    // entry, so an id that used to ride in the description has a field of its own.
+    val familyId: String = "",
     // Hash-chain seal (written by writeAuditEntry). Legacy/admin-SDK entries that
     // predate the chain have no seq and carry blank hashes.
     val seq: Int? = null,
@@ -3865,6 +4155,8 @@ data class ActivityLogEntry(
 data class NotificationEntry(
     val _id: String = "",
     val key: String = "",            // catalog key, e.g. 'kincare.booking.confirm'
+    // AO-28: the catalog label the dispatcher writes; blank on older rows (#1592).
+    val title: String = "",
     val category: String = "",
     val recipientUid: String = "",
     val actorUid: String? = null,
@@ -3893,6 +4185,11 @@ data class NotificationEntry(
     // map, so an odd `data` never drops the whole notification from the list.
     @Serializable(with = LenientJsonObjectSerializer::class)
     val data: JsonObject? = null,
+    // #1647: how a `kincare.requested` request ended, stamped onto its rows by
+    // the server (onBookingEnvelopeResolve) once the request is booked or
+    // declined: 'booked' | 'declined' | 'cancelled'. Blank while it is still
+    // waiting, and on every other key. Read through requestOutcomeLabel.
+    val requestResolution: String = "",
 ) {
     /** True once the recipient (or an admin) has marked this notification read. */
     val isRead: Boolean get() = readAt.isNotBlank()
@@ -4125,7 +4422,9 @@ data class BusinessSettings(
     // ---- GPS / tracking ----
     val enableGPSTrackingForAllVisits: Boolean = true,
     val enablePhotoLocationTagging: Boolean = true,
-    val requireArrivalDepartureVerification: Boolean = true,
+    // #1620: absent means OFF, the server's reading (`=== true` in
+    // functions/src/lib/arrivalVerification.ts).
+    val requireArrivalDepartureVerification: Boolean = false,
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value. 150 m matches ARRIVAL_RADIUS_DEFAULT_METERS on the server, which
@@ -4436,6 +4735,48 @@ data class BookingNote(
     val createdAtMs: Long? = null,
 )
 
+/** #1580: one note in a visit's internal list (`listVisitInternalNotes`). */
+data class VisitInternalNote(
+    val id: String,
+    val body: String,
+    /** 'admin', 'auntie' or 'unknown'. */
+    val authorRole: String,
+    val authorName: String?,
+    val createdAtMs: Long?,
+    /** 'shared' or 'adminOnly'. */
+    val visibility: String,
+    /** 'thread', or 'visitRecord' for the session's older notes text. */
+    val source: String,
+)
+/** #1580: a visit's internal list, and whether the caller may mark a note admin only. */
+data class VisitInternalNotes(
+    val notes: List<VisitInternalNote>,
+    val canMarkAdminOnly: Boolean,
+    val hasBookingRecord: Boolean,
+)
+/** Pure decode of the `listVisitInternalNotes` reply; never throws on a missing field. */
+internal fun decodeVisitInternalNotes(json: String): VisitInternalNotes {
+    val obj = Json.parseToJsonElement(json).jsonObject
+    val notes = (obj["notes"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val n = el as? JsonObject ?: return@mapNotNull null
+        fun str(k: String) = n[k]?.jsonPrimitive?.contentOrNull
+        VisitInternalNote(
+            id = str("id").orEmpty(),
+            body = str("body").orEmpty(),
+            authorRole = str("authorRole").orEmpty(),
+            authorName = str("authorName"),
+            createdAtMs = n["createdAtMs"]?.jsonPrimitive?.doubleOrNull?.toLong(),
+            visibility = str("visibility") ?: "shared",
+            source = str("source") ?: "thread",
+        )
+    }
+    return VisitInternalNotes(
+        notes = notes,
+        canMarkAdminOnly = obj["canMarkAdminOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
+        hasBookingRecord = obj["hasBookingRecord"]?.jsonPrimitive?.booleanOrNull ?: false,
+    )
+}
+
 /**
  * One KinTale comment read from kin_care_reports/{taleId}/comments. authorRole is
  * 'kinfolk' | 'admin' | 'guest'. guestName is only set for shared-link guest authors
@@ -4661,3 +5002,16 @@ data class UserProfile(
             return ""
         }
 }
+
+/** #1563: the `publishGeneratedDraft` request body. A blank title is left out (the draft's own is used). Pure; tested. */
+internal fun publishGeneratedDraftPayloadOf(draftId: String, bodyCopy: String, title: String): JsonObject =
+    buildJsonObject {
+        put("draftId", JsonPrimitive(draftId.trim()))
+        put("bodyCopy", JsonPrimitive(bodyCopy))
+        if (title.isNotBlank()) put("title", JsonPrimitive(title.trim()))
+    }
+/** #1563: the report id out of a `publishGeneratedDraft` reply, or null. Pure; tested. */
+internal fun decodePublishedReportId(raw: String): String? =
+    runCatching {
+        Json.parseToJsonElement(raw).jsonObject["reportId"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()?.takeIf { it.isNotBlank() }

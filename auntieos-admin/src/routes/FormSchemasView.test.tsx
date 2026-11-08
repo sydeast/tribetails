@@ -16,6 +16,9 @@ vi.mock('../api/businessAdmins', async (orig) => ({
   ...(await orig<typeof import('../api/businessAdmins')>()),
   listBusinessAdmins,
 }));
+// #1592: the shared staff-name read (`listStaff`), stubbed so no test dials it.
+const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() as ReadonlyMap<string, string> } }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames.current }));
 // The editor is covered by its own tests; here it only has to hand back a save.
 vi.mock('../screens/FormSchemaEditor', async () => {
   const { useToast } = await import('../components/Toast');
@@ -43,7 +46,7 @@ function row(over: Partial<FormSchemaSummary>): FormSchemaSummary {
 beforeEach(() => {
   listFormSchemas.mockReset();
   listBusinessAdmins.mockReset();
-  listBusinessAdmins.mockResolvedValue({ members: [], source: 'roster', rosterPath: '', reason: null });
+  listBusinessAdmins.mockResolvedValue({ members: [], source: 'roster', rosterPath: '', reason: null, businessEmail: '' });
 });
 describe('FormSchemasView (#1615)', () => {
   it('reads the list again after the editor saves and keeps the confirmation on screen', async () => {

@@ -23,6 +23,10 @@ vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+// #1707: "Edit templates" is the owner's control. Every test runs as the owner
+// unless it says otherwise.
+const access = vi.hoisted(() => ({ current: { status: 'admin' } as { status: string } | null }));
+vi.mock('../lib/access', () => ({ useAdminAccess: () => access.current }));
 
 // The head's "Edit templates" is a real route link, and a real `Link` wants a
 // RouterProvider no suite in this tree mounts (HouseholdData.test.tsx idiom).
@@ -48,6 +52,19 @@ vi.mock('../api/kinTaleTriage', () => ({
   markOrphanReportAsDuplicate: vi.fn(),
   archiveOrphanReportAsBadData: vi.fn(),
 }));
+
+/**
+ * #1592: the row names its service from the operator's KinCare catalog. Empty
+ * by default, so every pre-existing row keeps its stored text.
+ */
+const catalogRef = vi.hoisted(() => ({
+  current: { serviceRates: {}, serviceDurations: {}, timeBlocks: [] } as {
+    serviceRates: Record<string, string>;
+    serviceDurations: Record<string, string>;
+    timeBlocks: never[];
+  },
+}));
+vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => catalogRef.current }));
 
 import { KinTales } from './KinTales';
 
@@ -196,6 +213,23 @@ describe('KinTales screen', () => {
     expect(within(row).getByText('DRAFT')).toHaveClass('den-statuspill', 'den-statuspill--compact');
   });
 
+  it('#1592: names the service from the KinCare catalog, never the stored key', () => {
+    catalogRef.current = {
+      serviceRates: { '60Minute': '45', '30Minute': '30' },
+      serviceDurations: {},
+      timeBlocks: [],
+    };
+    try {
+      usePagedCollection.mockReturnValue(paged([entry({ serviceType: 'visit_60' })]));
+      render(<KinTales />);
+      const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
+      expect(within(row).getByText('60Minute')).toBeInTheDocument();
+      expect(within(row).queryByText('visit_60')).toBeNull();
+    } finally {
+      catalogRef.current = { serviceRates: {}, serviceDurations: {}, timeBlocks: [] };
+    }
+  });
+
   it('draws the row as the mock does: a status tile, no headline line', () => {
     // The logs mock's `.row` carries the household, "service · when" and the
     // pips, and nothing of the body. Neither does Android's. The tale is read
@@ -330,6 +364,18 @@ describe('KinTales screen', () => {
     expect(onSelect).toHaveBeenCalledWith('tale-42');
   });
 
+  it('#1563: a draft row selects its namespaced id, which the view routes to Communicate', async () => {
+    setDrafts([draft({ _id: 'gd-5' })]);
+    const onSelect = vi.fn();
+    render(<KinTales onSelect={onSelect} />);
+    await user.click(screen.getByRole('button', { name: /The Okafors/i }));
+    expect(onSelect).toHaveBeenCalledWith('generated_drafts/gd-5');
+  });
+  it('#1563: a draft already sent as a KinTale is not listed again under Drafts', () => {
+    setDrafts([draft({ _id: 'gd-sent', publishedReportId: 'r1' })]);
+    render(<KinTales />);
+    expect(screen.queryByText('The Okafors')).toBeNull();
+  });
   it('omitting onSelect renders each row STATIC (not a live no-op button)', () => {
     usePagedCollection.mockReturnValue(paged([entry({})]));
     render(<KinTales />);
@@ -340,7 +386,7 @@ describe('KinTales screen', () => {
     expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();
   });
 
-  it('offers no New KinTale: a KinTale starts from a Kin Care (#676), as the mock draws it', () => {
+  it('offers no New KinTale: a KinTale starts from a KinCare (#676), as the mock draws it', () => {
     render(<KinTales />);
     expect(screen.queryByText(/new kintale/i)).toBeNull();
   });
@@ -360,6 +406,15 @@ describe('KinTales screen: the head', () => {
     const link = screen.getByRole('link', { name: 'Edit templates' });
     expect(link).toHaveAttribute('href', '/kintale-templates');
     expect(link).toHaveClass('auntie-btn--ghost');
+  });
+  it('#1707: offers an Auntie no Edit templates, because the rules refuse her template writes', () => {
+    access.current = { status: 'caretaker' };
+    try {
+      render(<KinTales />);
+      expect(screen.queryByRole('link', { name: 'Edit templates' })).toBeNull();
+    } finally {
+      access.current = { status: 'admin' };
+    }
   });
 
   it('keeps the explanation as the heading tooltip, not a line of copy', () => {
@@ -420,6 +475,20 @@ describe('KinTales screen: the date window', () => {
     expect(lastSpec().filters?.map((f) => [f[0], f[1]])).toEqual([['createdAt', '>=']]);
   });
 
+  it('opens in the window it is told to, so Home can link to the archive its draft count covers (#1601)', () => {
+    render(<KinTales initialRange="all" />);
+    expect(screen.getByRole('tab', { name: 'All (archive)' })).toHaveAttribute('aria-selected', 'true');
+    expect(lastSpec().filters ?? []).toEqual([]);
+  });
+
+  it('tells the route which window was picked, so a closed KinTale lands back on it (#1594)', async () => {
+    const onRangeChange = vi.fn();
+    render(<KinTales onRangeChange={onRangeChange} />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Last 30 days' }));
+    expect(onRangeChange).toHaveBeenCalledWith('30d');
+    expect(screen.getByRole('tab', { name: 'Last 30 days' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('windows against an ISO string, which is what kin_care_reports.createdAt holds', () => {
     render(<KinTales />);
     const bound = lastSpec().filters?.[0]?.[2];
@@ -470,8 +539,9 @@ describe('KinTales screen: the kinfolk facet', () => {
     const select = screen.getByLabelText('Household');
     expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
       'All households',
-      'Dana Ruiz',
+      // A to Z by surname: the roster hook sorts, the stream is paged by id (#1565).
       'Sam Okafor',
+      'Dana Ruiz',
     ]);
   });
 

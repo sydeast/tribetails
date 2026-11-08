@@ -18,6 +18,7 @@ import {
   invoicePartialPayment,
   invoiceStateInfo,
   isInvoiceOverdue,
+  isUnreadableDueDate,
   localDateIso,
   unstampedStateInfo,
   type InvoiceAction,
@@ -37,9 +38,11 @@ import {
   archiveInvoice,
   unarchiveInvoice,
   retryInvoiceCheckoutClose,
+  previewInvoiceNotice,
 } from '../api/invoicesWrite';
 import type {
   GetInvoiceLedgerResult,
+  PreviewInvoiceNoticeResult,
   UpdateInvoiceArgsPatch,
 } from '../contracts/invoiceContracts.generated';
 import { InvoiceLedgerPanels } from './InvoiceLedger';
@@ -55,7 +58,13 @@ import { centsToInputDollars, normalizeMoneyText } from '../lib/invoiceMoneyInpu
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
+import { invoiceTermsDefs, parseInvoiceTermsCode, type InvoiceTermsCode } from '../lib/invoiceTerms';
+import { noticePreviewSentence } from '../lib/invoiceNoticePreview';
+import { failedToLead } from '../lib/callableErrorText';
 import { phaseOfError } from '../lib/offlineWrite';
+import { readInvoiceSendMarks } from '../api/invoiceSendCheck';
+import { sendMarksOf, sendOutcomeAfterSilence, type SendCheckAction } from '../lib/invoiceSendCheck';
+import { CallableTimeoutError, LONG_CALLABLE_TIMEOUT_MS } from '../lib/fns';
 import {
   mintInvoicePaymentIdempotencyKey,
   mintPaymentIdempotencyKey,
@@ -66,7 +75,7 @@ import './InvoiceDetail.css';
  * What this panel says when a money action fails (#807).
  *
  * THE SENTENCE THAT MATTERS IS WHICH OF THREE THINGS HAPPENED, and until now
- * all three read the same: "markInvoicePaid failed: internal". The SDK reports
+ * all three read the same: "Could not save: internal". The SDK reports
  * `functions/internal` for every transport failure, so that one string covered
  * "never left the device", "we cannot tell", and a genuine server refusal —
  * and on this panel those call for different actions:
@@ -94,7 +103,7 @@ import './InvoiceDetail.css';
  *   failed   the server answered. Its own sentence is the useful one.
  *
  * The offline classes carry their whole sentence, so the callable-name prefix
- * is dropped for them: "markInvoicePaid failed: This device is offline…" reads
+ * is dropped for them: "Could not save: This device is offline…" reads
  * as a bug in the app rather than a fact about the phone.
  */
 export function invoiceActionError(caught: unknown, callableName: string): string {
@@ -104,7 +113,7 @@ export function invoiceActionError(caught: unknown, callableName: string): strin
   if (phase === 'unknown') {
     return `${message} Press the same button again WITHOUT changing anything: this payment carries a key that makes a second attempt land on the same record. Changing a figure first would make it a different payment.`;
   }
-  return `${callableName} failed: ${message}`;
+  return `${failedToLead(callableName)}: ${message}`;
 }
 
 /**
@@ -389,9 +398,26 @@ export type PaymentSplit =
       appliedCents: number;
       tipCents: number;
       creditCents: number;
+      /**
+       * #1566: how much of the typed amount was over the balance and moved to
+       * the tip. Zero in the ordinary case. Already inside `tipCents`.
+       */
+      overCents: number;
     }
   | { ok: false; error: string };
-
+/**
+ * #1566: THE APPLIED PART STOPS AT THE BALANCE. Operator ruling, 2026-09-27:
+ * an overpayment is all tip, and the fee comes out of the tip. So when the
+ * amount typed is more than the invoice still owes, the invoice takes what it
+ * owes and the rest joins the tip: $100 against $78.50 is $78.50 to the
+ * invoice and $21.50 tip. Credit is still only what she types in its box.
+ *
+ * `amountDueCents` is the balance from the recorded payments (the ledger's
+ * figure, which is what the server refuses against). `null` means the screen
+ * has no trustworthy balance, and then nothing is capped here: the server's
+ * own refusal says what is owed. Capping against a stale zero would put the
+ * whole payment in the tip.
+ */
 export function paymentSplit(input: {
   paymentTotal: string;
   applied: string;
@@ -399,21 +425,39 @@ export function paymentSplit(input: {
   credit: string;
   /** Used when the applied box is blank, which means "settle the rest". */
   fallbackApplied: number;
+  /** #1566: what the invoice still owes, integer cents, or null when unknown. */
+  amountDueCents: number | null;
 }): PaymentSplit | null {
   const cents = (d: number) => Math.round(d * 100);
   const total = parseOptionalMoney(input.paymentTotal);
   const credit = parseOptionalMoney(input.credit);
   const typedApplied = input.applied.trim();
-  const applied = typedApplied === '' ? input.fallbackApplied : parseOptionalMoney(typedApplied);
+  // Blank settles the rest: the known balance when there is one.
+  const fallback = input.amountDueCents !== null ? input.amountDueCents / 100 : input.fallbackApplied;
+  const applied = typedApplied === '' ? fallback : parseOptionalMoney(typedApplied);
   const tipBlank = input.tip.trim() === '';
   const tip = tipBlank ? 0 : parseOptionalMoney(input.tip);
   if (total === null || credit === null || applied === null || tip === null) return null;
-  const appliedCents = cents(applied);
-  const creditCents = cents(credit);
   const usd = (c: number) => formatUsd(c / 100);
+  const typedAppliedCents = cents(applied);
+  const dueCents = input.amountDueCents;
+  const overCents = dueCents !== null && typedAppliedCents > dueCents ? typedAppliedCents - dueCents : 0;
+  const appliedCents = typedAppliedCents - overCents;
+  if (overCents > 0 && appliedCents <= 0) {
+    return { ok: false, error: 'This invoice owes nothing, so no payment can be recorded against it.' };
+  }
+  const creditCents = cents(credit);
+  // The part over the balance is tip, added to any tip she typed.
+  const typedTipCents = cents(tip) + overCents;
   if (total <= 0) {
-    const tipCents = cents(tip);
-    return { ok: true, paidCents: appliedCents + tipCents + creditCents, appliedCents, tipCents, creditCents };
+    return {
+      ok: true,
+      paidCents: appliedCents + typedTipCents + creditCents,
+      appliedCents,
+      tipCents: typedTipCents,
+      creditCents,
+      overCents,
+    };
   }
   const paidCents = cents(total);
   const leftoverCents = paidCents - appliedCents;
@@ -429,14 +473,18 @@ export function paymentSplit(input: {
       error: `Account credit of ${usd(creditCents)} is more than the ${usd(leftoverCents)} left after the ${usd(appliedCents)} applied to this invoice.`,
     };
   }
-  const tipCents = tipBlank ? leftoverCents - creditCents : cents(tip);
+  const tipCents = tipBlank ? leftoverCents - creditCents : typedTipCents;
   if (appliedCents + tipCents + creditCents !== paidCents) {
+    const overNote =
+      overCents > 0
+        ? ` The invoice owes ${usd(appliedCents)}, so ${usd(overCents)} of the amount collected counts as tip.`
+        : '';
     return {
       ok: false,
-      error: `${usd(appliedCents)} applied, a ${usd(tipCents)} tip and ${usd(creditCents)} account credit add up to ${usd(appliedCents + tipCents + creditCents)}, not the ${usd(paidCents)} paid. Change the tip or the credit, or leave the tip blank to take the rest.`,
+      error: `${usd(appliedCents)} applied, a ${usd(tipCents)} tip and ${usd(creditCents)} account credit add up to ${usd(appliedCents + tipCents + creditCents)}, not the ${usd(paidCents)} paid.${overNote} Change the tip or the credit, or leave the tip blank to take the rest.`,
     };
   }
-  return { ok: true, paidCents, appliedCents, tipCents, creditCents };
+  return { ok: true, paidCents, appliedCents, tipCents, creditCents, overCents };
 }
 type PendingAction = InvoiceAction;
 
@@ -537,12 +585,25 @@ const INVOICE_HEADER_TEXT_LIMITS = {
   discount: { label: 'Discount note', max: 200 },
 } as const;
 
+/** #1609: the edit picker's option for terms that carry no code. */
+const KEPT_TERMS = 'kept';
+/** #1609: true when the picked terms will set the due date on save, so the field is not typed. */
+function termsSetDueDate(editing: { termsChoice: string }, invoice: { termsCode?: string }): boolean {
+  const initial = parseInvoiceTermsCode(invoice.termsCode) ?? KEPT_TERMS;
+  return editing.termsChoice !== initial && editing.termsChoice !== KEPT_TERMS && editing.termsChoice !== 'custom';
+}
 /** The metadata and money fields, mid-edit. Text, because a half-typed field is not a number. */
 interface EditDraft {
   invoiceNumber: string;
   date: string;
   dueDate: string;
   terms: string;
+  /**
+   * #1609: the terms as the SAME picker New invoice uses. A code, or
+   * `KEPT_TERMS` for an invoice whose terms have no code (typed by hand, or
+   * imported), which stays exactly as stored until a code is picked.
+   */
+  termsChoice: InvoiceTermsCode | typeof KEPT_TERMS;
   /** The household name, the client, the billing address and the legacy discount text (#1198). */
   kinfolkName: string;
   client: string;
@@ -599,6 +660,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   /** Download link shown when the browser would not open the PDF tab itself. */
   const [pdfLink, setPdfLink] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // #1567: the banner title for an error raised after a send got no answer.
+  // Keyed to its own message, so any later error falls back to "Action failed".
+  const [silenceTitle, setSilenceTitle] = useState<{ message: string; title: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /**
    * Whether the notice above is wholly good news.
@@ -784,6 +848,36 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const meta =
     pending && allowed.includes(pending) ? ACTIONS.find((a) => a.key === pending) : undefined;
 
+  // #1609: the confirm for a household send names who it reaches and how,
+  // from the same recipient, prefs and gate the send itself uses.
+  const previewAction = meta?.key === 'reminder' || meta?.key === 'reviewSend' ? meta.key : null;
+  const [noticePreview, setNoticePreview] = useState<
+    | { action: string; kind: 'ready'; result: PreviewInvoiceNoticeResult }
+    | { action: string; kind: 'error'; message: string }
+    | null
+  >(null);
+  useEffect(() => {
+    if (previewAction === null) {
+      setNoticePreview(null);
+      return;
+    }
+    let live = true;
+    setNoticePreview(null);
+    previewInvoiceNotice(invoice._id, previewAction).then(
+      (result) => live && setNoticePreview({ action: previewAction, kind: 'ready', result }),
+      (err: unknown) =>
+        live &&
+        setNoticePreview({
+          action: previewAction,
+          kind: 'error',
+          message: err instanceof Error ? err.message : 'the check failed',
+        }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [previewAction, invoice._id]);
+
   // The stored itemization. NULL means never itemized, which is not the same as
   // an empty list and must not be rendered as an empty items table: a heading
   // over no rows reads as "nothing was billed".
@@ -809,12 +903,19 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const totalCheck = checkInvoiceTotal(invoice);
   // Recomputed every render from the boxes themselves, so it can never lag the
   // number she is looking at. Null while something is half-typed.
+  // #1566: the balance the applied part stops at. The ledger's figure first
+  // (summed from the recorded payments, the one the server refuses against),
+  // then the cents the server stamped on the invoice. Never the dollar
+  // `amountDue` alone: on an invoice the old partial write touched it reads 0
+  // while money is owed, and capping at that would make the whole payment tip.
+  const balanceDueCents: number | null = ledger?.amountDueCents ?? invoice.amountDueCents ?? null;
   const split = paymentSplit({
     paymentTotal: paidTotal,
     applied: paidAmount,
     tip: paidTip,
     credit: paidCredit,
     fallbackApplied: invoice.amountDue,
+    amountDueCents: balanceDueCents,
   });
   // The fee, for the "comes out of the tip" clause. Null while half-typed.
   const splitFee = parseOptionalMoney(paidFee);
@@ -848,7 +949,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // messages name the invoice and the reason, and rewording one here would
         // lose the part that says what to do next.
         setLedgerError(
-          `getInvoiceLedger failed: ${caught instanceof Error ? caught.message : 'Load failed'}`,
+          `Could not load: ${caught instanceof Error ? caught.message : 'Load failed'}`,
         );
         setLedgerLoading(false);
       });
@@ -906,6 +1007,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       date: invoice.date,
       dueDate: invoice.dueDate,
       terms: invoice.terms ?? '',
+      termsChoice: parseInvoiceTermsCode(invoice.termsCode) ?? KEPT_TERMS,
       kinfolkName: invoice.kinfolkName ?? '',
       client: invoice.client ?? '',
       address: invoice.address ?? '',
@@ -927,10 +1029,22 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     // Only CHANGED fields go in the patch. Echoing an unchanged value back would
     // still stamp `updatedAt` and write an audit entry describing an edit that
     // did not happen.
+    // #1609: a cleared number is caught here, beside Save, before the server's
+    // refusal could surface as a raw banner at the top of the form.
+    if (editing.invoiceNumber.trim() === '') {
+      setEditError('An invoice needs a number. Type one, or put the old one back.');
+      return;
+    }
     if (editing.invoiceNumber !== invoice.invoiceNumber) patch.invoiceNumber = editing.invoiceNumber.trim();
     if (editing.date !== invoice.date) patch.date = editing.date.trim();
-    if (editing.dueDate !== invoice.dueDate) patch.dueDate = editing.dueDate.trim();
-    if (editing.terms !== (invoice.terms ?? '')) patch.terms = editing.terms;
+    // #1609: terms are a code from the picker. A non-custom code works out its
+    // own due date on the server, so the due date is sent only for custom
+    // terms or when the terms were left alone.
+    const initialChoice = parseInvoiceTermsCode(invoice.termsCode) ?? KEPT_TERMS;
+    const termsChanged = editing.termsChoice !== initialChoice && editing.termsChoice !== KEPT_TERMS;
+    if (termsChanged) patch.termsCode = editing.termsChoice as InvoiceTermsCode;
+    const dueDateFromTerms = termsChanged && editing.termsChoice !== 'custom';
+    if (!dueDateFromTerms && editing.dueDate !== invoice.dueDate) patch.dueDate = editing.dueDate.trim();
     // #1198: the four descriptive fields, compared against the SAME `?? ''`
     // baseline the form was seeded from, so a field the doc never had does not
     // read as changed when the operator left it empty. Sent as typed, like
@@ -985,7 +1099,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       // sentence written for the operator (money locked by a recorded payment,
       // a discount larger than its line), and rewording them here would lose
       // exactly the part that says what to do next.
-      setEditError(`updateInvoice failed: ${caught instanceof Error ? caught.message : 'Save failed'}`);
+      setEditError(`Could not save: ${caught instanceof Error ? caught.message : 'Save failed'}`);
     }
   }
 
@@ -1053,7 +1167,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     } catch (caught) {
       setBusy(false);
       setActionError(
-        `retryInvoiceCheckoutClose failed: ${caught instanceof Error ? caught.message : 'Retry failed'}`,
+        `Could not retry: ${caught instanceof Error ? caught.message : 'Retry failed'}`,
       );
     }
   }
@@ -1092,7 +1206,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       if (win && !win.closed) win.close();
       setPdfBusy(false);
       setActionError(
-        `generateInvoicePdf failed: ${caught instanceof Error ? caught.message : 'PDF failed'}`,
+        `Could not create: ${caught instanceof Error ? caught.message : 'PDF failed'}`,
       );
     }
   }
@@ -1100,6 +1214,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     if (busy) return;
     setBusy(true);
     setActionError(null);
+    const before = sendMarksOf(invoice as unknown as Record<string, unknown>);
     try {
       const resent = await resendQuote(invoice._id);
       setBusy(false);
@@ -1114,21 +1229,52 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           : 'Quote sent again. The household can accept or decline it now.',
       );
     } catch (caught) {
+      // #1567: no answer is not a refusal. Re-read the quote and say what
+      // really happened before offering anything.
+      if (phaseOfError(caught) === 'unknown') {
+        await reportAfterSilence('resendQuote', caught, before);
+        setResendPrompt(false);
+        return;
+      }
       setBusy(false);
       setResendPrompt(false);
       // Fail loud and verbatim: every refusal this callable makes names what to
       // do next (give it a new due date, send a reminder instead), and
       // paraphrasing it here would throw that away.
       setActionError(
-        `resendQuote failed: ${caught instanceof Error ? caught.message : 'Resend failed'}`,
+        `Could not send: ${caught instanceof Error ? caught.message : 'Resend failed'}`,
       );
     }
   }
 
+  /**
+   * #1567: a send got no answer. The server may have finished it after the
+   * client stopped listening, so the invoice is re-read from the server and the
+   * panel reports what it shows (`lib/invoiceSendCheck.ts`), never "failed".
+   * Leaves `busy` on through the re-read, so the button keeps its spinner.
+   */
+  async function reportAfterSilence(action: SendCheckAction, caught: unknown, before: ReturnType<typeof sendMarksOf>) {
+    const seconds =
+      caught instanceof CallableTimeoutError ? caught.seconds : Math.round(LONG_CALLABLE_TIMEOUT_MS / 1000);
+    const after = await readInvoiceSendMarks(invoice._id);
+    const outcome = sendOutcomeAfterSilence(action, seconds, before, after);
+    setBusy(false);
+    if (outcome.kind === 'sent') {
+      setNoticeIncomplete(false);
+      setNotice(outcome.message);
+      setPending(null);
+      return;
+    }
+    setSilenceTitle({ message: outcome.message, title: outcome.kind === 'not-sent' ? 'Not sent' : 'No answer' });
+    setActionError(outcome.message);
+  }
   async function confirmPending() {
     if (!meta || busy) return;
     setBusy(true);
     setActionError(null);
+    // #1567: the marks each send leaves, as they stood when the button was
+    // pressed, so a re-read after a silent send can tell whether it landed.
+    const before = sendMarksOf(invoice as unknown as Record<string, unknown>);
     try {
       let outcome = meta.successMessage;
       // Set wherever an outcome sentence gets a clause saying part of this did
@@ -1219,6 +1365,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           tip: paidTip,
           credit: paidCredit,
           fallbackApplied: invoice.amountDue,
+          amountDueCents: balanceDueCents,
         });
         if (checked === null || !checked.ok) {
           setBusy(false);
@@ -1230,9 +1377,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           setActionError('Account credit needs a household, and this invoice is not linked to one.');
           return;
         }
-        // The tip that is sent: typed, or the rest of the payment when blank.
-        const tipToSend = typedTotal > 0 ? checked.tipCents / 100 : tip;
+        // The tip that is sent: typed, or the rest of the payment when blank,
+        // plus (#1566) whatever of the amount collected was over the balance.
+        const tipToSend = checked.tipCents / 100;
         const creditCents = checked.creditCents;
+        // #1566: the invoice takes what it owes and no more. A typed amount over
+        // the balance is settled at the balance; the rest went to the tip above.
+        if (amount !== undefined) amount = checked.appliedCents / 100;
 
         // STEP 1 OF 2, AND THE ORDER MATTERS. `markInvoicePaid` is the money
         // authority: it writes the `invoices/{id}/payments` subcollection and
@@ -1339,7 +1490,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           } catch (caught) {
             incomplete = true;
             ledgerNote = ` The payment ledger row did not save (${
-              caught instanceof Error ? caught.message : 'recordPayment failed'
+              caught instanceof Error ? caught.message : 'The payment was not recorded.'
             }), so this payment will not appear on the Payments screen. The invoice itself is correct.`;
             // #866: the confirmation rides on this call, and since #866 nothing
             // else sends one for a payment recorded here.
@@ -1377,6 +1528,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       setNotice(outcome);
       setPending(null);
     } catch (caught) {
+      const silentSend: SendCheckAction | null =
+        meta.key === 'reviewSend' || meta.key === 'reminder' || meta.key === 'receipt' ? meta.key : null;
+      if (silentSend !== null && phaseOfError(caught) === 'unknown') {
+        await reportAfterSilence(silentSend, caught, before);
+        return;
+      }
       setBusy(false);
       setActionError(invoiceActionError(caught, meta.callableName));
     }
@@ -1391,7 +1548,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   }, [busy, onClose]);
 
   return (
-    <Dialog title={`Invoice #${invoice.invoiceNumber || '(none)'}`} onClose={handleDialogClose}>
+    <Dialog
+      title={invoice.invoiceNumber.trim() === '' ? 'Invoice with no number' : `Invoice #${invoice.invoiceNumber}`}
+      onClose={handleDialogClose}
+    >
       <div className="invoice-detail">
         <div className="invoice-detail__summary">
           <span className="invoice-detail__household">{household}</span>
@@ -1414,7 +1574,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           </div>
           <div className="invoice-detail__fact">
             <dt>Due date</dt>
-            <dd>{invoice.dueDate.trim() === '' ? 'not set' : invoice.dueDate}</dd>
+            <dd>
+              {invoice.dueDate.trim() === '' ? 'not set' : invoice.dueDate}
+              {/* #1570: a due date that names no day can never be overdue, so
+                  the sheet says so beside it rather than letting it pass. */}
+              {isUnreadableDueDate(invoice.dueDate) && (
+                <span className="invoice-detail__due-unreadable"> (not a date this app can read, so it is never counted overdue)</span>
+              )}
+            </dd>
           </div>
           <div className="invoice-detail__fact">
             <dt>Last reminder</dt>
@@ -1530,7 +1697,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           </Banner>
         )}
         {actionError && (
-          <Banner tone="error" title="Action failed">
+          <Banner
+            tone="error"
+            title={silenceTitle !== null && silenceTitle.message === actionError ? silenceTitle.title : 'Action failed'}
+          >
             {actionError}
           </Banner>
         )}
@@ -1581,11 +1751,6 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
 
         {editing !== null ? (
           <div className="invoice-detail__edit">
-            {editError && (
-              <Banner tone="error" title="Can't save">
-                {editError}
-              </Banner>
-            )}
             {!editing.moneyEditable && (
               <Banner tone="warning" title="Money is locked">
                 A payment has already been recorded against this invoice, so its line items and
@@ -1626,19 +1791,35 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   className="invoice-detail__field-input"
                   value={editing.dueDate}
                   onChange={(e) => setEditing({ ...editing, dueDate: e.target.value })}
-                  disabled={busy}
+                  // #1609: picked terms other than custom set the due date.
+                  disabled={busy || termsSetDueDate(editing, invoice)}
                   aria-label="Invoice due date"
+                  title={termsSetDueDate(editing, invoice) ? 'Worked out from the terms when you save' : undefined}
                 />
               </label>
               <label className="invoice-detail__field">
                 <span className="invoice-detail__field-label">Terms</span>
-                <input
+                {/* #1609: the same choices as New invoice, not free text. */}
+                <select
                   className="invoice-detail__field-input"
-                  value={editing.terms}
-                  onChange={(e) => setEditing({ ...editing, terms: e.target.value })}
+                  value={editing.termsChoice}
+                  onChange={(e) =>
+                    setEditing({ ...editing, termsChoice: e.target.value as EditDraft['termsChoice'] })
+                  }
                   disabled={busy}
                   aria-label="Invoice terms"
-                />
+                >
+                  {parseInvoiceTermsCode(invoice.termsCode) === null && (
+                    <option value={KEPT_TERMS}>
+                      {(invoice.terms ?? '').trim() === '' ? 'Not set' : `As stored: ${(invoice.terms ?? '').trim()}`}
+                    </option>
+                  )}
+                  {invoiceTermsDefs().map((def) => (
+                    <option key={def.code} value={def.code}>
+                      {def.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="invoice-detail__field">
                 <span className="invoice-detail__field-label">Household</span>
@@ -1702,6 +1883,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               />
             )}
 
+            {/* #1609: beside Save, where the eye is when it is pressed. At the
+                top of the form it sat out of view of the button. */}
+            {editError && (
+              <Banner tone="error" title="Can't save">
+                {editError}
+              </Banner>
+            )}
             <div className="invoice-detail__confirm-actions">
               <GhostButton label="Cancel" onClick={() => !busy && setEditing(null)} disabled={busy} />
               <PrimaryButton
@@ -1788,6 +1976,16 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         ) : meta ? (
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">{meta.confirmCopy}</p>
+            {/* #1609: which person, and which channel, before the press. */}
+            {(meta.key === 'reminder' || meta.key === 'reviewSend') && (
+              <p className="invoice-detail__confirm-copy" role="status" data-testid="notice-preview">
+                {noticePreview === null
+                  ? 'Checking who this reaches…'
+                  : noticePreview.kind === 'error'
+                    ? `Couldn't check who this reaches: ${noticePreview.message}`
+                    : noticePreviewSentence(noticePreview.result)}
+              </p>
+            )}
             {meta.key === 'markPaid' && (
               <div className="invoice-detail__confirm-fields">
                 {/* UNCHANGED, and still the first field. It is what comes off
@@ -1910,6 +2108,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                           ? ` (the ${formatUsd(splitFee)} fee comes out of it)`
                           : ''}
                         , {formatUsd(split.creditCents / 100)} account credit.
+                        {/* #1566: said out loud when the amount typed was over
+                            the balance, so the cap is never a surprise. */}
+                        {split.overCents > 0
+                          ? ` The invoice owes ${formatUsd(split.appliedCents / 100)}, so the ${formatUsd(split.overCents / 100)} over it is tip.`
+                          : ''}
                       </span>
                     </>
                   )}

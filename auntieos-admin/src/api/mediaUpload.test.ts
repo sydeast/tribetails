@@ -353,6 +353,32 @@ describe('writeMediaFileDoc', () => {
     expect('kinfolkId' in payload).toBe(false);
   });
 
+  it('stamps a KIN upload with its household as kinfolkId when one is given (#1588), so Tag kin scopes to that household', async () => {
+    await writeMediaFileDoc({
+      entityId: 'pet1',
+      entityType: 'KIN',
+      kinfolkId: ' kf9 ',
+      originalFileName: 'photo.jpg',
+      cloud: cloudResult(),
+      cloudName: 'tribetails',
+    });
+    const [, payload] = addDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(payload.kinfolkId).toBe('kf9');
+    expect(payload.entityId).toBe('pet1');
+    expect(payload.entityType).toBe('KIN');
+  });
+  it('ignores a kinfolkId passed with a BUSINESS target: company media never carries a household', async () => {
+    await writeMediaFileDoc({
+      entityId: BUSINESS_ENTITY_ID,
+      entityType: 'BUSINESS',
+      kinfolkId: 'kf9',
+      originalFileName: 'photo.jpg',
+      cloud: cloudResult(),
+      cloudName: 'tribetails',
+    });
+    const [, payload] = addDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect('kinfolkId' in payload).toBe(false);
+  });
   it('omits kinfolkId entirely for a BUSINESS target too (Company / no household, operator ruling 2026-07-31)', async () => {
     await writeMediaFileDoc({
       entityId: BUSINESS_ENTITY_ID,

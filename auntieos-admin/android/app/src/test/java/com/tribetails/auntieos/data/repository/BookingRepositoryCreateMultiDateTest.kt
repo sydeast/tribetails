@@ -66,6 +66,18 @@ class BookingRepositoryCreateMultiDateTest {
     }
 
     @Test
+    fun `#1626 - the wizard's private note goes as staffNotes, never as the household-visible notes`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val payload = stub(functions, mapOf("batchId" to "batch1", "visitIds" to listOf("v1"), "visitCount" to 1))
+        repoWith(functions).createMultiDateBookingRequest(
+            kinfolkId = "kf1",
+            visits = listOf(NewBookingVisit(startTimeMs = 1000L, serviceName = "Dog Walking")),
+            staffNotes = "Key is under the blue pot",
+        )
+        assertEquals("Key is under the blue pot", payload.captured["staffNotes"])
+        assertEquals(null, payload.captured["notes"])
+    }
+    @Test
     fun `DRIFT FIX - billing and communication reach the wire when the caller supplies them`() = runBlocking {
         val functions = mockk<FirebaseFunctions>()
         val payload = stub(functions, mapOf("batchId" to "batch1", "visitIds" to listOf("v1"), "visitCount" to 1))

@@ -14,6 +14,17 @@ import org.junit.Test
  */
 class AuntieTimeWindowTest {
 
+    @Test
+    fun `#1744 the card names the KinCare, never the stored key, and blank stays blank`() {
+        val catalog = ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "45"))
+        assertEquals("Long walk", auntieTimeServiceName("visit_45", catalog))
+        assertEquals("", auntieTimeServiceName("  ", catalog))
+        assertEquals(
+            "Long walk · Biscuit · 09:00 - 09:45",
+            auntieTimeIdentityLine(auntieTimeServiceName("visit_45", catalog), listOf("Biscuit"), "09:00 - 09:45", null),
+        )
+    }
+
     private val today = "2026-07-16"
 
     private fun session(
@@ -93,10 +104,18 @@ class AuntieTimeWindowTest {
         assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-07-06T09:00:00Z"), today))
     }
 
+    // #1704: one definition of overdue with web, whose Auntie Time also reads
+    // SCHEDULED visits older than its thirty-day window.
     @Test
-    fun `overdue visibility reaches back thirty days, and stops just past it`() {
+    fun `a scheduled visit stays visible however long ago its slot passed`() {
         assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-06-16T09:00:00Z"), today))
-        assertFalse(isVisibleOnAuntieTime(session(startTime = "2026-06-15T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-06-15T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-03-01T09:00:00Z"), today))
+    }
+    @Test
+    fun `an unrecognized status keeps the thirty-day reach, as web reads it only inside its window`() {
+        assertTrue(isVisibleOnAuntieTime(session(status = "ON_HOLD", startTime = "2026-06-16T09:00:00Z"), today))
+        assertFalse(isVisibleOnAuntieTime(session(status = "ON_HOLD", startTime = "2026-06-15T09:00:00Z"), today))
     }
 
     @Test
@@ -116,6 +135,25 @@ class AuntieTimeWindowTest {
         )
     }
 
+    // #1590: Home's Today's Pack count must be the Overdue heading's count.
+    @Test
+    fun `overdueOnAuntieTime counts what the board files under Overdue and nothing else`() {
+        val sessions = listOf(
+            session(id = "a", startTime = "2026-07-14T09:00:00Z"),
+            session(id = "b", startTime = "2026-07-01T09:00:00Z"),
+            // yesterday is Upcoming, not Overdue
+            session(id = "c", startTime = "2026-07-15T09:00:00Z"),
+            // #1704: older than the thirty-day window is still Overdue, and counted
+            session(id = "d", startTime = "2026-06-01T09:00:00Z"),
+            session(id = "h", startTime = "2026-03-01T09:00:00Z"),
+            // booking queue and wrapped rows are never Overdue
+            session(id = "e", startTime = "2026-07-01T09:00:00Z", status = "PENDING"),
+            session(id = "f", startTime = "2026-07-01T09:00:00Z", status = "COMPLETED", completedAt = "2026-07-01T14:00:00Z"),
+            session(id = "g", startTime = "2026-07-20T09:00:00Z"),
+        )
+        assertEquals(4, overdueOnAuntieTime(sessions, today))
+        assertEquals(0, overdueOnAuntieTime(emptyList(), today))
+    }
     @Test
     fun `upcoming stops at the fourteen-day horizon`() {
         assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-07-30T09:00:00Z"), today))

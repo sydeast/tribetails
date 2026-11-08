@@ -287,7 +287,7 @@ export async function setVisitLifecycleHandler(
       action: args.action,
       code: 'not_found',
       from: '',
-      description: `${args.action} refused: session '${args.sessionId}' not found`,
+      description: (await import('../lib/activityWords.js')).visitNotFoundWords(args.action),
     });
     throw new HttpsError('not-found', `Session '${args.sessionId}' not found.`);
   }
@@ -306,7 +306,7 @@ export async function setVisitLifecycleHandler(
       action: args.action,
       code: BOOKING_STATUS_UNKNOWN_CODE,
       from: decision.raw,
-      description: `${args.action} refused: unreadable status on session '${args.sessionId}'`,
+      description: (await import('../lib/activityWords.js')).visitStatusUnreadableWords(args.action),
     });
     throw new HttpsError('failed-precondition', unknownStatusMessage(decision.raw), {
       code: BOOKING_STATUS_UNKNOWN_CODE,
@@ -321,7 +321,7 @@ export async function setVisitLifecycleHandler(
       action: args.action,
       code: VISIT_LIFECYCLE_ILLEGAL_CODE,
       from: decision.from,
-      description: `${args.action} refused: illegal from ${decision.from}`,
+      description: (await import('../lib/activityWords.js')).visitIllegalWords(args.action, decision.from),
     });
     throw new HttpsError(
       'failed-precondition',
@@ -349,7 +349,7 @@ export async function setVisitLifecycleHandler(
       actorUid: uid,
       targetUid: args.sessionId,
       targetCollection: 'kin_care_sessions',
-      description: `${args.action} on session ${args.sessionId}: already ${decision.at}, no write`,
+      description: (await import('../lib/activityWords.js')).visitNoopWords(args.action, decision.at),
       payload: {
         sessionId: args.sessionId,
         action: args.action,
@@ -441,7 +441,8 @@ export async function setVisitLifecycleHandler(
     actorUid: uid,
     targetUid: args.sessionId,
     targetCollection: 'kin_care_sessions',
-    description: `${args.action} on session ${args.sessionId}: ${decision.from} -> ${decision.to}`,
+    // #1752: words; the session is the entry's target.
+    description: (await import('../lib/activityWords.js')).visitTransitionWords(args.action, decision.from, decision.to),
     payload: {
       sessionId: args.sessionId,
       action: args.action,

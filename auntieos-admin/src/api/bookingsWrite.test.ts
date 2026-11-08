@@ -22,6 +22,7 @@ import {
   assignAuntie,
   addBookingNote,
   addInternalBookingNote,
+  listVisitInternalNotes,
 } from './bookingsWrite';
 
 beforeEach(() => {
@@ -246,19 +247,30 @@ describe('addBookingNote (kinfolk-facing; portal callable, server enforces the 3
     await expect(addBookingNote('kf1', 'b1', 'v1', 'late')).rejects.toThrow('within 3 hours');
   });
 });
-describe('addInternalBookingNote (admin-only; separate callable, separate subcollection)', () => {
-  it('sends the same envelope ids to the admin callable', async () => {
-    call.mockResolvedValue({ noteId: 'n2' });
-    await addInternalBookingNote('kf1', 'b1', 'v1', 'Gate code changed.');
+describe('addInternalBookingNote / listVisitInternalNotes (#1580: one list, two kinds)', () => {
+  it('sends the booking-record ids, marked shared by default', async () => {
+    call.mockResolvedValue({ noteId: 'n2', visibility: 'shared', storedOn: 'thread' });
+    await addInternalBookingNote({ kinfolkId: 'kf1', batchId: 'b1', visitId: 'v1' }, ' Gate code changed. ');
     expect(call).toHaveBeenCalledWith('addInternalBookingNote', {
       kinfolkId: 'kf1',
       batchId: 'b1',
       visitId: 'v1',
       body: 'Gate code changed.',
+      visibility: 'shared',
     });
+  });
+  it('names the visit by session and carries the writer\'s admin-only mark', async () => {
+    call.mockResolvedValue({ noteId: 'a1', visibility: 'adminOnly', storedOn: 'thread' });
+    await addInternalBookingNote({ sessionId: 'vis_v1' }, 'Rate goes up', 'adminOnly');
+    expect(call).toHaveBeenCalledWith('addInternalBookingNote', { sessionId: 'vis_v1', body: 'Rate goes up', visibility: 'adminOnly' });
+  });
+  it('reads the list by session', async () => {
+    call.mockResolvedValue({ notes: [], canMarkAdminOnly: false, hasBookingRecord: true });
+    await listVisitInternalNotes({ sessionId: 'vis_v1' });
+    expect(call).toHaveBeenCalledWith('listVisitInternalNotes', { sessionId: 'vis_v1' });
   });
   it('propagates a callable failure fail-loud', async () => {
     call.mockRejectedValue(new Error('booking not found'));
-    await expect(addInternalBookingNote('kf1', 'b1', 'v1', 'x')).rejects.toThrow('booking not found');
+    await expect(addInternalBookingNote({ sessionId: 's' }, 'x')).rejects.toThrow('booking not found');
   });
 });

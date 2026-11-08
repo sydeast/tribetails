@@ -266,6 +266,9 @@ class KinDetailScreenTest {
 
         rule.onNodeWithText("Auntie's notes").assertIsDisplayed()
         rule.onNodeWithText("Obsessed with sticks.").assertIsDisplayed()
+        // #1598 (operator ruling, 2026-11-05 docket): every staff role reads the
+        // pet's notes, so the false "admin only" badge is gone.
+        rule.onAllNodesWithText("admin only").assertCountEquals(0)
     }
 
     /** Admin-only, on an admin surface: a 411 never reaches a kinfolk screen. */
@@ -325,7 +328,7 @@ class KinDetailScreenTest {
         show(onOpenVisit = { opened = it })
 
         rule.onNodeWithText("Upcoming KinCare").assertIsDisplayed()
-        rule.onNodeWithText("30-min walk").performClick()
+        rule.onNodeWithText("30-min Walk").performClick()
 
         assertEquals("s1", opened)
     }

@@ -1,3 +1,4 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { SCHEDULE_SESSIONS_QUERY, SCHEDULE_BUSY_SLOTS_QUERY, type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
@@ -20,6 +21,7 @@ import {
   sessionDayLabel,
 } from '../lib/sessionFormat';
 import { sortServiceTypesByDuration } from '../lib/newBooking';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
 import {
   SNAP_MINUTES_OFF,
   SNAP_MINUTES_ON,
@@ -34,8 +36,9 @@ import {
 import { getBusinessSettings } from '../api/settings';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { businessInstantMs, businessTodayIso, sessionsByBusinessDay } from '../lib/businessZoneTime';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import { rescheduleBooking } from '../api/bookingsWrite';
+import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import {
   deleteBlockedTimeSlot,
   isOperatorBlock,
@@ -54,6 +57,7 @@ import {
   StatusPill,
   EmptyHint,
   serviceTone,
+  bookingServiceTone,
   type DenTone,
 } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -61,9 +65,11 @@ import { LoadingRow } from '../components/LoadingRow';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { BookingDetailModal } from '../components/BookingDetailModal';
+import { BookingStatusActions } from './BookingActions';
 import { BlockTimeDialog } from '../components/BlockTimeDialog';
 import { NewVisitDialog } from '../components/NewVisitDialog';
 import { ScheduleWeekGrid, type ScheduleDrop } from '../components/ScheduleWeekGrid';
+import { navKicker } from '../lib/nav';
 import './Schedule.css';
 
 const VIEW_MODES: readonly { key: ScheduleViewMode; label: string }[] = [
@@ -220,6 +226,15 @@ export function Schedule({ onSelect }: ScheduleProps) {
    */
   const [serviceRates, setServiceRates] = useState<Record<string, string>>({});
   /**
+   * #1592: the catalog a stored `serviceType` is NAMED against, so the legend
+   * and the agenda say the operator's KinCare name instead of `visit_60`.
+   * Time blocks play no part in a name, so none are read for it.
+   */
+  const serviceCatalog = useMemo<BookingCatalog>(
+    () => ({ serviceRates, serviceDurations, timeBlocks: [] }),
+    [serviceRates, serviceDurations],
+  );
+  /**
    * "Snap drag-to-reschedule to 15 min", off by default.
    *
    * `snapRescheduleTo15Min` has been storable and editable in Settings all
@@ -276,7 +291,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
   // The household list for the New visit dialog. Directory already streams this
   // collection for its own tab; this is Schedule's own bounded listener, the
   // same one-listener-per-screen rule `SCHEDULE_SESSIONS_QUERY` follows.
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   const households = useMemo(
     () =>
       kinfolkState.status === 'ready'
@@ -325,9 +340,16 @@ export function Schedule({ onSelect }: ScheduleProps) {
   }
 
   async function commitDrop(drop: ScheduleDrop, override: 'visit' | 'busy' | null) {
-    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone);
+    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone, drop.window);
     if (times === null) {
       setDropError('That visit could not be moved: its record has no readable start time.');
+      return;
+    }
+    // #1574: a drop onto an hour that has passed is refused here, before the
+    // callable, and the block stays where it was.
+    const pastRefusal = rescheduleIntoPastRefusal(times.startTime, Date.now());
+    if (pastRefusal !== null) {
+      setDropError(pastRefusal);
       return;
     }
     setPendingSessionId(drop.session._id);
@@ -353,7 +375,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
     // A drop that lands back where the visit already was writes nothing: no
     // callable, no audit entry, no "rescheduled" event for a move nobody made.
     const fromDay = businessDayOf(str(drop.session.startTime), businessZone) ?? '';
-    if (isNoOpDrop(drop.session, fromDay, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone)) return;
+    if (isNoOpDrop(drop.session, fromDay, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone, drop.window)) return;
     void commitDrop(drop, null);
   }
 
@@ -416,10 +438,10 @@ export function Schedule({ onSelect }: ScheduleProps) {
        * visit"; the mock has only the one button and is amended for that too.
        */}
       <DenScreenHeading
-        kicker="The Den · Schedule"
+        kicker={navKicker('schedule')}
         title="Schedule"
         accentTail={`${view}.`}
-        subtitle="Every Kin Care visit on the books, from the latest 300, with Google Calendar busy windows and your own blocked time laid over them."
+        subtitle="Every KinCare visit on the books, from the latest 300, with Google Calendar busy windows and your own blocked time laid over them."
         className="schedule__heading"
         trailing={
           <div className="schedule__actions">
@@ -488,7 +510,12 @@ export function Schedule({ onSelect }: ScheduleProps) {
           // which changes the legend along with it, and a view with nothing
           // scheduled yields an empty legend rather than a stale full list.
           const sessionsInView = daysInView.flatMap((day) => byDay.get(day) ?? []);
-          const legend = sortServiceTypesByDuration(distinctServiceTypes(sessionsInView), serviceDurations);
+          // #1592: named against the catalog, then deduped, so two spellings
+          // of one KinCare (`visit_60`, `60Mins`) are one legend row.
+          const legend = sortServiceTypesByDuration(
+            [...new Set(distinctServiceTypes(sessionsInView).map((t) => bookingServiceName(t, serviceCatalog)))],
+            serviceDurations,
+          );
           const selectedSessions = (byDay.get(selected) ?? [])
             .slice()
             .sort(
@@ -519,7 +546,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                */}
               <DenPanel
                 title={sessionDayLabel(selected, todayIso)}
-                subtitle="Kin Care visits on this day."
+                subtitle="KinCare visits on this day."
                 className="schedule__agenda-panel"
                 collapsible
               >
@@ -529,7 +556,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   </Banner>
                 )}
                 {selectedSessions.length === 0 && selectedBusy.length === 0 ? (
-                  <EmptyHint>No Kin Care sessions on this day.</EmptyHint>
+                  <EmptyHint>No KinCare sessions on this day.</EmptyHint>
                 ) : (
                   <ul className="schedule__agenda-list">
                     {selectedSessions.map((entry) => (
@@ -537,6 +564,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                         key={entry._id}
                         entry={entry}
                         businessZone={businessZone}
+                        catalog={serviceCatalog}
                         onSelect={onSelect ?? setOpenSessionId}
                       />
                     ))}
@@ -587,6 +615,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   selected={selected}
                   byDay={byDay}
                   busyByDate={busyByDate}
+                  catalog={serviceCatalog}
                   snapMinutes={snapMinutes}
                   pendingSessionId={pendingSessionId}
                   scrollToBusyRequestId={busyScrollRequestId}
@@ -605,6 +634,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   selected={selected}
                   byDay={byDay}
                   busyByDate={busyByDate}
+                  catalog={serviceCatalog}
                   onSelectDay={setSelected}
                   onOpenSession={onSelect ?? setOpenSessionId}
                 />
@@ -614,7 +644,21 @@ export function Schedule({ onSelect }: ScheduleProps) {
                 <BookingDetailModal
                   entry={openSession}
                   businessZone={businessZone}
+                  catalog={serviceCatalog}
                   onClose={() => setOpenSessionId(null)}
+                  // #1576: the same Actions panel Bookings composes into this
+                  // sheet (Mark Completed / Cancel on a scheduled visit,
+                  // Approve / Reject on a request), so a visit opened from the
+                  // calendar can be closed out where it was found. One
+                  // `actionsFor` map decides what is offered, in BookingActions.
+                  // `createdAt` is the Bookings list's sort key and nothing the
+                  // panel reads; the calendar's row does not carry it.
+                  actions={
+                    <BookingStatusActions
+                      entry={{ ...openSession, createdAt: null }}
+                      onDone={() => setOpenSessionId(null)}
+                    />
+                  }
                   onOpenKinfolk={(kinfolkId) =>
                     void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
                   }
@@ -728,9 +772,11 @@ function dragHint(snapMinutes: number): string {
  * A SWATCH, NOT A PILL. The 2026-09-10 pass drew each type as a `ServicePill`
  * here, and the pill is the right object on a row (it says what THAT visit
  * is); the legend is a key to the colours on the grid, and the mock keys them
- * with a square of the colour. `data-tone` carries the same `serviceTone`
- * mapping the month blocks and week blocks read, so the swatch and the block
- * it stands for resolve to one token.
+ * with a square of the colour. Each entry is already the NAME the catalog
+ * resolves, and `data-tone` is that name's `serviceTone`: the same key
+ * `bookingServiceTone` gives the month and week blocks and `ServicePill` gives
+ * the agenda pill (#1592), so the swatch and the block it stands for resolve
+ * to one token even when the stored type is a key like `visit_60`.
  */
 function ScheduleLegend({ serviceTypes, dragHint }: { serviceTypes: string[]; dragHint: string | null }) {
   return (
@@ -836,6 +882,8 @@ interface MonthGridProps {
   byDay: Map<string, ScheduleSessionEntry[]>;
   /** Google Calendar + manually blocked windows, by local date (#697). */
   busyByDate: Map<string, BusySlotEntry[]>;
+  /** #1592: a block is tinted by the name its legend swatch carries. */
+  catalog: BookingCatalog;
   onSelectDay: (day: string) => void;
   onOpenSession: (sessionId: string) => void;
 }
@@ -850,9 +898,9 @@ interface MonthGridProps {
  * calendar", against a mock whose cells draw the visits themselves.
  *
  * SO EACH CELL NOW LISTS ITS DAY: a short block per visit, tinted by service
- * type through the SAME `serviceTone` the legend's pills and every service pill
- * in the app use, carrying the household and the local start time; a hatched,
- * read-only block per busy window; and "+N more" when the day's VISITS run past
+ * type through the SAME resolved-name tone the legend swatch and the agenda
+ * pill use (`bookingServiceTone`, #1592), carrying the household and the local
+ * start time; a hatched, read-only block per busy window; and "+N more" when the day's VISITS run past
  * {@link MONTH_CELL_BLOCK_CAP}. Busy windows are outside that cap and always
  * drawn, for the reason the cap's own doc gives.
  *
@@ -876,6 +924,7 @@ function MonthGrid({
   selected,
   byDay,
   busyByDate,
+  catalog,
   onSelectDay,
   onOpenSession,
 }: MonthGridProps) {
@@ -908,6 +957,7 @@ function MonthGrid({
                     <li key={item.key}>
                       <MonthVisitBlock
                         entry={item.entry}
+                        catalog={catalog}
                         startMinute={item.minute}
                         onOpen={() => onOpenSession(item.entry._id)}
                       />
@@ -945,22 +995,24 @@ function blockTimeLabel(startMinute: number | null): string {
 
 function MonthVisitBlock({
   entry,
+  catalog,
   startMinute,
   onOpen,
 }: {
   entry: ScheduleSessionEntry;
+  catalog: BookingCatalog;
   startMinute: number | null;
   onOpen: () => void;
 }) {
   // str() on every field read: `serviceType` is absent on 76 of the 99 live
-  // sessions, and `serviceTone` reads it as a string.
+  // sessions. The tone is the resolved name's, the legend swatch's (#1592).
   const household = sessionHousehold(str(entry.kinfolkName));
   const when = blockTimeLabel(startMinute);
   return (
     <button
       type="button"
       className="schedule__month-block schedule__month-block--visit"
-      data-tone={serviceTone(str(entry.serviceType))}
+      data-tone={bookingServiceTone(str(entry.serviceType), catalog)}
       data-session-id={entry._id}
       onClick={onOpen}
       aria-label={`${household} at ${when}. Open this visit.`}
@@ -996,12 +1048,14 @@ interface AgendaRowProps {
   entry: ScheduleSessionEntry;
   /** #1158: the window reads on the business's clock, the same hour the grid block shows. */
   businessZone: string;
+  /** #1592: names the service pill, so a stored key reads as the KinCare it is. */
+  catalog: BookingCatalog;
   /** Always wired now (the screen falls back to its own sheet opener), kept
    *  optional so the static branch below stays reachable if that ever changes. */
   onSelect?: ((sessionId: string) => void) | undefined;
 }
 
-function AgendaRow({ entry, businessZone, onSelect }: AgendaRowProps) {
+function AgendaRow({ entry, businessZone, catalog, onSelect }: AgendaRowProps) {
   // str() on every field read: `ScheduleSessionEntry` is a cast over the raw
   // `kin_care_sessions` doc, and the absent-field fallbacks these helpers
   // already carry ('unknown', 'Unnamed Kinfolk', 'Time TBD', 'visit') only get
@@ -1016,7 +1070,10 @@ function AgendaRow({ entry, businessZone, onSelect }: AgendaRowProps) {
       <span className="schedule__row-when">{businessWindowLabel(str(entry.startTime), str(entry.endTime), businessZone)}</span>
       <span className="schedule__row-who">
         <span className="schedule__row-name">{household}</span>
-        <ServicePill serviceType={str(entry.serviceType)} />
+        <ServicePill
+          serviceType={str(entry.serviceType)}
+          label={bookingServiceName(str(entry.serviceType), catalog)}
+        />
       </span>
       <span className="schedule__row-status">
         <StatusPill label={info.chipLabel} tone={SESSION_STATE_TONE[state]} struck={state === 'cancelled'} />

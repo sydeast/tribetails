@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.activity
 
+import com.tribetails.auntieos.web.screens.unreadableTimesNote
+import com.tribetails.auntieos.web.screens.media.rememberUploaderNames
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,17 +29,21 @@ import com.composables.icons.lucide.CalendarPlus
 import com.composables.icons.lucide.Flag
 import com.composables.icons.lucide.History
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Receipt
 import com.composables.icons.lucide.Settings2
 import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.TriangleAlert
 import com.composables.icons.lucide.UserCheck
 import com.tribetails.auntieos.web.data.ActivityLogEntry
+import com.tribetails.auntieos.web.data.activityDescriptionWords
 import com.tribetails.auntieos.web.data.ChainVerifyResult
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import com.tribetails.auntieos.web.screens.booking.NewBookingMath
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -91,23 +97,13 @@ private enum class ActivityFilter(val label: String) {
     Bookings("Bookings"),
     KinTales("KinTales"),
     Notifications("Notifications"),
+    Billing("Billing"),
     Admin("Admin"),
 }
 
 private fun ActivityFilter.matches(actionType: String): Boolean {
     if (this == ActivityFilter.All) return true
-    val a = actionType.uppercase()
-    return when (this) {
-        ActivityFilter.All           -> true
-        ActivityFilter.Auth          -> a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT")
-        ActivityFilter.Bookings      -> a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")
-        ActivityFilter.KinTales      -> a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")
-        ActivityFilter.Notifications -> a.contains("NOTIFICATION") || a.contains("NOTIF")
-        ActivityFilter.Admin         -> a.startsWith("ADMIN") || a.contains("TRIAGE") ||
-            a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")
-    }
+    return activityCategoryOf(actionType)?.name == name
 }
 
 private fun ActivityFilter.chipTone(): AuntieChipTone = when (this) {
@@ -116,17 +112,25 @@ private fun ActivityFilter.chipTone(): AuntieChipTone = when (this) {
     ActivityFilter.Bookings      -> AuntieChipTone.Orange
     ActivityFilter.KinTales      -> AuntieChipTone.Accent
     ActivityFilter.Notifications -> AuntieChipTone.Teal
+    ActivityFilter.Billing       -> AuntieChipTone.Orange
     ActivityFilter.Admin         -> AuntieChipTone.Orange
 }
 
 @Composable
 fun ActivityLogScreen() {
     val client = remember { FirestoreClient() }
+    // #1592: uid -> name from listStaff (#1564's fallback), the Gallery's read.
+    val staffNames = rememberUploaderNames(client)
     // P0-FLICKER: hoist the Flow via remember so it survives recomposition.
     val state by remember { client.activityStream() }.collectAsState(initial = FirestoreResult.Loading)
 
     var filter by remember { mutableStateOf(ActivityFilter.All) }
     var query by remember { mutableStateOf("") }
+    // The business's clock (#1585): America/Chicago until the settings read lands or if it fails.
+    val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val zone = remember(settingsState) {
+        NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone)
+    }
 
     // Live hash-chain integrity: call the verifyActivityLogChain admin callable on
     // load (and on Re-verify). The server walks the SHA-256 chain and returns the
@@ -194,14 +198,16 @@ fun ActivityLogScreen() {
                     all        = all,
                     filter     = filter,
                     query      = query,
+                    zone       = zone,
                     onRowClick = { selectedEntry = it },
+                    staffNames = staffNames,
                 )
             }
         }
     }
 
     selectedEntry?.let { entry ->
-        ActivityDetailModal(entry = entry, onDismiss = { selectedEntry = null })
+        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null }, names = staffNames)
     }
 }
 
@@ -210,7 +216,9 @@ private fun LogPanel(
     all: List<ActivityLogEntry>,
     filter: ActivityFilter,
     query: String,
+    zone: TimeZone,
     onRowClick: (ActivityLogEntry) -> Unit,
+    staffNames: Map<String, String> = emptyMap(),
 ) {
     DenPanel(
         title    = "Sealed events",
@@ -257,9 +265,7 @@ private fun LogPanel(
                 dashed = true,
             ) {
                 Text(
-                    "$unparseable of ${capped.size} entries have a timestamp this screen can't read as ISO-8601. " +
-                        "The audit writer may be storing a Firestore Timestamp object instead of a string, " +
-                        "which breaks day-grouping and ordering. Day/time shown as best-effort below.",
+                    unreadableTimesNote(unparseable, capped.size),
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
@@ -269,7 +275,7 @@ private fun LogPanel(
 
         val visible = capped
             .filter { filter.matches(it.actionType) }
-            .filter { matchesQuery(it, query) }
+            .filter { matchesQuery(it, query, staffNames) }
 
         if (visible.isEmpty()) {
             NoMatchesState()
@@ -277,9 +283,11 @@ private fun LogPanel(
         }
 
         // Stable insertion-ordered grouping; capped list is already newest-first.
-        val todayKey = nowIso().take(10)
+        // Days are the BUSINESS's (#1585): a 9:34 pm Chicago event stamped 02:34Z belongs
+        // to the day before, and "Today" is Chicago's today.
+        val todayKey = activityWhen(nowIso(), zone)?.dayKey ?: nowIso().take(10)
         val yesterdayKey = isoDateMinusOneDay(todayKey)
-        val grouped = visible.groupBy { it.timestamp.take(10) }
+        val grouped = visible.groupBy { activityWhen(it.timestamp, zone)?.dayKey ?: it.timestamp.take(10) }
 
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             grouped.forEach { (dateIso, entries) ->
@@ -287,7 +295,7 @@ private fun LogPanel(
                     label = relativeDayLabel(dateIso, todayKey, yesterdayKey),
                     count = entries.size,
                 )
-                entries.forEach { entry -> ActivityRow(entry, onClick = { onRowClick(entry) }) }
+                entries.forEach { entry -> ActivityRow(entry, zone = zone, names = staffNames, onClick = { onRowClick(entry) }) }
             }
         }
     }
@@ -457,7 +465,12 @@ internal fun seqHashLabel(seq: Int?, entryHash: String): String? {
 }
 
 @Composable
-internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
+internal fun ActivityRow(
+    entry: ActivityLogEntry,
+    onClick: () -> Unit,
+    zone: TimeZone = NewBookingMath.businessTimeZone(null),
+    names: Map<String, String> = emptyMap(),
+) {
     val c = AuntieTheme.colors
     val isFailure = entry.status.equals("FAILURE", ignoreCase = true) ||
         entry.status.equals("ERROR", ignoreCase = true)
@@ -472,7 +485,7 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text  = shortTime(entry.timestamp),
+            text  = shortTime(entry.timestamp, zone),
             style = AuntieTheme.typography.mono,
             color = c.textFaint,
             modifier = Modifier.width(54.dp),
@@ -509,7 +522,7 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
                     )
                 }
             }
-            val context = rowContext(entry)
+            val context = rowContext(entry, names)
             if (context.isNotBlank()) {
                 Text(
                     text     = context,
@@ -539,7 +552,12 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
  * on the model; no fabricated data, no dead deep-link.
  */
 @Composable
-private fun ActivityDetailModal(entry: ActivityLogEntry, onDismiss: () -> Unit) {
+private fun ActivityDetailModal(
+    entry: ActivityLogEntry,
+    zone: TimeZone,
+    onDismiss: () -> Unit,
+    names: Map<String, String> = emptyMap(),
+) {
     val target = listOf(entry.targetCollection, entry.targetId).filter { it.isNotBlank() }.joinToString("/")
     AuntieDialog(
         visible = true,
@@ -550,11 +568,25 @@ private fun ActivityDetailModal(entry: ActivityLogEntry, onDismiss: () -> Unit) 
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             AuntieKeyValueRow(label = "When", value = entry.timestamp.ifBlank { "-" }, valueMono = true)
+            // The stored stamp is UTC; the row reads in the business zone (#1585). Both
+            // are shown so the two can be reconciled without doing the sum.
+            activityWhen(entry.timestamp, zone)?.let {
+                AuntieKeyValueRow(label = "Business time", value = "${it.dayKey} ${it.clock}", valueMono = true)
+            }
             AuntieKeyValueRow(label = "Action", value = entry.actionType.ifBlank { "-" }, valueMono = true)
             AuntieKeyValueRow(label = "Status", value = entry.status.ifBlank { "-" })
-            AuntieKeyValueRow(label = "Actor", value = entry.actorId.ifBlank { "-" }, valueMono = true)
+            // #1592: the person by name; the uid stays beside it, because this is
+            // the evidence log and the uid is what the record holds.
+            val actorName = names[entry.actorId.trim()]
+            if (actorName != null) {
+                AuntieKeyValueRow(label = "Actor", value = actorName)
+                AuntieKeyValueRow(label = "Actor id", value = entry.actorId, valueMono = true)
+            } else {
+                AuntieKeyValueRow(label = "Actor", value = entry.actorId.ifBlank { "-" }, valueMono = true)
+            }
             if (entry.description.isNotBlank()) {
-                AuntieKeyValueRow(label = "Detail", value = entry.description)
+                // #1747: a stored path reads as words; the entry is never rewritten.
+                AuntieKeyValueRow(label = "Detail", value = activityDescriptionWords(entry.description))
             }
             AuntieKeyValueRow(label = "Target", value = target.ifBlank { "-" }, valueMono = true, showDivider = false)
         }
@@ -599,14 +631,16 @@ private fun NoMatchesState() {
 
 // ---------- styling + formatting helpers (pure, JVM-testable) ----------
 
-private fun matchesQuery(entry: ActivityLogEntry, query: String): Boolean {
+internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<String, String> = emptyMap()): Boolean {
     val q = query.trim()
     if (q.isBlank()) return true
     val hay = listOf(
         entry.actionType,
         humanizeAction(entry.actionType),
         entry.description,
+        activityDescriptionWords(entry.description),
         entry.actorId,
+        names[entry.actorId.trim()].orEmpty(),
         entry.targetId,
         entry.targetCollection,
         entry.status,
@@ -615,10 +649,12 @@ private fun matchesQuery(entry: ActivityLogEntry, query: String): Boolean {
 }
 
 /** Actor + target context line built only from real fields. */
-private fun rowContext(entry: ActivityLogEntry): String {
+internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = emptyMap()): String {
     val parts = buildList {
-        if (entry.description.isNotBlank()) add(entry.description)
-        if (entry.actorId.isNotBlank()) add(entry.actorId)
+        // #1747: a stored path reads as words; the entry itself is never rewritten.
+        if (entry.description.isNotBlank()) add(activityDescriptionWords(entry.description))
+        // #1592: the actor's name, not their uid, once listStaff has answered.
+        if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
         val target = when {
             entry.targetCollection.isNotBlank() && entry.targetId.isNotBlank() ->
                 "${entry.targetCollection}/${entry.targetId}"
@@ -631,18 +667,14 @@ private fun rowContext(entry: ActivityLogEntry): String {
     return parts.joinToString(" · ")
 }
 
-private fun categoryTone(actionType: String): AuntieStatusTone {
-    val a = actionType.uppercase()
-    return when {
-        a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT") -> AuntieStatusTone.Purple
-        a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")                    -> AuntieStatusTone.Orange
-        a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")                     -> AuntieStatusTone.Success
-        a.contains("NOTIFICATION") || a.contains("NOTIF")                   -> AuntieStatusTone.Teal
-        a.startsWith("ADMIN") || a.contains("TRIAGE")                       -> AuntieStatusTone.Error
-        else                                                                -> AuntieStatusTone.Neutral
-    }
+private fun categoryTone(actionType: String): AuntieStatusTone = when (activityCategoryOf(actionType)) {
+    ActivityCategory.Auth          -> AuntieStatusTone.Purple
+    ActivityCategory.Bookings      -> AuntieStatusTone.Orange
+    ActivityCategory.KinTales      -> AuntieStatusTone.Success
+    ActivityCategory.Notifications -> AuntieStatusTone.Teal
+    ActivityCategory.Billing       -> AuntieStatusTone.Warning
+    ActivityCategory.Admin         -> AuntieStatusTone.Error
+    null                           -> AuntieStatusTone.Neutral
 }
 
 private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
@@ -659,16 +691,14 @@ private fun actionIcon(actionType: String, status: String): ImageVector {
         return Lucide.TriangleAlert
     }
     val a = actionType.uppercase()
-    return when {
-        a.startsWith("AUTH") || a.contains("LOGIN") || a.contains("LOGOUT") -> Lucide.UserCheck
-        a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")         -> Lucide.Settings2
-        a.startsWith("BOOKING") || a.startsWith("KINCARE") ||
-            a.contains("SESSION") || a.contains("VISIT")                    -> Lucide.CalendarPlus
-        a.contains("KINTALE") || a.contains("CONTENT") ||
-            a.contains("DRAFT") || a.contains("REPORT")                     -> Lucide.History
-        a.contains("NOTIFICATION") || a.contains("NOTIF")                   -> Lucide.Bell
-        a.startsWith("ADMIN") || a.contains("TRIAGE")                       -> Lucide.Flag
-        else                                                                -> Lucide.Activity
+    return when (activityCategoryOf(actionType)) {
+        ActivityCategory.Auth          -> Lucide.UserCheck
+        ActivityCategory.Bookings      -> Lucide.CalendarPlus
+        ActivityCategory.KinTales      -> Lucide.History
+        ActivityCategory.Notifications -> Lucide.Bell
+        ActivityCategory.Billing       -> Lucide.Receipt
+        ActivityCategory.Admin         -> if (a.startsWith("UPDATE_SETTINGS") || a.startsWith("SETTINGS")) Lucide.Settings2 else Lucide.Flag
+        null                           -> Lucide.Activity
     }
 }
 
@@ -701,9 +731,8 @@ private fun prettyDate(iso: String): String = runCatchingCancellable {
     "$month $day"
 }.getOrDefault(iso.ifBlank { "Undated" })
 
-private fun shortTime(iso: String): String =
-    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso.ifBlank { "--:--" } }
-        .getOrDefault(iso.ifBlank { "--:--" })
+private fun shortTime(iso: String, zone: TimeZone): String =
+    activityWhen(iso, zone)?.clock ?: iso.ifBlank { "--:--" }
 
 /**
  * Decrements an ISO date key (yyyy-MM-dd) by one day for the "Yesterday" label.

@@ -98,9 +98,13 @@ fun visitDayLabel(raw: String, todayIso: String): String {
     return if (year != todayIso.take(4)) "$name $day, $year" else "$name $day"
 }
 
-/** How a visit reads on an invoice line: the service, and the day it happened. */
-fun visitLineDescription(session: UninvoicedSession): String {
-    val label = session.serviceType.trim().ifBlank { "Visit" }
+/**
+ * How a visit reads on an invoice line: the service, and the day it happened.
+ * The service is the KinCare's name off the catalog, never the stored
+ * `visit_60` (#1744): this text is written onto the invoice the household reads.
+ */
+fun visitLineDescription(session: UninvoicedSession, catalog: com.tribetails.auntieos.web.screens.ServiceCatalog = com.tribetails.auntieos.web.screens.ServiceCatalog()): String {
+    val label = catalog.nameOf(session.serviceType)
     val day = session.startTime.take(10)
     return if (day.isBlank()) label else "$label, $day"
 }
@@ -132,11 +136,13 @@ fun buildBoundLines(
     sessions: List<UninvoicedSession>,
     selected: Set<String>,
     prices: Map<String, String>,
+    /** #1744: what names each line's service; the household reads this text. */
+    catalog: com.tribetails.auntieos.web.screens.ServiceCatalog = com.tribetails.auntieos.web.screens.ServiceCatalog(),
 ): BoundLinesOutcome {
     val lines = mutableListOf<InvoiceLineItem>()
     for (s in sessions) {
         if (s.sessionId !in selected) continue
-        val description = visitLineDescription(s)
+        val description = visitLineDescription(s, catalog)
         var unitCents = s.unitCents
         if (unitCents == null) {
             val typed = (prices[s.sessionId] ?: "").trim()
@@ -249,8 +255,9 @@ fun composerMoney(
     prices: Map<String, String>,
     drafts: List<ComposerDraftLine>,
     invoiceDiscountText: String,
+    catalog: com.tribetails.auntieos.web.screens.ServiceCatalog = com.tribetails.auntieos.web.screens.ServiceCatalog(),
 ): ComposerMoney {
-    val bound = buildBoundLines(sessions, selected, prices)
+    val bound = buildBoundLines(sessions, selected, prices, catalog)
     if (bound.error != null) return ComposerMoney(null, 0L, 0L, bound.error)
     val typed = parseDraftLines(drafts, invoiceDiscountText)
     if (typed.error != null || typed.lines == null) {

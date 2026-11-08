@@ -138,7 +138,7 @@ data class BookingSection(
 internal fun groupBookingsByStatus(rows: List<EnhancedBooking>): List<BookingSection> = listOf(
     BookingSection(
         key = BookingSectionKey.PENDING,
-        label = "Pending approval",
+        label = "Visit requests",
         rows = rows.filter { it.status == BookingStatus.DRAFT },
     ),
     BookingSection(
@@ -195,6 +195,11 @@ private fun ScheduleViewScreenContent(
     // Business-Settings timeBlocks now exist (Stage 1 §A.8). Always on, same as
     // Auntie Time's block pills; null (no segment) when unresolved.
     val timeBlocks = state.businessSettings.timeBlocks
+    // #1592: one catalog for every service mark on this screen, so the legend,
+    // the rows and the month dots name and colour a stored key the same way.
+    val serviceCatalog = remember(state.businessSettings.serviceRates, state.businessSettings.serviceDurations) {
+        ServiceCatalog(state.businessSettings.serviceRates, state.businessSettings.serviceDurations)
+    }
     val timeBlockLabelFor: (EnhancedBooking) -> String? = { b ->
         resolveTimeBlock(b.startDateTime, timeBlocks)?.label
     }
@@ -322,10 +327,10 @@ private fun ScheduleViewScreenContent(
                 // navigator below (#755), the way the mock draws it, so it is not
                 // repeated on `detail`; the explanation is the info tooltip.
                 DenScreenHeading(
-                    kicker = "The Den · Schedule",
+                    kicker = "Care Ops · Schedule",
                     title = "Schedule",
                     accentTail = "${state.viewMode.displayName.lowercase(Locale.US)}.",
-                    subtitle = "Every Kin Care visit on the books, with Google Calendar busy windows and your own blocked time laid over them.",
+                    subtitle = "Every KinCare visit on the books, with Google Calendar busy windows and your own blocked time laid over them.",
                 )
             }
 
@@ -400,8 +405,10 @@ private fun ScheduleViewScreenContent(
                 )
             }
 
-            // B7 (A8): colour key for the schedule, painted with the same
-            // serviceTone the agenda rows use so the key always matches.
+            // B7 (A8): colour key for the schedule. Each entry is the resolved
+            // name, toned by `serviceTone(name)`: the key `bookingServiceTone`
+            // gives the agenda pill and the month dots (#1592), so a stored key
+            // and its legend swatch always match.
             //
             // #392 (operator mark 5, 2026-08-17 walk): SCOPED to the types
             // actually present in the CURRENT view (`filteredBookings` -- the
@@ -417,7 +424,13 @@ private fun ScheduleViewScreenContent(
             // length parsed out of the name as fallback.
             val bookingsInView = bookingsInScheduleView(filteredBookings, state.selectedDate, state.viewMode)
             val legendTypes = sortServiceTypesByDuration(
-                distinctServiceTypes(bookingsInView.map { it.baseServiceTitle }),
+                // #1592: named against the KinCare catalog, so `visit_60` reads as the
+                // operator's own name and two spellings of one service are one row.
+                distinctServiceTypes(
+                    bookingsInView.map {
+                        if (it.baseServiceTitle.isBlank()) "" else serviceCatalog.nameOf(it.baseServiceTitle)
+                    },
+                ),
                 state.businessSettings.serviceDurations,
             )
             // #755: a bare row, not a "Service key" panel. The mock draws the
@@ -434,6 +447,12 @@ private fun ScheduleViewScreenContent(
                 item {
                     BulkBookingActionBar(
                         selectedCount = selectedBookingIds.size,
+                        // #1607: only what the picked rows can take.
+                        offered = com.tribetails.auntieos.ui.admin.scheduling.bulkActionsForSelection(
+                            selected = selectedBookingIds,
+                            requestIds = pendingBookings.map { it.id }.toSet(),
+                            scheduledIds = scheduledBookings.map { it.id }.toSet(),
+                        ),
                         inFlight = state.bulkBookingInFlight,
                         allSelected = selectableIds.isNotEmpty() && selectedBookingIds == selectableIds,
                         onSelectAll = {
@@ -494,7 +513,7 @@ private fun ScheduleViewScreenContent(
                             message = msg,
                             override = state.incomingOverride,
                             busy = state.seriesActionBatchId != null,
-                            title = "Incoming requests",
+                            title = "Visit requests",
                             overrideLabel = "Approve anyway",
                             onOverride = { viewModel.retryIncomingWithOverride() },
                             onDismiss = { viewModel.clearIncomingError() },
@@ -502,7 +521,7 @@ private fun ScheduleViewScreenContent(
                     } else {
                         AuntieBanner(
                             tone = AuntieBannerTone.Error,
-                            title = "Incoming requests",
+                            title = "Visit requests",
                             icon = Lucide.CircleAlert,
                             onDismiss = { viewModel.clearIncomingError() },
                         ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
@@ -513,7 +532,7 @@ private fun ScheduleViewScreenContent(
                 item {
                     AuntieBanner(
                         tone = AuntieBannerTone.Success,
-                        title = "Booking series",
+                        title = "Visit requests",
                         icon = Lucide.CircleCheckBig,
                         onDismiss = { viewModel.clearSeriesActionMessage() },
                     ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) }
@@ -522,7 +541,7 @@ private fun ScheduleViewScreenContent(
             if (state.incomingSeries.isNotEmpty()) {
                 item {
                     DenPanel(
-                        title = "Incoming requests",
+                        title = "Visit requests",
                         subtitle = "New requests from MyTribe. Approve a whole series at once; approving creates the visits on Auntie Time.",
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -535,6 +554,8 @@ private fun ScheduleViewScreenContent(
                                     onSetStartTime = { visitId, time -> viewModel.setSeriesStartTime(series, visitId, time) },
                                     onApprove = { viewModel.approveSeries(series) },
                                     onCancel = { viewModel.cancelSeries(series) },
+                                    loadNotes = { viewModel.loadRequestNotes(series) },
+                                    catalog = serviceCatalog,
                                 )
                             }
                         }
@@ -606,6 +627,7 @@ private fun ScheduleViewScreenContent(
                                     onResolve = { decision, note ->
                                         viewModel.resolveVisitRequest(row, decision, note)
                                     },
+                                    catalog = serviceCatalog,
                                 )
                             }
                         }
@@ -659,7 +681,7 @@ private fun ScheduleViewScreenContent(
                     subtitle = "Tap a visit to open its booking detail and notes. Long-press a confirmed visit and drag to move it.",
                 ) {
                     if (selectedDayBookings.isEmpty() && selectedDayBusy.isEmpty()) {
-                        EmptyHint("No Kin Care sessions on this day.")
+                        EmptyHint("No KinCare sessions on this day.")
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             // #575: a dropped drag is a reschedule, and its refusal
@@ -690,6 +712,7 @@ private fun ScheduleViewScreenContent(
                                 val dragged = state.dragState?.draggedBooking?.id == booking.id
                                 AdminBookingAgendaRow(
                                     booking = booking,
+                                    catalog = serviceCatalog,
                                     onClick = { viewModel.selectBooking(booking) },
                                     // #9 already made this operator choice for the
                                     // reschedule FORM; the drag reads the same
@@ -722,6 +745,7 @@ private fun ScheduleViewScreenContent(
                             currentDate     = state.selectedDate,
                             bookings        = filteredBookings,
                             timeSlots       = state.timeSlots,
+                            catalog         = serviceCatalog,
                             onBookingClick  = { viewModel.selectBooking(it) },
                             onDateClick     = { date ->
                                 viewModel.selectDate(date)
@@ -785,6 +809,7 @@ private fun ScheduleViewScreenContent(
                     val booking = pendingBookings[i]
                     BookingSectionCard(
                         booking = booking,
+                        catalog = serviceCatalog,
                         onClick = { viewModel.selectBooking(booking) },
                         onApprove = { viewModel.approveBooking(booking) },
                         onReject = { viewModel.cancelBooking(booking) },
@@ -822,6 +847,7 @@ private fun ScheduleViewScreenContent(
                     val booking = scheduledBookings[i]
                     BookingSectionCard(
                         booking = booking,
+                        catalog = serviceCatalog,
                         onClick = { viewModel.selectBooking(booking) },
                         onApprove = null,
                         onReject = null,
@@ -851,8 +877,8 @@ private fun ScheduleViewScreenContent(
             } else {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        HistorySubsection("Completed", completedHistory, timeBlockLabelFor) { viewModel.selectBooking(it) }
-                        HistorySubsection("Cancelled", cancelledHistory, timeBlockLabelFor) { viewModel.selectBooking(it) }
+                        HistorySubsection("Completed", completedHistory, timeBlockLabelFor, serviceCatalog) { viewModel.selectBooking(it) }
+                        HistorySubsection("Cancelled", cancelledHistory, timeBlockLabelFor, serviceCatalog) { viewModel.selectBooking(it) }
                     }
                 }
             }
@@ -869,7 +895,10 @@ private fun ScheduleViewScreenContent(
 
         if (state.showAddBookingDialog) {
             AddEnhancedBookingDialog(
-                baseServices = state.baseServices.filter { it.isActive },
+                // #1703: the operator's rate-card KinCare types, the catalog web's
+                // New visit uses, so the visit can be priced at invoice time.
+                serviceRates     = state.businessSettings.serviceRates,
+                serviceDurations = state.businessSettings.serviceDurations,
                 allKinfolk   = state.allKinfolk,
                 bookingMode  = state.bookingMode,
                 initialDate  = state.selectedDate,
@@ -878,6 +907,20 @@ private fun ScheduleViewScreenContent(
                     viewModel.createBooking(booking, internalNote)
                     viewModel.hideAddBookingDialog()
                 },
+                // #1574: a window that has ended is recorded as Completed, never booked.
+                onRecordCompleted = { visit ->
+                    viewModel.recordCompletedVisit(
+                        kinfolkId = visit.kinfolkId,
+                        kinfolkName = visit.kinfolkName,
+                        serviceType = visit.serviceType,
+                        startUtcIso = visit.startUtcIso,
+                        endUtcIso = visit.endUtcIso,
+                        durationMinutes = visit.durationMinutes,
+                        notes = visit.notes,
+                    )
+                    viewModel.hideAddBookingDialog()
+                },
+                now = viewModel::businessNow,
                 bookingSchemas = state.bookingFormSchemas,
                 schemaError    = state.bookingSchemaError,
             )
@@ -920,7 +963,7 @@ private fun ScheduleViewScreenContent(
                     viewModel.createBookingRequest(
                         kinfolkId = submission.kinfolkId,
                         visits = submission.visits,
-                        notes = submission.notes,
+                        staffNotes = submission.staffNotes,
                         pattern = submission.pattern,
                         weeklyDays = submission.weeklyDays,
                         overrideBusyConflict = submission.overrideBusyConflict,
@@ -954,6 +997,8 @@ private fun ScheduleViewScreenContent(
                 onDismiss    = { viewModel.selectBooking(null) },
                 onApprove    = { viewModel.approveBooking(booking) },
                 onCancel     = { viewModel.cancelBooking(booking) },
+                // #1576: the same Mark Completed web Bookings offers beside Cancel.
+                onMarkCompleted = { viewModel.markBookingCompleted(booking) },
                 onArchive    = { reason -> viewModel.archiveBooking(booking.id, reason) },
                 onUnarchive  = { viewModel.unarchiveBooking(booking.id) },
                 onSaveNotes  = { newNotes, newSpecial ->
@@ -1112,6 +1157,8 @@ private fun ScheduleControls(
 @Composable
 private fun BulkBookingActionBar(
     selectedCount: Int,
+    /** #1607: the transitions at least one picked row can take, plus "RESCHEDULE" when any can move. */
+    offered: List<String>,
     inFlight: Boolean,
     allSelected: Boolean,
     onSelectAll: () -> Unit,
@@ -1141,15 +1188,16 @@ private fun BulkBookingActionBar(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PrimaryButton(label = "Approve", enabled = canAct, onClick = { onAction("APPROVE") })
-                GhostButton(label = "Reject", onClick = { if (canAct) onAction("REJECT") }, enabled = canAct)
-                GhostButton(label = "Cancel", onClick = { if (canAct) onAction("CANCEL") }, enabled = canAct)
+                // #1607: Approve and Reject on scheduled visits could only ever skip.
+                if ("APPROVE" in offered) PrimaryButton(label = "Approve", enabled = canAct, onClick = { onAction("APPROVE") })
+                if ("REJECT" in offered) GhostButton(label = "Reject", onClick = { if (canAct) onAction("REJECT") }, enabled = canAct)
+                if ("CANCEL" in offered) GhostButton(label = "Cancel", onClick = { if (canAct) onAction("CANCEL") }, enabled = canAct)
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                GhostButton(label = "Reschedule", onClick = { if (canAct) onReschedule() }, enabled = canAct)
+                if ("RESCHEDULE" in offered) GhostButton(label = "Reschedule", onClick = { if (canAct) onReschedule() }, enabled = canAct)
             }
         }
     }
@@ -1410,6 +1458,8 @@ private fun BookingSectionHead(
 private fun AdminBookingAgendaRow(
     booking: EnhancedBooking,
     onClick: () -> Unit,
+    /** #1592: the KinCare catalog the service is named and coloured against. */
+    catalog: ServiceCatalog = ServiceCatalog(),
     /** 15 when the operator turned on "Snap drag-to-reschedule to 15 min", else 1. Parity with web. */
     snapMinutes: Int = DRAG_MINUTE_SNAP,
     isDragging: Boolean = false,
@@ -1421,8 +1471,9 @@ private fun AdminBookingAgendaRow(
     onDragCancel: (() -> Unit)? = null,
 ) {
     val c = AuntieTheme.colors
-    val accent = bookingServiceTint(booking)
-    val serviceText = booking.baseServiceTitle.ifBlank { booking.title.ifBlank { "Kin Care Visit" } }
+    val accent = bookingServiceTint(booking, catalog)
+    val serviceName = booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { catalog.nameOf(it) }
+    val serviceText = serviceName ?: booking.title.ifBlank { "KinCare Visit" }
     val bookingStart = parseIsoDateTimeOrNull(booking.startDateTime)
     // No start time we can read is no window we can move: the row still opens,
     // it just cannot be dragged onto a time nobody could name.
@@ -1499,8 +1550,9 @@ private fun AdminBookingAgendaRow(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (booking.baseServiceTitle.isNotBlank()) {
-                    ServicePill(booking.baseServiceTitle, serviceTone(booking.baseServiceTitle))
+                if (serviceName != null) {
+                    // The pill tones by the name it shows, the legend swatch's key (#1592).
+                    ServicePill(serviceName)
                 }
                 Text(text = bookingSubtitle(booking), style = AuntieTheme.typography.bodySmall, color = c.textDim)
             }
@@ -1540,6 +1592,7 @@ private fun HistorySubsection(
     label: String,
     bookings: List<EnhancedBooking>,
     timeBlockLabelFor: (EnhancedBooking) -> String?,
+    catalog: ServiceCatalog,
     onSelect: (EnhancedBooking) -> Unit,
 ) {
     if (bookings.isEmpty()) return
@@ -1556,6 +1609,7 @@ private fun HistorySubsection(
         visible.forEach { booking ->
             BookingSectionCard(
                 booking = booking,
+                catalog = catalog,
                 onClick = { onSelect(booking) },
                 onApprove = null,
                 onReject = null,
@@ -1592,6 +1646,8 @@ private fun HistorySubsection(
 private fun BookingSectionCard(
     booking: EnhancedBooking,
     onClick: () -> Unit,
+    /** #1592: the KinCare catalog the service is named against. */
+    catalog: ServiceCatalog = ServiceCatalog(),
     onApprove: (() -> Unit)?,
     onReject: (() -> Unit)?,
     onCancel: (() -> Unit)?,
@@ -1642,7 +1698,7 @@ private fun BookingSectionCard(
                         color = if (hasName) c.textPrimary else c.textFaint,
                     )
                     Text(
-                        text = "${booking.baseServiceTitle.ifBlank { booking.title.ifBlank { "Visit" } }} · ${bookingDateLabel(booking)}" +
+                        text = "${booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { catalog.nameOf(it) } ?: booking.title.ifBlank { "Visit" }} · ${bookingDateLabel(booking)}" +
                             (timeBlockLabel?.let { " · $it block" } ?: ""),
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
@@ -1749,12 +1805,17 @@ private fun BusySwatch(modifier: Modifier = Modifier) {
     )
 }
 
-/** Service-type tint for a booking, faded when cancelled, via the shared serviceTone. */
+/**
+ * Service-type tint for a booking, faded when cancelled. Keyed on the resolved
+ * service name ([bookingServiceTone], #1592), the same key the legend swatch
+ * and the agenda pill use, so a stored `visit_60` wears its KinCare's colour.
+ */
 @Composable
-private fun bookingServiceTint(booking: EnhancedBooking): Color {
+private fun bookingServiceTint(booking: EnhancedBooking, catalog: ServiceCatalog): Color {
     val c = AuntieTheme.colors
     if (booking.status == BookingStatus.REJECTED) return c.textFaint
-    return serviceTone(booking.baseServiceTitle.ifBlank { booking.title }).color(c)
+    val tone = if (booking.baseServiceTitle.isBlank()) serviceTone(booking.title) else bookingServiceTone(booking.baseServiceTitle, catalog)
+    return tone.color(c)
 }
 
 /** Den status tone for a booking, keyed to its lifecycle (active-now is its own tone). */
@@ -1924,7 +1985,7 @@ private fun ScreenshotBookingCard(
             Box(modifier = Modifier.width(1.dp).height(84.dp).background(AuntieTheme.colors.borderSoft))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = booking.title.ifBlank { booking.baseServiceTitle.ifBlank { "Kin Care Visit" } }, style = AuntieTheme.typography.headlineLarge, color = AuntieTheme.colors.textPrimary)
+                    Text(text = booking.title.ifBlank { booking.baseServiceTitle.ifBlank { "KinCare Visit" } }, style = AuntieTheme.typography.headlineLarge, color = AuntieTheme.colors.textPrimary)
                     Box(modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(accent.copy(alpha = 0.16f)).padding(horizontal = 12.dp, vertical = 6.dp)) {
                         Text(text = status, style = AuntieTheme.typography.headlineSmall, color = accent)
                     }
@@ -2097,6 +2158,8 @@ fun EnhancedMonthView(
     currentDate: LocalDate,
     bookings: List<EnhancedBooking>,
     timeSlots: List<BookingTimeSlot>,
+    /** #1592: a dot is tinted by the name its legend swatch carries. */
+    catalog: ServiceCatalog = ServiceCatalog(),
     onBookingClick: (EnhancedBooking) -> Unit,
     onDateClick: (LocalDate) -> Unit,
     onTimeSlotClick: (BookingTimeSlot) -> Unit
@@ -2142,6 +2205,7 @@ fun EnhancedMonthView(
                             date           = date,
                             bookings       = dayBookings,
                             timeSlots      = dayTimeSlots,
+                            catalog        = catalog,
                             modifier       = Modifier.weight(1f),
                             onDateClick    = onDateClick,
                             onBookingClick = onBookingClick,
@@ -2160,6 +2224,7 @@ fun EnhancedDayCell(
     date: LocalDate,
     bookings: List<EnhancedBooking>,
     timeSlots: List<BookingTimeSlot>,
+    catalog: ServiceCatalog = ServiceCatalog(),
     modifier: Modifier,
     onDateClick: (LocalDate) -> Unit,
     onBookingClick: (EnhancedBooking) -> Unit,
@@ -2204,7 +2269,7 @@ fun EnhancedDayCell(
                 bookings.take(3).forEach { booking ->
                     Box(
                         modifier = Modifier.size(4.dp).clip(CircleShape)
-                            .background(bookingServiceTint(booking))
+                            .background(bookingServiceTint(booking, catalog))
                             .clickable { onBookingClick(booking) }
                     )
                 }
@@ -2356,10 +2421,31 @@ fun TimeSlotManagementDialog(
     }
 }
 
+/** #1574: what New Booking hands back when the window has ended and the visit is written down as Completed. */
+data class RecordCompletedVisit(
+    val kinfolkId: String,
+    val kinfolkName: String,
+    val serviceType: String,
+    val startUtcIso: String,
+    val endUtcIso: String,
+    val durationMinutes: Int,
+    val notes: String,
+)
+
+/** #1703: said when Settings has no KinCare types to book a visit against. */
+internal const val NO_KINCARE_TYPES_MESSAGE = "No KinCare types yet. Add one in Settings before booking a visit."
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEnhancedBookingDialog(
-    baseServices: List<BaseService>,
+    /**
+     * #1703: `business_settings.serviceRates`. The picker offers its keys
+     * ([serviceOptionsFromRates], the same catalog web's New visit and the
+     * NewBookingWizard use), because pricing is by exact name against this map
+     * (`listUninvoicedSessions`). A base service's title is not a rate-card key,
+     * and a visit named by one landed unpriceable.
+     */
+    serviceRates: Map<String, String>,
+    serviceDurations: Map<String, String> = emptyMap(),
     allKinfolk: List<Kinfolk>,
     bookingMode: BookingMode,
     initialDate: LocalDate,
@@ -2367,9 +2453,20 @@ fun AddEnhancedBookingDialog(
     onSave: (EnhancedBooking, String) -> Unit,
     bookingSchemas: List<FormSchema> = emptyList(),
     schemaError: String? = null,
+    /**
+     * #1574, operator ruling 2026-11-05: a visit created with a past date is
+     * allowed only as already Completed, never Scheduled. For a window that has
+     * ended the button becomes "Record completed visit" and this is called
+     * instead of [onSave]; null leaves the dialog refusing a past window outright.
+     */
+    onRecordCompleted: ((RecordCompletedVisit) -> Unit)? = null,
+    /** Now, on the business clock. A parameter so a test can stand at a known instant. */
+    now: () -> LocalDateTime = { LocalDateTime.now() },
 ) {
+    val businessZone = LocalBusinessZone.current
     var selectedKinfolk by remember { mutableStateOf<Kinfolk?>(null) }
-    var selectedService by remember { mutableStateOf<BaseService?>(baseServices.firstOrNull()) }
+    val serviceOptions = remember(serviceRates, serviceDurations) { serviceOptionsFromRates(serviceRates, serviceDurations) }
+    var selectedService by remember(serviceOptions) { mutableStateOf<ServiceOption?>(serviceOptions.firstOrNull()) }
     // Phase 14: answers to BOOKING-placed custom fields; persisted into EnhancedBooking.formValues.
     val formValues = remember { mutableStateMapOf<String, String>() }
 
@@ -2389,6 +2486,13 @@ fun AddEnhancedBookingDialog(
     var notes         by remember { mutableStateOf("") }
     var internalNotes by remember { mutableStateOf("") }
     var publishImmediately by remember { mutableStateOf(false) }
+    val draftTiming: com.tribetails.auntieos.domain.VisitWindowTiming? = run {
+        val epochDay = datePickerState.selectedDateMillis?.let { it / 86_400_000L } ?: initialDate.toEpochDay()
+        val s = runCatching { LocalTime.parse(startTimeText) }.getOrNull()
+        val e = runCatching { LocalTime.parse(endTimeText) }.getOrNull()
+        if (s == null || e == null || !e.isAfter(s)) null
+        else com.tribetails.auntieos.domain.newVisitTiming(LocalDate.ofEpochDay(epochDay), s, e, now())
+    }
 
     if (showDatePicker) {
         DatePickerDialog(
@@ -2421,12 +2525,21 @@ fun AddEnhancedBookingDialog(
                 item {
                     AuntieDropdownField(
                         value       = selectedService,
-                        options     = listOf<BaseService?>(null) + baseServices,
+                        options     = serviceOptions,
                         onSelect    = { selectedService = it },
-                        displayText = { it?.title ?: "Select service *" },
+                        displayText = { it.name },
                         label       = "SERVICE",
+                        placeholder = "Select service *",
+                        enabled     = serviceOptions.isNotEmpty(),
                         modifier    = Modifier.fillMaxWidth()
                     )
+                    if (serviceOptions.isEmpty()) {
+                        Text(
+                            NO_KINCARE_TYPES_MESSAGE,
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.error,
+                        )
+                    }
                 }
                 item {
                     Box(
@@ -2451,6 +2564,21 @@ fun AddEnhancedBookingDialog(
                     }
                     timeError?.let {
                         Text(it, color = AuntieTheme.colors.error, style = AuntieTheme.typography.bodySmall)
+                    }
+                    // #1574: read on every recomposition, so the form changes the
+                    // moment the typed window crosses into the past.
+                    when (draftTiming) {
+                        com.tribetails.auntieos.domain.VisitWindowTiming.ENDED -> Text(
+                            com.tribetails.auntieos.domain.RECORD_COMPLETED_HINT,
+                            color = AuntieTheme.colors.textFaint,
+                            style = AuntieTheme.typography.bodySmall,
+                        )
+                        com.tribetails.auntieos.domain.VisitWindowTiming.UNDERWAY -> Text(
+                            com.tribetails.auntieos.domain.VISIT_UNDERWAY_MESSAGE,
+                            color = AuntieTheme.colors.error,
+                            style = AuntieTheme.typography.bodySmall,
+                        )
+                        else -> Unit
                     }
                 }
                 item {
@@ -2511,7 +2639,11 @@ fun AddEnhancedBookingDialog(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
                         PrimaryButton(
-                            label    = if (publishImmediately) "Confirm" else "Save Draft",
+                            label    = when {
+                                draftTiming == com.tribetails.auntieos.domain.VisitWindowTiming.ENDED -> "Record completed visit"
+                                publishImmediately -> "Confirm"
+                                else -> "Save Draft"
+                            },
                             onClick  = {
                                 val epochDay  = datePickerState.selectedDateMillis?.let { it / 86_400_000L } ?: initialDate.toEpochDay()
                                 val date      = LocalDate.ofEpochDay(epochDay)
@@ -2520,11 +2652,46 @@ fun AddEnhancedBookingDialog(
                                 if (startTime == null || endTime == null) { timeError = "Use HH:mm format (e.g. 09:00)"; return@PrimaryButton }
                                 if (!endTime.isAfter(startTime)) { timeError = "End time must be after start"; return@PrimaryButton }
                                 val svc = selectedService
+                                // #1703: a visit with no rate-card service cannot be priced.
+                                if (svc == null) {
+                                    timeError = if (serviceOptions.isEmpty()) NO_KINCARE_TYPES_MESSAGE else "Pick a service."
+                                    return@PrimaryButton
+                                }
+                                // #1574: never a booking in the past. Judged again
+                                // at the tap, on the clock as it is now.
+                                when (com.tribetails.auntieos.domain.newVisitTiming(date, startTime, endTime, now())) {
+                                    com.tribetails.auntieos.domain.VisitWindowTiming.UNDERWAY -> {
+                                        timeError = com.tribetails.auntieos.domain.VISIT_UNDERWAY_MESSAGE
+                                        return@PrimaryButton
+                                    }
+                                    com.tribetails.auntieos.domain.VisitWindowTiming.ENDED -> {
+                                        val kinfolk = selectedKinfolk
+                                        if (onRecordCompleted == null || kinfolk == null) {
+                                            timeError = "That time has already passed. Pick a household to record it as completed."
+                                            return@PrimaryButton
+                                        }
+                                        onRecordCompleted(
+                                            RecordCompletedVisit(
+                                                kinfolkId = kinfolk.id,
+                                                kinfolkName = kinfolk.displayName,
+                                                serviceType = svc.name,
+                                                startUtcIso = com.tribetails.auntieos.domain.wallClockToUtcIso(date, startTime, businessZone),
+                                                endUtcIso = com.tribetails.auntieos.domain.wallClockToUtcIso(date, endTime, businessZone),
+                                                durationMinutes = java.time.Duration.between(startTime, endTime).toMinutes().toInt(),
+                                                notes = notes,
+                                            ),
+                                        )
+                                        return@PrimaryButton
+                                    }
+                                    com.tribetails.auntieos.domain.VisitWindowTiming.AHEAD -> Unit
+                                }
                                 onSave(
                                     EnhancedBooking(
-                                        title            = svc?.title ?: "New Booking",
-                                        baseServiceId    = svc?.id ?: "",
-                                        baseServiceTitle = svc?.title ?: "",
+                                        title            = svc.name,
+                                        // No base_services doc behind a rate-card type; the
+                                        // approval bridge names the visit by baseServiceTitle.
+                                        baseServiceId    = "",
+                                        baseServiceTitle = svc.name,
                                         kinfolkId        = selectedKinfolk?.id ?: "",
                                         kinfolkName      = selectedKinfolk?.displayName ?: "",
                                         startDateTime    = LocalDateTime.of(date, startTime).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
@@ -2607,6 +2774,8 @@ fun BookingDetailsDialog(
     onDismiss: () -> Unit,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
+    /** #1576: shown for a scheduled (ACCEPTED) visit only; null hides it. */
+    onMarkCompleted: (() -> Unit)? = null,
     onArchive: (reason: String) -> Unit = {},
     onUnarchive: () -> Unit = {},
     onSaveNotes: (notes: String, specialInstructions: String) -> Unit = { _, _ -> },
@@ -2623,6 +2792,8 @@ fun BookingDetailsDialog(
     var notes              by remember(booking.id) { mutableStateOf(booking.notes) }
     var specialInstructions by remember(booking.id) { mutableStateOf(booking.specialInstructions) }
     var showArchiveDialog  by remember { mutableStateOf(false) }
+    // #1576: asked first, as on the web; a completed visit cannot be reopened.
+    var confirmComplete    by remember(booking.id) { mutableStateOf(false) }
     var archiveReason      by remember { mutableStateOf("") }
     // Reschedule prefill from the current start (wires Stage-1 rescheduleBooking, §A.9).
     var reDate by remember(booking.id) { mutableStateOf(booking.startDateTime.take(10)) }
@@ -2747,6 +2918,10 @@ fun BookingDetailsDialog(
                         AuntieTextBtn(onClick = onCancel, contentColor = AuntieTheme.colors.error) {
                             Text("Cancel Booking")
                         }
+                        if (onMarkCompleted != null && booking.status == BookingStatus.ACCEPTED) {
+                            Spacer(Modifier.width(4.dp))
+                            AuntieTextBtn(onClick = { confirmComplete = true }) { Text("Mark Completed") }
+                        }
                     }
                     Spacer(Modifier.width(4.dp))
                     AuntieTextBtn(onClick = onDismiss) { Text("Close") }
@@ -2759,6 +2934,20 @@ fun BookingDetailsDialog(
         }
     }
 
+    if (confirmComplete && onMarkCompleted != null) {
+        AuntieModal(
+            onDismissRequest = { confirmComplete = false },
+            title            = "Mark this visit completed?",
+            confirmButton    = {
+                AuntieTextBtn(onClick = { confirmComplete = false; onMarkCompleted() }) { Text("Yes, mark it completed") }
+            },
+            dismissButton    = {
+                AuntieTextBtn(onClick = { confirmComplete = false }) { Text("Keep it") }
+            },
+        ) {
+            Text("${booking.kinfolkName.ifBlank { "This household" }}'s visit will be marked Completed and leave the scheduled list.")
+        }
+    }
     if (showArchiveDialog) {
         AuntieModal(
             onDismissRequest = { showArchiveDialog = false; archiveReason = "" },
@@ -2860,7 +3049,7 @@ fun AddEventDialog(onDismiss: () -> Unit, onAdd: (Event) -> Unit) {
             Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Add Event", style = AuntieTheme.typography.titleLarge, color = AuntieTheme.colors.textPrimary)
                 AuntieField(value = title, onValueChange = { title = it }, label = "EVENT TITLE", modifier = Modifier.fillMaxWidth())
-                Text("Type: Kin Care / Holiday / Blocked", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                Text("Type: KinCare / Holiday / Blocked", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     AuntieTextBtn(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
@@ -2891,39 +3080,50 @@ fun AddEventDialog(onDismiss: () -> Unit, onAdd: (Event) -> Unit) {
 /**
  * One row in the change-request queue (#438, #399 item 2).
  *
- * Accept is one tap; Decline opens an inline note field first, since a note
- * needs a text box rather than firing straight away. #700: the note is
+ * #1577: the card names the household first, the card body opens the request,
+ * and Accept goes through a confirm step titled with the household, so an
+ * operator never answers a request without seeing whose it is. Decline opens
+ * an inline note field first, headed with the household. #700: the note is
  * optional, not a gate. The office does not owe the household a reason, so
  * "Send the decline" is never held back on it.
  */
 @Composable
-private fun VisitRequestRowCard(
+internal fun VisitRequestRowCard(
     row: VisitRequestRow,
     inFlight: Boolean,
     actionsLocked: Boolean,
     onResolve: (decision: String, note: String?) -> Unit,
+    /** #1744: the request names its KinCare, never a stored key. */
+    catalog: ServiceCatalog = ServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
+    val zone = LocalBusinessZone.current
     var declining by remember(row.key) { mutableStateOf(false) }
     var note by remember(row.key) { mutableStateOf("") }
-
+    var confirmingAccept by remember(row.key) { mutableStateOf(false) }
+    var detailOpen by remember(row.key) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AuntieStatusPill(
-                label = row.kindLabel(),
-                tone = if (row is VisitRequestRow.Cancel) AuntieStatusTone.Orange else AuntieStatusTone.Teal,
-            )
-            Text(text = row.title, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = "Open the request") { detailOpen = true },
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                AuntieStatusPill(
+                    label = row.kindLabel(),
+                    tone = if (row is VisitRequestRow.Cancel) AuntieStatusTone.Orange else AuntieStatusTone.Teal,
+                )
+                Text(text = row.householdLabel(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+            }
+            Text(text = row.subject(catalog), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            Text(text = visitRequestWhen(row, zone), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+            row.reason?.takeIf { it.isNotBlank() }?.let {
+                Text(text = it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
         }
-        if (row.kinNames.isNotBlank()) {
-            Text(text = row.kinNames, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
-        Text(text = visitRequestWhen(row, LocalBusinessZone.current), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
-        row.reason?.takeIf { it.isNotBlank() }?.let {
-            Text(text = it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
-
         if (declining) {
+            Text(text = row.declineConfirmTitle(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
             AuntieField(
                 value = note,
                 onValueChange = { note = it.take(500) },
@@ -2948,7 +3148,7 @@ private fun VisitRequestRowCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PrimaryButton(
                     label = if (inFlight) "Working…" else row.acceptLabel(),
-                    onClick = { onResolve("accept", null) },
+                    onClick = { confirmingAccept = true },
                     enabled = !actionsLocked,
                 )
                 GhostButton(
@@ -2959,8 +3159,72 @@ private fun VisitRequestRowCard(
             }
         }
     }
+    AuntieDialog(
+        visible = confirmingAccept,
+        title = row.acceptConfirmTitle(),
+        onDismiss = { confirmingAccept = false },
+        footer = {
+            GhostButton(label = "Never mind", onClick = { confirmingAccept = false })
+            PrimaryButton(
+                label = row.acceptLabel(),
+                onClick = {
+                    confirmingAccept = false
+                    onResolve("accept", null)
+                },
+                enabled = !actionsLocked,
+            )
+        },
+    ) {
+        Text(text = row.subject(catalog), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(text = visitRequestWhen(row, zone), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+    }
+    AuntieDialog(
+        visible = detailOpen,
+        title = "${row.kindLabel()} request${householdSuffix(row.householdName, "from")}",
+        onDismiss = { detailOpen = false },
+        footer = {
+            GhostButton(label = "Close", onClick = { detailOpen = false })
+            GhostButton(
+                label = "Decline",
+                onClick = {
+                    detailOpen = false
+                    declining = true
+                },
+                enabled = !actionsLocked,
+            )
+            PrimaryButton(
+                label = "Accept",
+                onClick = {
+                    detailOpen = false
+                    confirmingAccept = true
+                },
+                enabled = !actionsLocked,
+            )
+        },
+    ) {
+        RequestFact("Household", row.householdLabel())
+        RequestFact("Visit", row.titleIn(catalog))
+        RequestFact("Kin", row.kinNames.ifBlank { "Not on the visit" })
+        when (row) {
+            is VisitRequestRow.Cancel -> RequestFact("Booked for", visitRequestTime(row.dto.startTimeMs, zone))
+            is VisitRequestRow.Reschedule -> {
+                RequestFact("Booked for", visitRequestTime(row.dto.currentStartTimeMs, zone))
+                RequestFact("Asked to move to", visitRequestTime(row.dto.proposedStartTimeMs, zone))
+            }
+        }
+        RequestFact("Reason given", row.reason?.takeIf { it.isNotBlank() } ?: "None given")
+        RequestFact("Asked", visitRequestTime(row.requestedAtMs, zone))
+    }
 }
-
+/** One labelled fact in a request's detail sheet. */
+@Composable
+private fun RequestFact(label: String, value: String) {
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(bottom = 10.dp)) {
+        Text(text = label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Text(text = value, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+    }
+}
 /**
  * The times on a row. A reschedule shows both windows, because the decision is
  * about the difference between them; a cancellation shows the visit that would
@@ -2983,8 +3247,15 @@ private fun visitRequestTime(ms: Long?, zone: ZoneId): String {
     return local.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d 'at' h:mm a"))
 }
 
+/**
+ * One incoming booking request (#533 / 16.5).
+ *
+ * #1577: the household is the card's title, the card body opens the request
+ * with every visit and the household's notes, and both Approve and Cancel go
+ * through a confirm step titled with the household.
+ */
 @Composable
-private fun IncomingSeriesRow(
+internal fun IncomingSeriesRow(
     series: IncomingSeries,
     inFlight: Boolean,
     actionsLocked: Boolean,
@@ -2992,31 +3263,42 @@ private fun IncomingSeriesRow(
     onSetStartTime: (visitId: String, time: LocalTime) -> Unit,
     onApprove: () -> Unit,
     onCancel: () -> Unit,
+    loadNotes: suspend () -> Result<String> = { Result.success("") },
+    /** #1744: the request names its KinCare, never a stored key. */
+    catalog: ServiceCatalog = ServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
+    val zone = LocalBusinessZone.current
     val nights = series.pendingNights
     val ready = seriesReadyToApprove(series, startTimes)
+    val seriesKey = seriesNightKey(series, "")
+    var confirming by remember(seriesKey) { mutableStateOf<String?>(null) }
+    var detailOpen by remember(seriesKey) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = series.kinfolkName.ifBlank { "Kinfolk request" },
-            style = AuntieTheme.typography.titleSmall,
-            color = c.textPrimary,
-        )
-        Text(
-            text = buildString {
-                append(if (series.visitCount == 1) "1 visit" else "${series.visitCount} visits")
-                if (series.isSeries) append(" · recurring series")
-                if (series.serviceType.isNotBlank()) append(" · ${series.serviceType}")
-            },
-            style = AuntieTheme.typography.bodySmall,
-            color = c.textDim,
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = "Open the request") { detailOpen = true },
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = series.householdLabel(),
+                style = AuntieTheme.typography.titleSmall,
+                color = c.textPrimary,
+            )
+            Text(
+                text = series.subject(catalog),
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
         // #1098: an Overnight is asked for as a night. Its start time is the
         // operator's to set, with the same hour and minute pickers the New
         // booking wizard uses, and Approve waits until every night has one.
         nights.forEach { night ->
             val picked = startTimes[seriesNightKey(series, night.visitId)]
-            val name = night.serviceType.ifBlank { series.serviceType.ifBlank { "KinCare" } }
+            val name = (if (night.serviceType.isBlank()) "" else catalog.nameOf(night.serviceType))
+                .ifBlank { series.serviceName(catalog).ifBlank { "KinCare" } }
             val title = if (night.requestedDate.isBlank()) name else "$name on ${nightLabel(night.requestedDate)}"
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = title, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
@@ -3054,14 +3336,98 @@ private fun IncomingSeriesRow(
                     !ready -> "Set the start times first"
                     else -> "Approve series"
                 },
-                onClick = onApprove,
+                onClick = { confirming = "approve" },
                 enabled = !actionsLocked && ready,
             )
             GhostButton(
                 label = "Cancel",
-                onClick = onCancel,
+                onClick = { confirming = "cancel" },
                 enabled = !actionsLocked,
             )
+        }
+    }
+    AuntieDialog(
+        visible = confirming != null,
+        title = if (confirming == "cancel") series.declineConfirmTitle() else series.approveConfirmTitle(),
+        onDismiss = { confirming = null },
+        footer = {
+            GhostButton(label = "Never mind", onClick = { confirming = null })
+            PrimaryButton(
+                label = if (confirming == "cancel") "Turn it down" else "Book it",
+                onClick = {
+                    val decision = confirming
+                    confirming = null
+                    if (decision == "cancel") onCancel() else onApprove()
+                },
+                enabled = !actionsLocked,
+            )
+        },
+    ) {
+        Text(text = series.subject(catalog), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(
+            text = if (confirming == "cancel") {
+                "Nothing will be booked. The household will be told."
+            } else {
+                if (series.visitCount == 1) "This visit will go on the schedule and on the household's portal."
+                else "All ${series.visitCount} visits will go on the schedule and on the household's portal."
+            },
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+    }
+    if (detailOpen) {
+        var notes by remember(seriesKey) { mutableStateOf<Result<String>?>(null) }
+        LaunchedEffect(seriesKey) { notes = loadNotes() }
+        AuntieDialog(
+            visible = true,
+            title = "New request${householdSuffix(series.kinfolkName, "from")}",
+            onDismiss = { detailOpen = false },
+            footer = {
+                GhostButton(label = "Close", onClick = { detailOpen = false })
+                GhostButton(
+                    label = "Cancel",
+                    onClick = {
+                        detailOpen = false
+                        confirming = "cancel"
+                    },
+                    enabled = !actionsLocked,
+                )
+                PrimaryButton(
+                    label = "Approve",
+                    onClick = {
+                        detailOpen = false
+                        confirming = "approve"
+                    },
+                    enabled = !actionsLocked && ready,
+                )
+            },
+        ) {
+            RequestFact("Household", series.householdLabel())
+            RequestFact("Service", series.serviceName(catalog).ifBlank { "Not on the request" })
+            RequestFact("Kin", series.kinNames.joinToString(", ").ifBlank { "Not on the request" })
+            RequestFact(
+                if (series.visitCount == 1) "Visit" else "${series.visitCount} visits",
+                series.visitLines(zone, catalog).joinToString("\n"),
+            )
+            val loaded = notes
+            when {
+                loaded == null -> {
+                    Text(text = "NOTES ON THE REQUEST", style = AuntieTheme.typography.labelSmall, color = c.textDim)
+                    AuntieLinearProgress(modifier = Modifier.fillMaxWidth())
+                }
+                loaded.isFailure -> RequestFact(
+                    "Notes on the request",
+                    "Couldn't load the notes: ${loaded.exceptionOrNull()?.message ?: "the read did not land"}",
+                )
+                else -> RequestFact("Notes on the request", loaded.getOrNull().orEmpty().ifBlank { "None given" })
+            }
+            if (!ready) {
+                Text(
+                    text = if (nights.size == 1) "Set the start time on the card before approving." else "Set the start times on the card before approving.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+            }
         }
     }
 }

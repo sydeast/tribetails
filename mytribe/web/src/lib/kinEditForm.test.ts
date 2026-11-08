@@ -105,7 +105,8 @@ describe('validateKinForm', () => {
   });
 
   it('rejects an unparsable age', () => {
-    expect(validateKinForm(formFor({ ageYears: '-4' })).ageYears).toMatch(/0 or more/);
+    expect(validateKinForm(formFor({ ageYears: '-4' })).ageYears).toMatch(/0 to 100/);
+    expect(validateKinForm(formFor({ ageYears: '250' })).ageYears).toMatch(/0 to 100/);
     expect(validateKinForm(formFor({ ageYears: '' })).ageYears).toBeUndefined();
   });
 });
@@ -235,5 +236,27 @@ describe('buildNewKinPayload', () => {
   it('sends null for an unparsable age rather than blocking (validation gates submit before this runs)', () => {
     const form: KinEditForm = { ...emptyKinForm(), name: 'Rex', ageYears: 'not a number' };
     expect(buildNewKinPayload(form).ageYears).toBeNull();
+  });
+});
+
+// #1583: weight is a number with an optional unit; a value the pet already has passes unchanged.
+describe('validateKinForm weight (#1583)', () => {
+  it('accepts a number, a number with a unit, and blank', () => {
+    for (const weight of ['', '45', '45 lb', '12.5kg', '8 oz']) {
+      expect(validateKinForm(formFor({ weight })).weight).toBeUndefined();
+    }
+  });
+
+  it('refuses free text', () => {
+    for (const weight of ['heavy-ish', '45 stone', '-3', '0']) {
+      expect(validateKinForm(formFor({ weight })).weight).toMatch(/Weight is a number/);
+    }
+  });
+
+  it('lets a weight the pet already carries stand, and refuses a new bad one', () => {
+    const k = { weight: 'heavy-ish' };
+    expect(validateKinForm(formFor({ weight: 'heavy-ish' }), k).weight).toBeUndefined();
+    expect(validateKinForm(formFor({ weight: 'heavy' }), k).weight).toMatch(/Weight is a number/);
+    expect(validateKinForm(formFor({ weight: '40 lb' }), k).weight).toBeUndefined();
   });
 });

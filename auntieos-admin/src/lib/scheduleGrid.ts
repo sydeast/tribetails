@@ -34,6 +34,45 @@ export const GRID_START_MINUTE = GRID_START_HOUR * 60;
 export const GRID_END_MINUTE = GRID_END_HOUR * 60;
 
 /**
+ * #1606: the hours a week actually draws. 8a to 6p is the floor, the mock's and
+ * the desktop grid's geometry, and the week grows past it in whole hours to
+ * reach every visit in it: a 6:30 visit used to sit behind a footer line that
+ * did not even name the day, now the grid simply has a 6p row. Hours are
+ * `[startHour, endHour)` on the business clock, within 0..24.
+ */
+export interface GridWindow {
+  startHour: number;
+  endHour: number;
+}
+
+export const DEFAULT_GRID_WINDOW: GridWindow = { startHour: GRID_START_HOUR, endHour: GRID_END_HOUR };
+
+/**
+ * The window that reaches every visit: the default, widened to the earliest
+ * start's hour and the latest end's (rounded up), never past midnight either
+ * side. Visits are `[startMinute, endMinute)` minute-of-day pairs; an end that
+ * is missing or not after its start counts as the start plus the shortest
+ * drawn block, so the visit still gets a row.
+ */
+export function gridWindowFor(visits: readonly { startMinute: number; endMinute: number | null }[]): GridWindow {
+  let startHour = GRID_START_HOUR;
+  let endHour = GRID_END_HOUR;
+  for (const v of visits) {
+    if (!Number.isFinite(v.startMinute)) continue;
+    const end =
+      v.endMinute !== null && Number.isFinite(v.endMinute) && v.endMinute > v.startMinute
+        ? v.endMinute
+        : v.startMinute + MIN_BLOCK_MINUTES;
+    startHour = Math.min(startHour, Math.floor(v.startMinute / 60));
+    endHour = Math.max(endHour, Math.ceil(Math.min(end, 24 * 60) / 60));
+  }
+  return { startHour: Math.max(0, startHour), endHour: Math.min(24, Math.max(endHour, startHour + 1)) };
+}
+
+const startMinuteOf = (w: GridWindow): number => w.startHour * 60;
+const endMinuteOf = (w: GridWindow): number => w.endHour * 60;
+
+/**
  * Shortest block the grid will draw, in minutes. A 10-minute visit rendered at
  * its true 9px is an unreadable sliver and, worse, an untappable one. Capped by
  * the room actually left below the block so a visit starting at 5:55p cannot be
@@ -147,15 +186,19 @@ export interface GridPlacement {
  * to the room left below the block, in that order, so a short visit near the
  * bottom edge is drawn as small as the space allows rather than overflowing.
  */
-export function gridPlacement(startMinute: number, durationMinutes: number): GridPlacement | null {
+export function gridPlacement(
+  startMinute: number,
+  durationMinutes: number,
+  window: GridWindow = DEFAULT_GRID_WINDOW,
+): GridPlacement | null {
   if (!Number.isFinite(startMinute)) return null;
-  if (startMinute < GRID_START_MINUTE || startMinute >= GRID_END_MINUTE) return null;
-  const roomToBottom = GRID_END_MINUTE - startMinute;
+  if (startMinute < startMinuteOf(window) || startMinute >= endMinuteOf(window)) return null;
+  const roomToBottom = endMinuteOf(window) - startMinute;
   const minVisible = Math.min(MIN_BLOCK_MINUTES, roomToBottom);
   const raw = Number.isFinite(durationMinutes) && durationMinutes > 0 ? durationMinutes : MIN_BLOCK_MINUTES;
   const shown = Math.min(Math.max(raw, minVisible), roomToBottom);
   return {
-    topPx: (HOUR_HEIGHT_PX * (startMinute - GRID_START_MINUTE)) / 60,
+    topPx: (HOUR_HEIGHT_PX * (startMinute - startMinuteOf(window))) / 60,
     heightPx: (HOUR_HEIGHT_PX * shown) / 60,
   };
 }
@@ -164,21 +207,22 @@ export function gridPlacement(startMinute: number, durationMinutes: number): Gri
 export function busyPlacement(
   startHHmm: string | undefined,
   endHHmm: string | undefined,
+  window: GridWindow = DEFAULT_GRID_WINDOW,
 ): GridPlacement | null {
   const start = minutesFromHHmm(startHHmm);
   if (start === null) return null;
   const end = minutesFromHHmm(endHHmm);
   const realEnd = end !== null && end > start ? end : start + MIN_BLOCK_MINUTES;
   // Wholly above or below the window there is no honest place to draw it.
-  if (realEnd <= GRID_START_MINUTE || start >= GRID_END_MINUTE) return null;
+  if (realEnd <= startMinuteOf(window) || start >= endMinuteOf(window)) return null;
   // A block that straddles an edge is clamped into view: it still refuses bookings,
   // so it has to be seen. The label and title carry the real times.
-  const top = Math.max(start, GRID_START_MINUTE);
-  return gridPlacement(top, Math.min(realEnd, GRID_END_MINUTE) - top);
+  const top = Math.max(start, startMinuteOf(window));
+  return gridPlacement(top, Math.min(realEnd, endMinuteOf(window)) - top, window);
 }
 /** Minute-of-day for a vertical offset inside a day column, un-snapped and un-clamped. */
-export function minuteFromOffsetPx(offsetPx: number): number {
-  return GRID_START_MINUTE + Math.round((offsetPx / HOUR_HEIGHT_PX) * 60);
+export function minuteFromOffsetPx(offsetPx: number, window: GridWindow = DEFAULT_GRID_WINDOW): number {
+  return startMinuteOf(window) + Math.round((offsetPx / HOUR_HEIGHT_PX) * 60);
 }
 
 /**
@@ -196,8 +240,8 @@ export function snapMinuteOfDay(minuteOfDay: number, snapMinutes: number): numbe
 }
 
 /** Holds a drop inside the drawn window, so a block can never be released above 8a or past the last drawable minute. */
-export function clampDropMinute(minuteOfDay: number): number {
-  return Math.min(Math.max(Math.round(minuteOfDay), GRID_START_MINUTE), GRID_END_MINUTE - 1);
+export function clampDropMinute(minuteOfDay: number, window: GridWindow = DEFAULT_GRID_WINDOW): number {
+  return Math.min(Math.max(Math.round(minuteOfDay), startMinuteOf(window)), endMinuteOf(window) - 1);
 }
 
 /**
@@ -209,8 +253,12 @@ export function clampDropMinute(minuteOfDay: number): number {
  * fine — but 18:05 snapped first is 18:00, which is the exclusive bottom edge
  * and not a drawable minute at all).
  */
-export function dropMinuteFromOffsetPx(offsetPx: number, snapMinutes: number): number {
-  return snapMinuteOfDay(clampDropMinute(minuteFromOffsetPx(offsetPx)), snapMinutes);
+export function dropMinuteFromOffsetPx(
+  offsetPx: number,
+  snapMinutes: number,
+  window: GridWindow = DEFAULT_GRID_WINDOW,
+): number {
+  return snapMinuteOfDay(clampDropMinute(minuteFromOffsetPx(offsetPx, window), window), snapMinutes);
 }
 
 /** The one row the drop math needs off a session: its id, its window, and its stated duration. */
@@ -243,9 +291,10 @@ export function rescheduleTimesForDrop(
   dropMinuteOfDay: number,
   snapMinutes: number,
   businessZone: string,
+  window: GridWindow = DEFAULT_GRID_WINDOW,
 ): RescheduleTimes | null {
   if (visit._id.trim() === '') return null;
-  const snapped = snapMinuteOfDay(clampDropMinute(dropMinuteOfDay), snapMinutes);
+  const snapped = snapMinuteOfDay(clampDropMinute(dropMinuteOfDay, window), snapMinutes);
   // Built on the clock the grid is drawn on, so the visit lands on the row it was dropped on.
   return buildRescheduleTimes(targetDayIso, hhmmFromMinutes(snapped), visitDurationMinutes(visit), businessZone);
 }
@@ -262,9 +311,10 @@ export function isNoOpDrop(
   dropMinuteOfDay: number,
   snapMinutes: number,
   businessZone: string,
+  window: GridWindow = DEFAULT_GRID_WINDOW,
 ): boolean {
   if (fromDayIso !== targetDayIso) return false;
   const current = businessMinutesOfDay(visit.startTime, businessZone);
   if (current === null) return false;
-  return snapMinuteOfDay(clampDropMinute(dropMinuteOfDay), snapMinutes) === current;
+  return snapMinuteOfDay(clampDropMinute(dropMinuteOfDay, window), snapMinutes) === current;
 }

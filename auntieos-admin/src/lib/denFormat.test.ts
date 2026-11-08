@@ -4,9 +4,10 @@ import { denCurrentHour, formatTime, greetingForHour, serviceTone, statusLabel }
 /**
  * Ported from ui/components/DenScreenKit.kt + AuntieTones.kt. These specs exist to
  * pin the two things a reader would otherwise "correct" on sight: the lopsided
- * greeting boundaries (evening starts at 17, not 18) and serviceTone's "visit"
- * contains "sit" collision. Both match the live wasm app. If one of these fails,
- * the fix is a decision about the Kotlin, not a nudge to the expectation.
+ * greeting boundaries (evening starts at 17, not 18) and serviceTone's word-start
+ * "sit" (AO-19, #1736: "visit" is not a sit). Both match the Kotlin. If one of
+ * these fails, the fix is a decision about the Kotlin, not a nudge to the
+ * expectation.
  */
 
 describe('greetingForHour', () => {
@@ -102,13 +103,28 @@ describe('serviceTone', () => {
     expect(serviceTone('drop_in_sitting')).toBe('orange');
   });
 
-  it('gives "visit" keys the PURPLE sitting tone, because "visit" contains "sit"', () => {
-    // Not a typo and not a bug in this port. v-i-[s-i-t]. The raw keys the app
-    // actually stores hit this, and ScheduleScreen.kt's comment claiming visit_60
-    // resolves to Orange is simply wrong. Pinned so nobody "fixes" it downstream.
-    expect(serviceTone('visit_60')).toBe('purple');
-    expect(serviceTone('visit')).toBe('purple');
+  it('#1736: does not match the "sit" inside "visit", the AO-19 rule the Kotlin carries', () => {
+    // v-i-[s-i-t]. A bare substring painted every visit house-sitting purple on
+    // the web while Android and the desktop console painted it orange. These are
+    // DenScreenKitTest.serviceTone_does_not_match_sit_inside_visit's cases.
+    expect(serviceTone('visit_60')).toBe('orange');
+    expect(serviceTone('visit')).toBe('orange');
+    expect(serviceTone('Visit')).toBe('orange');
+    expect(serviceTone('Pet Visit')).toBe('orange');
+    expect(serviceTone('VISIT_30')).toBe('orange');
+    expect(serviceTone('Drop-In Visit')).toBe('orange');
+    expect(serviceTone('Off-Book Visit')).toBe('orange');
+    expect(serviceTone('KinCare Visit')).toBe('orange');
     expect(serviceTone('60Minute')).toBe('orange');
+  });
+
+  it('#1736: still matches a sit that starts a word', () => {
+    // DenScreenKitTest.serviceTone_still_matches_real_sitting_services.
+    expect(serviceTone('House Sit')).toBe('purple');
+    expect(serviceTone('Pet Sitting')).toBe('purple');
+    expect(serviceTone('sit')).toBe('purple');
+    expect(serviceTone('Housesitting')).toBe('purple');
+    expect(serviceTone('Overnight')).toBe('purple');
   });
 
   it('falls back to orange for unmatched and blank keys', () => {

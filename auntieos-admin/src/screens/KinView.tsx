@@ -173,7 +173,7 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
         if (live) {
           setKin({
             status: 'error',
-            message: `getKin failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           });
         }
@@ -412,7 +412,6 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
                       when it shares a line with `className`. */}
                   <DenPanel
                     title="Auntie's notes"
-                    meta="admin only"
                     className="d3"
                   >
                     {k.officeNotes.trim() !== '' ? (

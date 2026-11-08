@@ -6,6 +6,7 @@ import {
   visitDurationMinutes,
   type RescheduleTimes,
 } from './bookingDetailFormat';
+import { rescheduleIntoPastRefusal } from './pastVisit';
 import { bulkTargetName, type BulkFailure, type BulkSkip } from './bookingBulk';
 import { bookingState, type BookingState } from './bookingFormat';
 import { str } from './coerce';
@@ -123,6 +124,11 @@ export function rescheduleApplies(state: BookingState): boolean {
       return true;
     case 'draft':
     case 'pending':
+    // #1578: the Auntie is already on her way or at the door, so the window
+    // is not moved out from under her; the per-row panel refuses it too.
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
     case 'completed':
     case 'cancelled':
     case 'unknown':
@@ -136,6 +142,10 @@ function rescheduleSkipReason(state: BookingState): string {
     case 'draft':
     case 'pending':
       return 'It is still awaiting a reply, so it has no visit on the books to move. Approve it first.';
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
+      return 'The visit is already under way, so it is left where it is.';
     case 'completed':
       return 'It has already been completed.';
     case 'cancelled':
@@ -206,11 +216,14 @@ export function planBulkReschedule(
  *   - a row whose date and time cannot be turned into a real instant
  *     (2026-02-30, 25:00). `buildRescheduleTimes` returns null and the visit is
  *     left alone rather than handed a garbage window.
+ *   - a row moved to a time that has already passed (#1574): a visit is never
+ *     moved into the past, and the server would refuse it anyway.
  */
 export function planRescheduleWrites(
   targets: readonly RescheduleTarget[],
   drafts: ReadonlyMap<string, RescheduleDraft>,
   businessZone: string,
+  nowMs: number = Date.now(),
 ): { writes: RescheduleWrite[]; skipped: BulkSkip[] } {
   const writes: RescheduleWrite[] = [];
   const skipped: BulkSkip[] = [];
@@ -243,6 +256,11 @@ export function planRescheduleWrites(
         name: target.name,
         reason: `${date} ${time} is not a real date and time, so this visit was left where it is.`,
       });
+      continue;
+    }
+    const pastRefusal = rescheduleIntoPastRefusal(times.startTime, nowMs);
+    if (pastRefusal !== null) {
+      skipped.push({ id: target.id, name: target.name, reason: pastRefusal });
       continue;
     }
     writes.push({ target, times });

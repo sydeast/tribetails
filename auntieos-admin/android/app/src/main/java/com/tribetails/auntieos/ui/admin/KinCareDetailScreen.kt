@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
+import com.tribetails.auntieos.domain.addressLooksIncomplete
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import android.content.Intent
@@ -37,8 +39,11 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.emergencyContactsOf
 import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.domain.readableVisitNotes
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
+import com.tribetails.auntieos.data.contracts.ListVisitInternalNotesResult
+import com.tribetails.auntieos.data.contracts.ListVisitInternalNotesResultNote
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.ui.admin.scheduling.assignUnavailableReason
 import com.tribetails.auntieos.ui.admin.scheduling.canAssignAuntie
@@ -136,8 +141,14 @@ fun KinCareDetailScreen(
     // zone-less start on. Null until read, and on a failed read: [businessZone]
     // then resolves to America/Chicago, the server's own default, never the phone's.
     var businessTimeZone by remember { mutableStateOf<String?>(null) }
+    // #1744: the KinCare catalog the title and Service row name the visit by,
+    // off the same settings read. Empty until it lands, which names nothing.
+    var serviceCatalog by remember { mutableStateOf(ServiceCatalog()) }
     LaunchedEffect(Unit) {
-        repo.getBusinessSettings().onSuccess { businessTimeZone = it.timeZone }
+        repo.getBusinessSettings().onSuccess {
+            businessTimeZone = it.timeZone
+            serviceCatalog = it.serviceCatalog()
+        }
     }
 
     LaunchedEffect(kinCareId, retryNonce) {
@@ -183,7 +194,7 @@ fun KinCareDetailScreen(
                     // `ready + null`.
                     if (!isKinCarePermissionDenied(err)) {
                         loadError = err.message
-                            ?: "Couldn't load this Kin Care. Check your connection and try again."
+                            ?: "Couldn't load this KinCare. Check your connection and try again."
                     }
                 }
             loading = false
@@ -192,7 +203,7 @@ fun KinCareDetailScreen(
 
     val s = session
     AuntieScreenScaffold(
-        title = s?.kinfolkName?.ifBlank { "Kin Care" } ?: "Loading…",
+        title = s?.kinfolkName?.ifBlank { "KinCare" } ?: "Loading…",
         onBack = onBack,
     ) {
         if (loading) {
@@ -232,7 +243,7 @@ fun KinCareDetailScreen(
                 // unavailable" dialog carries. Also covers the sandbox
                 // permission-denied case folded in above.
                 Text(
-                    "This Kin Care isn't available to open. A visit gets its own record " +
+                    "This KinCare isn't available to open. A visit gets its own record " +
                         "only once the request is approved, so a request still waiting on " +
                         "you has none yet. Otherwise it may have been cancelled or removed.",
                     color = AuntieTheme.colors.textDim,
@@ -256,8 +267,10 @@ fun KinCareDetailScreen(
             val kinLabel = orderedIds
                 .mapNotNull { kinById[it]?.name?.takeIf { n -> n.isNotBlank() } }
                 .joinToString(" & ")
-            val household = s.kinfolkName.ifBlank { "Kin Care" }
-            val heroTitle = listOf(kinLabel, s.serviceType)
+            val household = s.kinfolkName.ifBlank { "KinCare" }
+            // #1744: the KinCare's name, never the stored `visit_60`.
+            val serviceName = auntieTimeServiceName(s.serviceType, serviceCatalog)
+            val heroTitle = listOf(kinLabel, serviceName)
                 .filter { it.isNotBlank() }
                 .joinToString(" · ")
                 .ifBlank { household }
@@ -269,7 +282,7 @@ fun KinCareDetailScreen(
 
             item {
                 DenScreenHeading(
-                    kicker = "The Den · Auntie Time",
+                    kicker = "Care Ops · Auntie Time",
                     // The crumb IS the way back, the same trail the web detail
                     // draws: the rail's name for the board, then the Kin.
                     crumbs = listOf(
@@ -359,11 +372,11 @@ fun KinCareDetailScreen(
                     if (!isActive && !hasRoute) {
                         EmptyHint(
                             if (notYetStarted) {
-                                "Tracking starts once an Auntie clocks in for this Kin Care."
+                                "Tracking starts once an Auntie clocks in for this KinCare."
                             } else if (s.gpsSummary != null) {
-                                "A GPS summary was saved for this Kin Care, but it has no route to view."
+                                "A GPS summary was saved for this KinCare, but it has no route to view."
                             } else {
-                                "No GPS breadcrumbs were recorded for this Kin Care because it was never tracked."
+                                "No GPS breadcrumbs were recorded for this KinCare because it was never tracked."
                             }
                         )
                     }
@@ -385,16 +398,17 @@ fun KinCareDetailScreen(
             // detail and the Bookings sheet.
             item {
                 DetailSection("Details") {
-                    DetailFieldRow("Service", s.serviceType)
-                    DetailFieldRow(
-                        "Visit length",
-                        if (s.serviceDurationMinutes > 0) "${s.serviceDurationMinutes} min" else "",
+                    DetailFieldRow("Service", serviceName)
+                    // #1581: a stored 0 falls back to the visit's own window.
+                    val lengthMinutes = com.tribetails.auntieos.domain.shownVisitLengthMinutes(
+                        s.serviceDurationMinutes, s.startTime, s.endTime,
                     )
+                    DetailFieldRow("Visit length", lengthMinutes?.let { "$it min" } ?: "")
                     // Present only once the visit has been billed, the same
                     // rule as the board's "Invoice linked" chip: an unbilled
                     // visit is the normal state of a visit, not a gap.
                     DetailFieldRow("Invoice", if (s.invoiceId.isNotBlank()) "Linked" else "")
-                    if (s.serviceType.isBlank() && s.serviceDurationMinutes <= 0 && s.invoiceId.isBlank()) {
+                    if (s.serviceType.isBlank() && lengthMinutes == null && s.invoiceId.isBlank()) {
                         EmptyHint("No service, length or invoice on this record yet.")
                     }
                 }
@@ -460,7 +474,7 @@ fun KinCareDetailScreen(
                 item {
                     DetailSection("Kin in this care") {
                         if (kinById.isEmpty() && fourOnes.isEmpty()) {
-                            EmptyHint("No Kin records linked to this Kin Care.")
+                            EmptyHint("No Kin records linked to this KinCare.")
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 orderedIds.forEach { kid ->
@@ -475,7 +489,7 @@ fun KinCareDetailScreen(
             item {
                 DetailSection("KinTales sent") {
                     if (reports.isEmpty()) {
-                        EmptyHint("No KinTales sent yet during this Kin Care.")
+                        EmptyHint("No KinTales sent yet during this KinCare.")
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             reports.forEach { r -> KinTaleSnippet(r) }
@@ -854,6 +868,14 @@ private fun AddressBlock(address: String) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(address, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+        // #1602: the walk's visit read "18605" with no hint it was incomplete.
+        if (addressLooksIncomplete(address)) {
+            Text(
+                INCOMPLETE_ADDRESS_HINT,
+                style = AuntieTheme.typography.labelSmall,
+                color = AuntieTheme.colors.warning,
+            )
+        }
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(999.dp))
@@ -1042,10 +1064,25 @@ private fun BookingNotesSection(
         if (canStream) notesRepo.streamKinfolkFacingNotes(session.kinfolkId, bookingId)
         else flowOf(emptyList<BookingNotesRepository.BookingNote>())
     }.collectAsState(initial = emptyList())
-    val internal by remember(canStream, bookingId) {
-        if (canStream) notesRepo.streamInternalNotes(session.kinfolkId, bookingId)
-        else flowOf(emptyList<BookingNotesRepository.BookingNote>())
-    }.collectAsState(initial = emptyList())
+    // #1580: the visit's ONE internal-notes list, the same one web Bookings and
+    // Auntie Time show, read by session through `listVisitInternalNotes`. It
+    // used to stream `families/{k}/bookings/{visitId}/internalNotes`, a path the
+    // server never writes (the thread lives under `.../kinCares/{visitId}`), so
+    // this panel only ever showed the session's own notes text.
+    var internalState by remember(session.id) { mutableStateOf<InternalNotesState>(InternalNotesState.Loading) }
+    var internalReload by remember(session.id) { mutableStateOf(0) }
+    LaunchedEffect(session.id, internalReload) {
+        if (session.id.isBlank()) {
+            internalState = InternalNotesState.Failed("This visit has no id, so its notes cannot be read.")
+            return@LaunchedEffect
+        }
+        internalState = notesRepo.listVisitInternalNotes(session.id).fold(
+            onSuccess = { InternalNotesState.Ready(it) },
+            onFailure = { InternalNotesState.Failed(it.message ?: "Could not load the notes.") },
+        )
+    }
+    var internalAdminOnly by remember(session.id) { mutableStateOf(false) }
+    var internalSaved by remember(session.id) { mutableStateOf<String?>(null) }
 
     // Through the shared helper, not a re-implementation: this screen used to
     // carry its own private NOTE_CUTOFF_MS and its own inline comparison, which
@@ -1114,64 +1151,88 @@ private fun BookingNotesSection(
             }
         }
 
-        DetailSection("Admin-internal note", trailing = { PanelWhoCan("private") }) {
+        DetailSection("Internal notes", trailing = { PanelWhoCan("staff only") }) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (session.notes.isNotBlank()) {
-                    FactRow(Lucide.NotebookPen, "On file", session.notes, multiline = true)
-                }
-                internal.sortedBy { it.createdAtMs ?: 0L }.forEach { note ->
-                    FactRow(Lucide.NotebookPen, note.authorRole.ifBlank { "admin" }, note.body, multiline = true)
-                }
-                if (session.notes.isBlank() && internal.isEmpty()) {
-                    EmptyHint("No internal notes yet.")
+                when (val st = internalState) {
+                    InternalNotesState.Loading -> EmptyHint("Loading the notes…")
+                    is InternalNotesState.Failed -> {
+                        Text(
+                            text = "Could not load the notes. ${st.message}",
+                            style = AuntieTheme.typography.labelSmall,
+                            color = AuntieTheme.colors.error,
+                        )
+                        GhostButton(label = "Try again", onClick = { internalReload++ })
+                    }
+                    is InternalNotesState.Ready -> {
+                        if (st.result.notes.isEmpty()) EmptyHint("No internal notes yet.")
+                        st.result.notes.forEach { note ->
+                            FactRow(
+                                Lucide.NotebookPen,
+                                internalNoteLabel(note, zone),
+                                // #1592: the visit record's own text carries ISO stamps.
+                                if (note.source == "visitRecord") readableVisitNotes(note.body, zone) else note.body,
+                                multiline = true,
+                            )
+                        }
+                    }
                 }
                 AuntieField(
                     value = internalInput,
                     onValueChange = { internalInput = it },
-                    label = "Add internal note",
-                    placeholder = "Hidden from kinfolk. Visible to staff on every session of this booking.",
+                    label = "Add an internal note",
+                    placeholder = "Hidden from the household.",
                     singleLine = false,
                     minLines = 3,
-                    // Locked on the same 3-hour cutoff as the kinfolk-facing thread.
-                    // addInternalBookingNote enforces it server-side too, so this is
-                    // a mirror that closes the composer early, not the guard itself;
-                    // see BookingNoteCutoff.kt.
-                    enabled = canStream && !locked,
+                    // #1580: no 3-hour lock on internal notes. Staff write them
+                    // during and after a visit; the household thread keeps it.
+                    enabled = !savingInternal,
                 )
-                noteCutoffWarning(locked)?.let { msg ->
-                    Text(
-                        text = msg,
-                        style = AuntieTheme.typography.labelSmall,
-                        color = AuntieTheme.colors.warning,
-                    )
+                val canMark = (internalState as? InternalNotesState.Ready)?.result?.let {
+                    it.canMarkAdminOnly && it.hasBookingRecord
+                } == true
+                if (canMark) {
+                    Row(
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        AuntieCheckbox(
+                            checked = internalAdminOnly,
+                            onCheckedChange = { internalAdminOnly = it },
+                        )
+                        Text(
+                            text = "Admin only (Aunties will not see it)",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textPrimary,
+                        )
+                    }
                 }
                 PrimaryButton(
-                    label = if (savingInternal) "Saving…" else "Save internal note",
-                    enabled = canStream && !locked && !savingInternal && internalInput.isNotBlank(),
+                    label = if (savingInternal) "Saving…" else "Add note",
+                    enabled = !savingInternal && internalInput.isNotBlank() && internalState !is InternalNotesState.Loading,
                     onClick = {
                         scope.launch {
                             savingInternal = true
                             error = null
-                            notesRepo.addInternalNote(session.kinfolkId, bookingId, internalInput.trim())
-                                .onSuccess { internalInput = "" }
+                            internalSaved = null
+                            notesRepo.addVisitInternalNote(session.id, internalInput.trim(), adminOnly = canMark && internalAdminOnly)
+                                .onSuccess { res ->
+                                    internalInput = ""
+                                    internalAdminOnly = false
+                                    internalSaved = if (res.visibility == "adminOnly") "Note added. Only you can see it." else "Note added for staff."
+                                    internalReload++
+                                }
                                 .onFailure { error = it.message ?: "Note save failed." }
                             savingInternal = false
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-
+                internalSaved?.let { msg ->
+                    Text(text = msg, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                }
                 error?.let { msg ->
                     Text(
                         text = msg,
-                        style = AuntieTheme.typography.labelSmall,
-                        color = AuntieTheme.colors.error,
-                    )
-                }
-
-                if (!canStream) {
-                    Text(
-                        text = "Notes unavailable - session is missing kinfolkId or bookingId.",
                         style = AuntieTheme.typography.labelSmall,
                         color = AuntieTheme.colors.error,
                     )
@@ -1180,7 +1241,29 @@ private fun BookingNotesSection(
         }
     }
 }
-
+/** #1580: what the internal-notes panel holds while it loads the visit's list. */
+internal sealed interface InternalNotesState {
+    data object Loading : InternalNotesState
+    data class Failed(val message: String) : InternalNotesState
+    data class Ready(val result: ListVisitInternalNotesResult) : InternalNotesState
+}
+/**
+ * #1580: a note's byline in the internal list: "Admin only · Syd · Nov 5, 3:00 PM".
+ * The session's older notes text has no author or date and reads "On the visit record".
+ */
+internal fun internalNoteLabel(note: ListVisitInternalNotesResultNote, zone: ZoneId): String {
+    if (note.source == "visitRecord") return "On the visit record"
+    val who = note.authorName?.takeIf { it.isNotBlank() } ?: when (note.authorRole) {
+        "auntie" -> "Auntie"
+        "admin" -> "Office"
+        else -> "Staff"
+    }
+    val whenText = note.createdAtMs?.let {
+        java.time.format.DateTimeFormatter.ofPattern("MMM d, h:mm a", java.util.Locale.US)
+            .format(java.time.Instant.ofEpochMilli(it.toLong()).atZone(zone))
+    }
+    return listOfNotNull(if (note.visibility == "adminOnly") "Admin only" else null, who, whenText).joinToString(" · ")
+}
 /**
  * The mock's `.who-can`: a short mono note on the panel header saying who
  * sees the box. The web twin is `DenPanel`'s `meta` prop; the Android panel

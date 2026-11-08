@@ -52,6 +52,10 @@ data class HouseholdMembersUiState(
     val removingUid: String? = null,
     val removeError: String? = null,
     val portalInviteBusy: Boolean = false,
+    /** #1602: the household's email on file, named in the invite confirm. */
+    val householdEmail: String = "",
+    /** #1602: true once [householdEmail] was read; an unread one never disables the invite. */
+    val householdEmailLoaded: Boolean = false,
     val portalInviteError: String? = null,
     /**
      * A portal-invite answer that emailed NOBODY. `already_active` and
@@ -83,6 +87,13 @@ class HouseholdMembersViewModel(
     val kinfolkId: String,
     private val householdName: String,
     private val repository: MembersRepository = MembersRepository(),
+    /**
+     * #1602: the household's email on file, the address Invite to portal
+     * mails, so the confirm can name it. Null when it cannot be read.
+     */
+    private val householdEmailLoader: suspend (String) -> String? = { id ->
+        com.tribetails.auntieos.AuntieOSApp.instance.repository.getKinfolkById(id).getOrNull()?.email
+    },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HouseholdMembersUiState())
@@ -92,6 +103,15 @@ class HouseholdMembersViewModel(
         loadMembers()
         loadInvites()
         loadPeople()
+        loadHouseholdEmail()
+    }
+
+    /** #1602: the address the portal invite goes to; null until read, "" when none is on file. */
+    fun loadHouseholdEmail() {
+        viewModelScope.launch {
+            val email = runCatching { householdEmailLoader(kinfolkId) }.getOrNull()
+            _uiState.value = _uiState.value.copy(householdEmail = email?.trim() ?: "", householdEmailLoaded = email != null)
+        }
     }
     fun loadPeople() {
         viewModelScope.launch {
@@ -103,7 +123,7 @@ class HouseholdMembersViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         peopleLoading = false,
-                        peopleError = "listSecondaryKinfolk failed: ${err.message ?: "Load failed"}",
+                        peopleError = "Could not load: ${err.message ?: "Load failed"}",
                     )
                 },
             )
@@ -137,8 +157,9 @@ class HouseholdMembersViewModel(
     fun savePerson() {
         val draft = _uiState.value.personDraft ?: return
         if (_uiState.value.personSaving) return
-        if (draft.name.isBlank()) {
-            _uiState.value = _uiState.value.copy(personError = MembersRepository.SECONDARY_KINFOLK_NAME_REQUIRED)
+        // #1593: name, phone and email are checked here first, not 4 s later by the server.
+        secondaryKinfolkDraftError(draft.name, draft.phone, draft.email)?.let { refusal ->
+            _uiState.value = _uiState.value.copy(personError = refusal)
             return
         }
         _uiState.value = _uiState.value.copy(personSaving = true, personError = null)
@@ -197,7 +218,7 @@ class HouseholdMembersViewModel(
                     // promote an unknown roster into a proven-empty one.
                     _uiState.value = _uiState.value.copy(
                         membersLoading = false,
-                        membersError = "listMembers failed: ${err.message ?: "Load failed"}",
+                        membersError = "Could not load: ${err.message ?: "Load failed"}",
                     )
                 },
             )
@@ -218,7 +239,7 @@ class HouseholdMembersViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         invitesLoading = false,
-                        invitesError = "listInvites failed: ${err.message ?: "Load failed"}",
+                        invitesError = "Could not load: ${err.message ?: "Load failed"}",
                     )
                 },
             )
@@ -259,7 +280,7 @@ class HouseholdMembersViewModel(
                     _uiState.value = _uiState.value.copy(
                         portalInviteBusy = false,
                         portalInviteError =
-                            "inviteKinfolkToPortal failed: ${err.message ?: "The portal invite was not sent."}",
+                            "The portal invite was not sent: ${err.message ?: "Try again in a moment."}",
                     )
                 },
             )
@@ -302,7 +323,7 @@ class HouseholdMembersViewModel(
                         members = before,
                         savingPermission = null,
                         permissionError =
-                            "setMemberPermissions failed for ${member.label}: ${err.message ?: "Save failed"}",
+                            "Could not save the access for ${member.label}: ${err.message ?: "Save failed"}",
                     )
                 },
             )
@@ -324,7 +345,7 @@ class HouseholdMembersViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         revokingInviteId = null,
-                        revokeError = "revokeInvite failed for ${invite.invitedEmail}: " +
+                        revokeError = "Could not cancel the invite for ${invite.invitedEmail}: " +
                             (err.message ?: "The invite is still live."),
                     )
                 },
@@ -354,7 +375,7 @@ class HouseholdMembersViewModel(
                 onFailure = { err ->
                     _uiState.value = _uiState.value.copy(
                         removingUid = null,
-                        removeError = "removeMember failed: ${err.message ?: "The member was not removed."}",
+                        removeError = "Could not remove: ${err.message ?: "The member was not removed."}",
                     )
                 },
             )

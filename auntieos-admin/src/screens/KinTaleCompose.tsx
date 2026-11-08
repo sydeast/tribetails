@@ -29,6 +29,8 @@ import { DenScreenHeading, DenPanel, EmptyHint, ServicePill, StatusPill } from '
 import { kinTaleWhen } from '../lib/kinTaleFormat';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { DeleteKinTaleDraftButton } from '../components/DeleteKinTaleDraftButton';
+import { canDeleteKinTaleDraft } from '../api/kinTaleReportDraftDelete';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
 import { GenerateButton, type GeneratedDraft } from '../components/GenerateButton';
@@ -36,6 +38,8 @@ import { MediaUploadDialog } from '../components/MediaUploadDialog';
 import { mediaCaption, mediaPreviewUrl } from '../lib/mediaFormat';
 import { validateKinTaleDraft, type KinTaleDraftErrors } from '../lib/kinTaleDraftSchema';
 import { useToast } from '../components/Toast';
+import { bookingServiceName } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import './KinTaleCompose.css';
 
 /**
@@ -314,6 +318,8 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    * bounded-listener discipline live.
    */
   const templateRows = useCollection<Record<string, unknown>>(KINTALE_TEMPLATES_QUERY);
+  // #1592: the visit line names its KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
   const templates = useMemo(
     () => (templateRows.status === 'ready' ? templateRows.data.map(decodeKinTaleTemplate) : []),
     [templateRows],
@@ -539,7 +545,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       ? [
           'Visit',
           kinTaleWhen({ visitDate: draft.visitDate, arrivedAt: draft.arrivedAt, sentAt: '', createdAt: '' }),
-          draft.serviceType.trim() !== '' ? draft.serviceType : null,
+          draft.serviceType.trim() !== '' ? bookingServiceName(draft.serviceType, catalog) : null,
         ]
           .filter((part): part is string => part !== null)
           .join(' · ')
@@ -582,6 +588,15 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    * not contain. Scaffolding is gated for the same reason in the hydration
    * effect above; this closes the read side of it.
    */
+  // #1631: the stored row behind this draft, once it has been saved. Delete is
+  // offered only for a saved, unsent draft the server would let go.
+  const storedRow =
+    draft?._id && reports.status === 'ready' ? reports.data.find((r) => r._id === draft._id) : undefined;
+  const deleteTarget =
+    storedRow !== undefined && canDeleteKinTaleDraft(storedRow)
+      ? { reportId: storedRow._id, household: storedRow.kinfolkName ?? draft?.kinfolkName ?? '' }
+      : null;
+
   const formProps = draft && templatesSettled
     ? {
         draft,
@@ -605,6 +620,8 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         onOpenSendConfirm: () => setConfirmSend(true),
         onCancelSendConfirm: () => setConfirmSend(false),
         onConfirmSend: () => void handleConfirmSend(),
+        deleteTarget,
+        onDeleted: onClose,
       }
     : null;
 
@@ -653,11 +670,11 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     return (
       <div className="screen kintale-compose">
         {heading}
-        <AsyncRegion state={sessions} what="the Kin Care session" isEmpty={() => false} empty={null}>
+        <AsyncRegion state={sessions} what="the KinCare session" isEmpty={() => false} empty={null}>
           {(data) => {
             const found = data.find((s) => s._id === effectiveSessionId);
             if (!found) {
-              return <EmptyHint>No Kin Care session found with id &ldquo;{effectiveSessionId}&rdquo;.</EmptyHint>;
+              return <EmptyHint>No KinCare session found with id &ldquo;{effectiveSessionId}&rdquo;.</EmptyHint>;
             }
             return formProps ? (
               <>
@@ -720,9 +737,11 @@ export function pickableSessions(data: SessionEntry[], kinfolkId?: string): Sess
 
 function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
   const scoped = kinfolkId !== undefined && kinfolkId !== '';
+  // #1592: one shared read with the screen's own (`useBookingCatalog`).
+  const catalog = useBookingCatalog();
   return (
     <DenPanel
-      title="Pick a Kin Care session"
+      title="Pick a KinCare session"
       subtitle={
         scoped
           ? "This household's visits that have already happened."
@@ -731,7 +750,7 @@ function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
     >
       <AsyncRegion
         state={sessions}
-        what="Kin Care sessions"
+        what="KinCare sessions"
         isEmpty={(data) => pickableSessions(data, kinfolkId).length === 0}
         empty={
           <EmptyHint>
@@ -749,7 +768,7 @@ function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
                 <li key={s._id} className="kintale-compose__picker-row">
                   <button type="button" className="kintale-compose__picker-button" onClick={() => onPick(s._id)}>
                     <span className="kintale-compose__picker-name">{s.kinfolkName || 'Unnamed Kinfolk'}</span>
-                    <ServicePill serviceType={s.serviceType ?? ''} />
+                    <ServicePill serviceType={s.serviceType ?? ''} label={bookingServiceName(s.serviceType, catalog)} />
                   </button>
                 </li>
               ))}
@@ -785,6 +804,9 @@ interface ComposeFormProps {
   onOpenSendConfirm: () => void;
   onCancelSendConfirm: () => void;
   onConfirmSend: () => void;
+  /** #1631: the saved, unsent draft Delete removes, or null when there is none to offer. */
+  deleteTarget: { reportId: string; household: string } | null;
+  onDeleted: () => void;
 }
 
 function ComposeForm({
@@ -808,6 +830,8 @@ function ComposeForm({
   onOpenSendConfirm,
   onCancelSendConfirm,
   onConfirmSend,
+  deleteTarget,
+  onDeleted,
 }: ComposeFormProps) {
   const contentReady = hasKinTaleContent(draft);
   const sendLabel = kinTaleSendLabel(draft.kinfolkName);
@@ -822,6 +846,9 @@ function ComposeForm({
   const hasErrors = Object.keys(errors).length > 0;
 
   const kinCount = draft.kinIds.length;
+  // #1592: the KinCare's name, never the stored `visit_60`; blank reads "Visit".
+  const catalog = useBookingCatalog();
+  const serviceName = bookingServiceName(draft.serviceType, catalog);
 
   // The mock's right rail: the "Goes to" card, sticky beside the editor. The
   // template row is not in the mock and stays: it decides which moments the
@@ -845,13 +872,12 @@ function ComposeForm({
         )}
         <div className="kintale-compose__meta-row">
           <dt>Service</dt>
-          <dd>{draft.serviceType || 'Visit'}</dd>
+          <dd>{serviceName}</dd>
         </div>
+        {/* #1744: the visit by its day, never its session id. */}
         <div className="kintale-compose__meta-row">
-          <dt>Session</dt>
-          <dd>
-            <code>{draft.sessionId}</code>
-          </dd>
+          <dt>Visit</dt>
+          <dd>{kinTaleWhen({ visitDate: draft.visitDate, arrivedAt: draft.arrivedAt, sentAt: '', createdAt: '' })}</dd>
         </div>
         <div className="kintale-compose__meta-row">
           <dt>Template</dt>
@@ -865,7 +891,7 @@ function ComposeForm({
                   <span className="kintale-compose__provenance">
                     {' '}
                     Built in. Nothing in the Template Bank matches
-                    {draft.serviceType ? ` ${draft.serviceType}` : ' this visit'} yet.
+                    {draft.serviceType ? ` ${serviceName}` : ' this visit'} yet.
                   </span>
                 )}
               </>
@@ -960,6 +986,14 @@ function ComposeForm({
 
         <div className="kintale-compose__actions">
           <GhostButton label={isSaving ? 'Saving…' : 'Save draft'} onClick={onSaveDraft} disabled={isSaving || isSending} />
+          {deleteTarget !== null && (
+            <DeleteKinTaleDraftButton
+              reportId={deleteTarget.reportId}
+              household={deleteTarget.household}
+              onDeleted={onDeleted}
+              disabled={isSaving || isSending}
+            />
+          )}
           <PrimaryButton
             label={isSending ? 'Sending…' : sendLabel}
             onClick={onOpenSendConfirm}

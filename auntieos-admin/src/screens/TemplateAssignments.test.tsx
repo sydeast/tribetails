@@ -26,6 +26,7 @@ vi.mock('../api/templates', async (orig) => ({
 }));
 
 import { TemplateAssignments } from './TemplateAssignments';
+import { decodeCatalogKeyRow } from '../api/templateBindings';
 
 function binding(over: Partial<TemplateBinding> = {}): TemplateBinding {
   return { catalogKey: 'booking.confirmed', templateId: 'tmpl_ok', audience: 'kinfolk', triggerKey: null, active: true, ...over };
@@ -44,6 +45,8 @@ function catalogRow(over: Partial<CatalogKeyRow> = {}): CatalogKeyRow {
     hasDefaultTemplate: true,
     bound: false,
     resolvedTemplateId: 'kincare.booking.confirm',
+    whenTemplateMissing: 'generic',
+    inRepoCorpus: true,
     ...over,
   };
 }
@@ -69,6 +72,12 @@ function noOverridesAnywhere(): CatalogKeyRow[] {
   ];
 }
 
+/** Rows are headed by the notification's name (#1592); the selector skips same-named options. */
+const ROW_KEY = { selector: '.tassign__row-key' } as const;
+function rowHeading(name: string): Promise<HTMLElement> {
+  return screen.findByText(name, ROW_KEY);
+}
+
 beforeEach(() => {
   listTemplateBindings.mockReset();
   listCatalogKeys.mockReset();
@@ -91,9 +100,17 @@ describe('TemplateAssignments routing table', () => {
     // The old screen said "No catalog keys are bound yet" here, which was true of
     // the collection and false about the business.
     expect(screen.queryByText(/no catalog keys are bound yet/i)).not.toBeInTheDocument();
-    const row = (await screen.findByText('kincare.booking.confirm')).closest('li')!;
-    expect(within(row).getByText(/sends kincare\.booking\.confirm/i)).toBeInTheDocument();
+    const row = (await rowHeading('KinCare booking confirmed')).closest('li')!;
+    expect(within(row).getByText(/sends its own template/i)).toBeInTheDocument();
     expect(within(row).getByText(/default, matched by name/i)).toBeInTheDocument();
+  });
+
+  it('#1592: an empty routing table names no function', async () => {
+    listTemplateBindings.mockResolvedValue([]);
+    listCatalogKeys.mockResolvedValue([]);
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    expect(await screen.findByText(/No notifications came back/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('listCatalogKeys');
   });
 
   it('counts how many keys route by override and how many by name', async () => {
@@ -107,7 +124,7 @@ describe('TemplateAssignments routing table', () => {
 
   it('calls an overridden key an override and names the template it sends', async () => {
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const row = (await screen.findByText('booking.confirmed')).closest('li')!;
+    const row = (await rowHeading('Booking confirmed')).closest('li')!;
     // resolvedTemplateId is tmpl_ok, whose bank title is "Booking confirmed".
     expect(within(row).getByText(/sends Booking confirmed/i)).toBeInTheDocument();
     expect(within(row).getByText(/override, assigned by an admin/i)).toBeInTheDocument();
@@ -127,31 +144,75 @@ describe('TemplateAssignments routing table', () => {
       }),
     ]);
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const row = (await screen.findByText('invoice.new')).closest('li')!;
+    const row = (await rowHeading('New invoice')).closest('li')!;
     expect(
       within(row).getByText(/binding is paused, so the name-matched default applies/i),
     ).toBeInTheDocument();
   });
 
-  it('warns loudly about a key whose template document does not exist', async () => {
+  it('warns loudly about a key whose send fails because its template does not exist', async () => {
     listTemplateBindings.mockResolvedValue([]);
     listCatalogKeys.mockResolvedValue([
       catalogRow({
-        key: 'account.welcome.business',
-        label: 'Business welcome',
-        defaultTemplateId: 'account.welcome.business',
-        resolvedTemplateId: 'account.welcome.business',
+        key: 'invite.primary',
+        label: 'Portal invite to a primary kinfolk',
+        source: 'direct-send',
+        defaultTemplateId: 'invite.primary',
+        resolvedTemplateId: 'invite.primary',
         hasDefaultTemplate: false,
+        whenTemplateMissing: 'fails',
+        inRepoCorpus: false,
       }),
     ]);
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const row = (await screen.findByText('account.welcome.business')).closest('li')!;
+    const row = (await rowHeading('Portal invite to a primary kinfolk')).closest('li')!;
     expect(
-      within(row).getByText(/no emailTemplates\/account\.welcome\.business document/i),
+      within(row).getByText(/the template this sends is missing, so its next send fails/i),
     ).toBeInTheDocument();
+    // #1592: no database path on the row.
+    expect(row.textContent).not.toContain('emailTemplates/');
     expect(
-      await screen.findByText(/1 key resolves to a template document that does not exist/i),
+      await screen.findByText(/1 key fails on the next send because the template does not exist/i),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * #1586: the 2026-11-05 walk. Five keys were called broken; only the one
+   * direct send without a template fails. The repo now has its copy, which a
+   * direct send never falls back to, so the row says to load it.
+   */
+  it('reports only keys that really fail: invite.verify-email of the five from the walk', async () => {
+    listTemplateBindings.mockResolvedValue([]);
+    const missing = (key: string, over: Partial<CatalogKeyRow> = {}) =>
+      catalogRow({ key, label: key, defaultTemplateId: key, resolvedTemplateId: key, hasDefaultTemplate: false, ...over });
+    listCatalogKeys.mockResolvedValue([
+      missing('broadcast.message', { whenTemplateMissing: 'unused', inRepoCorpus: false }),
+      missing('invite.verify-email', { source: 'direct-send', whenTemplateMissing: 'fails' }),
+      missing('kin.removal.archived'),
+      missing('kin.removal.declined'),
+      missing('kin.removal.requested'),
+    ]);
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    await rowHeading('Kin removal requested');
+    expect(screen.getByText(/1 key fails on the next send/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getByTestId('tassign-awaiting-import').textContent).toBe(
+      'Not in the bank yet, still delivered: Kin removal archived, Kin removal declined, Kin removal requested. Load them from Template Import.',
+    );
+    const kin = screen.getByText('Kin removal requested', ROW_KEY).closest('li')!;
+    expect(within(kin).getByText(/sends generic wording that cannot say what happened/i)).toBeInTheDocument();
+    const verify = screen.getByText('Invite verify email', ROW_KEY).closest('li')!;
+    expect(within(verify).getByRole('alert').textContent).toMatch(/its next send fails/);
+    expect(within(verify).getByText('The repo has a copy. Load it from Template Import.')).toBeInTheDocument();
+    const broadcast = screen.getByText('Broadcast message', ROW_KEY).closest('li')!;
+    expect(within(broadcast).getByText(/no template is used/i)).toBeInTheDocument();
+  });
+
+  it('decodes a pre-#1586 row with no effect as failing, so an old server never hides a break', () => {
+    const raw = catalogRow({ hasDefaultTemplate: false }) as Partial<CatalogKeyRow>;
+    delete raw.whenTemplateMissing;
+    delete raw.inRepoCorpus;
+    expect(decodeCatalogKeyRow(raw as CatalogKeyRow)).toMatchObject({ whenTemplateMissing: 'fails', inRepoCorpus: false });
   });
 
   it('does not paint every override as broken when the template bank fails to load', async () => {
@@ -159,25 +220,25 @@ describe('TemplateAssignments routing table', () => {
     // report every overridden key as missing. It must not.
     listTemplates.mockRejectedValue(new Error('permission-denied'));
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const row = (await screen.findByText('booking.confirmed')).closest('li')!;
+    const row = (await rowHeading('Booking confirmed')).closest('li')!;
     expect(within(row).queryByText(/does not exist/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/to a template document that does not exist/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/on the next send because the template does not exist/i)).not.toBeInTheDocument();
   });
 
   it('offers Override on an unbound key and Remove override only on a bound one', async () => {
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const unbound = (await screen.findByText('kincare.booking.confirm')).closest('li')!;
+    const unbound = (await rowHeading('KinCare booking confirmed')).closest('li')!;
     expect(within(unbound).getByRole('button', { name: /^override$/i })).toBeInTheDocument();
     expect(within(unbound).queryByRole('button', { name: /remove override/i })).not.toBeInTheDocument();
 
-    const bound = (await screen.findByText('booking.confirmed')).closest('li')!;
+    const bound = (await rowHeading('Booking confirmed')).closest('li')!;
     expect(within(bound).getByRole('button', { name: /change override/i })).toBeInTheDocument();
     expect(within(bound).getByRole('button', { name: /remove override/i })).toBeInTheDocument();
   });
 
   it('seeds the editor from what an unbound key sends today, not from blank', async () => {
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const row = (await screen.findByText('kincare.booking.confirm')).closest('li')!;
+    const row = (await rowHeading('KinCare booking confirmed')).closest('li')!;
     await userEvent.click(within(row).getByRole('button', { name: /^override$/i }));
 
     expect((screen.getByLabelText(/catalog key/i) as HTMLSelectElement).value).toBe('kincare.booking.confirm');
@@ -221,7 +282,7 @@ describe('TemplateAssignments picker and writes', () => {
 
   it('still shows a legacy key when you open the binding that uses it', async () => {
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const row = (await screen.findByText('booking.confirmed')).closest('li')!;
+    const row = (await rowHeading('Booking confirmed')).closest('li')!;
     await userEvent.click(within(row).getByRole('button', { name: /change override/i }));
 
     const picker = await screen.findByLabelText(/catalog key/i);
@@ -235,7 +296,7 @@ describe('TemplateAssignments picker and writes', () => {
   it('saves an override on a picked catalog key, then reloads bindings and the routing table', async () => {
     assignTemplate.mockResolvedValue({ catalogKey: 'kincare.booking.cancel', templateId: 'tmpl_reminder', active: true });
     render(<TemplateAssignments onClose={vi.fn()} />);
-    await screen.findByText('booking.confirmed');
+    await rowHeading('Booking confirmed');
 
     await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'kincare.booking.cancel');
     await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_reminder');
@@ -246,13 +307,13 @@ describe('TemplateAssignments picker and writes', () => {
     );
     await waitFor(() => expect(listTemplateBindings).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(listCatalogKeys).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(/assigned reminder to kincare\.booking\.cancel/i)).toBeInTheDocument();
+    expect(await screen.findByText(/assigned reminder to KinCare booking canceled/i)).toBeInTheDocument();
   });
 
   it('does not send audience when left at (none), but sends it when chosen', async () => {
     assignTemplate.mockResolvedValue({ catalogKey: 'invite.primary', templateId: 'tmpl_ok', active: true });
     render(<TemplateAssignments onClose={vi.fn()} />);
-    await screen.findByText('booking.confirmed');
+    await rowHeading('Booking confirmed');
 
     await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'invite.primary');
     await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_ok');
@@ -267,7 +328,7 @@ describe('TemplateAssignments picker and writes', () => {
   it('confirm-gates removing an override, then calls unassignTemplate and reloads', async () => {
     unassignTemplate.mockResolvedValue({ catalogKey: 'booking.confirmed', removed: true });
     render(<TemplateAssignments onClose={vi.fn()} />);
-    const row = (await screen.findByText('booking.confirmed')).closest('li')!;
+    const row = (await rowHeading('Booking confirmed')).closest('li')!;
 
     await userEvent.click(within(row).getByRole('button', { name: /remove override/i }));
     expect(unassignTemplate).not.toHaveBeenCalled();
@@ -277,20 +338,20 @@ describe('TemplateAssignments picker and writes', () => {
     await waitFor(() => expect(unassignTemplate).toHaveBeenCalledWith('booking.confirmed'));
     await waitFor(() => expect(listTemplateBindings).toHaveBeenCalledTimes(2));
     expect(
-      await screen.findByText(/removed the override on booking\.confirmed/i),
+      await screen.findByText(/removed the override on Booking confirmed/i),
     ).toBeInTheDocument();
   });
 
   it('fails loud (names the callable) when assign rejects, and never claims success', async () => {
     assignTemplate.mockRejectedValue(new Error('not-found: Template not found'));
     render(<TemplateAssignments onClose={vi.fn()} />);
-    await screen.findByText('booking.confirmed');
+    await rowHeading('Booking confirmed');
 
     await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'kincare.booking.confirm');
     await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_ok');
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-    expect(await screen.findByText(/assignTemplate failed:.*not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save:.*not found/i)).toBeInTheDocument();
   });
 
   it('repeats the server sentence verbatim when the key is refused', async () => {
@@ -300,26 +361,129 @@ describe('TemplateAssignments picker and writes', () => {
     );
     assignTemplate.mockRejectedValue(refusal);
     render(<TemplateAssignments onClose={vi.fn()} />);
-    await screen.findByText('booking.confirmed');
+    await rowHeading('Booking confirmed');
 
     await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'kincare.booking.confirm');
     await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_ok');
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
     expect(
-      await screen.findByText(/refused this catalog key:.*Unknown catalog key 'kincare\.bookng\.confirm'/i),
+      await screen.findByText(/cannot take that override:.*Unknown catalog key 'kincare\.bookng\.confirm'/i),
     ).toBeInTheDocument();
   });
 
   it('surfaces a bindings load failure fail-loud rather than an empty state', async () => {
     listTemplateBindings.mockRejectedValue(new Error('permission-denied'));
     render(<TemplateAssignments onClose={vi.fn()} />);
-    expect(await screen.findByText(/listTemplateBindings failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*permission-denied/i)).toBeInTheDocument();
   });
 
   it('surfaces a catalog-keys load failure instead of an empty routing table', async () => {
     listCatalogKeys.mockRejectedValue(new Error('permission-denied'));
     render(<TemplateAssignments onClose={vi.fn()} />);
-    expect(await screen.findByText(/listCatalogKeys failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*permission-denied/i)).toBeInTheDocument();
+  });
+});
+
+// ── #1592: the operator reads names, never the catalog key or a template id ───
+
+/** Visible text only; option VALUES are attributes and may keep the key. */
+function shownText(): string {
+  return document.body.textContent ?? '';
+}
+
+describe('TemplateAssignments words, not keys (#1592)', () => {
+  it('heads each row with the notification name, never the catalog key', async () => {
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    const row = (await screen.findByText('KinCare booking confirmed', { selector: '.tassign__row-key' })).closest('li')!;
+    expect(within(row).getByText(/default, matched by name/i)).toBeInTheDocument();
+    // A legacy stray's label is a sentence, not a name: it reads as words.
+    expect(screen.getByText('Booking confirmed', { selector: '.tassign__row-key' })).toBeInTheDocument();
+    for (const key of ['kincare.booking.confirm', 'kincare.booking.cancel', 'invite.primary', 'booking.confirmed']) {
+      expect(shownText()).not.toContain(key);
+    }
+  });
+
+  it('titles the editor with the name, not "Override: <key>"', async () => {
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    const row = (await screen.findByText('KinCare booking confirmed', { selector: '.tassign__row-key' })).closest('li')!;
+    await userEvent.click(within(row).getByRole('button', { name: /^override$/i }));
+    expect(screen.getByText('Override: KinCare booking confirmed')).toBeInTheDocument();
+    expect(shownText()).not.toContain('kincare.booking.confirm');
+  });
+
+  it('never prints a template id: an untitled bank doc reads its subject, a missing one says so', async () => {
+    listTemplateBindings.mockResolvedValue([]);
+    // listTemplates fills a missing title with the doc id.
+    listTemplates.mockResolvedValue([
+      template({ templateId: 'tmpl_untitled', title: 'tmpl_untitled', subject: 'Your visit is booked' }),
+    ]);
+    listCatalogKeys.mockResolvedValue([
+      catalogRow({ key: 'invoice.new', label: 'New invoice', defaultTemplateId: 'invoice.new', resolvedTemplateId: 'tmpl_untitled', bound: true }),
+      catalogRow({ key: 'invoice.paid', label: 'Invoice paid', defaultTemplateId: 'invoice.paid', resolvedTemplateId: 'tmpl_gone', bound: true }),
+    ]);
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    const titled = (await screen.findByText('New invoice', { selector: '.tassign__row-key' })).closest('li')!;
+    expect(within(titled).getByText(/sends Your visit is booked/)).toBeInTheDocument();
+    const gone = screen.getByText('Invoice paid', { selector: '.tassign__row-key' }).closest('li')!;
+    expect(within(gone).getByText(/sends a template not in the bank/)).toBeInTheDocument();
+    // The editor's template picker: the stored id that left the bank is an
+    // option the operator can read, and the untitled doc is named.
+    await userEvent.click(within(gone).getByRole('button', { name: /change override/i }));
+    const picker = screen.getByLabelText(/^template$/i) as HTMLSelectElement;
+    expect(picker.value).toBe('tmpl_gone');
+    expect(within(picker).getByRole('option', { name: 'A template not in the bank' })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: 'Your visit is booked' })).toBeInTheDocument();
+    for (const id of ['tmpl_untitled', 'tmpl_gone', 'invoice.new', 'invoice.paid']) {
+      expect(shownText()).not.toContain(id);
+    }
+  });
+
+  it('names the notification in the save and remove notices', async () => {
+    assignTemplate.mockResolvedValue({ catalogKey: 'kincare.booking.cancel', templateId: 'tmpl_reminder', active: true });
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    await screen.findByText('KinCare booking confirmed', { selector: '.tassign__row-key' });
+    await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'kincare.booking.cancel');
+    await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_reminder');
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(await screen.findByText('Assigned Reminder to KinCare booking canceled.')).toBeInTheDocument();
+    unassignTemplate.mockResolvedValue({ catalogKey: 'booking.confirmed', removed: true });
+    const legacy = screen.getByText('Booking confirmed', { selector: '.tassign__row-key' }).closest('li')!;
+    await userEvent.click(within(legacy).getByRole('button', { name: /remove override/i }));
+    await userEvent.click(within(legacy).getByRole('button', { name: /remove override/i }));
+    expect(
+      await screen.findByText('Removed the override on Booking confirmed. It goes back to its own template.'),
+    ).toBeInTheDocument();
+  });
+
+  it('offers each key in the picker by name, keeping the key as the value', async () => {
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    const picker = (await screen.findByLabelText(/catalog key/i)) as HTMLSelectElement;
+    const option = within(picker).getByRole('option', { name: /^KinCare booking confirmed/ }) as HTMLOptionElement;
+    expect(option.value).toBe('kincare.booking.confirm');
+    expect(option.textContent).not.toContain('kincare.booking.confirm');
+  });
+
+  it('lists the keys awaiting import by name', async () => {
+    listCatalogKeys.mockResolvedValue([
+      catalogRow({ key: 'invoice.paid', label: 'Invoice paid', defaultTemplateId: 'invoice.paid', resolvedTemplateId: 'invoice.paid', hasDefaultTemplate: false }),
+    ]);
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    expect(await screen.findByTestId('tassign-awaiting-import')).toHaveTextContent(
+      'Not in the bank yet, still delivered: Invoice paid.',
+    );
+  });
+
+  it('a refused key names no function', async () => {
+    assignTemplate.mockRejectedValue(
+      Object.assign(new Error('That notification cannot take an override.'), { code: 'functions/invalid-argument' }),
+    );
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    await screen.findByText('KinCare booking confirmed', { selector: '.tassign__row-key' });
+    await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'kincare.booking.confirm');
+    await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_ok');
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(await screen.findByText(/That notification cannot take an override\./)).toBeInTheDocument();
+    expect(shownText()).not.toContain('assignTemplate');
   });
 });

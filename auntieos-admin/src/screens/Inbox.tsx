@@ -48,6 +48,7 @@ import {
   filterChannelEntries,
   awaitingReplyCount,
   entryTitle,
+  displayContact,
   entryWhen,
   entryMachineWhen,
   type ChannelFilterKey,
@@ -141,16 +142,6 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'all', label: 'All', test: () => true },
   { key: 'unread', label: 'Unread', test: (s) => s === 'unread' },
 ];
-
-/**
- * Which read state each waiting/answered section holds, so the filter chips and
- * the sections agree by construction rather than through a second hand-written
- * mapping that could drift from `groupThreadsByWaiting`.
- */
-const SECTION_READ_STATE: Record<'waiting' | 'answered', ThreadReadState> = {
-  waiting: 'unread',
-  answered: 'read',
-};
 
 /**
  * What the bulk "Mark all read" write is doing right now.
@@ -269,7 +260,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
           live &&
           setThreads({
             status: 'error',
-            message: `listConversations failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );
@@ -328,7 +319,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
         bulkReadInFlight.current = false;
         setBulkRead({
           status: 'failed',
-          message: `markAllThreadsRead failed: ${err instanceof Error ? err.message : 'Mark all read failed'}`,
+          message: `Could not save: ${err instanceof Error ? err.message : 'Mark all read failed'}`,
         });
       });
   }, [load]);
@@ -457,7 +448,10 @@ export function Inbox({ onSelectThread }: InboxProps) {
             const sections =
               arrangement === 'waitingSections'
                 ? groupThreadsByWaiting(visible).filter(
-                    (s) => s.threads.length > 0 || activeFilter.test(SECTION_READ_STATE[s.key]),
+                    // Sections no longer map to a read state (a read thread can
+                    // still be waiting), so an empty one is drawn only on "All",
+                    // where "Nothing is waiting on a reply" is a true statement.
+                    (s) => s.threads.length > 0 || activeFilter.key === 'all',
                   )
                 : [];
 
@@ -750,7 +744,7 @@ function ChannelRow({ entry, onOpen }: { entry: InboxEntry; onOpen: (entry: Inbo
   // The mock's `.cp`: the number or address after the name. Skipped when it IS
   // the name (a caller who matched no household), or the row would read
   // "+1555… · +1555…".
-  const counterpart = entry.counterpart !== '' && entry.counterpart !== title ? entry.counterpart : null;
+  const counterpart = entry.counterpart !== '' && entry.kinfolkName !== '' ? displayContact(entry.counterpart) : null;
 
   return (
     <li className="inbox__row inbox__row--card" data-channel={entry.channel}>

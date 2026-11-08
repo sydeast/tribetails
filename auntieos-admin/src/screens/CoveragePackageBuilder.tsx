@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBusinessSettings, type BusinessSettings } from '../api/settings';
 import {
   DEFAULT_COVERAGE_RULES,
@@ -10,11 +10,15 @@ import {
   effectiveVisits,
   gapWarnings,
   minutesToInput,
+  parseMaxGapHours,
   minutesToTime,
   normalizePackage,
   packagesFromPatterns,
   pricePackage,
   quoteText,
+  uniqueCopyName,
+  sanitizeStoredRules,
+  storedMaxGapRefusal,
   timeToMinutes,
   todayIso,
   uid,
@@ -29,7 +33,7 @@ import {
 } from '../lib/coveragePackage';
 import { formatUsd } from '../lib/invoiceFormat';
 import { type Async } from '../lib/async';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, InfoTip } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
@@ -169,7 +173,7 @@ function Builder({ settings }: BuilderProps) {
   const [endDate, setEndDate] = useState(stored.endDate ?? '');
   // Rules pin visits by duration id, and #728 made the service NAME the id, so a
   // rule saved under the old ids must be repointed before anything reads it.
-  const initialRules = alignPinnedToDurations(stored.rules ?? DEFAULT_COVERAGE_RULES, durations);
+  const initialRules = alignPinnedToDurations(sanitizeStoredRules(stored.rules ?? DEFAULT_COVERAGE_RULES), durations);
   const [rules, setRules] = useState<CoverageRules>(initialRules);
   // Every quote opens with the three tiers already built, beside whatever the
   // operator has hand-built (issue #694). Seeded once per quote, so deleting one
@@ -239,6 +243,40 @@ function Builder({ settings }: BuilderProps) {
   // ── per-client rules ────────────────────────────────────────────────────────
 
   const patchRules = (patch: Partial<CoverageRules>) => setRules((r) => ({ ...r, ...patch }));
+  // What is typed in Max gap, kept apart from the rule it feeds (#1582). A half-typed
+  // or negative entry is refused here with a message; the rule, and every price
+  // built from it, keeps the last good value until the text reads as a valid gap.
+  // A stored gap the field would refuse (saved while it still coerced) is shown as
+  // stored, with its message, and prices use the default until it is retyped.
+  const storedRefusal = stored.rules ? storedMaxGapRefusal(stored.rules) : null;
+  const [gapText, setGapText] = useState(
+    storedRefusal !== null && stored.rules ? String(stored.rules.maxGapHours) : String(initialRules.maxGapHours),
+  );
+  const [gapError, setGapError] = useState(storedRefusal ?? '');
+  // Rules that change from outside the field (Undo, a new quote) bring the text with
+  // them. Only a CHANGE to the rule does this, never the first render, so a refused
+  // stored gap keeps its message.
+  const lastGap = useRef(rules.maxGapHours);
+  useEffect(() => {
+    if (lastGap.current === rules.maxGapHours) return;
+    lastGap.current = rules.maxGapHours;
+    const parsed = parseMaxGapHours(gapText);
+    if (!(parsed.ok && parsed.value === rules.maxGapHours)) {
+      setGapText(String(rules.maxGapHours));
+      setGapError('');
+    }
+    // Only a change to the rule itself; typing never moves it away from the text.
+  }, [rules.maxGapHours]); // eslint-disable-line react-hooks/exhaustive-deps
+  const changeGap = (text: string) => {
+    setGapText(text);
+    const parsed = parseMaxGapHours(text);
+    if (parsed.ok) {
+      setGapError('');
+      patchRules({ maxGapHours: parsed.value });
+    } else {
+      setGapError(parsed.message);
+    }
+  };
 
   const addPinned = () => {
     if (!newPinned.label.trim() || !newPinned.time || !newPinned.durationId) {
@@ -249,12 +287,31 @@ function Builder({ settings }: BuilderProps) {
     setNewPinned({ label: '', time: '', durationId: '' });
     setError('');
   };
-  const removePinned = (id: string) => patchRules({ pinnedTimes: rules.pinnedTimes.filter((p) => p.id !== id) });
+  const removePinned = (id: string) => {
+    const at = rules.pinnedTimes.findIndex((p) => p.id === id);
+    const gone = rules.pinnedTimes[at];
+    patchRules({ pinnedTimes: rules.pinnedTimes.filter((p) => p.id !== id) });
+    if (gone) {
+      offerUndo(`Removed the pinned visit "${gone.label}".`, () =>
+        setRules((r) => (r.pinnedTimes.some((p) => p.id === gone.id) ? r : { ...r, pinnedTimes: [...r.pinnedTimes.slice(0, at), gone, ...r.pinnedTimes.slice(at)] })),
+      );
+    }
+  };
 
   // ── packages ────────────────────────────────────────────────────────────────
 
   const suggestions = useMemo(() => patternsFor(durations, rules), [durations, rules]);
 
+  // The one thing the last destructive action can give back (#1605). Trashing a
+  // package or visit, resetting a day and Start new quote all wipe instantly, so
+  // each leaves its undo here; the next destructive action replaces it.
+  const [undo, setUndo] = useState<{ label: string; restore: () => void } | null>(null);
+  const offerUndo = (label: string, restore: () => void) => setUndo({ label, restore });
+  const runUndo = () => {
+    if (undo === null) return;
+    undo.restore();
+    setUndo(null);
+  };
   const newPackage = (name: string, visits: Visit[], note = '') => {
     const pkg = normalizePackage({ id: uid(), name, visits, note });
     setPackages((prev) => [...prev, pkg]);
@@ -269,7 +326,7 @@ function Builder({ settings }: BuilderProps) {
     const copy: Package = {
       ...src,
       id: uid(),
-      name: `${src.name} copy`,
+      name: uniqueCopyName(src.name, packages.map((p) => p.name)),
       visits: src.visits.map((v) => ({ ...v, id: uid() })),
       overnightNights: { ...src.overnightNights },
       dayOverrides: {},
@@ -278,8 +335,17 @@ function Builder({ settings }: BuilderProps) {
     setDetailId(copy.id);
   };
   const removePackage = (id: string) => {
+    const at = packages.findIndex((p) => p.id === id);
+    const gone = packages[at];
+    const wasOpen = detailId === id;
     setPackages((prev) => prev.filter((p) => p.id !== id));
     setDetailId((prev) => (prev === id ? null : prev));
+    if (gone) {
+      offerUndo(`Deleted package "${gone.name}".`, () => {
+        setPackages((prev) => (prev.some((p) => p.id === gone.id) ? prev : [...prev.slice(0, at), gone, ...prev.slice(at)]));
+        if (wasOpen) setDetailId(gone.id);
+      });
+    }
   };
   const patchPackage = (id: string, patch: Partial<Package>) =>
     setPackages((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -302,8 +368,21 @@ function Builder({ settings }: BuilderProps) {
             },
       ),
     );
-  const removeVisit = (pkgId: string, visitId: string) =>
+  const removeVisit = (pkgId: string, visitId: string) => {
+    const pkg = packages.find((p) => p.id === pkgId);
+    const at = pkg ? pkg.visits.findIndex((v) => v.id === visitId) : -1;
+    const gone = pkg && at >= 0 ? pkg.visits[at] : undefined;
     setPackages((prev) => prev.map((p) => (p.id !== pkgId ? p : { ...p, visits: p.visits.filter((v) => v.id !== visitId) })));
+    if (gone) {
+      offerUndo(`Removed the ${gone.label || 'visit'} from "${pkg!.name}".`, () =>
+        setPackages((prev) =>
+          prev.map((p) =>
+            p.id !== pkgId || p.visits.some((v) => v.id === gone.id) ? p : { ...p, visits: [...p.visits.slice(0, at), gone, ...p.visits.slice(at)] },
+          ),
+        ),
+      );
+    }
+  };
   const toggleOvernight = (pkgId: string, nightIndex: number) =>
     setPackages((prev) =>
       prev.map((p) => (p.id !== pkgId ? p : { ...p, overnightNights: { ...p.overnightNights, [nightIndex]: !p.overnightNights[nightIndex] } })),
@@ -317,7 +396,8 @@ function Builder({ settings }: BuilderProps) {
         return { ...p, dayOverrides: { ...p.dayOverrides, [dayIndex]: p.visits.map((v) => ({ ...v, id: uid() })) } };
       }),
     );
-  const resetDay = (pkgId: string, dayIndex: number) =>
+  const resetDay = (pkgId: string, dayIndex: number) => {
+    const prior = packages.find((p) => p.id === pkgId)?.dayOverrides[dayIndex];
     setPackages((prev) =>
       prev.map((p) => {
         if (p.id !== pkgId || !p.dayOverrides[dayIndex]) return p;
@@ -326,6 +406,12 @@ function Builder({ settings }: BuilderProps) {
         return { ...p, dayOverrides: next };
       }),
     );
+    if (prior) {
+      offerUndo(`Day ${dayIndex + 1} is back on the template.`, () =>
+        setPackages((prev) => prev.map((p) => (p.id !== pkgId || p.dayOverrides[dayIndex] ? p : { ...p, dayOverrides: { ...p.dayOverrides, [dayIndex]: prior } }))),
+      );
+    }
+  };
   const patchDayVisit = (pkgId: string, dayIndex: number, visitId: string, patch: Partial<Visit>) =>
     setPackages((prev) =>
       prev.map((p) =>
@@ -348,7 +434,10 @@ function Builder({ settings }: BuilderProps) {
             },
       ),
     );
-  const removeDayVisit = (pkgId: string, dayIndex: number, visitId: string) =>
+  const removeDayVisit = (pkgId: string, dayIndex: number, visitId: string) => {
+    const list = packages.find((p) => p.id === pkgId)?.dayOverrides[dayIndex];
+    const at = list ? list.findIndex((v) => v.id === visitId) : -1;
+    const gone = list && at >= 0 ? list[at] : undefined;
     setPackages((prev) =>
       prev.map((p) =>
         p.id !== pkgId || !p.dayOverrides[dayIndex]
@@ -356,8 +445,34 @@ function Builder({ settings }: BuilderProps) {
           : { ...p, dayOverrides: { ...p.dayOverrides, [dayIndex]: p.dayOverrides[dayIndex]!.filter((v) => v.id !== visitId) } },
       ),
     );
+    if (gone) {
+      offerUndo(`Removed the ${gone.label || 'visit'} from day ${dayIndex + 1}.`, () =>
+        setPackages((prev) =>
+          prev.map((p) => {
+            const cur = p.dayOverrides[dayIndex];
+            if (p.id !== pkgId || !cur || cur.some((v) => v.id === gone.id)) return p;
+            return { ...p, dayOverrides: { ...p.dayOverrides, [dayIndex]: [...cur.slice(0, at), gone, ...cur.slice(at)] } };
+          }),
+        ),
+      );
+    }
+  };
 
   const startNewQuote = () => {
+    // Everything this wipes comes back whole with Undo (#1605).
+    const snapshot = { packages, detailId, clientName, startDate, endDate, rules, overnightDurationId, gapText, gapError };
+    offerUndo('Started a new quote.', () => {
+      setPackages(snapshot.packages);
+      setDetailId(snapshot.detailId);
+      setClientName(snapshot.clientName);
+      setStartDate(snapshot.startDate);
+      setEndDate(snapshot.endDate);
+      setRules(snapshot.rules);
+      // The Max gap text and its message come back with the rule they feed (#1582).
+      setGapText(snapshot.gapText);
+      setGapError(snapshot.gapError);
+      setOvernightDurationId(snapshot.overnightDurationId);
+    });
     // Rules are per-client, so reset them for the next one, repointed at the menu
     // (#728 made the service NAME the duration id, so the shipped pin needs realigning).
     const freshRules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations);
@@ -368,6 +483,8 @@ function Builder({ settings }: BuilderProps) {
     setStartDate(todayIso()); // same default a fresh load opens on
     setEndDate('');
     setRules(freshRules);
+    setGapText(String(freshRules.maxGapHours));
+    setGapError('');
   };
 
   // ── pricing ─────────────────────────────────────────────────────────────────
@@ -476,10 +593,25 @@ function Builder({ settings }: BuilderProps) {
             <span className="cpb__fieldLabel">Day ends</span>
             <input className="cpb__input" type="time" value={rules.wakeEnd} onChange={(e) => patchRules({ wakeEnd: e.target.value })} />
           </label>
-          <label className="cpb__field">
-            <span className="cpb__fieldLabel">Max gap between visits (hrs)</span>
-            <input className="cpb__input" type="number" min="1" step="0.5" value={rules.maxGapHours} onChange={(e) => patchRules({ maxGapHours: parseFloat(e.target.value) || 1 })} />
-          </label>
+          {/* A div, not a wrapping label: the message must not become part of the field's name. */}
+          <div className="cpb__field">
+            <label className="cpb__fieldLabel" htmlFor="cpb-gap">Max gap between visits (hrs)</label>
+            <input
+              id="cpb-gap"
+              className="cpb__input"
+              type="text"
+              inputMode="decimal"
+              value={gapText}
+              aria-invalid={gapError !== '' ? true : undefined}
+              aria-describedby={gapError !== '' ? 'cpb-gap-error' : undefined}
+              onChange={(e) => changeGap(e.target.value)}
+            />
+            {gapError !== '' ? (
+              <span id="cpb-gap-error" className="cpb__fieldError" role="alert">
+                {gapError} Prices still use {rules.maxGapHours}h.
+              </span>
+            ) : null}
+          </div>
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Overnight duration</span>
             <select className="cpb__input" value={overnightDurationId} onChange={(e) => setOvernightDurationId(e.target.value)}>
@@ -498,7 +630,10 @@ function Builder({ settings }: BuilderProps) {
         </p>
 
         <div className="cpb__pinned">
-          <p className="cpb__pinnedHeading">Pinned visits — this client's non-negotiables. New blank packages start with these.</p>
+          {/* #1595: a label and a tip, not a label with its explanation run on. */}
+          <p className="cpb__pinnedHeading">
+            Pinned visits <InfoTip text="This client's non-negotiables. New blank packages start with these." />
+          </p>
           {rules.pinnedTimes.map((p) => (
             <div key={p.id} className="cpb__pinnedRow">
               <span className="cpb__pinnedLabel">{p.label}</span>
@@ -699,6 +834,19 @@ function Builder({ settings }: BuilderProps) {
           </div>
         </DenPanel>
       ) : null}
+      {/* Last in the flow and sticky to the bottom of the view, so the Undo is on
+          screen wherever the trash was pressed, not at the top of a long page. */}
+      {undo !== null ? (
+        <Banner
+          tone="info"
+          className="cpb__undo cpb__noprint"
+          dismissible
+          onDismiss={() => setUndo(null)}
+          trailing={<GhostButton label="Undo" onClick={runUndo} />}
+        >
+          {undo.label}
+        </Banner>
+      ) : null}
     </div>
   );
 }
@@ -865,7 +1013,7 @@ function DayDetailRow({
       <div className="cpb__dayCustomizeRow cpb__noprint">
         {row.customized ? (
           <>
-            <span className="cpb__customBadge">Customized</span>
+            {row.changed ? <span className="cpb__customBadge">Customized</span> : null}
             <button type="button" className="cpb__linkBtn" onClick={onReset}>
               Reset to template
             </button>

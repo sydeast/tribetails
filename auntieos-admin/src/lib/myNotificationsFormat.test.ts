@@ -72,9 +72,9 @@ describe('myNotificationsFormat', () => {
         'A booking was confirmed',
       );
     });
-    it('falls back to the raw key when both label and description are blank', () => {
+    it('reads the key as words when both label and description are blank (#1592)', () => {
       expect(displayTitle(entry({ label: '', description: '', key: 'kincare.booking.confirm' }))).toBe(
-        'kincare.booking.confirm',
+        'Kincare booking confirm',
       );
     });
   });

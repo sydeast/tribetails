@@ -129,7 +129,7 @@ class InvoiceEditViewModelTest {
         val state = viewModel.uiState.value
         assertEquals("Net 30", state.invoiceEdit?.terms)
         assertEquals(
-            "updateInvoice failed: This invoice has a recorded payment, so its money is locked.",
+            "Could not save: This invoice has a recorded payment, so its money is locked.",
             state.invoiceEditError,
         )
         assertFalse(state.savingInvoiceEdit)

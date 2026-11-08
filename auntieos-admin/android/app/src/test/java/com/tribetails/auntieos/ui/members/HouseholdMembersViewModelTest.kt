@@ -171,6 +171,16 @@ class HouseholdMembersViewModelTest {
             assertEquals("Expired", inviteStatusLabel(row.effectiveStatus))
         }
 
+    /** #1603: an accepted invite is spent, so its line carries no expiry date. */
+    @Test fun `an accepted invite drops its expiry date`() {
+        val accepted = invite(
+            status = MembersRepository.InviteStatus.ACCEPTED,
+            effective = MembersRepository.InviteStatus.ACCEPTED,
+            redeemable = false,
+        ).copy(expiresAt = "2026-05-26T00:00:00.000Z")
+        assertFalse(inviteMetaLine(accepted).contains("expire"))
+    }
+
     @Test fun `a revoked invite groups under Revoked and reads its revoked date`() {
         val revoked = invite(
             status = MembersRepository.InviteStatus.REVOKED,
@@ -181,9 +191,9 @@ class HouseholdMembersViewModelTest {
         val group = INVITE_GROUPS.single { revoked.effectiveStatus in it.statuses }
         assertEquals("Revoked", group.heading)
         assertTrue(inviteMetaLine(revoked).contains("revoked 2026-05-19"))
-        // The claim link never appears, and the id is truncated.
+        // The claim link never appears, and no part of the id does (#1592).
         assertFalse(inviteMetaLine(revoked).contains("?invite="))
-        assertFalse(inviteMetaLine(revoked).contains("rq_1LONG"))
+        assertFalse(inviteMetaLine(revoked).contains("rq_1"))
     }
 
     @Test fun `ERROR a failed revoke names the invite and leaves the row alone`() = runTest(testDispatcher) {
@@ -196,7 +206,7 @@ class HouseholdMembersViewModelTest {
         vm.revokeInvite(invite()); advanceUntilIdle()
 
         val s = vm.uiState.value
-        assertTrue(s.revokeError!!.contains("revokeInvite failed for jane@example.com"))
+        assertTrue(s.revokeError!!.contains("Could not cancel the invite for jane@example.com"))
         assertTrue(s.revokeError.contains("invite not found"))
         assertNull(s.revokingInviteId)
         // Not reloaded: the list on screen is still correct.
@@ -219,7 +229,7 @@ class HouseholdMembersViewModelTest {
 
             val s = vm.uiState.value
             assertFalse(s.members.single().permissions.billingFull)
-            assertTrue(s.permissionError!!.contains("setMemberPermissions failed for marcus@example.com"))
+            assertTrue(s.permissionError!!.contains("Could not save the access for marcus@example.com"))
             assertTrue(s.permissionError.contains("Admin claim required"))
             assertNull(s.savingPermission)
         }
@@ -262,7 +272,7 @@ class HouseholdMembersViewModelTest {
         advanceUntilIdle()
 
         assertFalse(closed)
-        assertTrue(vm.uiState.value.removeError!!.contains("removeMember failed"))
+        assertTrue(vm.uiState.value.removeError!!.contains("Could not remove"))
         assertNull(vm.uiState.value.removingUid)
     }
 
@@ -277,7 +287,7 @@ class HouseholdMembersViewModelTest {
             vm.load(); advanceUntilIdle()
 
             val s = vm.uiState.value
-            assertTrue(s.membersError!!.contains("listMembers failed"))
+            assertTrue(s.membersError!!.contains("Could not load"))
             assertTrue(s.membersError.contains("Admin claim required"))
             // membersLoaded stays false, so the screen shows the failure rather
             // than "nobody has claimed this household".
@@ -297,7 +307,7 @@ class HouseholdMembersViewModelTest {
         val s = vm.uiState.value
         assertEquals(1, s.members.size)
         assertTrue(s.membersLoaded)
-        assertTrue(s.invitesError!!.contains("listInvites failed"))
+        assertTrue(s.invitesError!!.contains("Could not load"))
         assertFalse(s.invitesLoaded)
     }
 
@@ -387,7 +397,8 @@ class HouseholdMembersViewModelTest {
 
     @Test fun `invite meta omits a date the server did not send, rather than substituting today`() {
         val bare = invite().copy(sentToInviteeAt = null, createdAt = null, expiresAt = null)
-        assertEquals("rq_1", inviteMetaLine(bare))
+        // #1592: no invite id stands in for the missing dates.
+        assertEquals("", inviteMetaLine(bare))
     }
 
     @Test fun `EMAIL_SENT reads as Email sent and the rest in sentence case`() {
@@ -487,12 +498,31 @@ class HouseholdMembersViewModelTest {
         assertTrue(portalInviteMessage("wat", "the Walls").startsWith("No invite sent"))
     }
 
-    @Test fun `the panel note counts secondaries, and only once the roster read lands`() {
+    @Test fun `the panel note counts secondaries, and only once both reads land`() {
         assertNull(secondaryMeta(HouseholdMembersUiState(), 0))
+        assertNull(secondaryMeta(HouseholdMembersUiState(membersLoaded = true), 1))
         assertEquals(
             "1 of role: SECONDARY",
-            secondaryMeta(HouseholdMembersUiState(membersLoaded = true), 1),
+            secondaryMeta(HouseholdMembersUiState(membersLoaded = true, peopleLoaded = true), 1),
         )
+    }
+
+    /**
+     * #1602: the walk added a secondary with no portal account and the panel
+     * still read 0, even after reload. Those people count; an ACTIVE person is
+     * already a member row and is not counted twice.
+     */
+    @Test fun `the panel note counts secondaries added with no portal account`() {
+        val state = HouseholdMembersUiState(
+            membersLoaded = true,
+            peopleLoaded = true,
+            people = listOf(
+                MembersRepository.SecondaryPerson("p1", "Rae East", null, null, MembersRepository.PersonAccess.NONE, null),
+                MembersRepository.SecondaryPerson("p2", "Jo Park", null, null, MembersRepository.PersonAccess.INVITED, null),
+                MembersRepository.SecondaryPerson("p3", "Ann Doe", null, null, MembersRepository.PersonAccess.ACTIVE, "u9"),
+            ),
+        )
+        assertEquals("3 of role: SECONDARY", secondaryMeta(state, 1))
     }
 
     // ── secondary kinfolk person records (2026-09-27 Q3) ────────────────────
@@ -514,7 +544,7 @@ class HouseholdMembersViewModelTest {
         val vm = vm()
         vm.load(); advanceUntilIdle()
         val s = vm.uiState.value
-        assertTrue(s.peopleError!!.contains("listSecondaryKinfolk failed"))
+        assertTrue(s.peopleError!!.contains("Could not load"))
         assertFalse(s.peopleLoaded)
         // The roster is independent and did load.
         assertTrue(s.membersLoaded)

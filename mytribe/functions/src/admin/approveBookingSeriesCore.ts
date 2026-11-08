@@ -79,6 +79,16 @@ export function toIso(v: unknown): string {
   return '';
 }
 
+/**
+ * The `kin_care_sessions` id a booking-record visit points at: its stored
+ * `sessionId` when it has one, else `vis_{visitId}`, the id every approval of a
+ * request mints. #1726: a draft approved through `transitionBookingStatus` keeps
+ * its own session id, which `vis_{visitId}` would not find, so a later Cancel
+ * by visit id would cancel the household's copy and leave the visit SCHEDULED.
+ */
+export function linkedSessionId(visitId: string, stored: unknown): string {
+  return typeof stored === 'string' && stored.trim() !== '' ? stored.trim() : `vis_${visitId}`;
+}
 export function durationMinutes(startIso: string, endIso: string): number {
   if (!startIso || !endIso) return 0;
   const s = Date.parse(startIso);
@@ -301,6 +311,50 @@ export function serviceDurationsReader(): () => Promise<unknown> {
       .then((s) => (s.data() as Record<string, unknown> | undefined)?.['serviceDurations']));
 }
 
+/**
+ * #1702: every visit this approval would book must still start ahead. A
+ * household request that sat in the queue until its date went by was approved
+ * straight into the past as SCHEDULED; the #1574 ruling allows a past visit
+ * only as already Completed. Thrown as one `HttpsError` before any write, so
+ * `manageBookingSeries` hands the sentence to the client and
+ * `batchUpdateBookings` copies it onto every selected id, rather than the visit
+ * counting as a nameless failure inside the loop.
+ *
+ * Skipped: a visit called off, or already confirmed (a re-approve of a booked
+ * request moves nothing). A night awaiting its start is judged by the start the
+ * operator chose for it here. `lib/pastVisit` is loaded on use, not at file
+ * scope (#1714): see coldStartImportGraph.test.ts.
+ */
+async function assertSeriesStartsAhead(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[],
+  startTimes: Record<string, number> | undefined,
+): Promise<void> {
+  const starts: Array<{ id: string; start: string }> = [];
+  for (const d of docs) {
+    const data = d.data() as Record<string, unknown>;
+    if (isCalledOff(data) || data['status'] === 'confirmed') continue;
+    const chosen = data['startTimePending'] === true ? startTimes?.[d.id] : undefined;
+    const start =
+      typeof chosen === 'number' && Number.isFinite(chosen) ? new Date(chosen).toISOString() : toIso(data['startTime']);
+    if (start) starts.push({ id: d.id, start });
+  }
+  if (starts.length === 0) return;
+  const { assertApprovalStartAhead, businessTimeZoneReader } = await import('../lib/pastVisit.js');
+  const nowMs = Date.now();
+  const timeZone = businessTimeZoneReader();
+  for (const { id, start } of starts) {
+    try {
+      await assertApprovalStartAhead(start, nowMs, timeZone);
+    } catch (err) {
+      // A retry after a partial failure: this visit's session was already
+      // written by an earlier pass, so approving again books nothing new.
+      // Read only on this refusal path.
+      const session = await db().collection('kin_care_sessions').doc(`vis_${id}`).get();
+      if (session.exists) continue;
+      throw err;
+    }
+  }
+}
 export async function approveBookingSeriesCore(opts: {
   kinfolkId: string;
   batchId: string;
@@ -338,10 +392,17 @@ export async function approveBookingSeriesCore(opts: {
   // notification even though re-running the core is otherwise harmless (the
   // deterministic `vis_{visitId}` session id makes the writes idempotent).
   const wasAlreadyConfirmed = envelope?.['envelopeStatus'] === 'confirmed';
+  // #1579: the household's note on the whole request, carried to every visit
+  // this approval books. Trimmed; blank when the request had none.
+  const requestNote = typeof envelope?.['notes'] === 'string' ? (envelope['notes'] as string).trim() : '';
 
   const childSnap = await parentRef.collection('kinCares').get();
   const childIds = childSnap.docs.map((d) => d.id);
 
+  // #1702: throws, before any write, when a visit this approval would put on
+  // the calendar starts in the past. First, as `rescheduleBooking` orders it,
+  // so a time that can never be written is not reported as a busy clash.
+  await assertSeriesStartsAhead(childSnap.docs, opts.startTimes);
   // #1098: throws, before any write, unless every visit awaiting a start time
   // has a usable one. Visits that already have a time are not touched by it.
   const startTimeSet = await resolvePendingStartTimes({
@@ -478,6 +539,14 @@ export async function approveBookingSeriesCore(opts: {
           endTime: endIso,
           serviceDurationMinutes: durationMinutes(startIso, endIso),
           notes: typeof data.notes === 'string' ? data.notes : '',
+          // #1579: the household's own words for the request live on the
+          // ENVELOPE (`requestBooking` writes `notes` there, never on a
+          // visit), so copying only the visit's field dropped them on every
+          // approval: the request card showed the note and the booked visit
+          // read "None on the request". `kinfolkNotes` is the session field
+          // every reader already labels as the household's note (Auntie
+          // Time's Kinfolk-facing box, Android's "On file", Bookings).
+          kinfolkNotes: requestNote,
           status: 'SCHEDULED',
           sourceBookingId: id,
           kinCareBatchId: batchId,

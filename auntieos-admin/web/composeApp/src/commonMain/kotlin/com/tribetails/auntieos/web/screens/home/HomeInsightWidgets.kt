@@ -40,6 +40,7 @@ import com.tribetails.auntieos.web.data.RouteResult
 import com.tribetails.auntieos.web.data.SupplySummary
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
+import com.tribetails.auntieos.web.screens.BookingServicePill
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.CountUpText
@@ -185,7 +186,7 @@ internal fun OverdueVisitsWidget(sessionsState: FirestoreResult<List<KinCareSess
                                     color = c.error,
                                 )
                             }
-                            if (v.serviceType.isNotBlank()) ServicePill(v.serviceType)
+                            if (v.serviceType.isNotBlank()) BookingServicePill(v.serviceType)
                         }
                     }
                     if (overdue.size > 5) {
@@ -529,7 +530,7 @@ internal fun SafeboxWidget(
                                 style = AuntieTheme.typography.titleMedium,
                                 color = c.textPrimary,
                             )
-                            if (next.serviceType.isNotBlank()) ServicePill(next.serviceType)
+                            if (next.serviceType.isNotBlank()) BookingServicePill(next.serviceType)
                         }
                         Text(
                             "${next.startTime.take(10)} ${formatTime(next.startTime)}".trim(),

@@ -1,3 +1,4 @@
+import { useVetClinics } from '../lib/useVetClinics';
 import { useCallback, useState, type ReactNode } from 'react';
 import { linkOptions } from '@tanstack/react-router';
 import { type Async } from '../lib/async';
@@ -20,8 +21,7 @@ import {
   type HouseholdFieldSpec,
   type HouseholdSectionSpec,
 } from '../lib/householdDataSchema';
-import { useCollection } from '../lib/firestore';
-import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
+import { type VetClinic } from '../api/vetClinics';
 import { resolveHouseholdVet, hasVet, type HouseholdVet } from '../lib/householdVet';
 import {
   blankHouseholdRecord,
@@ -157,7 +157,7 @@ function HouseholdRecordView({
 
   // The shared clinic catalog. The record stores a clinic id; everything shown
   // for the vet resolves through this listener, so there is one copy to correct.
-  const clinics = useCollection<VetClinic>(VET_CLINICS_QUERY);
+  const clinics = useVetClinics();
 
   /**
    * The record as it stands after a save. `useOneShot` exposes no reload outside
@@ -516,10 +516,8 @@ function VeterinarySection({
       {leftovers.length > 0 && (
         <Banner tone="warning" title="Older vet notes are still on this record">
           <p>
-            These were typed before the vet was chosen from the shared bank. They are not used
-            anywhere and are not kept up to date. The migration moves anything the record is
-            missing; whatever is left below can be cleared once you have copied out anything worth
-            keeping.
+            Typed before the vet came from the shared bank, and no longer used. Copy out anything
+            worth keeping, then clear them.
           </p>
           <LeftoverFacts leftovers={leftovers} record={record} />
           <GhostButton label="Clear old vet notes" onClick={() => setConfirming(true)} />

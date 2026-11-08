@@ -9,6 +9,7 @@ import {
   type NotificationMatrix,
   type NotifStream,
 } from '../api/myNotifications';
+import { humanizeKey } from './notificationsFeed';
 
 /**
  * Pure classification for the My Notifications screen, ported from the wasm
@@ -124,11 +125,11 @@ export function channelRequired(entry: NotificationCatalogEntry, channel: Notifi
   return entry.required[channel] === true;
 }
 
-/** The row title: label, else description, else the raw key (never blank). */
+/** The row title: label, else description, else the key as words (never blank, never the key, #1592). */
 export function displayTitle(entry: NotificationCatalogEntry): string {
   if (entry.label.trim() !== '') return entry.label;
   if (entry.description.trim() !== '') return entry.description;
-  return entry.key;
+  return humanizeKey(entry.key) || 'Notification';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

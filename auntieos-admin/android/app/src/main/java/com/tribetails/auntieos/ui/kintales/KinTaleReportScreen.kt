@@ -27,6 +27,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,7 +61,9 @@ import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.data.model.MoodOption
 import com.tribetails.auntieos.data.model.ReportStatus
+import com.tribetails.auntieos.data.model.canDeleteAsDraft
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository
+import com.tribetails.auntieos.ui.admin.rememberServiceCatalog
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -76,6 +81,7 @@ import com.tribetails.auntieos.ui.components.DenCrumb
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.DynamicFormFields
 import com.tribetails.auntieos.ui.components.EmptyHint
+import com.tribetails.auntieos.ui.components.AuntieDialog
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.LocalSaveConfirmation
 import com.tribetails.auntieos.ui.components.PrimaryButton
@@ -142,7 +148,16 @@ fun KinTaleReportScreen(
         }
     }
 
+    // #1631: a deleted draft leaves the screen, with a word on the way out.
+    LaunchedEffect(state.deletedSuccessfully) {
+        if (state.deletedSuccessfully) {
+            confirmation.show("Draft deleted.")
+            onBack()
+        }
+    }
+
     val isSent = state.report.status == ReportStatus.SENT.name
+    var confirmDelete by remember { mutableStateOf(false) }
 
     AuntieScreenScaffold(
         title = "KinTale Update",
@@ -445,6 +460,36 @@ fun KinTaleReportScreen(
                     leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(18.dp)) }
                 )
             }
+            // #1631: a saved, unsent draft can be deleted, after a confirm.
+            if (state.report.canDeleteAsDraft()) {
+                GhostButton(
+                    label = if (state.isDeleting) "Deleting..." else "Delete draft",
+                    onClick = { confirmDelete = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.isSaving && !state.isSending && !state.isDeleting,
+                )
+            }
+            AuntieDialog(
+                visible = confirmDelete,
+                title = "Delete this draft?",
+                onDismiss = { confirmDelete = false },
+                footer = {
+                    GhostButton(label = "Cancel", onClick = { confirmDelete = false })
+                    PrimaryButton(
+                        label = "Delete",
+                        onClick = {
+                            confirmDelete = false
+                            viewModel.deleteDraft()
+                        },
+                    )
+                },
+            ) {
+                Text(
+                    text = deleteDraftConfirmText(state.session?.kinfolkName.orEmpty()),
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+            }
             // Why Send is off, next to the button that is off. A disabled primary
             // with no reason beside it is the operator's problem to guess.
             if (!isSent) {
@@ -685,6 +730,17 @@ private fun PhotoCell(media: MediaFile, onRemove: () -> Unit) {
  * mirroring the web `kinTaleSendLabel`. Falls back to neutral copy when the
  * household name is blank, never a hardcoded sample name. Pure; unit-tested.
  */
+/**
+ * #1631: the delete confirm's line, naming the household when there is one.
+ * Pure; tested.
+ */
+internal fun deleteDraftConfirmText(recipient: String): String =
+    if (recipient.isBlank()) {
+        "This KinTale has not been sent. Deleting it cannot be undone."
+    } else {
+        "This KinTale for $recipient has not been sent. Deleting it cannot be undone."
+    }
+
 internal fun kinTaleSendLabel(recipient: String): String =
     if (recipient.isBlank()) "Send KinTale" else "Send to $recipient"
 
@@ -1135,11 +1191,13 @@ private fun RecipientsPanel(state: KinTaleUiState) {
 
 @Composable
 private fun VisitMetaPanel(state: KinTaleUiState) {
+    val catalog = rememberServiceCatalog()
     val session = state.session ?: return
     val visitDate = session.startTime.take(10)
     DenPanel(
         title = "Visit",
-        trailing = { if (session.serviceType.isNotBlank()) ServicePill(session.serviceType) },
+        // #1592: the KinCare's name, never the stored `visit_60`.
+        trailing = { if (session.serviceType.isNotBlank()) ServicePill(catalog.nameOf(session.serviceType)) },
     ) {
         Column {
             AuntieKeyValueRow(label = "Template", value = state.template.name)

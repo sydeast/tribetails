@@ -20,6 +20,13 @@ function render(ui: React.ReactElement) {
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
+// #1631: the delete callable. The gate (`canDeleteKinTaleDraft`) stays real.
+const { deleteKinTaleReportDraft } = vi.hoisted(() => ({ deleteKinTaleReportDraft: vi.fn() }));
+vi.mock('../api/kinTaleReportDraftDelete', async (orig) => ({
+  ...(await orig<typeof import('../api/kinTaleReportDraftDelete')>()),
+  deleteKinTaleReportDraft,
+}));
+
 const { saveKinTaleDraft, sendKinTale } = vi.hoisted(() => ({
   saveKinTaleDraft: vi.fn(),
   sendKinTale: vi.fn(),
@@ -68,7 +75,18 @@ vi.mock('../api/mediaUpload', async (orig) => ({
 }));
 
 import { decodeKinTaleTemplate } from '../api/kinTaleTemplates';
+import { kinTaleWhen } from '../lib/kinTaleFormat';
 import { DEFAULT_KINTALE_TEMPLATE } from '../lib/kinTale/model';
+// #1592: services are named from the KinCare catalog. "Long walk" runs 60
+// minutes, so a stored `visit_60` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({
+    serviceRates: { 'Long walk': '45' },
+    serviceDurations: { 'Long walk': '60' },
+    timeBlocks: [],
+  }),
+}));
+
 import {
   KinTaleCompose,
   isKinTaleEligibleSession,
@@ -350,6 +368,21 @@ describe('KinTaleCompose: session picker scoped to one household', () => {
 });
 
 describe('KinTaleCompose: NEW from a given sessionId', () => {
+  it('#1592: the visit line, the Service row and the picker name the KinCare, never the stored key', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({ serviceType: 'visit_60' })] } });
+    const { unmount } = render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+
+    expect(await screen.findByLabelText(/headline/i)).toBeInTheDocument();
+    expect(screen.getByText('Long walk')).toBeInTheDocument();
+    expect(screen.getByText(/· Long walk$/)).toBeInTheDocument();
+    expect(screen.queryByText(/visit_60/)).toBeNull();
+    unmount();
+
+    render(<KinTaleCompose onClose={vi.fn()} />);
+    expect(await screen.findByText('Long walk')).toBeInTheDocument();
+    expect(screen.queryByText('visit_60')).toBeNull();
+  });
+
   it('scaffolds the form from the session (household, service shown read-only)', async () => {
     mockStreams({ sessions: { status: 'ready', data: [session({})] } });
     render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
@@ -361,7 +394,7 @@ describe('KinTaleCompose: NEW from a given sessionId', () => {
   it('shows an honest not-found message for an unknown sessionId, never a silent blank', async () => {
     mockStreams({ sessions: { status: 'ready', data: [] } });
     render(<KinTaleCompose sessionId="ghost" onClose={vi.fn()} />);
-    expect(await screen.findByText(/no kin care session found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no kincare session found/i)).toBeInTheDocument();
   });
 });
 
@@ -401,6 +434,17 @@ describe('KinTaleCompose: the composer mock', () => {
     const rail = screen.getByRole('complementary', { name: 'Goes to' });
     expect(within(rail).getByRole('heading', { name: 'Goes to' })).toBeInTheDocument();
     expect(within(rail).getByText('Kin').nextElementSibling).toHaveTextContent('1 kin on this visit');
+  });
+  it('#1744: the Goes to rail names the visit by its day, never its session id', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({})] } });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    const rail = screen.getByRole('complementary', { name: 'Goes to' });
+    expect(within(rail).queryByText('sess1')).toBeNull();
+    expect(within(rail).queryByText('Session')).toBeNull();
+    expect(within(rail).getByText('Visit').nextElementSibling).toHaveTextContent(
+      kinTaleWhen({ visitDate: '2026-07-16T14:00:00.000Z', arrivedAt: '', sentAt: '', createdAt: '' }),
+    );
   });
 
   it('draws the photo strip as the mock: a dashed add tile, and the count as the mono note', async () => {
@@ -916,5 +960,40 @@ describe('L20 · GPS block', () => {
     });
     render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
     expect(await screen.findByText('Visit route')).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1631: the composer could save and send a report draft but never delete it.
+ * A saved, unsent draft now carries Delete draft; a brand-new one, never saved,
+ * does not.
+ */
+describe('KinTaleCompose: Delete draft (#1631)', () => {
+  beforeEach(() => {
+    deleteKinTaleReportDraft.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('deletes a saved draft after the confirm and closes the composer', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report()] } });
+    const onClose = vi.fn();
+    render(<KinTaleCompose kinTaleId="tale1" onClose={onClose} />);
+    await user.click(await screen.findByRole('button', { name: 'Delete draft' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Delete this draft?' })).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(deleteKinTaleReportDraft).toHaveBeenCalledWith('tale1');
+  });
+
+  it('offers no Delete on a new draft that has never been saved', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({})] } });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+  });
+
+  it('offers no Delete while editing a sent KinTale', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ status: 'SENT', sentAt: '2026-07-16T16:00:00.000Z' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
   });
 });

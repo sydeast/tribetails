@@ -16,7 +16,7 @@ plugins {
     // app was never in a release run. Raised WITH the dependencies that demand
     // it, and matched to auntieos-admin/android, which is already on 9.3.1.
     // Needs Gradle 9.x; the wrapper moves with it.
-    id("com.android.application") version "9.5.0"
+    id("com.android.application") version "9.5.1"
     id("com.google.gms.google-services") version "4.5.0"
 }
 
@@ -185,10 +185,10 @@ kotlin {
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             // Ktor client + JSON for Firebase REST (Auth + Firestore).
-            implementation("io.ktor:ktor-client-core:3.6.0")
-            implementation("io.ktor:ktor-client-cio:3.6.0")
-            implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
-            implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
+            implementation("io.ktor:ktor-client-core:3.6.1")
+            implementation("io.ktor:ktor-client-cio:3.6.1")
+            implementation("io.ktor:ktor-client-content-negotiation:3.6.1")
+            implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.1")
         }
         val jvmTest by getting {
             dependencies {
@@ -198,7 +198,7 @@ kotlin {
                 // scripted engine instead of CIO, so a call site's outgoing
                 // URL can be asserted with no real socket and no dependency
                 // on process env for the emulator switches.
-                implementation("io.ktor:ktor-client-mock:3.6.0")
+                implementation("io.ktor:ktor-client-mock:3.6.1")
             }
         }
         androidMain.dependencies {
@@ -211,7 +211,7 @@ kotlin {
             //   Could not find com.google.firebase:firebase-auth:
             // (note the empty version). Pinning the BOM is the supported answer
             // and it also stops the three SDKs drifting apart from each other.
-            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.19.0"))
+            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:35.1.0"))
             implementation("com.google.firebase:firebase-analytics-ktx:22.5.0")
             // Native Firebase Functions SDK — used by NativeAndroidFunctionsClient
             // to bypass gitlive 2.x's FirebaseEncoder, which throws
@@ -275,7 +275,7 @@ kotlin {
             // Coil 3 ktor3 fetcher for the kinfolk web portal. Brought into jsMain only;
             // jvmMain still uses ktor 2.x for the Firebase REST shim and stays untouched.
             implementation("io.coil-kt.coil3:coil-network-ktor3:3.6.3")
-            implementation("io.ktor:ktor-client-js:3.6.0")
+            implementation("io.ktor:ktor-client-js:3.6.1")
         }
     }
 }

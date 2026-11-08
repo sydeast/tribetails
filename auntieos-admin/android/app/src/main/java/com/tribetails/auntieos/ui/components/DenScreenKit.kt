@@ -541,7 +541,11 @@ fun DenPanel(
 
 // ── service pill ─────────────────────────────────────────────────────────────
 
-/** A small lowercase mono pill tinted to a service [tone]. */
+/**
+ * A small mono pill tinted to a service [tone]. By default the tone follows the
+ * text shown: hand it the resolved name (`bookingServiceName`) and it wears the
+ * same colour as that name's legend swatch and calendar marks (#1592).
+ */
 @Composable
 fun ServicePill(serviceType: String, tone: AuntieStatusTone = serviceTone(serviceType)) {
     val c = AuntieTheme.colors
@@ -553,7 +557,9 @@ fun ServicePill(serviceType: String, tone: AuntieStatusTone = serviceTone(servic
             .padding(horizontal = 9.dp, vertical = 4.dp),
     ) {
         Text(
-            serviceType.ifBlank { "visit" }.lowercase(),
+            // #1592: shown as written. A KinCare name is the operator's own, and
+            // lowercasing it made "30Minute" read as the key "30minute".
+            serviceType.ifBlank { "Visit" },
             style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp), color = t,
         )
     }

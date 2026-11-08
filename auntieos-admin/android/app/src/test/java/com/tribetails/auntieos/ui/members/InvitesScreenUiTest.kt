@@ -170,7 +170,9 @@ class InvitesScreenUiTest {
         // One row per invite: address, household and provenance each their own node.
         assertEquals(2, composeRule.onAllNodesWithText("jane@example.com").fetchSemanticsNodes().size)
         composeRule.onNodeWithText("the Marlowes").assertIsDisplayed()
-        composeRule.onNodeWithText("Sent 2026-08-01 · expires 2026-08-15 · inviteId i1").assertIsDisplayed()
+        // #1592: the provenance line carries the dates and no invite id.
+        assertEquals(2, composeRule.onAllNodesWithText("Sent 2026-08-01 · expires 2026-08-15").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("inviteId", substring = true).fetchSemanticsNodes().size)
         // The status pill in the mock's words, the role pill beside it.
         composeRule.onNodeWithText("EMAIL SENT").assertIsDisplayed()
         assertEquals(2, composeRule.onAllNodesWithText("PRIMARY").fetchSemanticsNodes().size)
@@ -188,7 +190,7 @@ class InvitesScreenUiTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("listAllInvites failed", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Could not load", substring = true).assertIsDisplayed()
         assertEquals(
             0,
             composeRule.onAllNodesWithText("No invites have been sent from any household yet.")

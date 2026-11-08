@@ -77,6 +77,8 @@ describe('transitionBookingStatus happy paths', () => {
         actorRole: 'AUNTIE',
         actorUid: 'admin1',
         targetCollection: 'kin_care_sessions',
+        // #1752: words, the session id stays the target.
+        description: 'Approved the visit: requested to scheduled',
         payload: expect.objectContaining({
           action: 'APPROVE',
           from: 'PENDING',
@@ -346,5 +348,77 @@ describe('transitionBookingStatus error surface', () => {
     const res = await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'CANCEL' }));
     expect(res.changed).toBe(true);
     expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'CANCELLED' });
+  });
+});
+
+// ── #1627: the household's copy of the visit moves with the session ─────────
+describe('transitionBookingStatus mirrors CANCEL and COMPLETE onto the booking record', () => {
+  const VISIT = 'families/kf1/bookings/b1/kinCares/v1';
+
+  function seedLinked(status: string, visitStatus: string | null = 'confirmed') {
+    const docs: Record<string, Record<string, unknown>> = {
+      'kin_care_sessions/s1': { kinfolkId: 'kf1', status, kinCareBatchId: 'b1', kinCareVisitId: 'v1' },
+    };
+    if (visitStatus !== null) docs[VISIT] = { status: visitStatus, sessionId: 's1' };
+    const ctx = buildDbMock({ docs });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return ctx;
+  }
+
+  const visitWrite = (ctx: ReturnType<typeof buildDbMock>) => ctx.writes.find((w) => w.path === VISIT);
+
+  it('CANCEL marks the visit cancelled, so the portal stops listing it as upcoming', async () => {
+    const ctx = seedLinked('SCHEDULED');
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'CANCEL' }));
+    expect(sessionWrite(ctx)?.data.status).toBe('CANCELLED');
+    expect(visitWrite(ctx)?.data).toMatchObject({ status: 'cancelled' });
+    expect(visitWrite(ctx)?.merge).toBe(true);
+  });
+
+  it('COMPLETE marks the visit completed', async () => {
+    const ctx = seedLinked('DEPARTED');
+    await transitionBookingStatusHandler(
+      req({ sessionId: 's1', action: 'COMPLETE', completedAt: '2026-11-05T20:30:00Z' }),
+    );
+    expect(sessionWrite(ctx)?.data.status).toBe('COMPLETED');
+    expect(visitWrite(ctx)?.data).toMatchObject({ status: 'completed' });
+  });
+
+  it('records the mirror on the audit entry', async () => {
+    seedLinked('SCHEDULED');
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'CANCEL' }));
+    const entry = mocks.writeAuditEntryFn.mock.calls.at(-1)?.[0] as { payload: Record<string, unknown> };
+    expect(entry.payload.visitMirrored).toBe('cancelled');
+  });
+
+  it('never creates a visit that is not there', async () => {
+    const ctx = seedLinked('SCHEDULED', null);
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'CANCEL' }));
+    expect(sessionWrite(ctx)?.data.status).toBe('CANCELLED');
+    expect(visitWrite(ctx)).toBeUndefined();
+  });
+
+  it('leaves a visit that is already finished as it is', async () => {
+    const ctx = seedLinked('SCHEDULED', 'cancelled');
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
+    expect(visitWrite(ctx)).toBeUndefined();
+  });
+
+  it('REJECT does not mirror: a declined request is not a cancelled visit (#533)', async () => {
+    const ctx = seedLinked('PENDING', 'requested');
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'REJECT' }));
+    expect(sessionWrite(ctx)?.data.status).toBe('CANCELLED');
+    expect(visitWrite(ctx)).toBeUndefined();
+  });
+  it('APPROVE does not touch the visit (the approval paths own that)', async () => {
+    const ctx = seedLinked('PENDING');
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'APPROVE' }));
+    expect(visitWrite(ctx)).toBeUndefined();
+  });
+
+  it('a session with no booking record writes only the session, as before', async () => {
+    const ctx = seed('SCHEDULED');
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'CANCEL' }));
+    expect(ctx.writes.filter((w) => w.path.startsWith('families/'))).toHaveLength(0);
   });
 });

@@ -140,6 +140,11 @@ describe('no emitter can land undocumented', () => {
       // marketing keys is `scheduleMarketingBlast.ts`, which is documented and
       // which is where the key literals live.
       if (f === 'src/admin/marketingAudience.ts') return false;
+      // #1609: the same kind of read. `previewInvoiceNotice` resolves the
+      // channels a reminder or a draft send WOULD use, so the confirm can name
+      // them; it enqueues and delivers nothing. The emitters stay
+      // sendInvoiceReminder.ts and reviewAndSendDraftInvoice.ts.
+      if (f === 'src/admin/previewInvoiceNotice.ts') return false;
       const src = read(f);
       if (EXTERNAL_DIRECT_SENDERS.includes(f)) return src.includes('sendTemplatedEmail(');
       return DISPATCH_CALLS.some((fn) => src.includes(`${fn}(`));
@@ -295,4 +300,35 @@ describe('whoReceives renders sentences, not enums', () => {
       }
     }
   });
+});
+/**
+ * #1747: the gate's "What fires it" and "Who receives it" lines are read by the
+ * operator, so they say what happens in business words. They used to name code:
+ * a source file, an issue number, a catalog key, a function, an env var, a
+ * Firestore path, "envelope", "cron".
+ */
+describe("the gate's sentences read in the operator's words (#1747)", () => {
+  const DEVELOPER_WORDING: readonly [string, RegExp][] = [
+    ['a code span', /`/],
+    ['a source path or Firestore path', /\b[\w-]+\/[\w./-]+/],
+    ['an issue number', /#\d+/],
+    ['a catalog key', /\b[a-z]+(?:\.[a-zA-Z_]+)+\b/],
+    ['a camelCase name', /\b[a-z]+[A-Z]\w*/],
+    ['an ALL-CAPS identifier', /\b[A-Z][A-Z_]{3,}\b/],
+    ['a developer word', /\b(?:cron|envelope|dispatch|key|claim|payload|write)\b/i],
+  ];
+  const sentences: [string, string][] = [
+    ...Object.entries(NOTIFICATION_EMITTERS).flatMap(([key, emitters]) =>
+      emitters.map((e): [string, string] => [`${key} trigger`, e.trigger]),
+    ),
+    ...UNGATED_SENDS.map((u): [string, string] => [`${u.templateId} (ungated) trigger`, u.trigger]),
+    ...Object.entries(RECIPIENT_SENTENCES).map(([resolver, s]): [string, string] => [`${resolver} recipients`, s]),
+  ];
+  for (const [where, sentence] of sentences) {
+    it(`${where}: "${sentence}"`, () => {
+      for (const [what, pattern] of DEVELOPER_WORDING) {
+        expect(pattern.test(sentence), `${what} in ${where}`).toBe(false);
+      }
+    });
+  }
 });

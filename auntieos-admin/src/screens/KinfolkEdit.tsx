@@ -17,7 +17,7 @@ import {
   type KinfolkEditInput,
   type KinfolkPickableStatus,
 } from '../lib/kinfolkEditSchema';
-import { joinDateForEdit } from '../lib/joinDate';
+import { JOIN_DATE_FIRST_DAY, joinDateForEdit, localIsoToday } from '../lib/joinDate';
 import { type Async } from '../lib/async';
 import {
   EMERGENCY_CONTACT_WHO_GETS_CALLED,
@@ -310,7 +310,7 @@ export function KinfolkEdit({
         if (live) {
           setLoaded({
             status: 'error',
-            message: `getKinfolkProfile failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           });
         }
@@ -399,7 +399,13 @@ export function KinfolkEdit({
     // problems shows all three at once rather than one per attempt.
     setAttempted(true);
     if (Object.keys(errors).length > 0) {
-      setError('Some details still need fixing. The fields below say which.');
+      // #1602: said beside Save (below), and the first field that needs fixing
+      // takes focus, which scrolls it into view. The banner at the top of the
+      // page was off screen when Save was pressed.
+      setError('Some details still need fixing. The highlighted fields say which.');
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('[data-screen="kinfolk-edit"] [aria-invalid="true"]')?.focus();
+      });
       return;
     }
 
@@ -428,7 +434,7 @@ export function KinfolkEdit({
         setHouseholdBaseline((prev) => (prev ? { ...prev, ...changes } : prev));
       } catch (err) {
         setSaving(false);
-        setError(`updateKinfolkProfile failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+        setError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
         return;
       }
     }
@@ -475,7 +481,7 @@ export function KinfolkEdit({
       onDone();
     } catch (err) {
       setArchiving(false);
-      setError(`archiveKinfolk failed: ${err instanceof Error ? err.message : 'Archive failed'}`);
+      setError(`Could not archive: ${err instanceof Error ? err.message : 'Archive failed'}`);
     }
   }
 
@@ -490,24 +496,18 @@ export function KinfolkEdit({
       onDone();
     } catch (err) {
       setArchiving(false);
-      setError(`unarchiveKinfolk failed: ${err instanceof Error ? err.message : 'Restore failed'}`);
+      setError(`Could not restore: ${err instanceof Error ? err.message : 'Restore failed'}`);
     }
   }
 
   return (
-    <div className="screen">
+    <div className="screen" data-screen="kinfolk-edit">
       <DenScreenHeading
         kicker="The Den · Directory"
         title={`Edit ${kinfolkName || kinfolkId}`}
         subtitle="Contact, access, and vet details for this household."
         trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={leaveHeld} />}
       />
-
-      {error !== null && (
-        <Banner tone="error" title="That didn't save" onDismiss={() => setError(null)}>
-          {error}
-        </Banner>
-      )}
 
       <AsyncRegion
         state={loaded}
@@ -731,6 +731,18 @@ export function KinfolkEdit({
                   />
                 </div>
               </div>
+              {/* #1602: what stopped the save, where the operator is looking:
+                  beside the button that was just pressed. */}
+              {error !== null && (
+                <Banner
+                  tone="error"
+                  title="That didn't save"
+                  onDismiss={() => setError(null)}
+                  className="kfedit__save-error"
+                >
+                  {error}
+                </Banner>
+              )}
             </>
           )
         }
@@ -864,6 +876,10 @@ function DateField({ name, label, value, error, hint, onChange, onBlur }: DateFi
         id={id}
         type="date"
         className="kfedit__input"
+        // #1584: the picker offers only 2025 through today. The schema refuses
+        // a typed value outside that with a message beside the field.
+        min={JOIN_DATE_FIRST_DAY}
+        max={localIsoToday()}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}

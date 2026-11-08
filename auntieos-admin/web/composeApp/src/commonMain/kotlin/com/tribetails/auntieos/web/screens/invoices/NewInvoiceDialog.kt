@@ -154,7 +154,9 @@ internal fun NewInvoiceDialogContent(
         serviceDates = if (onWork) sessions.filter { it.sessionId in selected }.map { it.startTime } else emptyList(),
         now = todayIso,
     )
-    val money = if (onWork) composerMoney(sessions, selected, prices, extraLines, invoiceDiscountText) else null
+    // #1744: each visit line names its KinCare, never the stored `visit_60`.
+    val catalog = com.tribetails.auntieos.web.screens.LocalServiceCatalog.current
+    val money = if (onWork) composerMoney(sessions, selected, prices, extraLines, invoiceDiscountText, catalog) else null
     val blocked = composerBlockedReason(
         kinfolkId = pick.id,
         path = path,

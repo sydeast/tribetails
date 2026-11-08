@@ -74,3 +74,45 @@ fun formatJoinDate(raw: String): String {
         parsed.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(Locale.getDefault()))
     }.getOrDefault(raw)
 }
+
+/**
+ * #1584. Operator ruling, 2026-11-05 docket: join dates run "from the year the
+ * business started, 2025, up to today". Same rule and words as the admin web
+ * (`src/lib/joinDate.ts`), the desktop console and `joinDateInRange` in
+ * `mytribe/firestore.rules`.
+ */
+const val JOIN_DATE_FIRST_DAY = "2025-01-01"
+const val JOIN_DATE_RANGE_MESSAGE = "Pick a join date from 2025 through today."
+
+/** True for an ISO day from 2025-01-01 through [today] inclusive. */
+fun isJoinDateInRange(iso: String, today: LocalDate = LocalDate.now()): Boolean {
+    val day = if (isIsoDate(iso)) parseIsoDay(iso) else null
+    return day != null && !day.isBefore(LocalDate.parse(JOIN_DATE_FIRST_DAY)) && !day.isAfter(today)
+}
+
+/** What to say beside the join date field, or null when it may be saved. Blank may be saved. */
+fun joinDateRangeError(value: String, today: LocalDate = LocalDate.now()): String? {
+    val v = value.trim()
+    return if (v.isEmpty() || isJoinDateInRange(v, today)) null else JOIN_DATE_RANGE_MESSAGE
+}
+
+/** #1602: the profile's line for a join date it cannot stand behind. Same words as the admin web. */
+const val JOIN_DATE_NEEDS_FIXING = "Join date needs fixing: pick it in Edit"
+
+/**
+ * #1602: what the household profile says about its join date, the same shape
+ * for every household. The walk found one profile reading a formatted date
+ * with a tenure badge and another reading stored text with none. A readable day
+ * from 2025 through [today] reads "Joined <date>" and earns the tenure badge
+ * ([profileJoinDateIsSound]); anything else says it needs fixing. Blank is null.
+ */
+fun profileJoinLine(raw: String, today: LocalDate = LocalDate.now()): String? {
+    if (raw.isBlank()) return null
+    return if (profileJoinDateIsSound(raw, today)) "Joined ${formatJoinDate(raw)}" else JOIN_DATE_NEEDS_FIXING
+}
+
+/** #1602: true when the stored join date is a readable day from 2025 through [today]. */
+fun profileJoinDateIsSound(raw: String, today: LocalDate = LocalDate.now()): Boolean {
+    val day = isoDayPrefix(raw) ?: return false
+    return isJoinDateInRange(day, today)
+}

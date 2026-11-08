@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.home
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.Draft
+import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
@@ -65,6 +66,8 @@ class HomeViewModelTest {
         coEvery { mockRepo.getRecentDrafts() } returns Result.success(listOf(TestFixtures.draft1))
         coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(emptyList())
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(TestFixtures.businessSettings)
+        // #1608: the arrival rule, read raw. Off unless a case turns it on.
+        coEvery { mockRepo.getArrivalRuleRequired() } returns Result.success(false)
         // Stage 2 Step 2: Home now loads invoices for the weekly-revenue tile.
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
         // Gatekeeper widget: Home now loads all sessions for the visit-gap ranking.
@@ -97,6 +100,29 @@ class HomeViewModelTest {
         )
 
     @Test
+    fun `Kin in care counts pets not marked inactive or archived (1601)`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getAllKin() } returns Result.success(
+            listOf(
+                Kin(id = "a", status = "active"),
+                Kin(id = "b", status = "inactive"),
+                Kin(id = "c", status = "archived"),
+                Kin(id = "d", status = ""),
+            ),
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        assertEquals(2, vm.uiState.value.kinCount)
+    }
+
+    @Test
+    fun `Kin in care falls back to the server count when the kin list cannot be read (1601)`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getAllKin() } returns Result.failure(RuntimeException("denied"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        assertEquals(3, vm.uiState.value.kinCount)
+    }
+
+    @Test
     fun `init loads dashboard data successfully`() = runTest(testDispatcher) {
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -105,7 +131,9 @@ class HomeViewModelTest {
         assertFalse(state.isLoading)
         assertFalse(state.isOffline)
         assertEquals(2, state.kinfolkCount)
-        assertEquals(3, state.kinCount)
+        // getAllKin() is empty here, so the in-care count is 0; the server's 3 is
+        // only the fallback for a failed read (next test).
+        assertEquals(0, state.kinCount)
         assertEquals(1, state.pendingDraftCount)
         assertEquals(1, state.recentDrafts.size)
         assertNull(state.actionError)
@@ -181,6 +209,80 @@ class HomeViewModelTest {
         advanceUntilIdle()
 
         assertNull(vm.uiState.value.pendingActionSessionId)
+    }
+
+    // ── ISSUE #1608: Complete answers the arrival rule before it is sent ──
+
+    @Test
+    fun `complete says what is missing and sends nothing when the arrival rule refuses`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getArrivalRuleRequired() } returns Result.success(true)
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.complete("ses1")
+        advanceUntilIdle()
+
+        val error = vm.uiState.value.actionError.orEmpty()
+        assertTrue(error, error.contains("This visit has no arrival and departure recorded"))
+        coVerify(exactly = 0) { mockKinCareRepo.markSessionComplete(any()) }
+    }
+
+    @Test
+    fun `complete is sent when the arrival rule is off`() = runTest(testDispatcher) {
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete(any()) } returns Result.success(Unit)
+        coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.complete("ses1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete("ses1") }
+        assertNull(vm.uiState.value.actionError)
+    }
+
+    @Test
+    fun `complete is sent when the rule is on and both steps are stamped`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getArrivalRuleRequired() } returns Result.success(true)
+        val stamped = TestFixtures.session1.copy(
+            arrivedAt = "2026-06-02T10:02:00Z",
+            departedAt = "2026-06-02T10:58:00Z",
+        )
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(stamped))
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete(any()) } returns Result.success(Unit)
+        coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.complete("ses1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete("ses1") }
+    }
+
+    @Test
+    fun `an unknown rule lets the server decide, and its refusal is shown rather than dropped`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getArrivalRuleRequired() } returns Result.failure(RuntimeException("offline"))
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete(any()) } returns
+            Result.failure(RuntimeException("This visit has no arrival and departure recorded."))
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.complete("ses1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete("ses1") }
+        assertEquals(
+            "Couldn't complete: This visit has no arrival and departure recorded.",
+            vm.uiState.value.actionError,
+        )
     }
 
     // ── ISSUE #519: arriving auto-starts tracking only if the operator says so ──

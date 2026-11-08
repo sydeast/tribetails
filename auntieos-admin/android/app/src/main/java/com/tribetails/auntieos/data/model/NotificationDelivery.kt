@@ -38,6 +38,11 @@ data class NotificationDeliveryRow(
     val dispatchId: String = "",
     val key: String = "",
     val recipientUid: String = "",
+    /**
+     * #1592: who `recipientUid` is, by name (household, else staff), from the
+     * server. Null when nobody answers to the uid, or the server predates it.
+     */
+    val recipientName: String? = null,
     val status: String = "unknown",
     val mode: String = "",
     val channels: List<String> = emptyList(),
@@ -78,6 +83,7 @@ fun notificationDeliveryRowFromMap(m: Map<*, *>): NotificationDeliveryRow =
         dispatchId = m["dispatchId"] as? String ?: "",
         key = m["key"] as? String ?: "",
         recipientUid = m["recipientUid"] as? String ?: "",
+        recipientName = (m["recipientName"] as? String)?.trim()?.takeIf { it.isNotEmpty() },
         status = (m["status"] as? String)?.takeIf { it.isNotBlank() } ?: "unknown",
         mode = m["mode"] as? String ?: "",
         channels = stringList(m["channels"]),

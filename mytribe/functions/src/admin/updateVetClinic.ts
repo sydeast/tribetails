@@ -128,7 +128,7 @@ export async function updateVetClinicHandler(
       actorUid: uid,
       targetUid: args.clinicId,
       targetCollection: 'vet_clinics',
-      description: `Vet clinic update refused: '${args.clinicId}' not found`,
+      description: (await import('../lib/activityWords.js')).vetClinicNotFoundWords('update'),
       payload: { refusalCode: 'vet_clinic_not_found', clinicId: args.clinicId },
     }).catch(() => undefined);
     throw new HttpsError('not-found', `Clinic '${args.clinicId}' not found.`, {

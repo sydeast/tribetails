@@ -244,7 +244,7 @@ export function KinEdit() {
 
   const kinDoc = found;
   const current = form;
-  const errors = validateKinForm(current);
+  const errors = validateKinForm(current, kinDoc);
   const changes = buildKinChanges(kinDoc, current);
   const nothingToSave = Object.keys(changes).length === 0;
   const canSave = !hasErrors(errors) && !nothingToSave && !save.isPending && !archive.isPending && !del.isPending && !removalRequest.isPending;

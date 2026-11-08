@@ -25,6 +25,8 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.SubmitVetClinicResult
 import com.tribetails.auntieos.data.model.VetClinicsSnapshot
+import com.tribetails.auntieos.domain.validateKinAge
+import com.tribetails.auntieos.domain.validateKinWeight
 import com.tribetails.auntieos.domain.horizonIso
 import com.tribetails.auntieos.domain.recentTalesFor
 import com.tribetails.auntieos.domain.upcomingVisitsFor
@@ -35,6 +37,7 @@ import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.joinDateForEdit
+import com.tribetails.auntieos.util.joinDateRangeError
 import com.tribetails.auntieos.util.SortOption
 import com.tribetails.auntieos.data.model.updatedAtIso
 import kotlinx.coroutines.async
@@ -103,8 +106,10 @@ internal fun filterKinDirectory(
     search: String,
     tag: String,
     sort: SortOption = SortOption.AlphaAsc,
+    inCareOnly: Boolean = false,
 ): List<Kin> {
     val rows = kin.filter { k ->
+        if (inCareOnly && !com.tribetails.auntieos.domain.isKinInCare(k.status)) return@filter false
         val matchesSearch = search.isBlank() ||
             k.name.contains(search, ignoreCase = true) ||
             k.species.contains(search, ignoreCase = true) ||
@@ -399,6 +404,10 @@ data class EditKinfolkUiState(
     val duplicateAddNotice: String? = null,
 )
 
+/** #1583: why an age / weight on the pet form is refused, or null for each that passes. */
+data class KinMeasureErrors(val age: String? = null, val weight: String? = null) {
+    val first: String? get() = age ?: weight
+}
 data class AddKinUiState(
     val kinfolkId: String = "",
     val name: String = "",
@@ -1437,6 +1446,11 @@ class DirectoryViewModel(
             )
             return
         }
+        // #1584 (operator ruling, 2026-11-05 docket): 2025 through today.
+        joinDateRangeError(state.joinDate)?.let { message ->
+            _editKinfolkState.value = state.copy(error = message)
+            return
+        }
 
         val updatedKinfolk = buildKinfolkFromEditState(state)
         val changes = kinfolkFieldChanges(baseline, updatedKinfolk)
@@ -1736,6 +1750,15 @@ class DirectoryViewModel(
     fun updateKinFeedingFrequency(value: String) { _addKinState.value = _addKinState.value.copy(feedingFrequency = value) }
     fun updateKinPottyRoutine(value: String) { _addKinState.value = _addKinState.value.copy(pottyRoutine = value) }
 
+    /**
+     * The edit form's age / weight problems. A value left as it loaded is never a
+     * problem, even when it is old free text (#1583), so the baseline is the
+     * loaded pet.
+     */
+    fun editKinMeasureErrors(state: EditKinUiState): KinMeasureErrors = KinMeasureErrors(
+        age = validateKinAge(state.age, loadedKin?.age),
+        weight = validateKinWeight(state.weight, loadedKin?.weight),
+    )
     fun saveKin() {
         val state = _addKinState.value
         if (state.name.isBlank() || state.kinfolkId.isBlank()) return
@@ -1923,6 +1946,13 @@ class DirectoryViewModel(
             return
         }
 
+        // #1583: age and weight are numbers. A value left as loaded passes even if
+        // it is old free text, so a record with a bad legacy value stays editable.
+        val measureError = editKinMeasureErrors(state).first
+        if (measureError != null) {
+            _editKinState.value = state.copy(error = measureError)
+            return
+        }
         val updatedKin = buildKinFromEditState(state)
         val changes = kinFieldChanges(baseline, updatedKin)
         if (changes.isEmpty()) {

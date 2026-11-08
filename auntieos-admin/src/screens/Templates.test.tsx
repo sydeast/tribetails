@@ -243,7 +243,7 @@ describe('Templates screen', () => {
     listTemplates.mockRejectedValue(new Error('permission-denied'));
     render(<Templates />);
     expect(
-      await screen.findByText(/listTemplates failed: permission-denied/, { selector: '.async-error-detail' }),
+      await screen.findByText(/Could not load: permission-denied/, { selector: '.async-error-detail' }),
     ).toBeInTheDocument();
     expect(screen.queryByText(TEMPLATE_BANK_EMPTY_COPY)).toBeNull();
   });
@@ -251,7 +251,7 @@ describe('Templates screen', () => {
   it('retries the load on demand', async () => {
     listTemplates.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([tpl({})]);
     render(<Templates />);
-    await screen.findByText(/listTemplates failed/i, { selector: '.async-error-detail' });
+    await screen.findByText(/Could not load/i, { selector: '.async-error-detail' });
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
     expect(listTemplates).toHaveBeenCalledTimes(2);
@@ -416,6 +416,29 @@ describe('Templates screen', () => {
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
+  it('#1594: the open editor is reported to the route, and a URL naming a template opens its editor', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed', subject: 'Your booking is confirmed' }),
+    ]);
+    const onEditorChange = vi.fn();
+    // A reload of `/templates?template=booking.confirmed`: the editor opens on it.
+    const { rerender } = render(<Templates editorTemplateId="booking.confirmed" onEditorChange={onEditorChange} />);
+    await editorCrumb('Edit template');
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
+
+    // Back: the URL drops `?template=`, so the bank comes back.
+    rerender(
+      <ToastProvider>
+        <Templates onEditorChange={onEditorChange} />
+      </ToastProvider>,
+    );
+    const card = await screen.findByText('Booking Confirmed');
+
+    // Opening a card from the bank tells the route which template is open.
+    await userEvent.click(card);
+    expect(onEditorChange).toHaveBeenLastCalledWith('booking.confirmed');
+  });
+
   /**
    * #716, the card footer. The mock's card ends in a right-aligned "Edit"
    * ghost button, and this card had none: the comment that chose that said a
@@ -513,9 +536,9 @@ describe('Templates screen', () => {
     await waitFor(() => expectBankShowing());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
-    // No Display name was typed, so the toast falls back to the template key,
-    // the same fallback `templateRowTitle` uses for the row itself.
-    expect(await screen.findByText('Saved booking.confirmed.')).toBeInTheDocument();
+    // No Display name was typed. #1747: the toast says so in words; it used to
+    // fall back to the template key.
+    expect(await screen.findByText('Saved the untitled template.')).toBeInTheDocument();
   });
 
   it('deleting a template through the editor closes it and reloads the list', async () => {
@@ -702,7 +725,7 @@ describe('Templates screen: I8 pagination', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /load more/i }));
 
-    expect(await screen.findByText(/listTemplates failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.getByText('Alpha')).toBeInTheDocument();
   });
 });
@@ -769,7 +792,7 @@ describe('Templates screen: an empty list that says which fact it means', () => 
     render(<Templates />);
     await screen.findByText('Alpha');
     await userEvent.type(screen.getByLabelText(/search templates by title or key/i), 'x');
-    expect(await screen.findByText(/listTemplates failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(listTemplates).toHaveBeenCalledTimes(2);
   });
   it('#1614: a key wraps at its separators, not mid-word', async () => {
@@ -865,7 +888,7 @@ describe('Templates screen: the mock\'s Ctrl-K search shortcut', () => {
     // browser's own shortcut in exchange for nothing.
     listTemplates.mockRejectedValue(new Error('permission-denied'));
     render(<Templates />);
-    await screen.findByText(/listTemplates failed: permission-denied/, { selector: '.async-error-detail' });
+    await screen.findByText(/Could not load: permission-denied/, { selector: '.async-error-detail' });
     await userEvent.keyboard('{Control>}k{/Control}');
     expect(screen.queryByLabelText(/search templates by title or key/i)).toBeNull();
   });

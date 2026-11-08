@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement, ReactNode } from 'react';
@@ -122,6 +122,8 @@ vi.mock('../components/BookingDetailModal', () => ({
   ),
 }));
 
+// #1608: BookingStatusActions reads the arrival rule; keep it off Firestore.
+vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule: () => null }));
 import { Bookings, groupBookingsByStatus } from './Bookings';
 
 function fakeTs(iso: string): Timestamp {
@@ -164,9 +166,9 @@ beforeEach(() => {
 });
 
 /**
- * The Select toggle, of which there are now TWO on the screen and ONE mode
- * behind them (#701): one in the page heading, one on the list toolbar directly
- * above the sections it picks rows from. `index` says which control to press.
+ * The Select toggle. #701 put one on the list toolbar, directly above the
+ * sections it picks rows from; #1607 removed the second copy from the page
+ * heading, since two buttons doing one thing read as two modes.
  */
 function selectToggle(index = 0): HTMLElement {
   return screen.getAllByRole('button', { name: 'Select' })[index] as HTMLElement;
@@ -266,10 +268,7 @@ describe('Bookings screen', () => {
     render(<Bookings />);
     expect(selectToggle()).toHaveAttribute('aria-pressed', 'false');
     await userEvent.click(selectToggle());
-    // BOTH controls report the mode, because there is only one mode (#701).
-    for (const toggle of screen.getAllByRole('button', { name: 'Select' })) {
-      expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    }
+    expect(selectToggle()).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('#704: there is no filter tab row, and every status still renders under its own section', () => {
@@ -303,7 +302,7 @@ describe('Bookings screen', () => {
     expect(document.querySelectorAll('.den-stat-label')).toHaveLength(0);
     // DRAFT and PENDING still count as one bucket, mirroring BookingScreen.kt's
     // "Pending approval"; the chip on the section heading is where it is stated.
-    const pending = screen.getByRole('group', { name: /^Pending approval/ });
+    const pending = screen.getByRole('group', { name: /^Visit requests/ });
     expect(within(pending).getByText('2')).toBeInTheDocument();
   });
 
@@ -506,7 +505,7 @@ describe('Bookings screen', () => {
     it('each section is a staggered block with a serif heading and a plain count', () => {
       useCollection.mockReturnValue({ status: 'ready', data: [entry({ status: 'PENDING' })] });
       render(<Bookings />);
-      const pending = screen.getByRole('group', { name: /^Pending approval/ });
+      const pending = screen.getByRole('group', { name: /^Visit requests/ });
       expect(pending.className).toContain('d1');
       expect(screen.getByRole('group', { name: /^Scheduled/ }).className).toContain('d2');
       expect(screen.getByRole('group', { name: /^History/ }).className).toContain('d3');
@@ -869,7 +868,16 @@ describe('groupBookingsByStatus', () => {
   });
   it('keeps an empty section so the screen can say nothing is waiting', () => {
     const sections = groupBookingsByStatus([entry({ _id: 'c', status: 'COMPLETED' })]);
-    expect(sections[0]).toEqual({ key: 'pending', label: 'Pending approval', rows: [] });
+    expect(sections[0]).toEqual({ key: 'pending', label: 'Visit requests', rows: [] });
+  });
+  it('#1578: keeps a visit that is under way in Scheduled, not History', () => {
+    const sections = groupBookingsByStatus([
+      entry({ _id: 'w', status: 'ON_MY_WAY' }),
+      entry({ _id: 'a', status: 'ARRIVED' }),
+      entry({ _id: 'd', status: 'DEPARTED' }),
+    ]);
+    expect(sections[1]?.rows.map((r) => r._id).sort()).toEqual(['a', 'd', 'w']);
+    expect(sections[2]?.rows).toEqual([]);
   });
   it('files an unrecognized status under History rather than letting it vanish', () => {
     // The AO-12 rule this tree keeps: a row that matches no section is a row
@@ -943,20 +951,20 @@ describe('Bookings status sections', () => {
   it('heads each section with its own live count', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    expect(within(sectionNamed('Pending approval')).getByText('1')).toBeInTheDocument();
+    expect(within(sectionNamed('Visit requests')).getByText('1')).toBeInTheDocument();
     expect(within(sectionNamed('Scheduled')).getByText('1')).toBeInTheDocument();
     expect(within(sectionNamed('History')).getByText('2')).toBeInTheDocument();
   });
   it('puts each row under its own status section, not one flat list', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    expect(within(sectionNamed('Pending approval')).getByText('Waiting Wren')).toBeInTheDocument();
+    expect(within(sectionNamed('Visit requests')).getByText('Waiting Wren')).toBeInTheDocument();
     expect(within(sectionNamed('Scheduled')).getByText('Booked Devlin')).toBeInTheDocument();
   });
   it('#704: all three sections are on screen, History open rather than behind "Show N finished"', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    for (const label of ['Pending approval', 'Scheduled', 'History']) {
+    for (const label of ['Visit requests', 'Scheduled', 'History']) {
       expect(sectionNamed(label)).toBeInTheDocument();
     }
     expect(screen.getByText('Finished Sparrow')).toBeInTheDocument();
@@ -982,7 +990,7 @@ describe('Bookings status sections', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [mixed[1] as BookingEntry] });
     render(<Bookings />);
     expect(
-      within(sectionNamed('Pending approval')).getByText(/nothing is waiting on a reply/i),
+      within(sectionNamed('Visit requests')).getByText(/nothing is waiting on a reply/i),
     ).toBeInTheDocument();
   });
   it('#701: the Select toggle on the list header turns select mode on, next to the rows it picks', async () => {
@@ -1088,6 +1096,16 @@ describe('Bookings deep link', () => {
  * `lib/bookingReschedule.test.ts`.
  */
 describe('Bookings bulk reschedule', () => {
+  // #1574: these visits are July 2026 and a visit is never moved into the
+  // past, so the clock stands before them (Date only; userEvent runs as normal).
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   // #1155: the DEVICE is America/Los_Angeles and the business (no timeZone in
   // TEST_SETTINGS) is the default America/Chicago, so the prefill below has to
   // come out on the business clock whatever zone the runner is in.
@@ -1146,5 +1164,63 @@ describe('Bookings bulk reschedule', () => {
     expect(screen.getByText(/permission-denied/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Select Household Two/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /Select Household One/ })).not.toBeChecked();
+  });
+});
+
+describe('Bookings, the #1607 walk', () => {
+  it('has ONE Select, on the list toolbar', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    render(<Bookings />);
+    const selects = screen.getAllByRole('button', { name: 'Select' });
+    expect(selects).toHaveLength(1);
+    expect(within(screen.getByRole('group', { name: 'Bookings list' })).getByRole('button', { name: 'Select' })).toBe(
+      selects[0],
+    );
+  });
+
+  it('a selection of scheduled visits is offered Cancel and Reschedule, never Approve or Reject', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 's1', kinfolkName: 'Household One', status: 'SCHEDULED', kinCareVisitId: 'v1' }),
+        entry({ _id: 's2', kinfolkName: 'Household Two', status: 'SCHEDULED', kinCareVisitId: 'v2' }),
+      ],
+    });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    const bar = screen.getByRole('group', { name: 'Bulk actions' });
+    expect(within(bar).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Reschedule' })).toBeInTheDocument();
+    expect(within(bar).queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(within(bar).queryByRole('button', { name: 'Reject' })).toBeNull();
+  });
+
+  it('a selection of requests is offered Approve and Reject, and no Reschedule', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 's1', kinfolkName: 'Household One', status: 'PENDING', kinCareVisitId: 'v1' })],
+    });
+    render(<Bookings />);
+    await pick('Household One');
+    const bar = screen.getByRole('group', { name: 'Bulk actions' });
+    expect(within(bar).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+    expect(within(bar).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(within(bar).queryByRole('button', { name: 'Reschedule' })).toBeNull();
+  });
+
+  it('a scheduled visit left behind is marked OVERDUE, by the rule Auntie Time uses', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 'old', kinfolkName: 'Left Behind', status: 'SCHEDULED', startTime: '2026-07-16T14:00:00.000Z' }),
+        entry({ _id: 'new', kinfolkName: 'Still Ahead', status: 'SCHEDULED', startTime: '2099-07-16T14:00:00.000Z' }),
+      ],
+    });
+    render(<Bookings />);
+    const scheduled = screen.getByRole('group', { name: /^Scheduled/ });
+    const row = (name: string) => within(scheduled).getByText(name).closest('li') as HTMLElement;
+    expect(within(row('Left Behind')).getByText('OVERDUE')).toBeInTheDocument();
+    expect(within(row('Still Ahead')).queryByText('OVERDUE')).toBeNull();
   });
 });

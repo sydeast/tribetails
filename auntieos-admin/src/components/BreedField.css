@@ -16,11 +16,10 @@
   grid-column: 1 / -1;
 }
 
+/* #1602: sentence case and the forms' own label size, like every label beside
+   it. It was the one uppercase label on the Kin forms. */
 .breedfield__label {
-  font-family: var(--type-label-md-family);
-  font-size: var(--type-label-md-size);
-  letter-spacing: var(--type-label-md-tracking);
-  text-transform: uppercase;
+  font-size: var(--type-label-sm-size);
   color: var(--color-text-dim);
 }
 

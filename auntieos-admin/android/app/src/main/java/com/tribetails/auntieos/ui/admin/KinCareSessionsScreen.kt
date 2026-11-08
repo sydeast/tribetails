@@ -1,5 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.completeRefusal
+import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
+import com.tribetails.auntieos.domain.addressLooksIncomplete
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -40,6 +43,7 @@ import com.tribetails.auntieos.data.admin.AuditLog
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
+import com.tribetails.auntieos.data.repository.BookingNotesRepository
 import com.tribetails.auntieos.location.LocationTrackingService
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
@@ -165,6 +169,8 @@ fun KinCareSessionsScreen(
     val scope = rememberCoroutineScope()
     // §A.8: time-block label (e.g. "Evening block"), always on, resolved from Business-Settings blocks.
     val timeBlocks by viewModel.timeBlocks.collectAsState()
+    // #1608: the operator's arrival rule, so Complete can answer before it is sent.
+    val arrivalRule by viewModel.arrivalRule.collectAsState()
     val timeBlockLabelFor: (com.tribetails.auntieos.data.model.KinCareSession) -> String? = { s ->
         com.tribetails.auntieos.domain.resolveTimeBlock(s.startTime, timeBlocks)?.label
     }
@@ -224,7 +230,18 @@ fun KinCareSessionsScreen(
      */
     val transitionFn: (String, BookingTransitionAction, String, String) -> Unit =
         { id, action, completedAt, msg ->
-            viewModel.transitionBookingStatus(id, action, completedAt = completedAt) { err ->
+            // #1608: a Complete the server is certain to refuse is not sent. The
+            // operator reads the same sentence now instead of after the round trip.
+            val refusal = if (action == BookingTransitionAction.COMPLETE) {
+                sessions.firstOrNull { it.id == id }?.let { completeRefusal(arrivalRule, it) }
+            } else {
+                null
+            }
+            if (refusal != null) {
+                toastMessage = "Couldn't complete: $refusal"
+                toastKind = ToastKind.Error
+                toastVisible = true
+            } else viewModel.transitionBookingStatus(id, action, completedAt = completedAt) { err ->
                 scope.launch {
                     toastMessage = err?.let { "Couldn't update: ${it.message}" } ?: msg
                     toastKind = if (err != null) ToastKind.Error else ToastKind.Success
@@ -233,6 +250,14 @@ fun KinCareSessionsScreen(
             }
         }
 
+    /** #1580: the toast for a note sent through `addInternalBookingNote`. */
+    val noticeFn: (String, Boolean) -> Unit = { msg, failed ->
+        scope.launch {
+            toastMessage = msg
+            toastKind = if (failed) ToastKind.Error else ToastKind.Success
+            toastVisible = true
+        }
+    }
     AuntieScreenScaffold(title = "Auntie Time", onBack = onBack) {
         Box(modifier = Modifier.fillMaxSize()) {
             AuntiePullRefresh(
@@ -252,9 +277,9 @@ fun KinCareSessionsScreen(
                     // windows" framing (spec 13 item 1 / spec 14): the route map (§A.10)
                     // renders below on the in-flight card; the phases cover the rest.
                     DenScreenHeading(
-                        kicker = "The Den · Auntie Time",
+                        kicker = "Care Ops · Auntie Time",
                         title = "🐾 Auntie Time",
-                        subtitle = "Day-of view. Clock in, clock out, every Kin Care in flight.",
+                        subtitle = "Day-of view. Clock in, clock out, every KinCare in flight.",
                     )
                     Spacer(Modifier.height(16.dp))
 
@@ -265,7 +290,7 @@ fun KinCareSessionsScreen(
                         loadError != null -> {
                             AuntieBanner(
                                 tone = AuntieBannerTone.Error,
-                                title = "Could not load your Kin Cares",
+                                title = "Could not load your KinCares",
                                 icon = Lucide.TriangleAlert,
                             ) {
                                 Text(
@@ -311,6 +336,7 @@ fun KinCareSessionsScreen(
                                         onLiveTrack = onLiveTrack,
                                         onPatch = patchFn,
                                         onTransition = transitionFn,
+                                        onNotice = noticeFn,
                                     )
                                 }
                             }
@@ -365,6 +391,8 @@ private fun PhaseGroup(
     onPatch: (String, Map<String, Any>, String) -> Unit,
     /** A3: operator status transitions, server-owned and audited. See `transitionFn`. */
     onTransition: (String, BookingTransitionAction, String, String) -> Unit,
+    /** #1580: `(message, failed)` for a note sent to the visit's internal list. */
+    onNotice: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     // The mock's `.phlab`: a mono uppercase label with the count in a small
     // capsule beside it, over a bare stack of cards. Not a DenPanel: the mock
@@ -419,6 +447,7 @@ private fun PhaseGroup(
                         onTransition = { action, completedAt, msg ->
                             onTransition(session.id, action, completedAt, msg)
                         },
+                        onNotice = onNotice,
                     )
                 }
             }
@@ -462,6 +491,10 @@ private fun KinCareCard(
     onPatch: (patch: Map<String, Any>, msg: String) -> Unit,
     /** A3: `(action, completedAt, successMessage)`, bound to this session. */
     onTransition: (BookingTransitionAction, String, String) -> Unit,
+    /** #1580: see [PhaseGroup]'s `onNotice`. */
+    onNotice: (String, Boolean) -> Unit = { _, _ -> },
+    /** #1744: the card names the KinCare, never the stored `visit_60`. */
+    catalog: ServiceCatalog = rememberServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
     val tone = kinCareStatusTone(session.status)
@@ -528,7 +561,7 @@ private fun KinCareCard(
                     // mock writes all of it as one sentence.
                     Text(
                         text = auntieTimeIdentityLine(
-                            service = session.serviceType,
+                            service = auntieTimeServiceName(session.serviceType, catalog),
                             kinNames = kinNames,
                             window = sessionWindow(session, todayIso),
                             timeBlockLabel = timeBlockLabel,
@@ -607,6 +640,14 @@ private fun KinCareCard(
             if (address.isNotBlank()) {
                 AddressChip(address = address, context = context)
             }
+            // #1602: "18605" was all the walk's chip said, with no hint.
+            if (addressLooksIncomplete(address)) {
+                Text(
+                    INCOMPLETE_ADDRESS_HINT,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.warning,
+                )
+            }
 
             // ---- One-line notes preview (kinfolk-facing first, internal fallback) ----
             val notePreview = session.kinfolkNotes.ifBlank { session.notes }
@@ -634,6 +675,7 @@ private fun KinCareCard(
                 onLiveTrack = onLiveTrack,
                 onWriteKinTale = onWriteKinTale,
                 context = context,
+                onNotice = onNotice,
             )
         }
     }
@@ -653,10 +695,14 @@ private fun ActionRow(
     onLiveTrack: () -> Unit,
     onWriteKinTale: () -> Unit,
     context: Context,
+    /** #1580: `(message, failed)` once a note to the office lands or fails. */
+    onNotice: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     var showOMWDialog by remember { mutableStateOf(false) }
     var showOfficeNoteDialog by remember { mutableStateOf(false) }
     var officeNoteText by remember(session.id) { mutableStateOf("") }
+    var officeNoteSending by remember(session.id) { mutableStateOf(false) }
+    var officeNoteError by remember(session.id) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     Column(
@@ -764,30 +810,37 @@ private fun ActionRow(
                 AuntieTextBtn(
                     onClick = {
                         val typed = officeNoteText.trim()
-                        if (typed.isNotBlank()) {
-                            // Append timestamped office note to session.notes
-                            // (admin-internal field). Auntie-in-field uses this
-                            // to flag schedule problems, missing supplies, etc.
-                            // for the office to action. Audit logs the action
-                            // type so admin reports can filter to field-comms.
-                            val merged = appendOfficeNote(session.notes, typed)
-                            onPatch(
-                                mapOf("notes" to merged, "updatedAt" to nowIso()),
-                                "Note sent to office.",
-                            )
-                            AuditLog.fire(
-                                scope = scope,
-                                repository = AuntieOSApp.instance.repository,
-                                actionType = "SESSION_OFFICE_NOTE_ADDED",
-                                description = "Field auntie added office note on session ${session.id}",
-                                targetId = session.id,
-                                targetCollection = "kin_care_sessions",
-                            )
-                            officeNoteText = ""
-                            showOfficeNoteDialog = false
+                        if (typed.isNotBlank() && !officeNoteSending) {
+                            // #1580: into the visit's ONE internal-notes list, the
+                            // same one Bookings and the session detail show, as a
+                            // shared note (the office and every Auntie on the
+                            // visit). It used to append to the session's own
+                            // `notes` text, which web Bookings never read.
+                            officeNoteSending = true
+                            officeNoteError = null
+                            scope.launch {
+                                // Built on send, not in composition: a Compose test of this
+                                // row must not need an initialised FirebaseApp.
+                                BookingNotesRepository().addVisitInternalNote(session.id, typed)
+                                    .onSuccess {
+                                        AuditLog.fire(
+                                            scope = scope,
+                                            repository = AuntieOSApp.instance.repository,
+                                            actionType = "SESSION_OFFICE_NOTE_ADDED",
+                                            description = "Field auntie added office note on session ${session.id}",
+                                            targetId = session.id,
+                                            targetCollection = "kin_care_sessions",
+                                        )
+                                        officeNoteText = ""
+                                        showOfficeNoteDialog = false
+                                        onNotice("Note sent to office.", false)
+                                    }
+                                    .onFailure { officeNoteError = it.message ?: "The note did not send." }
+                                officeNoteSending = false
+                            }
                         }
                     },
-                ) { Text("SEND") }
+                ) { Text(if (officeNoteSending) "SENDING…" else "SEND") }
             },
             dismissButton = {
                 AuntieTextBtn(onClick = {
@@ -798,7 +851,7 @@ private fun ActionRow(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "Send a quick note to the office about this assignment. Visible to admin only.",
+                    text = "Send a quick note to the office about this visit. It goes on the visit's internal notes, which staff see and the household never does.",
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
@@ -812,6 +865,9 @@ private fun ActionRow(
                     maxLines = 6,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                officeNoteError?.let { msg ->
+                    Text(text = "Couldn't send: $msg", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error)
+                }
             }
         }
     }

@@ -43,7 +43,7 @@ class FormSchemaListDeleteTest {
     @Test
     fun errResultProducesFailLoudMessage() {
         val msg = deleteResultMessage(WriteResult.Err("permission-denied"))
-        assertTrue(msg != null && msg.contains("deleteFormSchema failed"))
+        assertTrue(msg != null && msg.contains("Could not delete"))
         assertTrue(msg!!.contains("permission-denied"))
     }
 

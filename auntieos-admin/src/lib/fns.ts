@@ -4,6 +4,24 @@ import { E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT, E2E_FUNCTIONS_SERVED, functions 
 import { OfflineSessionError, isReadOnlySession } from './readOnlySession';
 import { LostSignalError, OfflineCallError, isConnected } from './offlineWrite';
 import { noteSessionAlive, reactToCallableError } from './revokedSession';
+import { plainCallableMessage } from './callableErrorText';
+import { noteCallableFailure } from './sentry';
+
+/**
+ * #1592: the operator's copy of a callable's refusal, made plain in place.
+ * The error stays the SDK's own `FirebaseError` with its `code` and `details`,
+ * so every `err.code === 'functions/...'` branch and every machine-token match
+ * still works; only `message` changes, and only when it was written for a
+ * developer. The raw text goes to the console and a Sentry breadcrumb first.
+ */
+function plainForOperator(name: string, err: FirebaseError): void {
+  const raw = err.message;
+  const plain = plainCallableMessage(err.code, raw);
+  if (plain === raw) return;
+  console.warn(`[callable] ${name} ${err.code}: ${raw}`);
+  noteCallableFailure(name, err.code, raw, (err as { details?: unknown }).details);
+  err.message = plain;
+}
 
 /**
  * Typed callables client, lifted from MyTribe/web/src/lib/fns.ts (the plan's
@@ -18,12 +36,92 @@ import { noteSessionAlive, reactToCallableError } from './revokedSession';
  * before any error surfaces. 20s is generous for a Firestore-backed callable
  * and short enough that a hang becomes a visible, retryable error.
  */
-const CALLABLE_TIMEOUT_MS = 20_000;
+export const CALLABLE_TIMEOUT_MS = 20_000;
 
+/**
+ * #1567: the budget for a callable that does slow work while the operator
+ * waits, or that sends something to a household. 70s is the Functions SDK's
+ * own default, which is what the Android admin has always run with.
+ *
+ * WHY 20s WAS WRONG FOR THESE. On 2026-11-05 a `reviewAndSendDraftInvoice`
+ * cold start took 20.8s from "Starting new instance" to the container's
+ * startup probe, before the handler ran at all. The web cut the call off at
+ * 20s and printed "Action failed" while the server went on to email the
+ * invoice. A cold start costs the same on every callable; what differs is
+ * what a false "failed" costs. On a read it costs a retry. On a send it tells
+ * the operator a household was not billed when it was.
+ *
+ * 70s is also longer than the server's own 60s function timeout, so when this
+ * budget runs out the server has finished or been stopped: a re-read of what
+ * it writes is then the true answer, which `InvoiceDetail` relies on.
+ */
+export const LONG_CALLABLE_TIMEOUT_MS = 70_000;
+/**
+ * #1567: the callables that get [LONG_CALLABLE_TIMEOUT_MS]. Each one either
+ * sends to a household or to the outside world (email, text, payment
+ * processor, calendar), or does slow work inline (a PDF, an AI call, a batch
+ * over many records). `fns.test.ts` checks every name is a real server export,
+ * so a rename cannot quietly drop one back to 20s.
+ */
+export const LONG_RUNNING_CALLABLES: ReadonlySet<string> = new Set([
+  // Invoices and quotes: each one sends to the household. The notice itself
+  // is queued, so these are fast once warm; a cold start is what runs long,
+  // and a false "failed" on a send is the costly kind.
+  'reviewAndSendDraftInvoice',
+  'sendInvoiceReminder',
+  'generateReceipt',
+  'resendQuote',
+  'createQuote',
+  // A PDF rendered and uploaded inline.
+  'generateInvoicePdf',
+  // Stripe, inline.
+  'retryInvoiceCheckoutClose',
+  // Up to 500 invoices read one after another.
+  'repairInvoicePayments',
+  // Email or text sent inline, or a fan-out over many households.
+  'broadcastMessage',
+  'scheduleMarketingBlast',
+  'cancelMarketingBlast',
+  'sendExternalMessage',
+  'mintInvite',
+  'inviteKinfolkToPortal',
+  'executePrimaryRecovery',
+  'requestPasswordReset',
+  // Google Calendar, inline.
+  'pushVisitsToGoogleCalendar',
+  'syncVisitToGoogleCalendar',
+  'syncGoogleCalendarBusyEvents',
+  'listGoogleCalendars',
+  'disconnectGoogleCalendar',
+  // Reads and hashes thousands of activity-log entries.
+  'verifyActivityLogChain',
+]);
+/** The client budget for [name], in milliseconds. */
+export function callableTimeoutMs(name: string): number {
+  return LONG_RUNNING_CALLABLES.has(name) ? LONG_CALLABLE_TIMEOUT_MS : CALLABLE_TIMEOUT_MS;
+}
+/**
+ * The call got no answer inside its budget.
+ *
+ * #1567: THIS IS NOT A FAILURE, and the sentence must not say it is. The
+ * request left the device; the server may have finished it after the client
+ * stopped listening. So the message says what is known (no answer) and what
+ * to do (check before trying again), never "failed" or a bare "try again".
+ * `offlineWrite.phaseOfError` reads this class as `unknown` for the same
+ * reason it reads `LostSignalError` that way.
+ */
 export class CallableTimeoutError extends Error {
-  constructor(name: string) {
-    super(`${name} took too long to respond. Check your connection and try again.`);
+  readonly callableName: string;
+  readonly seconds: number;
+  constructor(name: string, timeoutMs: number = callableTimeoutMs(name)) {
+    const seconds = Math.round(timeoutMs / 1000);
+    super(
+      `${name} got no answer from Tribe Tails within ${seconds} seconds, so it may still have gone through. ` +
+        'Check before trying again.',
+    );
     this.name = 'CallableTimeoutError';
+    this.callableName = name;
+    this.seconds = seconds;
   }
 }
 
@@ -81,8 +179,8 @@ export class CallableNotStubbedError extends Error {
 export interface CallOptions {
   /**
    * Retry ONCE on `functions/internal`, and only that code. A deadline is left
-   * alone deliberately: the 20s timeout exists so a hang becomes a visible,
-   * operator-driven retry, and quietly doubling the wait would undo it.
+   * alone deliberately: the timeout exists so a hang becomes a visible,
+   * operator-driven decision, and quietly doubling the wait would undo it.
    */
   idempotent?: boolean;
 }
@@ -120,7 +218,8 @@ export async function call<TReq, TRes>(
   // as well as writes — `readOnlySession.ts` gives the reasoning for refusing
   // reads too, and it is unchanged.
   if (!isConnected()) throw new OfflineCallError(name);
-  const fn = httpsCallable<TReq, TRes>(functions, name, { timeout: CALLABLE_TIMEOUT_MS });
+  const timeoutMs = callableTimeoutMs(name);
+  const fn = httpsCallable<TReq, TRes>(functions, name, { timeout: timeoutMs });
   let retriedInternal = false;
   for (;;) {
     try {
@@ -135,7 +234,7 @@ export async function call<TReq, TRes>(
         // Deliberately BEFORE the revocation check and returning early: a
         // deadline is a network fact, never a statement about the session, and
         // the relabelled error carries none of the server's tags anyway.
-        throw new CallableTimeoutError(name);
+        throw new CallableTimeoutError(name, timeoutMs);
       }
       // `functions/internal` is what the SDK reports for ANY transport failure:
       // `postJSON` swallows the fetch rejection and returns `status: 0`, which
@@ -169,6 +268,8 @@ export async function call<TReq, TRes>(
       // under way before the caller's own error handling paints anything, and it
       // rethrows regardless: this reacts to the error, it does not consume it.
       await reactToCallableError(err);
+      // #1592: after the revocation check, which reads the server's own text.
+      if (err instanceof FirebaseError) plainForOperator(name, err);
       // #807: the signal went between the preflight above and this answer, so
       // the request WAS away and its fate is not knowable from here. Relabel
       // at the one moment that is true, rather than leaving a screen to ask a

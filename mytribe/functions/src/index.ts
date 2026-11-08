@@ -430,6 +430,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // settlement authority and `firestore.rules` grants no client any access to it,
   // so this callable is the only way a detail screen can show what was paid.
   getInvoiceLedger: () => require('./admin/getInvoiceLedger'),
+  // #1609: who a reminder or a draft send will reach, and by which channel,
+  // read before the operator confirms it. Read-only.
+  previewInvoiceNotice: () => require('./admin/previewInvoiceNotice'),
   // The staff payment browser's read. `getInvoiceLedger` above answers "what was
   // paid against THIS invoice"; this answers "what has been paid, across
   // households", which that callable refuses to degenerate into. Cursored by
@@ -464,9 +467,12 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // able to exist beside it (preview the audience, list the campaigns, call one
   // back before it fires).
   previewMarketingBlastAudience: () => require('./admin/marketingBlasts'),
+  previewMarketingBlastCopy: () => require('./admin/marketingBlasts'),
   listMarketingBlasts: () => require('./admin/marketingBlasts'),
   cancelMarketingBlast: () => require('./admin/marketingBlasts'),
   addInternalBookingNote: () => require('./admin/addInternalBookingNote'),
+  // #1580: the one internal-notes list on a visit, filtered by the caller's role.
+  listVisitInternalNotes: () => require('./admin/listVisitInternalNotes'),
   saveTemplate: () => require('./admin/saveTemplate'),
   previewEmailTemplate: () => require('./admin/previewEmailTemplate'),
   getEmailFrame: () => require('./admin/emailFrameSettings'),
@@ -574,6 +580,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   listAudienceSegments: () => require('./admin/audienceSegments'),
   deleteAudienceSegment: () => require('./admin/audienceSegments'),
   broadcastMessage: () => require('./admin/broadcastMessage'),
+  previewBroadcastAudience: () => require('./admin/previewBroadcastAudience'),
   // #823. Watching and stopping a broadcast whose fan-out outlived its callable.
   getBroadcastProgress: () => require('./admin/broadcastProgress'),
   stopBroadcast: () => require('./admin/broadcastProgress'),
@@ -581,7 +588,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   getConversationThread: () => require('./admin/conversations'),
   replyToConversation: () => require('./admin/conversations'),
   markConversationRead: () => require('./admin/conversations'),
+  markConversationUnread: () => require('./admin/conversations'),
   markAllThreadsRead: () => require('./admin/markAllThreadsRead'),
+  getRecordingAudio: () => require('./admin/getRecordingAudio'),
   sendKinfolkMessage: () => require('./portal/sendKinfolkMessage'),
   getMyConversation: () => require('./portal/sendKinfolkMessage'),
   markThreadRead: () => require('./portal/sendKinfolkMessage'),
@@ -602,10 +611,17 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   ingestKinTale: () => require('./admin/ingestKinTale'),
   listFormSchemas: () => require('./admin/listFormSchemas'),
   deleteFormSchema: () => require('./admin/deleteFormSchema'),
+  // #1591: what a KinTale template is used by, for the delete / archive confirm.
+  getKinTaleTemplateUsage: () => require('./admin/getKinTaleTemplateUsage'),
   // Run-4 #7b: shared bank of common KinTale checklist items (list + save-to-bank).
   listChecklistBank: () => require('./admin/checklistBank'),
   saveChecklistBankItem: () => require('./admin/checklistBank'),
   triageOrphanReport: () => require('./admin/triageOrphanReport'),
+  // #1631: delete an unsent kin_care_reports draft (owner only).
+  deleteKinTaleReportDraft: () => require('./admin/deleteKinTaleReportDraft'),
+  // #1563: send a generated KinTale draft to its household, or delete an unsent one.
+  publishGeneratedDraft: () => require('./admin/kinTaleDrafts'),
+  deleteGeneratedDraft: () => require('./admin/kinTaleDrafts'),
   // B2: the "Needs triage" read side. Web has no Firestore path to this list
   // that stays correct as the collection grows past KINTALES_QUERY's 200-row
   // cap; see listOrphanReports.ts for why a dedicated callable, not a filter.
@@ -672,6 +688,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // failure mode is an operator's day being wrong. Issue #397.
   onKinCareSessionCalendarSync: () => require('./triggers/onKinCareSessionCalendarSync'),
   onBookingEnvelopeCreate: () => require('./triggers/onBookingEnvelopeCreate'),
+  // #1647: stamps a request's `kincare.requested` rows once the request is
+  // booked or declined, so no client offers Approve/Deny on an answered request.
+  onBookingEnvelopeResolve: () => require('./triggers/onBookingEnvelopeResolve'),
   onFamilyKinWrite: () => require('./triggers/onFamilyKinWrite'),
   onFlatKinWrite: () => require('./triggers/onFlatKinWrite'),
   onFamilyProfileWrite: () => require('./triggers/onFamilyProfileWrite'),

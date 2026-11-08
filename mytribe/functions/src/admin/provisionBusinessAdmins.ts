@@ -16,6 +16,7 @@ import {
   type RosterChange,
 } from '../lib/businessAdmins';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { resolveStaffIdentities } from '../lib/staffIdentity';
 
 /**
  * The write surface for `businessSettings/admins`, the roster that decides who
@@ -246,8 +247,16 @@ const ROSTER_PATH = 'businessSettings/admins.uids';
 /** One person on the roster, resolved from a uid to somebody with a name. */
 export interface BusinessAdminMember {
   uid: string;
-  /** From `staff/{uid}`. Null when there is no staff record, or it has no name. */
+  /**
+   * The name to show (#1564): `staff/{uid}`'s, else the sign-in account's
+   * display name, else an email. Null only when none of those exists.
+   */
   displayName: string | null;
+  /**
+   * From `staff/{uid}`. Not where business email goes: every business email
+   * goes to `businessEmail` in business settings (operator ruling, 2026-11-05
+   * docket), which this response carries as `businessEmail`.
+   */
   email: string | null;
   /**
    * False when no `staff/{uid}` document exists for this uid. A real state, not
@@ -271,6 +280,19 @@ export interface ListBusinessAdminsResult {
   rosterPath: string;
   /** Why there is nobody, when there is nobody. Null when there are members. */
   reason: string | null;
+  /**
+   * #1564: where every business email goes, `businessEmail` in business
+   * settings (operator ruling, 2026-11-05 docket). '' when unset, and then
+   * business emails are skipped until it is filled.
+   */
+  businessEmail: string;
+}
+
+/** `business_settings/business_settings.businessEmail`, trimmed; '' when unset. */
+async function readBusinessEmail(): Promise<string> {
+  const snap = await db().collection('business_settings').doc('business_settings').get();
+  const raw = snap.data()?.['businessEmail'];
+  return typeof raw === 'string' ? raw.trim() : '';
 }
 
 /**
@@ -299,7 +321,7 @@ export async function listBusinessAdminsHandler(
   _req: CallableRequest<unknown>,
 ): Promise<ListBusinessAdminsResult> {
   initSentry();
-  const settings = await readBusinessAdmins();
+  const [settings, businessEmail] = await Promise.all([readBusinessAdmins(), readBusinessEmail()]);
   const fromRoster = settings.uids.length > 0;
   const uids = fromRoster ? settings.uids : operatorAllowlistUids();
 
@@ -308,37 +330,34 @@ export async function listBusinessAdminsHandler(
       members: [],
       source: 'none',
       rosterPath: ROSTER_PATH,
+      // #1592: the operator reads this sentence verbatim on the notification
+      // gate (web and Android), so it names no database path and no function.
+      // Computed per call and never stored: no saved row carries the old text.
       reason:
-        `${ROSTER_PATH} is empty and this function has no operator allowlist to fall back on, `
-        + 'so a business notification currently reaches nobody and fails to dispatch. '
-        + 'Call provisionBusinessAdmins as an operator to seed the roster.',
+        'Nobody is on the business admin roster, so business notifications reach nobody '
+        + 'and fail to send until someone is added to it.',
+      businessEmail,
     };
   }
 
   const defaultAssigneeUid = defaultAssigneeUidFrom(settings);
-  const firestore = db();
-  const snaps = await firestore.getAll(...uids.map((uid) => firestore.collection('staff').doc(uid)));
-  const members: BusinessAdminMember[] = uids.map((uid, i) => {
-    const snap = snaps[i];
-    const data = (snap?.exists ? snap.data() : undefined) as
-      | { displayName?: unknown; email?: unknown }
-      | undefined;
-    const displayName = typeof data?.displayName === 'string' ? data.displayName.trim() : '';
-    const email = typeof data?.email === 'string' ? data.email.trim() : '';
-    return {
-      uid,
-      displayName: displayName || null,
-      email: email || null,
-      hasStaffRecord: snap?.exists === true,
-      defaultAssignee: uid === defaultAssigneeUid,
-    };
-  });
+  // #1564: a name, never a bare uid: the staff record's, else the sign-in
+  // account's display name, else an email.
+  const identities = await resolveStaffIdentities(uids, 'listBusinessAdmins');
+  const members: BusinessAdminMember[] = identities.map((who) => ({
+    uid: who.uid,
+    displayName: who.displayName,
+    email: who.email,
+    hasStaffRecord: who.hasStaffRecord,
+    defaultAssignee: who.uid === defaultAssigneeUid,
+  }));
 
   return {
     members,
     source: fromRoster ? 'roster' : 'operatorAllowlist',
     rosterPath: ROSTER_PATH,
     reason: null,
+    businessEmail,
   };
 }
 

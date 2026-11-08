@@ -1,4 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// #1574: the fixtures below are fixed 2026 dates, and every reschedule path now
+// refuses a start that has already passed. The clock is pinned before the
+// earliest of them so these tests keep testing what they were written for.
+// Only Date is faked: timers and promises run as normal.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
@@ -38,12 +50,12 @@ describe('createKinCareSession', () => {
       startTime: '2026-06-10T13:00:00Z', endTime: '2026-06-10T14:00:00Z',
     }));
     expect(res.ok).toBe(true);
-    const add = ctx.adds.find((a) => a.collection === 'kin_care_sessions');
+    const add = ctx.writes.find((w) => w.path.startsWith('kin_care_sessions/'));
     expect(add).toBeDefined();
     expect(add?.data.status).toBe('SCHEDULED');
     expect(add?.data.kinfolkId).toBe('kf1');
     expect(add?.data.kinIds).toEqual(['k1']);
-    expect(res.sessionId).toBe(add?.id);
+    expect(add?.path).toBe(`kin_care_sessions/${res.sessionId}`);
   });
 
   it('HAPPY: writes a CREATE_KINCARE_SESSION audit entry', async () => {

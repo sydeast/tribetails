@@ -38,7 +38,7 @@ describe('resolveRecipients(resolverOverride) — multi-audience refactor #43', 
       { key: 't.k', recipientUid: 'u1', data: {} },
       'businessAdmins',
     );
-    expect(res).toEqual([{ uid: 'admin1', collection: 'staff' }]);
+    expect(res).toEqual([{ uid: 'admin1', collection: 'staff', businessRoster: true }]);
   });
 
   it('HAPPY: omitted override falls back to def.recipientResolver', async () => {

@@ -2,12 +2,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { ToastProvider } from '../components/Toast';
 import { type Async } from '../lib/async';
 import { type KinTaleEntry } from '../api/kinTales';
 import { type Kin } from '../api/directory';
 
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+const { useCollection, useDocById } = vi.hoisted(() => ({ useCollection: vi.fn(), useDocById: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
+
+// #1631: the delete callable. The gate (`canDeleteKinTaleDraft`) stays real.
+const { deleteKinTaleReportDraft } = vi.hoisted(() => ({ deleteKinTaleReportDraft: vi.fn() }));
+vi.mock('../api/kinTaleReportDraftDelete', async (orig) => ({
+  ...(await orig<typeof import('../api/kinTaleReportDraftDelete')>()),
+  deleteKinTaleReportDraft,
+}));
 
 const {
   getKinTaleComments,
@@ -46,6 +54,16 @@ vi.mock('../api/formSchemasWrite', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/formSchemasWrite')>()),
   getFormSchema,
   saveFormSchema,
+}));
+
+// #1592: services are named from the KinCare catalog. "Long walk" runs 60
+// minutes, so a stored `visit_60` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({
+    serviceRates: { 'Long walk': '45' },
+    serviceDurations: { 'Long walk': '60' },
+    timeBlocks: [],
+  }),
 }));
 
 import { KinTaleDetail } from './KinTaleDetail';
@@ -105,7 +123,7 @@ function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
 function templateDoc(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     _id: 'tmpl1',
-    name: 'Dog walk',
+    name: 'Long walk',
     petMoodEnabled: true,
     moodOptions: [
       { key: 'happy', label: 'Happy', emoji: '😊', order: 0 },
@@ -135,6 +153,9 @@ function mockStreams(opts: {
 
 beforeEach(() => {
   useCollection.mockReset();
+  // The by-id fallback read. Default: no such document, which is what a
+  // missing id resolves to.
+  useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
   getKinTaleComments.mockReset().mockResolvedValue([]);
   addKinTaleComment.mockReset();
   getKinTaleReaction.mockReset().mockResolvedValue({ loved: false, loveCount: 0 });
@@ -151,12 +172,41 @@ beforeEach(() => {
 });
 
 describe('KinTaleDetail: report resolution', () => {
+  it('#1592: the heading pill and the Visit panel name the KinCare, never the stored key', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ serviceType: 'visit_60' })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+
+    expect(await screen.findAllByText('Long walk')).toHaveLength(2);
+    expect(screen.queryByText('visit_60')).toBeNull();
+  });
+
   it('shows an honest not-found message for an unknown kinTaleId, never a silent blank', async () => {
     mockStreams({ reports: { status: 'ready', data: [] } });
     render(<KinTaleDetail kinTaleId="ghost" onClose={vi.fn()} />);
     expect(await screen.findByText(/no kintale found/i)).toBeInTheDocument();
   });
 
+  it('#1563: opens a report the 200-row stream does not hold, by reading it by id', async () => {
+    mockStreams({ reports: { status: 'ready', data: [] } });
+    useDocById.mockImplementation((path: string, id: string | null) =>
+      path === 'kin_care_reports' && id === 'old-draft'
+        ? { status: 'ready', data: report({ _id: 'old-draft', title: 'An old draft', status: 'DRAFT' }) }
+        : { status: 'ready', data: null },
+    );
+    render(<KinTaleDetail kinTaleId="old-draft" onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { level: 1, name: 'An old draft' })).toBeInTheDocument();
+    expect(screen.queryByText(/no kintale found/i)).not.toBeInTheDocument();
+  });
+  it('#1563: does not read by id while the stream already holds the report', () => {
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(useDocById).toHaveBeenCalledWith('kin_care_reports', null);
+  });
+  it('#1563: waits on the by-id read rather than claiming not-found early', () => {
+    mockStreams({ reports: { status: 'ready', data: [] } });
+    useDocById.mockReturnValue({ status: 'loading' });
+    render(<KinTaleDetail kinTaleId="old-draft" onClose={vi.fn()} />);
+    expect(screen.queryByText(/no kintale found/i)).not.toBeInTheDocument();
+  });
   it('surfaces a report-stream error, never a false empty', async () => {
     mockStreams({ reports: { status: 'error', message: 'permission-denied' } });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
@@ -830,5 +880,81 @@ describe('KinTaleDetail: custom form_schemas answers', () => {
     mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
     expect(await screen.findByText(/custom fields failed to load: permission-denied/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1631: an unsent KinTale report draft had no Delete on any client. The
+ * detail offers one on a deletable draft when the route wires `onDeleted`, asks
+ * first, calls the server, and leaves.
+ */
+describe('KinTaleDetail: Delete draft (#1631)', () => {
+  const draftRow = () => report({ status: 'DRAFT', sentAt: '', sentVia: '' });
+
+  beforeEach(() => {
+    deleteKinTaleReportDraft.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('deletes an unsent draft after the confirm, then calls onDeleted', async () => {
+    mockStreams({ reports: { status: 'ready', data: [draftRow()] } });
+    const onDeleted = vi.fn();
+    render(
+      <ToastProvider>
+        <KinTaleDetail kinTaleId="tale1" onDeleted={onDeleted} onClose={vi.fn()} />
+      </ToastProvider>,
+    );
+    await user.click(await screen.findByRole('button', { name: 'Delete draft' }));
+    const dialog = screen.getByRole('dialog', { name: 'Delete this draft?' });
+    expect(within(dialog).getByText(/The Whitfields has not been sent/)).toBeInTheDocument();
+    expect(deleteKinTaleReportDraft).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledOnce());
+    expect(deleteKinTaleReportDraft).toHaveBeenCalledWith('tale1');
+    expect(await screen.findByText('Draft deleted.')).toBeInTheDocument();
+  });
+
+  it('keeps the dialog open and names the reason when the server refuses', async () => {
+    deleteKinTaleReportDraft.mockRejectedValue(new Error('This KinTale has a send time, so the household may have it.'));
+    mockStreams({ reports: { status: 'ready', data: [draftRow()] } });
+    const onDeleted = vi.fn();
+    render(
+      <ToastProvider>
+        <KinTaleDetail kinTaleId="tale1" onDeleted={onDeleted} onClose={vi.fn()} />
+      </ToastProvider>,
+    );
+    await user.click(await screen.findByRole('button', { name: 'Delete draft' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText(/has a send time/)).toBeInTheDocument();
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it('offers no Delete on a sent KinTale', async () => {
+    render(
+      <ToastProvider>
+        <KinTaleDetail kinTaleId="tale1" onDeleted={vi.fn()} onClose={vi.fn()} />
+      </ToastProvider>,
+    );
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+  });
+
+  it('offers no Delete on an untriaged migration orphan', async () => {
+    mockStreams({
+      reports: { status: 'ready', data: [report({ status: 'DRAFT', sentAt: '', kinfolkId: '', sentVia: 'legacy_orphan' })] },
+    });
+    render(
+      <ToastProvider>
+        <KinTaleDetail kinTaleId="tale1" onDeleted={vi.fn()} onClose={vi.fn()} />
+      </ToastProvider>,
+    );
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+  });
+
+  it('offers no Delete when onDeleted is not wired (no live no-op)', async () => {
+    mockStreams({ reports: { status: 'ready', data: [draftRow()] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
   });
 });

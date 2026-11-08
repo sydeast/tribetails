@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
-import { dayKey, formatWhen, type FsTime } from './time';
+import { dayKey, formatClock, type FsTime } from './time';
 import { localDateIso } from './invoiceFormat';
 
 /**
@@ -56,17 +56,12 @@ export function sessionDayKey(iso: string): string {
 }
 
 /**
- * LOCAL `HH:mm` clock time for one session ISO field. Reuses `formatWhen`'s
- * `MM-DD HH:mm` in full and takes only the time half (`.slice(6)`), rather than
- * re-deriving hour/minute padding here, the day is already carried by the row's
- * day-group header, so repeating it per-row would be noise, not a second AO-18
- * check. The `'(no time)'` fallback is returned verbatim (it is shorter than 6
- * characters would slice cleanly to anyway, so it is special-cased rather than
- * silently truncated).
+ * LOCAL `HH:mm` clock time for one session ISO field, through `formatClock`
+ * (#1599). The row's day-group header already carries the day, so repeating
+ * it per-row would be noise. `'(no time)'` when unparseable.
  */
 export function sessionClock(iso: string): string {
-  const full = formatWhen(sessionTimeOf(iso));
-  return full === '(no time)' ? full : full.slice(6);
+  return formatClock(sessionTimeOf(iso));
 }
 
 /**
@@ -427,6 +422,26 @@ export function sessionPhase(row: PhaseRow, todayIso: string): SessionPhase | nu
   return diff >= -1 ? 'upcoming' : 'overdue';
 }
 
+/**
+ * #1607: THE one definition of overdue, shared by Auntie Time's Overdue group
+ * and the Bookings list's OVERDUE pill: a visit still on the books whose day is
+ * more than a day behind today (`sessionPhase`'s own rule, issue #702).
+ */
+export function isOverdueSession(row: PhaseRow, todayIso: string): boolean {
+  return sessionPhase(row, todayIso) === 'overdue';
+}
+
+/**
+ * How many rows Auntie Time files under its Overdue heading. Home's Today's
+ * Pack reads this, so the number on Home is the number on the board by
+ * construction: both call `sessionPhase`, and Home reads the same
+ * `sessionsWindowQuery` range the board pages through.
+ */
+export function overdueSessionCount(rows: readonly PhaseRow[], todayIso: string): number {
+  let n = 0;
+  for (const row of rows) if (isOverdueSession(row, todayIso)) n += 1;
+  return n;
+}
 /** One phase's rows, still sub-grouped by local day so the day headers survive. */
 export interface SessionPhaseGroup<T> {
   phase: SessionPhase;

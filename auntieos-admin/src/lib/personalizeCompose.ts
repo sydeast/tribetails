@@ -53,13 +53,19 @@ export interface PersonalizeMessageType {
    * The channel approving this type actually sends over, or `false` when
    * approving only promotes the draft and writes the audit entry.
    *
-   * Only email and sms are ever true, because `sendExternalMessage` speaks those
-   * two and nothing else. `push` in this table is a COPY FORMAT, not a delivery
+   * Email and sms go out through `sendExternalMessage`, which speaks those two
+   * and nothing else. `push` in this table is a COPY FORMAT, not a delivery
    * route: there is no 1:1 push callable, so a push draft is written here and
-   * carried elsewhere. A KinTale goes out through the KinTale flow, and a Blog,
-   * Social or General post has no single destination at all.
+   * carried elsewhere. A Blog, Social or General post has no single destination
+   * at all.
+   *
+   * `kintale` (#1563): a KinTale draft is sent to its household's portal by the
+   * `publishGeneratedDraft` callable, which writes the SENT `kin_care_reports`
+   * doc the portal lists and `onKinTaleCreate` announces. Before #1563 this
+   * type was `false`, so approving a KinTale stamped the draft and reached
+   * nobody.
    */
-  deliverable: false | 'email' | 'sms';
+  deliverable: false | 'email' | 'sms' | 'kintale';
   /**
    * Whether to spend the second model call on a title.
    *
@@ -100,7 +106,7 @@ export const PERSONALIZE_MESSAGE_TYPES: readonly PersonalizeMessageType[] = [
   { key: 'social_post', label: 'Social', needsRecipient: false, deliverable: false, wantsTitle: false },
   { key: 'blog_post', label: 'Blog', needsRecipient: false, deliverable: false, wantsTitle: true },
   { key: 'general', label: 'General', needsRecipient: true, deliverable: false, wantsTitle: false },
-  { key: 'visit_report', label: 'KinTale', needsRecipient: true, deliverable: false, wantsTitle: true },
+  { key: 'visit_report', label: 'KinTale', needsRecipient: true, deliverable: 'kintale', wantsTitle: true },
 ];
 
 /** Archive `Tone` enum, wire keys verbatim (they reach the model as `tone_hint`). */
@@ -200,10 +206,11 @@ export function generateBlocker(s: PersonalizeFormState): string | null {
 /**
  * Why this draft cannot be approved yet, or null.
  *
- * The contact-method and subject rules only apply to a type that actually
- * DELIVERS. Approving a KinTale report promotes the draft and writes an audit
- * entry; it sends nothing, so demanding a phone number for it would block a
- * legitimate action on a fact the action does not use.
+ * The contact-method and subject rules only apply to a type that sends over
+ * that channel. A KinTale goes to the household's portal (#1563), so it needs a
+ * household and nothing else; demanding a phone number for it would block a
+ * send on a fact the send does not use. Push, Social, Blog and General send
+ * nothing from here and need nothing.
  */
 export function approveBlocker(
   s: PersonalizeFormState,
@@ -221,6 +228,11 @@ export function approveBlocker(
 
   if (def.deliverable === 'email' && s.subject.trim() === '') return 'Email needs a subject.';
 
+  // A KinTale goes to the household's portal, so it needs a household and
+  // nothing else: no phone, no email, no subject.
+  if (def.deliverable === 'kintale') {
+    return kf ? null : 'This KinTale is not addressed to a household. Choose one before sending.';
+  }
   const name = kf ? kinfolkDisplayName(kf) : 'This household';
   if (def.deliverable === 'email' && str(kf?.email).trim() === '') {
     return `${name} has no email address on file. Add one in Directory before sending.`;
@@ -262,18 +274,22 @@ export function buildGeneratePayload(
   };
 }
 
-/** The archive's draft-callout detail line: whatever the response actually told us, joined with the archive's separator. */
+/**
+ * The draft callout's detail line: who it is for and what kind of message it
+ * is, joined with the archive's separator. #1592: the model name and the draft
+ * id used to ride along, and the type showed as its key ("visit_report"); the
+ * operator reads neither, so the type is its picker label and the rest is gone.
+ */
 export function draftSubtitle(r: {
   kinfolk_name: string | null;
   communication_type: string;
-  model: string | null;
-  draft_id: string | null;
+  model?: string | null;
+  draft_id?: string | null;
 }): string {
+  const type = PERSONALIZE_MESSAGE_TYPES.find((t) => t.key === r.communication_type)?.label ?? r.communication_type;
   return [
     r.kinfolk_name ? `for ${r.kinfolk_name}` : null,
-    r.communication_type,
-    r.model,
-    r.draft_id ? `draft #${r.draft_id}` : null,
+    type,
   ]
     .filter((p): p is string => p !== null && p !== '')
     .join(' · ');

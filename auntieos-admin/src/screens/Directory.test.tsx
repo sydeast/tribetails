@@ -64,6 +64,8 @@ vi.mock('./KinView', () => ({
 // Firestore of their own, each covered by its own suite. Unmocked here they
 // went to production (#1138), so each is answered at its api seam, the way
 // KinfolkProfile.test.tsx and AddKinDialog.test.tsx answer them.
+// #1603: the profile's Invite to portal reads listMembers; its own suite covers it.
+vi.mock('../components/PortalInviteButton', () => ({ PortalInviteButton: () => null }));
 vi.mock('../api/accountCredit', () => ({
   getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'kf1', accountBalanceCents: 0, credits: [], uses: [] }),
   giveAccountCredit: vi.fn(),
@@ -85,6 +87,12 @@ vi.mock('../api/householdData', async (orig) => ({
   ...(await orig<typeof import('../api/householdData')>()),
   getHouseholdData: vi.fn().mockResolvedValue(null),
 }));
+// #1592: the household's visit rows name their service from the KinCare
+// catalog (`useBookingCatalog`, a business_settings read). Not under test here.
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
+}));
+
 import { Directory } from './Directory';
 
 function fakeTs(iso: string): Timestamp {
@@ -378,6 +386,28 @@ describe('Directory screen, Kin tab', () => {
     await userEvent.click(screen.getByRole('tab', { name: /^kin(\s|·|$)/i }));
   }
 
+  /** #1602: two kin named Mia could not be told apart; each card names its household. */
+  it('#1602: each kin card names its household', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Dre', lastName: 'East' }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Rae', lastName: 'Wren' }),
+      ],
+    };
+    kinAsync = {
+      status: 'ready',
+      data: [kinRow({ _id: 'a', name: 'Mia', kinfolkId: 'kf1' }), kinRow({ _id: 'b', name: 'Mia', kinfolkId: 'kf2' })],
+    };
+    render(<Directory />);
+    await openKinTab();
+    const households = screen.getAllByTestId('kin-card-household').map((el) => el.textContent);
+    expect(households).toHaveLength(2);
+    expect(new Set(households).size).toBe(2);
+    expect(households.join(' ')).toMatch(/East/);
+    expect(households.join(' ')).toMatch(/Wren/);
+  });
+
   it('renders every active kin as a standalone card', async () => {
     kinAsync = {
       status: 'ready',
@@ -389,6 +419,26 @@ describe('Directory screen, Kin tab', () => {
     expect(screen.queryByText('Gravy')).toBeNull();
   });
 
+  const inactiveAndActive = [
+    kinRow({ _id: 'a', name: 'Biscuit', status: 'active' }),
+    kinRow({ _id: 'b', name: 'Sandbox Bird', status: 'inactive' }),
+  ];
+  it('lists inactive pets under "All kin", and drops them under "In care" (#1601)', async () => {
+    kinAsync = { status: 'ready', data: inactiveAndActive };
+    render(<Directory />);
+    await openKinTab();
+    expect(screen.getByText('Sandbox Bird')).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Filter kin by status' }), 'inCare');
+    expect(screen.getByText('Biscuit')).toBeInTheDocument();
+    expect(screen.queryByText('Sandbox Bird')).toBeNull();
+  });
+  it('opens on the Kin tab already narrowed to pets in care when Home sends it there (#1601)', () => {
+    kinAsync = { status: 'ready', data: inactiveAndActive };
+    render(<Directory initialTab="kin" initialKinInCare />);
+    expect(screen.getByText('Biscuit')).toBeInTheDocument();
+    expect(screen.queryByText('Sandbox Bird')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Filter kin by status' })).toHaveValue('inCare');
+  });
   it('search filters kin by species or breed', async () => {
     kinAsync = {
       status: 'ready',

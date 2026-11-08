@@ -25,6 +25,7 @@ import { GhostButton } from '../components/Buttons';
 import { ExternalSendPanel } from '../components/ExternalSendPanel';
 import { CommunicateCompose } from './CommunicateCompose';
 import { CommunicatePersonalize } from './CommunicatePersonalize';
+import { navKicker } from '../lib/nav';
 import './Communicate.css';
 
 /**
@@ -102,7 +103,7 @@ const MODES: readonly ModeDef[] = [
   },
 ];
 
-type FilterKey = 'all' | 'email' | 'sms' | 'push';
+type FilterKey = 'all' | 'email' | 'sms' | 'push' | 'broadcast' | 'message';
 
 interface FilterDef {
   key: FilterKey;
@@ -115,9 +116,17 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'email', label: 'Email', test: (c) => c === 'email' },
   { key: 'sms', label: 'Text', test: (c) => c === 'sms' },
   { key: 'push', label: 'Push', test: (c) => c === 'push' },
+  { key: 'broadcast', label: 'Broadcasts', test: (c) => c === 'broadcast' },
+  { key: 'message', label: 'Inbox replies', test: (c) => c === 'message' },
 ];
 
-export function Communicate() {
+export interface CommunicateProps {
+  /** #1563: a `generated_drafts` id to open in Personalize for review, from KinTales or Home. */
+  draftId?: string | undefined;
+  /** Opens a sent KinTale; passed through to Personalize's success banner. */
+  onOpenKinTale?: ((reportId: string) => void) | undefined;
+}
+export function Communicate({ draftId, onOpenKinTale }: CommunicateProps = {}) {
   const [mode, setMode] = useState<Mode>('personalize');
 
   const { getTabProps } = useRovingTabs({
@@ -132,7 +141,7 @@ export function Communicate() {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Communicate"
+        kicker={navKicker('communicate')}
         title="Talk to your"
         accentTail="kinfolk"
         subtitle={active.subtitle}
@@ -159,7 +168,7 @@ export function Communicate() {
         {/* The compose surfaces mount per mode rather than hide with CSS, so a
             surface's in-flight state (a draft, a confirm) belongs to the visit
             that started it. */}
-        {mode === 'personalize' && <CommunicatePersonalize />}
+        {mode === 'personalize' && <CommunicatePersonalize draftId={draftId} onOpenKinTale={onOpenKinTale} />}
         {mode === 'broadcast' && <CommunicateCompose />}
         {/* Mounted once, outside the mode switch, so a half-written external
             message survives flipping Personalize to Broadcast; it belongs to
@@ -206,7 +215,7 @@ function RecentSends() {
           live &&
           setSends({
             status: 'error',
-            message: `listRecentSends failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Could not load: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );
@@ -240,7 +249,7 @@ function RecentSends() {
         loading={<LoadingRow label="Loading recent sends…" className="communicate__hint" />}
         empty={
           <EmptyHint>
-            No external sends yet. Sends from Communicate show here with delivery and open counts.
+            Nothing sent yet. Emails, texts, broadcasts and Inbox replies show here, newest first.
           </EmptyHint>
         }
       >
@@ -300,6 +309,13 @@ interface SendRowProps {
   row: RecentSend;
 }
 
+/** "12 kinfolk · Email, Text" for a broadcast row (#1610). Pure. */
+export function broadcastSummaryLine(row: RecentSend): string {
+  const who = `${String(row.recipientCount ?? 0)} kinfolk`;
+  const via = (row.channels ?? []).map((c) => channelLabel(c)).join(', ');
+  return via !== '' ? `${who} · ${via}` : who;
+}
+
 function SendRow({ row }: SendRowProps) {
   const counts = sendCountsOf(row.counts);
   const state = sendStateOf(counts, row.channel);
@@ -316,7 +332,12 @@ function SendRow({ row }: SendRowProps) {
           {channelLabel(row.channel)} · {recipient}
         </span>
         {subject !== '' ? <span className="communicate__row-subject">{subject}</span> : null}
-        <span className="communicate__row-summary">{engagementSummary(row.channel, counts)}</span>
+        {row.kind === 'reply' && row.preview ? <span className="communicate__row-subject">{row.preview}</span> : null}
+        <span className="communicate__row-summary">
+          {row.kind === 'broadcast'
+            ? broadcastSummaryLine(row)
+            : engagementSummary(row.channel, counts)}
+        </span>
       </span>
       <span className="communicate__row-side">
         <time className="communicate__row-time" dateTime={sendMachineTime(row.sentAtMs)}>

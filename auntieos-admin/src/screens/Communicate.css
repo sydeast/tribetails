@@ -57,7 +57,8 @@
   outline: var(--border-emphasis) solid var(--color-primary);
   outline-offset: 2px;
 }
-.communicate__mode--active {
+.communicate__mode--active,
+.communicate__mode.communicate__mode--active:hover {
   background: var(--color-text-primary);
   color: var(--color-background);
 }
@@ -147,7 +148,8 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.communicate__tab--active {
+.communicate__tab--active,
+.communicate__tab.communicate__tab--active:hover {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-background);
@@ -222,6 +224,10 @@
 }
 .communicate__row-dot[data-channel='push'] {
   background: var(--color-tertiary);
+}
+.communicate__row-dot[data-channel='broadcast'],
+.communicate__row-dot[data-channel='message'] {
+  background: var(--color-secondary);
 }
 
 .communicate__row-who {

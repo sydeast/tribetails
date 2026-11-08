@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
@@ -17,12 +17,13 @@ function render(ui: ReactElement) {
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
-const { rescheduleBooking, assignAuntie, addBookingNote, addInternalBookingNote, getVisitAssignment } =
+const { rescheduleBooking, assignAuntie, addBookingNote, addInternalBookingNote, listVisitInternalNotes, getVisitAssignment } =
   vi.hoisted(() => ({
     rescheduleBooking: vi.fn(),
     assignAuntie: vi.fn(),
     addBookingNote: vi.fn(),
     addInternalBookingNote: vi.fn(),
+    listVisitInternalNotes: vi.fn(),
     getVisitAssignment: vi.fn(),
   }));
 vi.mock('../api/bookingsWrite', async (orig) => ({
@@ -31,6 +32,7 @@ vi.mock('../api/bookingsWrite', async (orig) => ({
   assignAuntie,
   addBookingNote,
   addInternalBookingNote,
+  listVisitInternalNotes,
   getVisitAssignment,
 }));
 
@@ -39,6 +41,9 @@ vi.mock('../api/staff', async (orig) => ({
   ...(await orig<typeof import('../api/staff')>()),
   listStaff,
 }));
+// #1607: the notes name their staff writer through the shared roster read.
+const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() } }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames.current }));
 
 const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
 vi.mock('../api/kinfolkProfile', async (orig) => ({
@@ -47,6 +52,18 @@ vi.mock('../api/kinfolkProfile', async (orig) => ({
 }));
 
 import { BookingDetailModal } from './BookingDetailModal';
+
+// #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
+// into the past (nor a New visit scheduled there). The clock is pinned before
+// the earliest of them; only Date is faked, so userEvent's timers run as normal.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 
 // #1155: the DEVICE is America/Los_Angeles (UTC-7 in July) and the BUSINESS is
 // America/Chicago (UTC-5), so a stored "...Z" instant must be re-read on the
@@ -104,6 +121,8 @@ beforeEach(() => {
   assignAuntie.mockReset();
   addBookingNote.mockReset();
   addInternalBookingNote.mockReset();
+  listVisitInternalNotes.mockReset();
+  listVisitInternalNotes.mockResolvedValue({ notes: [], canMarkAdminOnly: true, hasBookingRecord: true });
   getVisitAssignment.mockReset();
   getVisitAssignment.mockResolvedValue({ assignedAuntieUid: null, auntieDisplayName: null });
   listStaff.mockReset();
@@ -131,7 +150,22 @@ function factValue(label: string): HTMLElement {
   return dd as HTMLElement;
 }
 
+describe('BookingDetailModal: the request note on a booked visit (#1579)', () => {
+  it('shows the household’s request note, which approval carries as kinfolkNotes', () => {
+    open({ kinfolkNotes: 'QA- booking request test, safe to cancel', notes: '' });
+    expect(factValue('From the household')).toHaveTextContent('QA- booking request test, safe to cancel');
+    expect(screen.queryByText('Office note')).not.toBeInTheDocument();
+  });
+});
 describe('BookingDetailModal fact rows', () => {
+  it('#1592: names the requested service from the KinCare catalog, never the stored key', () => {
+    open(
+      { serviceType: '30minute' },
+      { catalog: { serviceRates: { '30Minute': '30' }, serviceDurations: {}, timeBlocks: [] } },
+    );
+    expect(factValue('Requested services')).toHaveTextContent(/^30Minute$/);
+  });
+
   it('is a real dialog, not a styled div', () => {
     open();
     expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true');
@@ -144,7 +178,9 @@ describe('BookingDetailModal fact rows', () => {
     expect(factValue('Duration')).toHaveTextContent('1 hr 30 min');
     expect(factValue('When')).toHaveTextContent('Thu, Jul 16 at 2:00 PM');
     expect(factValue('Status')).toHaveTextContent('SCHEDULED');
-    expect(factValue('Booking notes')).toHaveTextContent('Side gate is sticky.');
+    // #1580: the session's own notes text is the first row of the internal-notes list now, not a fact.
+    expect(screen.queryByText('Office note')).not.toBeInTheDocument();
+    expect(factValue('From the household')).toHaveTextContent('None on the request');
     await waitFor(() => expect(factValue('Address')).toHaveTextContent('412 Mockingbird Ln'));
     expect(getKinfolkProfile).toHaveBeenCalledWith('kf1');
   });
@@ -217,17 +253,33 @@ describe('BookingDetailModal notes', () => {
     );
   });
 
-  it('adds an internal note through the admin callable', async () => {
-    addInternalBookingNote.mockResolvedValue({ noteId: 'n2' });
+  it('adds an internal note to the visit\'s one list, by its session (#1580)', async () => {
+    addInternalBookingNote.mockResolvedValue({ noteId: 'n2', visibility: 'shared', storedOn: 'thread' });
     open();
+    await screen.findByText('No internal notes yet.');
     await user.type(screen.getByLabelText('Add an internal note'), 'Gate code changed.');
-    await user.click(screen.getByRole('button', { name: 'Save internal note' }));
+    await user.click(screen.getByRole('button', { name: 'Add note' }));
     await waitFor(() =>
-      expect(addInternalBookingNote).toHaveBeenCalledWith('kf1', 'b1', 'v1', 'Gate code changed.'),
+      expect(addInternalBookingNote).toHaveBeenCalledWith({ sessionId: 'vis_v1' }, 'Gate code changed.', 'shared'),
     );
   });
+  it('shows the same internal list Auntie Time shows, admin-only notes marked (#1580)', async () => {
+    listVisitInternalNotes.mockResolvedValue({
+      notes: [
+        { id: 'session:vis_v1', body: 'Note from Auntie Time', authorRole: 'unknown', authorName: null, createdAtMs: null, visibility: 'shared', source: 'visitRecord' },
+        { id: 'a1', body: 'Rate goes up', authorRole: 'admin', authorName: 'Syd', createdAtMs: 1_000, visibility: 'adminOnly', source: 'thread' },
+      ],
+      canMarkAdminOnly: true,
+      hasBookingRecord: true,
+    });
+    open();
+    const list = await screen.findByRole('list', { name: 'Internal notes' });
+    expect(within(list).getByText('Note from Auntie Time')).toBeInTheDocument();
+    expect(within(list).getByText('Admin only')).toBeInTheDocument();
+    expect(listVisitInternalNotes).toHaveBeenCalledWith({ sessionId: 'vis_v1' });
+  });
 
-  it('renders both existing threads oldest first', () => {
+  it('renders the kinfolk-facing thread oldest first', () => {
     mockNotes({
       kinfolk: {
         status: 'ready',
@@ -236,7 +288,6 @@ describe('BookingDetailModal notes', () => {
           { _id: 'n1', body: 'First note', createdAt: '2026-07-15T09:00:00.000Z' },
         ],
       },
-      internal: { status: 'ready', data: [{ _id: 'i1', body: 'Staff only' }] },
     });
     open();
     const thread = screen.getByRole('list', { name: 'Kinfolk-facing notes' });
@@ -244,20 +295,15 @@ describe('BookingDetailModal notes', () => {
       expect.stringContaining('First note'),
       expect.stringContaining('Second note'),
     ]);
-    expect(
-      within(screen.getByRole('list', { name: 'Internal notes' })).getByText('Staff only'),
-    ).toBeInTheDocument();
   });
 
-  it('locks BOTH composers inside the three hour cutoff and says why', async () => {
+  it('locks the kinfolk-facing composer inside the three hour cutoff and says why; internal notes stay open (#1580)', async () => {
     open({}, { nowMs: () => INSIDE_CUTOFF });
     expect(screen.getByLabelText('Add a kinfolk-facing note')).toBeDisabled();
-    expect(screen.getByLabelText('Add an internal note')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Save kinfolk-facing note' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Save internal note' })).toBeDisabled();
-    // The reason, not just a grey control: one banner per locked composer.
-    expect(screen.getAllByText(/locked/i).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText(/3 hours/i).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/3 hours/i).length).toBeGreaterThanOrEqual(1);
+    await screen.findByText('No internal notes yet.');
+    expect(screen.getByLabelText('Add an internal note')).toBeEnabled();
   });
 
   it('surfaces a note callable rejection fail-loud rather than a silent no-op', async () => {
@@ -381,6 +427,14 @@ describe('BookingDetailModal on a non-envelope (legacy flat) visit', () => {
     expect(useCollection).not.toHaveBeenCalled();
     expect(screen.getAllByText(/no visit record to attach notes to/i).length).toBeGreaterThan(0);
     expect(screen.queryByLabelText('Add a kinfolk-facing note')).toBeNull();
+  });
+  it('#1580: still lists and takes internal notes, which the server keeps on its visit record', async () => {
+    listVisitInternalNotes.mockResolvedValue({ notes: [], canMarkAdminOnly: true, hasBookingRecord: false });
+    open(legacy);
+    await screen.findByText('No internal notes yet.');
+    expect(screen.getByLabelText('Add an internal note')).toBeEnabled();
+    // An admin-only note cannot be kept apart from Aunties on such a visit, so it is not offered.
+    expect(screen.queryByRole('checkbox', { name: /admin only/i })).toBeNull();
   });
 
   it('still offers reschedule, which acts on the flat session doc', async () => {

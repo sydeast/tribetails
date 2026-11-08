@@ -20,6 +20,7 @@ import {
   buildVisualSavePayload,
   fieldsForTemplate,
   visualFieldErrors,
+  templateSavedNotice,
 } from '../lib/templateFormat';
 import { getNotificationMatrix, type NotificationCatalogEntry } from '../api/myNotifications';
 import { EmailContentEditor } from '../components/emailEditor/EmailContentEditor';
@@ -471,8 +472,8 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
       const result = await saveTemplate(payload);
       setConvertedUnsaved(false);
       setSaving(false);
-      const savedName = effective.title.trim() !== '' ? effective.title.trim() : effective.templateId.trim();
-      showToast(`Saved ${savedName}.`);
+      // #1747: the title, never the template id.
+      showToast(templateSavedNotice(effective.title));
       onSaved(result.templateId);
     } catch (err) {
       setSaving(false);
@@ -487,7 +488,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
         );
         return;
       }
-      setError(`saveTemplate failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
   }
 
@@ -529,7 +530,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
         setLiveKeyWarning(err instanceof Error ? err.message : 'This template is still in use.');
         return;
       }
-      setError(`deleteTemplate failed: ${err instanceof Error ? err.message : 'Delete failed'}`);
+      setError(`Could not delete: ${err instanceof Error ? err.message : 'Delete failed'}`);
     }
   }
 

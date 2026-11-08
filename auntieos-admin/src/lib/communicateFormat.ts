@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
-import { dayKey, formatWhen, machineWhen, type FsTime } from './time';
+import { dayKey, formatClock, machineWhen, type FsTime } from './time';
 import { sessionDayLabel, localDateIso } from './sessionFormat';
 
 /**
@@ -52,14 +52,12 @@ export function sendDayKey(ms: number): string {
 }
 
 /**
- * LOCAL `HH:mm` clock time for a send's `sentAtMs`. Reuses `formatWhen`'s
- * `MM-DD HH:mm` in full and takes only the time half (`.slice(6)`), matching
- * inboxFormat.ts's `threadClock`: the row's day group header already carries
- * the day, so repeating it per-row would be noise, not a second AO-18 check.
+ * LOCAL `HH:mm` clock time for a send's `sentAtMs`, through `formatClock`
+ * (#1599), matching inboxFormat.ts's `threadClock`: the row's day group
+ * header already carries the day.
  */
 export function sendClock(ms: number): string {
-  const full = formatWhen(sendTimeOf(ms));
-  return full === '(no time)' ? full : full.slice(6);
+  return formatClock(sendTimeOf(ms));
 }
 
 /** Machine-readable local datetime for a row's `<time dateTime={…}>` attribute. */
@@ -79,7 +77,7 @@ export { sessionDayLabel as sendDayLabel, localDateIso };
  * `sessionState` / AO-12 convention: every branch is a positive match against
  * the literal text, never "not the other one, so must be X").
  */
-export type SendChannel = 'email' | 'sms' | 'push' | 'unknown';
+export type SendChannel = 'email' | 'sms' | 'push' | 'broadcast' | 'message' | 'unknown';
 
 export function sendChannelOf(channel: string): SendChannel {
   switch (channel.trim().toLowerCase()) {
@@ -89,6 +87,11 @@ export function sendChannelOf(channel: string): SendChannel {
       return 'sms';
     case 'push':
       return 'push';
+    // #1610: Recent now lists broadcasts and Inbox replies too.
+    case 'broadcast':
+      return 'broadcast';
+    case 'message':
+      return 'message';
     default:
       return 'unknown';
   }
@@ -114,6 +117,10 @@ export function channelLabel(channel: string): string {
       return 'Text';
     case 'push':
       return 'Push';
+    case 'broadcast':
+      return 'Broadcast';
+    case 'message':
+      return 'Inbox reply';
     case 'unknown':
       return channel.trim() === '' ? 'Send' : channel.trim();
   }
@@ -185,6 +192,9 @@ export function sendStateInfo(state: SendState): SendStateInfo {
  * measured. Ports the wasm `engagementSummary` verbatim.
  */
 export function engagementSummary(channel: string, counts: SendCounts): string {
+  // #1610: a broadcast reports its reach on its own screen and a reply has no
+  // provider events, so neither waits on delivery counts here.
+  if (sendChannelOf(channel) === 'broadcast' || sendChannelOf(channel) === 'message') return 'Sent';
   const parts: string[] = [];
   if (counts.delivered > 0) parts.push(`${counts.delivered} delivered`);
   if (counts.opened > 0) parts.push(`${counts.opened} opened`);

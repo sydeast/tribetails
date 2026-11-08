@@ -66,6 +66,18 @@ vi.mock('../lib/visitTracking', () => ({
   endVisitTracking: vi.fn(),
   stopVisitTracking: vi.fn(),
 }));
+/**
+ * #1608: the operator's arrival-and-departure rule, as the board reads it.
+ * Mocked at the hook so no case reaches Firestore; null (unknown) by default,
+ * which is the "let the server decide" path every older case was written for.
+ */
+const { useArrivalRule } = vi.hoisted(() => ({ useArrivalRule: vi.fn<() => boolean | null>(() => null) }));
+vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
+}));
 import { Sessions } from './Sessions';
 
 /**
@@ -124,11 +136,14 @@ function paged(
  * hand the kin roster to the address lookup and vice versa, which is exactly the
  * confusion the card must never make.
  */
-function directory(households: Kinfolk[] = [], kin: Kin[] = []) {
+function directory(households: Kinfolk[] = [], kin: Kin[] = [], olderOverdue: SessionEntry[] = []) {
   useCollection.mockImplementation((spec: CollectionSpec) =>
     spec.path === 'kin'
       ? { status: 'ready', data: kin }
-      : { status: 'ready', data: households },
+      : // #1607: the overdue visits from before the board's window.
+        spec.path === 'kin_care_sessions'
+        ? { status: 'ready', data: olderOverdue }
+        : { status: 'ready', data: households },
   );
 }
 
@@ -272,6 +287,29 @@ describe('Auntie Time: the four phase groups', () => {
     expect(phaseCount('Recent')).toBe('1');
   });
 
+  /**
+   * #1607: Bookings marked July and August visits OVERDUE while this board's
+   * Overdue showed only six from October, because the board reads a window
+   * from 30 days back. The older ones arrive through their own query and land
+   * in the same group, counted once.
+   */
+  it('Overdue also holds the scheduled visits older than the board window, once each', () => {
+    const july = entry({ _id: 'jul', kinfolkName: 'Left In July', status: 'SCHEDULED', startTime: at(-120) });
+    const recent = entry({ _id: 'rec', kinfolkName: 'Left Last Week', status: 'SCHEDULED', startTime: at(-7) });
+    directory([], [], [july, recent]);
+    usePagedCollection.mockReturnValue(paged([recent]));
+    renderBoard();
+    expect(phaseCount('Overdue')).toBe('2');
+    expect(screen.getByText('Left In July')).toBeInTheDocument();
+    const spec = useCollection.mock.calls
+      .map((c) => c[0] as CollectionSpec)
+      .find((c) => c.path === 'kin_care_sessions');
+    expect(spec?.filters).toEqual([
+      ['status', '==', 'SCHEDULED'],
+      ['startTime', '<', expect.any(String)],
+    ]);
+  });
+
   it('sorts each visit into its own phase group', () => {
     usePagedCollection.mockReturnValue(
       paged([
@@ -387,6 +425,14 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(within(card).getByRole('button', { name: 'Undo arrived' })).toBeInTheDocument();
   });
 
+  it('#1744: the card line names the KinCare, never the stored key', () => {
+    usePagedCollection.mockReturnValue(paged([{ ...populated, serviceType: 'visit_45' }]));
+    directory(households, kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).getByText('Long walk · Biscuit & Gravy · Today · 09:00 to 09:30')).toBeInTheDocument();
+    expect(within(card).queryByText(/visit_45/)).toBeNull();
+  });
   it('wears the kit status pill in the state tone, not a chip of its own', () => {
     // The #755 fidelity pass: one capsule for every screen that shows a visit.
     // The tone is the mock's own per-state palette (arrived is teal), resolved
@@ -485,6 +531,24 @@ describe('Auntie Time: one fully populated action card', () => {
     renderBoard();
     const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
     expect(card.querySelector('.sessions__addr')).toBeNull();
+  });
+
+  /** #1602: the walk's chip read "18605" and nothing said it was incomplete. */
+  it('#1602: says an address is incomplete when it is only a number', () => {
+    usePagedCollection.mockReturnValue(paged([populated]));
+    directory([{ _id: 'kf-wren', serviceAddress: '18605' }], kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).getByText('18605', { exact: false })).toBeInTheDocument();
+    expect(within(card).getByRole('note')).toHaveTextContent('This address looks incomplete');
+  });
+
+  it('#1602: gives no hint for a full address', () => {
+    usePagedCollection.mockReturnValue(paged([populated]));
+    directory([{ _id: 'kf-wren', serviceAddress: '82 Creekside Ln, Austin TX' }], kin);
+    renderBoard();
+    const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
+    expect(within(card).queryByText(/looks incomplete/)).toBeNull();
   });
 
   it('claims a live GPS route only while ARRIVED, never on a departed visit', () => {
@@ -598,6 +662,44 @@ describe('Auntie Time: the card runs the visit', () => {
       expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
     );
     expect(patchVisitLifecycle).not.toHaveBeenCalled();
+  });
+
+  // #1608: the rule is checked before the confirm, not 18 s after it.
+  it('says what is missing instead of asking, when the rule refuses the Complete', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }));
+    expect(
+      await screen.findByText(/This visit has no arrival and departure recorded, and your settings require both/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /yes, mark it completed/i })).not.toBeInTheDocument();
+    expect(transitionBookingStatus).not.toHaveBeenCalled();
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('asks as before when the rule is off', async () => {
+    useArrivalRule.mockReturnValue(false);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await act(/^Complete$/, /yes, mark it completed/i);
+    expect(transitionBookingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
+    );
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('asks as before when the rule is on and both steps are stamped', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({
+      status: 'ON_MY_WAY',
+      startTime: at(0, 9),
+      arrivedAt: at(0, 9, 5),
+      departedAt: at(0, 9, 35),
+    });
+    await act(/^Complete$/, /yes, mark it completed/i);
+    expect(transitionBookingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
+    );
+    useArrivalRule.mockReturnValue(null);
   });
 
   it('refreshes the page after a write that changed the document, so the card stops lying', async () => {
@@ -870,7 +972,7 @@ describe('Auntie Time: the Archive', () => {
     usePagedCollection.mockReturnValue(paged([]));
     renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
-    expect(screen.getByText('No Kin Cares in this range.')).toBeInTheDocument();
+    expect(screen.getByText('No KinCares in this range.')).toBeInTheDocument();
   });
 });
 
@@ -1000,9 +1102,9 @@ describe('Auntie Time: a failed FIRST page is not a failed LATER page', () => {
     expect(screen.getByText('Still Here')).toBeInTheDocument();
     expect(document.querySelectorAll('.sessions__card')).toHaveLength(1);
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Couldn’t load more Kin Care sessions. deadline-exceeded');
+    expect(alert).toHaveTextContent('Couldn’t load more KinCare sessions. deadline-exceeded');
     expect(alert).toHaveTextContent('The 1 already loaded are unaffected');
-    expect(screen.queryByText('Kin Care sessions unavailable while the load is failing.')).toBeNull();
+    expect(screen.queryByText('KinCare sessions unavailable while the load is failing.')).toBeNull();
   });
 
   it('retries the failed page from where it stopped, not from the top', async () => {

@@ -77,6 +77,6 @@ describe('ExpenseQuickLogWidget', () => {
     fireEvent.change(screen.getByPlaceholderText('0.00'), { target: { value: '9.99' } });
     fireEvent.click(screen.getByRole('button', { name: /log expense/i }));
 
-    expect(await screen.findByText(/logExpense failed:.*write-failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save:.*write-failed/i)).toBeInTheDocument();
   });
 });

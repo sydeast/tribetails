@@ -29,6 +29,10 @@ import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.ui.branding.brandIdentity
+import com.tribetails.auntieos.ui.admin.ServiceCatalog
+import com.tribetails.auntieos.ui.admin.bookingServiceTone
+import com.tribetails.auntieos.ui.admin.overdueOnAuntieTime
+import com.tribetails.auntieos.ui.admin.serviceCatalog
 import com.tribetails.auntieos.ui.branding.homeHeading
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
@@ -49,7 +53,6 @@ import com.tribetails.auntieos.ui.components.SlideInCard
 import com.tribetails.auntieos.ui.components.denCurrentHour
 import com.tribetails.auntieos.ui.components.formatTime
 import com.tribetails.auntieos.ui.components.greetingForHour
-import com.tribetails.auntieos.ui.components.serviceTone
 import com.tribetails.auntieos.ui.components.statusLabel
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -78,9 +81,18 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     onNavigateToCommunicate: () -> Unit,
     onNavigateToCalls: () -> Unit,
+    onNavigateToAuntieTime: () -> Unit = {},
+    onNavigateToKinInCare: () -> Unit = {},
+    onNavigateToInvoices: () -> Unit = {},
     onWriteKinTale: (sessionId: String) -> Unit,
     onLiveTrack: (sessionId: String, kinfolkId: String, kinfolkName: String) -> Unit = { _, _, _ -> },
     onViewRoute: (routeId: String, kinfolkName: String) -> Unit = { _, _ -> },
+    /**
+     * #1563: open one stored draft in Communicate for review, send or delete.
+     * Each "KinTales pending" row opens its own; "Review & send tales" opens the
+     * newest. Both used to open a blank Communicate with no draft loaded.
+     */
+    onOpenDraft: (draftId: String) -> Unit = { onNavigateToCommunicate() },
 ) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -287,6 +299,7 @@ fun HomeScreen(
                                             tone = AuntieStatusTone.Orange,
                                             feature = true,
                                             modifier = Modifier.weight(1.5f),
+                                            onClick = onNavigateToAuntieTime,
                                         )
                                         StatCard(
                                             label = "KinTales to review",
@@ -296,7 +309,10 @@ fun HomeScreen(
                                             trend = "${state.recentDrafts.size} recent drafts",
                                             tone = AuntieStatusTone.Teal,
                                             modifier = Modifier.weight(1f),
-                                            onClick = onNavigateToCommunicate,
+                                            onClick = {
+                                                val newest = reviewTarget(state.recentDrafts)
+                                                if (newest != null) onOpenDraft(newest) else onNavigateToCommunicate()
+                                            },
                                         )
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -308,6 +324,7 @@ fun HomeScreen(
                                             trend = "across all households",
                                             tone = AuntieStatusTone.Purple,
                                             modifier = Modifier.weight(1f),
+                                            onClick = onNavigateToKinInCare,
                                         )
                                         StatCard(
                                             label = "This week",
@@ -317,6 +334,7 @@ fun HomeScreen(
                                             trend = "paid invoices this week",
                                             tone = AuntieStatusTone.Success,
                                             modifier = Modifier.weight(1f),
+                                            onClick = onNavigateToInvoices,
                                         )
                                     }
                                 }
@@ -326,8 +344,23 @@ fun HomeScreen(
                                 subtitle = "Your visit run for the day.",
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
+                                // #1590: late work belongs on the card that opens the day. The
+                                // count is Auntie Time's own Overdue rule over the same session
+                                // list, so it matches the heading the row opens.
+                                val overdueCount = if (state.gapsLoaded && !state.isLoading) {
+                                    overdueOnAuntieTime(state.allSessions, java.time.LocalDate.now().toString())
+                                } else 0
+                                val overdueLabel = todaysPackOverdueLabel(overdueCount)
+                                if (!state.isLoading && !state.gapsLoaded) {
+                                    EmptyHint("Couldn't check for overdue visits.", error = true)
+                                }
+                                if (overdueLabel != null) {
+                                    TodaysPackOverdueRow(overdueLabel, onNavigateToAuntieTime)
+                                }
                                 when {
                                     state.isLoading -> EmptyHint("Loading today's visits…")
+                                    state.todayVisits.isEmpty() && overdueLabel != null ->
+                                        EmptyHint("Nothing else on the books today.")
                                     state.todayVisits.isEmpty() ->
                                         EmptyHint("Nothing on the books today. Enjoy the quiet.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -335,6 +368,7 @@ fun HomeScreen(
                                             SlideInCard(visible = true) {
                                                 TodayVisitCardView(
                                                     card = card,
+                                                    catalog = state.businessSettings.serviceCatalog(),
                                                     defaultEtaMinutes = state.businessSettings.defaultEtaMinutes,
                                                     etaOptions = state.businessSettings.etaMinuteOptions,
                                                     actionPending = state.pendingActionSessionId == card.session.id,
@@ -373,13 +407,18 @@ fun HomeScreen(
                                     state.isLoading -> EmptyHint("Loading drafts…")
                                     state.recentDrafts.isEmpty() -> EmptyHint("All caught up, no drafts waiting.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                                        state.recentDrafts.take(4).forEachIndexed { i, d -> TaleRow(d, i) }
+                                        state.recentDrafts.take(4).forEachIndexed { i, d ->
+                                            TaleRow(d, i, onOpen = { onOpenDraft(d.id) })
+                                        }
                                     }
                                 }
                                 Spacer(Modifier.height(14.dp))
                                 PrimaryButton(
                                     label = "Review & send tales",
-                                    onClick = onNavigateToCommunicate,
+                                    onClick = {
+                                        val newest = reviewTarget(state.recentDrafts)
+                                        if (newest != null) onOpenDraft(newest) else onNavigateToCommunicate()
+                                    },
                                     modifier = Modifier.fillMaxWidth(),
                                     leading = { Icon(Lucide.Pencil, contentDescription = null, modifier = Modifier.size(16.dp)) },
                                 )
@@ -469,7 +508,7 @@ fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 if (state.isLoading) EmptyHint("Loading visits…")
-                                else OverdueVisitsWidget(state.allSessions, java.time.LocalDate.now().toString())
+                                else OverdueVisitsWidget(state.allSessions, java.time.LocalDate.now().toString(), state.businessSettings.serviceCatalog())
                             }
                             DashKey.PET_BREAKDOWN -> DenPanel(
                                 title = "Pets by type",
@@ -512,6 +551,7 @@ fun HomeScreen(
                                     sessionsLoading = state.isLoading,
                                     kinfolkResult = state.safeboxKinfolk,
                                     nowIso = java.time.Instant.now().toString(),
+                                    catalog = state.businessSettings.serviceCatalog(),
                                 )
                             }
                             DashKey.CARE_FLAGS -> DenPanel(
@@ -866,7 +906,7 @@ fun OfflineBanner(
 
 /** A KinTales-pending tale row: colored mark, type + recipient, mono meta line. */
 @Composable
-private fun TaleRow(draft: Draft, index: Int) {
+private fun TaleRow(draft: Draft, index: Int, onOpen: () -> Unit) {
     val c = AuntieTheme.colors
     val markTone = when (index % 3) { 0 -> c.primary; 1 -> c.secondary; else -> c.accent }
     Row(
@@ -875,6 +915,8 @@ private fun TaleRow(draft: Draft, index: Int) {
             .clip(RoundedCornerShape(13.dp))
             .background(c.surfaceGlass)
             .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(13.dp))
+            // #1563: the row opens its draft. It used to do nothing.
+            .clickable(onClickLabel = "Open draft", onClick = onOpen)
             .padding(13.dp),
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
@@ -893,13 +935,9 @@ private fun TaleRow(draft: Draft, index: Int) {
                 maxLines = 1,
             )
             Spacer(Modifier.height(5.dp))
-            // item 6: meta = STATUS · household (name once now) · createdOn when present.
+            // item 6: meta = DRAFT · household (name once now) · createdOn when present.
             Text(
-                buildString {
-                    append(draft.status.uppercase())
-                    if (!draft.kinfolkName.isNullOrBlank()) append(" · ${draft.kinfolkName}")
-                    if (draft.createdOn.isNotBlank()) append(" · ${draft.createdOn.take(10)}")
-                },
+                taleRowMeta(draft),
                 style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp, letterSpacing = 0.4.sp),
                 color = c.textFaint,
             )
@@ -910,6 +948,8 @@ private fun TaleRow(draft: Draft, index: Int) {
 @Composable
 private fun TodayVisitCardView(
     card: TodayVisitCard,
+    /** #1592: the card names the KinCare, never the stored `visit_60`. */
+    catalog: ServiceCatalog,
     defaultEtaMinutes: Int,
     etaOptions: List<Int>,
     actionPending: Boolean,
@@ -924,7 +964,8 @@ private fun TodayVisitCardView(
     val session = card.session
     val status = runCatching { VisitStatus.valueOf(session.status) }.getOrDefault(VisitStatus.SCHEDULED)
     val kinName = card.kinfolk?.displayName ?: session.kinfolkName.ifBlank { "Unknown kinfolk" }
-    val tone = serviceTone(session.serviceType)
+    val serviceName = catalog.nameOf(session.serviceType)
+    val tone = bookingServiceTone(session.serviceType, catalog)
 
     var etaMinutes by remember(session.id) { mutableStateOf(defaultEtaMinutes) }
 
@@ -943,12 +984,12 @@ private fun TodayVisitCardView(
             Column(modifier = Modifier.weight(1f)) {
                 Text(kinName, style = AuntieTheme.typography.titleSmall, color = AuntieTheme.colors.textPrimary)
                 Text(
-                    session.serviceType.ifBlank { "Visit" },
+                    serviceName,
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim
                 )
             }
-            ServicePill(session.serviceType, tone)
+            ServicePill(serviceName, tone)
             Spacer(Modifier.width(4.dp))
             Column(horizontalAlignment = Alignment.End) {
                 Text(formatTime(session.startTime), style = AuntieTheme.typography.titleSmall, color = AuntieTheme.colors.textPrimary)
@@ -1066,4 +1107,47 @@ private fun statusColor(status: VisitStatus): Color = when (status) {
     VisitStatus.DEPARTED -> AuntieTheme.colors.success
     VisitStatus.COMPLETED -> AuntieTheme.colors.success
     VisitStatus.CANCELLED -> AuntieTheme.colors.error
+}
+
+/**
+ * The Today's Pack overdue line: a real button, because it navigates to Auntie
+ * Time, where the same visits sit under the Overdue heading.
+ */
+@Composable
+internal fun TodaysPackOverdueRow(label: String, onClick: () -> Unit) {
+    val c = AuntieTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, c.warning, RoundedCornerShape(12.dp))
+            .background(c.warning.copy(alpha = 0.12f))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Lucide.CalendarClock, contentDescription = null, tint = c.warning, modifier = Modifier.size(18.dp))
+        Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+    }
+}
+
+/**
+ * #1563: the draft "Review & send tales" opens: the newest listed, or null when
+ * there is none (the button then opens a blank Communicate). Pure; tested.
+ */
+internal fun reviewTarget(drafts: List<Draft>): String? = drafts.firstOrNull { it.id.isNotBlank() }?.id
+
+/**
+ * The mono meta line of a "KinTales pending" row: DRAFT, the household, the day.
+ * #1598 ruling (2026-11-05): a written but unsent KinTale is a "Draft"
+ * everywhere, Home included. Every row is unsent ([AuntieRepository.getRecentDrafts]
+ * keeps only [Draft.isUnsent]), so the word is constant; the stored status
+ * printed PENDING or GENERATED and disagreed with KinTales > Drafts. Pure; tested.
+ */
+internal fun taleRowMeta(draft: Draft): String = buildString {
+    append("DRAFT")
+    if (!draft.kinfolkName.isNullOrBlank()) append(" · ${draft.kinfolkName}")
+    if (draft.createdOn.isNotBlank()) append(" · ${draft.createdOn.take(10)}")
 }

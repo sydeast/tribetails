@@ -1,7 +1,7 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
-  KINFOLK_QUERY,
   KIN_QUERY,
   KINFOLK_SORT_OPTIONS,
   KIN_SORT_OPTIONS,
@@ -9,6 +9,7 @@ import {
   TAG_FILTER_ALL,
   filterSortKinfolk,
   filterSortKin,
+  isKinInCare,
   tagFilterOptions,
   activeKinByKinfolk,
   kinfolkDisplayName,
@@ -34,7 +35,7 @@ import { clearDuplicateAddKinfolk, readDuplicateAddKinfolk } from '../lib/pendin
 import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
 import { EntityCardGrid } from '../components/EntityCardGrid';
-import { KinfolkProfile } from './KinfolkProfile';
+import { KinfolkProfile, type ProfileSubView, type ProfileView } from './KinfolkProfile';
 import { KinView } from './KinView';
 import './Directory.css';
 
@@ -251,12 +252,17 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
 
 interface KinCardProps {
   kin: Kin;
+  /**
+   * #1602: the household the kin belongs to, shown on the card so two kin
+   * with the same name can be told apart. Absent while households load.
+   */
+  householdName?: string;
   /** Absent until a kin route is wired: the card then renders STATIC, never a no-op button. */
   onClick?: () => void;
 }
 
 /** Kin (pet) card for the Kin tab. Mirrors KinfolkCard's frame, no pet-chip row. */
-function KinCard({ kin, onClick }: KinCardProps) {
+function KinCard({ kin, householdName, onClick }: KinCardProps) {
   // str() on every part: an absent species/breed/age is `undefined`, which
   // survives the `!== ''` filter and would join as "undefined · undefined".
   const age = str(kin.age);
@@ -284,6 +290,11 @@ function KinCard({ kin, onClick }: KinCardProps) {
 
         <span className="directory__card-footer">
           <span className="directory__card-contact">
+            {householdName !== undefined && householdName !== '' && (
+              <span className="directory__card-contact-item" data-testid="kin-card-household">
+                {householdName}
+              </span>
+            )}
             {str(kin.sex) !== '' && (
               <span className="directory__card-contact-item">{str(kin.sex)}</span>
             )}
@@ -326,6 +337,10 @@ interface OpenKin {
 }
 
 interface DirectoryProps {
+  /** The tab the screen opens on. Home's "Kin in care" card opens `kin` (#1601). */
+  initialTab?: DirectoryTab;
+  /** Open the Kin tab narrowed to pets in care (not inactive, not archived). */
+  initialKinInCare?: boolean;
   /**
    * Card-open override. Propless (the router default), a kinfolk card NAVIGATES
    * to `/directory/{kinfolkId}`; the profile is then mounted by that route, not
@@ -354,6 +369,9 @@ interface DirectoryProps {
   openUnappliedPayments?: boolean;
   /** #1003: that notice's payment, whose Decide dialog opens on arrival. */
   unappliedPaymentId?: string;
+  /** The open profile's sub-view from the URL, and where to report a switch (#1594). */
+  profileView?: ProfileSubView;
+  onProfileViewChange?: (view: ProfileView) => void;
 }
 
 /**
@@ -377,15 +395,25 @@ export function Directory({
   onProfileClose,
   openUnappliedPayments = false,
   unappliedPaymentId = '',
+  initialTab = 'kinfolk',
+  initialKinInCare = false,
+  profileView,
+  onProfileViewChange,
 }: DirectoryProps) {
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   const kinState = useCollection<Kin>(KIN_QUERY);
   const navigate = useNavigate();
   // #890: Add Kinfolk keeps a household waiting on its Emergency Contact per operator.
   const auth = useAuth();
   const operatorUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
-  const [tab, setTab] = useState<DirectoryTab>('kinfolk');
+  const [tab, setTab] = useState<DirectoryTab>(initialTab);
+  /**
+   * Kin tab status narrowing (#1601). Off by default, because the tab is "every
+   * pet"; on, it keeps what `isKinInCare` keeps, which is exactly what Home's
+   * "Kin in care" card counts.
+   */
+  const [kinInCareOnly, setKinInCareOnly] = useState(initialKinInCare);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>(SORT_OPTION_DEFAULT);
   /**
@@ -540,6 +568,8 @@ export function Directory({
         kinPending={kinPending}
         openUnappliedPayments={openUnappliedPayments}
         unappliedPaymentId={unappliedPaymentId}
+        {...(profileView !== undefined ? { view: profileView } : {})}
+        {...(onProfileViewChange !== undefined ? { onViewChange: onProfileViewChange } : {})}
         // #907 review item 1(b): an Add the server answered `duplicateOf` for this
         // household opens it on its editor with the typing filled in, unsaved.
         duplicateAdd={readDuplicateAddKinfolk(operatorUid, openKinfolkId)}
@@ -702,6 +732,23 @@ export function Directory({
           </label>
         )}
 
+        {tab === 'kin' && (
+          <label className="directory__sort">
+            <span className="directory__sort-label">Show</span>
+            <select
+              className="directory__sort-select"
+              value={kinInCareOnly ? 'inCare' : 'all'}
+              onChange={(e) => setKinInCareOnly(e.target.value === 'inCare')}
+              aria-label="Filter kin by status"
+            >
+              <option value="all">All kin</option>
+              <option value="inCare">In care</option>
+            </select>
+            <span className="directory__sort-chevron">
+              <ChevronGlyph />
+            </span>
+          </label>
+        )}
         <label className="directory__sort">
           <span className="directory__sort-label">Sort</span>
           <select
@@ -775,7 +822,7 @@ export function Directory({
           empty={<EmptyHint>No kin on file yet.</EmptyHint>}
         >
           {(rows) => {
-            const visible = filterSortKin(rows, query, sort, activeKinTag);
+            const visible = filterSortKin(kinInCareOnly ? rows.filter(isKinInCare) : rows, query, sort, activeKinTag);
             if (visible.length === 0) {
               return <EmptyHint>{noMatchHint(query, activeKinTag)}</EmptyHint>;
             }
@@ -785,6 +832,7 @@ export function Directory({
                   <KinCard
                     key={k._id}
                     kin={k}
+                    {...(householdOf(k) !== undefined ? { householdName: householdOf(k)!.name } : {})}
                     onClick={() => {
                       if (onSelectKin) {
                         onSelectKin(k._id);

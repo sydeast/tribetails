@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.directory
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.tribetails.auntieos.data.model.Kinfolk
@@ -9,6 +10,7 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.ui.admin.ServiceCatalog
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -115,7 +117,7 @@ class KinfolkProfileVisitTest {
         show(onOpenVisit = { opened = it })
 
         rule.onNodeWithText("Upcoming KinCare").assertIsDisplayed()
-        rule.onNodeWithText("30-min walk").performClick()
+        rule.onNodeWithText("30-min Walk").performClick()
 
         assertEquals("s1", opened)
     }
@@ -140,10 +142,32 @@ class KinfolkProfileVisitTest {
         val openedIds = mutableListOf<String>()
         show(onOpenVisit = { openedIds.add(it) })
 
-        rule.onNodeWithText("45-min drop-in").performClick()
+        rule.onNodeWithText("45-min Drop-in").performClick()
         assertEquals(listOf("s2"), openedIds)
 
-        rule.onNodeWithText("30-min walk").performClick()
+        rule.onNodeWithText("30-min Walk").performClick()
         assertEquals(listOf("s2", "s1"), openedIds)
+    }
+
+    @Test
+    fun `#1592 a visit row names its KinCare, never the stored key`() {
+        val catalog = ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "60"))
+        rule.setContent {
+            AuntieOSTheme {
+                VisitLine(
+                    s = KinCareSession(
+                        id = "s1", kinfolkId = "kf1", startTime = soon, serviceType = "visit_60",
+                        serviceDurationMinutes = 60, status = "SCHEDULED",
+                    ),
+                    last = true,
+                    onOpen = {},
+                    catalog = catalog,
+                )
+            }
+        }
+
+        rule.onNodeWithText("60-min Long walk").assertIsDisplayed()
+        rule.onNodeWithText("Long walk").assertIsDisplayed()
+        assertEquals(0, rule.onAllNodesWithText("visit_60", substring = true).fetchSemanticsNodes().size)
     }
 }

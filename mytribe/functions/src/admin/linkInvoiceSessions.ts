@@ -17,7 +17,7 @@ import {
 } from '../lib/invoiceEditPolicy';
 import { paidCentsFromPayments, invoiceTotalCentsOf, type PaymentAmount } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
-import { isSessionClaimed } from '../lib/sessionInvoicing';
+import { isSessionCancelled, isSessionClaimed } from '../lib/sessionInvoicing';
 import {
   InvoiceEditScopeSchema,
   InvoiceStateSchema,
@@ -195,13 +195,17 @@ export async function linkInvoiceSessionsHandler(
     // #1259: removed sessions whose back-link names ANOTHER invoice. They drop
     // out of this invoice's set but their `invoiceId` is left alone.
     const claimedElsewhere = new Set<string>();
+    // #1609: ADDED sessions that were cancelled. Already-linked ones can stay
+    // (and be unlinked); a new link to work that never happened is refused.
+    const cancelled: string[] = [];
     sessionSnaps.forEach((snap, i) => {
       const sid = touched[i];
       if (!snap.exists) {
         missing.push(sid);
         return;
       }
-      const sData = snap.data() as { kinfolkId?: string; invoiceId?: unknown } | undefined;
+      const sData = snap.data() as { kinfolkId?: string; invoiceId?: unknown; status?: unknown } | undefined;
+      if (addedSet.has(sid) && isSessionCancelled(sData?.status)) cancelled.push(sid);
       if (!testOwnsDoc(actor.testMode, sData?.kinfolkId ?? '')) {
         throw new HttpsError('permission-denied', `Session '${sid}' is outside your test sandbox.`);
       }
@@ -230,6 +234,13 @@ export async function linkInvoiceSessionsHandler(
         'failed-precondition',
         `Session(s) not found: ${missing.join(', ')}.`,
         { code: 'session_not_found', missing },
+      );
+    }
+    if (cancelled.length > 0) {
+      throw new HttpsError(
+        'failed-precondition',
+        `A cancelled visit cannot be billed: ${cancelled.join(', ')}. Untick it, or restore the visit first.`,
+        { code: 'session_cancelled', sessionIds: cancelled },
       );
     }
     if (elsewhere.length > 0) {
@@ -322,7 +333,10 @@ export async function linkInvoiceSessionsHandler(
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId: outcome.data.kinfolkId,
-    description: `Invoice ${outcome.data.invoiceNumber ?? args.invoiceId} session links set to ${newIds.length} session(s) (${outcome.added.length} linked, ${outcome.removed.length} unlinked)`,
+    description: (await import('../lib/activityWords.js')).invoiceSentence(
+      outcome.data.invoiceNumber,
+      `session links set to ${newIds.length} session(s) (${outcome.added.length} linked, ${outcome.removed.length} unlinked)`,
+    ),
     payload: {
       invoiceId: args.invoiceId,
       sessionCount: newIds.length,

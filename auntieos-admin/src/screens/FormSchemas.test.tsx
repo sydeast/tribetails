@@ -27,6 +27,9 @@ vi.mock('../api/businessAdmins', async (orig) => ({
   ...(await orig<typeof import('../api/businessAdmins')>()),
   listBusinessAdmins,
 }));
+// #1592: the shared staff-name read (`listStaff`), stubbed so no test dials it.
+const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() as ReadonlyMap<string, string> } }));
+vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames.current }));
 
 import {
   FormSchemas,
@@ -50,13 +53,14 @@ function schema(over: Partial<FormSchemaSummary>): FormSchemaSummary {
 }
 
 function roster(members: BusinessAdminRoster['members']): BusinessAdminRoster {
-  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null };
+  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null, businessEmail: '' };
 }
 
 beforeEach(() => {
   listFormSchemas.mockReset();
   deleteFormSchema.mockReset();
   listBusinessAdmins.mockReset();
+  staffNames.current = new Map();
   // Every screen-level test gets a resolved-but-empty roster by default, so a
   // test that never mocks it does not hang waiting on a pending promise.
   listBusinessAdmins.mockResolvedValue(roster([]));
@@ -227,6 +231,17 @@ describe('filterSchemas (pure)', () => {
 });
 
 describe('FormSchemas screen', () => {
+  it('shows who last updated a schema by name, ahead of the roster email (#1592)', async () => {
+    staffNames.current = new Map([['admin1', 'Syd East']]);
+    listFormSchemas.mockResolvedValue([schema({})]);
+    listBusinessAdmins.mockResolvedValue(
+      roster([{ uid: 'admin1', email: 'auntie@tribetails.example', displayName: null, hasStaffRecord: true, defaultAssignee: false }]),
+    );
+    render(<FormSchemas />);
+    expect(await screen.findByText('Syd East')).toBeInTheDocument();
+    expect(screen.queryByText('admin1')).toBeNull();
+  });
+
   it('loads and renders the table with a name, id, version, updated, and updated-by cell', async () => {
     listFormSchemas.mockResolvedValue([schema({})]);
     listBusinessAdmins.mockResolvedValue(
@@ -347,14 +362,14 @@ describe('FormSchemas screen', () => {
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
     listFormSchemas.mockRejectedValue(new Error('permission-denied'));
     render(<FormSchemas />);
-    expect(await screen.findByText(/listFormSchemas failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.queryByText(/no schemas yet/i)).toBeNull();
   });
 
   it('retries the load on demand', async () => {
     listFormSchemas.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([schema({})]);
     render(<FormSchemas />);
-    await screen.findByText(/listFormSchemas failed/i);
+    await screen.findByText(/Could not load/i);
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('Tribe Profile')).toBeInTheDocument();
     expect(listFormSchemas).toHaveBeenCalledTimes(2);
@@ -382,6 +397,13 @@ describe('FormSchemas screen', () => {
     // The explanation is the heading's tooltip, never a line of copy.
     expect(screen.queryByText('Author the dynamic forms kinfolk fill out.')).toHaveAttribute('role', 'tooltip');
   });
+  it('#1592: counts a single schema in the singular', async () => {
+    listFormSchemas.mockResolvedValue([schema({})]);
+    const { container } = render(<FormSchemas />);
+    await screen.findByText('Tribe Profile');
+    expect(container.querySelector('.schemas__count')).toHaveTextContent(/^1 schema$/);
+  });
+
   it('lays the mock controls row out: the filter box with its magnifier, then the count chip, then the table, then Reload', async () => {
     listFormSchemas.mockResolvedValue([schema({}), schema({ id: 'other', name: 'Other' })]);
     const { container } = render(<FormSchemas />);
@@ -481,7 +503,7 @@ describe('FormSchemas screen', () => {
     await screen.findByText('Tribe Profile');
     await userEvent.click(screen.getByRole('button', { name: /delete tribe profile/i }));
     await userEvent.click(screen.getByRole('button', { name: /delete schema/i }));
-    expect(await screen.findByText(/deleteFormSchema failed:.*not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not delete:.*not found/i)).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 

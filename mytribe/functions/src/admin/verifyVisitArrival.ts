@@ -173,7 +173,7 @@ export async function verifyVisitArrivalHandler(
     actorUid: uid,
     targetUid: args.sessionId,
     targetCollection: SESSIONS_COLLECTION,
-    description: `Arrival location check on session ${args.sessionId}: ${status}`,
+    description: (await import('../lib/activityWords.js')).arrivalCheckWords(status),
     payload: {
       sessionId: args.sessionId,
       // Distance, radius and accuracy only. The coordinate that produced them

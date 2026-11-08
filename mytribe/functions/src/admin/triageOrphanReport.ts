@@ -103,7 +103,7 @@ export async function triageOrphanReportHandler(
         actorUid,
         targetUid: args.reportId,
         targetCollection: 'kin_care_reports',
-        description: `Assigned orphan KinTale ${args.reportId} to kinfolk ${canonicalName} (${args.kinfolkId})`,
+        description: (await import('../lib/activityWords.js')).triageAssignedWords(canonicalName),
         payload: {
           reportId: args.reportId,
           kinfolkId: args.kinfolkId,
@@ -148,7 +148,7 @@ export async function triageOrphanReportHandler(
         actorUid,
         targetUid: args.reportId,
         targetCollection: 'kin_care_reports',
-        description: `Marked orphan KinTale ${args.reportId} as duplicate of ${args.duplicateOfReportId}`,
+        description: (await import('../lib/activityWords.js')).triageDuplicateWords(),
         payload: {
           reportId: args.reportId,
           duplicateOfReportId: args.duplicateOfReportId,
@@ -179,7 +179,7 @@ export async function triageOrphanReportHandler(
         actorUid,
         targetUid: args.reportId,
         targetCollection: 'kin_care_reports',
-        description: `Archived orphan KinTale ${args.reportId} as bad data: ${args.reason}`,
+        description: (await import('../lib/activityWords.js')).triageBadDataWords(args.reason),
         payload: {
           reportId: args.reportId,
           reason: args.reason,

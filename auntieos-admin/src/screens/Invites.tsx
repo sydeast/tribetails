@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   formatInviteDate,
-  inviteHandle,
   inviteStatusLabel,
   listAllInvites,
   type AdminInvite,
@@ -42,10 +41,15 @@ import './Invites.css';
  * the pills. There is no panel around the sections because the mock draws
  * none.
  *
- * OUTSTANDING IS THE DEFAULT because it is the question. It means PENDING,
- * EMAIL_SENT and EXPIRED: an expired invite is still somebody who never
- * accepted, and it is the row most likely to need a second send. REVOKED is
- * not outstanding: that one was a decision already taken.
+ * OUTSTANDING IS THE DEFAULT because it is the question, and since #1603 it
+ * means the invites still waiting on somebody: PENDING and EMAIL_SENT. An
+ * expired invite can no longer be accepted, so it has its own Expired filter
+ * rather than filling Outstanding (the 2026-11-05 walk found Outstanding (3)
+ * holding nothing but expired rows). REVOKED is not outstanding either.
+ *
+ * NO INVITE BUTTON HERE. Operator ruling, 2026-11-05 docket: "no button on
+ * the Invites screen. Invite from the kinfolk profile." Each row opens the
+ * invite; the household link opens the household.
  *
  * `effectiveStatus`, NEVER `status`, decides which chip and which section a
  * row lands in. `expireStaleInvites` sweeps at 02:00 America/New_York, so a
@@ -54,8 +58,8 @@ import './Invites.css';
  * invite under Pending would send the operator chasing something that is over.
  *
  * THE INVITE ID IS A BEARER TOKEN. The claim link is `?invite=<inviteId>`, so
- * the document id doubles as the secret. Cards show `inviteHandle`'s truncated
- * form, for matching a row against the activity log, and never the full id or
+ * the document id doubles as the secret. Cards show no part of it (#1592: it
+ * is a database id; the address and household name the invite), and never
  * anything resembling a claim URL.
  *
  * FAIL LOUD. A failed read renders `AsyncRegion`'s error, never an empty
@@ -63,7 +67,7 @@ import './Invites.css';
  * facts and only one of them is good news.
  */
 
-export type InviteFilterKey = 'outstanding' | 'accepted' | 'revoked' | 'all';
+export type InviteFilterKey = 'outstanding' | 'accepted' | 'expired' | 'revoked' | 'all';
 
 interface InviteFilter {
   readonly key: InviteFilterKey;
@@ -73,8 +77,10 @@ interface InviteFilter {
 
 /** Order is the order rendered. Outstanding is first because it is the default. */
 export const INVITE_FILTERS: readonly InviteFilter[] = [
-  { key: 'outstanding', label: 'Outstanding', statuses: ['PENDING', 'EMAIL_SENT', 'EXPIRED'] },
+  // #1603: waiting on somebody. An expired invite cannot be accepted any more.
+  { key: 'outstanding', label: 'Outstanding', statuses: ['PENDING', 'EMAIL_SENT'] },
   { key: 'accepted', label: 'Accepted', statuses: ['ACCEPTED'] },
+  { key: 'expired', label: 'Expired', statuses: ['EXPIRED'] },
   { key: 'revoked', label: 'Revoked', statuses: ['REVOKED'] },
   { key: 'all', label: 'All', statuses: 'all' },
 ];
@@ -217,8 +223,8 @@ function InviteCard({ invite }: { invite: AdminInvite }) {
           {inviteDateParts(invite).map((part) => (
             <span key={part}>{part}</span>
           ))}
-          {/* Truncated on purpose. The full id is the claim token. */}
-          <span className="invites__handle">inviteId {inviteHandle(invite.inviteId)}</span>
+          {/* #1592: no invite id, not even truncated. It is a database id (and
+              the claim token); the address and household name the invite. */}
         </p>
         <div className="invites__pills">
           <StatusPill label={inviteStatusLabel(invite.effectiveStatus)} tone={tone} />
@@ -245,7 +251,7 @@ export function Invites() {
         if (live) {
           setInvites({
             status: 'error',
-            message: `listAllInvites failed: ${errText(err, 'Load failed')}`,
+            message: `Could not load: ${errText(err, 'Load failed')}`,
             retry: load,
           });
         }

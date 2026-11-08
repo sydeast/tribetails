@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
 /**
@@ -32,6 +32,17 @@ vi.mock('firebase-admin/firestore', async () => {
 
 import { approveBookingSeriesCore } from '../src/admin/approveBookingSeriesCore';
 import { onBookingsWrite, seriesApproveStampChanged } from '../src/triggers/onBookingsWrite';
+
+// #1702: approval refuses a visit whose start has already passed. These
+// fixtures date their visits from June 2026 on, so the clock stands before
+// them; the past-start refusal itself is tested in approveIntoPast.test.ts.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const PARENT = 'families/fam1/bookings/req_1';
 
@@ -390,6 +401,30 @@ describe('onBookingsWrite: the per-visit confirm after #536', () => {
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
+  // #1575: a New visit is CREATED confirmed, unassigned, with the stamp. Its
+  // creation is the office's own act, and it sends nothing, as it always has.
+  it('sends nothing for a New visit created confirmed by createKinCareSession', async () => {
+    await run(undefined, {
+      status: 'confirmed',
+      assignedAuntieUid: null,
+      scheduledByOffice: true,
+      seriesApprovedAt: '__TS__',
+      startTime: { toMillis: () => Date.parse(SEP4) },
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+  // #1574: a backdated New visit is CREATED completed. The ruling: it must not
+  // fire any household notice.
+  it('sends nothing for a past visit recorded as completed by createKinCareSession', async () => {
+    await run(undefined, {
+      status: 'completed',
+      assignedAuntieUid: null,
+      scheduledByOffice: true,
+      seriesApprovedAt: '__TS__',
+      startTime: { toMillis: () => Date.parse(SEP4) },
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
   it('STILL fires for a visit confirmed on its own (batchUpdateBookings, Android)', async () => {
     await run({ status: 'requested' }, { status: 'confirmed', startTime: { toMillis: () => Date.parse(SEP4) } });
 

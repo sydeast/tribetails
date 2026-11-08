@@ -6,9 +6,11 @@ import com.tribetails.auntieos.data.contracts.ManageBookingSeriesArgs
 import com.tribetails.auntieos.data.contracts.decodeBatchUpdateBookingsResult
 import com.tribetails.auntieos.data.contracts.decodeManageBookingSeriesResult
 import com.tribetails.auntieos.domain.withSandboxScope
+import com.tribetails.auntieos.domain.sortVetClinics
 import com.tribetails.auntieos.domain.RecentSend
 import com.tribetails.auntieos.domain.decodeRecentSends
 
+import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
@@ -61,6 +63,12 @@ private val KINFOLK_CREATE_EXCLUDED_FIELDS = setOf(
  * phone or email; [kinfolk] then carries that household's id.
  */
 data class KinfolkCreated(val kinfolk: Kinfolk, val duplicateOf: String?)
+
+/**
+ * #1563: how many `generated_drafts` the KinTales list reads. The same 50 the web
+ * list reads (`GENERATED_DRAFTS_MAX` in `src/api/drafts.ts`).
+ */
+const val GENERATED_DRAFTS_LIST_MAX = 50
 
 class AuntieRepository(
     private val n8n: N8nApi,
@@ -575,6 +583,8 @@ class AuntieRepository(
             if (actor.isNotBlank()) put("actorId", actor)
             if (entry.targetId.isNotBlank()) put("targetId", entry.targetId)
             if (entry.targetCollection.isNotBlank()) put("targetCollection", entry.targetCollection)
+            // #1747: the household, now that the description no longer carries its id.
+            if (entry.familyId.isNotBlank()) put("familyId", entry.familyId)
         }
         functions.getHttpsCallable("logActivity").call(payload).awaitCallable()
         Unit
@@ -1155,6 +1165,22 @@ class AuntieRepository(
      * Optional, so a caller that has not adopted it behaves exactly as it did
      * before, server-minted id, no dedupe, and no retry.
      */
+    /** #1610: how many households a broadcast audience reaches, before the send. Writes nothing. */
+    suspend fun previewBroadcastAudience(
+        segmentId: String?,
+        criteria: com.tribetails.auntieos.ui.communicate.BroadcastCriteria?,
+    ): Result<com.tribetails.auntieos.ui.communicate.BroadcastAudiencePreview> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        val payload = buildMap<String, Any?> {
+            if (!segmentId.isNullOrBlank()) put("segmentId", segmentId)
+            if (criteria != null) put("criteria", criteria.toPayload())
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("previewBroadcastAudience").call(payload).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.communicate.decodeBroadcastAudiencePreview(raw)
+            ?: error("previewBroadcastAudience returned no count")
+    }.onFailure { AuntieLog.e("previewBroadcastAudience failed", it) }
+
     suspend fun broadcastMessage(
         segmentId: String?,
         criteria: com.tribetails.auntieos.ui.communicate.BroadcastCriteria?,
@@ -1243,6 +1269,21 @@ class AuntieRepository(
         com.tribetails.auntieos.ui.marketing.decodeBlastReach(raw)
     }.onFailure { AuntieLog.e("previewMarketingBlastAudience failed", it) }
 
+    /**
+     * What a campaign's email will say, rendered the way the send renders it
+     * (#1587): the subject, the body, and every merge field the template names with
+     * whether something supplies it. Writes nothing and needs no audience.
+     */
+    suspend fun previewMarketingBlastCopy(
+        key: com.tribetails.auntieos.ui.marketing.MarketingKey,
+        data: Map<String, Any?>,
+    ): Result<com.tribetails.auntieos.ui.marketing.BlastCopyPreview> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("previewMarketingBlastCopy")
+            .call(mapOf("key" to key.wire, "data" to data)).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.marketing.decodeBlastCopy(raw)
+    }.onFailure { AuntieLog.e("previewMarketingBlastCopy failed", it) }
     /**
      * Schedules a campaign. [data] is the merge context the operator's template
      * for [key] is rendered against, not the message copy itself; [title] is the
@@ -1366,6 +1407,12 @@ class AuntieRepository(
         functions.getHttpsCallable("markConversationRead").call(mapOf("kinfolkId" to kinfolkId)).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("markConversationRead failed", it) }
+    /** #1611: puts one thread back in the unread pile (admin flag only; read receipts stay). */
+    suspend fun markConversationUnread(kinfolkId: String): Result<Unit> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        functions.getHttpsCallable("markConversationUnread").call(mapOf("kinfolkId" to kinfolkId)).awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("markConversationUnread failed", it) }
 
     /**
      * Clears the admin-side unread flag on EVERY thread waiting on a reply and
@@ -1384,6 +1431,22 @@ class AuntieRepository(
             ?: error("markAllThreadsRead returned no count")
     }.onFailure { AuntieLog.e("markAllThreadsRead failed", it) }
 
+    /**
+     * The audio behind a voicemail or call recording (#1573). Twilio's stored
+     * link needs the account's credentials, so the `getRecordingAudio` callable
+     * fetches it server-side and returns the bytes; the app plays those. A
+     * response with nothing playable fails the Result with the reason instead of
+     * handing the player an empty file.
+     */
+    suspend fun getRecordingAudio(kind: String, id: String): Result<com.tribetails.auntieos.ui.inbox.RecordingAudio> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("getRecordingAudio")
+                .call(mapOf("kind" to kind, "id" to id)).awaitCallable().data as? Map<String, Any?>
+            com.tribetails.auntieos.ui.inbox.decodeRecordingAudio(raw)
+                ?: error("This recording has no audio to play.")
+        }.onFailure { AuntieLog.e("getRecordingAudio failed for $kind/$id", it) }
     // ── Dashboard widget callables (AO-35/39/40/41) ──────────────────────────
     // Admin-gated MyTribe callables backing the hidden-by-default Home widgets.
     // Fail-loud: every failure (missing Mapbox key, missing supply, etc) rides the
@@ -1527,8 +1590,29 @@ class AuntieRepository(
         },
     )
 
-    suspend fun getRecentDrafts(): Result<List<Draft>> = runCatchingCancellable {
-        AuntieLog.d("Fetching recent drafts")
+    /**
+     * Home's "KinTales pending": the three newest drafts still waiting on a
+     * decision. #1563: an approved or already-sent draft is not pending, and the
+     * panel's rows and its "Review & send" button now open what they list, so
+     * listing one would open a draft there is nothing left to do with. Read a
+     * little wider than three so a run of decided drafts does not empty it.
+     */
+    suspend fun getRecentDrafts(): Result<List<Draft>> = getGeneratedDrafts(limit = 10)
+        // #1629: the same rule as the count beside it (pendingDraftCountOf), so a
+        // content-less shell is neither a row nor counted.
+        .map { drafts -> drafts.filter { it.isUnsent && it.generatedCopy.isNotBlank() }.take(3) }
+        .onFailure { AuntieLog.e("Failed to get recent drafts", it) }
+    /**
+     * #1563: the newest [limit] `generated_drafts` docs that have NOT been sent,
+     * decoded from both spellings ([draftFromFields]). Home's "KinTales pending"
+     * reads three; the KinTales list reads [GENERATED_DRAFTS_LIST_MAX], the same
+     * cap the web list uses.
+     *
+     * A draft already sent as a KinTale (`publishedReportId` set) is dropped: the
+     * household has the report, and the KinTales list shows that instead.
+     */
+    suspend fun getGeneratedDrafts(limit: Int = GENERATED_DRAFTS_LIST_MAX): Result<List<Draft>> = runCatchingCancellable {
+        AuntieLog.d("Fetching generated drafts (limit $limit)")
         authGate.ensureAuthenticated()
         scoped.scopedQuery(
             "generated_drafts",
@@ -1538,19 +1622,53 @@ class AuntieRepository(
             // field == testScope; see generate.js). Sort + cap client-side to avoid a
             // composite (kinfolk_id, createdOn) index; the sandbox draft set is tiny.
             sandbox = { q ->
-                q.get().await()
-                    .toObjects(Draft::class.java)
+                q.get().await().documents
+                    .map { draftFromFields(it.id, it.data.orEmpty()) }
+                    .filterNot { it.isPublished }
                     .sortedByDescending { it.createdOn }
-                    .take(3)
+                    .take(limit)
             },
             unscoped = { col ->
                 col.orderBy("createdOn", com.google.firebase.firestore.Query.Direction.DESCENDING)
-                    .limit(3)
-                    .get().await()
-                    .toObjects(Draft::class.java)
+                    .limit(limit.toLong())
+                    .get().await().documents
+                    .map { draftFromFields(it.id, it.data.orEmpty()) }
+                    .filterNot { it.isPublished }
             },
         )
-    }.onFailure { AuntieLog.e("Failed to get recent drafts", it) }
+    }.onFailure { AuntieLog.e("Failed to get generated drafts", it) }
+    /** #1563: one `generated_drafts` doc by id, both spellings, or null when it is gone. */
+    suspend fun getGeneratedDraft(draftId: String): Result<Draft?> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(draftId.isNotBlank()) { "draftId required" }
+        val snap = firestore.collection("generated_drafts").document(draftId).get().await()
+        if (snap.exists()) draftFromFields(snap.id, snap.data.orEmpty()) else null
+    }.onFailure { AuntieLog.e("Failed to read draft $draftId", it) }
+    /**
+     * #1563: send a generated KinTale draft to its household. The
+     * `publishGeneratedDraft` callable writes the SENT `kin_care_reports` doc the
+     * portal lists and marks the draft sent, in one transaction, and answers a
+     * repeat with the first report's id. Returns that report id.
+     */
+    suspend fun publishGeneratedDraft(draftId: String, bodyCopy: String, title: String): Result<String> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(draftId.isNotBlank()) { "draftId required" }
+        val payload = buildMap<String, Any> {
+            put("draftId", draftId)
+            put("bodyCopy", bodyCopy)
+            if (title.isNotBlank()) put("title", title.trim())
+        }
+        val raw = functions.getHttpsCallable("publishGeneratedDraft").call(payload).awaitCallable().data as? Map<*, *>
+        (raw?.get("reportId") as? String)?.takeIf { it.isNotBlank() }
+            ?: error("publishGeneratedDraft returned no reportId")
+    }.onFailure { AuntieLog.e("Failed to send draft $draftId", it) }
+    /** #1563: delete an unsent generated draft. The server refuses one already sent. */
+    suspend fun deleteGeneratedDraft(draftId: String): Result<Unit> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(draftId.isNotBlank()) { "draftId required" }
+        functions.getHttpsCallable("deleteGeneratedDraft").call(mapOf("draftId" to draftId)).awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to delete draft $draftId", it) }
 
     suspend fun getKinfolkCount(): Result<Int> = runCatchingCancellable {
         authGate.ensureAuthenticated()
@@ -1567,18 +1685,16 @@ class AuntieRepository(
         scoped.scopedCount("kin")
     }.onFailure { AuntieLog.e("Failed to get kin count", it) }
 
-    suspend fun getPendingDraftCount(): Result<Int> = runCatchingCancellable {
-        authGate.ensureAuthenticated()
-        scoped.scopedCount(
-            "generated_drafts",
-            field = "kinfolk_id",
-            // Stage-0I sandbox: scope to this tribe (kinfolk_id == testScope) and count
-            // 'pending' client-side to avoid a composite (kinfolk_id, status) index. An
-            // unfiltered read is denied by rules for a test admin.
-            sandbox = { snap -> snap.documents.count { it.getString("status") == "pending" } },
-            unscoped = { whereEqualTo("status", "pending") },
-        )
-    }.onFailure { AuntieLog.e("Failed to get pending draft count", it) }
+    /**
+     * Home's "KinTales to review". #1629: counted from the same read and the same
+     * rule as the "KinTales pending" rows ([pendingDraftCountOf]), the way the
+     * web stat row does. It used to be a server-side count of
+     * `status == "pending"`, so a generate.js draft (`generated`, snake_case
+     * copy) could never be counted.
+     */
+    suspend fun getPendingDraftCount(): Result<Int> = getGeneratedDrafts()
+        .map { pendingDraftCountOf(it) }
+        .onFailure { AuntieLog.e("Failed to get pending draft count", it) }
 
     // Business/Operational Settings
     suspend fun getBusinessSettings(): Result<BusinessSettings> = runCatchingCancellable {
@@ -1596,6 +1712,24 @@ class AuntieRepository(
             BusinessSettings()
         }
     }.onFailure { AuntieLog.e("Failed to get business settings", it) }
+
+    /**
+     * ISSUE #1608: is "Verify arrival and departure" on, read the way the server
+     * reads it? Off the RAW snapshot rather than [BusinessSettings], because the
+     * model defaults the field to `true` for the Settings editor while the
+     * server treats an absent key as off (`arrivalVerification.ts`). Reading
+     * the model would refuse a Complete the server would accept.
+     */
+    suspend fun getArrivalRuleRequired(): Result<Boolean> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        val snapshot = firestore.collection("business_settings")
+            .document("business_settings")
+            .get()
+            .await()
+        com.tribetails.auntieos.domain.arrivalRuleRequired(
+            if (snapshot.exists()) snapshot.get("requireArrivalDepartureVerification") else null,
+        )
+    }.onFailure { AuntieLog.e("Failed to read the arrival rule", it) }
 
     /**
      * The Google Calendar sync's last-run receipt, read straight off the same
@@ -2857,11 +2991,59 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to update KinTale template $templateId", it) }
 
-    suspend fun deleteKinTaleTemplate(templateId: String): Result<Unit> = runCatchingCancellable {
+    private suspend fun deleteKinTaleTemplate(templateId: String): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         firestore.collection("kintale_templates").document(templateId).delete().await()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete KinTale template $templateId", it) }
+
+    /**
+     * #1591: the one entry point that archives, restores or deletes a KinTale
+     * template (operator ruling 2026-11-05: "both"). ARCHIVE keeps the doc and
+     * sets `archived`; RESTORE clears it, and drops `isDefault` when
+     * [clearDefault] says another template took the default meanwhile; DELETE
+     * removes the doc, which `firestore.rules` allows only for an archived one.
+     */
+    suspend fun removeKinTaleTemplate(
+        templateId: String,
+        mode: com.tribetails.auntieos.data.model.KinTaleTemplateRemoval,
+        clearDefault: Boolean = false,
+        now: () -> String = { java.time.Instant.now().toString() },
+    ): Result<Unit> = when (mode) {
+        com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.DELETE -> deleteKinTaleTemplate(templateId)
+        com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.ARCHIVE -> updateTemplateArchive(
+            templateId,
+            mapOf("archived" to true, "archivedAt" to now(), "updatedAt" to now()),
+        )
+        com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.RESTORE -> updateTemplateArchive(
+            templateId,
+            buildMap {
+                put("archived", false)
+                put("archivedAt", "")
+                put("updatedAt", now())
+                if (clearDefault) put("isDefault", false)
+            },
+        )
+    }
+
+    private suspend fun updateTemplateArchive(templateId: String, fields: Map<String, Any>): Result<Unit> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            require(templateId.isNotBlank()) { "templateId required" }
+            firestore.collection("kintale_templates").document(templateId).update(fields).await()
+            Unit
+        }.onFailure { AuntieLog.e("Failed to change archive state of KinTale template $templateId", it) }
+    /** #1591: what uses this template, for a confirm that names what breaks. Owner-only on the server. */
+    suspend fun getKinTaleTemplateUsage(
+        templateId: String,
+    ): Result<com.tribetails.auntieos.data.model.KinTaleTemplateUsage> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("getKinTaleTemplateUsage")
+            .call(mapOf("templateId" to templateId)).awaitCallable().data as? Map<String, Any?>
+            ?: error("getKinTaleTemplateUsage: non-map payload")
+        com.tribetails.auntieos.data.model.parseKinTaleTemplateUsage(raw)
+    }.onFailure { AuntieLog.e("Failed to read usage of KinTale template $templateId", it) }
 
     /** Pick the best template for a service type. Falls back to the default template if no match. */
     suspend fun getActiveTemplateForService(serviceType: String): Result<KinTaleTemplate?> = runCatchingCancellable {
@@ -2869,7 +3051,8 @@ class AuntieRepository(
         val snapshot = firestore.collection("kintale_templates")
             .whereEqualTo("isActive", true)
             .get().await()
-        val templates = snapshot.toObjects(KinTaleTemplate::class.java)
+        // #1591: an archived template is never picked for a new KinTale.
+        val templates = snapshot.toObjects(KinTaleTemplate::class.java).filterNot { it.archived }
         val needle = serviceType.lowercase().trim()
         val match = templates.firstOrNull { tpl ->
             tpl.serviceTypeKeys.any { it.lowercase().trim() == needle }
@@ -2939,8 +3122,12 @@ class AuntieRepository(
 
     // ---- Vet clinics shared catalog (matches web `vet_clinics` collection) ----
 
-    /** Ordered/capped exactly like the web `VET_CLINICS_QUERY` (name ascending, 500). */
-    private fun vetClinicsQuery() = firestore.collection("vet_clinics").orderBy("name").limit(500)
+    /**
+     * Paged/capped exactly like the web `VET_CLINICS_QUERY` (document id, 500).
+     * NOT `orderBy("name")`: Firestore drops a document missing the ordered field
+     * (#1565). Callers sort A to Z with [sortVetClinics].
+     */
+    private fun vetClinicsQuery() = firestore.collection("vet_clinics").orderBy(FieldPath.documentId()).limit(500)
 
     fun observeVetClinics(): Flow<List<VetClinic>> = observeVetClinicsOrFail().map { it.clinics }
 
@@ -2952,7 +3139,7 @@ class AuntieRepository(
      */
     suspend fun getVetClinicsOnce(): Result<List<VetClinic>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        vetClinicsQuery().get().await().toObjects(VetClinic::class.java)
+        sortVetClinics(vetClinicsQuery().get().await().toObjects(VetClinic::class.java))
     }.onFailure { AuntieLog.e("Failed to read vet clinics", it) }
 
     /**
@@ -2974,7 +3161,7 @@ class AuntieRepository(
                     trySend(VetClinicsSnapshot(failed = true))
                     return@addSnapshotListener
                 }
-                trySend(VetClinicsSnapshot(clinics = snap?.toObjects(VetClinic::class.java).orEmpty()))
+                trySend(VetClinicsSnapshot(clinics = sortVetClinics(snap?.toObjects(VetClinic::class.java).orEmpty())))
             }
         awaitClose { reg.remove() }
     }

@@ -338,6 +338,20 @@ describe('KinTale title generation', () => {
     assert.strictEqual(gen.TITLE_INSTRUCTION, backfillInstruction);
   });
 
+  describe('splitSubjectLine (#1610)', () => {
+    it('cuts a leading Subject line and the blank lines after it', () => {
+      assert.deepStrictEqual(gen.splitSubjectLine('Subject: Big day\n\nHi Dana'), { subject: 'Big day', body: 'Hi Dana' });
+    });
+    it('handles a bold markdown subject', () => {
+      assert.deepStrictEqual(gen.splitSubjectLine('**Subject:** Big day\nHi'), { subject: 'Big day', body: 'Hi' });
+    });
+    it('leaves copy with no leading subject line alone', () => {
+      assert.deepStrictEqual(gen.splitSubjectLine('Hi Dana, the subject: today'), { subject: '', body: 'Hi Dana, the subject: today' });
+    });
+  });
+  it('#1610: the system prompt forbids a subject line in the body', () => {
+    assert.ok(/Never write a subject line/.test(String(gen.SYSTEM_FRAMING)));
+  });
   describe('normalizeTitle', () => {
     it('strips wrapping quotes the prompt already forbade', () => {
       assert.strictEqual(gen.normalizeTitle('"Nova Meets the Door"'), 'Nova Meets the Door');
@@ -730,6 +744,27 @@ describe('runGenerate', needsVoice, () => {
     assert.strictEqual(db._drafts[0].generated_title, 'Nova Meets the Door');
   });
 
+  it('#1610: lifts a "Subject:" line out of an email body into the title, one subject only', async () => {
+    const db = fullDb();
+    const a = scriptedAnthropic(['Subject: Nova had a big day\n\nHi Dana, Nova met me at the door.']);
+    const out = await gen.runGenerate(
+      { db, anthropic: a, model: 'm' },
+      { ...VALID, communication_type: 'email', want_title: true },
+    );
+    assert.strictEqual(out.generated_title, 'Nova had a big day');
+    assert.ok(!/subject:/i.test(out.generated_copy));
+    assert.ok(out.generated_copy.startsWith('Hi Dana'));
+    // No second call: the model already named the subject.
+    assert.strictEqual(a.calls.length, 1);
+    assert.ok(!/subject:/i.test(db._drafts[0].generated_copy));
+  });
+  it('#1610: drops the subject line from the body even when no title was asked for', async () => {
+    const db = fullDb();
+    const a = scriptedAnthropic(['Subject: Hello\nNova met me at the door.']);
+    const out = await gen.runGenerate({ db, anthropic: a, model: 'm' }, VALID);
+    assert.strictEqual(out.generated_copy, 'Nova met me at the door.');
+    assert.strictEqual(out.generated_title, '');
+  });
   it('makes no second call and returns a blank title when want_title is absent', async () => {
     const db = fullDb();
     const a = scriptedAnthropic(['Nova met me at the door.']);
@@ -764,6 +799,16 @@ describe('runGenerate', needsVoice, () => {
     assert.deepStrictEqual(out.warnings, []);
     assert.strictEqual(db._drafts.length, 1);
     assert.ok(db._drafts[0].generated_copy.includes('The cats were already'));
+  });
+
+  it('#1629: the draft carries createdOn, the field every admin list orders by', async () => {
+    const db = fullDb();
+    await gen.runGenerate({ db, anthropic: fakeAnthropic('The cats were already at the door.'), model: 'm' }, VALID);
+    const d = db._drafts[0];
+    assert.ok(typeof d.createdOn === 'string' && d.createdOn !== '', 'createdOn missing: Firestore drops it from orderBy(createdOn)');
+    assert.ok(!Number.isNaN(Date.parse(d.createdOn)));
+    // One instant, two spellings.
+    assert.strictEqual(d.createdOn, d.generated_at);
   });
 
   it('strips em/en dashes from the model output', async () => {

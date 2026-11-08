@@ -318,7 +318,12 @@ class KinTaleTemplateEditorViewModel(
         val template = _uiState.value.template
         if (template.id.isBlank()) return
         viewModelScope.launch {
-            repository.deleteKinTaleTemplate(template.id).getOrNull()
+            // #1591: removing from the editor archives (restorable); deleting
+            // for good happens only from the archive on the templates list.
+            repository.removeKinTaleTemplate(
+                template.id,
+                com.tribetails.auntieos.data.model.KinTaleTemplateRemoval.ARCHIVE,
+            ).getOrNull()
         }
     }
 

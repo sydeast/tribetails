@@ -18,6 +18,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import com.tribetails.auntieos.util.rethrowIfCancellation
 
+/**
+ * #1563: the composer type a stored draft's `communication_type` selects. Blank
+ * or unknown reads as a KinTale, which is what Home already calls such a row.
+ * Pure; tested.
+ */
+internal fun commTypeOfDraft(raw: String): String {
+    val t = raw.trim().lowercase()
+    return if (t in KNOWN_COMM_TYPES) t else "visit_report"
+}
+private val KNOWN_COMM_TYPES = setOf("email", "sms", "push", "social_post", "blog_post", "general", "visit_report")
 /** Blog/social are recipient-less (spec 19 item 2); everything else needs a recipient. Pure; tested. */
 internal fun needsRecipient(commType: String): Boolean =
     commType != "blog_post" && commType != "social_post"
@@ -56,6 +66,44 @@ internal fun validateExternalSend(
         }
     }
     if (body.isBlank()) return "Message body is required."
+    return null
+}
+
+/**
+ * #1625: the channel an approved draft of [commType] goes out on, or null when
+ * approving sends nothing (a KinTale, a blog or social post, a push or general
+ * note). Mirrors `deliverable` in the React admin's src/lib/personalizeCompose.ts,
+ * so the three clients agree on which approvals reach a household. Pure.
+ */
+internal fun approveDeliveryChannel(commType: String): ExternalChannel? = when (commType) {
+    "email" -> ExternalChannel.Email
+    "sms" -> ExternalChannel.Sms
+    else -> null
+}
+
+/**
+ * #1625: why an approve cannot go ahead yet, or null when it can. Mirrors the
+ * React admin's `approveBlocker`: an empty draft never approves, and a draft
+ * that SENDS needs a subject (email) and an address on file for the household.
+ * A type that sends nothing is not held up by a missing phone number it never
+ * uses. Pure.
+ */
+internal fun approveSendBlocker(
+    channel: ExternalChannel?,
+    kinfolk: Kinfolk?,
+    subject: String,
+    copy: String,
+): String? {
+    if (copy.isBlank()) return "The message is empty. Write something before approving."
+    if (channel == null) return null
+    if (channel == ExternalChannel.Email && subject.isBlank()) return "Email needs a subject."
+    val name = kinfolk?.displayName ?: "This household"
+    if (channel == ExternalChannel.Email && kinfolk?.email.isNullOrBlank()) {
+        return "$name has no email address on file. Add one in Directory before sending."
+    }
+    if (channel == ExternalChannel.Sms && kinfolk?.phoneNumber.isNullOrBlank()) {
+        return "$name has no phone number on file. Add one in Directory before sending."
+    }
     return null
 }
 
@@ -98,6 +146,19 @@ data class CommunicateUiState(
     // Approval
     val isSaving: Boolean = false,
     val savedDraftId: String? = null,
+    /** #1625: the "send this to the household?" confirm for a Text or Email approve. */
+    val approveConfirmOpen: Boolean = false,
+    // #1563: a stored `generated_drafts` doc opened from KinTales or Home.
+    val draftLoading: Boolean = false,
+    val draftLoadError: String? = null,
+    /** The opened draft's household, held until the kinfolk list has loaded to resolve it. */
+    val pendingKinfolkId: String? = null,
+    /** The KinTale a send produced, or the one an opened draft was already sent as. */
+    val publishedReportId: String? = null,
+    /** True when the opened draft had been sent before this screen opened it. */
+    val publishedBefore: Boolean = false,
+    val isDeletingDraft: Boolean = false,
+    val draftDeleted: Boolean = false,
 
     // External send (one-off email/SMS to an arbitrary recipient, not a kinfolk).
     val externalChannel: ExternalChannel = ExternalChannel.Email,
@@ -151,6 +212,9 @@ data class CommunicateUiState(
     /** #823. What the operator was told after stopping a send part-way. */
     val stopBroadcastNotice: String? = null,
     val broadcastError: String? = null,
+    /** #1610: the confirm before a broadcast, and the count it shows. */
+    val bcConfirmOpen: Boolean = false,
+    val bcReach: BroadcastReachState = BroadcastReachState.Loading,
 
     // Recent sends + engagement (Communicate "Recent" panel; counts from the webhooks).
     val recentSends: List<RecentSend> = emptyList(),
@@ -215,6 +279,13 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
             repo.getKinfolk().onSuccess { list ->
                 AuntieLog.d("Loaded ${list.size} kinfolk for communication")
                 _uiState.value = _uiState.value.copy(kinfolkList = list, kinfolkLoading = false)
+                // #1563: a draft opened before the list arrived names its household now.
+                _uiState.value.pendingKinfolkId?.let { id ->
+                    list.find { it.id == id }?.let { found ->
+                        _uiState.value = _uiState.value.copy(pendingKinfolkId = null)
+                        selectKinfolk(found)
+                    }
+                }
             }.onFailure { e ->
                 AuntieLog.e("Failed to load kinfolk for communication", e)
                 _uiState.value = _uiState.value.copy(kinfolkLoading = false, error = "Could not load Kinfolk")
@@ -389,15 +460,23 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
 
             repo.generate(request, useFunction).onSuccess { result ->
                 AuntieLog.i("Content generation successful")
+                // #1610: one subject. A "Subject:" line the generator wrote
+                // leaves the body, and fills the Subject field only when the
+                // operator has not typed one.
+                val split = splitSubjectLine(result.generatedCopy)
                 _uiState.value = _uiState.value.copy(
                     isGenerating          = false,
-                    generatedCopy         = result.generatedCopy,
+                    generatedCopy         = split.body,
+                    subject               = _uiState.value.subject.ifBlank { split.subject },
                     draftId               = result.draftId,
                     kinfolkId             = result.kinfolkId,
                     generatedKinfolkName  = result.kinfolkName,
                     generatedCommType     = result.communicationType,
                     generatedModel        = result.model,
-                    savedDraftId          = null
+                    savedDraftId          = null,
+                    publishedReportId     = null,
+                    publishedBefore       = false,
+                    draftDeleted          = false,
                 )
             }.onFailure { e ->
                 AuntieLog.e("Content generation failed", e)
@@ -409,17 +488,179 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
     }
 
-    fun approveDraft() {
+    /** The household the draft was written for: the one generation resolved, else the picker's. */
+    private fun approveRecipient(state: CommunicateUiState): Kinfolk? =
+        state.kinfolkList.firstOrNull { it.id == state.kinfolkId && state.kinfolkId != null } ?: state.selectedKinfolk
+
+    /**
+     * The Approve button (#1625). A Text or Email approve SENDS to a household,
+     * so it is checked first and then confirmed; any other type approves at once.
+     * Mirrors `handleApproveClick` in the React admin's CommunicatePersonalize.tsx.
+     */
+    fun requestApprove() {
+        val state = _uiState.value
+        if (state.isSaving) return
+        if (state.draftId == null) {
+            _uiState.value = state.copy(error = "This draft was not saved, so there is nothing to approve. Regenerate and try again.")
+            return
+        }
+        val channel = approveDeliveryChannel(state.commType)
+        val blocker = approveSendBlocker(channel, approveRecipient(state), state.subject, state.generatedCopy)
+        if (blocker != null) {
+            _uiState.value = state.copy(error = blocker)
+            return
+        }
+        if (channel != null) {
+            _uiState.value = state.copy(error = null, approveConfirmOpen = true)
+            return
+        }
+        approveDraft()
+    }
+
+    fun cancelApproveConfirm() { _uiState.value = _uiState.value.copy(approveConfirmOpen = false) }
+
+    /**
+     * #1563: open a stored `generated_drafts` doc for review: its type, its
+     * household, its title and its copy, ready to edit and send, or to delete.
+     * KinTales > Drafts and Home's "KinTales pending" land here. Before this a
+     * draft could only be one this screen had just generated, so every stored
+     * draft was stranded.
+     */
+    fun loadDraft(draftId: String) {
+        if (draftId.isBlank()) return
+        _uiState.value = _uiState.value.copy(
+            draftLoading = true,
+            draftLoadError = null,
+            draftDeleted = false,
+            error = null,
+            successMessage = null,
+        )
+        viewModelScope.launch {
+            repo.getGeneratedDraft(draftId).onSuccess { draft ->
+                if (draft == null) {
+                    _uiState.value = _uiState.value.copy(
+                        draftLoading = false,
+                        draftLoadError = "This draft is no longer here. It may have been deleted.",
+                    )
+                    return@onSuccess
+                }
+                val type = commTypeOfDraft(draft.communicationType)
+                val kinfolkId = draft.kinfolkId.orEmpty()
+                val household = _uiState.value.kinfolkList.find { it.id == kinfolkId }
+                _uiState.value = _uiState.value.copy(
+                    draftLoading         = false,
+                    commType             = type,
+                    subject              = draft.generatedTitle,
+                    generatedCopy        = draft.generatedCopy,
+                    draftId              = draft.id,
+                    kinfolkId            = kinfolkId.ifBlank { null },
+                    generatedKinfolkName = draft.kinfolkName.orEmpty(),
+                    generatedCommType    = type,
+                    generatedModel       = draft.model,
+                    savedDraftId         = null,
+                    publishedReportId    = draft.publishedReportId.ifBlank { null },
+                    publishedBefore      = draft.isPublished,
+                    pendingKinfolkId     = if (household == null && kinfolkId.isNotBlank()) kinfolkId else null,
+                )
+                if (household != null) selectKinfolk(household)
+            }.onFailure { e ->
+                _uiState.value = _uiState.value.copy(
+                    draftLoading = false,
+                    draftLoadError = e.message ?: "The draft could not be opened.",
+                )
+            }
+        }
+    }
+    /**
+     * #1563: send a KinTale draft to its household's portal. The server writes
+     * the SENT `kin_care_reports` doc and marks the draft sent in one go, and
+     * answers a repeat with the first report, so a second tap cannot send twice.
+     */
+    fun sendKinTaleDraft() {
         val state = _uiState.value
         val draftId = state.draftId ?: run {
-            AuntieLog.w("Approval attempted without draft ID")
-            _uiState.value = state.copy(error = "No draft to save.")
+            _uiState.value = state.copy(error = "This draft was not saved, so there is nothing to send. Regenerate and try again.")
             return
+        }
+        if (state.generatedCopy.isBlank()) {
+            _uiState.value = state.copy(error = "The KinTale is empty. Write something before sending it.")
+            return
+        }
+        if (state.isSaving) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            repo.publishGeneratedDraft(draftId, state.generatedCopy, state.subject)
+                .onSuccess { reportId ->
+                    val who = state.selectedKinfolk?.displayName?.ifBlank { null }
+                        ?: state.generatedKinfolkName.ifBlank { "the household" }
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false,
+                        publishedReportId = reportId,
+                        publishedBefore = false,
+                        successMessage = "Sent to $who. It is on their portal now.",
+                    )
+                }
+                .onFailure { e ->
+                    _uiState.value = _uiState.value.copy(isSaving = false, error = e.message ?: "Send failed")
+                }
+        }
+    }
+    /** #1563: delete the open, unsent draft. The server refuses one already sent. */
+    fun deleteDraft() {
+        val state = _uiState.value
+        val draftId = state.draftId ?: return
+        if (state.isDeletingDraft) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDeletingDraft = true, error = null)
+            repo.deleteGeneratedDraft(draftId)
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(
+                        isDeletingDraft = false,
+                        draftDeleted = true,
+                        generatedCopy = "",
+                        draftId = null,
+                        kinfolkId = null,
+                        generatedKinfolkName = "",
+                        generatedCommType = "",
+                        generatedModel = "",
+                        savedDraftId = null,
+                        publishedReportId = null,
+                        successMessage = "Draft deleted.",
+                    )
+                }
+                .onFailure { e ->
+                    _uiState.value = _uiState.value.copy(isDeletingDraft = false, error = e.message ?: "Delete failed")
+                }
+        }
+    }
+    fun approveDraft() {
+        val state = _uiState.value
+        // #1563: approving a KinTale sends it. It used to stamp the draft and reach nobody.
+        if (state.commType == "visit_report") {
+            sendKinTaleDraft()
+            return
+        }
+        val draftId = state.draftId ?: run {
+            AuntieLog.w("Approval attempted without draft ID")
+            _uiState.value = state.copy(error = "No draft to save.", approveConfirmOpen = false)
+            return
+        }
+        if (state.isSaving) return
+        // Resolved BEFORE the write, from the state the operator confirmed, so a
+        // type or recipient change while the write is in flight cannot redirect it.
+        val channel = approveDeliveryChannel(state.commType)
+        val recipient = approveRecipient(state)
+        if (channel != null) {
+            val blocker = approveSendBlocker(channel, recipient, state.subject, state.generatedCopy)
+            if (blocker != null) {
+                _uiState.value = state.copy(error = blocker, approveConfirmOpen = false)
+                return
+            }
         }
 
         AuntieLog.i("Approving and saving draft: $draftId")
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            _uiState.value = _uiState.value.copy(isSaving = true, error = null, approveConfirmOpen = false)
             repo.approveDraft(draftId, state.generatedCopy, state.kinfolkId)
                 .onSuccess {
                     AuntieLog.i("Draft #$draftId saved successfully")
@@ -458,10 +699,13 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                         repo.logActivity(
                             ActivityLogEntry(
                                 actionType = "DRAFT_APPROVED",
-                                description = "Approved generated_drafts/$draftId (${state.kinfolkId ?: "no kinfolk"})",
+                                // #1747: words for the Activity Log. The draft is
+                                // the entry's target and the household its familyId.
+                                description = com.tribetails.auntieos.ui.admin.ActivityWords.DRAFT_APPROVED,
                                 status = "SUCCESS",
                                 targetId = draftId,
                                 targetCollection = "generated_drafts",
+                                familyId = state.kinfolkId.orEmpty(),
                             ),
                         ).exceptionOrNull()
                     } catch (t: Throwable) {
@@ -471,16 +715,57 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     if (auditFailure != null) {
                         AuntieLog.e("Audit entry for draft $draftId failed", auditFailure)
                     }
-                    _uiState.value = _uiState.value.copy(
-                        isSaving       = false,
-                        savedDraftId   = draftId,
-                        successMessage = if (auditFailure == null) {
-                            "Draft #$draftId approved and logged to the audit trail."
-                        } else {
-                            "Draft #$draftId approved. The audit entry could not be written: " +
-                                (auditFailure.message ?: "unknown error")
-                        },
-                    )
+                    val auditNote = auditFailure?.let {
+                        " The audit entry could not be written: " + (it.message ?: "unknown error")
+                    }.orEmpty()
+                    // #1625: the send, AFTER the approve write landed, the same
+                    // order as the web admin. A Text or Email approve that sent
+                    // nothing left the household unreached while the screen said
+                    // the draft was done.
+                    if (channel == null || recipient == null) {
+                        _uiState.value = _uiState.value.copy(
+                            isSaving       = false,
+                            savedDraftId   = draftId,
+                            successMessage = if (auditFailure == null) {
+                                "Draft approved and logged to the audit trail."
+                            } else {
+                                "Draft approved.$auditNote"
+                            },
+                        )
+                        return@onSuccess
+                    }
+                    val sent = try {
+                        repo.sendExternalMessage(
+                            channel = channel.wire,
+                            to = if (channel == ExternalChannel.Email) recipient.email.trim() else recipient.phoneNumber.trim(),
+                            subject = state.subject.trim().takeIf { channel == ExternalChannel.Email },
+                            body = state.generatedCopy,
+                            transactional = true,
+                        )
+                    } catch (t: Throwable) {
+                        t.rethrowIfCancellation()
+                        Result.failure(t)
+                    }
+                    sent.onSuccess { result ->
+                        _uiState.value = _uiState.value.copy(
+                            isSaving       = false,
+                            savedDraftId   = draftId,
+                            successMessage = "Draft approved and sent by " +
+                                (if (channel == ExternalChannel.Email) "email" else "text") +
+                                " to ${result.recipientRedacted}.$auditNote",
+                        )
+                    }.onFailure { e ->
+                        AuntieLog.e("Approved draft $draftId but the send failed", e)
+                        // Approved stays approved: the write landed. The error
+                        // says the household did not get it, so nobody assumes
+                        // it went out.
+                        _uiState.value = _uiState.value.copy(
+                            isSaving     = false,
+                            savedDraftId = draftId,
+                            error        = "The draft is approved, but the send failed: " +
+                                externalSendErrorText(e.message) + auditNote,
+                        )
+                    }
                 }
                 .onFailure { e ->
                     AuntieLog.e("Failed to save draft", e)
@@ -646,6 +931,10 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     fun selectSegment(id: String?) { _uiState.value = _uiState.value.copy(selectedSegmentId = id, broadcastError = null) }
     fun setBcKind(kind: SegmentKind) { _uiState.value = _uiState.value.copy(bcKind = kind) }
     fun setBcStatuses(text: String) { _uiState.value = _uiState.value.copy(bcStatusesText = text) }
+    /** #1610: the By status picker. */
+    fun toggleBcStatus(status: String, on: Boolean) {
+        _uiState.value = _uiState.value.copy(bcStatusesText = toggleBroadcastStatus(_uiState.value.bcStatusesText, status, on))
+    }
     fun setBcTagMatch(m: TagMatch) { _uiState.value = _uiState.value.copy(bcTagMatch = m) }
 
     // ── "By tag" audience picker ──────────────────────────────────────────────
@@ -736,7 +1025,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     // bar cannot tell them apart.
                     _uiState.value = _uiState.value.copy(
                         broadcastProgress = null,
-                        broadcastError = "getBroadcastProgress failed: ${e.message ?: "Read failed"}",
+                        broadcastError = "Could not load: ${e.message ?: "Read failed"}",
                     )
                 },
             )
@@ -859,14 +1148,45 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         s.bcBody,
     ).joinToString("\u001F") // a separator no typed field can contain
 
+    private fun broadcastProblem(s: CommunicateUiState): String? {
+        val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
+        val effective = criteria ?: s.segments.firstOrNull { it.id == s.selectedSegmentId }?.criteria ?: BroadcastCriteria()
+        return tagCapProblem(s)
+            ?: broadcastBlocker(s.bcChannels, effective, s.bcSubject, s.bcBody)
+            ?: mergeFieldBlocker(s.bcSubject, s.bcBody)
+    }
+
+    /**
+     * #1610: Review, not Send. Checks the form, opens the confirm, and asks the
+     * server how many households the audience reaches, so the operator approves
+     * a number rather than a description. The count is resolved exactly as the
+     * send resolves it.
+     */
+    fun requestBroadcast() {
+        val s = _uiState.value
+        val problem = broadcastProblem(s)
+        if (problem != null) { _uiState.value = s.copy(broadcastError = problem); return }
+        if (s.isBroadcasting) return
+        _uiState.value = s.copy(bcConfirmOpen = true, bcReach = BroadcastReachState.Loading, broadcastError = null, broadcastResult = null)
+        val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
+        viewModelScope.launch {
+            val next = repo.previewBroadcastAudience(s.selectedSegmentId, criteria).fold(
+                onSuccess = { BroadcastReachState.Ready(it) },
+                onFailure = { BroadcastReachState.Failed(it.message ?: "The count did not load.") },
+            )
+            _uiState.value = _uiState.value.copy(bcReach = next)
+        }
+    }
+
+    fun cancelBroadcastConfirm() { _uiState.value = _uiState.value.copy(bcConfirmOpen = false) }
+
     fun sendBroadcast() {
         val s = _uiState.value
         val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
-        val effective = criteria ?: s.segments.firstOrNull { it.id == s.selectedSegmentId }?.criteria ?: BroadcastCriteria()
-        val problem = tagCapProblem(s) ?: broadcastBlocker(s.bcChannels, effective, s.bcSubject, s.bcBody)
-        if (problem != null) { _uiState.value = s.copy(broadcastError = problem); return }
+        val problem = broadcastProblem(s)
+        if (problem != null) { _uiState.value = s.copy(broadcastError = problem, bcConfirmOpen = false); return }
         if (s.isBroadcasting) return
-        _uiState.value = s.copy(isBroadcasting = true, broadcastError = null, broadcastResult = null)
+        _uiState.value = s.copy(isBroadcasting = true, broadcastError = null, broadcastResult = null, bcConfirmOpen = false)
         // #814: one key per message, re-minted only when the message or its
         // audience has changed since the key was minted.
         val signature = broadcastSignature(s)

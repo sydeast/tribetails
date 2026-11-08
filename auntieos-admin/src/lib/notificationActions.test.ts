@@ -4,6 +4,7 @@ import {
   notificationOpenRoute,
   notificationQuoteRoute,
   notificationTargetRoute,
+  requestOutcomeLabel,
 } from './notificationActions';
 import { type NotificationEntry } from '../api/notifications';
 
@@ -103,14 +104,13 @@ describe('applicableNotificationActions', () => {
   // (onBookingEnvelopeCreate.ts, fired once per request). That is the pendency
   // signal: the notification doc carries no live visit status to re-check, so
   // Approve/Deny is scoped to the event that means "this needs a decision"
-  // rather than to every booking-flavoured row. batchUpdateBookings APPROVE/
-  // REJECT is also the wrong callable for a reschedule ask (resolved through
-  // resolveBookingRescheduleRequest) or a cancellation ask (resolved through
-  // the #438 accept/decline path), so those two keys are excluded even though
-  // they are also booking-targeted and also pending an answer. A stale
-  // Approve/Deny on an already-decided request still fails loud: `bookingAction`
-  // in Notifications.tsx surfaces batchUpdateBookings' `failed[]` / `updated
-  // === 0` in the error banner rather than pretending the click worked.
+  // rather than to every booking-flavoured row. Since #1675 they answer the
+  // whole request through manageBookingSeries, which is the wrong callable for
+  // a reschedule ask (resolved through resolveBookingRescheduleRequest) or a
+  // cancellation ask (resolved through the #438 accept/decline path), so those
+  // two keys are excluded even though they are also booking-targeted and also
+  // pending an answer. A refusal still fails loud: `bookingAction` in
+  // Notifications.tsx shows the server's sentence in the error banner.
   describe('Approve/Deny (bookingId)', () => {
     it.each([
       ['kincare.requested', 'booking', 'b1', 'b1'],
@@ -122,12 +122,41 @@ describe('applicableNotificationActions', () => {
       ['kincare.requested', 'invoice', 'i1', ''],
       [undefined, 'booking', 'b1', ''],
     ])('key %s + targetType %s -> bookingId %j', (key, targetType, targetId, expected) => {
-      expect(applicableNotificationActions(entry({ key, targetType, targetId })).bookingId).toBe(expected);
+      // Every request row names its household (onBookingEnvelopeCreate writes data.kinfolkId).
+      const data = { kinfolkId: 'kf1' };
+      expect(applicableNotificationActions(entry({ key, targetType, targetId, data })).bookingId).toBe(expected);
+    });
+    // #1675: Approve/Deny answer the request through manageBookingSeries, which
+    // needs the household as well as the request id.
+    it('offers nothing for a waiting request that names no household', () => {
+      expect(
+        applicableNotificationActions(entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1' }))
+          .bookingId,
+      ).toBe('');
     });
 
+    // #1647: the server stamps `requestResolution` on a request's rows once it
+    // is booked or declined anywhere. An answered request offers no decision.
+    it.each([['booked'], ['declined'], ['cancelled'], ['something-new']])(
+      'offers no Approve/Deny once the request is answered (%s)',
+      (requestResolution) => {
+        expect(
+          applicableNotificationActions(
+            entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' }, requestResolution }),
+          ).bookingId,
+        ).toBe('');
+      },
+    );
+    it('a blank stamp is still waiting', () => {
+      expect(
+        applicableNotificationActions(
+          entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' }, requestResolution: ' ' }),
+        ).bookingId,
+      ).toBe('req_1');
+    });
     it('offers nothing for a pending booking request with a blank targetId', () => {
       expect(
-        applicableNotificationActions(entry({ key: 'kincare.requested', targetType: 'booking', targetId: '' }))
+        applicableNotificationActions(entry({ key: 'kincare.requested', targetType: 'booking', targetId: '', data: { kinfolkId: 'kf1' } }))
           .bookingId,
       ).toBe('');
     });
@@ -159,6 +188,19 @@ describe('applicableNotificationActions', () => {
       }
     });
 
+    it('drops Create quote once the request is answered: it is no longer a fresh ask (#1647)', () => {
+      expect(
+        applicableNotificationActions(
+          entry({
+            key: 'kincare.requested',
+            targetType: 'booking',
+            targetId: 'req_1',
+            data: { kinfolkId: 'k9' },
+            requestResolution: 'booked',
+          }),
+        ).quote,
+      ).toBeNull();
+    });
     it('never offers Create quote without an identifiable household, even on a qualifying key', () => {
       expect(
         applicableNotificationActions(entry({ key: 'quote.denied', targetType: 'invoice', targetId: 'i1' }))
@@ -214,5 +256,27 @@ describe('notificationOpenRoute: invoice.payment.unapplied (#1003)', () => {
   it('leaves every other invoice key on the invoice', () => {
     const e = entry({ key: 'invoice.paid', targetType: 'invoice', targetId: 'inv_9', data: { kinfolkId: 'fam1' } });
     expect(notificationOpenRoute(e)).toEqual({ to: '/invoices', search: { invoiceId: 'inv_9' } });
+  });
+});
+
+describe('requestOutcomeLabel (#1647)', () => {
+  it.each([
+    ['booked', 'Booked'],
+    ['declined', 'Declined'],
+    ['cancelled', 'Cancelled'],
+    ['BOOKED', 'Booked'],
+    ['something-new', 'Answered'],
+  ])('%s reads %s', (requestResolution, label) => {
+    const e = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' }, requestResolution });
+    expect(requestOutcomeLabel(e)).toBe(label);
+    expect(applicableNotificationActions(e).outcome).toBe(label);
+  });
+  it('is null while the request is waiting', () => {
+    expect(requestOutcomeLabel(entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } }))).toBeNull();
+  });
+  it('is null on every other key, stamp or not', () => {
+    expect(
+      requestOutcomeLabel(entry({ key: 'kincare.booking.confirm', targetType: 'booking', requestResolution: 'booked' })),
+    ).toBeNull();
   });
 });

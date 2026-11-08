@@ -6,8 +6,13 @@ import { type Async } from '../lib/async';
 import { type Kinfolk } from '../api/directory';
 import { type GenerateDraftResult } from '../api/communicateGenerate';
 
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+const { useCollection, useDocById } = vi.hoisted(() => ({ useCollection: vi.fn(), useDocById: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
+const { publishGeneratedDraft, deleteGeneratedDraft } = vi.hoisted(() => ({
+  publishGeneratedDraft: vi.fn(),
+  deleteGeneratedDraft: vi.fn(),
+}));
+vi.mock('../api/kinTaleDraftActions', () => ({ publishGeneratedDraft, deleteGeneratedDraft }));
 
 const { generateDraft } = vi.hoisted(() => ({ generateDraft: vi.fn() }));
 vi.mock('../api/communicateGenerate', async (orig) => ({
@@ -79,6 +84,9 @@ function setup(rows: Async<Kinfolk[]> = { status: 'ready', data: ROWS }) {
   generateDraft.mockReset();
   approveGeneratedDraft.mockReset();
   sendExternalMessage.mockReset();
+  publishGeneratedDraft.mockReset().mockResolvedValue({ ok: true, reportId: 'r1', alreadyPublished: false });
+  deleteGeneratedDraft.mockReset().mockResolvedValue(undefined);
+  useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
   useCollection.mockReturnValue(rows);
   approveGeneratedDraft.mockResolvedValue({ ok: true, auditWarning: null, providerId: null, delivered: false });
   return userEvent.setup();
@@ -277,9 +285,12 @@ describe('generate', () => {
 });
 
 describe('approve', () => {
+  // A General note: a type that approves without sending, so these cases test
+  // the approve path itself. A KinTale sends (#1563) and has its own cases.
   async function draftReady(user: ReturnType<typeof userEvent.setup>, over: Partial<GenerateDraftResult> = {}) {
-    generateDraft.mockResolvedValue(draftResult(over));
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'general', ...over }));
     render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'General' }));
     await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
     await generate(user);
     await screen.findByLabelText(/edit before approving/i);
@@ -297,12 +308,52 @@ describe('approve', () => {
     expect(args?.editedCopy).toBe('Nova had the best day at the park today.');
   });
 
-  it('sends nothing for a KinTale report, which delivers from the KinTale flow rather than here', async () => {
+  it('sends nothing for a General note, which has no single destination', async () => {
     const user = setup();
     await draftReady(user);
     await user.click(screen.getByRole('button', { name: 'Approve draft' }));
     await waitFor(() => expect(approveGeneratedDraft).toHaveBeenCalled());
     expect(approveGeneratedDraft.mock.calls[0]?.[0]?.deliver).toBeUndefined();
+    expect(publishGeneratedDraft).not.toHaveBeenCalled();
+  });
+  it('#1563: sends a KinTale to the household through publishGeneratedDraft, after a confirm', async () => {
+    const user = setup();
+    generateDraft.mockResolvedValue(draftResult());
+    render(<CommunicatePersonalize />);
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    const box = await screen.findByLabelText(/edit before approving/i);
+    await user.type(box, ' Edited.');
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText(/not undoable/i)).toBeInTheDocument();
+    expect(publishGeneratedDraft).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(publishGeneratedDraft).toHaveBeenCalledTimes(1));
+    expect(publishGeneratedDraft).toHaveBeenCalledWith({
+      draftId: 'd1',
+      bodyCopy: 'Nova had the best day at the park today. Edited.',
+      title: 'Nova at the park',
+    });
+    // The server writes the approve; no client-side approve write runs first.
+    expect(approveGeneratedDraft).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Sent to Dana Halbrook/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and send' })).toBeNull();
+  });
+  it('#1563: reports a failed KinTale send and leaves the send button live', async () => {
+    const user = setup();
+    publishGeneratedDraft.mockImplementation(() =>
+      Promise.reject(new Error('The household this draft is addressed to no longer exists.')),
+    );
+    generateDraft.mockResolvedValue(draftResult());
+    render(<CommunicatePersonalize />);
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText(/no longer exists/)).toBeInTheDocument();
+    expect(screen.queryByText(/Sent to/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Approve and send' })).toBeEnabled();
   });
 
   it('confirms before a deliverable send, because it reaches a real household and is not undoable', async () => {
@@ -322,6 +373,28 @@ describe('approve', () => {
     await user.click(screen.getByRole('button', { name: 'Send now' }));
     await waitFor(() => expect(approveGeneratedDraft).toHaveBeenCalled());
     expect(typeof approveGeneratedDraft.mock.calls[0]?.[0]?.deliver).toBe('function');
+  });
+
+  it('#1592: a delivered approve says it was sent, never the provider message id', async () => {
+    const user = setup();
+    approveGeneratedDraft.mockResolvedValue({
+      ok: true,
+      auditWarning: null,
+      providerId: 'SG.msg-123',
+      delivered: true,
+    });
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'email' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'Email' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await user.type(screen.getByLabelText(/^subject$/i), 'Nova at the park');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText(/Approved and sent\./)).toBeInTheDocument();
+    expect(screen.queryByText(/SG\.msg-123/)).toBeNull();
+    expect(screen.queryByText(/Provider id/)).toBeNull();
   });
 
   it('refuses to approve a draft the server never saved', async () => {
@@ -422,5 +495,131 @@ describe('the recipient context panel', () => {
     render(<CommunicatePersonalize />);
     await user.click(screen.getByRole('radio', { name: 'Blog' }));
     expect(screen.queryByTestId('context-stub')).toBeNull();
+  });
+});
+
+/**
+ * #1563: every stored draft was stranded. KinTales > Drafts opened them in a
+ * report screen that could not find them, and Home's "Review and send tales"
+ * opened this form blank. `draftId` is the way in: it loads one
+ * `generated_drafts` doc, whichever writer's spelling it carries.
+ */
+describe('#1563 opening a stored draft', () => {
+  /** A May-era n8n draft, camelCase and `pending`, like the walk's five. */
+  const MIGRATED = {
+    _id: 'gd1',
+    status: 'pending',
+    communicationType: 'visit_report',
+    kinfolkId: 'kf1',
+    kinfolkName: 'Dana Halbrook',
+    generatedCopy: 'Biscuit chased every leaf in the yard.',
+    createdOn: '2026-05-23T22:23:00.000Z',
+  };
+
+  function stored(row: Record<string, unknown> | null) {
+    useDocById.mockImplementation((path: string, id: string | null) =>
+      path === 'generated_drafts' && id === 'gd1' ? { status: 'ready', data: row } : { status: 'ready', data: null },
+    );
+  }
+
+  it('reads the draft by its id, not out of Home’s capped stream', () => {
+    setup();
+    stored(MIGRATED);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(useDocById).toHaveBeenCalledWith('generated_drafts', 'gd1');
+  });
+
+  it('loads the household, the type and the copy, ready to edit and send', async () => {
+    const user = setup();
+    stored(MIGRATED);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    const box = await screen.findByLabelText(/edit before approving/i);
+    expect(box).toHaveValue('Biscuit chased every leaf in the yard.');
+    expect(screen.getByRole('radio', { name: 'KinTale' })).toBeChecked();
+    expect(screen.getByText('Dana Halbrook', { selector: '.personalize__recipient-name' })).toBeInTheDocument();
+    await user.clear(box);
+    await user.type(box, 'Biscuit chased every leaf.');
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(publishGeneratedDraft).toHaveBeenCalledTimes(1));
+    expect(publishGeneratedDraft.mock.calls[0]?.[0]).toMatchObject({ draftId: 'gd1', bodyCopy: 'Biscuit chased every leaf.' });
+    expect(await screen.findByText(/Sent to Dana Halbrook/)).toBeInTheDocument();
+  });
+
+  it('reads the snake_case draft generate.js writes, title included', async () => {
+    setup();
+    stored({
+      _id: 'gd1',
+      status: 'generated',
+      communication_type: 'visit_report',
+      kinfolk_id: 'kf2',
+      kinfolk_name: 'Dana Zamora',
+      generated_copy: 'Mochi napped in the sun.',
+      generated_title: 'A sunny nap',
+    });
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(await screen.findByLabelText(/edit before approving/i)).toHaveValue('Mochi napped in the sun.');
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('A sunny nap');
+    expect(screen.getByText('Dana Zamora', { selector: '.personalize__recipient-name' })).toBeInTheDocument();
+  });
+
+  it('opens a stored text draft on the SMS chip, so it sends as a text', async () => {
+    setup();
+    stored({ ...MIGRATED, communicationType: 'sms' });
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await screen.findByLabelText(/edit before approving/i);
+    expect(screen.getByRole('radio', { name: 'SMS' })).toBeChecked();
+  });
+
+  it('says a draft already sent as a KinTale was sent, and offers no second send', async () => {
+    const onOpenKinTale = vi.fn();
+    const user = setup();
+    stored({ ...MIGRATED, status: 'published', publishedReportId: 'r7' });
+    render(<CommunicatePersonalize draftId="gd1" onOpenKinTale={onOpenKinTale} />);
+    expect(await screen.findByText(/already sent to Dana Halbrook/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and send' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Open the KinTale' }));
+    expect(onOpenKinTale).toHaveBeenCalledWith('r7');
+  });
+
+  it('says so when the draft is gone, instead of a blank form that looks like a fresh start', async () => {
+    setup();
+    stored(null);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(await screen.findByText(/no longer here/i)).toBeInTheDocument();
+  });
+
+  it('shows a loading cue while the draft is on its way', () => {
+    setup();
+    useDocById.mockReturnValue({ status: 'loading' });
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(screen.getByText('Opening the draft…')).toBeInTheDocument();
+  });
+
+  it('deletes an unsent draft after a confirm', async () => {
+    const user = setup();
+    stored(MIGRATED);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }));
+    expect(await screen.findByText(/cannot be undone/i)).toBeInTheDocument();
+    expect(deleteGeneratedDraft).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(deleteGeneratedDraft).toHaveBeenCalledWith('gd1'));
+    expect(await screen.findByText('Draft deleted.')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/edit before approving/i)).toBeNull();
+  });
+
+  it('keeps the draft and says why when the delete is refused', async () => {
+    const user = setup();
+    deleteGeneratedDraft.mockImplementation(() => Promise.reject(new Error('Admin claim required.')));
+    stored(MIGRATED);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('Admin claim required.')).toBeInTheDocument();
+    expect(screen.queryByText('Draft deleted.')).toBeNull();
   });
 });

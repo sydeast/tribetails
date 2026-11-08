@@ -41,6 +41,13 @@ vi.mock('./KinfolkEdit', () => ({
 vi.mock('./HouseholdData', () => ({
   HouseholdData: () => <p>STUB HouseholdData</p>,
 }));
+// #1603: the profile's portal invite has its own suite (PortalInviteButton.test).
+// Here it only has to be on the profile, with the household's email.
+vi.mock('../components/PortalInviteButton', () => ({
+  PortalInviteButton: ({ email, householdName }: { email: string; householdName: string }) => (
+    <button type="button">{`STUB Invite to portal ${householdName} ${email}`}</button>
+  ),
+}));
 // Q6: the account credit card reads a callable; its own suite covers it.
 vi.mock('../api/accountCredit', () => ({
   getAccountCreditHistory: vi.fn().mockResolvedValue({ ok: true, kinfolkId: 'k1', accountBalanceCents: 0, credits: [], uses: [] }),
@@ -111,6 +118,12 @@ vi.mock('../api/householdData', async (orig) => ({
   ...(await orig<typeof import('../api/householdData')>()),
   getHouseholdData,
 }));
+// #1592: the household's visit rows name their service from the KinCare
+// catalog (`useBookingCatalog`, a business_settings read). Not under test here.
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
+}));
+
 import { KinfolkProfile } from './KinfolkProfile';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
 
@@ -158,6 +171,18 @@ describe('mergeKinfolkProfile (pure)', () => {
 });
 
 describe('KinfolkProfile', () => {
+  /** #1602: Fix Backlog 4.8/4.9 and punchlist K2 ordered both rows off the profile. */
+  it('#1602: shows neither Preferred contact nor Best time to reach, even when stored', async () => {
+    getKinfolkProfile.mockResolvedValue(
+      profile({ preferredContactMethod: 'Text', bestTimeToContact: 'Evenings' }),
+    );
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    await screen.findByText('512-555-1000');
+    expect(screen.queryByText('Preferred contact')).toBeNull();
+    expect(screen.queryByText('Best time to reach')).toBeNull();
+    expect(screen.queryByText('Evenings')).toBeNull();
+  });
+
   it('loads and shows household + contact + kin', async () => {
     getKinfolkProfile.mockResolvedValue(profile({ email: 'jamie@x.com', serviceAddress: '1 Bark Ave' }));
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);
@@ -166,6 +191,18 @@ describe('KinfolkProfile', () => {
     expect(screen.getByText('1 Bark Ave')).toBeInTheDocument();
     expect(screen.getByText('Willow')).toBeInTheDocument();
     expect(getKinfolkProfile).toHaveBeenCalledWith('k1');
+  });
+
+  /**
+   * #1603. Operator ruling, 2026-11-05 docket: "no button on the Invites
+   * screen. Invite from the kinfolk profile."
+   */
+  it('#1603: offers Invite to portal on the profile, for the email on file', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ email: 'catch@hanasamku.com' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    expect(
+      await screen.findByRole('button', { name: /STUB Invite to portal .* catch@hanasamku\.com/ }),
+    ).toBeInTheDocument();
   });
 
   it('omits the empty Vet panel, but still shows Emergency Contacts, flagged (#829)', async () => {
@@ -219,16 +256,29 @@ describe('KinfolkProfile', () => {
     expect(await screen.findByText('Joined Jul 24, 2026')).toBeInTheDocument();
   });
 
-  it('passes a legacy join date it cannot read straight through, never "Invalid Date"', async () => {
-    // Negative case: existing documents hold whatever Android's old free-text
-    // field accepted. Display tolerates them; it does not throw, and it does not
-    // invent a date.
+  /**
+   * #1602: profiles differed in date format ("Jun 1" on one, a stored
+   * "March 5" on another) because unreadable text was printed as stored.
+   * Every household's line has one shape now: a readable day in range is
+   * formatted, anything else says it needs fixing. Never "Invalid Date".
+   */
+  it('#1602: a legacy join date it cannot read says it needs fixing, never the raw text', async () => {
     getKinfolkProfile.mockResolvedValue(profile({ joinDate: '07/24/2026' }));
     const { container } = render(
       <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
     );
-    expect(await screen.findByText('Joined 07/24/2026')).toBeInTheDocument();
+    expect(await screen.findByText('Join date needs fixing: pick it in Edit')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('07/24/2026');
     expect(container.textContent).not.toContain('Invalid Date');
+  });
+
+  it('#1602: a join date outside 2025 through today needs fixing and earns no tenure badge', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ joinDate: '1900-01-15' }));
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
+    );
+    expect(await screen.findByText('Join date needs fixing: pick it in Edit')).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/\d+ years/);
   });
 
   it('says nothing at all when there is no join date', async () => {
@@ -436,6 +486,27 @@ describe('KinfolkProfile: sub-view wiring', () => {
     await user.click(await screen.findByRole('button', { name: /household data/i }));
     expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
   });
+  it('#1594: reports the sub-view to the route, opens the one the URL names, and follows Back', async () => {
+    const user = userEvent.setup();
+    const onViewChange = vi.fn();
+    const props = { kinfolkId: 'k1', kinfolkName: 'Jamie Halbrook', kin: [kin()], onBack: vi.fn(), onViewChange };
+    const { rerender } = render(<KinfolkProfile {...props} />);
+    await user.click(await screen.findByRole('button', { name: /household data/i }));
+    expect(onViewChange).toHaveBeenLastCalledWith('household');
+    // The route writes `?view=household`.
+    rerender(<KinfolkProfile {...props} view="household" />);
+    expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
+    // Browser Back drops `?view=`: the profile comes back, not the Directory list.
+    rerender(<KinfolkProfile {...props} />);
+    expect(screen.queryByText('STUB HouseholdData')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /household data/i })).toBeInTheDocument();
+  });
+  it('#1594: a reload of ?view=household opens straight on the household record', () => {
+    render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} view="household" onViewChange={vi.fn()} />,
+    );
+    expect(screen.getByText('STUB HouseholdData')).toBeInTheDocument();
+  });
   // Members is the one sub-view that is NOT a local swap: it has its own route,
   // so it gets a real anchor. That is what makes it linkable and openable in a
   // new tab, which a button swapping state can never be.
@@ -578,7 +649,7 @@ describe('KinfolkProfile: the mock', () => {
     const { container } = render(
       <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
     );
-    await screen.findByText('Joined 07/24/2026');
+    await screen.findByText('Join date needs fixing: pick it in Edit');
     expect(container.textContent).not.toMatch(/\d+ months/);
   });
   it('walks Directory / Kinfolk / household, and the Kinfolk step goes back to the list', async () => {

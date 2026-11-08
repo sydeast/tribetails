@@ -81,9 +81,15 @@ beforeEach(() => {
 });
 
 describe('Invites', () => {
-  it('groups by status and defaults to the ones still outstanding', async () => {
+  /**
+   * #1603: the 2026-11-05 walk found Outstanding (3) holding nothing but
+   * expired invites. Outstanding is the invites still waiting on somebody;
+   * expired ones have their own filter.
+   */
+  it('#1603: defaults to the pending invites, and files expired ones under Expired', async () => {
     api.listAllInvites.mockResolvedValue([
       invite({ inviteId: 'i1', tribeId: 'f1', householdName: 'the Demos', status: 'PENDING' }),
+      invite({ inviteId: 'i4', tribeId: 'f4', householdName: 'the Rowans', status: 'EMAIL_SENT' }),
       invite({ inviteId: 'i2', tribeId: 'f2', householdName: 'the Marlowes', status: 'EXPIRED' }),
       invite({ inviteId: 'i3', tribeId: 'f3', householdName: 'the Sparrows', status: 'ACCEPTED' }),
     ]);
@@ -95,12 +101,38 @@ describe('Invites', () => {
       'true',
     );
     expect(screen.getByText('the Demos')).toBeInTheDocument();
-    expect(screen.getByText('the Marlowes')).toBeInTheDocument();
+    expect(screen.getByText('the Rowans')).toBeInTheDocument();
+    expect(screen.queryByText('the Marlowes')).not.toBeInTheDocument();
     expect(screen.queryByText('the Sparrows')).not.toBeInTheDocument();
-    // Grouped, not one flat list: the two outstanding rows sit under different
-    // headings because they need different things done about them.
     expect(screen.getByRole('heading', { name: 'Pending' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Expired' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Expired' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Expired 1' }));
+    expect(screen.getByText('the Marlowes')).toBeInTheDocument();
+    expect(screen.queryByText('the Demos')).not.toBeInTheDocument();
+  });
+
+  /** #1603: a row opens its invite: the address link is stretched over the whole card. */
+  it('#1603: every row opens its own invite', async () => {
+    api.listAllInvites.mockResolvedValue([
+      invite({ inviteId: 'inv-abc', householdName: 'the Demos', status: 'PENDING', invitedEmail: 'catch@hanasamku.com' }),
+    ]);
+    render(<Invites />);
+    const link = await screen.findByRole('link', { name: 'catch@hanasamku.com' });
+    expect(link).toHaveAttribute('href', expect.stringContaining('/invites/inv-abc'));
+    expect(link).toHaveClass('invites__email-link');
+    expect(link.closest('li')).toHaveClass('invites__card');
+  });
+
+  /** #1592: the invite id is a database id; the row names the invite by its address and household. */
+  it('#1592: a row never shows the invite id', async () => {
+    api.listAllInvites.mockResolvedValue([
+      invite({ inviteId: 'rq_8fk29abc', householdName: 'the Demos', status: 'PENDING' }),
+    ]);
+    render(<Invites />);
+    const row = (await screen.findByText('the Demos')).closest('li')!;
+    expect(row.textContent).not.toContain('inviteId');
+    expect(row.textContent).not.toContain('rq_8fk29');
   });
 
   it('shows the accepted ones when that filter is chosen', async () => {
@@ -271,13 +303,14 @@ describe('Invites', () => {
     expect(actions.map((b) => b.textContent?.trim())).toEqual([
       'Outstanding 1',
       'Accepted 0',
+      'Expired 0',
       'Revoked 0',
       'All 1',
     ]);
   });
 
-  /** The invite id is the claim-link bearer token. */
-  it('shows a truncated handle and never the full id or a claim URL', async () => {
+  /** The invite id is the claim-link bearer token, and a database id (#1592). */
+  it('shows no part of the invite id and never a claim URL', async () => {
     api.listAllInvites.mockResolvedValue([
       invite({ inviteId: 'rq_8fk29aLONGTAIL', householdName: 'the Demos' }),
     ]);
@@ -285,8 +318,7 @@ describe('Invites', () => {
     render(<Invites />);
     await screen.findByText('the Demos');
 
-    expect(screen.getByText(/rq_8fk29…/)).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain('rq_8fk29aLONGTAIL');
+    expect(document.body.textContent).not.toContain('rq_8fk29');
     expect(document.body.innerHTML).not.toContain('?invite=');
   });
 });
@@ -340,12 +372,12 @@ describe('filterInvites', () => {
   ];
 
   /**
-   * "Outstanding" answers the operator's actual question, "who never accepted".
-   * An EXPIRED invite belongs there and a REVOKED one does not: expiry happened
-   * TO the invite, revocation was a decision already taken about it.
+   * #1603: "Outstanding" is the invites still waiting on somebody. An EXPIRED
+   * invite can no longer be accepted, so it is under Expired, not here.
    */
-  it('counts pending, sent and expired as outstanding, and not revoked', () => {
-    expect(filterInvites(rows, 'outstanding').map((r) => r.inviteId)).toEqual(['p', 's', 'x']);
+  it('#1603: counts pending and sent as outstanding, and not expired or revoked', () => {
+    expect(filterInvites(rows, 'outstanding').map((r) => r.inviteId)).toEqual(['p', 's']);
+    expect(filterInvites(rows, 'expired').map((r) => r.inviteId)).toEqual(['x']);
     expect(filterInvites(rows, 'accepted').map((r) => r.inviteId)).toEqual(['a']);
     expect(filterInvites(rows, 'revoked').map((r) => r.inviteId)).toEqual(['r']);
     expect(filterInvites(rows, 'all')).toHaveLength(5);
@@ -358,7 +390,8 @@ describe('filterInvites', () => {
    */
   it('files a lapsed invite by its effective status, not its stored one', () => {
     const lapsed = invite({ inviteId: 'l', status: 'EMAIL_SENT', effectiveStatus: 'EXPIRED' });
-    const [row] = filterInvites([lapsed], 'outstanding');
+    expect(filterInvites([lapsed], 'outstanding')).toEqual([]);
+    const [row] = filterInvites([lapsed], 'expired');
     expect(row?.inviteId).toBe('l');
     expect(groupInvitesByStatus([lapsed]).find((s) => s.rows.length > 0)?.heading).toBe('Expired');
   });
@@ -379,10 +412,11 @@ describe('filterInvites', () => {
     ]);
   });
 
-  it('offers exactly the four filters, outstanding first', () => {
+  it('offers exactly the five filters, outstanding first', () => {
     expect(INVITE_FILTERS.map((f) => f.key)).toEqual([
       'outstanding',
       'accepted',
+      'expired',
       'revoked',
       'all',
     ]);

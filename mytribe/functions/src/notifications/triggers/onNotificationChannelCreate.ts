@@ -133,7 +133,12 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
         // (collection + doc id) per writeAuditEntry canonical schema.
         targetUid: notificationId,
         targetCollection: 'notifications',
-        description: `Notification ${parent.key} delivered via ${channel}`,
+        // #1752: the notification's name, not its catalog key; the key and the
+        // notification id stay in the payload and target.
+        description: (await import('../../lib/activityWords.js')).notificationDeliveredWords(
+          (await import('../notificationName.js')).notificationName(parent.key),
+          channel,
+        ),
         payload: {
           notificationId,
           key: parent.key,

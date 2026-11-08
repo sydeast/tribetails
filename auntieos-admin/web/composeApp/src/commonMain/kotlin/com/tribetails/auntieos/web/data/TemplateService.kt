@@ -122,6 +122,20 @@ class TemplateService {
         }
     }
 
+    /**
+     * #1586: the routing ROWS behind listCatalogKeys, not just the key names, so
+     * the screen can say which keys really fail on send. One call: the `keys`
+     * array the older [listCatalogKeys] reads is exactly `rows.map { it.key }`.
+     */
+    suspend fun listCatalogKeyRows(): WriteResult<List<CatalogKeyRow>> {
+        val r = platformInvokeCallable("listCatalogKeys", "{}")
+        return when (r) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(decodeCatalogKeyRows(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
     suspend fun saveTemplate(template: EmailTemplate): WriteResult<String> {
         val payload = buildJsonObject {
             put("templateId", JsonPrimitive(template.templateId))
@@ -220,3 +234,81 @@ class TemplateService {
         fun isBindingActive(active: Boolean?): Boolean = active != false
     }
 }
+
+/**
+ * One row of the listCatalogKeys routing table (#1586). Mirrors the Android
+ * `TemplateRepository.CatalogKey` and the web `CatalogKeyRow`.
+ */
+data class CatalogKeyRow(
+    val key: String,
+    /** 'catalog', 'direct-send' or 'legacy'. */
+    val source: String,
+    val defaultTemplateId: String,
+    val hasDefaultTemplate: Boolean,
+    val bound: Boolean,
+    val resolvedTemplateId: String,
+    /**
+     * What a send does when the resolved template document is missing: "fails",
+     * "repoCopy", "generic" or "unused". A server from before #1586 omits it,
+     * read as "fails".
+     */
+    val whenTemplateMissing: String = "fails",
+    /** Whether the repo carries a copy Template Import can load. */
+    val inRepoCorpus: Boolean = false,
+    /** The catalog's name for the key ("New invoice"), what the operator reads (#1592). */
+    val label: String = "",
+)
+
+private val MISSING_TEMPLATE_EFFECTS = setOf("fails", "repoCopy", "generic", "unused")
+
+private val rowJson = Json { ignoreUnknownKeys = true; isLenient = true }
+
+/** Pure decode of the listCatalogKeys body `{rows:[...]}`. Throws on malformed JSON. */
+internal fun decodeCatalogKeyRows(body: String): List<CatalogKeyRow> {
+    val obj = rowJson.parseToJsonElement(body).jsonObject
+    val arr = obj["rows"] as? JsonArray ?: return emptyList()
+    return arr.mapNotNull { el ->
+        val o = el as? JsonObject ?: return@mapNotNull null
+        fun str(k: String) = (o[k] as? JsonPrimitive)?.contentOrNull
+        fun bool(k: String) = (o[k] as? JsonPrimitive)?.booleanOrNull
+        val key = str("key") ?: return@mapNotNull null
+        val default = str("defaultTemplateId") ?: key
+        CatalogKeyRow(
+            key = key,
+            source = str("source") ?: "catalog",
+            defaultTemplateId = default,
+            hasDefaultTemplate = bool("hasDefaultTemplate") ?: false,
+            bound = bool("bound") ?: false,
+            resolvedTemplateId = str("resolvedTemplateId") ?: default,
+            whenTemplateMissing = str("whenTemplateMissing")?.takeIf { it in MISSING_TEMPLATE_EFFECTS } ?: "fails",
+            inRepoCorpus = bool("inRepoCorpus") ?: false,
+            label = str("label").orEmpty(),
+        )
+    }
+}
+
+/**
+ * Whether the template this row resolves to is missing. A name-matched default
+ * uses the server's check; an override is checked against the loaded bank, and
+ * only once the bank loaded, so an unavailable listTemplates paints nothing.
+ */
+internal fun resolvedTemplateMissing(row: CatalogKeyRow, bankIds: Set<String>, bankLoaded: Boolean): Boolean =
+    if (row.resolvedTemplateId != row.defaultTemplateId) bankLoaded && row.resolvedTemplateId !in bankIds
+    else !row.hasDefaultTemplate
+/** #1586: keys whose next send FAILS because the template is missing. */
+internal fun keysFailingOnSend(rows: List<CatalogKeyRow>, bankIds: Set<String>, bankLoaded: Boolean): List<String> =
+    rows.filter { it.whenTemplateMissing == "fails" && resolvedTemplateMissing(it, bankIds, bankLoaded) }.map { it.key }
+
+/** #1586: the failing keys the repo has a copy of, so Template Import can fix them. */
+internal fun failingKeysWithRepoCopy(rows: List<CatalogKeyRow>, bankIds: Set<String>, bankLoaded: Boolean): List<String> {
+    val failing = keysFailingOnSend(rows, bankIds, bankLoaded).toSet()
+    return rows.filter { it.key in failing && it.inRepoCorpus }.map { it.key }
+}
+/** #1586: keys missing from the bank that still go out and Template Import can load. */
+internal fun keysAwaitingImport(rows: List<CatalogKeyRow>, bankIds: Set<String>, bankLoaded: Boolean): List<String> =
+    rows.filter {
+        it.inRepoCorpus &&
+            (it.whenTemplateMissing == "generic" || it.whenTemplateMissing == "repoCopy") &&
+            resolvedTemplateMissing(it, bankIds, bankLoaded)
+    }.map { it.key }
+

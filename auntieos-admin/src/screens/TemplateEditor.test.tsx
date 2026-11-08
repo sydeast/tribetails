@@ -209,9 +209,9 @@ describe('TemplateEditor: create mode', () => {
     fireEvent.change(screen.getByLabelText(/^headline$/i), { target: { value: 'Headline' } });
     fillVisualBody();
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
-    expect(await screen.findByText(/saveTemplate failed: boom/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save: boom/)).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText(/^subject$/i), '!');
-    expect(screen.queryByText(/saveTemplate failed/)).toBeNull();
+    expect(screen.queryByText(/Could not save/)).toBeNull();
   });
   it('calls saveTemplate with the exact payload and onSaved on success', async () => {
     saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
@@ -253,7 +253,9 @@ describe('TemplateEditor: create mode', () => {
     );
     expect(onSaved).toHaveBeenCalledWith('booking.confirmed');
     // No Display name was typed, so the toast falls back to the template key.
-    expect(await screen.findByText('Saved booking.confirmed.')).toBeInTheDocument();
+    // #1747: a template with no title is named as untitled, never by its id.
+    expect(await screen.findByText('Saved the untitled template.')).toBeInTheDocument();
+    expect(screen.queryByText('Saved booking.confirmed.')).toBeNull();
   });
 
   it('offers a datalist of known categories without forcing one', () => {
@@ -401,7 +403,7 @@ describe('TemplateEditor: save failure (fail loud)', () => {
     fillVisualBody();
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
 
-    expect(await screen.findByText(/saveTemplate failed: templateId already exists/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save: templateId already exists/)).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Email template');
     expect(screen.getByLabelText(/template key/i)).toHaveValue('booking.confirmed');
     expect(onSaved).not.toHaveBeenCalled();
@@ -529,7 +531,7 @@ describe('TemplateEditor: delete (edit mode only)', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
-    expect(await screen.findByText(/deleteTemplate failed: failed-precondition/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not delete: failed-precondition/)).toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
     expect(onDeleted).not.toHaveBeenCalled();
   });
@@ -552,8 +554,8 @@ describe('TemplateEditor: delete (edit mode only)', () => {
     await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
     expect(await screen.findByText(/matched by name/)).toBeInTheDocument();
     expect(screen.getByText(/email template missing/)).toBeInTheDocument();
-    // A warning to read, not an error to report: no "deleteTemplate failed".
-    expect(screen.queryByText(/deleteTemplate failed/)).toBeNull();
+    // A warning to read, not an error to report: no "Could not delete".
+    expect(screen.queryByText(/Could not delete/)).toBeNull();
     expect(screen.getByRole('button', { name: /delete anyway/i })).toBeInTheDocument();
     expect(onDeleted).not.toHaveBeenCalled();
   });
@@ -607,7 +609,7 @@ describe('TemplateEditor: delete (edit mode only)', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
-    expect(await screen.findByText(/deleteTemplate failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not delete/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /delete anyway/i })).toBeNull();
   });
 
@@ -791,7 +793,7 @@ describe('TemplateEditor: creating cannot overwrite an existing template', () =>
     expect(
       await screen.findByText(/The key booking\.confirmed is already in use/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/saveTemplate failed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Could not save/)).not.toBeInTheDocument();
   });
 });
 describe('TemplateEditor: the email creation mock (#755)', () => {

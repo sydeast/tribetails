@@ -30,4 +30,13 @@ class MessageTypeTest {
         assertEquals("Wanda Thorne", generateRecipient(MessageType.Visit, "Wanda Thorne"))
         assertEquals("", generateRecipient(MessageType.Blog, "Wanda Thorne"))
     }
+
+    @Test
+    fun `#1592 the draft line names who and what, never the model or the draft id`() {
+        assertEquals("for Dana Reyes · Visit report", draftCalloutLine("Dana Reyes", "visit_report"))
+        assertEquals("Text", draftCalloutLine(null, "sms"))
+        assertEquals("Social", draftCalloutLine("  ", "social_post"))
+        assertEquals("for Dana Reyes", draftCalloutLine("Dana Reyes", ""))
+        assertEquals("Some new type", draftCalloutLine(null, "some_new_type"))
+    }
 }

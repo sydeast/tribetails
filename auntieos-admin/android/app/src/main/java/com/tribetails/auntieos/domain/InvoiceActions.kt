@@ -151,6 +151,48 @@ internal fun invoiceIsoDatePrefixOrNull(raw: String): String? {
     return candidate
 }
 
+private val MONTH_NAME_DAY = Regex("^([A-Za-z]{3,9})\\s+(\\d{1,2}),?\\s+(\\d{4})$")
+private val MONTH_NAMES = listOf(
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+)
+private fun monthIndexOf(name: String): Int {
+    val n = name.lowercase()
+    val exact = MONTH_NAMES.indexOf(n)
+    if (exact >= 0) return exact
+    if (n.length != 3) return -1
+    return MONTH_NAMES.indexOfFirst { it.startsWith(n) }
+}
+/**
+ * #1570: which day a stored invoice `date`/`dueDate` names, as `YYYY-MM-DD`, or
+ * null when it names none.
+ *
+ * [invoiceIsoDatePrefixOrNull] alone read only the `YYYY-MM-DD` shape, so an
+ * invoice loaded from the old system with `dueDate = "July 14, 2026"` was never
+ * overdue: the walk's `#1018`, OPEN and four months past due, read 0 on the
+ * Overdue card. This reads that form too: an English month name (full or three
+ * letters), a day, an optional comma and a four-digit year, checked against the
+ * calendar. `07/14/2026` stays unreadable, because it is two different days
+ * depending on who typed it.
+ *
+ * Same rule and fixtures as the server's `lib/invoiceDay.ts#invoiceDayOf` and
+ * the web's `lib/invoiceFormat.ts#invoiceDayOrNull`.
+ */
+fun invoiceDayOrNull(raw: String): String? {
+    invoiceIsoDatePrefixOrNull(raw)?.let { return it }
+    val named = MONTH_NAME_DAY.matchEntire(raw.trim()) ?: return null
+    val year = named.groupValues[3].toIntOrNull() ?: return null
+    val month = monthIndexOf(named.groupValues[1])
+    val day = named.groupValues[2].toIntOrNull() ?: return null
+    if (month < 0) return null
+    return runCatching { java.time.LocalDate.of(year, month + 1, day).toString() }.getOrNull()
+}
+/**
+ * #1570: true when an invoice HAS a due date and it names no day. It can never
+ * be counted overdue, so the screens flag it and count it rather than leaving
+ * it out silently.
+ */
+fun isUnreadableDueDate(raw: String): Boolean = raw.isNotBlank() && invoiceDayOrNull(raw) == null
 /**
  * True only when the stored stamp reads [InvoiceState.OPEN] AND dueDate parses
  * to a date strictly before [todayIso]. Overdue stays a CLIENT-side display
@@ -162,7 +204,7 @@ internal fun invoiceIsoDatePrefixOrNull(raw: String): String? {
  */
 fun invoiceIsOverdue(invoice: Invoice, todayIso: String): Boolean {
     if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return false
-    val due = invoiceIsoDatePrefixOrNull(invoice.dueDate) ?: return false
+    val due = invoiceDayOrNull(invoice.dueDate) ?: return false
     return due < todayIso
 }
 

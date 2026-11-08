@@ -180,6 +180,86 @@ internal fun slugifyBlockId(label: String, taken: List<String>): String {
     return "$base-${taken.size}"
 }
 
+/**
+ * ISSUE #1612: a new row has no start and no end. It used to open at 09:00, an
+ * hour the app chose, which landed on top of Midday with nothing on screen
+ * saying so. Blank, the HH:mm check asks for both times.
+ */
+internal fun newTimeBlockRow(taken: List<String>): TimeBlockRow = TimeBlockRow(
+    id = slugifyBlockId("block ${taken.size + 1}", taken),
+    label = "",
+    startTime = "",
+    endTime = "",
+    active = true,
+)
+
+/**
+ * ISSUE #1612: the row with [start] typed in. A row whose end is still empty
+ * gets its end from "Default block length" ([durationHours]) once the start is
+ * a real time: the operator's own setting doing what its label says. An end the
+ * operator already gave is left alone.
+ */
+internal fun TimeBlockRow.withStartTime(start: String, durationHours: Int): TimeBlockRow {
+    val fillEnd = endTime.isEmpty() && HHMM_REGEX.matches(start)
+    return copy(startTime = start, endTime = if (fillEnd) defaultBlockEnd(start, durationHours) else endTime)
+}
+
+/**
+ * ISSUE #1612: for each row, the names of the other ACTIVE rows it overlaps
+ * (empty when none), so the clash shows on the rows themselves.
+ *
+ * Labels play no part. [timeBlockError] stops at its first problem, and a new
+ * row has no name yet, so the banner said "Every block needs a name." while the
+ * new row sat on top of Midday. Rows whose times are not a valid HH:mm pair yet,
+ * or that end before they start, are skipped: they have their own message.
+ * Touching ends do not overlap, the same half-open rule as [firstActiveOverlap].
+ */
+internal fun blockOverlaps(rows: List<TimeBlockRow>): List<List<String>> {
+    fun usable(r: TimeBlockRow) =
+        r.active && HHMM_REGEX.matches(r.startTime) && HHMM_REGEX.matches(r.endTime) && r.startTime < r.endTime
+    return rows.mapIndexed { i, row ->
+        if (!usable(row)) {
+            emptyList()
+        } else {
+            rows.filterIndexed { j, other ->
+                j != i && usable(other) && other.startTime < row.endTime && row.startTime < other.endTime
+            }.map { it.label.trim().ifEmpty { "a block with no name yet" } }
+        }
+    }
+}
+
+/** "Overlaps Midday." / "Overlaps Morning and Midday." / "Overlaps A, B and C." */
+internal fun overlapNote(names: List<String>): String =
+    if (names.size <= 1) {
+        "Overlaps ${names.firstOrNull().orEmpty()}."
+    } else {
+        "Overlaps ${names.dropLast(1).joinToString(", ")} and ${names.last()}."
+    }
+
+/**
+ * ISSUE #1612: when `kincareReminderCron` sends the visit reminder, the one
+ * phrase Booking rules (where it is switched on and off) and Notifications
+ * (which says it has no hour) both use. A fact about the server, not a value
+ * the operator sets: the cron runs hourly and reminds once per confirmed visit
+ * starting 24 to 48 hours out (`WINDOW_LOWER_MS` / `WINDOW_UPPER_MS` in
+ * `mytribe/functions/src/scheduled/kincareReminderCron.ts`).
+ */
+internal const val VISIT_REMINDER_TIMING = "24 to 48 hours before"
+internal const val VISIT_REMINDER_TOGGLE_TITLE = "Remind kinfolk $VISIT_REMINDER_TIMING a visit"
+internal const val VISIT_REMINDER_TOGGLE_DESCRIPTION = "Turning this off stops it for everyone."
+
+/** ISSUE #1612: names the switch it depends on, rather than "the switch above". */
+internal const val ARRIVAL_RADIUS_NOTE =
+    "Only applies while Verify arrival and departure by location is on. An arrival recorded " +
+        "further than this from the household stops the visit being marked complete. An arrival " +
+        "with no usable location still goes through and is recorded as unverified. That includes " +
+        "every arrival marked from this console, which has no GPS. Use the phone when you want a " +
+        "visit verified."
+
+/** The Notifications panel's line about visit reminders, built on [VISIT_REMINDER_TIMING]. */
+internal const val VISIT_REMINDER_NOTE =
+    "They go out $VISIT_REMINDER_TIMING each visit. Turn them on or off under Booking rules."
+
 /** The end a NEW block gets: its start plus the default block length, capped at 23:59. */
 internal fun defaultBlockEnd(startTime: String, durationHours: Int): String {
     if (!HHMM_REGEX.matches(startTime)) return "23:59"
@@ -404,6 +484,7 @@ internal fun BookingRulesPanel(
         timeZone = s?.timeZone.orEmpty(),
         zoneUsable = true, // the zone is edited on its own panel; not this panel's gate
     )
+    val overlaps = blockOverlaps(blocks)
 
     DenPanel(
         title = "Booking rules",
@@ -445,8 +526,8 @@ internal fun BookingRulesPanel(
                 },
             )
             AuntieSettingRow(
-                title = "Remind kinfolk 24 hours before a visit",
-                description = "The reminder goes out the day before. Turning this off stops it for everyone.",
+                title = VISIT_REMINDER_TOGGLE_TITLE,
+                description = VISIT_REMINDER_TOGGLE_DESCRIPTION,
                 leadingIcon = Lucide.CalendarClock,
                 iconTone = AuntieStatusTone.Orange,
                 showDivider = false,
@@ -525,16 +606,19 @@ internal fun BookingRulesPanel(
                     )
                     BottomBorderField(
                         value = row.startTime,
-                        onValueChange = { v -> blocks = blocks.replaceAt(index) { it.copy(startTime = v) } },
+                        onValueChange = { v ->
+                            val hours = parseWholeNumber(blockHours, 1, 24) ?: 4
+                            blocks = blocks.replaceAt(index) { it.withStartTime(v, hours) }
+                        },
                         label = "Starts",
-                        placeholder = "11:00",
+                        placeholder = "HH:mm",
                         modifier = Modifier.weight(1f),
                     )
                     BottomBorderField(
                         value = row.endTime,
                         onValueChange = { v -> blocks = blocks.replaceAt(index) { it.copy(endTime = v) } },
                         label = "Ends",
-                        placeholder = "15:00",
+                        placeholder = "HH:mm",
                         modifier = Modifier.weight(1f),
                     )
                     AuntieToggle(
@@ -546,20 +630,17 @@ internal fun BookingRulesPanel(
                         onClick = { blocks = blocks.filterIndexed { i, _ -> i != index } },
                     )
                 }
+                // ISSUE #1612: under the row itself, named or not, so the clash
+                // is seen where it is fixed. The banner still names the first
+                // thing blocking the save.
+                val clashes = overlaps.getOrNull(index).orEmpty()
+                if (clashes.isNotEmpty()) {
+                    Text(overlapNote(clashes), style = AuntieTheme.typography.bodySmall, color = c.warning)
+                }
             }
             GhostButton(
                 label = "Add a block",
-                onClick = {
-                    val hours = parseWholeNumber(blockHours, 1, 24) ?: 4
-                    val taken = blocks.map { it.id }
-                    blocks = blocks + TimeBlockRow(
-                        id = slugifyBlockId("block ${taken.size + 1}", taken),
-                        label = "",
-                        startTime = "09:00",
-                        endTime = defaultBlockEnd("09:00", hours),
-                        active = true,
-                    )
-                },
+                onClick = { blocks = blocks + newTimeBlockRow(blocks.map { it.id }) },
             )
 
             Spacer(Modifier.height(dims.space2))
@@ -623,7 +704,7 @@ internal fun VisitsTrackingPanel(
     var autoStart by remember(s) { mutableStateOf(s?.autoStartTrackingOnVisitStart != false) }
     var accuracy by remember(s) { mutableStateOf(s?.trackingAccuracy ?: "HIGH") }
     var photoTagging by remember(s) { mutableStateOf(s?.enablePhotoLocationTagging != false) }
-    var arrivalCheck by remember(s) { mutableStateOf(s?.requireArrivalDepartureVerification != false) }
+    var arrivalCheck by remember(s) { mutableStateOf(s?.requireArrivalDepartureVerification == true) }
     var arrivalRadius by remember(s) { mutableStateOf((s?.arrivalRadiusMeters ?: 150).toString()) }
     var clientSharing by remember(s) { mutableStateOf(s?.allowClientLocationSharing != false) }
     var routeDays by remember(s) { mutableStateOf((s?.saveRoutesForDays ?: 90).toString()) }
@@ -731,11 +812,7 @@ internal fun VisitsTrackingPanel(
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                "Only applies while the switch above is on. An arrival recorded further than this " +
-                    "from the household stops the visit being marked complete. An arrival with no " +
-                    "usable location still goes through and is recorded as unverified. That " +
-                    "includes every arrival marked from this console, which has no GPS. Use the " +
-                    "phone when you want a visit verified.",
+                ARRIVAL_RADIUS_NOTE,
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )

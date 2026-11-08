@@ -201,7 +201,8 @@ export async function updateKinCareSessionHandler(
     actorUid: uid,
     targetUid: args.sessionId,
     targetCollection: 'kin_care_sessions',
-    description: `Edited session ${args.sessionId}: ${updated.join(', ')}`,
+    // #1752: words; the session is the target, the field names are in the payload.
+    description: (await import('../lib/activityWords.js')).visitEditedWords(updated),
     // FIELD NAMES, NOT FIELD VALUES. `notes` is free text an operator may have
     // put a household detail into, and the audit trail is a different
     // retention question from the document. Same treatment

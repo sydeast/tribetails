@@ -6,6 +6,8 @@ import {
   getBroadcastProgress,
   reachOf,
   stopBroadcast,
+  previewBroadcastAudience,
+  type BroadcastAudiencePreview,
   type BroadcastCriteria,
   type BroadcastChannel,
   type BroadcastProgress,
@@ -20,6 +22,8 @@ import {
 import { segmentSaveBlocker, broadcastBlocker, broadcastAudienceArgs } from '../lib/audienceSegmentEdit';
 import { mintBroadcastIdempotencyKey } from '../lib/sendIdempotency';
 import { channelLabel } from '../lib/communicateFormat';
+import { BROADCAST_PREVIEW_SAMPLE, KINFOLK_NAME_STAND_IN, mergeFieldBlocker } from '../lib/broadcastMerge';
+import { KINFOLK_STATUS_OPTIONS } from '../lib/kinfolkEditSchema';
 import { DenPanel } from '../components/DenScreenKit';
 import { MergePreview } from '../components/MergePreview';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -35,6 +39,26 @@ const BODY_MAX = 5000;
 const SUBJECT_MAX = 200;
 
 type AudienceKind = BroadcastCriteria['kind'];
+
+/**
+ * #1610: the "By status" picker toggles one status in or out of the
+ * comma-joined list `buildCriteria` reads, so the criteria shape and its tests
+ * are unchanged. Pure.
+ */
+export function toggleStatus(statusesRaw: string, status: string, on: boolean): string {
+  const list = splitList(statusesRaw).filter((s) => s !== status);
+  if (on) list.push(status);
+  // Kept in the picker's own order so the confirm reads the same way every time.
+  return KINFOLK_STATUS_OPTIONS.filter((o) => list.includes(o)).join(', ');
+}
+
+/** "12 kinfolk" / "1 kinfolk": Kinfolk is both singular and plural. Pure. */
+export function reachLine(p: BroadcastAudiencePreview): string {
+  const base = `${String(p.targeted)} kinfolk match this audience (${String(p.withEmail)} with an email address, ${String(p.withPhone)} with a phone number, ${String(p.withApp)} with the app).`;
+  if (p.withoutFirstName === 0) return base;
+  const who = p.withoutFirstName === 1 ? '1 has' : `${String(p.withoutFirstName)} have`;
+  return `${base} ${who} no first name on file and will read "${KINFOLK_NAME_STAND_IN}" where you wrote {{firstName}}.`;
+}
 
 /** Splits a comma-separated field into trimmed, non-blank entries. Pure. */
 export function splitList(raw: string): string[] {
@@ -88,12 +112,12 @@ export function buildCriteria(
  * TYPE in Personalize, and the dispatcher has no KinTale delivery leg, so the
  * chip would be a button that cannot deliver.
  *
- * ── STILL NO PRE-SEND RECIPIENT COUNT ───────────────────────────────────────
- * The confirm step shows an audience DESCRIPTION rather than a live "N
- * recipients" figure, because no such figure exists to show honestly:
- * `broadcastMessageHandler` only computes `recipientCount` AFTER it has sent,
- * and MyTribe has no preview/count/dry-run callable anywhere. The REAL count
- * appears in the result, once it is real.
+ * ── THE PRE-SEND RECIPIENT COUNT (#1610) ────────────────────────────────────
+ * Opening the confirm asks `previewBroadcastAudience`, which resolves the
+ * audience exactly as the send does, so the confirm says how many kinfolk the
+ * broadcast will reach before anything goes out. The post-send result still
+ * reports who was actually reached, since a household's own preferences can
+ * switch a channel off at send time.
  */
 export function CommunicateCompose() {
   const [segments, setSegments] = useState<AudienceSegment[]>([]);
@@ -115,6 +139,9 @@ export function CommunicateCompose() {
   const [body, setBody] = useState('');
 
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reach, setReach] = useState<
+    { status: 'loading' } | { status: 'ready'; preview: BroadcastAudiencePreview } | { status: 'error'; message: string }
+  >({ status: 'loading' });
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [result, setResult] = useState<SendBroadcastResult | null>(null);
@@ -165,7 +192,7 @@ export function CommunicateCompose() {
         // Fail loud but non-blocking: saved segments are an accelerator, and an
         // ad-hoc broadcast is still perfectly sendable without them.
         setSegmentsError(
-          `listAudienceSegments failed: ${err instanceof Error ? err.message : 'Load failed'}. You can still build an audience below.`,
+          `Could not load: ${err instanceof Error ? err.message : 'Load failed'}. You can still build an audience below.`,
         );
       });
     return () => {
@@ -195,14 +222,23 @@ export function CommunicateCompose() {
   const subjectRequired = emailOn || inappOn;
   const subjectIsPushTitle = pushOn && !subjectRequired && trimmedSubject.length === 0;
   const audienceMissing = audienceArgs === null;
-  const formBlocker = broadcastBlocker(channels, subject, body);
+  const mergeBlocker = mergeFieldBlocker(subject, body);
+  const formBlocker = broadcastBlocker(channels, subject, body) ?? mergeBlocker;
   const formValid = !audienceMissing && formBlocker === null && trimmedBody.length <= BODY_MAX;
 
   function openConfirm() {
-    if (!formValid || sending) return;
+    if (!formValid || sending || audienceArgs === null) return;
     setResult(null);
     setSendError(null);
     setConfirmOpen(true);
+    // #1610: the count is asked for when the confirm opens, so it describes
+    // the audience as it stands right now.
+    setReach({ status: 'loading' });
+    previewBroadcastAudience(audienceArgs)
+      .then((preview) => setReach({ status: 'ready', preview }))
+      .catch((err: unknown) =>
+        setReach({ status: 'error', message: err instanceof Error ? err.message : 'The count did not load.' }),
+      );
   }
 
   async function confirmSend() {
@@ -222,7 +258,7 @@ export function CommunicateCompose() {
       submissionKey.current = null;
       setConfirmOpen(false);
     } catch (err) {
-      setSendError(`sendBroadcast failed: ${friendlySendError(err)}`);
+      setSendError(`Could not send: ${friendlySendError(err)}`);
       setConfirmOpen(false);
     } finally {
       setSending(false);
@@ -246,7 +282,7 @@ export function CommunicateCompose() {
       setSelectedSegmentId(id);
       loadSegments();
     } catch (err) {
-      setSegmentsError(`saveAudienceSegment failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setSegmentsError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     } finally {
       setSegmentBusy(false);
     }
@@ -263,7 +299,7 @@ export function CommunicateCompose() {
       setSegmentsError(null);
       loadSegments();
     } catch (err) {
-      setSegmentsError(`deleteAudienceSegment failed: ${err instanceof Error ? err.message : 'Delete failed'}`);
+      setSegmentsError(`Could not delete: ${err instanceof Error ? err.message : 'Delete failed'}`);
     } finally {
       setSegmentBusy(false);
     }
@@ -386,17 +422,22 @@ export function CommunicateCompose() {
               </div>
 
               {audienceKind === 'status' && (
-                <label className="compose__field">
-                  <span className="compose__field-label">Statuses (comma-separated)</span>
-                  <input
-                    type="text"
-                    className="compose__text-input"
-                    value={statusesRaw}
-                    disabled={sending}
-                    onChange={(e) => setStatusesRaw(e.target.value)}
-                    placeholder="active, prospect"
-                  />
-                </label>
+                // #1610: picked from the Directory's own status list, never typed,
+                // so a misspelled status cannot quietly match nobody.
+                <fieldset className="compose__field compose__status-picker">
+                  <legend className="compose__field-label">Statuses</legend>
+                  {KINFOLK_STATUS_OPTIONS.map((status) => (
+                    <label key={status} className="compose__check">
+                      <input
+                        type="checkbox"
+                        checked={splitList(statusesRaw).includes(status)}
+                        disabled={sending}
+                        onChange={(e) => setStatusesRaw((raw) => toggleStatus(raw, status, e.target.checked))}
+                      />
+                      {status.charAt(0).toUpperCase() + status.slice(1)}
+                    </label>
+                  ))}
+                </fieldset>
               )}
 
               {audienceKind === 'tags' && (
@@ -534,18 +575,17 @@ export function CommunicateCompose() {
           </label>
 
           <div className="compose__actions">
+            {mergeBlocker !== null && <p className="compose__blocker">{mergeBlocker}</p>}
             <PrimaryButton label="Review broadcast" onClick={openConfirm} disabled={!formValid || sending} />
           </div>
         </div>
 
         {/*
-          The preview column. `sample={{}}` is not a placeholder waiting to be
-          filled in later, it is the accurate one: `broadcastMessage` calls
-          `sendTemplatedEmail` with `data: {}` and hands Twilio / FCM / the
-          in-app write the string verbatim, so nothing on this path can resolve
-          a merge field. Every `{{token}}` an author types here IS unresolved,
-          and the footnote says what each channel does with it rather than
-          leaving the operator to find out from a customer.
+          The preview column. #1610: `broadcastMessage` now fills
+          {{firstName}}, {{lastName}}, {{kinfolkName}} and {{business}} per
+          household on every channel, so the preview fills them from a sample
+          household. Any other token is refused before Send (mergeFieldBlocker),
+          so the preview never shows a field that would go out blank.
         */}
         </DenPanel>
       </div>
@@ -555,8 +595,8 @@ export function CommunicateCompose() {
           <MergePreview
             subject={subject}
             body={body}
-            sample={{}}
-            footnote="A broadcast carries no merge data. Email sends these blank; in-app, SMS and push send the braces as typed."
+            sample={BROADCAST_PREVIEW_SAMPLE}
+            footnote={`Filled per household on every channel. A household with no first name on file reads "${KINFOLK_NAME_STAND_IN}".`}
           />
         </DenPanel>
       </div>
@@ -596,9 +636,17 @@ export function CommunicateCompose() {
           <p className="compose__confirm-line">
             <strong>Message:</strong> {trimmedBody}
           </p>
+          <p className="compose__confirm-line" role="status">
+            <strong>Reach:</strong>{' '}
+            {reach.status === 'loading'
+              ? 'Counting who this reaches…'
+              : reach.status === 'error'
+                ? `The count did not load (${reach.message}). The send still reports who it reached.`
+                : reachLine(reach.preview)}
+          </p>
           <p className="compose__confirm-note">
-            This goes out to every kinfolk this audience matches, right now. The exact number reached is reported below
-            once the send completes; it isn&rsquo;t known until then.
+            This goes out right now. A household that switched a channel off does not get it there; the result shows who was
+            reached.
           </p>
         </Dialog>
       )}
@@ -610,6 +658,10 @@ export function CommunicateCompose() {
 export function friendlySendError(err: unknown): string {
   const message = err instanceof Error ? err.message : 'Send failed';
   if (message.includes('no_recipients')) return 'No kinfolk match this audience. Nothing was sent.';
+  if (message.includes('unsupported_merge_fields')) {
+    const list = message.split('unsupported_merge_fields:')[1]?.trim() ?? '';
+    return `The message has merge fields a broadcast cannot fill${list !== '' ? ` (${list})` : ''}. Nothing was sent.`;
+  }
   if (message.includes('broadcast_all_failed')) {
     return 'Every attempted send failed. Nothing went out, check the email/SMS provider configuration.';
   }
@@ -739,7 +791,7 @@ function StillSending({ broadcastId }: { broadcastId: string }) {
         // gone out" are different facts, and a progress bar cannot tell them
         // apart.
         setProgress(null);
-        setError(`getBroadcastProgress failed: ${err instanceof Error ? err.message : 'Read failed'}`);
+        setError(`Could not load: ${err instanceof Error ? err.message : 'Read failed'}`);
       });
   }, [broadcastId]);
 

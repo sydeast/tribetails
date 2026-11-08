@@ -617,7 +617,7 @@ describe('FormSchemaEditor: create mode', () => {
     await fillValidSchema();
     await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
 
-    expect(await screen.findByText(/saveFormSchema failed:.*validation failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save:.*validation failed/i)).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled();
   });
 
@@ -626,10 +626,10 @@ describe('FormSchemaEditor: create mode', () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     await fillValidSchema();
     await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
-    await screen.findByText(/saveFormSchema failed/i);
+    await screen.findByText(/Could not save/i);
 
     await goToStep('Schema');
-    expect(screen.getByText(/saveFormSchema failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/Could not save/i)).toBeInTheDocument();
   });
 
   it('calls onCancel and never calls saveFormSchema when Cancel is clicked on a clean form', async () => {
@@ -745,10 +745,18 @@ describe('FormSchemaEditor: edit mode', () => {
     expect(screen.getByDisplayValue('firstName')).toBeInTheDocument();
   });
 
+  it('#1592: Applies to reads as words, never the stored NONE', async () => {
+    getFormSchema.mockResolvedValue(schema({ appliesTo: 'NONE' }));
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(await screen.findByDisplayValue('Nothing yet')).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'NONE' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'KinTales' })).toHaveValue('KINTALE');
+  });
+
   it('fails loud when getFormSchema rejects, naming the callable', async () => {
     getFormSchema.mockRejectedValue(new Error("Schema 'tribeProfile' not found."));
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    expect(await screen.findByText(/getFormSchema failed:.*not found/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load:.*not found/i)).toBeInTheDocument();
   });
 
   /**

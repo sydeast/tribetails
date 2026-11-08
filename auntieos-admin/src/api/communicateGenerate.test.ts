@@ -13,6 +13,7 @@ import {
   generateDraft,
   sendPersonalizedMessage,
   draftOpening,
+  splitSubjectLine,
   GenerateDraftError,
   SendMessageError,
   type GenerateDraftArgs,
@@ -73,6 +74,24 @@ describe('generateDraft', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('#1610: a "Subject:" line in the copy leaves the body and fills a blank title', async () => {
+    authState.currentUser = fakeUser('abc.def');
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { generated_copy: 'Subject: Biscuit had a big day\n\nHi Dana,', communication_type: 'email' }),
+    );
+    const out = await generateDraft(generateArgs);
+    expect(out.generated_copy).toBe('Hi Dana,');
+    expect(out.generated_title).toBe('Biscuit had a big day');
+  });
+  it('#1610: a title the server sent wins over the copy\'s own subject line', async () => {
+    authState.currentUser = fakeUser('abc.def');
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { generated_copy: 'Subject: Other\nHi', generated_title: 'Server title', communication_type: 'email' }),
+    );
+    const out = await generateDraft(generateArgs);
+    expect(out.generated_copy).toBe('Hi');
+    expect(out.generated_title).toBe('Server title');
+  });
   it('forwards a resolved kinfolk_id, so the server reads the household directly instead of matching a name', async () => {
     authState.currentUser = fakeUser('abc.def');
     fetchMock.mockResolvedValue(
@@ -303,5 +322,13 @@ describe('sendPersonalizedMessage', () => {
     callMock.mockResolvedValue({ ok: true, channel: 'email' });
     const result = await sendPersonalizedMessage(sendArgs);
     expect(result).toEqual({ ok: true, providerId: null });
+  });
+});
+describe('splitSubjectLine (#1610)', () => {
+  it('leaves copy with no leading subject line alone', () => {
+    expect(splitSubjectLine('Hi, the subject: is Biscuit')).toEqual({ subject: '', body: 'Hi, the subject: is Biscuit' });
+  });
+  it('handles a bold markdown subject', () => {
+    expect(splitSubjectLine('**Subject:** Big day\nHi')).toEqual({ subject: 'Big day', body: 'Hi' });
   });
 });

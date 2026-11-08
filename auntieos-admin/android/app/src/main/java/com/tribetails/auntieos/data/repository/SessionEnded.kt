@@ -7,6 +7,7 @@ import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.functions.HttpsCallableResult
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.forOperator
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -319,8 +320,26 @@ suspend fun Task<HttpsCallableResult>.awaitCallable(): HttpsCallableResult {
         throw c
     } catch (t: Throwable) {
         RevokedSessionGuard.shared.react(t)
-        throw t
+        throw operatorCopyOf(t)
     }
     RevokedSessionGuard.shared.noteSessionAlive()
     return result
+}
+
+/**
+ * #1592: what the caller (and so the screen) is handed, after the revocation
+ * check above has read the server's own text. A callable refusal whose message
+ * was written for a developer ("updateInvoice validation failed") is rethrown
+ * as the same [FirebaseFunctionsException] (code, details, the original as its
+ * cause) with a plain sentence; the raw text goes to logcat and a Sentry
+ * breadcrumb. Anything else is rethrown as it came.
+ */
+internal fun operatorCopyOf(
+    t: Throwable,
+    note: (String) -> Unit = { AuntieLog.breadcrumb(it) },
+): Throwable {
+    if (t !is FirebaseFunctionsException) return t
+    val plain = t.forOperator()
+    if (plain !== t) note("callable ${t.code.name}: ${t.message}")
+    return plain
 }

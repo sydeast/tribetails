@@ -7,12 +7,23 @@ import { logEvent } from '../../lib/logger';
 import { isEmailHardBounced } from '../../lib/suppressions';
 import { fallbackEmail } from '../fallbackTemplate';
 import { businessLabel, loadBusinessName } from '../../lib/businessName';
+import { operatorAllowlistUids, readBusinessAdmins } from '../../lib/businessAdmins';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
 /**
  * Email channel sender, reads recipient email from clients/{uid} or
  * staff/{uid}, looks up template via def.templates.email, renders, sends
  * via smtp2go (lib/email.ts).
+ *
+ * BUSINESS EMAIL GOES TO THE BUSINESS CONTACT EMAIL (#1564). Operator ruling,
+ * 2026-11-05 docket: "every business email goes to the business contact email
+ * in business settings (`businessEmail`), not to a staff record." A copy that
+ * reached a staff uid through the `businessAdmins` resolver is a business
+ * email, so it is sent to `business_settings/business_settings.businessEmail`,
+ * whatever the staff record says. A blank `businessEmail` skips the send
+ * (`business_email_unset`) and logs at warn; Settings says the same thing
+ * beside the field. Staff copies from any other resolver (an assigned Auntie's
+ * `assignment.*` mail) still read `staff/{uid}.email`.
  *
  * Throws if:
  *   - the catalog row has no email template id (a misconfigured row, which no
@@ -45,7 +56,21 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
     throw new Error(`emailChannel(${def.key}): catalog has no email template id`);
   }
 
-  const email = await lookupRecipientEmail(recipientUid);
+  const target = await lookupRecipientEmail(def, recipientUid);
+  if (target.kind === 'business-unset') {
+    logEvent({
+      severity: 'warn',
+      function: 'emailChannel',
+      event: 'notification.businessEmail.unset',
+      uid: recipientUid,
+      extra: {
+        key: def.key,
+        action: 'skipped; set the business contact email in Settings > Business',
+      },
+    });
+    return { skipped: true, skipReason: 'business_email_unset' };
+  }
+  const email = target.kind === 'address' ? target.email : null;
   if (!email) {
     // Fail-soft: undeliverable, not an error. Do NOT throw (no Sentry, no retry).
     return { skipped: true, skipReason: 'recipient_no_email' };
@@ -97,17 +122,51 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
   return { providerMessageId };
 }
 
-async function lookupRecipientEmail(uid: string): Promise<string | null> {
+type EmailTarget =
+  | { kind: 'address'; email: string }
+  | { kind: 'none' }
+  /** A business email, and `businessEmail` in settings is blank. */
+  | { kind: 'business-unset' };
+
+/**
+ * Does this copy belong to the business roster? Only a key that names the
+ * `businessAdmins` resolver can produce one, and only for a uid that is on the
+ * roster (or, while the roster is empty, the operator allowlist the dispatch
+ * path seeds it from). The roster check keeps a household uid with no
+ * `clients/` document from being mailed to the business by mistake.
+ */
+async function isBusinessRosterCopy(def: ChannelSendArgs['def'], uid: string): Promise<boolean> {
+  if (def.recipientResolver !== 'businessAdmins' && def.secondaryResolver !== 'businessAdmins') return false;
+  const roster = (await readBusinessAdmins()).uids;
+  const uids = roster.length > 0 ? roster : operatorAllowlistUids();
+  return uids.includes(uid);
+}
+
+/**
+ * `business_settings/business_settings.businessEmail`, trimmed. '' when unset.
+ * A failed read throws: that is retryable, and skipping would lose the email.
+ */
+async function loadBusinessEmail(): Promise<string> {
+  const snap = await db().collection('business_settings').doc('business_settings').get();
+  const raw = snap.data()?.['businessEmail'];
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+async function lookupRecipientEmail(def: ChannelSendArgs['def'], uid: string): Promise<EmailTarget> {
   const firestore = db();
   const clientSnap = await firestore.collection('clients').doc(uid).get();
   if (clientSnap.exists) {
     const email = clientSnap.data()?.['email'];
-    if (typeof email === 'string' && email.length > 0) return email;
+    return typeof email === 'string' && email.length > 0 ? { kind: 'address', email } : { kind: 'none' };
+  }
+  if (await isBusinessRosterCopy(def, uid)) {
+    const businessEmail = await loadBusinessEmail();
+    return businessEmail ? { kind: 'address', email: businessEmail } : { kind: 'business-unset' };
   }
   const staffSnap = await firestore.collection('staff').doc(uid).get();
   if (staffSnap.exists) {
     const email = staffSnap.data()?.['email'];
-    if (typeof email === 'string' && email.length > 0) return email;
+    if (typeof email === 'string' && email.length > 0) return { kind: 'address', email };
   }
-  return null;
+  return { kind: 'none' };
 }

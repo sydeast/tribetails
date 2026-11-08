@@ -83,10 +83,33 @@ describe('listMembersHandler', () => {
     // email field absent on this doc -> null, never fabricated from displayName.
     expect(sec2.invitedEmail).toBeNull();
 
+    // #1589: the name comes through so no screen has to show the uid.
+    expect(sec1.displayName).toBe('Sam Secondary');
+    expect(res.members.find((m) => m.uid === 'primary-uid')!.displayName).toBe('Pat Primary');
     // No writes — read-only callable.
     expect(ctx.writes).toHaveLength(0);
     expect(ctx.adds).toHaveLength(0);
     expect(ctx.deletes).toHaveLength(0);
+  });
+  it('#1589: a PRIMARY whose member doc carries no name takes the household contact name; a nameless secondary reads null', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/primary-uid': { kinfolkIds: ['fam-1'] },
+        'families/fam-1/members/primary-uid': { ...primaryMemberDoc('primary-uid'), displayName: '' },
+        'kinfolk/fam-1': { firstName: 'Dre', lastName: 'East' },
+      },
+      queryDocs: {
+        'families/fam-1/members': [
+          { id: 'primary-uid', data: { ...primaryMemberDoc('primary-uid'), displayName: '' } },
+          { id: 'sec-1', data: { ...secondaryMemberDoc('sec-1', 'Spouse', FULL_PERMISSIONS), displayName: '  ' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { listMembersHandler } = await import('../src/portal/listMembers');
+    const res = await listMembersHandler({ data: { kinfolkId: 'fam-1' }, auth: { uid: 'primary-uid' } } as any);
+    expect(res.members.find((m) => m.uid === 'primary-uid')!.displayName).toBe('Dre East');
+    expect(res.members.find((m) => m.uid === 'sec-1')!.displayName).toBeNull();
   });
 
   it('returns the full permissions shape (all six flags) for every member', async () => {

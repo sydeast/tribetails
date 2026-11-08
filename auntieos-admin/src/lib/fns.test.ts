@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { FirebaseError } from 'firebase/app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -48,7 +50,16 @@ const { noteSessionAlive, reactToCallableError } = vi.hoisted(() => ({
 }));
 vi.mock('./revokedSession', () => ({ noteSessionAlive, reactToCallableError }));
 
-const { call, CallableNotStubbedError, CallableTimeoutError } = await import('./fns');
+const {
+  call,
+  CallableNotStubbedError,
+  CallableTimeoutError,
+  CALLABLE_TIMEOUT_MS,
+  LONG_CALLABLE_TIMEOUT_MS,
+  LONG_RUNNING_CALLABLES,
+  callableTimeoutMs,
+} = await import('./fns');
+const { phaseOfError } = await import('./offlineWrite');
 const { LostSignalError, OfflineCallError } = await import('./offlineWrite');
 
 /** Makes the next `call()` reject with [code], as the SDK would. */
@@ -128,6 +139,37 @@ describe('call', () => {
  * sites. These assert the two halves of that seam: every failure is offered to
  * the classifier, and every success re-arms it.
  */
+describe('call, the operator copy of a refusal (#1592)', () => {
+  it('shows a plain sentence, not "updateInvoice validation failed [400]", and keeps code and details', async () => {
+    const details = { validationErrors: [{ path: 'lineItems.0.unitPrice', message: 'Expected number' }] };
+    httpsCallable.mockReturnValue(() =>
+      Promise.reject(
+        Object.assign(new FirebaseError('functions/invalid-argument', 'updateInvoice validation failed [400]'), {
+          details,
+        }),
+      ),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const err = (await call('updateInvoice', {}).catch((e: unknown) => e)) as FirebaseError & { details?: unknown };
+    expect(err).toBeInstanceOf(FirebaseError);
+    expect(err.code).toBe('functions/invalid-argument');
+    expect(err.details).toBe(details);
+    expect(err.message).toBe('Something in this form was not accepted. Check what you entered and try again.');
+    expect(err.message).not.toMatch(/updateInvoice|\[400\]/);
+    // The raw text is kept for triage.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('updateInvoice validation failed [400]'));
+    warn.mockRestore();
+  });
+
+  it('keeps a server sentence written for the operator, minus the status', async () => {
+    httpsCallable.mockReturnValue(() =>
+      Promise.reject(new FirebaseError('functions/invalid-argument', 'Pick a join date from 2025 on. [400]')),
+    );
+    const err = (await call('updateKinfolk', {}).catch((e: unknown) => e)) as FirebaseError;
+    expect(err.message).toBe('Pick a join date from 2025 on.');
+  });
+});
+
 describe('call, revoked-session reaction', () => {
   it('offers a failed callable to the classifier, then rethrows unchanged', async () => {
     rejectWith('functions/unauthenticated');
@@ -304,5 +346,47 @@ describe('call, with no connection (#807)', () => {
     const err = await call('recordPayment', {}).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(FirebaseError);
     expect(err).not.toBeInstanceOf(LostSignalError);
+  });
+});
+
+/**
+ * #1567. A cold start of `reviewAndSendDraftInvoice` took 20.8s before the
+ * handler ran, the 20s cutoff fired, and the screen said "Action failed" while
+ * the invoice was emailed. These pin the two halves of the fix: the long
+ * callables get the SDK's 70s, and a timeout never reads as a failure.
+ */
+describe('call, the per-callable budget (#1567)', () => {
+  it('gives a send the 70s budget Android runs with, and a read the 20s one', async () => {
+    httpsCallable.mockReturnValue(() => Promise.resolve({ data: { ok: true } }));
+    await call('reviewAndSendDraftInvoice', { invoiceId: 'i1' });
+    expect(httpsCallable).toHaveBeenLastCalledWith({}, 'reviewAndSendDraftInvoice', { timeout: 70_000 });
+    await call('listSupplies', {});
+    expect(httpsCallable).toHaveBeenLastCalledWith({}, 'listSupplies', { timeout: 20_000 });
+  });
+  it('is longer than the server\'s own 60s function timeout, so a re-read after it is the true answer', () => {
+    expect(LONG_CALLABLE_TIMEOUT_MS).toBeGreaterThan(60_000);
+    expect(CALLABLE_TIMEOUT_MS).toBe(20_000);
+    expect(callableTimeoutMs('sendInvoiceReminder')).toBe(LONG_CALLABLE_TIMEOUT_MS);
+    expect(callableTimeoutMs('listSupplies')).toBe(CALLABLE_TIMEOUT_MS);
+  });
+  it('names the real budget on a timeout and never says failed', async () => {
+    rejectWith('functions/deadline-exceeded');
+    const err = (await call('reviewAndSendDraftInvoice', {}).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(CallableTimeoutError);
+    expect(err.message).toContain('reviewAndSendDraftInvoice');
+    expect(err.message).toContain('70 seconds');
+    expect(err.message).toMatch(/may still have gone through/);
+    expect(err.message).not.toMatch(/fail/i);
+    expect(phaseOfError(err)).toBe('unknown');
+  });
+  it('lists only callables the server really exports', () => {
+    // A rename on the server would otherwise drop a send back to 20s silently.
+    const index = readFileSync(
+      resolve(__dirname, '../../../mytribe/functions/src/index.ts'),
+      'utf8',
+    );
+    for (const name of LONG_RUNNING_CALLABLES) {
+      expect(index, `${name} is not exported by mytribe/functions`).toMatch(new RegExp(`\\b${name}\\b`));
+    }
   });
 });

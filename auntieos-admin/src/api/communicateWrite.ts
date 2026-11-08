@@ -340,3 +340,23 @@ export async function sendBroadcast(args: SendBroadcastArgs): Promise<SendBroadc
   }
   return call<SendBroadcastArgs, SendBroadcastResult>('broadcastMessage', args, { idempotent: true });
 }
+/** What `previewBroadcastAudience` answers (#1610): households a broadcast audience reaches. */
+export interface BroadcastAudiencePreview {
+  ok: true;
+  description: string;
+  targeted: number;
+  withEmail: number;
+  withPhone: number;
+  withApp: number;
+  withoutFirstName: number;
+}
+/**
+ * How many households an audience reaches, asked before the send so the
+ * confirm can say it. Resolved on the server exactly as `broadcastMessage`
+ * resolves it. Writes nothing.
+ */
+export async function previewBroadcastAudience(
+  audience: { segmentId: string } | { criteria: BroadcastCriteria },
+): Promise<BroadcastAudiencePreview> {
+  return call<typeof audience, BroadcastAudiencePreview>('previewBroadcastAudience', audience);
+}

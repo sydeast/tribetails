@@ -41,6 +41,10 @@ import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.ReceiptText
 import com.composables.icons.lucide.X
+import com.tribetails.auntieos.web.data.CheckedSend
+import com.tribetails.auntieos.web.data.SendCheckAction
+import com.tribetails.auntieos.web.data.SilenceKind
+import com.tribetails.auntieos.web.data.checkedSend
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
@@ -50,6 +54,7 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.lastReminderLabel
+import com.tribetails.auntieos.web.data.linkPickerCancelled
 import com.tribetails.auntieos.web.data.linkPickerOnOtherInvoice
 import com.tribetails.auntieos.web.data.toggleLinkPick
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
@@ -111,7 +116,7 @@ fun InvoiceDetailScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "Invoices · The Den",
+            kicker     = "Care Ops · Invoices",
             title      = "Invoice",
             accentTail = "Detail.",
             subtitle   = "Full billing record.",
@@ -284,7 +289,7 @@ private fun InvoiceDetailBody(
             when (val r = client.linkInvoiceSessions(invoice._id, newIds)) {
                 is WriteResult.Err -> {
                     saveLoading = false
-                    linkSessionsError = "linkInvoiceSessions failed: ${r.message}"
+                    linkSessionsError = "Could not save: ${r.message}"
                 }
                 is WriteResult.Ok -> {
                     saveLoading = false
@@ -324,7 +329,7 @@ private fun InvoiceDetailBody(
                 }
                 is WriteResult.Err -> {
                     savingInvoiceEdit = false
-                    invoiceEditError = "updateInvoice failed: ${r.message}"
+                    invoiceEditError = "Could not save: ${r.message}"
                 }
             }
         }
@@ -486,10 +491,17 @@ private fun InvoiceDetailBody(
                     if (receiptLoading || reminderLoading) return@GhostButton
                     receiptLoading = true
                     scope.launch {
-                        when (val r = client.generateReceipt(invoice._id)) {
-                            is WriteResult.Err -> showToast("Couldn't generate receipt: ${r.message}", true)
-                            // #1511: honest about where the notice went, and not green when app-only.
-                            is WriteResult.Ok  -> showToast(receiptGeneratedMessage(r.value.appOnly), r.value.appOnly)
+                        // #1567: a send that times out is re-read, never reported as failed.
+                        val checked = checkedSend(SendCheckAction.RECEIPT, { client.invoiceSendMarks(invoice._id) }) {
+                            client.generateReceipt(invoice._id)
+                        }
+                        when (checked) {
+                            is CheckedSend.Silent -> showToast(checked.outcome.message, checked.outcome.kind != SilenceKind.SENT)
+                            is CheckedSend.Answered -> when (val r = checked.result) {
+                                is WriteResult.Err -> showToast("Couldn't generate receipt: ${r.message}", true)
+                                // #1511: honest about where the notice went, and not green when app-only.
+                                is WriteResult.Ok  -> showToast(receiptGeneratedMessage(r.value.appOnly), r.value.appOnly)
+                            }
                         }
                         receiptLoading = false
                     }
@@ -497,15 +509,17 @@ private fun InvoiceDetailBody(
                 enabled = !receiptLoading && !reminderLoading,
                 leading = { Icon(Lucide.ReceiptText, contentDescription = null, modifier = Modifier.size(14.dp)) },
             )
-            // #871: offered only for a stored open bill, the rule the server
-            // enforces, so a cancelled invoice or a quote never shows the button.
-            if (InvoiceAction.SEND_REMINDER in actions) GhostButton(
-                label   = if (reminderLoading) "Sending..." else "Send reminder",
-                onClick = {
-                    if (receiptLoading || reminderLoading) return@GhostButton
+            var askReminder by remember { mutableStateOf(false) }
+            fun sendReminderNow() {
+                    if (receiptLoading || reminderLoading) return
                     reminderLoading = true
                     scope.launch {
-                        when (val r = client.sendInvoiceReminder(invoice._id)) {
+                        val checked = checkedSend(SendCheckAction.REMINDER, { client.invoiceSendMarks(invoice._id) }) {
+                            client.sendInvoiceReminder(invoice._id)
+                        }
+                        if (checked is CheckedSend.Silent) {
+                            showToast(checked.outcome.message, checked.outcome.kind != SilenceKind.SENT)
+                        } else when (val r = (checked as CheckedSend.Answered).result) {
                             is WriteResult.Err -> showToast("Couldn't send reminder: ${r.message}", true)
                             // #832: a refusal inside the server's window is not a
                             // failure, but it is not "sent" either. Say which,
@@ -522,6 +536,27 @@ private fun InvoiceDetailBody(
                         }
                         reminderLoading = false
                     }
+                }
+            // #871: offered only for a stored open bill, the rule the server
+            // enforces, so a cancelled invoice or a quote never shows the button.
+            // #1609: the button opens a confirm naming who the reminder reaches.
+            if (askReminder) {
+                SendConfirmDialog(
+                    client = client,
+                    invoiceId = invoice._id,
+                    send = HouseholdSend.REMINDER,
+                    onConfirm = {
+                        askReminder = false
+                        sendReminderNow()
+                    },
+                    onDismiss = { askReminder = false },
+                )
+            }
+            if (InvoiceAction.SEND_REMINDER in actions) GhostButton(
+                label   = if (reminderLoading) "Sending..." else "Send reminder",
+                onClick = {
+                    if (receiptLoading || reminderLoading) return@GhostButton
+                    askReminder = true
                 },
                 enabled = !receiptLoading && !reminderLoading,
                 leading = { Icon(Lucide.MessageSquare, contentDescription = null, modifier = Modifier.size(14.dp)) },
@@ -553,7 +588,17 @@ private fun InvoiceDetailBody(
             Column {
                 DetailRow("Client",   invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
-                DetailRow("Due date", invoice.dueDate.ifBlank { "-" })
+                // #1570: a stored due date that names no day is never counted
+                // overdue, so the row says so beside it.
+                DetailRow(
+                    "Due date",
+                    when {
+                        invoice.dueDate.isBlank() -> "-"
+                        isUnreadableDueDate(invoice.dueDate) ->
+                            "${invoice.dueDate.trim()} (not a date this app can read, so it is never counted overdue)"
+                        else -> invoice.dueDate
+                    },
+                )
                 DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
@@ -944,7 +989,7 @@ private fun RecordPaymentDialog(
             BottomBorderField(credit, { credit = it }, label = "Leave as account credit", placeholder = "0.00", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
             // #988: where the money goes, before Save.
             Text(
-                recordPaymentSplitLine(recordPaymentSplit(amount, apply, tip, credit), fee),
+                recordPaymentSplitLine(recordPaymentSplit(amount, apply, tip, credit, invoiceBalanceCents(invoice)), fee),
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )
@@ -962,6 +1007,27 @@ private fun RecordPaymentDialog(
     }
 }
 @OptIn(ExperimentalLayoutApi::class)
+/**
+ * #1744: a linked visit's row names its KinCare off the catalog, never the
+ * stored `visit_60`. A blank service keeps its "Service" stand-in.
+ */
+internal fun linkedSessionServiceLabel(serviceType: String, catalog: com.tribetails.auntieos.web.screens.ServiceCatalog): String =
+    if (serviceType.isBlank()) "Service" else catalog.nameOf(serviceType)
+
+/** #1744: one link-picker chip: the visit's KinCare name, its day, and why it cannot be ticked. */
+internal fun linkPickerChipLabel(
+    serviceType: String,
+    dateLabel: String,
+    elsewhere: Boolean,
+    cancelled: Boolean,
+    catalog: com.tribetails.auntieos.web.screens.ServiceCatalog,
+): String {
+    val service = if (serviceType.isBlank()) "Session" else catalog.nameOf(serviceType)
+    return "$service · $dateLabel" +
+        (if (elsewhere) " · on another invoice" else "") +
+        (if (cancelled) " · cancelled, not billable" else "")
+}
+
 @Composable
 private fun LinkSessionsDialog(
     visible: Boolean,
@@ -1020,14 +1086,17 @@ private fun LinkSessionsDialog(
                             // #1254: shown, not hidden, and not tickable:
                             // another invoice already bills it.
                             val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
-                            val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel" +
-                                if (elsewhere) " · on another invoice" else ""
+                            // #1609: a cancelled visit is not billable.
+                            val cancelled = linkPickerCancelled(session, storedIds)
+                            val chipLabel = linkPickerChipLabel(
+                                session.serviceType, dateLabel, elsewhere, cancelled, com.tribetails.auntieos.web.screens.LocalServiceCatalog.current,
+                            )
                             AuntieChip(
                                 label    = chipLabel,
                                 selected = session._id in pendingIds,
                                 tone     = AuntieChipTone.Orange,
                                 onClick  = { onToggle(session._id) },
-                                enabled  = !elsewhere && !saveLoading,
+                                enabled  = !elsewhere && !cancelled && !saveLoading,
                             )
                         }
                     }
@@ -1139,7 +1208,7 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                session.serviceType.ifBlank { "Service" },
+                linkedSessionServiceLabel(session.serviceType, com.tribetails.auntieos.web.screens.LocalServiceCatalog.current),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textPrimary,
             )

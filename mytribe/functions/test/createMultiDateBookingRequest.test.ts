@@ -401,3 +401,75 @@ describe('createMultiDateBookingRequest busy-conflict guard', () => {
     expect(visitWrites(ctx)).toHaveLength(1);
   });
 });
+// ── #1626: the wizard's "Private notes" never reach the household ───────────
+describe('createMultiDateBookingRequest staffNotes (#1626)', () => {
+  const internalNoteWrites = (ctx: ReturnType<typeof seed>) =>
+    ctx.writes.filter((w) => /\/kinCares\/[^/]+\/internalNotes\/[^/]+$/.test(w.path));
+  const visitDocWrites = (ctx: ReturnType<typeof seed>) =>
+    ctx.writes.filter((w) => /\/kinCares\/[^/]+$/.test(w.path));
+  it('writes the private note to every visit’s staff-only thread, and never to the envelope', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const t1 = Date.now() + 3 * DAY;
+    const t2 = Date.now() + 10 * DAY;
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        staffNotes: 'Key is under the blue pot',
+        visits: [
+          { startTimeMs: t1, serviceName: 'Dog Walk', serviceId: 'svc_walk' },
+          { startTimeMs: t2, serviceName: 'Dog Walk', serviceId: 'svc_walk' },
+        ],
+      }),
+    );
+    const notes = internalNoteWrites(ctx);
+    expect(notes).toHaveLength(2);
+    for (const n of notes) {
+      expect(n.data).toMatchObject({ body: 'Key is under the blue pot', authorUid: 'admin1', authorRole: 'admin', source: 'bookingRequest' });
+    }
+    // One note per visit, each under its own visit.
+    const visitPaths = visitDocWrites(ctx).map((w) => w.path);
+    expect(new Set(notes.map((n) => n.path.replace(/\/internalNotes\/[^/]+$/, '')))).toEqual(new Set(visitPaths));
+    // The household-visible fields carry none of it.
+    expect(envelope(ctx)?.data.notes).toBeNull();
+    for (const v of visitDocWrites(ctx)) expect(JSON.stringify(v.data)).not.toContain('blue pot');
+    expect(JSON.stringify(envelope(ctx)?.data)).not.toContain('blue pot');
+  });
+  it('a household-facing `notes` still lands on the envelope, and writes no internal note', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        notes: 'Please text when you arrive',
+        visits: [{ startTimeMs: Date.now() + 3 * DAY, serviceName: 'Dog Walk', serviceId: 'svc_walk' }],
+      }),
+    );
+    expect(envelope(ctx)?.data.notes).toBe('Please text when you arrive');
+    expect(internalNoteWrites(ctx)).toHaveLength(0);
+  });
+  it('a blank private note writes nothing', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        staffNotes: '   ',
+        visits: [{ startTimeMs: Date.now() + 3 * DAY, serviceName: 'Dog Walk', serviceId: 'svc_walk' }],
+      }),
+    );
+    expect(internalNoteWrites(ctx)).toHaveLength(0);
+  });
+  it('stamps an Auntie as the author role when an Auntie books', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const r = req({
+      kinfolkId: 'kf1',
+      staffNotes: 'Bring the long leash',
+      visits: [{ startTimeMs: Date.now() + 3 * DAY, serviceName: 'Dog Walk', serviceId: 'svc_walk' }],
+    }, 'auntie1');
+    (r.auth as any).token = { staffRole: 'auntie' };
+    await createMultiDateBookingRequestHandler(r);
+    expect(internalNoteWrites(ctx)[0]?.data).toMatchObject({ authorUid: 'auntie1', authorRole: 'auntie' });
+  });
+});

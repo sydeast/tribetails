@@ -55,6 +55,12 @@ import com.tribetails.auntieos.web.data.FieldCondition
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.KinTaleTemplate
+import com.tribetails.auntieos.web.data.KinTaleTemplateRemoval
+import com.tribetails.auntieos.web.data.KinTaleTemplateUsage
+import com.tribetails.auntieos.web.data.kinTaleTemplateArchiveImpact
+import com.tribetails.auntieos.web.data.kinTaleTemplateDeleteHeadline
+import com.tribetails.auntieos.web.data.kinTaleTemplateRemovalImpact
+import com.tribetails.auntieos.web.data.kinTaleTemplateRestoreClearsDefault
 import com.tribetails.auntieos.web.data.MoodOption
 import com.tribetails.auntieos.web.data.TagDef
 import com.tribetails.auntieos.web.data.WriteResult
@@ -80,6 +86,8 @@ import com.tribetails.auntieos.web.ui.components.Crumb
 import com.tribetails.auntieos.web.ui.components.AuntieBreadcrumbs
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
+import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
@@ -126,6 +134,12 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
     var loaded by remember { mutableStateOf<KinTaleTemplate?>(null) }
     var dirty by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    // #1591: archive / restore / delete-for-good.
+    var removing by remember { mutableStateOf<KinTaleTemplate?>(null) }
+    var deleting by remember { mutableStateOf<KinTaleTemplate?>(null) }
+    var deleteUsage by remember { mutableStateOf<KinTaleTemplateUsage?>(null) }
+    var deleteUsageError by remember { mutableStateOf<String?>(null) }
+    var removalBusy by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf("") }
     var toastVisible by remember { mutableStateOf(false) }
     var toastKind by remember { mutableStateOf(ToastKind.Info) }
@@ -160,7 +174,8 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
     LaunchedEffect(templatesRes) {
         val data = (templatesRes as? FirestoreResult.Data)?.value ?: return@LaunchedEffect
         if (selectedId == null) {
-            val first = data.firstOrNull { it.isDefault } ?: data.firstOrNull()
+            val live = data.filterNot { it.archived }
+            val first = live.firstOrNull { it.isDefault } ?: live.firstOrNull()
             if (first != null) {
                 selectedId = first._id
                 draft = first
@@ -240,8 +255,45 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
 
         Spacer(Modifier.height(18.dp))
 
+        val allTemplates = (templatesRes as? FirestoreResult.Data)?.value.orEmpty()
+        fun label(t: KinTaleTemplate) = t.name.ifBlank { "Untitled template" }
+        fun runRemoval(t: KinTaleTemplate, mode: KinTaleTemplateRemoval, clearDefault: Boolean, done: String) {
+            if (removalBusy) return
+            removalBusy = true
+            scope.launch {
+                when (val r = client.removeKinTaleTemplate(t, mode, clearDefault)) {
+                    is WriteResult.Ok -> {
+                        if (selectedId == t._id && mode != KinTaleTemplateRemoval.RESTORE) {
+                            selectedId = null // re-pick a live template on the next stream tick
+                        }
+                        showToast(done, ToastKind.Success)
+                    }
+                    is WriteResult.Err -> showToast("Couldn't change the template: ${r.message}", ToastKind.Error)
+                }
+                removalBusy = false
+            }
+        }
+        RemovalDialogs(
+            removing = removing,
+            deleting = deleting,
+            deleteUsage = deleteUsage,
+            deleteUsageError = deleteUsageError,
+            busy = removalBusy,
+            onDismissRemove = { removing = null },
+            onConfirmRemove = { t ->
+                removing = null
+                runRemoval(t, KinTaleTemplateRemoval.ARCHIVE, false, "${label(t)} moved to the archive.")
+            },
+            onDismissDelete = { deleting = null },
+            onConfirmDelete = { t ->
+                deleting = null
+                runRemoval(t, KinTaleTemplateRemoval.DELETE, false, "${label(t)} deleted for good.")
+            },
+        )
+
         TemplatePicker(
-            templates    = (templatesRes as? FirestoreResult.Data)?.value.orEmpty(),
+            templates    = allTemplates.filterNot { it.archived },
+            onRemove     = { tpl -> removing = tpl },
             selectedId   = selectedId,
             onSelect     = { tpl ->
                 selectedId = tpl._id
@@ -261,6 +313,35 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                 dirty = true
             },
         )
+
+        // #1591: removed templates, restorable, and the only place one is deleted for good.
+        val archivedTemplates = allTemplates.filter { it.archived }
+        if (archivedTemplates.isNotEmpty()) {
+            Spacer(Modifier.height(18.dp))
+            ArchiveSection(
+                templates = archivedTemplates,
+                busy = removalBusy,
+                onRestore = { t ->
+                    runRemoval(
+                        t,
+                        KinTaleTemplateRemoval.RESTORE,
+                        kinTaleTemplateRestoreClearsDefault(t, allTemplates),
+                        "${label(t)} is back in the template list.",
+                    )
+                },
+                onDelete = { t ->
+                    deleting = t
+                    deleteUsage = null
+                    deleteUsageError = null
+                    scope.launch {
+                        when (val r = client.getKinTaleTemplateUsage(t._id)) {
+                            is WriteResult.Ok -> deleteUsage = r.value
+                            is WriteResult.Err -> deleteUsageError = r.message
+                        }
+                    }
+                },
+            )
+        }
 
         Spacer(Modifier.height(18.dp))
 
@@ -485,12 +566,13 @@ private fun TemplatePicker(
     selectedId: String?,
     onSelect: (KinTaleTemplate) -> Unit,
     onAddNew: () -> Unit,
+    onRemove: (KinTaleTemplate) -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     EditorSection(title = "Templates") {
         if (templates.isEmpty()) {
             Text(
-                text  = "No templates saved in Firestore yet - start with the built-in default below and save it.",
+                text  = "No templates saved yet. Start with the built-in default below and save it.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -528,6 +610,8 @@ private fun TemplatePicker(
                         if (!tpl.isActive) {
                             AuntieStatusPill(label = "Inactive", tone = AuntieStatusTone.Muted, mono = true)
                         }
+                        // #1591: Remove moves it to the archive, after a confirm.
+                        GhostButton(label = "Remove", onClick = { onRemove(tpl) })
                     }
                 }
             }
@@ -1136,4 +1220,106 @@ private fun freshMoodKey(existing: List<MoodOption>): String {
     var i = 1
     while (existing.any { it.key == "mood_$i" }) i++
     return "mood_$i"
+}
+
+/** #1591: the archived templates, each with Restore and Delete for good. */
+@Composable
+private fun ArchiveSection(
+    templates: List<KinTaleTemplate>,
+    busy: Boolean,
+    onRestore: (KinTaleTemplate) -> Unit,
+    onDelete: (KinTaleTemplate) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    EditorSection(title = "Archive") {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            templates.forEach { tpl ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(11.dp))
+                        .border(AuntieTheme.dims.borderHairline, c.borderSoft, RoundedCornerShape(11.dp))
+                        .padding(horizontal = 13.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        tpl.name.ifBlank { "Untitled template" },
+                        style = AuntieTheme.typography.titleMedium,
+                        color = c.textDim,
+                        modifier = Modifier.weight(1f),
+                    )
+                    GhostButton(label = "Restore", onClick = { onRestore(tpl) }, enabled = !busy)
+                    GhostButton(label = "Delete for good", onClick = { onDelete(tpl) }, enabled = !busy)
+                }
+            }
+        }
+    }
+}
+
+/** #1591: the Remove (archive) confirm and the delete-for-good confirm with the usage count. */
+@Composable
+private fun RemovalDialogs(
+    removing: KinTaleTemplate?,
+    deleting: KinTaleTemplate?,
+    deleteUsage: KinTaleTemplateUsage?,
+    deleteUsageError: String?,
+    busy: Boolean,
+    onDismissRemove: () -> Unit,
+    onConfirmRemove: (KinTaleTemplate) -> Unit,
+    onDismissDelete: () -> Unit,
+    onConfirmDelete: (KinTaleTemplate) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    removing?.let { t ->
+        AuntieDialog(
+            visible = true,
+            title = "Remove ${t.name.ifBlank { "Untitled template" }}?",
+            onDismiss = onDismissRemove,
+            footer = {
+                GhostButton(label = "Cancel", onClick = onDismissRemove)
+                PrimaryButton(label = "Move to archive", onClick = { onConfirmRemove(t) }, enabled = !busy)
+            },
+        ) {
+            kinTaleTemplateArchiveImpact(t.isDefault).forEach { line ->
+                Text(line, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            }
+        }
+    }
+    deleting?.let { t ->
+        AuntieDialog(
+            visible = true,
+            title = "Delete ${t.name.ifBlank { "Untitled template" }} for good?",
+            onDismiss = onDismissDelete,
+            footer = {
+                GhostButton(label = "Cancel", onClick = onDismissDelete)
+                // Off until the count has loaded: nobody deletes past a warning they never saw.
+                PrimaryButton(
+                    label = "Delete for good",
+                    onClick = { onConfirmDelete(t) },
+                    enabled = deleteUsage != null && !busy,
+                )
+            },
+        ) {
+            when {
+                deleteUsageError != null -> Text(
+                    "Couldn't count the KinTales that used it: $deleteUsageError",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.error,
+                )
+                deleteUsage == null -> Text(
+                    "Counting the KinTales that used it…",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.textDim,
+                )
+                else -> {
+                    Text(kinTaleTemplateDeleteHeadline(deleteUsage), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                    kinTaleTemplateRemovalImpact(deleteUsage).forEach { line ->
+                        Text(line, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                    }
+                    Text("This cannot be undone.", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                }
+            }
+        }
+    }
 }

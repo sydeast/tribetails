@@ -143,7 +143,8 @@
 .ktt__picker-row:hover {
   border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
 }
-.ktt__picker-row--active {
+.ktt__picker-row--active,
+.ktt__picker-row.ktt__picker-row--active:hover {
   border-color: var(--color-primary);
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
 }
@@ -152,6 +153,23 @@
   flex: 1 1 auto;
   font-family: var(--type-title-md-family);
   font-size: var(--type-title-md-size);
+}
+
+/* #1591: a row is the picker button plus its Remove control. */
+.ktt__picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ktt__picker-item > .ktt__picker-row {
+  flex: 1 1 auto;
+}
+/* An archived row is not a button: its name, then Restore and Delete for good. */
+.ktt__archive-row {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-11);
+  color: var(--color-text-dim);
 }
 
 /* ── toggle rows ─────────────────────────────────────────────────────────── */

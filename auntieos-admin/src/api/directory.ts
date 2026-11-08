@@ -41,6 +41,12 @@ export interface Kinfolk {
   profilePictureUrl?: string | undefined;
   status?: string | undefined; // active | inactive | archived
   /**
+   * The household's linked MyTribe login, when it has one (#1587). Blank or
+   * absent until the household signs up. Marketing blasts address accounts, so
+   * this is what lets the screen offer households by name and send to their uid.
+   */
+  uid?: string | undefined;
+  /**
    * Where the Kin Care actually happens. Written by `KinfolkEdit.tsx` through
    * `updateKinfolk` and read back by the profile; modeled on this flat-list type
    * as of #703, because the Auntie Time board needs an address PER CARD and one
@@ -115,6 +121,25 @@ export function kinfolkSurnameSortKey(kf: Pick<Kinfolk, 'firstName' | 'lastName'
   return key.trim().toLowerCase();
 }
 
+/**
+ * A to Z roster order for the pickers and the Directory's default view: the
+ * surname-primary key, then the document id so two households with the same
+ * name keep a stable order between snapshots. Returns a new array. A record
+ * with no last name (or no name at all) sorts by whatever name it has; it is
+ * never dropped.
+ */
+export function sortKinfolkRoster<T extends Pick<Kinfolk, 'firstName' | 'lastName'> & { _id?: string }>(
+  rows: readonly T[],
+): T[] {
+  return [...rows].sort((a, b) => {
+    const ka = kinfolkSurnameSortKey(a);
+    const kb = kinfolkSurnameSortKey(b);
+    if (ka !== kb) return ka < kb ? -1 : 1;
+    const ia = a._id ?? '';
+    const ib = b._id ?? '';
+    return ia < ib ? -1 : ia > ib ? 1 : 0;
+  });
+}
 /** Digits only, so a bare-digit query ("1234") matches a formatted number ("(512) 555-1234"). */
 function digitsOnly(s: string): string {
   return s.replace(/\D/g, '');
@@ -137,34 +162,32 @@ export function matchesKinfolk(kf: Kinfolk, needle: string): boolean {
 }
 
 /**
- * Bounded, server-ordered kinfolk listener. Ordered by `lastName` ascending, 
- * a directory-conventional alphabetical order and, per the note on `joinDate`
- * above, the only string field guaranteed to exist on every doc (there is no
- * timestamp to order by). Capped at 500: generous for a single business's
- * household roster; a business large enough to need pagination is out of
- * scope for this port. No `where` filter is combined with this `orderBy`, so
- * this query needs NO composite Firestore index (single-field orderBy is
- * always covered by Firestore's automatic single-field index), same
- * reasoning NOTIFICATIONS_QUERY documents.
+ * Bounded kinfolk listener, paged by DOCUMENT ID (#1565).
  *
- * KNOWN TRADEOFF, still open on THIS query: Firestore `orderBy` excludes any doc
- * MISSING the sort field, so a kinfolk with no `lastName` silently drops from
- * the list, chips, and count. Flagged for operator prod-verification; the
- * 2026-07-20 model audit profiled `kinfolk.updatedAt` (8 of 12) but never
- * measured `lastName`, so the real exposure here is unmeasured, not proven zero.
+ * This query used to be ordered by `lastName`. Firestore's `orderBy` silently
+ * EXCLUDES every document missing the sort field, so a kinfolk record with no
+ * last name (the "No Lead" test household) vanished from Directory, the chips,
+ * the count and every household picker with no error and no empty state. The
+ * same shape `KIN_QUERY` below documents for `updatedAt`.
  *
- * This comment used to advise "if a legacy doc lacks the field, BACKFILL it".
- * That advice is now retracted, see the KIN_QUERY doc below: a backfill fixes
- * the rows that exist and nothing about the next writer that omits the field.
- * KIN_QUERY was moved off `updatedAt` onto the document id for exactly that
- * reason. The same remedy is available here and is deliberately NOT applied in
- * the same change: this query has no measured drop yet, and re-ordering a
- * screen's live household list on the strength of an unmeasured risk is a
- * separate call with its own verification.
+ * A document id exists on every document, so this order cannot hide a row no
+ * matter which writer created it. It carries no meaning, and no caller needs it
+ * to: every consumer reads the stream through `useKinfolkRoster`
+ * (`lib/useKinfolkRoster.ts`), which re-derives the A to Z order on the client
+ * with {@link sortKinfolkRoster}. Directory's own sort controls
+ * (`filterSortKinfolk`) re-sort again on top of that.
+ *
+ * Capped at 500: generous for a single business's household roster; a
+ * business large enough to need pagination is out of scope. No `where` filter
+ * is combined with this `orderBy`, so this query needs NO composite Firestore
+ * index (the sandbox scope in `lib/testScope.ts` adds an equality filter on the
+ * document id sentinel, which the automatic single-field index also covers).
+ * If the roster ever nears the cap, paginate it; do not reintroduce a sort key
+ * a writer can omit.
  */
 export const KINFOLK_QUERY: CollectionSpec = {
   path: 'kinfolk',
-  order: ['lastName', 'asc'],
+  order: ['__name__', 'asc'],
   max: 500,
 };
 
@@ -177,6 +200,16 @@ export const KINFOLK_QUERY: CollectionSpec = {
  * compiler forces a default at each read instead of promising a `string` the
  * document never carried. `_id` stays required (useCollection sets it).
  */
+/**
+ * A pet that counts as "in care": anything not marked inactive or archived. A
+ * blank status counts, because no `kin` writer sets the field on every doc
+ * (see KIN_QUERY). Home's "Kin in care" card and the Directory's Kin tab "In
+ * care" filter both call this, so the card's number is the list's length.
+ */
+export function isKinInCare(kin: { status?: string | undefined }): boolean {
+  const s = (kin.status ?? '').trim().toLowerCase();
+  return s !== 'inactive' && s !== 'archived';
+}
 export interface Kin {
   _id: string;
   kinfolkId?: string | undefined;
