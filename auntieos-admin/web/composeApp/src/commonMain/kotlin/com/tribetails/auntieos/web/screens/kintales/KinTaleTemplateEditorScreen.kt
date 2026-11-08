@@ -572,7 +572,7 @@ private fun TemplatePicker(
     EditorSection(title = "Templates") {
         if (templates.isEmpty()) {
             Text(
-                text  = "No templates saved in Firestore yet - start with the built-in default below and save it.",
+                text  = "No templates saved yet. Start with the built-in default below and save it.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )

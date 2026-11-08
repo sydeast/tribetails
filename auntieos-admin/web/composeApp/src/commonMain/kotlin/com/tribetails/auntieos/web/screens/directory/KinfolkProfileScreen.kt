@@ -325,7 +325,7 @@ fun KinfolkProfileScreen(
             val loadError = (state as? FirestoreResult.Error)?.message
             SectionHeader(
                 title    = if (loadError != null) "Kinfolk" else "Loading…",
-                subtitle = if (loadError != null) "" else "Pulling profile from Firestore",
+                subtitle = if (loadError != null) "" else "Loading the profile",
                 icon     = Lucide.Users,
                 onBack   = onBack,
                 breadcrumbs = listOf("Directory", "Kinfolk"),

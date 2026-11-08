@@ -87,6 +87,8 @@ class CommunicateApproveSendTest {
         assertFalse(s.approveConfirmOpen)
         assertNull(s.error)
         assertTrue(s.successMessage!!.contains("sent by email to r***@example.com"))
+        // #1592: the toast named the draft by its database id ("Draft #d1").
+        assertFalse(s.successMessage!!, s.successMessage!!.contains("d1"))
     }
 
     @Test fun `a Text approve sends an SMS to the household phone, no subject`() = runTest(testDispatcher) {
