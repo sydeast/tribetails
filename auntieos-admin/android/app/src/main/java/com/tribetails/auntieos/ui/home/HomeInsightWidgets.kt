@@ -39,6 +39,7 @@ import com.tribetails.auntieos.ui.components.CountUpText
 import com.tribetails.auntieos.ui.components.PulsingBadge
 import com.tribetails.auntieos.ui.components.ServicePill
 import com.tribetails.auntieos.ui.components.color
+import com.tribetails.auntieos.ui.admin.ServiceCatalog
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlin.math.roundToInt
 
@@ -127,7 +128,12 @@ private fun CapacityBar(fraction: Float) {
 // ── Overdue visits ──────────────────────────────────────────────────────────
 
 @Composable
-internal fun OverdueVisitsWidget(sessions: List<KinCareSession>, nowIso: String) {
+internal fun OverdueVisitsWidget(
+    sessions: List<KinCareSession>,
+    nowIso: String,
+    /** #1592: the pill names the KinCare, never the stored `visit_60`. */
+    catalog: ServiceCatalog = ServiceCatalog(),
+) {
     val overdue = overdueVisits(sessions, nowIso)
     if (overdue.isEmpty()) {
         InsightHint("Nothing overdue. Clean slate.")
@@ -150,7 +156,7 @@ internal fun OverdueVisitsWidget(sessions: List<KinCareSession>, nowIso: String)
                     Text(v.kinfolkName, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                     Text("ended ${v.endedAt.take(10)}", style = AuntieTheme.typography.bodySmall, color = c.error)
                 }
-                if (v.serviceType.isNotBlank()) ServicePill(v.serviceType)
+                if (v.serviceType.isNotBlank()) ServicePill(catalog.nameOf(v.serviceType))
             }
         }
         if (overdue.size > 5) {
@@ -388,6 +394,8 @@ internal fun SafeboxWidget(
     sessionsLoading: Boolean,
     kinfolkResult: Result<List<Kinfolk>>?,
     nowIso: String,
+    /** #1592: the pill names the KinCare, never the stored `visit_60`. */
+    catalog: ServiceCatalog = ServiceCatalog(),
 ) {
     when {
         kinfolkResult?.isFailure == true ->
@@ -413,7 +421,7 @@ internal fun SafeboxWidget(
                             style = AuntieTheme.typography.titleMedium,
                             color = c.textPrimary,
                         )
-                        if (next.serviceType.isNotBlank()) ServicePill(next.serviceType)
+                        if (next.serviceType.isNotBlank()) ServicePill(catalog.nameOf(next.serviceType))
                     }
                     Text(next.startTime.take(10), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     val lines = household?.let { safeboxAccessLines(it) } ?: emptyList()

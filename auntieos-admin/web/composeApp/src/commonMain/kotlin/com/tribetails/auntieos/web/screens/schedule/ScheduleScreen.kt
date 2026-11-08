@@ -1,8 +1,8 @@
 package com.tribetails.auntieos.web.screens.schedule
 
+import com.tribetails.auntieos.web.screens.LocalServiceCatalog
 import com.tribetails.auntieos.web.screens.ServiceCatalog
 import com.tribetails.auntieos.web.screens.bookingServiceTone
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1048,8 +1048,6 @@ private fun MonthGrid(
     }
 }
 
-/** #1592: the KinCare catalog a stored `serviceType` is named and coloured against, for the agenda and week blocks. */
-internal val LocalServiceCatalog = staticCompositionLocalOf { ServiceCatalog() }
 
 @Composable
 private fun DayAgenda(

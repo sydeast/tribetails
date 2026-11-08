@@ -32,6 +32,9 @@ import com.tribetails.auntieos.web.data.AuthUser
 import com.tribetails.auntieos.web.branding.brandIdentity
 import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.screens.LocalServiceCatalog
+import com.tribetails.auntieos.web.screens.ServiceCatalog
+import com.tribetails.auntieos.web.screens.serviceCatalog
 import com.tribetails.auntieos.web.data.NotificationEntry
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.ui.shell.unreadNotificationCount
@@ -226,6 +229,10 @@ private fun SignedInApp(
         )
     }
     val firestoreClient = remember { FirestoreClient() }
+    // #1592: every screen names a stored service against this catalog.
+    val catalogSettings by remember { firestoreClient.businessSettingsStream() }
+        .collectAsState(initial = FirestoreResult.Loading)
+    val serviceCatalog = (catalogSettings as? FirestoreResult.Data)?.value?.serviceCatalog() ?: ServiceCatalog()
     val signOutScope = rememberReportingScope("app")
 
     // Feature flags: fetch once after auth; on failure keep the compile-time
@@ -358,6 +365,7 @@ private fun SignedInApp(
 
     CompositionLocalProvider(
         LocalFeatureFlags provides featureFlags,
+        LocalServiceCatalog provides serviceCatalog,
         com.tribetails.auntieos.web.data.LocalTestMode provides testMode,
     ) {
     AppShell(

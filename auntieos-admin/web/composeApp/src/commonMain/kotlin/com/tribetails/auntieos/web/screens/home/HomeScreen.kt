@@ -55,6 +55,9 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.UserProfile
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
+import com.tribetails.auntieos.web.screens.BookingServicePill
+import com.tribetails.auntieos.web.screens.LocalServiceCatalog
+import com.tribetails.auntieos.web.screens.bookingServiceTone
 import com.tribetails.auntieos.web.data.ExpenseSummary
 import com.tribetails.auntieos.web.data.ExpirationItem
 import com.tribetails.auntieos.web.data.GeneratedDraft
@@ -86,7 +89,6 @@ import com.tribetails.auntieos.web.ui.components.StatCard
 import com.tribetails.auntieos.web.ui.components.denCurrentHour
 import com.tribetails.auntieos.web.ui.components.formatTime
 import com.tribetails.auntieos.web.ui.components.greetingForHour
-import com.tribetails.auntieos.web.ui.components.serviceTone
 import com.tribetails.auntieos.web.ui.components.statusLabel
 import com.tribetails.auntieos.web.ui.shell.Destination
 import com.tribetails.auntieos.web.util.nowIso
@@ -797,7 +799,9 @@ private fun WidgetEditBar(
 @Composable
 private fun VisitRow(session: KinCareSession, onClick: () -> Unit) {
     val c = AuntieTheme.colors
-    val tone = serviceTone(session.serviceType)
+    // #1592: the KinCare's name and that name's tone, never the stored `visit_60`.
+    val catalog = LocalServiceCatalog.current
+    val tone = bookingServiceTone(session.serviceType, catalog)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -814,11 +818,11 @@ private fun VisitRow(session: KinCareSession, onClick: () -> Unit) {
                 style = AuntieTheme.typography.titleSmall, color = c.textPrimary,
             )
             Text(
-                session.serviceType.ifBlank { "Visit" },
+                catalog.nameOf(session.serviceType),
                 style = AuntieTheme.typography.bodySmall, color = c.textDim,
             )
         }
-        ServicePill(session.serviceType, tone)
+        BookingServicePill(session.serviceType, catalog)
         Spacer(Modifier.width(4.dp))
         Column(horizontalAlignment = Alignment.End) {
             Text(formatTime(session.startTime), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)

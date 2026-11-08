@@ -328,7 +328,7 @@ class KinDetailScreenTest {
         show(onOpenVisit = { opened = it })
 
         rule.onNodeWithText("Upcoming KinCare").assertIsDisplayed()
-        rule.onNodeWithText("30-min walk").performClick()
+        rule.onNodeWithText("30-min Walk").performClick()
 
         assertEquals("s1", opened)
     }

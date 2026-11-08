@@ -54,6 +54,8 @@ import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { DeleteKinTaleDraftButton } from '../components/DeleteKinTaleDraftButton';
 import { canDeleteKinTaleDraft } from '../api/kinTaleReportDraftDelete';
 import { Banner } from '../components/Banner';
+import { bookingServiceName } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import './KinTaleDetail.css';
 
 /**
@@ -238,6 +240,9 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
     createdAt: entry.createdAt ?? '',
   });
   const serviceType = entry.serviceType ?? '';
+  // #1592: the recap names its KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
+  const serviceName = serviceType.trim() !== '' ? bookingServiceName(serviceType, catalog) : '';
   const authorDisplayName = entry.authorDisplayName ?? '';
   const title = entry.title ?? '';
   const bodyCopy = entry.bodyCopy ?? '';
@@ -564,7 +569,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
         badges={
           <>
             <StatusPill label={info.chipLabel} tone={tone} />
-            {serviceType.trim() !== '' ? <ServicePill serviceType={serviceType} /> : null}
+            {serviceName !== '' ? <ServicePill serviceType={serviceType} label={serviceName} /> : null}
           </>
         }
         trailing={
@@ -907,7 +912,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
             <dl className="kintale-detail__who">
               <div className="kintale-detail__who-row">
                 <dt>Service</dt>
-                <dd>{serviceType.trim() !== '' ? serviceType : 'Not recorded'}</dd>
+                <dd>{serviceName !== '' ? serviceName : 'Not recorded'}</dd>
               </div>
               <div className="kintale-detail__who-row">
                 <dt>Visit date</dt>

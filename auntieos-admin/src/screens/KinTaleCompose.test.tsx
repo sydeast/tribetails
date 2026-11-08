@@ -76,6 +76,16 @@ vi.mock('../api/mediaUpload', async (orig) => ({
 
 import { decodeKinTaleTemplate } from '../api/kinTaleTemplates';
 import { DEFAULT_KINTALE_TEMPLATE } from '../lib/kinTale/model';
+// #1592: services are named from the KinCare catalog. "Long walk" runs 60
+// minutes, so a stored `visit_60` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({
+    serviceRates: { 'Long walk': '45' },
+    serviceDurations: { 'Long walk': '60' },
+    timeBlocks: [],
+  }),
+}));
+
 import {
   KinTaleCompose,
   isKinTaleEligibleSession,
@@ -357,6 +367,21 @@ describe('KinTaleCompose: session picker scoped to one household', () => {
 });
 
 describe('KinTaleCompose: NEW from a given sessionId', () => {
+  it('#1592: the visit line, the Service row and the picker name the KinCare, never the stored key', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({ serviceType: 'visit_60' })] } });
+    const { unmount } = render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+
+    expect(await screen.findByLabelText(/headline/i)).toBeInTheDocument();
+    expect(screen.getByText('Long walk')).toBeInTheDocument();
+    expect(screen.getByText(/· Long walk$/)).toBeInTheDocument();
+    expect(screen.queryByText(/visit_60/)).toBeNull();
+    unmount();
+
+    render(<KinTaleCompose onClose={vi.fn()} />);
+    expect(await screen.findByText('Long walk')).toBeInTheDocument();
+    expect(screen.queryByText('visit_60')).toBeNull();
+  });
+
   it('scaffolds the form from the session (household, service shown read-only)', async () => {
     mockStreams({ sessions: { status: 'ready', data: [session({})] } });
     render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);

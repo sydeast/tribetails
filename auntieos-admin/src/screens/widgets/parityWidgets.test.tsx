@@ -8,6 +8,7 @@ import type { Kin } from '../../api/directory';
 import type { InvoiceEntry } from '../../api/invoices';
 import type { GeneratedDraftRow } from '../../api/drafts';
 import { localDateIso } from '../../lib/invoiceFormat';
+import { invalidateSharedLoad } from '../../lib/useSharedOneShot';
 
 /**
  * The ten stream-backed D2 widgets, each through its three real states: a
@@ -25,6 +26,11 @@ import { localDateIso } from '../../lib/invoiceFormat';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../../lib/firestore', () => ({ useCollection }));
+
+// #1592: the cards name a visit's service from the KinCare catalog. "Dog walk"
+// runs 60 minutes, so a stored `visit_60` reads as "Dog walk".
+const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
+vi.mock('../../api/settings', () => ({ getBusinessSettings }));
 
 import { StatsWidget } from './StatsWidget';
 import { TodaysPackWidget } from './TodaysPackWidget';
@@ -117,6 +123,12 @@ function wire(streams: Streams): void {
 
 beforeEach(() => {
   useCollection.mockReset();
+  invalidateSharedLoad();
+  getBusinessSettings.mockReset().mockResolvedValue({
+    serviceRates: { 'Dog walk': '45' },
+    serviceDurations: { 'Dog walk': '60' },
+    timeBlocks: [],
+  });
 });
 
 function statsNav() {
@@ -231,6 +243,35 @@ describe('TodaysPackWidget', () => {
     expect(screen.getByText('Arrived')).toBeInTheDocument();
     const names = [...document.querySelectorAll('.pack-row__who')].map((el) => el.textContent);
     expect(names).toEqual(['Rivera', 'Walls']);
+  });
+
+  it('#1592: names each visit\'s KinCare, never the stored key', async () => {
+    wire({ kin_care_sessions: { status: 'ready', data: [sess({ serviceType: 'visit_60' })] } });
+    render(<TodaysPackWidget onOpenSessions={noop} />);
+
+    expect(await screen.findByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
+    expect(screen.queryByText('visit_60')).toBeNull();
+  });
+
+  it('#1592: Home\'s cards share one catalog read', async () => {
+    wire({
+      kin_care_sessions: {
+        status: 'ready',
+        data: [
+          sess({ _id: 'today', serviceType: 'visit_60' }),
+          sess({ _id: 'late', serviceType: 'visit_60', startTime: `${daysAgo(2)}T09:00:00`, endTime: `${daysAgo(2)}T10:00:00` }),
+        ],
+      },
+    });
+    render(
+      <>
+        <TodaysPackWidget onOpenSessions={noop} />
+        <OverdueVisitsWidget />
+      </>,
+    );
+
+    expect(await screen.findAllByText('Dog walk')).toHaveLength(2);
+    expect(getBusinessSettings).toHaveBeenCalledTimes(1);
   });
 
   it('says the day is quiet when nothing is on the books', () => {
@@ -472,6 +513,19 @@ describe('OverdueVisitsWidget', () => {
 
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(screen.getByText('Rivera')).toBeInTheDocument();
+  });
+
+  it('#1592: names the overdue visit\'s KinCare, never the stored key', async () => {
+    wire({
+      kin_care_sessions: {
+        status: 'ready',
+        data: [sess({ serviceType: 'visit_60', startTime: `${daysAgo(2)}T09:00:00`, endTime: `${daysAgo(2)}T10:00:00` })],
+      },
+    });
+    render(<OverdueVisitsWidget />);
+
+    expect(await screen.findByText('Dog walk')).toBeInTheDocument();
+    expect(screen.queryByText('visit_60')).toBeNull();
   });
 
   it('says nothing is hanging when every visit is closed', () => {

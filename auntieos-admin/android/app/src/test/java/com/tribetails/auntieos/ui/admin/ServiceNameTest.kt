@@ -60,4 +60,23 @@ class ServiceNameTest {
         val catalog = ServiceCatalog(mapOf("Dog walk" to "45"))
         assertEquals(AuntieStatusTone.Purple, bookingServiceTone("Overnight sit", catalog))
     }
+
+    @Test fun `screens mounted together share one settings read, and a failed read is not kept`() = kotlinx.coroutines.test.runTest {
+        SharedServiceCatalog.reset()
+        var reads = 0
+        val settings = com.tribetails.auntieos.data.model.BusinessSettings(
+            serviceRates = mapOf("Long walk" to "45"),
+            serviceDurations = mapOf("Long walk" to "60"),
+        )
+        val first = SharedServiceCatalog.load { reads++; Result.success(settings) }
+        val second = SharedServiceCatalog.load { reads++; Result.success(settings) }
+        assertEquals("Long walk", first?.nameOf("visit_60"))
+        assertEquals(first, second)
+        assertEquals(1, reads)
+
+        SharedServiceCatalog.reset()
+        assertEquals(null, SharedServiceCatalog.load { Result.failure(IllegalStateException("offline")) })
+        assertEquals("Long walk", SharedServiceCatalog.load { Result.success(settings) }?.nameOf("visit_60"))
+        SharedServiceCatalog.reset()
+    }
 }

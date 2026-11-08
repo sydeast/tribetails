@@ -38,6 +38,8 @@ import { MediaUploadDialog } from '../components/MediaUploadDialog';
 import { mediaCaption, mediaPreviewUrl } from '../lib/mediaFormat';
 import { validateKinTaleDraft, type KinTaleDraftErrors } from '../lib/kinTaleDraftSchema';
 import { useToast } from '../components/Toast';
+import { bookingServiceName } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import './KinTaleCompose.css';
 
 /**
@@ -316,6 +318,8 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    * bounded-listener discipline live.
    */
   const templateRows = useCollection<Record<string, unknown>>(KINTALE_TEMPLATES_QUERY);
+  // #1592: the visit line names its KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
   const templates = useMemo(
     () => (templateRows.status === 'ready' ? templateRows.data.map(decodeKinTaleTemplate) : []),
     [templateRows],
@@ -541,7 +545,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       ? [
           'Visit',
           kinTaleWhen({ visitDate: draft.visitDate, arrivedAt: draft.arrivedAt, sentAt: '', createdAt: '' }),
-          draft.serviceType.trim() !== '' ? draft.serviceType : null,
+          draft.serviceType.trim() !== '' ? bookingServiceName(draft.serviceType, catalog) : null,
         ]
           .filter((part): part is string => part !== null)
           .join(' · ')
@@ -733,6 +737,8 @@ export function pickableSessions(data: SessionEntry[], kinfolkId?: string): Sess
 
 function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
   const scoped = kinfolkId !== undefined && kinfolkId !== '';
+  // #1592: one shared read with the screen's own (`useBookingCatalog`).
+  const catalog = useBookingCatalog();
   return (
     <DenPanel
       title="Pick a KinCare session"
@@ -762,7 +768,7 @@ function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
                 <li key={s._id} className="kintale-compose__picker-row">
                   <button type="button" className="kintale-compose__picker-button" onClick={() => onPick(s._id)}>
                     <span className="kintale-compose__picker-name">{s.kinfolkName || 'Unnamed Kinfolk'}</span>
-                    <ServicePill serviceType={s.serviceType ?? ''} />
+                    <ServicePill serviceType={s.serviceType ?? ''} label={bookingServiceName(s.serviceType, catalog)} />
                   </button>
                 </li>
               ))}
@@ -840,6 +846,9 @@ function ComposeForm({
   const hasErrors = Object.keys(errors).length > 0;
 
   const kinCount = draft.kinIds.length;
+  // #1592: the KinCare's name, never the stored `visit_60`; blank reads "Visit".
+  const catalog = useBookingCatalog();
+  const serviceName = bookingServiceName(draft.serviceType, catalog);
 
   // The mock's right rail: the "Goes to" card, sticky beside the editor. The
   // template row is not in the mock and stays: it decides which moments the
@@ -863,7 +872,7 @@ function ComposeForm({
         )}
         <div className="kintale-compose__meta-row">
           <dt>Service</dt>
-          <dd>{draft.serviceType || 'Visit'}</dd>
+          <dd>{serviceName}</dd>
         </div>
         <div className="kintale-compose__meta-row">
           <dt>Session</dt>
@@ -883,7 +892,7 @@ function ComposeForm({
                   <span className="kintale-compose__provenance">
                     {' '}
                     Built in. Nothing in the Template Bank matches
-                    {draft.serviceType ? ` ${draft.serviceType}` : ' this visit'} yet.
+                    {draft.serviceType ? ` ${serviceName}` : ' this visit'} yet.
                   </span>
                 )}
               </>

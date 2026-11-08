@@ -48,6 +48,9 @@ import com.tribetails.auntieos.domain.feedCountMeta
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.domain.kinfolkInvoiceFeedLabel
 import com.tribetails.auntieos.domain.tenureLabel
+import com.tribetails.auntieos.ui.admin.ServiceCatalog
+import com.tribetails.auntieos.ui.admin.bookingServiceTone
+import com.tribetails.auntieos.ui.admin.rememberServiceCatalog
 import com.tribetails.auntieos.ui.admin.settingsWithTagVocab
 import com.tribetails.auntieos.ui.admin.tagVocabFor
 import com.tribetails.auntieos.AuntieOSApp
@@ -850,14 +853,23 @@ private fun KinRow(kin: Kin, kin411: Kin411?, onOpen: () -> Unit) {
  * rather than getting that for free.
  */
 @Composable
-internal fun VisitLine(s: KinCareSession, last: Boolean, onOpen: () -> Unit) {
+internal fun VisitLine(
+    s: KinCareSession,
+    last: Boolean,
+    onOpen: () -> Unit,
+    /**
+     * #1592: the KinCare catalog the row names its service against. The
+     * default is the shared read, so a list of rows costs one fetch.
+     */
+    catalog: ServiceCatalog = rememberServiceCatalog(),
+) {
     val c = AuntieTheme.colors
-    val tone = serviceTone(s.serviceType)
-    val description = if (s.serviceDurationMinutes > 0) {
-        "${s.serviceDurationMinutes}-min ${s.serviceType.ifBlank { "visit" }.lowercase()}"
-    } else {
-        s.serviceType.ifBlank { "visit" }.lowercase()
-    }
+    val tone = bookingServiceTone(s.serviceType, catalog)
+    // The operator's own KinCare name, as written: lowercasing it made
+    // "30Minute" read as the key "30minute" (#1592).
+    val service = if (s.serviceType.isBlank()) "visit" else catalog.nameOf(s.serviceType)
+    val description = if (s.serviceDurationMinutes > 0) "${s.serviceDurationMinutes}-min $service" else service
+    val pillText = if (s.serviceType.isBlank()) "" else service
     Column {
         Row(
             modifier = Modifier
@@ -874,7 +886,7 @@ internal fun VisitLine(s: KinCareSession, last: Boolean, onOpen: () -> Unit) {
                 color = c.textPrimary,
             )
             Text(description, style = AuntieTheme.typography.bodySmall, color = c.textDim, modifier = Modifier.weight(1f))
-            ServicePill(serviceType = s.serviceType, tone = tone)
+            ServicePill(serviceType = pillText, tone = tone)
         }
         if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSoft))
     }

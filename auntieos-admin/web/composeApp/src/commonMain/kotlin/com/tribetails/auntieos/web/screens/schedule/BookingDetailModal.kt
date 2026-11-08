@@ -54,7 +54,8 @@ import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ServicePill
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.util.nowIso
-import com.tribetails.auntieos.web.ui.components.serviceTone
+import com.tribetails.auntieos.web.screens.BookingServicePill
+import com.tribetails.auntieos.web.screens.LocalServiceCatalog
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
@@ -241,7 +242,8 @@ fun BookingDetailModal(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = session.serviceType.ifBlank { "KinCare Visit" },
+                            // #1592: the KinCare's name, never the stored `visit_60`.
+                            text = if (session.serviceType.isBlank()) "KinCare Visit" else LocalServiceCatalog.current.nameOf(session.serviceType),
                             style = AuntieTheme.typography.headlineMedium,
                             color = c.textPrimary,
                         )
@@ -271,7 +273,7 @@ fun BookingDetailModal(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text("Service", style = AuntieTheme.typography.labelSmall, color = c.textDim)
-                            ServicePill(session.serviceType, serviceTone(session.serviceType))
+                            BookingServicePill(session.serviceType)
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
