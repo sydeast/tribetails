@@ -56,6 +56,16 @@ vi.mock('../api/formSchemasWrite', async (importOriginal) => ({
   saveFormSchema,
 }));
 
+// #1592: services are named from the KinCare catalog. "Long walk" runs 60
+// minutes, so a stored `visit_60` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({
+    serviceRates: { 'Long walk': '45' },
+    serviceDurations: { 'Long walk': '60' },
+    timeBlocks: [],
+  }),
+}));
+
 import { KinTaleDetail } from './KinTaleDetail';
 import { type FormSchemaDetail } from '../api/formSchemasWrite';
 
@@ -113,7 +123,7 @@ function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
 function templateDoc(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     _id: 'tmpl1',
-    name: 'Dog walk',
+    name: 'Long walk',
     petMoodEnabled: true,
     moodOptions: [
       { key: 'happy', label: 'Happy', emoji: '😊', order: 0 },
@@ -162,6 +172,14 @@ beforeEach(() => {
 });
 
 describe('KinTaleDetail: report resolution', () => {
+  it('#1592: the heading pill and the Visit panel name the KinCare, never the stored key', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ serviceType: 'visit_60' })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+
+    expect(await screen.findAllByText('Long walk')).toHaveLength(2);
+    expect(screen.queryByText('visit_60')).toBeNull();
+  });
+
   it('shows an honest not-found message for an unknown kinTaleId, never a silent blank', async () => {
     mockStreams({ reports: { status: 'ready', data: [] } });
     render(<KinTaleDetail kinTaleId="ghost" onClose={vi.fn()} />);

@@ -68,6 +68,7 @@ import com.tribetails.auntieos.web.data.canDeleteAsDraft
 import com.tribetails.auntieos.web.data.responseKey
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.screens.sessions.RouteMap
+import com.tribetails.auntieos.web.screens.LocalServiceCatalog
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
@@ -808,7 +809,7 @@ private fun CoverHero(
             Text(
                 text = listOfNotNull(
                     "Visit",
-                    session.serviceType.takeIf { it.isNotBlank() },
+                    session.serviceType.takeIf { it.isNotBlank() }?.let { LocalServiceCatalog.current.nameOf(it) },
                     sessionWindow(session),
                 ).joinToString(" · "),
                 style = AuntieTheme.typography.labelSmall,
@@ -1110,7 +1111,7 @@ private fun RecipientRail(
 
         AuntieKeyValueRow(
             label = "Service",
-            value = session.serviceType.ifBlank { "Visit" },
+            value = LocalServiceCatalog.current.nameOf(session.serviceType),
             // Divider only when a Booking row follows (no trailing divider).
             showDivider = session.sourceBookingId.isNotBlank(),
         )

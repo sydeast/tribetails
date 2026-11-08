@@ -63,6 +63,7 @@ import com.tribetails.auntieos.data.model.MoodOption
 import com.tribetails.auntieos.data.model.ReportStatus
 import com.tribetails.auntieos.data.model.canDeleteAsDraft
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository
+import com.tribetails.auntieos.ui.admin.rememberServiceCatalog
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
@@ -1190,11 +1191,13 @@ private fun RecipientsPanel(state: KinTaleUiState) {
 
 @Composable
 private fun VisitMetaPanel(state: KinTaleUiState) {
+    val catalog = rememberServiceCatalog()
     val session = state.session ?: return
     val visitDate = session.startTime.take(10)
     DenPanel(
         title = "Visit",
-        trailing = { if (session.serviceType.isNotBlank()) ServicePill(session.serviceType) },
+        // #1592: the KinCare's name, never the stored `visit_60`.
+        trailing = { if (session.serviceType.isNotBlank()) ServicePill(catalog.nameOf(session.serviceType)) },
     ) {
         Column {
             AuntieKeyValueRow(label = "Template", value = state.template.name)

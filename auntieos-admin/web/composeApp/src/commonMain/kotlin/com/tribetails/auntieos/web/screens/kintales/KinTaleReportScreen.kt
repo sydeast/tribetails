@@ -53,6 +53,7 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.toBreadcrumbs
 import com.tribetails.auntieos.web.screens.sessions.RouteMap
+import com.tribetails.auntieos.web.screens.BookingServicePill
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -858,7 +859,7 @@ private fun VisitMetaPanel(report: KinCareReport) {
         report.arrivedAt.isBlank() && report.departedAt.isBlank()
     ) return
     DenPanel(title = "Visit", trailing = {
-        if (report.serviceType.isNotBlank()) ServicePill(report.serviceType)
+        if (report.serviceType.isNotBlank()) BookingServicePill(report.serviceType)
     }) {
         Column {
             if (report.visitDate.isNotBlank()) {

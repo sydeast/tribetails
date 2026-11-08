@@ -105,6 +105,7 @@ import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.util.householdLabel
 import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.screens.invoices.formatMoney
+import com.tribetails.auntieos.web.screens.LocalServiceCatalog
 import com.tribetails.auntieos.web.data.CloudFormSchemaRepository
 import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
@@ -604,7 +605,7 @@ fun KinfolkProfileScreen(
                     } else {
                         tales.forEachIndexed { i, r ->
                             AuntieKeyValueRow(
-                                label = r.title.ifBlank { r.serviceType.ifBlank { "KinTale" } },
+                                label = r.title.ifBlank { if (r.serviceType.isBlank()) "KinTale" else LocalServiceCatalog.current.nameOf(r.serviceType) },
                                 value = (r.sentAt.ifBlank { r.visitDate }).take(10).ifBlank { null },
                                 // K1: open the tale. sessionId routes to KinTaleReportScreen.
                                 onValueClick = r.sessionId.takeIf { it.isNotBlank() }?.let { sid -> { onOpenTale(sid) } },
@@ -623,7 +624,7 @@ fun KinfolkProfileScreen(
                     } else {
                         ups.forEachIndexed { i, s ->
                             AuntieKeyValueRow(
-                                label = s.serviceType.ifBlank { "Visit" },
+                                label = LocalServiceCatalog.current.nameOf(s.serviceType),
                                 value = s.startTime.take(16).replace('T', ' ').ifBlank { null },
                                 showDivider = i != ups.lastIndex,
                             )

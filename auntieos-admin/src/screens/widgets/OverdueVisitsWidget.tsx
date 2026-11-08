@@ -3,6 +3,8 @@ import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { overdueVisits } from '../../lib/dashboardInsights';
 import { humanizeDate } from '../../lib/invoiceFormat';
+import { bookingServiceName } from '../../lib/bookingFormat';
+import { useBookingCatalog } from '../../lib/useBookingCatalog';
 import { useSessionsStream, useTodayIso } from './homeData';
 import './widgets.css';
 
@@ -20,6 +22,8 @@ import './widgets.css';
 export function OverdueVisitsWidget() {
   const sessions = useSessionsStream();
   const todayIso = useTodayIso();
+  // #1592: the pill names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
 
   return (
     <DenPanel
@@ -50,7 +54,7 @@ export function OverdueVisitsWidget() {
                     <span className="overdue-row__who" title={v.household}>
                       {v.household}
                     </span>
-                    <ServicePill serviceType={v.serviceType} />
+                    <ServicePill serviceType={v.serviceType} label={bookingServiceName(v.serviceType, catalog)} />
                     <span className="overdue-row__when">
                       {humanizeDate(v.endedAt, todayIso)}
                     </span>

@@ -118,6 +118,12 @@ vi.mock('../api/householdData', async (orig) => ({
   ...(await orig<typeof import('../api/householdData')>()),
   getHouseholdData,
 }));
+// #1592: the household's visit rows name their service from the KinCare
+// catalog (`useBookingCatalog`, a business_settings read). Not under test here.
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
+}));
+
 import { KinfolkProfile } from './KinfolkProfile';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
 

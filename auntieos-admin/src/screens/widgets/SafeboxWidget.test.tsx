@@ -15,7 +15,12 @@ vi.mock('../../api/kinfolkProfile', async (orig) => ({
   getKinfolkProfile,
 }));
 
+// #1592: the next visit's pill names its KinCare ("Dog walk" runs 60 minutes).
+const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
+vi.mock('../../api/settings', () => ({ getBusinessSettings }));
+
 import { SafeboxWidget } from './SafeboxWidget';
+import { invalidateSharedLoad } from '../../lib/useSharedOneShot';
 
 function sess(over: Partial<SessionEntry> = {}): SessionEntry {
   return {
@@ -38,9 +43,24 @@ function sess(over: Partial<SessionEntry> = {}): SessionEntry {
 beforeEach(() => {
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<SessionEntry[]>);
   getKinfolkProfile.mockReset();
+  invalidateSharedLoad();
+  getBusinessSettings.mockReset().mockResolvedValue({
+    serviceRates: { 'Dog walk': '45' },
+    serviceDurations: { 'Dog walk': '60' },
+    timeBlocks: [],
+  });
 });
 
 describe('SafeboxWidget', () => {
+  it("#1592: names the next visit's KinCare, never the stored key", async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [sess({ serviceType: 'visit_60' })] });
+    getKinfolkProfile.mockResolvedValue(mergeKinfolkProfile('k1', { entryNotes: 'Side door' }));
+    render(<SafeboxWidget />);
+
+    expect(await screen.findByText('Dog walk')).toBeInTheDocument();
+    expect(screen.queryByText('visit_60')).toBeNull();
+  });
+
   it('shows the next visit household and its access notes', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [sess()] });
     getKinfolkProfile.mockResolvedValue(

@@ -1,7 +1,16 @@
 package com.tribetails.auntieos.ui.admin
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.serviceTone
+import com.tribetails.auntieos.util.runCatchingCancellable
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * What a visit's service is CALLED, resolved against the operator's KinCare
@@ -71,6 +80,69 @@ data class ServiceCatalog(
  */
 fun bookingServiceTone(rawServiceType: String?, catalog: ServiceCatalog): AuntieStatusTone =
     serviceTone(catalog.nameOf(rawServiceType))
+
+/** The catalog fields of the operator's settings. */
+fun BusinessSettings.serviceCatalog(): ServiceCatalog = ServiceCatalog(serviceRates, serviceDurations)
+
+/**
+ * One `business_settings` read shared by every screen that names a service
+ * without loading settings itself (#1592: the household profile's visit rows,
+ * KinTale detail). Port of the web `useBookingCatalog` + `sharedLoad`: callers
+ * mounted together join one read, a later caller reuses it for [TTL_MS] so a
+ * rename in Settings shows within that window, and a failed read is never kept.
+ */
+internal object SharedServiceCatalog {
+    private const val TTL_MS = 5 * 60 * 1000L
+    private val lock = Mutex()
+    private var held: CompletableDeferred<ServiceCatalog>? = null
+    private var settledAtMs = 0L
+
+    /** What a caller shows before its read lands: the last good catalog, or empty. */
+    @Volatile var latest: ServiceCatalog = ServiceCatalog()
+        private set
+
+    suspend fun load(read: suspend () -> Result<BusinessSettings>): ServiceCatalog? {
+        val pending = lock.withLock {
+            val current = held
+            val fresh = current != null && (!current.isCompleted || System.currentTimeMillis() - settledAtMs < TTL_MS)
+            if (fresh) return@withLock current!! to false
+            CompletableDeferred<ServiceCatalog>().also { held = it } to true
+        }
+        val (deferred, owner) = pending
+        if (owner) {
+            val result = runCatchingCancellable { read().getOrThrow().serviceCatalog() }
+            result.onSuccess {
+                settledAtMs = System.currentTimeMillis()
+                latest = it
+                deferred.complete(it)
+            }.onFailure {
+                lock.withLock { if (held === deferred) held = null }
+                deferred.completeExceptionally(it)
+            }
+        }
+        return runCatching { deferred.await() }.getOrNull()
+    }
+
+    /** Tests only: forget the shared read. */
+    internal fun reset() {
+        held = null
+        settledAtMs = 0L
+        latest = ServiceCatalog()
+    }
+}
+
+/**
+ * The KinCare catalog for a composable that names a visit's service. Fails
+ * quiet to the empty catalog, which [bookingServiceName] answers with the
+ * stored text, so a row never shows a made-up name.
+ */
+@Composable
+fun rememberServiceCatalog(): ServiceCatalog {
+    val catalog by produceState(initialValue = SharedServiceCatalog.latest) {
+        SharedServiceCatalog.load { AuntieOSApp.instance.repository.getBusinessSettings() }?.let { value = it }
+    }
+    return catalog
+}
 
 /** Letters and digits only, lowercased: "30 Minute", "30Minute" and "30-minute" are one id. */
 private fun normaliseServiceKey(raw: String): String = raw.lowercase().replace(Regex("[^a-z0-9]"), "")

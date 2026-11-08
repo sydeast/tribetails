@@ -37,6 +37,8 @@ import com.tribetails.auntieos.ui.components.AuntieEmptyState
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieTextBtn
+import com.tribetails.auntieos.ui.admin.ServiceCatalog
+import com.tribetails.auntieos.ui.admin.rememberServiceCatalog
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
 /**
@@ -160,6 +162,8 @@ private fun SessionPickRow(
     session: KinCareSession,
     showHousehold: Boolean,
     onClick: () -> Unit,
+    /** #1592: the shared catalog read, so the rows name the KinCare. */
+    catalog: ServiceCatalog = rememberServiceCatalog(),
 ) {
     Row(
         modifier = Modifier
@@ -172,13 +176,13 @@ private fun SessionPickRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = sessionPickPrimaryLabel(session, showHousehold),
+                text = sessionPickPrimaryLabel(session, showHousehold, catalog),
                 style = AuntieTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = AuntieTheme.colors.textPrimary,
             )
             Text(
-                text = sessionPickMetaLabel(session, showHousehold),
+                text = sessionPickMetaLabel(session, showHousehold, catalog),
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )
@@ -199,8 +203,13 @@ private fun SessionPickRow(
  * name would just repeat down the list. Unscoped, the household is what
  * distinguishes one row from the next, so it leads instead.
  */
-internal fun sessionPickPrimaryLabel(session: KinCareSession, showHousehold: Boolean): String {
-    val service = session.serviceType.ifBlank { "Visit" }
+internal fun sessionPickPrimaryLabel(
+    session: KinCareSession,
+    showHousehold: Boolean,
+    catalog: ServiceCatalog = ServiceCatalog(),
+): String {
+    // #1592: the KinCare's name, never the stored `visit_60`; blank reads "Visit".
+    val service = catalog.nameOf(session.serviceType)
     if (!showHousehold) return service
     return session.kinfolkName.ifBlank { "Unnamed household" }
 }
@@ -210,8 +219,12 @@ internal fun sessionPickPrimaryLabel(session: KinCareSession, showHousehold: Boo
  * not already carry it. Repeating "Dog Walk" twice in one row is noise, and a
  * blank `startTime` says so rather than rendering an empty line.
  */
-internal fun sessionPickMetaLabel(session: KinCareSession, showHousehold: Boolean): String {
+internal fun sessionPickMetaLabel(
+    session: KinCareSession,
+    showHousehold: Boolean,
+    catalog: ServiceCatalog = ServiceCatalog(),
+): String {
     val date = freeTextDateLabel(session.startTime).ifBlank { "Date not recorded" }
     if (!showHousehold) return date
-    return "$date  ${session.serviceType.ifBlank { "Visit" }}"
+    return "$date  ${catalog.nameOf(session.serviceType)}"
 }
