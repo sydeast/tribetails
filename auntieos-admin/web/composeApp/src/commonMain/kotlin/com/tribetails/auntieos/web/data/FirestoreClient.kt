@@ -4135,6 +4135,9 @@ data class ActivityLogEntry(
     val actorId: String = "",        // user/auth uid that triggered the event
     val targetId: String = "",       // optional doc id the action applied to
     val targetCollection: String = "",
+    // #1747: the household the entry is about. `logActivity` seals it onto the
+    // entry, so an id that used to ride in the description has a field of its own.
+    val familyId: String = "",
     // Hash-chain seal (written by writeAuditEntry). Legacy/admin-SDK entries that
     // predate the chain have no seq and carry blank hashes.
     val seq: Int? = null,

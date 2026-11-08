@@ -83,7 +83,7 @@ export const RECIPIENT_SENTENCES: Record<RecipientResolver, string> = {
   kinfolkAcct: "The household's own portal account: the kinfolk the event is about.",
   specificUid: 'One named person, chosen by whatever fired it.',
   businessAdmins:
-    'Every business admin on the roster, one copy each (businessSettings/admins.uids).',
+    'Every business admin on the roster, one copy each.',
   auntieAssignedToKincare: 'The Auntie assigned to that visit, and only her.',
 };
 
@@ -104,7 +104,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // #532: ONE per request, not one per visit. The emitter moved from
       // onBookingsWrite (registered per visit, so a four-day request sent four
       // copies) up to the parent envelope doc.
-      trigger: 'A household requests care (a booking envelope is created as "requested").',
+      trigger: 'A household requests care.',
       source: 'src/triggers/onBookingEnvelopeCreate.ts',
       dataKeys: [
         'kinfolkId',
@@ -126,7 +126,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // trigger below; the whole-request answer now comes from the approve core,
       // which is the code that knows the whole child set.
       trigger:
-        'A whole booking request is approved, confirming every visit in it at once (admin APPROVE, or the portal auto-confirm).',
+        'A whole booking request is approved, confirming every visit in it at once (an admin approves it, or the portal confirms it automatically).',
       source: 'src/admin/approveBookingSeriesCore.ts',
       dataKeys: [
         'kinfolkId',
@@ -148,7 +148,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // Still per visit, and still correct: batchUpdateBookings and the Android
       // schedule screen confirm single visits without going through the core.
       // Suppressed only when the visit carries the core's seriesApprovedAt stamp.
-      trigger: 'One visit is confirmed or approved on its own (status changes to confirmed/approved).',
+      trigger: 'One visit is confirmed or approved on its own.',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: [
         'kinfolkId',
@@ -170,14 +170,14 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.booking.cancel': [
     {
-      trigger: 'A visit is cancelled (its status changes to cancelled).',
+      trigger: 'A visit is cancelled.',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: ['kinfolkId', 'batchId', 'bookingId', 'visitId', 'serviceName', 'startTimeMs'],
     },
   ],
   'kincare.unavailable': [
     {
-      trigger: 'A visit is marked unavailable (its status changes to unavailable).',
+      trigger: 'A visit is marked unavailable.',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: ['kinfolkId', 'batchId', 'bookingId', 'visitId', 'serviceName', 'startTimeMs'],
     },
@@ -185,7 +185,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'kincare.changed': [
     {
       trigger:
-        'A confirmed visit is edited: one of the watched fields (date, time, service, Auntie) changes.',
+        'A confirmed visit is edited: its date, time, service or Auntie changes.',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: [
         'kinfolkId',
@@ -215,7 +215,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.cancel.requested': [
     {
-      trigger: 'A household asks to cancel a visit (a cancel request is stamped on the booking).',
+      trigger: 'A household asks to cancel a visit.',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: [
         'kinfolkId',
@@ -231,7 +231,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'kincare.request.declined': [
     {
       trigger:
-        'An operator turns down a booking request the household asked for, so nothing is booked (#533). ONE per request, not one per visit. Only fires when the envelope was still "requested": cancelling an already-approved series is a different event and still sends kincare.booking.cancel.',
+        'An operator turns down a booking request the household asked for, so nothing is booked. One message per request, not one per visit. It goes out only while the request is still waiting: cancelling a series that was already approved sends "KinCare booking canceled" instead.',
       source: 'src/admin/manageBookingSeries.ts',
       dataKeys: [
         'kinfolkId',
@@ -249,21 +249,21 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kin.removal.requested': [
     {
-      trigger: 'A household asks the office to remove a Kin that has visits, KinTales, photos or records on file (#1408).',
+      trigger: 'A household asks the office to remove a Kin that has visits, KinTales, photos or records on file.',
       source: 'src/portal/kinWrites.ts',
       dataKeys: ['kinfolkId', 'kinId', 'flatKinId', 'kinName', 'reason', 'requestId'],
     },
   ],
   'kin.removal.archived': [
     {
-      trigger: 'An operator archives a Kin the household asked to remove (#1408). Visits, invoices and KinTales are kept.',
+      trigger: 'An operator archives a Kin the household asked to remove. Visits, invoices and KinTales are kept.',
       source: 'src/admin/kinRemovalRequests.ts',
       dataKeys: ['kinfolkId', 'kinId', 'kinName', 'note', 'requestId'],
     },
   ],
   'kin.removal.declined': [
     {
-      trigger: 'An operator declines a household request to remove a Kin (#1408). The Kin stays on the profile.',
+      trigger: 'An operator declines a household request to remove a Kin. The Kin stays on the profile.',
       source: 'src/admin/kinRemovalRequests.ts',
       dataKeys: ['kinfolkId', 'kinId', 'kinName', 'note', 'requestId'],
     },
@@ -271,7 +271,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'kincare.cancel.declined': [
     {
       trigger:
-        'An operator declines a cancellation ask, so the visit stays on the schedule (#438). The ACCEPT half has no key of its own: accepting sets the visit to cancelled and kincare.booking.cancel already reaches the household.',
+        'An operator declines a cancellation ask, so the visit stays on the schedule. Accepting one has no notification of its own: it cancels the visit, and "KinCare booking canceled" already reaches the household.',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: [
         'kinfolkId',
@@ -288,7 +288,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'kincare.auntie.on_my_way': [
     {
       trigger:
-        'An Auntie taps "On my way" on a visit (Android), or an operator marks it on the way from the web admin\'s Auntie Time detail. Both reach the same dispatch core; the web path goes through `src/admin/setVisitLifecycle.ts`, which calls it server-side in the same request that moves the status.',
+        'An Auntie taps "On my way" on a visit in the Android app, or an operator marks it on the way from Auntie Time in the web admin. Both send the same message.',
       source: 'src/admin/dispatchVisitNotification.ts',
       dataKeys: [
         'familyId',
@@ -307,7 +307,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'kincare.auntie.arrived': [
     {
       trigger:
-        'An Auntie taps "Arrived" on a visit (Android), or an operator clocks it in from the web admin\'s Auntie Time detail. Both reach the same dispatch core; the web path goes through `src/admin/setVisitLifecycle.ts`.',
+        'An Auntie taps "Arrived" on a visit in the Android app, or an operator clocks it in from Auntie Time in the web admin. Both send the same message.',
       source: 'src/admin/dispatchVisitNotification.ts',
       dataKeys: [
         'familyId',
@@ -325,7 +325,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'kincare.auntie.departed': [
     {
       trigger:
-        'An Auntie taps "Departed" on a visit (Android), or an operator clocks it out from the web admin\'s Auntie Time detail. Both reach the same dispatch core; the web path goes through `src/admin/setVisitLifecycle.ts`.',
+        'An Auntie taps "Departed" on a visit in the Android app, or an operator clocks it out from Auntie Time in the web admin. Both send the same message.',
       source: 'src/admin/dispatchVisitNotification.ts',
       dataKeys: [
         'familyId',
@@ -387,7 +387,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // dispatches anything on a request create; her summary comes from the
       // approve core, which knows the whole child set and who is on each visit.
       trigger:
-        'A whole booking request is approved, and an Auntie is on one or more of its visits (admin APPROVE, or the portal auto-confirm).',
+        'A whole booking request is approved, and an Auntie is on one or more of its visits (an admin approves it, or the portal confirms it automatically).',
       source: 'src/admin/approveBookingSeriesCore.ts',
       dataKeys: [
         'kinfolkId',
@@ -451,7 +451,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'schedule.upcoming.digest': [
     {
-      trigger: 'The schedule digest cron rolls up the next window of visits.',
+      trigger: 'The scheduled digest runs and rolls up the next window of visits.',
       source: 'src/scheduled/scheduleDigestCron.ts',
       dataKeys: ['windowStartMs', 'windowEndMs', 'count', 'items'],
     },
@@ -475,7 +475,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // canonicalizes it onto this row. So an Auntie sending the visit report
       // fires kintale.published, and a reader who only looked for the literal
       // string in the source would never find this third trigger.
-      trigger: 'An Auntie sends the visit report (through the retired kincare.report.sent key).',
+      trigger: 'An Auntie sends the visit report from an app that still uses the old visit-report message.',
       source: 'src/admin/dispatchVisitNotification.ts',
       dataKeys: [
         'familyId',
@@ -521,13 +521,13 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       dataKeys: ['kinfolkId', 'invoiceId'],
     },
     {
-      trigger: 'An admin issues a quote (quotes ride the invoice.new key; data carries isQuote).',
+      trigger: 'An admin issues a quote. A quote goes out on this same notification and says it is a quote.',
       source: 'src/admin/createQuote.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'isQuote'],
     },
     {
       trigger:
-        'An admin revises a DECLINED quote and sends it back out (issue #448). The same key that issued it, because it is the same quote: `resent` is what tells the two apart.',
+        'An admin revises a declined quote and sends it back out. It goes out on the same notification that issued it, because it is the same quote, marked as sent again.',
       source: 'src/admin/resendQuote.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'isQuote', 'resent'],
     },
@@ -588,12 +588,12 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     },
     {
       trigger:
-        'Account credit pays an invoice off (the auto-apply trigger or the Run auto-apply button). A partial draw tells nobody.',
+        'Account credit pays an invoice off (automatically, or with the Run auto-apply button). Credit that pays only part of an invoice tells nobody.',
       source: 'src/lib/accountCredit.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'amountDue', 'currency', 'dueDate', 'paymentId'],
     },
     {
-      trigger: 'An open invoice is paid off by a write that names no other sender.',
+      trigger: 'An open invoice is marked paid off in some way other than the ones above.',
       source: 'src/triggers/onInvoicesWrite.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'amountDue', 'currency', 'dueDate'],
     },
@@ -622,7 +622,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'invoice.payment.unapplied': [
     {
-      trigger: 'A card payment completes on an invoice already paid (or on a stale checkout round).',
+      trigger: 'A card payment completes on an invoice that is already paid, or through a checkout that had already been replaced.',
       source: 'src/billing/stripeWebhook.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'stripeEventId', 'unappliedAmount', 'unappliedReason'],
     },
@@ -671,7 +671,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'pets.updated': [
     {
       trigger:
-        "A kin's record changes in a way the household can see (staff-only mirror edits are suppressed).",
+        "A kin's record changes in a way the household can see. Changes only staff can see send nothing.",
       source: 'src/triggers/onFamilyKinWrite.ts',
       dataKeys: ['kinfolkId', 'kinId'],
     },
@@ -685,7 +685,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'profile.updated': [
     {
-      trigger: "A household's profile document is edited.",
+      trigger: "A household's profile is edited.",
       source: 'src/triggers/onFamilyProfileWrite.ts',
       dataKeys: ['kinfolkId'],
     },
@@ -738,7 +738,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'auth.failedLogin.attempts': [
     {
       trigger:
-        'Failed sign-ins on one account cross the warning threshold. This copy goes to that person only; business admins get security.failedLogin.attempts.operator.',
+        'Failed sign-ins on one account cross the warning threshold. This copy goes to that person only; business admins get "Repeated failed sign-ins on a kinfolk account".',
       source: 'src/auth/loginSecurity.ts',
       dataKeys: ['email', 'attemptsInWindow'],
     },
@@ -746,7 +746,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'security.failedLogin.attempts.operator': [
     {
       trigger:
-        'Failed sign-ins on a kinfolk account cross the warning threshold (5 in 10 minutes). One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty).',
+        'Failed sign-ins on a kinfolk account cross the warning threshold (5 in 10 minutes). One copy goes to each business admin on the roster (while the roster is empty, the operators named in the server settings).',
       source: 'src/auth/loginSecurity.ts',
       dataKeys: ['kinfolkUid', 'kinfolkEmail', 'kinfolkName', 'attemptsInWindow', 'warnStartedAtMs'],
       dataNote:
@@ -759,7 +759,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'auth.account.locked': [
     {
       trigger:
-        'Failed sign-ins lock an account. This copy goes to the locked-out person only; business admins get security.account.locked.operator.',
+        'Failed sign-ins lock an account. This copy goes to the locked-out person only; business admins get "Kinfolk account locked after failed logins".',
       source: 'src/auth/loginSecurity.ts',
       dataKeys: ['email', 'lockStartedAtMs'],
     },
@@ -767,7 +767,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'security.account.locked.operator': [
     {
       trigger:
-        'Failed sign-ins lock a kinfolk account. One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty).',
+        'Failed sign-ins lock a kinfolk account. One copy goes to each business admin on the roster (while the roster is empty, the operators named in the server settings).',
       source: 'src/auth/loginSecurity.ts',
       dataKeys: ['kinfolkUid', 'kinfolkEmail', 'kinfolkName', 'lockStartedAtMs'],
       dataNote:
@@ -779,7 +779,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'security.failedLogin.budgetExhausted.operator': [
     {
       trigger:
-        'recordFailedLogin refuses a report because a real kinfolk account used its 15 reports for the day. One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty). Addresses that are not accounts never alert.',
+        'The sign-in guard stops counting failed sign-ins for a real kinfolk account that has reached 15 for the day. One copy goes to each business admin on the roster (while the roster is empty, the operators named in the server settings). Addresses that are not accounts never alert.',
       source: 'src/auth/loginSecurity.ts',
       dataKeys: ['kinfolkUid', 'kinfolkEmail', 'kinfolkName', 'reportLimit', 'budgetExhaustedAtMs'],
       dataNote:
@@ -791,7 +791,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   'security.account.locked.spike.operator': [
     {
       trigger:
-        '3 or more distinct kinfolk accounts lock within 30 minutes. One copy goes to each business admin on the roster (AUNTIE_OPERATOR_UIDS only while the roster is empty).',
+        '3 or more distinct kinfolk accounts lock within 30 minutes. One copy goes to each business admin on the roster (while the roster is empty, the operators named in the server settings).',
       source: 'src/auth/loginSecurity.ts',
       dataKeys: ['lockedAccounts', 'windowMinutes', 'spikeStartedAtMs'],
       dataNote:
@@ -808,7 +808,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'security.breach_attempt.staff': [
     {
-      trigger: 'A secure-reset confirmation is attempted against a staff account (admin claim) that did not ask.',
+      trigger: 'A secure-reset confirmation is attempted against a staff account that did not ask.',
       source: 'src/security/confirmSecureReset.ts',
       dataKeys: ['staffEmail', 'timestampIso', 'ip', 'userAgent', 'incidentId'],
     },
@@ -817,7 +817,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   // ── Marketing ───────────────────────────────────────────────────────────
   'newsletter.announcement': [
     {
-      trigger: 'An admin schedules a marketing blast on the newsletter key.',
+      trigger: 'An admin schedules a marketing blast as a newsletter.',
       source: 'src/admin/scheduleMarketingBlast.ts',
       dataKeys: ['audienceUid', 'blastId'],
       dataNote:
@@ -827,7 +827,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'survey.event': [
     {
-      trigger: 'An admin schedules a marketing blast on the survey key.',
+      trigger: 'An admin schedules a marketing blast as a survey.',
       source: 'src/admin/scheduleMarketingBlast.ts',
       dataKeys: ['audienceUid', 'blastId'],
       dataNote:
@@ -837,7 +837,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'marketing.optin': [
     {
-      trigger: 'An admin schedules a marketing blast on the opt-in key.',
+      trigger: 'An admin schedules a marketing blast as an opt-in request.',
       source: 'src/admin/scheduleMarketingBlast.ts',
       dataKeys: ['audienceUid', 'blastId'],
       dataNote:
@@ -905,7 +905,7 @@ export const NEVER_FIRES: readonly string[] = ['invoice.updated'];
 const UNGATED_TRIGGERS: Record<string, { trigger: string; source: string }> = {
   'invite.primary': {
     trigger:
-      'A tribe is provisioned, an invite is minted by hand, or a household is invited to the portal.',
+      'A tribe is set up, an invite is made by hand, or a household is invited to the portal.',
     source: 'src/admin/inviteKinfolkToPortal.ts',
   },
   'invite.secondary': {
@@ -936,7 +936,7 @@ const UNGATED_TRIGGERS: Record<string, { trigger: string; source: string }> = {
     source: 'src/admin/executePrimaryRecovery.ts',
   },
   'error.daily-digest': {
-    trigger: 'The daily error digest cron runs.',
+    trigger: 'The daily error digest runs.',
     source: 'src/scheduled/errorDailyDigest.ts',
   },
 };

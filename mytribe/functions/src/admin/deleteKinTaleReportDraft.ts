@@ -98,7 +98,9 @@ export async function deleteKinTaleReportDraftHandler(
     actorUid,
     targetUid: reportId,
     targetCollection: 'kin_care_reports',
-    description: `Deleted unsent KinTale draft kin_care_reports/${reportId} (${kinfolkId || 'no household'})`,
+    // #1747: words for the Activity Log; the report is the target, the
+    // household is in the payload.
+    description: 'Deleted a KinTale draft',
     payload: { reportId, kinfolkId: kinfolkId || null },
   });
   logEvent({

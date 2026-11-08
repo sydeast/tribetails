@@ -3,6 +3,7 @@ import { type ActivityLogEntry } from '../api/activityLog';
 import { businessInstantMs, businessWallClock } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { formatTime } from './denFormat';
+import { activityDescriptionWords } from './activityWords';
 
 /**
  * What an Activity Log row shows when it is OPENED.
@@ -186,6 +187,8 @@ export function activityMatchesQuery(
   const haystack = [
     str(entry.actionType),
     str(entry.description),
+    // #1747: the words the row shows, so a search for them finds a stored path's row.
+    activityDescriptionWords(str(entry.description)),
     str(entry.actorId),
     names.get(str(entry.actorId).trim()) ?? '',
     str(entry.actorRole),

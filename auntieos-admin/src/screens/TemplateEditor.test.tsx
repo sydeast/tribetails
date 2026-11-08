@@ -253,7 +253,9 @@ describe('TemplateEditor: create mode', () => {
     );
     expect(onSaved).toHaveBeenCalledWith('booking.confirmed');
     // No Display name was typed, so the toast falls back to the template key.
-    expect(await screen.findByText('Saved booking.confirmed.')).toBeInTheDocument();
+    // #1747: a template with no title is named as untitled, never by its id.
+    expect(await screen.findByText('Saved the untitled template.')).toBeInTheDocument();
+    expect(screen.queryByText('Saved booking.confirmed.')).toBeNull();
   });
 
   it('offers a datalist of known categories without forcing one', () => {

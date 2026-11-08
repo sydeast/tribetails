@@ -583,6 +583,8 @@ class AuntieRepository(
             if (actor.isNotBlank()) put("actorId", actor)
             if (entry.targetId.isNotBlank()) put("targetId", entry.targetId)
             if (entry.targetCollection.isNotBlank()) put("targetCollection", entry.targetCollection)
+            // #1747: the household, now that the description no longer carries its id.
+            if (entry.familyId.isNotBlank()) put("familyId", entry.familyId)
         }
         functions.getHttpsCallable("logActivity").call(payload).awaitCallable()
         Unit
