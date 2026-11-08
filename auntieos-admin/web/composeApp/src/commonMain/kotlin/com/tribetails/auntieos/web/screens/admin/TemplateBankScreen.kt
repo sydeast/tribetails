@@ -431,7 +431,7 @@ fun TemplateBankBody(
                         is WriteResult.Ok -> {
                             editing = null
                             creating = false
-                            notice = "Saved ${updated.title.ifBlank { updated.templateId }}."
+                            notice = templateSavedNotice(updated.title)
                             reload()
                         }
                         is WriteResult.Err -> error = r.message
@@ -949,3 +949,10 @@ private fun TemplateEditorOverlay(
 /** #1614: "Subject is required." once the operator has touched the field and left it blank. */
 internal fun requiredFieldHint(label: String, value: String, touched: Boolean): String? =
     if (touched && value.isBlank()) "$label is required." else null
+
+/**
+ * The notice after a template is saved (#1747): its title, or "the untitled
+ * template" when it has none, never its id. The web `templateSavedNotice`.
+ */
+internal fun templateSavedNotice(title: String): String =
+    title.trim().let { if (it.isEmpty()) "Saved the untitled template." else "Saved $it." }
