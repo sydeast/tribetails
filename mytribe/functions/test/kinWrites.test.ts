@@ -500,3 +500,53 @@ describe('deleteRefusalMessage (#1314)', () => {
     );
   });
 });
+// #1583: weight is a number with an optional unit; ageYears is bounded.
+describe('kin weight and age are numbers (#1583)', () => {
+  const auth = { uid: 'u1' };
+  it('addKin refuses a non-numeric weight and an out-of-range age, and writes nothing', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { addKinHandler } = await import('../src/portal/kinWrites');
+    await expect(
+      addKinHandler({ data: { kinfolkId: '3', kin: { name: 'Pup', weight: 'heavy-ish' } }, auth } as any),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(
+      addKinHandler({ data: { kinfolkId: '3', kin: { name: 'Pup', ageYears: 400 } }, auth } as any),
+    ).rejects.toThrow();
+    expect(ctx.adds.length).toBe(0);
+  });
+
+  it('addKin accepts a weight with a unit and a plain number', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { addKinHandler } = await import('../src/portal/kinWrites');
+    await expect(
+      addKinHandler({ data: { kinfolkId: '3', kin: { name: 'Pup', weight: '52 lbs', ageYears: 4.5 } }, auth } as any),
+    ).resolves.toBeTruthy();
+    await expect(
+      addKinHandler({ data: { kinfolkId: '3', kin: { name: 'Pup', weight: '12' } }, auth } as any),
+    ).resolves.toBeTruthy();
+  });
+
+  it('updateKin refuses an edited weight that is not a number', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'families/3/kin/k1': { name: 'Pup', weight: '40 lb' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    await expect(
+      updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { weight: 'heavy-ish' } }, auth } as any),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes.find((w) => w.path === 'families/3/kin/k1')).toBeUndefined();
+  });
+
+  it('updateKin lets an unchanged legacy weight ride along, and accepts a correction', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'families/3/kin/k1': { name: 'Pup', weight: 'heavy-ish' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    await expect(
+      updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { weight: 'heavy-ish', medications: 'x' } }, auth } as any),
+    ).resolves.toBeTruthy();
+    await expect(
+      updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { weight: '40 lb' } }, auth } as any),
+    ).resolves.toBeTruthy();
+  });
+});

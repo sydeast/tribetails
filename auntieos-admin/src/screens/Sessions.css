@@ -277,6 +277,13 @@
 
 /* Mock `.addr`: the door, in its own soft chip, and a control: it opens
    directions, so the rim goes brand orange under the pointer. */
+/* #1602: under an address too thin to drive to. */
+.sessions__addr-hint {
+  margin: 0;
+  font-size: var(--type-label-sm-size);
+  color: var(--color-warning);
+}
+
 .sessions__addr {
   align-self: flex-start;
   display: inline-flex;

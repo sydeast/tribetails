@@ -98,25 +98,157 @@ if staged | grep -qxE "$SRC|$MIRROR"; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Node test suites, only when their code is touched.
+# 3. Node test suites, only for the code this commit changes.
 # ---------------------------------------------------------------------------
-if staged | grep -q '^auntieos-admin/web/functions/'; then
-  if (cd auntieos-admin/web/functions && npm test >/dev/null 2>&1); then
-    grn "ok: AuntieOS functions tests pass"
+# #1712. This section used to run the WHOLE mytribe/functions suite (~460
+# files) on any staged path under it, with the output sent to /dev/null. Three
+# things went wrong on 2026-11-06 with several builds on the machine:
+#
+#   - Merge commits. Merging origin/main stages every file main brought in, so
+#     a branch that only touched admin web re-ran the full functions suite on
+#     main's own, already-tested code.
+#   - Load. The few tests that load the whole function index passed their 10 s
+#     timeout at load average 60+, and the commit was refused for code nobody
+#     had touched. They pass in ~6 s alone.
+#   - Silence. The builder saw "tests FAIL" and nothing else: no test name, no
+#     "timed out", and the same words for a missing node_modules.
+#
+# What it does now:
+#
+#   - The paths that count are the ones this commit changes. On a merge
+#     commit (MERGE_HEAD present) that is every path whose staged content
+#     differs from MERGE_HEAD's: the branch's own changes plus any conflict
+#     resolution. A file that is byte-identical to main's copy was tested on
+#     main. A clean `git merge` runs pre-merge-commit, not this hook, and
+#     .githooks has none, so this only fires on a merge that stopped (conflict
+#     or --no-commit) and was then committed.
+#   - mytribe/functions runs `vitest related` on those paths: every test whose
+#     import graph reaches a changed file, which includes the setup file
+#     (a change to test/_helpers/networkGuard.ts selects all ~490). Tests that
+#     load a module by path instead of by import (src/index.ts is the main
+#     one: its tests require() it dynamically or read it as text) are not in
+#     that graph, so any test file that NAMES a changed path is added too.
+#     A change to package.json, the lockfile, vitest.config.* or a tsconfig
+#     changes how every test runs, so those still run the whole suite.
+#   - auntieos-admin/web/functions keeps its whole suite: it is 8 node:test
+#     files that finish in under a second, and node:test has no related mode.
+#   - When it blocks it prints the failing tests, the error lines, the tail of
+#     the output and the log path, and says so when a test timed out or the
+#     install is missing.
+#
+# The test timeouts are NOT raised here. A real failing test in a changed file
+# still blocks, and CI still runs both full suites on the pull request.
+
+# Paths whose tests this commit should run. --no-renames so a moved file shows
+# up as added (the default rename detection reports it as R, which ACM drops).
+test_paths() {
+  if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    git diff --cached --name-only --no-renames --diff-filter=ACM MERGE_HEAD
   else
-    red "BLOCKED: AuntieOS functions tests FAIL."
-    echo "  Run: cd auntieos-admin/web/functions && npm test"
-    FAIL=1
+    git diff --cached --name-only --no-renames --diff-filter=ACM
+  fi
+}
+
+LOGDIR="$(cd "$(git rev-parse --git-dir)" && pwd)/pre-commit-logs"
+mkdir -p "$LOGDIR" 2>/dev/null || LOGDIR="${TMPDIR:-/tmp}"
+
+# report_failure <label> <log> <dir> <rerun command>
+report_failure() {
+  red "BLOCKED: $1 tests FAIL."
+  local hits
+  hits="$(grep -E '(^| )(FAIL|×|✗) |^not ok |timed out|Cannot find module|ERR_MODULE_NOT_FOUND|command not found|Error:' "$2" 2>/dev/null | head -n 30)"
+  if [ -n "$hits" ]; then
+    echo "  Failing tests and errors:"
+    printf '%s\n' "$hits" | sed 's/^/    /'
+  fi
+  echo "  Last 40 lines of output:"
+  tail -n 40 "$2" | sed 's/^/    | /'
+  if grep -q 'timed out' "$2" 2>/dev/null; then
+    echo "  A test TIMED OUT. On a loaded machine that can be load, not a defect:"
+    echo "  re-run it alone (below) before changing code. Do not raise the timeout."
+  fi
+  echo "  Full log: $2"
+  echo "  Re-run:   cd $3 && $4"
+  FAIL=1
+}
+
+# report_missing_install <label> <dir>
+report_missing_install() {
+  red "BLOCKED: $1 tests cannot run: $2/node_modules is missing."
+  echo "  This is an install problem, not a test failure. Install with"
+  echo "    (cd $2 && npm ci)"
+  echo "  or, in a worktree, symlink the main checkout's copy:"
+  echo "    ln -s <main checkout>/$2/node_modules $2/node_modules"
+  FAIL=1
+}
+
+# --- auntieos-admin/web/functions: whole suite, it is under a second. --------
+ADMIN_FN=auntieos-admin/web/functions
+if test_paths | grep -q "^$ADMIN_FN/"; then
+  if [ ! -d "$ADMIN_FN/node_modules" ]; then
+    report_missing_install "AuntieOS functions" "$ADMIN_FN"
+  else
+    log="$LOGDIR/auntieos-functions.log"
+    if (cd "$ADMIN_FN" && npm test >"$log" 2>&1); then
+      grn "ok: AuntieOS functions tests pass"
+    else
+      report_failure "AuntieOS functions" "$log" "$ADMIN_FN" "npm test"
+    fi
   fi
 fi
 
-if staged | grep -q '^mytribe/functions/'; then
-  if (cd mytribe/functions && npm test >/dev/null 2>&1); then
-    grn "ok: MyTribe functions tests pass"
-  else
-    red "BLOCKED: MyTribe functions tests FAIL."
-    echo "  Run: cd mytribe/functions && npm test"
+# --- mytribe/functions: tests related to the changed paths. ------------------
+MT_FN=mytribe/functions
+MT_PATHS="$(test_paths | grep "^$MT_FN/" || true)"
+if [ -n "$MT_PATHS" ]; then
+  VITEST="$MT_FN/node_modules/.bin/vitest"
+  if [ ! -d "$MT_FN/node_modules" ]; then
+    report_missing_install "MyTribe functions" "$MT_FN"
+  elif [ ! -x "$VITEST" ]; then
+    red "BLOCKED: MyTribe functions tests cannot run: $VITEST is missing."
+    echo "  node_modules exists but has no vitest. Re-install: (cd $MT_FN && npm ci)"
     FAIL=1
+  else
+    full=""
+    targets=()
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      rel="${p#"$MT_FN"/}"
+      case "$rel" in
+        package.json|package-lock.json|vitest.config.*|tsconfig*.json) full="$rel" ;;
+      esac
+      [ -f "$p" ] && targets+=("$rel")
+      # Tests that reach this file by path rather than by import. A code file
+      # is named by its path (src/index.ts); a fixture or doc by its name.
+      case "$rel" in
+        *.ts|*.js|*.mjs|*.cjs) needle="$rel" ;;
+        *) needle="${rel##*/}" ;;
+      esac
+      while IFS= read -r t; do
+        [ -n "$t" ] && targets+=("${t#"$MT_FN"/}")
+      done < <(git grep -lF -e "$needle" -- "$MT_FN/*.test.ts" 2>/dev/null)
+    done <<EOF
+$MT_PATHS
+EOF
+
+    log="$LOGDIR/mytribe-functions.log"
+    n_paths="$(printf '%s\n' "$MT_PATHS" | grep -c .)"
+    if [ -n "$full" ]; then
+      echo "MyTribe functions: $full changed, running the whole suite"
+      cmd="npx vitest run"
+      (cd "$MT_FN" && node_modules/.bin/vitest run >"$log" 2>&1)
+    else
+      echo "MyTribe functions: running tests related to $n_paths changed path(s)"
+      cmd="npx vitest related --run --passWithNoTests ${targets[*]+${targets[*]}}"
+      (cd "$MT_FN" && node_modules/.bin/vitest related --run --passWithNoTests ${targets[@]+"${targets[@]}"} >"$log" 2>&1)
+    fi
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      summary="$(grep -E '^ *(Test Files|No affected test files)' "$log" | head -n 1 | sed 's/^ *//')"
+      grn "ok: MyTribe functions tests pass${summary:+ ($summary)}"
+    else
+      report_failure "MyTribe functions" "$log" "$MT_FN" "$cmd"
+    fi
   fi
 fi
 

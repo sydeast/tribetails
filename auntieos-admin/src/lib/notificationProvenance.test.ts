@@ -10,8 +10,11 @@ import {
   OFF_AND_MEANT_TO_STAY_ON,
   alwaysOnBadge,
   businessAdminLines,
+  businessEmailLine,
   businessAdminSourceNote,
   deliveryPhrase,
+  deliveryRecipient,
+  fieldWords,
   hasPartialDataNote,
   mergeFieldNames,
   reachesBusinessAdmins,
@@ -123,29 +126,31 @@ describe('recipientLines answers "how many people is that"', () => {
   });
 
   it('appends the live roster size', () => {
-    const [line] = recipientLines(businessRow, 3, 'businessSettings/admins.uids');
+    const [line] = recipientLines(businessRow, 3);
     expect(line).toContain('3 people');
   });
 
   it('says one person, not one people', () => {
-    const [line] = recipientLines(businessRow, 1, 'businessSettings/admins.uids');
+    const [line] = recipientLines(businessRow, 1);
     expect(line).toContain('1 person');
   });
 
   it('reports an unreadable roster as unknown, never as zero', () => {
-    const [line] = recipientLines(businessRow, null, 'businessSettings/admins.uids');
+    const [line] = recipientLines(businessRow, null);
     expect(line).toContain('unknown');
     expect(line).not.toContain('0 people');
+    // #1592: no database path in the sentence.
+    expect(line).not.toContain('businessSettings');
   });
 
   it('says where an empty roster actually sends instead', () => {
-    const [line] = recipientLines(businessRow, 0, 'businessSettings/admins.uids');
+    const [line] = recipientLines(businessRow, 0);
     expect(line).toContain('operator allowlist');
   });
 
   it('leaves a household sentence alone', () => {
     const row = entry({ whoReceives: ["The household's own portal account."] });
-    expect(recipientLines(row, 3, 'x')).toEqual(["The household's own portal account."]);
+    expect(recipientLines(row, 3)).toEqual(["The household's own portal account."]);
   });
 });
 
@@ -160,6 +165,7 @@ describe('the business admin roster, resolved to people', () => {
       source: 'roster',
       rosterPath: 'businessSettings/admins.uids',
       reason: null,
+      businessEmail: 'pawsome@hanasamku.com',
       ...over,
     };
   }
@@ -184,10 +190,21 @@ describe('the business admin roster, resolved to people', () => {
   it('does not offer it for a row that never reaches business admins', () => {
     expect(reachesBusinessAdmins(entry({ recipientResolver: 'kinfolkAcct' }))).toBe(false);
   });
-  it('names each person and how the mail reaches them', () => {
+  it('names each person, and not their own email (#1564: business email goes to businessEmail)', () => {
     const [line] = businessAdminLines(roster({ members: [member()] }));
-    expect(line).toContain('Auntie Nora');
-    expect(line).toContain('nora@tribetails.com');
+    expect(line).toBe('Auntie Nora');
+    expect(line).not.toContain('nora@tribetails.com');
+  });
+  it('#1564: says business emails go to the business contact email', () => {
+    expect(businessEmailLine(roster())).toBe('Emails go to the business email, pawsome@hanasamku.com.');
+  });
+  it('#1564: says business emails have nowhere to go while businessEmail is blank', () => {
+    const line = businessEmailLine(roster({ businessEmail: '' }));
+    expect(line).toContain('nowhere to go');
+    expect(line).toContain('Settings > Business');
+  });
+  it('#1564: words the business_email_unset skip', () => {
+    expect(deliveryPhrase('skipped', 'business_email_unset', null).detail).toContain('business email in Settings > Business was blank');
   });
   it('says which of them unassigned visits default to', () => {
     const [line] = businessAdminLines(roster({ members: [member({ defaultAssignee: true })] }));
@@ -204,26 +221,29 @@ describe('the business admin roster, resolved to people', () => {
     );
     expect(line).toContain('op8');
     expect(line).toContain('no staff record');
-    expect(line).toContain('no email on file');
+    expect(line).not.toContain('no email on file');
   });
   it('warns when the list is the allowlist fallback rather than the stored roster', () => {
     const note = businessAdminSourceNote(roster({ source: 'operatorAllowlist', members: [member()] }));
-    expect(note).toContain('businessSettings/admins.uids');
-    expect(note).toContain('provisionBusinessAdmins');
+    expect(note).toContain('roster is empty');
+    // #1592: no database path and no function name in operator copy.
+    expect(note).not.toContain('businessSettings');
+    expect(note).not.toContain('provisionBusinessAdmins');
   });
   it('adds no caveat when the stored roster answered', () => {
     expect(businessAdminSourceNote(roster({ members: [member()] }))).toBeNull();
   });
 });
 describe('templateLines names the document that writes each body', () => {
-  it('builds the collection path per channel', () => {
+  it('names the template per channel in words, never a database path (#1592)', () => {
     const row = entry({
       allowedChannels: ['email', 'sms'],
-      templates: { email: 'invoice.new', sms: 'invoice.new' },
+      templates: { email: 'invoice.new', sms: 'invoice.reminder' },
     });
     expect(templateLines(row)).toEqual([
-      { channel: 'email', path: 'emailTemplates/invoice.new', missing: false },
-      { channel: 'sms', path: 'smsTemplates/invoice.new', missing: false },
+      // The row's own template carries the row's own name.
+      { channel: 'email', name: 'New invoice', missing: false },
+      { channel: 'sms', name: 'Invoice reminder', missing: false },
     ]);
   });
 
@@ -247,9 +267,9 @@ describe('templateLines names the document that writes each body', () => {
     const lines = templateLines(row);
     expect(lines[0]).toEqual({
       channel: 'email',
-      path: 'emailTemplates/invoice.new.v2',
+      name: 'Invoice new v2',
       missing: false,
-      retargetedFrom: 'invoice.new',
+      retargetedFrom: 'New invoice',
     });
     expect(lines[1]?.retargetedFrom).toBeUndefined();
   });
@@ -272,7 +292,25 @@ describe('mergeFieldNames merges the two halves of the leak surface', () => {
         { trigger: 'y', source: 'src/b.ts', dataKeys: ['stripeEventId'] },
       ],
     });
-    expect(mergeFieldNames(row)).toEqual(['amount', 'invoiceId', 'kinfolkName', 'stripeEventId']);
+    // #1592: in words, not keys. No server labels here, so the client splits them.
+    expect(mergeFieldNames(row)).toEqual([
+      'Amount',
+      'Invoice reference',
+      'Kinfolk name',
+      'Stripe event reference',
+    ]);
+  });
+  it('#1592: uses the server words when it sends them, and folds two keys that mean one thing', () => {
+    const row = entry({
+      mergeFields: ['Business', 'business', 'ip'],
+      emitters: [{ trigger: 'x', source: 'src/a.ts', dataKeys: ['startTimeMsList'] }],
+      mergeFieldLabels: {
+        Business: 'Business name',
+        business: 'Business name',
+        ip: 'Sign-in IP address',
+      },
+    });
+    expect(mergeFieldNames(row)).toEqual(['Business name', 'Sign-in IP address', 'Start time']);
   });
 
   it('reports when an emitter admits the list is incomplete', () => {
@@ -291,6 +329,19 @@ describe('mergeFieldNames merges the two halves of the leak surface', () => {
  * this repo ever writes a receipt back to a notification's channel subdoc, so
  * a green "Delivered" here would be a guess printed as a fact.
  */
+describe('fieldWords and deliveryRecipient (#1592)', () => {
+  it('splits a key the server sent no words for', () => {
+    expect(fieldWords('startTimeMs')).toBe('Start time');
+    expect(fieldWords('nextVisit.date')).toBe('Next visit date');
+    expect(fieldWords('kinfolkId')).toBe('Kinfolk reference');
+    expect(fieldWords('portalUrl')).toBe('Portal link');
+  });
+  it('names the recipient, and keeps the uid only when nobody answers to it', () => {
+    expect(deliveryRecipient({ recipientName: 'Dre East', recipientUid: 'kin1' })).toBe('Dre East');
+    expect(deliveryRecipient({ recipientName: null, recipientUid: 'ghost' })).toBe('ghost');
+    expect(deliveryRecipient({ recipientName: null, recipientUid: '' })).toBe('an unknown recipient');
+  });
+});
 describe('deliveryPhrase never promises a delivery it cannot prove', () => {
   it('calls a successful send handed over, not delivered', () => {
     const phrase = deliveryPhrase('sent', null, null);
@@ -298,8 +349,21 @@ describe('deliveryPhrase never promises a delivery it cannot prove', () => {
     expect(phrase.detail).toContain('not proof it arrived');
   });
 
-  it('carries the skip reason', () => {
-    expect(deliveryPhrase('skipped', 'no-email-on-file', null).detail).toContain('no-email-on-file');
+  it('carries the skip reason, in words (#1592)', () => {
+    expect(deliveryPhrase('skipped', 'no-email-on-file', null).detail).toContain('no email on file');
+    expect(deliveryPhrase('skipped', 'recipient_no_phone', null).detail).toBe(
+      'Not sent on this channel: the recipient has no phone number on file.',
+    );
+    for (const code of [
+      'recipient_no_email',
+      'recipient_no_phone',
+      'recipient_hard_bounced',
+      'template_missing',
+      'template_text_empty',
+      'unknown',
+    ]) {
+      expect(deliveryPhrase('skipped', code, null).detail).not.toContain(code);
+    }
   });
 
   it('carries the failure text', () => {

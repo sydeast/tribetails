@@ -8,7 +8,7 @@ import {
 } from '../api/kinTaleTriage';
 import { matchesKinfolk, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { type KinTaleEntry } from '../api/kinTales';
-import { sentViaLabel, bodyPreview } from '../lib/kinTaleFormat';
+import { sentViaLabel, bodyPreview, kinTaleHousehold, kinTaleWhen } from '../lib/kinTaleFormat';
 import { useOneShot } from '../lib/useOneShot';
 import { type Async } from '../lib/async';
 import { useToast } from './Toast';
@@ -52,6 +52,23 @@ interface NeedsTriageSectionProps {
   candidateReports: KinTaleEntry[];
 }
 
+/**
+ * #1592: an orphan and a duplicate candidate are named by when they were
+ * written and whose they are, never by their document id (`legacy_79`), which
+ * the operator cannot read.
+ */
+function orphanWhen(report: OrphanReportEntry): string {
+  return kinTaleWhen({ visitDate: '', arrivedAt: '', sentAt: '', createdAt: report.createdAt });
+}
+function candidateLabel(entry: KinTaleEntry): string {
+  const when = kinTaleWhen({
+    visitDate: entry.visitDate ?? '',
+    arrivedAt: entry.arrivedAt ?? '',
+    sentAt: entry.sentAt ?? '',
+    createdAt: entry.createdAt ?? '',
+  });
+  return `${kinTaleHousehold(entry.kinfolkName ?? '')} · ${when}`;
+}
 type TriageSheet =
   | { kind: 'assign'; report: OrphanReportEntry }
   | { kind: 'duplicate'; report: OrphanReportEntry }
@@ -107,7 +124,7 @@ export function NeedsTriageSection({ kinfolk, candidateReports }: NeedsTriageSec
         {state.data.map((report) => (
           <li key={report._id} className="needs-triage__row">
             <div className="needs-triage__row-meta">
-              <span className="needs-triage__row-id">{report._id}</span>
+              <span className="needs-triage__row-id">{orphanWhen(report)}</span>
               <span className="needs-triage__row-dot" aria-hidden="true">
                 ·
               </span>
@@ -132,7 +149,7 @@ export function NeedsTriageSection({ kinfolk, candidateReports }: NeedsTriageSec
           kinfolk={kinfolk}
           onClose={() => setActiveSheet(null)}
           onAssigned={(name) =>
-            onTriaged(activeSheet.report._id, `Assigned ${activeSheet.report._id} to ${name}.`)
+            onTriaged(activeSheet.report._id, `Assigned the KinTale to ${name}.`)
           }
         />
       )}
@@ -141,11 +158,8 @@ export function NeedsTriageSection({ kinfolk, candidateReports }: NeedsTriageSec
           report={activeSheet.report}
           candidates={candidateReports.filter((r) => !orphanIds.has(r._id))}
           onClose={() => setActiveSheet(null)}
-          onMarked={(canonicalId) =>
-            onTriaged(
-              activeSheet.report._id,
-              `Marked ${activeSheet.report._id} as a duplicate of ${canonicalId}.`,
-            )
+          onMarked={(canonical) =>
+            onTriaged(activeSheet.report._id, `Marked as a duplicate of ${candidateLabel(canonical)}.`)
           }
         />
       )}
@@ -153,7 +167,7 @@ export function NeedsTriageSection({ kinfolk, candidateReports }: NeedsTriageSec
         <ArchiveOrphanDialog
           report={activeSheet.report}
           onClose={() => setActiveSheet(null)}
-          onArchived={() => onTriaged(activeSheet.report._id, `Archived ${activeSheet.report._id}.`)}
+          onArchived={() => onTriaged(activeSheet.report._id, 'Archived the KinTale.')}
         />
       )}
     </section>
@@ -191,14 +205,14 @@ function AssignOrphanDialog({ report, kinfolk, onClose, onAssigned }: AssignOrph
     } catch (err) {
       setSaving(false);
       setError(
-        `assignKinfolkToOrphanReport failed: ${err instanceof Error ? err.message : 'Assign failed'}`,
+        `Could not save: ${err instanceof Error ? err.message : 'Assign failed'}`,
       );
     }
   }
 
   return (
     <Dialog
-      title={`Assign kinfolk to ${report._id}`}
+      title="Assign kinfolk to this KinTale"
       onClose={() => {
         if (!saving) onClose();
       }}
@@ -272,7 +286,7 @@ interface MarkDuplicateDialogProps {
   /** Already excludes every other current orphan; the parent passes only genuine, previously-triaged candidates. */
   candidates: KinTaleEntry[];
   onClose: () => void;
-  onMarked: (canonicalReportId: string) => void;
+  onMarked: (canonical: KinTaleEntry) => void;
 }
 
 function matchesCandidate(entry: KinTaleEntry, needle: string): boolean {
@@ -301,18 +315,19 @@ function MarkDuplicateDialog({ report, candidates, onClose, onMarked }: MarkDupl
     try {
       await markOrphanReportAsDuplicate(report._id, selectedId);
       setSaving(false);
-      onMarked(selectedId);
+      const canonical = candidates.find((c) => c._id === selectedId);
+      onMarked(canonical ?? { _id: selectedId });
     } catch (err) {
       setSaving(false);
       setError(
-        `markOrphanReportAsDuplicate failed: ${err instanceof Error ? err.message : 'Mark duplicate failed'}`,
+        `Could not save: ${err instanceof Error ? err.message : 'Mark duplicate failed'}`,
       );
     }
   }
 
   return (
     <Dialog
-      title={`Mark ${report._id} as duplicate`}
+      title="Mark this KinTale as a duplicate"
       onClose={() => {
         if (!saving) onClose();
       }}
@@ -333,7 +348,7 @@ function MarkDuplicateDialog({ report, candidates, onClose, onMarked }: MarkDupl
         this screen, same as the search box above the list.
       </p>
       <label className="needs-triage__field-label" htmlFor="duplicate-orphan-search">
-        Search by kinfolk, title, body, or report id
+        Search by kinfolk, title or body
       </label>
       <input
         id="duplicate-orphan-search"
@@ -362,7 +377,7 @@ function MarkDuplicateDialog({ report, candidates, onClose, onMarked }: MarkDupl
                 aria-pressed={selectedId === c._id}
               >
                 <span className="needs-triage__option-title">
-                  {c._id} - {(c.kinfolkName ?? '').trim() === '' ? 'Unnamed Kinfolk' : c.kinfolkName}
+                  {candidateLabel(c)}
                 </span>
                 <span className="needs-triage__option-sub">{bodyPreview(c.bodyCopy ?? '')}</span>
               </button>
@@ -408,14 +423,14 @@ function ArchiveOrphanDialog({ report, onClose, onArchived }: ArchiveOrphanDialo
     } catch (err) {
       setSaving(false);
       setError(
-        `archiveOrphanReportAsBadData failed: ${err instanceof Error ? err.message : 'Archive failed'}`,
+        `Could not archive: ${err instanceof Error ? err.message : 'Archive failed'}`,
       );
     }
   }
 
   return (
     <Dialog
-      title={`Archive ${report._id} as bad data`}
+      title="Archive this KinTale as bad data"
       onClose={() => {
         if (!saving) onClose();
       }}
@@ -432,8 +447,8 @@ function ArchiveOrphanDialog({ report, onClose, onArchived }: ArchiveOrphanDialo
       }
     >
       <p className="needs-triage__hint">
-        Soft-archive: the report stays in Firestore for audit but is hidden from the active buckets.
-        The reason is recorded in the activity log.
+        Archiving hides the report from these lists and keeps it on file. The reason is recorded in
+        the activity log.
       </p>
       <label className="needs-triage__field-label" htmlFor="archive-orphan-reason">
         {`Archive reason (at least ${String(ARCHIVE_REASON_MIN)} characters)`}

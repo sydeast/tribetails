@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -157,10 +157,10 @@ async function guardApprovalWindow(opts: {
   sessionId: string;
   session: { startTime?: unknown; endTime?: unknown; serviceId?: unknown; serviceDurationMinutes?: unknown };
   args: z.infer<typeof Args>;
-}): Promise<void> {
+}): Promise<{ startMs: number; endMs: number | null } | null> {
   const startIso = toIso(opts.session.startTime);
   const startMs = Date.parse(startIso);
-  if (!Number.isFinite(startMs)) return;
+  if (!Number.isFinite(startMs)) return null;
   let endMs: number | null = null;
   const endIso = await storedVisitEndIso(
     startIso,
@@ -191,6 +191,7 @@ async function guardApprovalWindow(opts: {
     attempt: 'approve',
     auditContext: { sessionId: opts.sessionId },
   });
+  return { startMs, endMs };
 }
 export async function transitionBookingStatusHandler(
   req: CallableRequest<unknown>,
@@ -220,7 +221,7 @@ export async function transitionBookingStatusHandler(
       action: args.action,
       code: 'not_found',
       from: '',
-      description: `${args.action} refused: session '${args.sessionId}' not found`,
+      description: (await import('../lib/activityWords.js')).visitNotFoundWords(args.action),
     });
     throw new HttpsError('not-found', `Session '${args.sessionId}' not found.`);
   }
@@ -239,6 +240,15 @@ export async function transitionBookingStatusHandler(
         endTime?: unknown;
         serviceId?: unknown;
         serviceDurationMinutes?: unknown;
+        // #1627: the household's copy of this visit, when it has one.
+        kinfolkId?: unknown;
+        kinCareBatchId?: unknown;
+        kinCareVisitId?: unknown;
+        // #1726: what a booking record minted at approval carries over.
+        serviceType?: unknown;
+        kinIds?: unknown;
+        kinfolkNotes?: unknown;
+        sourceBookingId?: unknown;
       }
     | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });
@@ -250,7 +260,7 @@ export async function transitionBookingStatusHandler(
       action: args.action,
       code: BOOKING_STATUS_UNKNOWN_CODE,
       from: decision.raw,
-      description: `${args.action} refused: unreadable status on session '${args.sessionId}'`,
+      description: (await import('../lib/activityWords.js')).visitStatusUnreadableWords(args.action),
     });
     throw new HttpsError('failed-precondition', unknownStatusMessage(decision.raw), {
       code: BOOKING_STATUS_UNKNOWN_CODE,
@@ -265,7 +275,7 @@ export async function transitionBookingStatusHandler(
       action: args.action,
       code: BOOKING_TRANSITION_ILLEGAL_CODE,
       from: decision.from,
-      description: `${args.action} refused: illegal from ${decision.from}`,
+      description: (await import('../lib/activityWords.js')).visitIllegalWords(args.action, decision.from),
     });
     throw new HttpsError(
       'failed-precondition',
@@ -294,7 +304,7 @@ export async function transitionBookingStatusHandler(
       actorUid: uid,
       targetUid: args.sessionId,
       targetCollection: 'kin_care_sessions',
-      description: `${args.action} on session ${args.sessionId}: already ${decision.at}, no write`,
+      description: (await import('../lib/activityWords.js')).visitNoopWords(args.action, decision.at),
       payload: {
         sessionId: args.sessionId,
         action: args.action,
@@ -345,7 +355,7 @@ export async function transitionBookingStatusHandler(
           action: args.action,
           code: ARRIVAL_VERIFICATION_CODE,
           from: decision.from,
-          description: `COMPLETE refused: session '${args.sessionId}' has no ${missing.join(' or ')} recorded`,
+          description: (await import('../lib/activityWords.js')).visitMissingStepsWords(missing),
         });
         throw new HttpsError('failed-precondition', arrivalVerificationMessage(missing), {
           code: ARRIVAL_VERIFICATION_CODE,
@@ -370,10 +380,10 @@ export async function transitionBookingStatusHandler(
           action: args.action,
           code: ARRIVAL_RADIUS_CODE,
           from: decision.from,
-          description:
-            `COMPLETE refused: session '${args.sessionId}' arrival was recorded ` +
-            `${Math.round(evidence.distanceMeters ?? 0)}m from the household ` +
-            `(radius ${arrivalSettings.radiusMeters}m)`,
+          description: (await import('../lib/activityWords.js')).visitOutsideRadiusWords(
+            Math.round(evidence.distanceMeters ?? 0),
+            arrivalSettings.radiusMeters,
+          ),
         });
         throw new HttpsError(
           'failed-precondition',
@@ -402,9 +412,17 @@ export async function transitionBookingStatusHandler(
   // and same semantics as `rescheduleBooking`: the closed day cannot be
   // overridden, the busy block and the other visit can. A session with no
   // readable start has no window to check and is approved as before.
+  let approvedWindow: { startMs: number; endMs: number | null } | null = null;
   if (decision.to === 'SCHEDULED') {
     try {
-      await guardApprovalWindow({ uid, sessionId: args.sessionId, session: prev ?? {}, args });
+      // #1702: a request that waited until its time went by would go on the
+      // calendar SCHEDULED in the past. Checked first, as `rescheduleBooking`
+      // does, so a time that can never be written is not reported as a clash.
+      // `lib/pastVisit` is loaded here, not at file scope (#1714): see
+      // coldStartImportGraph.test.ts.
+      const { assertApprovalStartAhead, businessTimeZoneReader } = await import('../lib/pastVisit.js');
+      await assertApprovalStartAhead(toIso(prev?.startTime), Date.now(), businessTimeZoneReader());
+      approvedWindow = await guardApprovalWindow({ uid, sessionId: args.sessionId, session: prev ?? {}, args });
     } catch (err) {
       const details = (err as { details?: { code?: unknown } }).details;
       if (err instanceof HttpsError && err.code === 'failed-precondition') {
@@ -414,7 +432,7 @@ export async function transitionBookingStatusHandler(
           action: args.action,
           code: typeof details?.code === 'string' ? details.code : 'schedule_conflict',
           from: decision.from,
-          description: `${args.action} refused: ${err.message}`,
+          description: (await import('../lib/activityWords.js')).visitRefusedWords(args.action, err.message),
         });
       }
       throw err;
@@ -434,7 +452,35 @@ export async function transitionBookingStatusHandler(
     patch.notes = appendCancellationNote(prev?.notes, reason);
   }
 
-  await ref.set(patch, { merge: true });
+  // #1627: CANCEL and COMPLETE also move the household's copy of the visit
+  // (`families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`), in the same
+  // batch. The portal reads that copy, so before this a visit the office
+  // cancelled stayed in the household's Upcoming list and a completed one never
+  // reached Recent. `batchUpdateBookings` has always mirrored this way; this is
+  // the single-row path every admin client's Cancel / Mark Completed uses.
+  const mirror = await visitMirrorFor(prev, args.action);
+  // #1726: an approval that puts a visit on the calendar with no booking record
+  // behind it writes that record in the same batch, so the visit can be given an
+  // Auntie and notes on every client.
+  const record =
+    decision.to === 'SCHEDULED' && approvedWindow !== null
+      ? await recordForUnlinkedSession(args.sessionId, uid, prev, approvedWindow)
+      : null;
+  if (record !== null) Object.assign(patch, record.sessionLink);
+  if (mirror === null && record === null) {
+    await ref.set(patch, { merge: true });
+  } else {
+    const batch = db().batch();
+    batch.set(ref, patch, { merge: true });
+    if (mirror !== null) {
+      batch.set(mirror.ref, { status: mirror.status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
+    if (record !== null) {
+      batch.set(record.envelopeRef, record.envelope);
+      batch.set(record.visitRef, record.visit);
+    }
+    await batch.commit();
+  }
 
   await writeAuditEntry({
     event: AUDIT_EVENTS.BOOKING_STATUS_TRANSITION,
@@ -446,13 +492,18 @@ export async function transitionBookingStatusHandler(
     actorUid: uid,
     targetUid: args.sessionId,
     targetCollection: 'kin_care_sessions',
-    description: `${args.action} on session ${args.sessionId}: ${decision.from} -> ${decision.to}`,
+    // #1752: words; the session is the entry's target.
+    description: (await import('../lib/activityWords.js')).visitTransitionWords(args.action, decision.from, decision.to),
     payload: {
       sessionId: args.sessionId,
       action: args.action,
       from: decision.from,
       to: decision.to,
       changed: true,
+      // #1627: the household's copy moved too (null when the session has none).
+      visitMirrored: mirror?.status ?? null,
+      // #1726: the booking record this approval wrote for a session that had none.
+      bookingRecordCreated: record === null ? null : { batchId: record.batchId, visitId: record.visitId },
       // The reason TEXT is stored on the session's own notes; the audit records
       // only that one was supplied, so the trail carries no free-text the
       // operator may have put a household detail into.
@@ -491,6 +542,145 @@ export async function transitionBookingStatusHandler(
   });
 }
 
+/**
+ * The kinCares status an action mirrors to, for the actions that move the household's copy.
+ *
+ * Keyed on the ACTION, not the target status: REJECT also lands on CANCELLED,
+ * but a declined request is not a cancelled visit (#533). Mirroring it as
+ * `cancelled` without the decline stamp would make `onBookingsWrite` tell the
+ * household "your visit was cancelled" about a visit that was never on their
+ * schedule. Declines go through `manageBookingSeries`, which stamps
+ * `requestDeclinedAt` and sends the true message once per request.
+ */
+export function visitMirrorStatus(action: BookingAction): 'cancelled' | 'completed' | null {
+  if (action === 'CANCEL') return 'cancelled';
+  if (action === 'COMPLETE') return 'completed';
+  return null;
+}
+
+/**
+ * #1627: the household's copy of this visit to move, or null.
+ *
+ * Null when the action is not CANCEL or COMPLETE, when the session
+ * has no booking record (an older ad-hoc visit), when that record is gone, or
+ * when it already reads as finished. The last two matter: a merge `set` on a
+ * missing doc would CREATE a stray visit, and rewriting a cancelled copy as
+ * completed (or back) would contradict an answer the household already has.
+ */
+async function visitMirrorFor(
+  prev: { kinfolkId?: unknown; kinCareBatchId?: unknown; kinCareVisitId?: unknown } | undefined,
+  action: BookingAction,
+): Promise<{ ref: FirebaseFirestore.DocumentReference; status: 'cancelled' | 'completed' } | null> {
+  const status = visitMirrorStatus(action);
+  if (status === null) return null;
+  const kinfolkId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
+  const batchId = typeof prev?.kinCareBatchId === 'string' ? prev.kinCareBatchId.trim() : '';
+  const visitId = typeof prev?.kinCareVisitId === 'string' ? prev.kinCareVisitId.trim() : '';
+  if (kinfolkId === '' || batchId === '' || visitId === '') return null;
+  const visitRef = db().doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`);
+  const visit = await visitRef.get();
+  if (!visit.exists) return null;
+  const current = (visit.data() as { status?: unknown } | undefined)?.status;
+  if (current === 'cancelled' || current === 'completed') return null;
+  return { ref: visitRef, status };
+}
+
+/**
+ * #1726: the booking record an APPROVE writes for a session that has none.
+ *
+ * The desktop console's Save draft writes a DRAFT session straight to
+ * `kin_care_sessions`, the way Android's draft is an `enhanced_bookings` doc
+ * with no record. #1630 gave Android's draft its record at approval, through
+ * `createKinCareSession`; this does the same for a session approved here,
+ * from any client, with the same two documents (`officeBookingRecordDocs`).
+ * An older one-visit request written the same way (before #1674) is covered
+ * by the same rule.
+ *
+ * Null, and the approval goes ahead as before, when the session is already
+ * linked, names no household, or has no readable start (the guards had no
+ * window to check, and a visit with no time is not one a household can see).
+ *
+ * The ids derive from the session id (`ses_{sessionId}`), so a retry of an
+ * approval that failed after this read writes the same documents rather than a
+ * second record. The visit keeps the session's own id as `sessionId`: an
+ * existing document cannot be renamed to `vis_{visitId}`.
+ */
+async function recordForUnlinkedSession(
+  sessionId: string,
+  uid: string,
+  prev:
+    | {
+        kinfolkId?: unknown;
+        kinCareBatchId?: unknown;
+        kinCareVisitId?: unknown;
+        serviceType?: unknown;
+        kinIds?: unknown;
+        kinfolkNotes?: unknown;
+        sourceBookingId?: unknown;
+      }
+    | undefined,
+  window: { startMs: number; endMs: number | null },
+): Promise<{
+  batchId: string;
+  visitId: string;
+  envelopeRef: FirebaseFirestore.DocumentReference;
+  visitRef: FirebaseFirestore.DocumentReference;
+  envelope: Record<string, unknown>;
+  visit: Record<string, unknown>;
+  sessionLink: Record<string, unknown>;
+} | null> {
+  const kinfolkId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
+  const linkedBatch = typeof prev?.kinCareBatchId === 'string' ? prev.kinCareBatchId.trim() : '';
+  const linkedVisit = typeof prev?.kinCareVisitId === 'string' ? prev.kinCareVisitId.trim() : '';
+  if (kinfolkId === '' || linkedBatch !== '' || linkedVisit !== '') return null;
+  // Loaded here, not at file scope: only an unlinked approval needs them. See
+  // coldStartImportGraph.test.ts.
+  const [{ officeBookingRecordDocs }, { materializeKinRoster }] = await Promise.all([
+    import('../lib/officeBookingRecord.js'),
+    import('../lib/kinRoster.js'),
+  ]);
+  const stated = Array.isArray(prev?.kinIds) ? prev.kinIds.filter((k): k is string => typeof k === 'string') : [];
+  const { kinIds, kinNames } = await materializeKinRoster(kinfolkId, stated);
+  const serviceType = typeof prev?.serviceType === 'string' ? prev.serviceType : '';
+  const householdNote = typeof prev?.kinfolkNotes === 'string' && prev.kinfolkNotes.trim() !== '' ? prev.kinfolkNotes : null;
+  const batchId = `ses_${sessionId}`;
+  const visitId = batchId;
+  const envelopeRef = db().doc(`families/${kinfolkId}/bookings/${batchId}`);
+  const visitRef = envelopeRef.collection('kinCares').doc(visitId);
+  const { envelope, visit } = officeBookingRecordDocs({
+    kinfolkId,
+    uid,
+    batchId,
+    visitId,
+    sessionId,
+    serviceType,
+    startTs: Timestamp.fromMillis(window.startMs),
+    endTs: window.endMs !== null && window.endMs > window.startMs ? Timestamp.fromMillis(window.endMs) : null,
+    kinIds,
+    kinNames,
+    backdated: false,
+    householdNote,
+  });
+  return {
+    batchId,
+    visitId,
+    envelopeRef,
+    visitRef,
+    envelope,
+    visit,
+    sessionLink: {
+      kinCareBatchId: batchId,
+      kinCareVisitId: visitId,
+      // Kept when the session already names where it came from: Android's
+      // linked-session lookup reads it.
+      ...(typeof prev?.sourceBookingId === 'string' && prev.sourceBookingId.trim() !== ''
+        ? {}
+        : { sourceBookingId: visitId }),
+      kinIds,
+      kinNames,
+    },
+  };
+}
 export const transitionBookingStatus = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('transitionBookingStatus', transitionBookingStatusHandler),

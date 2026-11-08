@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { failedToLead } from '../lib/callableErrorText';
 import { type BookingEntry } from '../api/bookings';
 import {
   approveBooking,
@@ -7,10 +8,14 @@ import {
   markBookingCompleted,
   rescheduleBooking,
 } from '../api/bookingsWrite';
-import { bookingState, bookingStateInfo, bookingWhen, type BookingState } from '../lib/bookingFormat';
+import { bookingServiceName, bookingState, bookingStateInfo, bookingWhen, type BookingState } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { completeRefusal } from '../lib/completeRule';
+import { useArrivalRule } from '../lib/useArrivalRule';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
 import { overridableScheduleRefusal, overrideHint } from '../api/scheduleWrite';
+import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
@@ -153,6 +158,12 @@ function actionsFor(state: BookingState): ActionDef[] {
     case 'pending':
       return [APPROVE, REJECT];
     case 'scheduled':
+    // #1578: the server completes or cancels a visit from any in-visit state
+    // (`ALLOWED_FROM` in bookingTransitions.ts), and Auntie Time and Android
+    // both offer the two, so a Departed visit is no longer stuck here.
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
       return [COMPLETE, CANCEL];
     case 'completed':
     case 'cancelled':
@@ -185,6 +196,8 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   // #1154: the override a reschedule refusal offers, or null. Cleared once taken,
   // so the same losing move is never offered twice.
   const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
+  // #1744: the Service row names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
 
   if (!entry) {
     return (
@@ -249,7 +262,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       onClose();
     } catch (err) {
       setBusy(false);
-      setError(`${action.kind} failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+      setError(`${failedToLead(action.kind)}: ${err instanceof Error ? err.message : 'Write failed'}`);
     }
   }
 
@@ -263,6 +276,12 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       setError('End time must be after the start time.');
       return;
     }
+    // #1574: a visit is never moved into the past; say so before sending.
+    const pastRefusal = rescheduleIntoPastRefusal(startTime, Date.now());
+    if (pastRefusal !== null) {
+      setError(pastRefusal);
+      return;
+    }
     setBusy(true);
     setError(null);
     setRetry(null);
@@ -274,7 +293,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       onClose();
     } catch (err) {
       setBusy(false);
-      setError(`rescheduleBooking failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+      setError(`Could not reschedule: ${err instanceof Error ? err.message : 'Write failed'}`);
       setRetry(overridableScheduleRefusal(err, override !== null));
     }
   }
@@ -381,7 +400,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
       <dl className="booking-actions__meta">
         <div>
           <dt>Service</dt>
-          <dd>{(booking.serviceType ?? '').trim() !== '' ? booking.serviceType : 'Visit'}</dd>
+          <dd>{bookingServiceName(booking.serviceType ?? '', catalog)}</dd>
         </div>
         <div>
           <dt>When</dt>
@@ -450,6 +469,8 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   const [confirming, setConfirming] = useState<ActionDef | null>(
     () => actions.find((a) => a.kind === initialAction) ?? null,
   );
+  // #1608: Mark Completed checks the operator's arrival rule before it asks.
+  const arrivalRule = useArrivalRule();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // #1145: the override an Approve refusal offers, or null. Cleared once taken,
@@ -457,6 +478,14 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
   const kinfolkName = entry.kinfolkName ?? '';
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
+
+  /** Pose [action]'s question, unless the arrival rule already answers it (#1608). */
+  function ask(action: ActionDef) {
+    setRetry(null);
+    const refusal = action.kind === 'complete' ? completeRefusal(arrivalRule, entry) : null;
+    setError(refusal);
+    if (refusal === null) setConfirming(action);
+  }
 
   async function run(action: ActionDef, override: 'visit' | 'busy' | null = null) {
     if (busy) return;
@@ -474,7 +503,7 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
       // transition failed next to the reason, rather than a bare list of
       // buttons that gives no clue which one they just pressed.
       setBusy(false);
-      setError(`${action.kind} failed: ${err instanceof Error ? err.message : 'Write failed'}`);
+      setError(`${failedToLead(action.kind)}: ${err instanceof Error ? err.message : 'Write failed'}`);
       if (action.kind === 'approve') setRetry(overridableScheduleRefusal(err, override !== null));
     }
   }
@@ -494,19 +523,13 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
               <PrimaryButton
                 key={action.kind}
                 label={action.label}
-                onClick={() => {
-                  setError(null);
-                  setConfirming(action);
-                }}
+                onClick={() => ask(action)}
               />
             ) : (
               <GhostButton
                 key={action.kind}
                 label={action.label}
-                onClick={() => {
-                  setError(null);
-                  setConfirming(action);
-                }}
+                onClick={() => ask(action)}
               />
             ),
           )}

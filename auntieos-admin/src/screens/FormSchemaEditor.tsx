@@ -15,6 +15,7 @@ import { SchemaPreview } from '../components/SchemaPreview';
 import { GhostButton, IconButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import { useToast } from '../components/Toast';
+import { appliesToLabel } from '../lib/formSchemaFormat';
 import './FormSchemaEditor.css';
 
 /**
@@ -355,7 +356,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       })
       .catch((err: unknown) => {
         if (!live) return;
-        setLoadError(`getFormSchema failed: ${err instanceof Error ? err.message : 'Load failed'}`);
+        setLoadError(`Could not load: ${err instanceof Error ? err.message : 'Load failed'}`);
         setLoading(false);
       });
     return () => {
@@ -472,7 +473,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       onSaved(res.id);
     } catch (err) {
       setSaving(false);
-      setSaveError(`saveFormSchema failed: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setSaveError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
   }
 
@@ -583,11 +584,11 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
                 : (
                   // Preserves a stray stored value rather than silently
                   // discarding it the moment this select renders.
-                  <option value={appliesTo}>{appliesTo} (unrecognised)</option>
+                  <option value={appliesTo}>{appliesToLabel(appliesTo)} (unrecognised)</option>
                 )}
               {APPLIES_TO.map((a) => (
                 <option key={a} value={a}>
-                  {a}
+                  {appliesToLabel(a)}
                 </option>
               ))}
             </select>
@@ -669,7 +670,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
             </div>
             <div>
               <dt>Applies to</dt>
-              <dd>{appliesTo}</dd>
+              <dd>{appliesToLabel(appliesTo)}</dd>
             </div>
             {/* The mock's "{id} • v{version}" subtitle line: the wizard has no
                 heading of its own to carry it, so the version is a review row.

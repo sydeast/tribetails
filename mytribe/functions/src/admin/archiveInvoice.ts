@@ -105,7 +105,8 @@ export async function archiveInvoiceHandler(
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId: data.kinfolkId,
-    description: `Invoice ${data.invoiceNumber ?? args.invoiceId} archived${forced ? ' (forced, money still owed)' : ''}`,
+    // #1752: the number, never the id, in the sentence.
+    description: (await import('../lib/activityWords.js')).invoiceSentence(data.invoiceNumber, `archived${forced ? ' (forced, money still owed)' : ''}`),
     payload: { invoiceId: args.invoiceId, state, owed, forced },
   }).catch((err) => {
     logEvent({

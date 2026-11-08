@@ -63,6 +63,52 @@ fun isoDatePrefixOrNull(raw: String): String? {
     return if (digitsOk) candidate else null
 }
 
+private val MONTH_NAME_DAY = Regex("^([A-Za-z]{3,9})\\s+(\\d{1,2}),?\\s+(\\d{4})$")
+private val MONTH_NAMES = listOf(
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+)
+private fun monthIndexOf(name: String): Int {
+    val n = name.lowercase()
+    val exact = MONTH_NAMES.indexOf(n)
+    if (exact >= 0) return exact
+    if (n.length != 3) return -1
+    return MONTH_NAMES.indexOfFirst { it.startsWith(n) }
+}
+private fun daysInMonth(year: Int, month1: Int): Int = when (month1) {
+    2 -> if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) 29 else 28
+    4, 6, 9, 11 -> 30
+    else -> 31
+}
+/**
+ * #1570: which day a stored invoice `date`/`dueDate` names, as `YYYY-MM-DD`, or
+ * null when it names none.
+ *
+ * [isoDatePrefixOrNull] alone read only the `YYYY-MM-DD` shape, so an invoice
+ * loaded from the old system with `dueDate = "July 14, 2026"` was never overdue
+ * (the walk's `#1018`, OPEN and four months past due). This reads that form
+ * too: an English month name (full or three letters), a day, an optional comma
+ * and a four-digit year, checked against the calendar. `07/14/2026` stays
+ * unreadable: it is two different days depending on who typed it.
+ *
+ * Same rule and fixtures as the server's `lib/invoiceDay.ts#invoiceDayOf`, the
+ * web's `lib/invoiceFormat.ts#invoiceDayOrNull` and Android's
+ * `domain/InvoiceActions.kt#invoiceDayOrNull`.
+ */
+fun invoiceDayOrNull(raw: String): String? {
+    isoDatePrefixOrNull(raw)?.let { return it }
+    val named = MONTH_NAME_DAY.matchEntire(raw.trim()) ?: return null
+    val year = named.groupValues[3].toIntOrNull() ?: return null
+    val month = monthIndexOf(named.groupValues[1])
+    val day = named.groupValues[2].toIntOrNull() ?: return null
+    if (month < 0 || day < 1 || day > daysInMonth(year, month + 1)) return null
+    return "${year.toString().padStart(4, '0')}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}"
+}
+/**
+ * #1570: true when an invoice HAS a due date and it names no day. It can never
+ * be counted overdue, so the screens flag it and count it instead of skipping it.
+ */
+fun isUnreadableDueDate(raw: String): Boolean = raw.isNotBlank() && invoiceDayOrNull(raw) == null
 /**
  * The eight states the server's state stamp writes into `status` (ADR-0002,
  * `lib/invoiceEditPolicy.ts#INVOICE_STATES`). The same vocabulary as Android's
@@ -173,7 +219,7 @@ fun invoicePaymentsEmptyCopy(actions: List<InvoiceAction>): String =
  */
 fun invoiceIsOverdue(invoice: Invoice, todayIso: String): Boolean {
     if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return false
-    val due = isoDatePrefixOrNull(invoice.dueDate) ?: return false
+    val due = invoiceDayOrNull(invoice.dueDate) ?: return false
     return due < todayIso
 }
 
@@ -184,7 +230,7 @@ fun invoiceIsOverdue(invoice: Invoice, todayIso: String): Boolean {
  */
 fun daysOverdue(invoice: Invoice, todayIso: String): Int? {
     if (!invoiceIsOverdue(invoice, todayIso)) return null
-    val due = isoDatePrefixOrNull(invoice.dueDate) ?: return null
+    val due = invoiceDayOrNull(invoice.dueDate) ?: return null
     val dueDays = isoToEpochDay(due) ?: return null
     val todayDays = isoToEpochDay(todayIso) ?: return null
     val diff = todayDays - dueDays
@@ -210,10 +256,11 @@ private fun isoToEpochDay(iso: String): Long? {
 /**
  * Humanizes an ISO date prefix to a compact "May 21" label for row meta lines,
  * or echoes the raw string when it is not ISO-parseable (fail-loud: we show the
- * operator exactly what is stored rather than hiding bad data).
+ * operator exactly what is stored rather than hiding bad data). With [todayIso],
+ * a date from another year carries it ("Jul 2, 2025", #1599).
  */
-fun humanizeDate(raw: String): String {
-    val iso = isoDatePrefixOrNull(raw) ?: return raw.trim()
+fun humanizeDate(raw: String, todayIso: String? = null): String {
+    val iso = invoiceDayOrNull(raw) ?: return raw.trim()
     val month = iso.substring(5, 7).toIntOrNull() ?: return raw.trim()
     val day = iso.substring(8, 10).toIntOrNull() ?: return raw.trim()
     val name = when (month) {
@@ -221,7 +268,8 @@ fun humanizeDate(raw: String): String {
         7 -> "Jul"; 8 -> "Aug"; 9 -> "Sep"; 10 -> "Oct"; 11 -> "Nov"; 12 -> "Dec"
         else -> return raw.trim()
     }
-    return "$name $day"
+    val year = iso.substring(0, 4)
+    return if (todayIso != null && year != todayIso.take(4)) "$name $day, $year" else "$name $day"
 }
 
 /** "$36.00" / "-$12.50" / "$1,234.50". Display only; an input is seeded with `centsToInputDollars`. */
@@ -280,3 +328,10 @@ fun invoiceChipLabel(invoice: Invoice, todayIso: String): String {
         null -> invoice.status.trim().ifBlank { "No status" }
     }
 }
+
+/**
+ * #1595: the Invoices panel's count line, "3 of 12 shown". A value, so it is
+ * the panel's visible detail line. It used to be the panel's info tip, along
+ * with "Tap a row to open the invoice.", which the rows' own affordance says.
+ */
+fun invoicesShownDetail(shown: Int, total: Int): String = "$shown of $total shown"

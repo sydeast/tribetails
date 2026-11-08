@@ -124,6 +124,12 @@ export interface NotificationCatalogEntry {
   emailTemplateRetargetedFrom?: string;
   /** Merge fields the server hydrates for this key's templates. */
   mergeFields: readonly string[];
+  /**
+   * #1592: the server's words for each merge field and emitter data key. A
+   * server older than this field sends none; `mergeFieldNames` then splits the
+   * key into words itself.
+   */
+  mergeFieldLabels?: Readonly<Record<string, string>>;
   /** True when an outside system delivers it and this gate controls nothing. */
   external: boolean;
 }
@@ -198,6 +204,7 @@ interface RawCatalogEntry {
   templates?: Record<string, string>;
   emailTemplateRetargetedFrom?: string;
   mergeFields?: string[];
+  mergeFieldLabels?: Record<string, unknown>;
   external?: boolean;
 }
 
@@ -297,6 +304,14 @@ function decodeEmitters(raw: RawCatalogEntry['emitters']): NotificationEmitter[]
 function decodeStringList(raw: unknown): string[] {
   return arr<unknown>(raw).map((v) => str(v));
 }
+function decodeLabels(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [key, label] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof label === 'string' && label.trim() !== '') out[key] = label.trim();
+  }
+  return out;
+}
 function decodeTemplates(raw: Record<string, string> | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const channel of NOTIFICATION_CHANNELS) {
@@ -343,6 +358,7 @@ function decodeCatalogEntry(raw: RawCatalogEntry): NotificationCatalogEntry {
       ? { emailTemplateRetargetedFrom: raw.emailTemplateRetargetedFrom }
       : {}),
     mergeFields: decodeStringList(raw.mergeFields),
+    mergeFieldLabels: decodeLabels(raw.mergeFieldLabels),
     external: raw.external === true,
   };
 }

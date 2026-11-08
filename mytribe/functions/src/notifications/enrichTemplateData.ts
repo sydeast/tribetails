@@ -4,9 +4,9 @@ import { logEvent } from '../lib/logger';
 import { businessTimeZone } from '../lib/bookingTimeBlocks';
 import { isInactiveKinStatus } from '../lib/kinStatus';
 import { formatUsd } from '../lib/invoiceMath';
+import { serviceDisplayName, serviceNameCatalogFrom } from '../lib/serviceDisplayName';
 import { getNotificationDef } from './catalog';
 import {
-  DEFAULT_TIME_ZONE,
   START_TIME_TO_BE_SET,
   formatBookingDate,
   formatBookingTime,
@@ -82,6 +82,9 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'auth.failedLogin.attempts': ['attemptsInWindow', 'business', 'email'],
   'auth.password.reset': ['Business', 'displayName', 'link'],
   'invite.expired': ['Business', 'invitedEmail'],
+  // #1586: a direct send (membership/acceptInvite.ts), not a catalog row, so the
+  // enricher never runs on it. Every token is supplied by the sender.
+  'invite.verify-email': ['claimUrl', 'invitedEmail', 'verifyUrl'],
   'invoice.charge.failed': ['invoiceNumber', 'kinfolkName'],
   'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'kinfolkName', 'kinName'],
   'invoice.overdue': ['bookingDate', 'kinfolkName', 'kinName'],
@@ -204,6 +207,12 @@ const ENRICHABLE: ReadonlySet<string> = new Set([
 ]);
 
 type Doc = Record<string, unknown> | null;
+/**
+ * #1749: what {{serviceType}} reads when the visit's stored label is a code the
+ * KinCare list cannot name. A card detail drops it (`buildNotificationDetail`):
+ * "Service: visit" tells the operator nothing.
+ */
+export const SERVICE_FALLBACK_WORD = 'visit';
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
@@ -264,7 +273,10 @@ export async function enrichTemplateData(
   }
   const fields = [...(TEMPLATE_FIELDS[key] ?? []), ...extraFields];
   const want = new Set(fields.filter((f) => ENRICHABLE.has(f) && !hasValue(ctx[f])));
-  if (want.size === 0) return ctx;
+  // #1749: `serviceType` is resolved even when the emitter sent one; see the
+  // resolution block below. So a key whose templates use it never returns here.
+  const resolveService = fields.includes('serviceType');
+  if (want.size === 0 && !resolveService) return ctx;
 
   let audience: Audience = 'kinfolk';
   try {
@@ -477,18 +489,23 @@ export async function enrichTemplateData(
     }
   }
 
-  let tzLoaded = false;
-  let timeZone = DEFAULT_TIME_ZONE;
-  async function loadTimeZone(): Promise<string> {
-    if (tzLoaded) return timeZone;
-    tzLoaded = true;
+  // One read of the settings document, shared by the time zone and the KinCare
+  // catalog (#1749) so a key that needs both pays for it once.
+  let settingsLoaded = false;
+  let settings: Doc = null;
+  async function loadSettings(): Promise<Doc> {
+    if (settingsLoaded) return settings;
+    settingsLoaded = true;
     try {
       const snap = await firestore.doc('business_settings/business_settings').get();
-      timeZone = businessTimeZone(snap.data());
+      settings = (snap.data() as Doc) ?? null;
     } catch {
-      // keep default
+      // keep null: the default time zone and an empty catalog
     }
-    return timeZone;
+    return settings;
+  }
+  async function loadTimeZone(): Promise<string> {
+    return businessTimeZone((await loadSettings()) ?? undefined);
   }
 
   function fill(token: string, value: string): void {
@@ -582,13 +599,34 @@ export async function enrichTemplateData(
   }
 
   // ── resolution (only the wanted tokens; loaders fire lazily) ──────────────
-  if (want.has('serviceType')) {
-    let v = str(data.serviceType) || str(data.serviceName);
-    if (!v) {
+  // #1749: {{serviceType}} IS THE KINCARE'S NAME, never the stored key.
+  //
+  // `serviceType` on a visit is free text that often holds a code (`visit_60`,
+  // `30minute`), and emitters pass it through as written: the auntie arrived /
+  // departed / on-my-way pushes send `booking.serviceType`, the booking trigger
+  // and the reminder cron send it as `serviceName`. So this field is the one
+  // exception to "the emitter wins": whatever arrived is a label to resolve
+  // against the operator's KinCare list, through the same resolver the portal's
+  // schedule uses (`lib/serviceDisplayName.ts`), so the text a household reads
+  // names the service the way its schedule does. A label that is already a name
+  // ("Drop-in visit") comes back as written.
+  //
+  // A code the catalog cannot place (two 60-minute KinCares, or a KinCare the
+  // operator removed) reads as SERVICE_FALLBACK_WORD rather than the code; every
+  // template says "your {{serviceType}}" or "the {{serviceType}} for", which a
+  // plain "visit" completes and a blank breaks.
+  if (resolveService) {
+    let raw = str(ctx.serviceType).trim() || str(data.serviceName).trim();
+    let storedName: unknown = data.serviceName;
+    if (!raw) {
       const b = await loadBooking();
-      v = str(b?.serviceType) || str(b?.serviceName) || str(b?.title);
+      raw = str(b?.serviceType).trim() || str(b?.serviceName).trim() || str(b?.title).trim();
+      storedName = b?.serviceName;
     }
-    fill('serviceType', v);
+    if (raw) {
+      const catalog = serviceNameCatalogFrom(await loadSettings());
+      ctx.serviceType = serviceDisplayName(raw, catalog, storedName) ?? SERVICE_FALLBACK_WORD;
+    }
   }
 
   // #532: the whole envelope's dates, for the one notification that is about a

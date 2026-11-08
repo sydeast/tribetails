@@ -39,9 +39,11 @@ import {
   EmptyHint,
   ErrorHint,
   ServicePill,
+  bookingServiceTone,
   StatCard,
   StatusPill,
   serviceTone,
+  tipLeftPx,
 } from './DenScreenKit';
 import { asyncScalar, type Async, type ResolvedScalar } from '../lib/async';
 
@@ -95,6 +97,11 @@ describe('StatCard', () => {
   it('names what failed instead of only greying out', () => {
     renderStat({ kind: 'error', message: 'listBookings failed.' });
     expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t load open bookings: listBookings failed.');
+  });
+
+  it('says "could not load" once when the load error already says it (#1592)', () => {
+    renderStat({ kind: 'error', message: 'Could not load: The server could not be reached.' });
+    expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t load open bookings: The server could not be reached.');
   });
 
   it('drops the trend claim on an error, rather than pairing it with a dash', () => {
@@ -271,6 +278,45 @@ describe('DenScreenHeading', () => {
       'aria-describedby',
       tip.id,
     );
+  });
+
+  it('#1596: an open tip goes to the top layer, placed under its button and inside the window', async () => {
+    const show = vi.fn();
+    const hide = vi.fn();
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    proto.showPopover = show;
+    proto.hidePopover = hide;
+    try {
+      render(<DenScreenHeading kicker="k" title="Today" subtitle="Visits on this day." />);
+      const button = screen.getByRole('button', { name: 'About this section' });
+      const tip = screen.getByText('Visits on this day.');
+      // The button sits 20px from the right edge of a 1000px window; the tip is 260px wide.
+      button.getBoundingClientRect = () => new DOMRect(980, 100, 16, 16);
+      tip.getBoundingClientRect = () => new DOMRect(0, 0, 260, 40);
+      Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1000 });
+
+      await userEvent.hover(button);
+
+      expect(show).toHaveBeenCalledTimes(1);
+      expect(tip).toHaveAttribute('popover', 'manual');
+      expect(tip.style.top).toBe('122px');
+      // 1000 - 8 gutter - 260 wide: the right edge lands 8px inside the window.
+      expect(tip.style.left).toBe('732px');
+
+      await userEvent.unhover(button);
+      expect(hide).toHaveBeenCalled();
+    } finally {
+      delete proto.showPopover;
+      delete proto.hidePopover;
+      Reflect.deleteProperty(document.documentElement, 'clientWidth');
+    }
+  });
+
+  it('#1596: tipLeftPx keeps the tip inside the window on both sides', () => {
+    expect(tipLeftPx(100, 260, 1000)).toBe(100);
+    expect(tipLeftPx(980, 260, 1000)).toBe(732);
+    // Wider than the window: the left edge stays in view.
+    expect(tipLeftPx(50, 1200, 1000)).toBe(8);
   });
 
   it('keeps the tooltip mounted while it is closed, or the description points at nothing', () => {
@@ -730,9 +776,21 @@ describe('ServicePill', () => {
     expect(screen.getByText('walk')).toBeInTheDocument();
   });
 
-  it('falls back to "visit" for a blank service type', () => {
+  it('falls back to "Visit" for a blank service type', () => {
     render(<ServicePill serviceType="   " />);
-    expect(screen.getByText('visit')).toBeInTheDocument();
+    expect(screen.getByText('Visit')).toBeInTheDocument();
+  });
+
+  it('#1592: says the resolved name, toned from the stored type', () => {
+    render(<ServicePill serviceType="dog_walk_60" label="Dog Walk" />);
+    expect(screen.getByText('Dog Walk')).toHaveAttribute('data-tone', 'teal');
+    expect(screen.queryByText('dog_walk_60')).toBeNull();
+  });
+
+  it('#1592: the tone follows the resolved name, not the stored key', () => {
+    // `visit_60` alone tones orange (a visit, not a sit); the KinCare it names is a walk.
+    render(<ServicePill serviceType="visit_60" label="Dog walk" />);
+    expect(screen.getByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
   });
 
   it('tones itself from the service type', () => {
@@ -746,6 +804,20 @@ describe('ServicePill', () => {
   });
 });
 
+describe('bookingServiceTone', () => {
+  const catalog = { serviceRates: { 'Dog walk': '45' }, serviceDurations: { 'Dog walk': '60' }, timeBlocks: [] };
+
+  it('#1592: tones a stored key by the KinCare it resolves to', () => {
+    expect(serviceTone('visit_60')).toBe('orange');
+    expect(bookingServiceTone('visit_60', catalog)).toBe('teal');
+  });
+
+  it('an unresolved type keeps its own tone', () => {
+    expect(bookingServiceTone('Overnight sit', catalog)).toBe('purple');
+    expect(bookingServiceTone(undefined, catalog)).toBe(serviceTone('Visit'));
+  });
+});
+
 describe('serviceTone', () => {
   it.each([
     ['Dog Walk', 'teal'],
@@ -754,6 +826,12 @@ describe('serviceTone', () => {
     ['Overnight', 'purple'],
     ['Meet and Greet', 'success'],
     ['something else', 'orange'],
+    // #1736: the "sit" inside "visit" is not a house sit.
+    ['visit_60', 'orange'],
+    ['Off-Book Visit', 'orange'],
+    ['KinCare Visit', 'orange'],
+    ['House Sit', 'purple'],
+    ['Pet Sitting', 'purple'],
   ])('maps %s to %s', (service, tone) => {
     expect(serviceTone(service)).toBe(tone);
   });

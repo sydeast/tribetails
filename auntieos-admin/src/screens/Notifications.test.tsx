@@ -8,6 +8,10 @@ import { type NotificationEntry } from '../api/notifications';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+// #1749: the KinCare list the Service row is named against.
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: { '60Minute': '40' }, serviceDurations: { '60Minute': '60' }, timeBlocks: [] }),
+}));
 
 const { markNotificationRead, markNotificationUnread, bulkMarkNotificationsRead } = vi.hoisted(() => ({
   markNotificationRead: vi.fn(),
@@ -41,6 +45,23 @@ vi.mock('../api/notificationsWrite', () => ({
 
 const { batchUpdateBookings } = vi.hoisted(() => ({ batchUpdateBookings: vi.fn() }));
 vi.mock('../api/bookingsWrite', () => ({ batchUpdateBookings }));
+
+// #1675: Approve / Deny on a waiting request answer it through `manageBookingSeries`.
+const { approveBookingRequest, declineBookingRequest } = vi.hoisted(() => ({
+  approveBookingRequest: vi.fn(),
+  declineBookingRequest: vi.fn(),
+}));
+vi.mock('../api/bookingRequests', () => ({ approveBookingRequest, declineBookingRequest }));
+const APPROVED = {
+  ok: true,
+  action: 'APPROVE',
+  batchId: 'req_b1',
+  affectedVisits: 1,
+  sessionsCreated: 1,
+  failedVisits: 0,
+  householdNotified: true,
+  newlyConfirmed: 1,
+};
 
 import { Notifications } from './Notifications';
 import { KINFOLK_QUERY } from '../api/directory';
@@ -108,19 +129,37 @@ beforeEach(() => {
   unarchiveNotification.mockReset().mockResolvedValue(1);
   bulkUnarchiveNotifications.mockReset().mockResolvedValue(1);
   batchUpdateBookings.mockReset().mockResolvedValue({ ok: true, action: 'APPROVE', updated: 1, failed: [] });
+  approveBookingRequest.mockReset().mockResolvedValue(APPROVED);
+  declineBookingRequest.mockReset().mockResolvedValue({ ...APPROVED, action: 'CANCEL', householdNotified: true });
 });
 
 describe('Notifications screen', () => {
-  it('renders streamed rows grouped by day, with the key and the category', () => {
+  it('renders streamed rows grouped by day, with the title and the category in words', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Notifications />);
     expect(screen.getByText('2026-07-16')).toBeInTheDocument();
-    expect(screen.getByText('kincare.booking.confirm')).toBeInTheDocument();
-    // Scoped to the ROW: "bookings" is also the text of the category filter
+    // #1592: a row with no title reads its key as words, never the key itself.
+    expect(screen.getByText('Kincare booking confirm')).toBeInTheDocument();
+    expect(screen.queryByText('kincare.booking.confirm')).toBeNull();
+    // Scoped to the ROW: "Bookings" is also the text of the category filter
     // chip, and an unscoped getByText now matches both. It used to be unique
     // only because the meta line read "bookings · trigger", i.e. because the
     // delivery mode was on the card.
-    expect(within(screen.getByRole('listitem')).getByText('bookings')).toBeInTheDocument();
+    expect(within(screen.getByRole('listitem')).getByText('Bookings')).toBeInTheDocument();
+  });
+
+  it('#1592: shows the catalog category as a word on the chip and the card', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ key: 'account.welcome.kinfolk', title: 'account.welcome.kinfolk', category: 'visit' })],
+    });
+    render(<Notifications />);
+    expect(screen.getByRole('tab', { name: 'Visits' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'visit' })).toBeNull();
+    expect(within(screen.getByRole('listitem')).getByText('Visits')).toBeInTheDocument();
+    expect(screen.getByText('Account welcome kinfolk')).toBeInTheDocument();
+    expect(screen.queryByText('account.welcome.kinfolk')).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Select Account welcome kinfolk' })).toBeInTheDocument();
   });
 
   /**
@@ -223,7 +262,7 @@ describe('Notifications screen', () => {
   it('shows an inline pending indicator on Mark read and leaves the other CTAs live while it runs', async () => {
     useCollection.mockReturnValue({
       status: 'ready',
-      data: [entry({ _id: 'n1', key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+      data: [entry({ _id: 'n1', key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } })],
     });
     let release!: () => void;
     markNotificationRead.mockReturnValue(
@@ -369,7 +408,7 @@ describe('Notifications feed context (issue #20)', () => {
       ],
     });
     render(<Notifications />);
-    await userEvent.click(screen.getByRole('tab', { name: 'payments' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Payments' }));
     expect(screen.queryByText('Booking row')).toBeNull();
     expect(screen.getByText('Payment row')).toBeInTheDocument();
   });
@@ -397,7 +436,7 @@ describe('Notifications feed context (issue #20)', () => {
     mockStreams({ status: 'ready', data: [entry({ category: 'bookings' })] });
     render(<Notifications />);
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(tabs).toEqual(['All', 'Unread', 'bookings']);
+    expect(tabs).toEqual(['All', 'Unread', 'Bookings']);
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -419,7 +458,7 @@ describe('Notifications feed context (issue #20)', () => {
     mockStreams({ status: 'ready', data: [entry({ category: 'bookings' })] });
     render(<Notifications />);
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('tabindex', '0');
-    expect(screen.getByRole('tab', { name: 'bookings' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Bookings' })).toHaveAttribute('tabindex', '-1');
   });
 });
 
@@ -440,13 +479,14 @@ describe('Notifications stat strip', () => {
     mockStreams({
       status: 'ready',
       data: [
-        entry({ _id: 'n1', key: 'kincare.requested', targetType: 'booking', targetId: 'b1' }),
+        entry({ _id: 'n1', key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } }),
         entry({ _id: 'n2', targetType: 'invoice', targetId: 'i1' }),
         entry({
           _id: 'n3',
           key: 'kincare.requested',
           targetType: 'booking',
           targetId: 'b2',
+          data: { kinfolkId: 'kf2' },
           readAt: fakeTs('2026-07-16T10:00:00Z'),
         }),
       ],
@@ -707,6 +747,37 @@ describe('Notifications bulk bar', () => {
     expect(screen.queryByRole('button', { name: /select all/i })).toBeNull();
   });
 
+  it('Select all is limited to the rows the active filter chip shows (#1611)', async () => {
+    mockStreams({
+      status: 'ready',
+      data: [
+        entry({ _id: 'n1', category: 'bookings' }),
+        entry({ _id: 'n2', category: 'payments' }),
+        entry({ _id: 'n3', category: 'payments' }),
+      ],
+    });
+    bulkArchiveNotifications.mockResolvedValue(2);
+    render(<Notifications />);
+    expect(screen.getByRole('button', { name: 'Select all 3' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Payments' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Select all 2' }));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear selection' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Archive 2' }));
+    expect(bulkArchiveNotifications).toHaveBeenCalledWith(['n2', 'n3']);
+  });
+  it('changing the filter chip drops a selection made under the old one', async () => {
+    mockStreams({
+      status: 'ready',
+      data: [entry({ _id: 'n1', category: 'bookings' }), entry({ _id: 'n2', category: 'payments' })],
+    });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Select all 2' }));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Payments' }));
+    expect(screen.queryByText(/selected$/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Select all 1' })).toBeInTheDocument();
+  });
   it('Select all never reaches rows the archive facet has hidden', async () => {
     mockStreams({
       status: 'ready',
@@ -756,24 +827,43 @@ describe('Notifications quick actions (issue #20)', () => {
   // ISSUE #706: Approve/Deny only offers on a still-pending booking request
   // (key `kincare.requested`). See notificationActions.test.ts for the full
   // per-key table.
-  it('Approve calls batchUpdateBookings with the booking id and APPROVE', async () => {
-    mockStreams({
-      status: 'ready',
-      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+  //
+  // #1675: that row's `targetId` is the REQUEST's envelope id (`batchId`), and
+  // its household is in `data.kinfolkId` (onBookingEnvelopeCreate). The buttons
+  // used to send the envelope id to `batchUpdateBookings`, which only knows
+  // visit ids, so every press came back not-found. They answer the whole
+  // request through `manageBookingSeries` now, as Bookings > Review does.
+  const waitingRequest = (over: Partial<NotificationEntry> = {}) =>
+    entry({
+      key: 'kincare.requested',
+      targetType: 'booking',
+      targetId: 'req_b1',
+      data: { kinfolkId: 'kf1' },
+      ...over,
     });
+
+  it('#1675: Approve books the whole request by household and request id, not batchUpdateBookings', async () => {
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'APPROVE');
+    await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('kf1', 'req_b1'));
+    expect(batchUpdateBookings).not.toHaveBeenCalled();
+    expect(screen.queryByText('Notification action failed')).toBeNull();
   });
 
-  it('Deny calls batchUpdateBookings with the booking id and REJECT', async () => {
-    mockStreams({
-      status: 'ready',
-      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
-    });
+  it('#1675: Deny declines the whole request by household and request id', async () => {
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
-    expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'REJECT');
+    await waitFor(() => expect(declineBookingRequest).toHaveBeenCalledWith('kf1', 'req_b1'));
+    expect(batchUpdateBookings).not.toHaveBeenCalled();
+  });
+
+  it('#1675: offers no Approve/Deny on a request row that names no household, since it cannot be answered', () => {
+    mockStreams({ status: 'ready', data: [waitingRequest({ data: {} })] });
+    render(<Notifications />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
   });
 
   it('offers no Approve/Deny on a booking notification whose event has already been decided', () => {
@@ -786,64 +876,47 @@ describe('Notifications quick actions (issue #20)', () => {
     expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
   });
 
-  it('fails loud when the booking batch resolves with a per-id failure, not a fake success', async () => {
-    batchUpdateBookings.mockResolvedValue({
-      ok: true,
-      action: 'APPROVE',
-      updated: 0,
-      failed: [{ id: 'b1', error: 'not found' }],
-    });
-    mockStreams({
-      status: 'ready',
-      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
-    });
-    render(<Notifications />);
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    expect(await screen.findByText(/not found/i)).toBeInTheDocument();
-  });
-
-  it('#1098: a quick approve of an Overnight with no start time shows the server refusal, not a generic error', async () => {
-    batchUpdateBookings.mockResolvedValue({
-      ok: true,
-      action: 'APPROVE',
-      updated: 0,
-      failed: [{ id: 'b1', error: 'Set the start time before approving this Overnight.' }],
-    });
-    mockStreams({
-      status: 'ready',
-      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
-    });
+  it('fails loud on a partial approval, not a fake success', async () => {
+    approveBookingRequest.mockResolvedValue({ ...APPROVED, affectedVisits: 2, failedVisits: 1 });
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(
-      await screen.findByText(/Set the start time before approving this Overnight\./),
+      await screen.findByText(/Approved 2 of 3 visits\. The rest did not go through and the household has not been told/),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Updating the booking failed.')).toBeNull();
+  });
+
+  it('says so when the household was not told of an approval', async () => {
+    approveBookingRequest.mockResolvedValue({ ...APPROVED, householdNotified: false });
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(await screen.findByText(/did not go out, so tell them another way/)).toBeInTheDocument();
+  });
+
+  it('#1098: a quick approve of an Overnight with no start time shows the server refusal, not a generic error', async () => {
+    approveBookingRequest.mockRejectedValue(new Error('Set a start time for the Overnight on Nov 9 before approving.'));
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(
+      await screen.findByText(/Set a start time for the Overnight on Nov 9 before approving\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Answering the request failed.')).toBeNull();
   });
 
   it('#1099: a quick approve the server refused for a busy block shows that sentence', async () => {
-    batchUpdateBookings.mockResolvedValue({
-      ok: true,
-      action: 'APPROVE',
-      updated: 0,
-      failed: [{ id: 'b1', error: 'That time overlaps a busy block on your Google Calendar.' }],
-    });
-    mockStreams({
-      status: 'ready',
-      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
-    });
+    approveBookingRequest.mockRejectedValue(new Error('That time overlaps a busy block on your Google Calendar.'));
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(
       await screen.findByText(/That time overlaps a busy block on your Google Calendar\./),
     ).toBeInTheDocument();
   });
-  it('fails loud when the booking call rejects', async () => {
-    batchUpdateBookings.mockRejectedValue(new Error('permission-denied'));
-    mockStreams({
-      status: 'ready',
-      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
-    });
+  it('fails loud when the decline call rejects', async () => {
+    declineBookingRequest.mockRejectedValue(new Error('permission-denied'));
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
     expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
@@ -980,6 +1053,14 @@ describe('Notifications card detail', () => {
     expect(screen.queryByRole('button', { name: /Something happened/ })).toBeNull();
     expect(screen.getByText('Something happened')).toBeInTheDocument();
   });
+  it('names the KinCare on a card stored with the visit key (#1749)', async () => {
+    mockStreams({ status: 'ready', data: [detailed({ detail: { kinName: 'Biscuit', serviceType: 'visit_60' } })] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: /A KinCare visit was assigned/ }));
+    expect(screen.getByText('Service')).toBeInTheDocument();
+    expect(screen.getByText('60Minute')).toBeInTheDocument();
+    expect(screen.queryByText('visit_60')).toBeNull();
+  });
   it('shows only the fields that resolved, never a labelled blank', async () => {
     mockStreams({
       status: 'ready',
@@ -999,11 +1080,11 @@ describe('Notifications card detail', () => {
    * must not disturb them.
    */
   it('keeps the entity CTAs working while the card is open', async () => {
-    mockStreams({ status: 'ready', data: [detailed({ key: 'kincare.requested' })] });
+    mockStreams({ status: 'ready', data: [detailed({ key: 'kincare.requested', data: { kinfolkId: 'kf1' } })] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: /A KinCare visit was assigned/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'APPROVE');
+    await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('kf1', 'b1'));
   });
 });
 
@@ -1049,7 +1130,7 @@ describe('Notifications card body click (issue #705)', () => {
   });
 
   it('does not toggle when a quick-action button inside the card is clicked', async () => {
-    mockStreams({ status: 'ready', data: [detailed({ key: 'kincare.requested' })] });
+    mockStreams({ status: 'ready', data: [detailed({ key: 'kincare.requested', data: { kinfolkId: 'kf1' } })] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(screen.queryByText('Requested by')).toBeNull();

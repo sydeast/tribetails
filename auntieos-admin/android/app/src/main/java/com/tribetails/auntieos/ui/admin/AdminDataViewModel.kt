@@ -1,5 +1,12 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.SEND_BUDGET_SECONDS
+import com.tribetails.auntieos.domain.SendCheckAction
+import com.tribetails.auntieos.domain.SendMarks
+import com.tribetails.auntieos.domain.SilenceKind
+import com.tribetails.auntieos.domain.sendMarksOf
+import com.tribetails.auntieos.domain.sendOutcomeAfterSilence
+import com.tribetails.auntieos.util.isSilentSendFailure
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
@@ -239,13 +246,35 @@ class AdminDataViewModel(
     // §A.8: Business-Settings time blocks for the Auntie-Time "Evening block" labels.
     // Unified settings (2026-06-05): timeBlocks now live on business_settings,
     // read via the injected AuntieRepository.
+    /**
+     * `business_settings.timeZone` for screens that read stored instants on the business's
+     * clock (#1585). Blank until read and on a failed read; `businessZone(...)` turns blank
+     * into America/Chicago, the server's own default.
+     */
+    private val _businessTimeZone = MutableStateFlow("")
+    val businessTimeZone: StateFlow<String> = _businessTimeZone.asStateFlow()
     private val _timeBlocks = MutableStateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>>(emptyList())
     val timeBlocks: StateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>> = _timeBlocks.asStateFlow()
+    // #1592: the KinCare catalog, so the KinTales list names a visit's service
+    // instead of printing the stored key. Empty until read, and if the read fails.
+    private val _serviceRates = MutableStateFlow<Map<String, String>>(emptyMap())
+    val serviceRates: StateFlow<Map<String, String>> = _serviceRates.asStateFlow()
+    // #1608: "Verify arrival and departure", read raw (absent is off). Null until read.
+    private val _arrivalRule = MutableStateFlow<Boolean?>(null)
+    val arrivalRule: StateFlow<Boolean?> = _arrivalRule.asStateFlow()
 
     // KinTale (visit recap report) Management
     private val _kinCareReports = MutableStateFlow<List<KinCareReport>>(emptyList())
     val kinCareReports: StateFlow<List<KinCareReport>> = _kinCareReports.asStateFlow()
 
+    // #1563: the KinTales list's other half. A KinTale in draft state is a
+    // `generated_drafts` doc (ruling D-2026-08-04), and this list never read
+    // them, so a draft Home counted could not be found here at all. Only the
+    // unsent ones are listed; see [unsentGeneratedDrafts].
+    private val _generatedDrafts = MutableStateFlow<List<Draft>>(emptyList())
+    val generatedDrafts: StateFlow<List<Draft>> = _generatedDrafts.asStateFlow()
+    private val _generatedDraftsError = MutableStateFlow<String?>(null)
+    val generatedDraftsError: StateFlow<String?> = _generatedDraftsError.asStateFlow()
     // Kinfolk list - populated on demand by orphan triage flow so the
     // "Assign Kinfolk" picker has live data without loading the directory
     // every time the logs screen opens.
@@ -385,27 +414,37 @@ class AdminDataViewModel(
     }
 
     /**
-     * Step 4 quick-action (booking notifications only): apply a booking transition
-     * (APPROVE/REJECT) to the linked visit via batchUpdateBookings, then reload the
-     * inbox. Fail-loud: the per-id failure (or success) is surfaced verbatim.
+     * #1675: Approve / Deny on a waiting request's notification answer the
+     * whole request, the same `manageBookingSeries` call Bookings' incoming
+     * requests make (APPROVE books it, CANCEL declines it). The row's
+     * `targetId` is the request's envelope id (`batchId`); it used to go to
+     * `batchUpdateBookings`, which only knows visit ids, so every press came
+     * back not-found. Fail-loud: the server's refusal is shown verbatim.
      */
-    fun quickBookingAction(targetId: String, action: String) {
-        if (targetId.isBlank()) return
+    fun answerBookingRequest(kinfolkId: String, batchId: String, approve: Boolean) {
+        if (kinfolkId.isBlank() || batchId.isBlank()) return
+        val action = if (approve) "APPROVE" else "CANCEL"
         viewModelScope.launch {
-            repository.batchUpdateBookings(listOf(targetId), action)
+            repository.manageBookingSeries(action, kinfolkId, batchId)
                 .onSuccess { result ->
-                    _bulkReadMessage.value = when {
-                        result.updated > 0 -> "Booking ${action.lowercase()}."
-                        result.failed.isNotEmpty() -> "Couldn't ${action.lowercase()}: ${result.failed.first().error}"
-                        else -> "No booking updated."
-                    }
+                    _bulkReadMessage.value = bookingRequestAnswerMessage(approve, result)
                     loadNotifications()
                 }
                 .onFailure { throwable ->
-                    _bulkReadMessage.value = "Couldn't ${action.lowercase()}: ${throwable.message}"
+                    _bulkReadMessage.value = "Couldn't ${if (approve) "approve" else "decline"}: ${throwable.message}"
                 }
         }
     }
+
+    /**
+     * #1609: the sentence the row confirm shows, naming who a reminder
+     * ("reminder") or a draft send ("reviewSend") reaches and how.
+     */
+    suspend fun invoiceNoticePreviewSentence(invoiceId: String, action: String): String =
+        invoiceRepository.previewInvoiceNotice(invoiceId, action).fold(
+            onSuccess = { com.tribetails.auntieos.domain.noticePreviewSentence(it) },
+            onFailure = { "Couldn't check who this reaches: ${it.message ?: "the check failed"}" },
+        )
 
     fun loadInvoices() {
         viewModelScope.launch {
@@ -519,6 +558,9 @@ class AdminDataViewModel(
             // absence/no-Firebase just means no block labels). Wrapped so a missing
             // FirebaseApp in tests can't crash.
             runCatchingCancellable { repository.getBusinessSettings().onSuccess { _timeBlocks.value = it.timeBlocks } }
+            // #1608: the arrival rule, so Complete can say what is missing before
+            // it is sent. A failed read leaves it null and the server decides.
+            runCatchingCancellable { repository.getArrivalRuleRequired().onSuccess { _arrivalRule.value = it } }
 
             _isLoading.value = false
         }
@@ -534,16 +576,34 @@ class AdminDataViewModel(
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load KinTales"
             }
+            // Best-effort, like the time blocks above: a missing FirebaseApp in tests can't crash.
+            runCatchingCancellable { repository.getBusinessSettings().onSuccess { _serviceRates.value = it.serviceRates } }
 
             _isLoading.value = false
         }
     }
 
+    /** #1563: load the unsent generated drafts for the KinTales list's Drafts bucket. */
+    fun loadGeneratedDrafts() {
+        viewModelScope.launch {
+            _generatedDraftsError.value = null
+            repository.getGeneratedDrafts().onSuccess { drafts ->
+                _generatedDrafts.value = unsentGeneratedDrafts(drafts)
+            }.onFailure { throwable ->
+                _generatedDraftsError.value = throwable.message ?: "Failed to load drafts"
+            }
+        }
+    }
     private fun sortKey(r: KinCareReport): String = sequenceOf(
         r.sentAt, r.updatedAt, r.visitDate, r.createdAt,
     ).firstOrNull { !it.isNullOrBlank() } ?: ""
 
     fun loadActivityLog() {
+        // The zone read does not hold the log back: rows draw on the default zone and
+        // re-read when it lands.
+        viewModelScope.launch {
+            runCatchingCancellable { repository.getBusinessSettings().onSuccess { _businessTimeZone.value = it.timeZone } }
+        }
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
@@ -568,7 +628,7 @@ class AdminDataViewModel(
                 loadKinCareSessions()
                 onResult(null)
             }.onFailure { t ->
-                _error.value = t.message ?: "Failed to update Kin Care"
+                _error.value = t.message ?: "Failed to update KinCare"
                 onResult(t)
             }
         }
@@ -597,7 +657,7 @@ class AdminDataViewModel(
                 loadKinCareSessions()
                 onResult(null)
             }.onFailure { t ->
-                _error.value = t.message ?: "Failed to update Kin Care"
+                _error.value = t.message ?: "Failed to update KinCare"
                 onResult(t)
             }
         }
@@ -760,6 +820,9 @@ class AdminDataViewModel(
     fun generateReceipt(invoiceId: String) {
         viewModelScope.launch {
             _isLoading.value = true
+            // #1567: the model carries no receipt stamp, so the "before" is read
+            // from the server, for the case where the send goes silent.
+            val before = invoiceRepository.readInvoiceSendMarks(invoiceId)
             invoiceRepository.generateReceipt(invoiceId).onSuccess { result ->
                 loadInvoices() // Refresh to reflect receiptIssuedAt
                 // #1511: honest about where the notice went. A missing flag (an
@@ -767,6 +830,11 @@ class AdminDataViewModel(
                 _invoiceActionMessage.value =
                     com.tribetails.auntieos.domain.receiptGeneratedMessage(result.appOnly == true)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.RECEIPT, before, invoiceId)
+                    _isLoading.value = false
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to generate receipt"
                 _isLoading.value = false
             }
@@ -781,6 +849,22 @@ class AdminDataViewModel(
     val invoiceActionMessage: StateFlow<String?> = _invoiceActionMessage.asStateFlow()
 
     fun clearInvoiceActionMessage() { _invoiceActionMessage.value = null }
+    /**
+     * #1567: a row send got no answer. Re-reads the invoice from the server and
+     * reports what it shows (domain/InvoiceSendCheck.kt): a landed send is the
+     * confirmation line and refreshes the list; anything else is the error line,
+     * worded as "not sent" or "cannot tell", never "failed".
+     */
+    private suspend fun reportAfterSilence(action: SendCheckAction, before: SendMarks?, invoiceId: String) {
+        val after = invoiceRepository.readInvoiceSendMarks(invoiceId)
+        val outcome = sendOutcomeAfterSilence(action, SEND_BUDGET_SECONDS, before, after)
+        if (outcome.kind == SilenceKind.SENT) {
+            loadInvoices()
+            _invoiceActionMessage.value = outcome.message
+        } else {
+            _error.value = outcome.message
+        }
+    }
 
     /**
      * Stage 2 tail: send an on-demand payment reminder for an invoice via the
@@ -799,6 +883,8 @@ class AdminDataViewModel(
         if (invoiceId.isBlank()) return
         if (invoiceId in _remindingInvoiceIds.value) return
         _remindingInvoiceIds.value = _remindingInvoiceIds.value + invoiceId
+        // #1567: the reminder stamp as it stood at the press.
+        val before = _invoices.value.firstOrNull { it.id == invoiceId }?.let { sendMarksOf(it) }
         viewModelScope.launch {
             invoiceRepository.sendInvoiceReminder(invoiceId).onSuccess { outcome ->
                 if (outcome.sent) {
@@ -826,6 +912,10 @@ class AdminDataViewModel(
                 }
                 _invoiceActionMessage.value = com.tribetails.auntieos.domain.reminderOutcomeMessage(outcome)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.REMINDER, before, invoiceId)
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to send reminder"
             }
             _remindingInvoiceIds.value = _remindingInvoiceIds.value - invoiceId
@@ -843,6 +933,8 @@ class AdminDataViewModel(
             _error.value = "This invoice has no client (kinfolk) on record, so it cannot be sent."
             return
         }
+        // #1567: the status as it stood at the press.
+        val before = sendMarksOf(invoice)
         viewModelScope.launch {
             invoiceRepository.reviewAndSendDraftInvoice(invoice.id, invoice.kinfolkId).onSuccess { sent ->
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -857,6 +949,10 @@ class AdminDataViewModel(
                 // #1511: as for the receipt above.
                 _invoiceActionMessage.value = com.tribetails.auntieos.domain.draftSentMessage(sent.appOnly == true)
             }.onFailure { throwable ->
+                if (isSilentSendFailure(throwable)) {
+                    reportAfterSilence(SendCheckAction.REVIEW_SEND, before, invoice.id)
+                    return@onFailure
+                }
                 _error.value = throwable.message ?: "Failed to send draft"
             }
         }
@@ -1195,3 +1291,40 @@ internal fun bulkArchiveSummary(requested: Int, archived: Int): String = when {
  */
 internal fun isNotificationUnread(entry: com.tribetails.auntieos.data.admin.NotificationEntry): Boolean =
     entry.readAt.isNullOrBlank()
+
+/**
+ * #1563: the generated drafts the KinTales list files under Drafts: not yet sent
+ * as a KinTale, and still in a status that means nobody has signed it off
+ * (`generated` from generate.js, `pending` from the n8n era, or blank). The
+ * same positive match the web list makes (`draftStatusAsKinTaleStatus`). Newest
+ * first. Pure; tested.
+ */
+internal fun unsentGeneratedDrafts(drafts: List<Draft>): List<Draft> =
+    drafts
+        .filter { it.isUnsent }
+        .sortedByDescending { it.createdOn }
+/**
+ * #1675: what the notifications screen says after answering a waiting request
+ * from its row. Reports the server's answer rather than assuming it, the #536
+ * rule the Schedule screen's `householdLine` follows: a partial approval left
+ * the rest waiting and told the household nothing, a re-approve sent nothing,
+ * and a dispatch can fail. Pure; unit-tested.
+ */
+internal fun bookingRequestAnswerMessage(
+    approve: Boolean,
+    result: com.tribetails.auntieos.data.repository.ManageSeriesResult,
+): String = when {
+    approve && result.failedVisits > 0 ->
+        "Approved ${result.affectedVisits} of ${result.affectedVisits + result.failedVisits} visits. " +
+            "The rest did not go through and the household has not been told. Open the request in Bookings to finish it."
+    approve && result.newlyConfirmed == 0 ->
+        "This was already booked. Nothing changed and the household was not told again."
+    approve && result.householdNotified ->
+        "Approved. The household has been told once, with every date."
+    approve ->
+        "Approved, but the message to the household did not go out, so tell them another way."
+    result.householdNotified ->
+        "Declined. Nothing was booked and the household has your answer."
+    else ->
+        "Declined, but the message to the household did not go out, so tell them another way."
+}

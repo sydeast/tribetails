@@ -146,7 +146,11 @@ async function pollOneBatch(
     actorRole: 'AUNTIE',
     actorUid: 'system:aiBatchPollCron',
     targetCollection: TALES_COLLECTION,
-    description: `AI tale titles applied from batch ${batchId} (${counts.applied} applied, ${counts.skippedTitled + counts.skippedMissing} skipped, ${counts.errored} errored)`,
+    description: (await import('../lib/activityWords.js')).aiTitlesAppliedWords(
+      counts.applied,
+      counts.skippedTitled + counts.skippedMissing,
+      counts.errored,
+    ),
     payload: { batchId, ...counts },
   }).catch((err) => {
     logEvent({

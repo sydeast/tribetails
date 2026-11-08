@@ -62,7 +62,7 @@ describe('canineHeatRisk', () => {
 
 describe('weatherErrorText', () => {
   it('turns the unset-location failure into something the operator can act on', () => {
-    expect(weatherErrorText('getLocalWeather failed: weather_location_not_set')).toMatch(
+    expect(weatherErrorText('Could not load: weather_location_not_set')).toMatch(
       /Settings/,
     );
   });

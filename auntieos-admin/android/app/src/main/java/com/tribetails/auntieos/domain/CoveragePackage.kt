@@ -140,6 +140,8 @@ data class PricedDayRow(
     val dayIndex: Int,
     val items: List<PricedItem>,
     val customized: Boolean,
+    /** True only when the day's own list differs from the template (#1605); `customized` alone just means an editable copy exists. */
+    val changed: Boolean,
     val canOvernight: Boolean,
     val isOvernight: Boolean,
     val overnightCost: Double,
@@ -253,6 +255,35 @@ fun alignPinnedToDurations(rules: CoverageRules, durations: List<Duration>): Cov
 /** Today as the "YYYY-MM-DD" string the date field carries, in the device's zone. */
 fun todayIso(today: LocalDate = LocalDate.now()): String = today.toString()
 
+/** The least the "Max gap between visits" rule may be, in hours (#1582). The web field has always said `min=1`. */
+const val MAX_GAP_MIN_HOURS = 1.0
+/** What [parseMaxGapHours] made of the typed text: a usable gap, or a message to show beside the field. */
+sealed interface MaxGapParse {
+    data class Ok(val hours: Double) : MaxGapParse
+    data class Refused(val message: String) : MaxGapParse
+}
+private val MAX_GAP_TEXT = Regex("""^\d+(\.\d+)?$""")
+/**
+ * Reads what was typed into "Max gap between visits (hrs)".
+ *
+ * REFUSES instead of coercing (#1582). The field used to turn anything it could
+ * not read into 1, so typing the "-" of "-5" repriced every package at a 1 hour
+ * gap and the next keystroke made it 15, with no message. No upper bound: how long
+ * a gap the client accepts is the operator's call. Mirrors `parseMaxGapHours` in
+ * `auntieos-admin/src/lib/coveragePackage.ts`.
+ */
+fun parseMaxGapHours(text: String): MaxGapParse {
+    val t = text.trim()
+    if (t.isEmpty()) return MaxGapParse.Refused("Enter the longest gap between visits, in hours.")
+    if (!MAX_GAP_TEXT.matches(t)) {
+        return MaxGapParse.Refused("Enter hours as a plain number, like 6 or 4.5. A minus sign is not allowed.")
+    }
+    val value = t.toDoubleOrNull()
+    if (value == null || !value.isFinite() || value < MAX_GAP_MIN_HOURS) {
+        return MaxGapParse.Refused("Max gap must be at least 1 hour.")
+    }
+    return MaxGapParse.Ok(value)
+}
 val DEFAULT_COVERAGE_RULES = CoverageRules(
     wakeStart = "07:00",
     wakeEnd = "22:00",
@@ -574,6 +605,30 @@ fun gapWarnings(visits: List<Visit>, wakeStart: String, wakeEnd: String, maxGapH
     return out
 }
 
+/**
+ * Whether a day's own visit list differs from the package template (#1605).
+ * "Customize this day" forks the template into an editable copy; until something
+ * changes that copy is the template, so the day is not customized yet. Ids are
+ * ignored (the fork mints fresh ones). Mirrors `dayDiffersFromTemplate` on the web.
+ */
+fun dayDiffersFromTemplate(pkg: Package, dayIndex: Int): Boolean {
+    val own = pkg.dayOverrides[dayIndex] ?: return false
+    fun sig(list: List<Visit>) = list.map { "${it.time}|${it.durationId}|${it.label}" }.sorted()
+    return sig(own) != sig(pkg.visits)
+}
+/**
+ * A name for a duplicate that no other package carries (#1605): "Lean copy", then
+ * "Lean copy 2". Duplicating a copy extends the original's name instead of stacking
+ * another " copy" on it. Mirrors `uniqueCopyName` on the web.
+ */
+fun uniqueCopyName(name: String, existing: List<String>): String {
+    val base = name.replace(Regex(" copy( \\d+)?$"), "")
+    val first = "$base copy"
+    if (first !in existing) return first
+    var n = 2
+    while ("$first $n" in existing) n++
+    return "$first $n"
+}
 /** Price a whole package across the stay. */
 fun pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
     val rows = mutableListOf<PricedDayRow>()
@@ -588,6 +643,7 @@ fun pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
                 dayIndex = i,
                 items = items,
                 customized = pkg.dayOverrides.containsKey(i),
+                changed = dayDiffersFromTemplate(pkg, i),
                 canOvernight = canOvernight,
                 isOvernight = isOvernight,
                 overnightCost = overnightCost,

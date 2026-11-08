@@ -163,6 +163,37 @@ fun InvoiceDetailScreen(
             onOpenVisit = onOpenVisit,
         )
     }
+    // #1609: the confirm before a household send names the person and the channel.
+    uiState.sendConfirm?.let { action ->
+        AuntieDialog(
+            visible   = true,
+            title     = if (action == "reminder") "Send a payment reminder?" else "Send this draft?",
+            onDismiss = { viewModel.dismissSendConfirm() },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { viewModel.dismissSendConfirm() })
+                PrimaryButton(
+                    label   = if (action == "reminder") "Send reminder" else "Review and send",
+                    onClick = { viewModel.confirmSend() },
+                )
+            },
+        ) {
+            Text(
+                text = if (action == "reminder") {
+                    "This sends a real payment-reminder notification to the household."
+                } else {
+                    "This sends the draft to the household and marks the invoice open. A draft missing its " +
+                        "total, household, or invoice number is rejected rather than sent."
+                },
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
+            Text(
+                text  = uiState.sendConfirmPreview ?: "Checking who this reaches…",
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textPrimary,
+            )
+        }
+    }
     // Session-link edit dialog
     if (uiState.editMode) {
         LinkSessionsDialog(
@@ -188,7 +219,7 @@ fun InvoiceDetailScreen(
         ) {
             item {
                 DenScreenHeading(
-                    kicker     = "Invoices · The Den",
+                    kicker     = "Care Ops · Invoices",
                     title      = "Invoice",
                     accentTail = "Detail.",
                     subtitle   = "Full billing record.",
@@ -274,8 +305,9 @@ fun InvoiceDetailScreen(
                         onRecordPayment   = { viewModel.openRecordPayment() },
                         onRetryPayments   = { viewModel.retryPayments() },
                         onGenerateReceipt = { viewModel.generateReceipt() },
-                        onSendReminder    = { viewModel.sendReminder() },
-                        onSendDraft       = { viewModel.reviewAndSendDraft() },
+                        // #1609: both open a confirm naming who the send reaches.
+                        onSendReminder    = { viewModel.askSend("reminder") },
+                        onSendDraft       = { viewModel.askSend("reviewSend") },
                         onResendQuote     = { viewModel.resendQuote() },
                         onDownloadPdf     = { viewModel.downloadPdf() },
                         onArchive         = { viewModel.promptArchive() },
@@ -291,6 +323,7 @@ fun InvoiceDetailScreen(
         uiState.invoice?.let { inv ->
             RecordPaymentDialog(
                 invoice    = inv,
+                amountDueCents = uiState.ledgerAmountDueCents,
                 submitting = uiState.recordingPayment,
                 onDismiss  = { viewModel.closeRecordPayment() },
                 onSubmit   = { payment, applied -> viewModel.recordPayment(payment, applied) },
@@ -674,7 +707,17 @@ private fun invoiceDetailBody(
             Column {
                 DetailRow("Client",   invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
-                DetailRow("Due date", invoice.dueDate.ifBlank { "-" })
+                // #1570: a stored due date that names no day is never counted
+                // overdue, so the row says so beside it.
+                DetailRow(
+                    "Due date",
+                    when {
+                        invoice.dueDate.isBlank() -> "-"
+                        com.tribetails.auntieos.domain.isUnreadableDueDate(invoice.dueDate) ->
+                            "${invoice.dueDate.trim()} (not a date this app can read, so it is never counted overdue)"
+                        else -> invoice.dueDate
+                    },
+                )
                 // #832: when the household was last reminded (cron or button).
                 DetailRow(
                     "Last reminder",
@@ -1315,7 +1358,11 @@ private fun InvoiceLineTotalsRows(
 }
 
 @Composable
-private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
+private fun LinkedSessionRow(
+    session: KinCareSession,
+    showDivider: Boolean,
+    catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog = com.tribetails.auntieos.ui.admin.rememberServiceCatalog(),
+) {
     val c = AuntieTheme.colors
     val hairline = AuntieTheme.dims.borderHairline
     val ruleColor = c.borderSoft
@@ -1342,7 +1389,7 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                session.serviceType.ifBlank { "Service" },
+                linkedSessionServiceLabel(session, catalog),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textPrimary,
             )
@@ -1646,6 +1693,8 @@ private fun LedgerCaveatBanner(rows: List<GetInvoiceLedgerResultLedgerPayment>) 
 @Composable
 private fun RecordPaymentDialog(
     invoice: Invoice,
+    /** #1566: the ledger's balance; the applied part stops here. Null caps nothing. */
+    amountDueCents: Long?,
     submitting: Boolean,
     onDismiss: () -> Unit,
     /** The whole transaction, and the Amount box: the part applied to this invoice (#982). */
@@ -1677,7 +1726,7 @@ private fun RecordPaymentDialog(
     // tip (the rest, unless she typed one) and the credit she chose. Null while a
     // box is half-typed.
     val split: PaymentSplit? = if (amountValue != null && amountValue > 0.0) {
-        paymentSplit(amountValue, tip, credit, total)
+        paymentSplit(amountValue, tip, credit, total, amountDueCents)
     } else null
     val creditNeedsHousehold = split is PaymentSplit.Ok && split.creditCents > 0L && invoice.kinfolkId.isBlank()
     val canSave = split is PaymentSplit.Ok && method.isNotBlank() && tipValue != null &&
@@ -1690,24 +1739,17 @@ private fun RecordPaymentDialog(
                 label   = "Record payment",
                 onClick = {
                     val ok = split as? PaymentSplit.Ok ?: return@PrimaryButton
-                    onSubmit(
-                        buildInvoicePayment(
-                            invoice = invoice,
-                            amount = amountValue ?: 0.0,
-                            paymentMethod = method,
-                            referenceNumber = reference,
-                            date = date,
-                            notes = notes,
-                            // The tip as split: typed, or the rest of the payment.
-                            tip = ok.tipCents / 100.0,
-                            fee = feeValue ?: 0.0,
-                            // The whole transaction, applied + tip + credit.
-                            paymentTotal = ok.paidCents / 100.0,
-                            creditToAccount = ok.creditCents / 100.0,
-                            sendConfirmationEmail = sendConfirmation,
-                        ),
-                        amountValue ?: 0.0,
+                    val (payment, applied) = recordPaymentSubmission(
+                        invoice = invoice,
+                        split = ok,
+                        method = method,
+                        reference = reference,
+                        date = date,
+                        notes = notes,
+                        fee = feeValue ?: 0.0,
+                        sendConfirmation = sendConfirmation,
                     )
+                    onSubmit(payment, applied)
                 },
                 loading = submitting,
                 enabled = canSave && !submitting,
@@ -1751,6 +1793,42 @@ private fun RecordPaymentDialog(
     }
 }
 /**
+ * What the Record press hands the view model: the ledger row and the figure
+ * `markInvoicePaid` settles with. Pure; unit-tested.
+ *
+ * #1566: the settlement is the split's APPLIED part, which stops at the balance,
+ * never the Amount box as typed. Whatever was over the balance is already in the
+ * split's tip, which is where the fee comes out of.
+ */
+internal fun recordPaymentSubmission(
+    invoice: Invoice,
+    split: PaymentSplit.Ok,
+    method: String,
+    reference: String,
+    date: String,
+    notes: String,
+    fee: Double,
+    sendConfirmation: Boolean,
+): Pair<Payment, Double> {
+    val appliedDollars = split.appliedCents / 100.0
+    return buildInvoicePayment(
+        invoice = invoice,
+        amount = appliedDollars,
+        paymentMethod = method,
+        referenceNumber = reference,
+        date = date,
+        notes = notes,
+        // The tip as split: typed, or the rest of the payment, plus any part of
+        // the Amount over the balance.
+        tip = split.tipCents / 100.0,
+        fee = fee,
+        // The whole transaction, applied + tip + credit.
+        paymentTotal = split.paidCents / 100.0,
+        creditToAccount = split.creditCents / 100.0,
+        sendConfirmationEmail = sendConfirmation,
+    ) to appliedDollars
+}
+/**
  * #988: where the payment goes, in words, shown before Save. Pure; unit-tested.
  *
  * The fee is named as coming out of the tip, never out of the bill.
@@ -1760,8 +1838,14 @@ internal fun recordPaymentSplitCopy(split: PaymentSplit?, feeCents: Long?): Stri
     is PaymentSplit.Refused -> split.message
     is PaymentSplit.Ok -> {
         val fee = if (feeCents != null && feeCents > 0L) " (the ${formatCentsUsd(feeCents)} fee comes out of it)" else ""
+        // #1566: said out loud when the Amount was over the balance.
+        val over = if (split.overCents > 0L) {
+            " The invoice owes ${formatCentsUsd(split.appliedCents)}, so the ${formatCentsUsd(split.overCents)} over it is tip."
+        } else {
+            ""
+        }
         "${formatCentsUsd(split.paidCents)} paid: ${formatCentsUsd(split.appliedCents)} to this invoice, " +
-            "${formatCentsUsd(split.tipCents)} tip$fee, ${formatCentsUsd(split.creditCents)} account credit."
+            "${formatCentsUsd(split.tipCents)} tip$fee, ${formatCentsUsd(split.creditCents)} account credit.$over"
     }
 }
 /**
@@ -1797,6 +1881,29 @@ internal fun recordPaymentBalanceCopy(unappliedCents: Long?, autoApply: Boolean)
 // ── Edit dialog: "Link Sessions" ─────────────────────────────────────────────
 
 @OptIn(ExperimentalLayoutApi::class)
+/**
+ * #1744: a linked visit's row names its KinCare off the catalog, never the
+ * stored `visit_60`. A blank service keeps its "Service" stand-in.
+ */
+internal fun linkedSessionServiceLabel(
+    session: KinCareSession,
+    catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog,
+): String = if (session.serviceType.isBlank()) "Service" else catalog.nameOf(session.serviceType)
+
+/** #1744: one link-picker chip: the visit's KinCare name, its day, and why it cannot be ticked. */
+internal fun linkPickerChipLabel(
+    session: KinCareSession,
+    dateLabel: String,
+    elsewhere: Boolean,
+    cancelled: Boolean,
+    catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog,
+): String {
+    val service = if (session.serviceType.isBlank()) "Session" else catalog.nameOf(session.serviceType)
+    return "$service · $dateLabel" +
+        (if (elsewhere) " · on another invoice" else "") +
+        (if (cancelled) " · cancelled, not billable" else "")
+}
+
 @Composable
 private fun LinkSessionsDialog(
     available: List<KinCareSession>,
@@ -1808,6 +1915,7 @@ private fun LinkSessionsDialog(
     onSave: () -> Unit,
     onDismiss: () -> Unit,
     saveLoading: Boolean,
+    catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog = com.tribetails.auntieos.ui.admin.rememberServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
     AuntieModal(
@@ -1848,13 +1956,14 @@ private fun LinkSessionsDialog(
                     // #1254: shown, not hidden, and not tickable: another
                     // invoice already bills it.
                     val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
-                    val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel" +
-                        if (elsewhere) " · on another invoice" else ""
+                    // #1609: a cancelled visit is not billable.
+                    val cancelled = linkPickerCancelled(session, storedIds)
+                    val chipLabel = linkPickerChipLabel(session, dateLabel, elsewhere, cancelled, catalog)
                     AuntieChip(
                         label    = chipLabel,
                         selected = session.id in selectedIds,
                         onClick  = { onToggle(session.id) },
-                        enabled  = !elsewhere && !saveLoading,
+                        enabled  = !elsewhere && !cancelled && !saveLoading,
                     )
                 }
             }

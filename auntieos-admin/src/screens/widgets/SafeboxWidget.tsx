@@ -5,6 +5,8 @@ import { useCollection } from '../../lib/firestore';
 import { useOneShot } from '../../lib/useOneShot';
 import { nextUpcomingSession, safeboxAccessLines } from '../../lib/dashboardInsights';
 import { sessionHousehold, sessionWindow } from '../../lib/sessionFormat';
+import { bookingServiceName } from '../../lib/bookingFormat';
+import { useBookingCatalog } from '../../lib/useBookingCatalog';
 import { DenPanel, ServicePill, EmptyHint } from '../../components/DenScreenKit';
 import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
@@ -26,6 +28,8 @@ export function SafeboxWidget() {
   // A full ISO instant (not a local date): "upcoming" is future-of-now, and it
   // doesn't change mid-render, so compute it once.
   const nowIso = useMemo(() => new Date().toISOString(), []);
+  // #1592: the pill names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
 
   return (
     <DenPanel
@@ -47,7 +51,10 @@ export function SafeboxWidget() {
             <div className="dash-widget">
               <div className="safebox__head">
                 <span className="safebox__who">{sessionHousehold(next.kinfolkName ?? '')}</span>
-                <ServicePill serviceType={next.serviceType ?? ''} />
+                <ServicePill
+                  serviceType={next.serviceType ?? ''}
+                  label={bookingServiceName(next.serviceType, catalog)}
+                />
                 <span className="safebox__when">
                   {sessionWindow(next.startTime ?? '', next.endTime ?? '')}
                 </span>

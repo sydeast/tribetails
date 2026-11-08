@@ -94,12 +94,25 @@ export function bulkActionApplies(state: BookingState, action: BatchBookingActio
     case 'pending':
       return action === 'APPROVE' || action === 'REJECT';
     case 'scheduled':
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
       return action === 'CANCEL';
     case 'completed':
     case 'cancelled':
     case 'unknown':
       return false;
   }
+}
+
+/**
+ * #1607: the bulk actions worth offering for a selection: each one that applies
+ * to at least one picked row, in the bar's own order. Approve and Reject on a
+ * selection of scheduled visits were two buttons that could only ever skip.
+ */
+export function bulkActionsFor(states: readonly BookingState[]): BatchBookingAction[] {
+  const order: BatchBookingAction[] = ['APPROVE', 'REJECT', 'CANCEL'];
+  return order.filter((action) => states.some((s) => bulkActionApplies(s, action)));
 }
 
 /** Why a row cannot take this action, in the operator's words rather than a state name. */
@@ -111,6 +124,10 @@ function skipReason(state: BookingState, action: BatchBookingAction): string {
       return `Still awaiting a reply, so it cannot be ${verb}. Approve or reject it instead.`;
     case 'scheduled':
       return `Already on the books, so it cannot be ${verb}. Cancel it instead.`;
+    case 'onMyWay':
+    case 'arrived':
+    case 'departed':
+      return `The visit is under way, so it cannot be ${verb}. Cancel or complete it instead.`;
     case 'completed':
       return 'Already completed.';
     case 'cancelled':

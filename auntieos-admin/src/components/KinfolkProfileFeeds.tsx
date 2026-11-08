@@ -1,7 +1,9 @@
 import { Link } from '@tanstack/react-router';
 import { AsyncRegion } from './AsyncRegion';
-import { DenPanel, EmptyHint, ServicePill, StatusPill, serviceTone, type DenTone } from './DenScreenKit';
+import { DenPanel, EmptyHint, ServicePill, StatusPill, bookingServiceTone, type DenTone } from './DenScreenKit';
 import { useCollection } from '../lib/firestore';
+import { bookingServiceName } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { str, arr } from '../lib/coerce';
 import {
   kinTalesForKinfolkQuery,
@@ -167,6 +169,8 @@ export function UpcomingVisitsPanel({
       ? upcomingVisitsFor(state.data.filter(inScope), kinfolkId, nowIso, through)
       : [];
   const who = kin === undefined ? 'this household' : kin.kinName;
+  // #1592: the pill names the KinCare, and the dot wears that name's tone.
+  const catalog = useBookingCatalog();
 
   return (
     <DenPanel title="Upcoming KinCare" meta={`next ${UPCOMING_HORIZON_DAYS} days`}>
@@ -197,7 +201,7 @@ export function UpcomingVisitsPanel({
                 >
                   <span
                     className="kfeed__dot"
-                    data-tone={serviceTone(str(s.serviceType))}
+                    data-tone={bookingServiceTone(str(s.serviceType), catalog)}
                     aria-hidden="true"
                   />
                   <span className="kfeed__when kfeed__when--lead">
@@ -205,7 +209,10 @@ export function UpcomingVisitsPanel({
                     {sessionClock(str(s.startTime))}
                   </span>
                   {visitKin(s) !== '' && <span className="kfeed__sub">{visitKin(s)}</span>}
-                  <ServicePill serviceType={str(s.serviceType)} />
+                  <ServicePill
+                    serviceType={str(s.serviceType)}
+                    label={bookingServiceName(str(s.serviceType), catalog)}
+                  />
                 </Link>
               </li>
             ))}

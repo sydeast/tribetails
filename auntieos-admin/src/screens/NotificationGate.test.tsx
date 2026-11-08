@@ -252,7 +252,7 @@ describe('NotificationGate screen', () => {
     const sms = await screen.findByRole('switch', { name: /via SMS for Business/i });
     await userEvent.click(sms);
 
-    expect(await screen.findByText(/saveBusinessNotificationOverride failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save/i)).toBeInTheDocument();
     expect(await screen.findByText(/nope/i)).toBeInTheDocument();
     // initial load + reload-on-failure
     await waitFor(() => expect(getNotificationMatrix).toHaveBeenCalledTimes(2));
@@ -307,17 +307,19 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
     await open();
     expect(await screen.findByText(/That is 4 people today/)).toBeInTheDocument();
   });
-  it('names what fires it and where that code lives', async () => {
+  it('names what fires it, and never the source file (#1592)', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
     await open();
     expect(await screen.findByText(/An admin creates an invoice/)).toBeInTheDocument();
-    expect(screen.getByText('src/admin/createInvoice.ts')).toBeInTheDocument();
+    expect(screen.queryByText('src/admin/createInvoice.ts')).toBeNull();
+    expect(document.body.textContent).not.toContain('createInvoice.ts');
   });
-  it('names the template document behind each channel', async () => {
+  it('names the template behind each channel in words, never a database path (#1592)', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
     await open();
-    expect(await screen.findByText('emailTemplates/invoice.new')).toBeInTheDocument();
-    expect(screen.getByText('smsTemplates/invoice.new')).toBeInTheDocument();
+    expect(await screen.findByText('Email: New invoice')).toBeInTheDocument();
+    expect(screen.getByText('Text (SMS): New invoice')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('Templates/');
   });
   it('says when the email has been retargeted, and names the catalog default', async () => {
     getNotificationMatrix.mockResolvedValue(
@@ -332,8 +334,8 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
       }),
     );
     await open();
-    expect(await screen.findByText('emailTemplates/invoice.new.v2')).toBeInTheDocument();
-    expect(screen.getByText(/the catalog default is invoice\.new/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Email: Invoice new v2/)).toBeInTheDocument();
+    expect(screen.getByText(/the default is New invoice/)).toBeInTheDocument();
   });
   /**
    * The gate REPORTS the routing; Template Assignments (#439) owns changing it.
@@ -349,10 +351,26 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
   it('lists the merge fields, emitter data keys included, as the leak surface', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
     await open();
-    expect(await screen.findByText('amount')).toBeInTheDocument();
+    // #1592: in words. The row carries no server labels, so the client splits
+    // the keys; `kinfolkId` and `dueDate` were printed as they are stored.
+    expect(await screen.findByText('Amount')).toBeInTheDocument();
     // This one existed only in source before now: it is what the emitter puts
     // in the bag, and it is the half that matters for a leak.
-    expect(screen.getByText('invoiceId')).toBeInTheDocument();
+    expect(screen.getByText('Invoice reference')).toBeInTheDocument();
+    expect(screen.getByText('Due date')).toBeInTheDocument();
+    for (const key of ['amount', 'invoiceId', 'kinfolkId', 'dueDate']) {
+      expect(screen.queryByText(key)).not.toBeInTheDocument();
+    }
+  });
+  it('#1592: shows the server words for a merge field when it sends them', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [{ ...documented, mergeFieldLabels: { kinfolkId: 'Household reference' } }],
+      }),
+    );
+    await open();
+    expect(await screen.findByText('Household reference')).toBeInTheDocument();
+    expect(screen.queryByText('Kinfolk reference')).not.toBeInTheDocument();
   });
   it('says a row nothing fires controls nothing', async () => {
     getNotificationMatrix.mockResolvedValue(
@@ -395,6 +413,7 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
           dispatchId: 'd1',
           key: 'invoice.new',
           recipientUid: 'kin1',
+          recipientName: 'Dre East',
           status: 'dispatched',
           mode: 'trigger',
           channels: ['email'],
@@ -420,7 +439,47 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
     await open();
     expect(await screen.findByText(/Handed to the provider/)).toBeInTheDocument();
     expect(screen.queryByText(/Delivered/)).not.toBeInTheDocument();
-    expect(screen.getByText('smtp-1')).toBeInTheDocument();
+    // #1592: the recipient by name, and no uid or provider message id.
+    expect(screen.getByText('Dre East')).toBeInTheDocument();
+    expect(screen.queryByText('kin1')).not.toBeInTheDocument();
+    expect(screen.queryByText(/smtp-1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Provider id/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Handed to the provider/).closest('li')?.textContent).toMatch(/^Email: /);
+  });
+  it('#1592: says a skip in words, not the sender code', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    listNotificationDeliveries.mockResolvedValue({
+      deliveries: [
+        {
+          dispatchId: 'd1',
+          key: 'invoice.new',
+          recipientUid: 'kin1',
+          recipientName: 'Dre East',
+          status: 'dispatched',
+          mode: 'trigger',
+          channels: ['sms'],
+          createdAtMs: 1,
+          attempts: [
+            {
+              channel: 'sms',
+              status: 'skipped',
+              providerMessageId: null,
+              skipReason: 'recipient_no_phone',
+              errorMessage: null,
+              attempts: 1,
+              sentAtMs: null,
+              failedAtMs: null,
+              skippedAtMs: 2,
+            },
+          ],
+        },
+      ],
+      sentMeaning: 'x',
+      receiptAvailable: false,
+    });
+    await open();
+    expect(await screen.findByText(/no phone number on file/)).toBeInTheDocument();
+    expect(screen.queryByText(/recipient_no_phone/)).not.toBeInTheDocument();
   });
   it('shows a failure with its provider error rather than hiding it', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
@@ -430,6 +489,7 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
           dispatchId: 'd1',
           key: 'invoice.new',
           recipientUid: 'kin1',
+          recipientName: null,
           status: 'dispatched',
           mode: 'trigger',
           channels: ['sms'],
@@ -482,7 +542,10 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
     );
     render(<NotificationGate />);
     expect(await screen.findByText(/ALSO SENT, BUT NOT GATED HERE/)).toBeInTheDocument();
-    expect(screen.getByText('emailTemplates/invite.primary')).toBeInTheDocument();
+    // #1592: the email is named in words, with no database path or source file.
+    expect(screen.getByText('Invite primary email, sent when: A household is invited to the portal.')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('emailTemplates/');
+    expect(document.body.textContent).not.toContain('inviteKinfolkToPortal.ts');
   });
   it('says nothing about ungated mail when there is none to warn about', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented], ungated: [] }));
@@ -530,6 +593,7 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
     source: 'roster' as const,
     rosterPath: 'businessSettings/admins.uids',
     reason: null,
+    businessEmail: 'pawsome@hanasamku.com',
   };
   async function open(label = /Who gets this, and what fires it/i) {
     render(<NotificationGate />);
@@ -540,7 +604,26 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
     listBusinessAdmins.mockResolvedValue(roster);
     await open();
     expect(await screen.findByText(/Auntie Nora/)).toBeInTheDocument();
-    expect(screen.getByText(/nora@tribetails.com/)).toBeInTheDocument();
+    // #1564: a member's own address is not where business email goes.
+    expect(screen.queryByText(/nora@tribetails.com/)).not.toBeInTheDocument();
+  });
+  /**
+   * #1564. Operator ruling, 2026-11-05 docket: every business email goes to
+   * the business contact email in business settings.
+   */
+  it('#1564: says business emails go to the business contact email', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
+    listBusinessAdmins.mockResolvedValue(roster);
+    await open();
+    expect(await screen.findByTestId('business-email-line')).toHaveTextContent(
+      'Emails go to the business email, pawsome@hanasamku.com.',
+    );
+  });
+  it('#1564: says business emails have nowhere to go while businessEmail is blank', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
+    listBusinessAdmins.mockResolvedValue({ ...roster, businessEmail: '' });
+    await open();
+    expect(await screen.findByTestId('business-email-line')).toHaveTextContent(/nowhere to go/);
   });
   it('shows an allowlist-seeded operator by uid rather than dropping them', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
@@ -561,10 +644,11 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
       members: [],
       source: 'none',
       rosterPath: 'businessSettings/admins.uids',
-      reason: 'businessSettings/admins.uids is empty, so this reaches nobody. Call provisionBusinessAdmins.',
+      reason: 'Nobody is on the business admin roster, so business notifications reach nobody.',
+      businessEmail: '',
     });
     await open();
-    expect(await screen.findByText(/Call provisionBusinessAdmins/)).toBeInTheDocument();
+    expect(await screen.findByText(/reach nobody/)).toBeInTheDocument();
   });
   it('surfaces a roster read failure with a way to try again', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow] }));

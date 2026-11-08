@@ -43,6 +43,10 @@ export const DATE_RANGE_PRESETS: readonly DateRangePreset[] = [
   { key: 'all', label: 'All (archive)', days: null },
 ];
 
+/** Narrow an address-bar string to a window the toolbar offers. */
+export function isDateRangeKey(value: unknown): value is DateRangeKey {
+  return DATE_RANGE_PRESETS.some((p) => p.key === value);
+}
 export const DEFAULT_DATE_RANGE: DateRangeKey = DATE_RANGE_PRESETS[0]?.key ?? '7d';
 
 /**

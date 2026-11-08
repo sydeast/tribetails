@@ -59,6 +59,11 @@ const { useCollection, useDocById } = vi.hoisted(() => ({
   useDocById: vi.fn(),
 }));
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
+// #1744: the detail sheet's visit rows name their KinCare off the catalog, a
+// `business_settings` read; the empty catalog keeps it off the network.
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
+}));
 
 // InvoiceDetail / InvoiceCreate (now wired in, see the header comment on
 // Invoices.tsx) both reach these callables. Mocked here so nothing under this
@@ -74,6 +79,7 @@ const {
   getInvoiceLedger,
   listUninvoicedSessions,
   setSessionDoNotInvoice,
+  previewInvoiceNotice,
 } = vi.hoisted(() => ({
   createInvoice: vi.fn(),
   createQuote: vi.fn(),
@@ -88,6 +94,7 @@ const {
   // chosen (#408), so this screen's tests answer that read too.
   listUninvoicedSessions: vi.fn(),
   setSessionDoNotInvoice: vi.fn(),
+  previewInvoiceNotice: vi.fn(),
 }));
 vi.mock('../api/invoicesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/invoicesWrite')>()),
@@ -100,6 +107,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   getInvoiceLedger,
   listUninvoicedSessions,
   setSessionDoNotInvoice,
+  previewInvoiceNotice,
 }));
 
 import { Invoices } from './Invoices';
@@ -227,6 +235,17 @@ beforeEach(() => {
     truncated: false,
   });
   setSessionDoNotInvoice.mockReset();
+  previewInvoiceNotice.mockReset().mockResolvedValue({
+    ok: true,
+    key: 'invoice.reminder',
+    hasRecipient: true,
+    recipientName: 'Robin Wren',
+    email: { on: true, address: 'catch@hanasamku.com' },
+    sms: { on: false, address: '' },
+    push: { on: false },
+    disabled: null,
+    householdGateLive: true,
+  });
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
   generateReceipt.mockReset();
@@ -304,6 +323,28 @@ describe('Invoices screen', () => {
     expect(screen.queryByText('OPEN')).toBeNull();
   });
 
+  it('#1570 an imported month-name due date in the past reads OVERDUE and counts', () => {
+    // The walk's #1018: OPEN, "due July 14, 2026", and the Overdue tile read 0.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ invoiceNumber: '1018', kinfolkName: 'Loretta', dueDate: 'July 14, 2020' })]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('OVERDUE')).toBeInTheDocument();
+    expect(screen.getByText(/^Loretta, \d+ days past$/)).toBeInTheDocument();
+  });
+  it('#1570 a due date that names no day is flagged on the row and counted on the Overdue card', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: '1018', dueDate: '07/14/2026' }),
+        entry({ _id: 'b', invoiceNumber: '1019', dueDate: 'Net 14' }),
+      ]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('due date cannot be read: "07/14/2026"')).toBeInTheDocument();
+    expect(screen.getByText('due date cannot be read: "Net 14"')).toBeInTheDocument();
+    expect(screen.getByText('2 open invoices have due dates that cannot be read')).toBeInTheDocument();
+    expect(screen.queryByText('all clear')).toBeNull();
+  });
   it('a doc with no recognizable stamp gets the neutral chip, and matches only the All tab', async () => {
     // The deliberate fail-soft (ADR-0002 makes this doc impossible; this is
     // what renders if one appears anyway): the chip is the doc's own word,
@@ -386,6 +427,22 @@ describe('Invoices screen', () => {
       overpaidCents: 0,
     });
     recordPayment.mockResolvedValue({ ok: true, confirmationEmailSent: false, creditedToAccountCents: 0 });
+    // #1566: the record-payment dialog stops the applied part at the ledger's
+    // balance, so the ledger has to agree this $40 invoice still owes $40.
+    getInvoiceLedger.mockImplementation(async (invoiceId: string) => ({
+      invoiceId,
+      payments: [],
+      paidCents: 0,
+      totalCents: 4000,
+      amountDueCents: 4000,
+      ledgerPayments: [],
+      unlinkedKinfolkPayments: [],
+      unresolvedAmountCount: 0,
+      sessions: [],
+      missingSessionIds: [],
+      orphanSessionIds: [],
+      truncated: false,
+    }));
     usePagedCollection.mockReturnValue(
       paged([
         entry({
@@ -406,6 +463,69 @@ describe('Invoices screen', () => {
     expect(args['client']).toBe('');
     expect(args['invoiceNumber']).toBe('');
     expect(Object.entries(args).filter(([, v]) => v === null)).toEqual([]);
+  });
+  describe('#1569: the list follows what the sheet changes', () => {
+    /** The open sheet's live document, answered only for the id it was opened on. */
+    function liveDoc(doc: InvoiceEntry) {
+      useDocById.mockImplementation((_col: string, id: string | null) =>
+        id === doc._id ? { status: 'ready', data: doc } : { status: 'ready', data: null },
+      );
+    }
+    function billedTotal(): HTMLElement {
+      return screen.getByText('Billed total').closest('.den-stat, button.den-stat--button') as HTMLElement;
+    }
+    it('an edit in the open sheet moves the row and the Billed total, and closing re-reads the page', async () => {
+      usePagedCollection.mockReturnValue(paged([entry({ total: 43, amountDue: 43 })]));
+      liveDoc(entry({ total: 78.5, amountDue: 78.5 }));
+      render(<Invoices />);
+      expect(within(billedTotal()).getByText('$43.00')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /1042/i }));
+      await screen.findByRole('dialog');
+      // The walk: $43.00 edited to $78.50. The total behind the sheet moves now.
+      expect(within(billedTotal()).getByText('$78.50')).toBeInTheDocument();
+      expect(reload).not.toHaveBeenCalled();
+      await userEvent.click(screen.getByRole('button', { name: /close/i }));
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+    it('a send seen by the live copy re-reads the page on close', async () => {
+      usePagedCollection.mockReturnValue(paged([entry({ status: 'draft', editScope: 'all' })]));
+      liveDoc(entry({ status: 'open' }));
+      render(<Invoices />);
+      await userEvent.click(screen.getByRole('button', { name: /1042/i }));
+      await screen.findByRole('dialog');
+      await userEvent.click(screen.getByRole('button', { name: /close/i }));
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+    it('an untouched sheet closes without a re-read, so the list keeps its place', async () => {
+      usePagedCollection.mockReturnValue(paged([entry({})]));
+      liveDoc(entry({}));
+      render(<Invoices />);
+      await userEvent.click(screen.getByRole('button', { name: /1042/i }));
+      await screen.findByRole('dialog');
+      await userEvent.click(screen.getByRole('button', { name: /close/i }));
+      expect(reload).not.toHaveBeenCalled();
+    });
+    it('a created invoice re-reads the page at once, so it joins the list and its totals', async () => {
+      createInvoice.mockResolvedValue({ invoiceId: 'inv-new' });
+      usePagedCollection.mockReturnValue(paged([entry({ _id: 'someone-else' })]));
+      useDocById.mockReturnValue({
+        status: 'ready',
+        data: entry({ _id: 'inv-new', invoiceNumber: '1043', status: 'draft' }),
+      });
+      useCollection.mockReturnValue({
+        status: 'ready',
+        data: [{ _id: 'kf1', firstName: 'Pat', lastName: 'Whitfield' }],
+      });
+      render(<Invoices />);
+      await userEvent.click(screen.getByRole('button', { name: /^new invoice$/i }));
+      await screen.findByRole('heading', { name: 'New invoice' });
+      const composer = screen.getByRole('dialog');
+      await userEvent.selectOptions(within(composer).getByLabelText('Household'), 'kf1');
+      await screen.findByRole('checkbox');
+      await userEvent.click(screen.getByRole('button', { name: /create invoice for 1 visit/i }));
+      await screen.findByRole('dialog');
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
   });
   it('closing InvoiceDetail returns to the list', async () => {
     usePagedCollection.mockReturnValue(paged([entry({ _id: 'inv-42' })]));
@@ -1189,11 +1309,11 @@ describe('Invoices row, days overdue', () => {
     expect(within(row).getByText(/^due /)).toBeInTheDocument();
     expect(within(row).queryByText(/overdue/)).toBeNull();
   });
-  it('falls back to the due date when the stored value is not a date', () => {
+  it('#1570 says, quoted, when the stored due date is not a date, rather than printing it as one', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'open', dueDate: 'Net 14' })]));
     render(<Invoices />);
     const row = screen.getByText('#1042').closest('.invoices__row') as HTMLElement;
-    expect(within(row).getByText('due Net 14')).toBeInTheDocument();
+    expect(within(row).getByText('due date cannot be read: "Net 14"')).toBeInTheDocument();
   });
 });
 /**
@@ -1282,10 +1402,11 @@ describe('Invoices Overdue stat subline', () => {
     // this subline; the operator has stopped chasing it.
     expect(screen.getByText('The Seeds, 6 days past')).toBeInTheDocument();
   });
-  it('is not overdue at all on free text like "Net 14", so the card stays all clear', () => {
+  it('#1570 is not overdue on free text like "Net 14", and the card says it cannot read it instead of all clear', () => {
     usePagedCollection.mockReturnValue(paged([entry({ dueDate: 'Net 14' })]));
     render(<Invoices />);
-    expect(screen.getByText('all clear')).toBeInTheDocument();
+    expect(screen.getByText('1 open invoice has a due date that cannot be read')).toBeInTheDocument();
+    expect(screen.queryByText('all clear')).toBeNull();
     expect(screen.queryByText(/NaN/)).toBeNull();
   });
   it('names the household with NO number when the date is shaped right but impossible', () => {
@@ -1419,5 +1540,80 @@ describe('Invoices row, declined-quote marker', () => {
     render(<Invoices />);
     expect(screen.queryByText('DECLINED')).toBeNull();
     expect(screen.getByText('OPEN')).toBeInTheDocument();
+  });
+});
+
+/** #1609: the walk's list minors. */
+describe('#1609 invoices list', () => {
+  function dayAgo(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  it('places an imported month-name date by the day it names (#1570 reader)', () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const yesterdayNamed = `${months[d.getMonth()]!} ${String(d.getDate())}, ${String(d.getFullYear())}`;
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'named', invoiceNumber: 'NAMED', date: yesterdayNamed }),
+        entry({ _id: 'today', invoiceNumber: 'TODAY', date: dayAgo(0) }),
+        entry({ _id: 'old', invoiceNumber: 'OLD', date: dayAgo(4) }),
+      ]),
+    );
+    render(<Invoices />);
+    const numbers = Array.from(document.querySelectorAll('.invoices__row-number')).map((n) => n.textContent);
+    expect(numbers).toEqual(['#TODAY', '#NAMED', '#OLD']);
+  });
+  it('lists the loaded rows newest first, whatever order the page arrived in', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'old', invoiceNumber: 'OLD', date: dayAgo(5) }),
+        entry({ _id: 'new', invoiceNumber: 'NEW', date: dayAgo(0) }),
+        entry({ _id: 'mid', invoiceNumber: 'MID', date: dayAgo(2) }),
+      ]),
+    );
+    render(<Invoices />);
+    const numbers = Array.from(document.querySelectorAll('.invoices__row-number')).map((n) => n.textContent);
+    expect(numbers).toEqual(['#NEW', '#MID', '#OLD']);
+  });
+  it('leaves an unsent draft and a quote out of the Billed total, and says so', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'o', invoiceNumber: '1018', total: 40 }),
+        entry({ _id: 'd', invoiceNumber: '1020', status: 'draft', total: 25 }),
+        entry({ _id: 'q', invoiceNumber: '1021', status: 'quote', total: 90 }),
+      ]),
+    );
+    render(<Invoices />);
+    const billed = screen.getByText('Billed total').closest('.den-stat, button.den-stat--button') as HTMLElement;
+    expect(within(billed).getByText('$40.00')).toBeInTheDocument();
+    expect(screen.getByText(/Billed total leaves out 2 unsent drafts or quotes\./)).toBeInTheDocument();
+  });
+  it('under Only archived, calls the rows left out not archived, and never "the archive"', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'live', invoiceNumber: 'LIVE' }),
+        entry({ _id: 'gone', invoiceNumber: 'GONE', archivedAt: fakeTs('2026-07-20T00:00:00Z') }),
+      ]),
+    );
+    render(<Invoices />);
+    await userEvent.selectOptions(screen.getByLabelText('Archived'), 'only');
+    expect(screen.getByText(/1 invoice not archived excluded/)).toBeInTheDocument();
+    expect(screen.queryByText(/archived invoice excluded/)).toBeNull();
+    expect(screen.queryByText(/in the archive/)).toBeNull();
+  });
+  it('shows "No number" in words for an invoice without one, and the full year-style number', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', invoiceNumber: '' }),
+        entry({ _id: 'b', invoiceNumber: 'INV-2027-0001' }),
+      ]),
+    );
+    render(<Invoices />);
+    expect(screen.getByText('No number')).toBeInTheDocument();
+    expect(screen.queryByText('#(none)')).toBeNull();
+    expect(screen.getByText('#INV-2027-0001')).toBeInTheDocument();
   });
 });

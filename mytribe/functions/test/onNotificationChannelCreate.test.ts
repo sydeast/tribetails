@@ -100,6 +100,10 @@ describe('onNotificationChannelCreate central enrichment', () => {
     // channel subdoc stamped sent
     const sentWrite = setSpy.mock.calls.find((c) => (c[0] as { status?: string }).status === 'sent');
     expect(sentWrite).toBeTruthy();
+    // #1752: the delivery entry names the notification, not its catalog key.
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'Delivered "New invoice or quote issued" by email' }),
+    );
   });
 
   it('SOFT-SKIP: a sender that returns { skipped } stamps status "skipped", warns, does NOT throw, and writes no delivery audit', async () => {

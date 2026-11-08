@@ -32,6 +32,9 @@ import com.tribetails.auntieos.web.data.AuthUser
 import com.tribetails.auntieos.web.branding.brandIdentity
 import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.screens.LocalServiceCatalog
+import com.tribetails.auntieos.web.screens.ServiceCatalog
+import com.tribetails.auntieos.web.screens.serviceCatalog
 import com.tribetails.auntieos.web.data.NotificationEntry
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.ui.shell.unreadNotificationCount
@@ -47,6 +50,7 @@ import com.tribetails.auntieos.web.screens.inbox.InboxScreen
 import com.tribetails.auntieos.web.screens.notifications.NotificationsScreen
 import com.tribetails.auntieos.web.screens.invoices.InvoiceDetailScreen
 import com.tribetails.auntieos.web.screens.invoices.InvoicesScreen
+import com.tribetails.auntieos.web.screens.kintales.KinTaleListFilter
 import com.tribetails.auntieos.web.screens.kintales.KinTaleLogsScreen
 import com.tribetails.auntieos.web.screens.kintales.KinTaleReportScreen
 import com.tribetails.auntieos.web.screens.media.MediaGalleryScreen
@@ -196,6 +200,14 @@ private fun SignedInApp(
     var invoiceLineVisitId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(current) { if (current != Destination.Sessions) invoiceLineVisitId = null }
     var reportSessionId by remember { mutableStateOf(if (initialRoute.dest == Destination.KinTales) initialRoute.detailId else null) }
+    // #1594: the KinTale list's search and sort, held above the list so a
+    // KinTale opened from it closes back onto the same filtered list. Leaving
+    // KinTales lets it go, as the web list opens fresh from the rail.
+    val kinTaleListFilter = remember { KinTaleListFilter() }
+    LaunchedEffect(current) { if (current != Destination.KinTales) kinTaleListFilter.reset() }
+    // #1563: a stored KinTale draft handed to Communicate from KinTales or Home.
+    // Communicate clears it once applied, so the next visit opens blank.
+    var openDraft by remember { mutableStateOf<com.tribetails.auntieos.web.data.GeneratedDraft?>(null) }
     var mediaEntityId by remember { mutableStateOf(if (initialRoute.dest == Destination.MediaGallery) initialRoute.detailId else null) }
     var mediaEntityType by remember { mutableStateOf(if (initialRoute.dest == Destination.MediaGallery) initialRoute.detailType else null) }
     var mediaEntityName by remember { mutableStateOf<String?>(null) }
@@ -217,6 +229,10 @@ private fun SignedInApp(
         )
     }
     val firestoreClient = remember { FirestoreClient() }
+    // #1592: every screen names a stored service against this catalog.
+    val catalogSettings by remember { firestoreClient.businessSettingsStream() }
+        .collectAsState(initial = FirestoreResult.Loading)
+    val serviceCatalog = (catalogSettings as? FirestoreResult.Data)?.value?.serviceCatalog() ?: ServiceCatalog()
     val signOutScope = rememberReportingScope("app")
 
     // Feature flags: fetch once after auth; on failure keep the compile-time
@@ -349,6 +365,7 @@ private fun SignedInApp(
 
     CompositionLocalProvider(
         LocalFeatureFlags provides featureFlags,
+        LocalServiceCatalog provides serviceCatalog,
         com.tribetails.auntieos.web.data.LocalTestMode provides testMode,
     ) {
     AppShell(
@@ -404,8 +421,15 @@ private fun SignedInApp(
         // which screen or sub-route the operator lands on.
         RouteToastHost {
         when (current) {
-            Destination.Home        -> HomeScreen(authUser = user, onNavigate = { current = it })
-            Destination.Communicate -> CommunicateScreen()
+            Destination.Home        -> HomeScreen(
+                authUser = user,
+                onNavigate = { current = it },
+                onOpenDraft = { draft -> openDraft = draft; current = Destination.Communicate },
+            )
+            Destination.Communicate -> CommunicateScreen(
+                openDraft = openDraft,
+                onDraftConsumed = { openDraft = null },
+            )
             Destination.Directory   -> DirectoryScreen(
                 initialKinfolkId = directoryKinfolkId,
                 initialKinId     = directoryKinId,
@@ -423,7 +447,11 @@ private fun SignedInApp(
                         onBack     = { reportSessionId = null },
                     )
                 } else {
-                    KinTaleLogsScreen(onOpenReport = { reportSessionId = it })
+                    KinTaleLogsScreen(
+                        onOpenReport = { reportSessionId = it },
+                        onOpenDraft = { draft -> openDraft = draft; current = Destination.Communicate },
+                        listFilter = kinTaleListFilter,
+                    )
                 }
             }
             Destination.Bookings    -> BookingScreen()

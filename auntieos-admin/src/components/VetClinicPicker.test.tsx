@@ -343,7 +343,7 @@ describe('VetClinicPicker: the inline create form', () => {
     await userEvent.click(screen.getByRole('button', { name: /^save clinic$/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'submitVetClinic failed: permission-denied',
+      'Could not save: permission-denied',
     );
     expect(screen.getByLabelText('Clinic phone')).toHaveValue('(512) 555-0400');
     expect(onChange).not.toHaveBeenCalled();

@@ -62,6 +62,9 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'getKinTaleComments',
   'listOrphanReports', // a tale that landed without a household
   'triageOrphanReport', // assign / mark duplicate / archive bad data
+  // #1563: send a generated KinTale draft to its household. Deleting one
+  // (deleteGeneratedDraft) is destructive (rule 6) and stays with the owner.
+  'publishGeneratedDraft',
   'listTemplates',
   'listTemplateBindings',
   'listCategories',
@@ -87,6 +90,8 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'submitVetClinic', // propose a clinic; curating the catalog stays with the owner
   'addBookingNote',
   'addInternalBookingNote',
+  // #1580: filtered on her claim, so an Auntie's list never carries an admin-only note.
+  'listVisitInternalNotes',
   // #1408: a household's pending request to remove a Kin, read on the Kin's
   // admin profile. Answering it (resolveKinRemovalRequest) archives a Kin,
   // which is destructive (rule 6), so that half stays with the owner.
@@ -127,7 +132,9 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'getConversationThread',
   'replyToConversation',
   'markConversationRead',
+  'markConversationUnread',
   'markAllThreadsRead',
+  'getRecordingAudio', // the voicemail and call recordings in the same Inbox
 
   // ── Herself ────────────────────────────────────────────────────────────
   'getMyAdminNotificationPrefs',

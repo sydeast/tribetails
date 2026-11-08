@@ -36,6 +36,15 @@ import com.tribetails.auntieos.data.model.KinCareSession
  * ancient dangling SCHEDULED row from resurfacing forever. Thirty days matches
  * the web fetch's own backstop (`FETCH_DAYS_BACK` in `sessionFormat.ts`).
  *
+ * ISSUE #1704 (after #1607's "one definition of overdue"): web's Auntie Time
+ * now also reads every SCHEDULED visit older than that window
+ * (`overdueBeforeWindowQuery`), so a July visit nobody closed out is Overdue
+ * on web and was missing here and from Home's Today's Pack count. A SCHEDULED
+ * visit therefore has no lower bound: once its slot has passed it stays
+ * Overdue until someone closes it out. The thirty-day reach now applies only
+ * to a status code no writer produces, which web also reads only inside its
+ * window.
+ *
  * DRAFT / PENDING / REJECTED stay hidden and are matched POSITIVELY by name
  * (the archive's AO-60: the Bookings screen owns that queue). A status code no
  * writer produces today is therefore not swept in with them; it lands in
@@ -45,9 +54,8 @@ import com.tribetails.auntieos.data.model.KinCareSession
 const val RECENT_WINDOW_DAYS = 1
 const val UPCOMING_WINDOW_DAYS = 14
 
-/** How far back a SCHEDULED (or unrecognized-status) visit stays visible once
- * its slot has passed. See the ISSUE #702 note above for why Android needs an
- * explicit cap here where web does not. */
+/** How far back an unrecognized-status visit stays visible once its slot has
+ * passed. A SCHEDULED one has no such cap since #1704; see the note above. */
 const val OVERDUE_WINDOW_DAYS = 30
 
 /** The booking-queue states the Bookings screen owns; never shown on Auntie Time. */
@@ -93,7 +101,10 @@ internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Bool
     // dropping the row outright.
     val date = session.startTime.take(10)
     if (date.length < 10) return false
-    return date in dateAddDays(today, -OVERDUE_WINDOW_DAYS)..dateAddDays(today, UPCOMING_WINDOW_DAYS)
+    val horizon = dateAddDays(today, UPCOMING_WINDOW_DAYS)
+    // #1704: a SCHEDULED visit is Overdue at any age, as on web.
+    if (status == "SCHEDULED") return date <= horizon
+    return date in dateAddDays(today, -OVERDUE_WINDOW_DAYS)..horizon
 }
 
 /**
@@ -112,6 +123,13 @@ internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean
 }
 
 /**
+ * How many sessions Auntie Time files under its Overdue heading: visible on
+ * the board AND [isOverdueScheduled]. Home's Today's Pack reads this, so the
+ * count on Home is the count on the board by construction (#1590).
+ */
+internal fun overdueOnAuntieTime(sessions: List<KinCareSession>, today: String): Int =
+    sessions.count { isVisibleOnAuntieTime(it, today) && isOverdueScheduled(it, today) }
+/**
  * One phase's sessions in reading order: ascending by startTime, since a run
  * sheet reads forwards. The soonest/latest switch #17 added was removed in
  * #755 with the chip row that drove it (the mock has no sort control).
@@ -128,6 +146,14 @@ internal fun sortSessions(sessions: List<KinCareSession>): List<KinCareSession> 
  * way the mock writes them. The web board builds the same line in
  * `Sessions.tsx` (`metaLine`).
  */
+/**
+ * #1744: a visit's service as the Auntie Time card and visit detail name it:
+ * the KinCare's name off the catalog, never the stored `visit_60`. Blank stays
+ * blank, so the line drops it rather than saying "Visit".
+ */
+internal fun auntieTimeServiceName(serviceType: String, catalog: ServiceCatalog): String =
+    if (serviceType.isBlank()) "" else catalog.nameOf(serviceType)
+
 internal fun auntieTimeIdentityLine(
     service: String,
     kinNames: List<String>,

@@ -71,4 +71,40 @@ class IncomingSeriesTest {
         assertEquals(setOf("kf1", "kf2"), groups.map { it.kinfolkId }.toSet())
         groups.forEach { assertEquals(1, it.visitCount) }
     }
+
+    // ── #1577: whose request it is ──────────────────────────────────────────
+    @Test
+    fun theCardAndBothConfirmStepsNameTheHousehold() {
+        val series = groupIncomingBySeries(
+            listOf(
+                visit("kf1", "b1", "v1", "2026-06-03T14:00:00Z", name = "The Rowans"),
+                visit("kf1", "b1", "v2", "2026-06-10T14:00:00Z", name = "The Rowans"),
+            ),
+        ).single()
+        assertEquals("The Rowans", series.householdLabel())
+        assertEquals("2 visits · recurring series · Walk", series.subject())
+        assertEquals("Book this request for The Rowans", series.approveConfirmTitle())
+        assertEquals("Turn down this request from The Rowans", series.declineConfirmTitle())
+        assertEquals("New request from The Rowans", series.detailTitle())
+    }
+    @Test
+    fun aRequestWithNoHouseholdNameSaysSo() {
+        val series = groupIncomingBySeries(listOf(visit("kf1", "b1", "v1", "2026-06-03T14:00:00Z"))).single()
+        assertEquals(HOUSEHOLD_NOT_ON_FILE, series.householdLabel())
+        assertEquals("Book this request", series.approveConfirmTitle())
+    }
+    @Test
+    fun theDetailListsEveryVisitOnTheBusinessClock() {
+        val series = groupIncomingBySeries(
+            listOf(
+                visit("kf1", "b1", "v1", "2026-06-03T14:00:00Z"),
+                visit("kf1", "b1", "v2", ""),
+                visit("kf1", "b1", "v3", "soon"),
+            ),
+        ).single()
+        assertEquals(
+            listOf("Time not on file", "Wed, Jun 3 at 9:00 AM", "soon"),
+            series.visitLines(kotlinx.datetime.TimeZone.of("America/Chicago")),
+        )
+    }
 }

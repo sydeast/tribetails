@@ -399,7 +399,7 @@ fun TemplateBankBody(
                         result
                             .onSuccess {
                                 if (stillOpen) { editing = null; editingId = null; saveError = null }
-                                notice = "Saved ${updated.title.ifBlank { updated.templateId }}."
+                                notice = templateSavedNotice(updated.title)
                                 reload()
                             }
                             .onFailure {
@@ -444,7 +444,7 @@ fun TemplateBankBody(
                     result
                         .onSuccess {
                             if (stillOpen) { editing = null; editingId = null; creating = false; saveError = null }
-                            notice = "Saved ${updated.title.ifBlank { updated.templateId }}."
+                            notice = templateSavedNotice(updated.title)
                             reload()
                         }
                         .onFailure {
@@ -863,7 +863,7 @@ private fun TemplateViewOverlay(
         title = template.title.ifBlank { template.templateId.ifBlank { "Template" } },
         onDismiss = onDismiss,
         closeIcon = Lucide.X,
-        hint = "Stored in Firestore, rendered with Handlebars. SendGrid delivers as a dumb pipe.",
+        hint = TEMPLATE_PREVIEW_HINT,
         footer = {
             GhostButton(label = "Close", onClick = onDismiss, modifier = Modifier.weight(1f))
             PrimaryButton(
@@ -1464,3 +1464,10 @@ private fun TemplateEditorScreen(
         }
     }
 }
+
+/**
+ * The notice after a template is saved (#1747): its title, or "the untitled
+ * template" when it has none, never its id. The web `templateSavedNotice`.
+ */
+internal fun templateSavedNotice(title: String): String =
+    title.trim().let { if (it.isEmpty()) "Saved the untitled template." else "Saved $it." }

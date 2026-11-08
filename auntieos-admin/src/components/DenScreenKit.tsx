@@ -1,6 +1,8 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, type LinkProps } from '@tanstack/react-router';
 import { type ResolvedScalar } from '../lib/async';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
+import { serviceTone as denServiceTone } from '../lib/denFormat';
 import './DenScreenKit.css';
 
 /**
@@ -21,14 +23,27 @@ import './DenScreenKit.css';
 /** Mirrors Compose `AuntieStatusTone`. Resolved to a token in the CSS, never here. */
 export type DenTone = 'neutral' | 'success' | 'warning' | 'error' | 'teal' | 'purple' | 'orange' | 'muted';
 
-/** Maps a free-text service type to a brand tone, per the Compose `serviceTone`. */
-export function serviceTone(serviceType: string): DenTone {
-  const s = serviceType.toLowerCase();
-  if (s.includes('walk')) return 'teal';
-  if (s.includes('drop')) return 'orange';
-  if (s.includes('sit') || s.includes('house') || s.includes('overnight')) return 'purple';
-  if (s.includes('meet') || s.includes('greet')) return 'success';
-  return 'orange';
+/**
+ * Maps a free-text service type to a brand tone, per the Compose `serviceTone`.
+ * One implementation, in `lib/denFormat`: this file kept its own copy and the
+ * two drifted from the Kotlin together (#1736).
+ */
+export const serviceTone: (serviceType: string) => DenTone = denServiceTone;
+
+/**
+ * THE tone of a stored booking `serviceType`, for every mark that colours a
+ * visit: the Schedule legend swatch, the agenda and row pills, the week and
+ * month blocks (#1592).
+ *
+ * The key is the NAME `bookingServiceName` resolves, never the stored text. The
+ * legend names each service against the catalog and dedupes on that name, so it
+ * can only colour by the name; a block that coloured by the stored `visit_60`
+ * while its legend row coloured by the KinCare it resolves to ("Dog walk") drew
+ * two colours for one service, and renaming a KinCare moved the swatch without
+ * the blocks. Everything colours through here, so both always move together.
+ */
+export function bookingServiceTone(rawServiceType: string | undefined, catalog: BookingCatalog): DenTone {
+  return serviceTone(bookingServiceName(rawServiceType, catalog));
 }
 
 // ── breadcrumbs ─────────────────────────────────────────────────────────────
@@ -103,6 +118,36 @@ function CrumbStep({ crumb }: { crumb: Crumb }) {
 
 // ── subtitle tooltip ────────────────────────────────────────────────────────
 
+/** The gap a tooltip keeps from either edge of the window, in px. */
+const TIP_EDGE_GUTTER_PX = 8;
+/** The gap between the info button and the tip hanging under it, in px. */
+const TIP_OFFSET_PX = 6;
+
+/**
+ * Where an open tip's left edge goes so the whole tip stays inside the window
+ * (#1596). The tip hangs from its button's left edge, so a button near the
+ * right edge (Schedule's "Today" panel) pushed it past the window and added a
+ * horizontal scrollbar. A tip wider than the window keeps its left edge in view.
+ */
+export function tipLeftPx(anchorLeft: number, tipWidth: number, viewportWidth: number): number {
+  const maxLeft = viewportWidth - TIP_EDGE_GUTTER_PX - tipWidth;
+  return Math.round(Math.max(TIP_EDGE_GUTTER_PX, Math.min(anchorLeft, maxLeft)));
+}
+
+/** `showPopover` where the browser has it; jsdom and older engines do not. */
+function canPopover(el: HTMLElement): el is HTMLElement & { showPopover(): void; hidePopover(): void } {
+  return typeof (el as { showPopover?: unknown }).showPopover === 'function';
+}
+
+/**
+ * Whether this engine has the popover API at all. The `popover` attribute is
+ * only written where it does: an engine that knows the attribute but not the
+ * call would hide the tip for good.
+ */
+function popoverSupported(): boolean {
+  return typeof HTMLElement !== 'undefined' && typeof (HTMLElement.prototype as { showPopover?: unknown }).showPopover === 'function';
+}
+
 /**
  * The info affordance that replaced the subtitle line.
  *
@@ -124,6 +169,15 @@ function CrumbStep({ crumb }: { crumb: Crumb }) {
  * `bodyClassName` carries `.den-panel-subtitle` / `.den-heading-subtitle`
  * through to the tip body: screen stylesheets target those names, and what
  * changed here is where the text sits, not what it is.
+ *
+ * #1596: an open tip is shown as a manual popover, in the browser's top layer.
+ * Positioned in place it sat inside whatever stacking context its panel made
+ * (the entrance animations leave a transform), so the next panel's text and
+ * chips painted over it, and it could run off the right edge of the window.
+ * In the top layer it is above everything, placed from the button's rect and
+ * kept inside the window. It stays in the same DOM spot, so `aria-describedby`
+ * and the tests that find it inside its panel are unchanged. Without popover
+ * support it falls back to the old absolute placement.
  */
 function KitTooltip({
   id,
@@ -135,6 +189,50 @@ function KitTooltip({
   bodyClassName: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLSpanElement>(null);
+
+  // Before paint: lift the tip into the top layer, measure it, place it.
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const button = buttonRef.current;
+    if (body === null || button === null || !canPopover(body)) return undefined;
+    if (!open) {
+      setPlace(null);
+      return undefined;
+    }
+    try {
+      body.showPopover();
+    } catch {
+      return undefined;
+    }
+    const anchor = button.getBoundingClientRect();
+    const viewport = document.documentElement.clientWidth || window.innerWidth;
+    setPlace({
+      top: Math.round(anchor.bottom + TIP_OFFSET_PX),
+      left: tipLeftPx(anchor.left, body.getBoundingClientRect().width, viewport),
+    });
+    return () => {
+      try {
+        body.hidePopover();
+      } catch {
+        // Already closed.
+      }
+    };
+  }, [open]);
+
+  // A placed tip is fixed to the window, so a scroll would leave it behind.
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -150,6 +248,7 @@ function KitTooltip({
   return (
     <span className="kit-tip">
       <button
+        ref={buttonRef}
         type="button"
         className="kit-tip-button"
         aria-label="About this section"
@@ -163,7 +262,15 @@ function KitTooltip({
       >
         <span aria-hidden="true">i</span>
       </button>
-      <span id={id} role="tooltip" className={`kit-tip-body ${bodyClassName}`} hidden={!open}>
+      <span
+        ref={bodyRef}
+        id={id}
+        role="tooltip"
+        className={`kit-tip-body ${bodyClassName}`}
+        hidden={!open}
+        popover={popoverSupported() ? 'manual' : undefined}
+        style={place === null ? undefined : { top: `${place.top}px`, left: `${place.left}px` }}
+      >
         {text}
       </span>
     </span>
@@ -424,7 +531,8 @@ function StatBody({ label, value, trend, formatValue }: StatBodyProps) {
             -
           </span>
           <span className="den-stat-trend den-stat-trend--error" role="alert">
-            Couldn&rsquo;t load {label.toLowerCase()}: {value.message}
+            {/* #1592: a load error already reads "Could not load: ..."; said once. */}
+            Couldn&rsquo;t load {label.toLowerCase()}: {value.message.replace(/^Could not load: /, '')}
           </span>
         </>
       )}
@@ -609,16 +717,34 @@ function Chevron({ expanded }: { expanded: boolean }) {
 // ── service pill ────────────────────────────────────────────────────────────
 
 interface ServicePillProps {
+  /** The stored `serviceType`, shown as written when no `label` is given. */
   serviceType: string;
+  /**
+   * What the pill says: the name the caller resolved for the stored
+   * `serviceType` (#1592: `bookingServiceName`, so `visit_60` reads as the
+   * operator's own KinCare name).
+   */
+  label?: string;
   tone?: DenTone;
 }
 
-/** A small lowercase mono pill tinted to a service tone. */
-export function ServicePill({ serviceType, tone }: ServicePillProps) {
-  const label = serviceType.trim() === '' ? 'visit' : serviceType;
+/**
+ * A small mono pill tinted to a service tone. The text is shown as written:
+ * a KinCare name is the operator's own, and lowercasing it made "30Minute"
+ * read as the key "30minute" (#1592).
+ *
+ * THE TONE FOLLOWS WHAT THE PILL SAYS. With a `label`, that is the resolved
+ * name, the same key `bookingServiceTone` gives the Schedule legend and the
+ * week and month blocks, so a pill, its legend swatch and its block are one
+ * colour and a KinCare rename recolours all of them together. Without one, the
+ * stored text is both what it says and what it is coloured by.
+ */
+export function ServicePill({ serviceType, label, tone }: ServicePillProps) {
+  const named = label ?? serviceType;
+  const shown = named.trim() === '' ? 'Visit' : named;
   return (
-    <span className="den-pill" data-tone={tone ?? serviceTone(serviceType)}>
-      {label}
+    <span className="den-pill" data-tone={tone ?? serviceTone(named)}>
+      {shown}
     </span>
   );
 }

@@ -2,8 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CallableRequest } from 'firebase-functions/v2/https';
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
-vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), getUsers: vi.fn() }));
+vi.mock('../src/lib/firestoreAdmin', () => ({
+  db: mocks.dbFn,
+  auth: vi.fn(),
+  getAdmin: () => ({ auth: () => ({ getUsers: mocks.getUsers }) }),
+}));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 
@@ -16,6 +20,7 @@ const req = { auth: { uid: 'op1' } } as unknown as CallableRequest<unknown>;
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
+  mocks.getUsers.mockReset().mockResolvedValue({ users: [], notFound: [] });
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -143,8 +148,113 @@ describe('listBusinessAdmins', () => {
 
     expect(res.members).toEqual([]);
     expect(res.source).toBe('none');
-    expect(res.reason).toContain('provisionBusinessAdmins');
+    expect(res.reason).toMatch(/nobody is on the business admin roster/i);
+    // #1592: the gate shows this sentence as written, so no path, no function.
+    expect(res.reason).not.toMatch(/businessSettings|provisionBusinessAdmins|\//);
     expect(ctx.writes.filter((w) => w.path === DOC)).toEqual([]);
+  });
+
+  /**
+   * #1564: the only business admin on the 2026-11-05 walk had a staff record
+   * with no name and no email, so the roster showed a uid. The sign-in display
+   * name now fills the NAME. Only the name: business email goes to
+   * `businessEmail` (operator ruling, 2026-11-05 docket), so the record's email
+   * stays what the record says.
+   */
+  it('#1564: fills a missing name from the sign-in display name, never the email', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        [DOC]: { uids: ['nppJNdMNYJfUigibGKUQj3n4obt2'] },
+        'staff/nppJNdMNYJfUigibGKUQj3n4obt2': { staffRole: 'admin' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.getUsers.mockResolvedValue({
+      users: [{ uid: 'nppJNdMNYJfUigibGKUQj3n4obt2', displayName: 'E2E Admin', email: 'e2e-admin@tribetails.com' }],
+      notFound: [],
+    });
+
+    const res = await listBusinessAdminsHandler(req);
+
+    expect(mocks.getUsers).toHaveBeenCalledWith([{ uid: 'nppJNdMNYJfUigibGKUQj3n4obt2' }]);
+    expect(res.members[0]).toMatchObject({
+      displayName: 'E2E Admin',
+      email: null,
+      hasStaffRecord: true,
+    });
+  });
+
+  it('#1564: with no sign-in display name, the name falls back to an email', async () => {
+    const ctx = buildDbMock({
+      docs: { [DOC]: { uids: ['op1'] }, 'staff/op1': {} },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.getUsers.mockResolvedValue({
+      users: [{ uid: 'op1', displayName: '', email: 'e2e-admin@tribetails.com' }],
+      notFound: [],
+    });
+    const res = await listBusinessAdminsHandler(req);
+    expect(res.members[0]).toMatchObject({ displayName: 'e2e-admin@tribetails.com', email: null });
+  });
+
+  it('#1564: carries businessEmail, where every business email goes', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        [DOC]: { uids: ['op1'] },
+        'staff/op1': { displayName: 'Auntie Nora' },
+        'business_settings/business_settings': { businessEmail: ' pawsome@hanasamku.com ' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listBusinessAdminsHandler(req);
+    expect(res.businessEmail).toBe('pawsome@hanasamku.com');
+  });
+
+  it('#1564: businessEmail is blank when settings has none', async () => {
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] }, 'staff/op1': { displayName: 'Auntie Nora' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listBusinessAdminsHandler(req);
+    expect(res.businessEmail).toBe('');
+  });
+
+  it('#1564: a record name wins over the sign-in account', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        [DOC]: { uids: ['op1'] },
+        'staff/op1': { displayName: 'Auntie Nora' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.getUsers.mockResolvedValue({
+      users: [{ uid: 'op1', displayName: 'Sign-in Name', email: 'catch@hanasamku.com' }],
+      notFound: [],
+    });
+
+    const res = await listBusinessAdminsHandler(req);
+    expect(res.members[0]).toMatchObject({ displayName: 'Auntie Nora', email: null });
+  });
+
+  it('#1564: does not read Auth when every record is complete', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        [DOC]: { uids: ['op1'] },
+        'staff/op1': { displayName: 'Auntie Nora', email: 'nora@tribetails.com' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await listBusinessAdminsHandler(req);
+    expect(mocks.getUsers).not.toHaveBeenCalled();
+  });
+
+  it('#1564: an Auth failure leaves the gap showing rather than failing the roster', async () => {
+    const ctx = buildDbMock({
+      docs: { [DOC]: { uids: ['op1'] }, 'staff/op1': {} },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.getUsers.mockRejectedValue(new Error('auth unavailable'));
+
+    const res = await listBusinessAdminsHandler(req);
+    expect(res.members[0]).toMatchObject({ uid: 'op1', displayName: null, email: null });
   });
 
   it('reports the outage when the roster document does not exist', async () => {

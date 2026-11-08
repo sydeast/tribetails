@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.notifications
 
+import com.tribetails.auntieos.web.screens.notificationHeadline
+import com.tribetails.auntieos.web.screens.notificationCategoryLabel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -87,8 +89,10 @@ import kotlinx.coroutines.launch
  *   - open linked item    -> navigate by targetType/targetId via [onOpenTarget],
  *   - dismiss/archive      -> archiveNotification (single) + bulkArchiveNotifications
  *     (multi-select), with archived rows filtered out of the default list,
- *   - approve / deny       -> batchUpdateBookings([targetId], APPROVE|REJECT),
- *     shown ONLY when targetType == "booking".
+ *   - approve / deny       -> manageBookingSeries(APPROVE|CANCEL, kinfolkId, targetId)
+ *     on the whole request (#1675; targetId is the request's batchId),
+ *     shown ONLY on a `kincare.requested` row still waiting on a decision
+ *     (#706, #1647); an answered request shows its outcome instead.
  * Every action is fail-loud: a WriteResult.Err surfaces the server message in an
  * error banner and the optimistic stream re-renders truth on the next snapshot.
  *
@@ -152,19 +156,9 @@ fun NotificationsScreen(
     }
     val onBookingAction: (NotificationEntry, String) -> Unit = { entry, action ->
         scope.launch {
-            when (val r = client.batchUpdateBookings(listOf(entry.targetId), action)) {
-                is WriteResult.Err -> actionError = r.message
-                is WriteResult.Ok -> {
-                    val refused = com.tribetails.auntieos.web.data.batchFailureText(r.value)
-                    if (refused != null) {
-                        actionNotice = null
-                        actionError = "Booking ${if (action == "APPROVE") "approval" else "denial"} failed: $refused"
-                    } else {
-                        actionError = null
-                        actionNotice = if (action == "APPROVE") "Booking approved." else "Booking denied."
-                    }
-                }
-            }
+            val answer = answerBookingRequest(client, entry, approve = action == "APPROVE")
+            actionError = answer.error
+            actionNotice = answer.notice
         }
     }
     val onBulkArchive: () -> Unit = {
@@ -186,7 +180,7 @@ fun NotificationsScreen(
             FirestoreResult.Loading -> {
                 Heading(unreadCount = 0)
                 Spacer(Modifier.height(20.dp))
-                DenPanel(title = "Activity", subtitle = "Catalog-dispatched events for your account.") {
+                DenPanel(title = "Activity") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         repeat(4) { ShimmerCard(height = 84.dp) }
                     }
@@ -217,7 +211,9 @@ fun NotificationsScreen(
                 // Archived notifications are filtered out of the active inbox.
                 val all = activeNotifications(s.value).sortedByDescending { it.createdAt }
                 val unreadCount = all.count { !it.isRead }
-                val dispatchedCount = all.count { it.status.equals("dispatched", ignoreCase = true) }
+                // #1592 / R5: the strip counts the operator's work, not the
+                // sender's. "Dispatched" was delivery-pipeline health.
+                val decisionCount = needsDecisionCount(all)
 
                 Heading(unreadCount = unreadCount)
                 Spacer(Modifier.height(20.dp))
@@ -233,25 +229,25 @@ fun NotificationsScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     StatCard(
-                        label = "All notifications",
+                        label = "In your inbox",
                         value = all.size.toString(),
-                        trend = "in your inbox",
+                        trend = "active notifications",
                         tone = AuntieStatusTone.Purple,
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
                         label = "Unread",
                         value = unreadCount.toString(),
-                        trend = "not yet read",
+                        trend = "not opened yet",
                         tone = AuntieStatusTone.Warning,
                         feature = unreadCount > 0,
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
-                        label = "Dispatched",
-                        value = dispatchedCount.toString(),
-                        trend = "delivered",
-                        tone = AuntieStatusTone.Success,
+                        label = "Needs a decision",
+                        value = decisionCount.toString(),
+                        trend = "approve or deny",
+                        tone = if (decisionCount > 0) AuntieStatusTone.Warning else AuntieStatusTone.Neutral,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -306,12 +302,9 @@ fun NotificationsScreen(
                     Spacer(Modifier.height(16.dp))
                 }
 
-                DenPanel(
-                    title = "Activity",
-                    subtitle = "Catalog-dispatched events for your account, newest first.",
-                ) {
+                DenPanel(title = "Activity") {
                     if (all.isEmpty()) {
-                        EmptyHint("No notifications yet. Catalog-dispatched events appear here when MyTribe functions emit them.")
+                        EmptyHint("No notifications yet.")
                     } else {
                         // Filter chips reflect categories actually present in the
                         // feed, never an invented taxonomy. "All" + each category.
@@ -323,7 +316,12 @@ fun NotificationsScreen(
                         FilterRow(
                             categories = categories,
                             active = activeFilter,
-                            onSelect = { activeFilter = it },
+                            onSelect = {
+                                // #1611: a selection made under one chip must not
+                                // ride into a bulk action on rows the next hides.
+                                if (it != activeFilter) selectedIds.clear()
+                                activeFilter = it
+                            },
                         )
                         Spacer(Modifier.height(16.dp))
 
@@ -365,7 +363,7 @@ private fun Heading(unreadCount: Int) {
     DenScreenHeading(
         kicker = "The Den · Notifications",
         title = "Notifications",
-        subtitle = "Business-side notifications dispatched to your account.",
+        subtitle = "Events that need you, and the household each one is about. Activity Log keeps the audit trail.",
         trailing = {
             if (unreadCount > 0) {
                 Box(
@@ -415,7 +413,8 @@ private fun FilterRow(
         )
         categories.forEach { category ->
             AuntieChip(
-                label = category,
+                // #1592: the chip says the word; the filter value stays the stored category.
+                label = notificationCategoryLabel(category),
                 selected = active == category,
                 onClick = { onSelect(category) },
                 tone = AuntieChipTone.Accent,
@@ -499,8 +498,9 @@ private fun DaySeparator(label: String) {
 
 /**
  * A single notification row. Leads with a multi-select checkbox + an
- * [AuntieIconTile] keyed off the category, then the catalog key (mono), category +
- * dispatch mode, channels, and an [AuntieStatusPill]. The right rail carries the
+ * [AuntieIconTile] keyed off the category, then the title and the category in
+ * words. No transports and no dispatch-status pill (#1592, matching web's R5:
+ * those are Activity Log, not notification). The right rail carries the
  * timestamp, an unread dot, and the real quick-action buttons returned by
  * [applicableActions]: read/unread toggle, open-linked, approve/deny (booking
  * only), and archive.
@@ -548,28 +548,26 @@ private fun NotificationRow(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
-                text = entry.key.ifBlank { "(no key)" },
+                // #1592: the catalog title, else the key as words, never the key.
+                text = notificationHeadline(entry.key, entry.title),
                 style = typo.titleMedium,
                 color = c.textPrimary,
             )
             Text(
-                text = "${entry.category.ifBlank { "uncategorized" }} · ${entry.mode.ifBlank { "trigger" }}",
+                // #1592: the category in words. The delivery mode was a key too.
+                text = notificationCategoryLabel(entry.category),
                 style = typo.bodySmall,
                 color = c.textDim,
             )
-            if (entry.channels.isNotEmpty()) {
-                Text(
-                    text = "channels: ${entry.channels.joinToString(", ")}",
-                    style = typo.mono.copy(fontSize = 10.sp, letterSpacing = 0.4.sp),
-                    color = c.textFaint,
+            Spacer(Modifier.height(2.dp))
+            // #1647: an answered request says how it ended, where the Approve
+            // and Deny buttons used to sit.
+            requestOutcomeLabel(entry)?.let { outcome ->
+                AuntieStatusPill(
+                    label = outcome,
+                    tone = if (outcome == "Booked") AuntieStatusTone.Success else AuntieStatusTone.Neutral,
                 )
             }
-            Spacer(Modifier.height(2.dp))
-            AuntieStatusPill(
-                label = entry.status.ifBlank { "unknown" },
-                tone = statusTone(entry.status),
-                showDot = true,
-            )
 
             // Real, fail-loud quick actions (Stage 2 Step 4). Each maps to a
             // deployed callable; the parent surfaces any error loudly.
@@ -690,12 +688,6 @@ internal fun notificationsForFilter(all: List<NotificationEntry>, filter: String
         else -> all.filter { it.category.ifBlank { "uncategorized" } == filter }
     }
 
-/** Map status text to a status-pill tone. */
-private fun statusTone(status: String): AuntieStatusTone = when (status.lowercase()) {
-    "dispatched" -> AuntieStatusTone.Success
-    "pending" -> AuntieStatusTone.Warning
-    else -> AuntieStatusTone.Neutral
-}
 
 /**
  * Map a notification to an icon-tile tone. Keyed off the category / key family so

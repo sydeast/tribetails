@@ -89,6 +89,18 @@ describe('AddKinDialog', () => {
 
   // #1013 sweep: Add kin had no confirmation at all, the same gap as the Kin
   // editor's save/archive.
+  it('#1583: refuses a non-numeric age beside the field and does not create', async () => {
+    render(<AddKinDialog kinfolkOptions={OPTIONS} initialKinfolkId="kf1" onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText('Name'), 'QA-Pup');
+    await userEvent.selectOptions(screen.getByLabelText('Gender'), 'Male');
+    await userEvent.type(screen.getByLabelText('Age'), 'abc-5');
+    expect(screen.getByText(/Age is a number of years/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^add kin$/i }));
+    expect(createKin).not.toHaveBeenCalled();
+    await userEvent.clear(screen.getByLabelText('Age'));
+    await userEvent.type(screen.getByLabelText('Age'), '5');
+    expect(screen.queryByText(/Age is a number of years/)).toBeNull();
+  });
   it('#1013: confirms a create with a toast naming the (trimmed) kin', async () => {
     createKin.mockResolvedValue('new-kin-1');
     render(<AddKinDialog kinfolkOptions={OPTIONS} onClose={vi.fn()} onCreated={vi.fn()} />);
@@ -147,7 +159,7 @@ describe('AddKinDialog', () => {
     await userEvent.selectOptions(screen.getByLabelText('Gender'), 'Female');
     await userEvent.click(screen.getByRole('button', { name: /^add kin$/i }));
 
-    expect(await screen.findByText(/createKin failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not create:.*permission-denied/i)).toBeInTheDocument();
     expect(onCreated).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /^add kin$/i })).toBeEnabled();
   });

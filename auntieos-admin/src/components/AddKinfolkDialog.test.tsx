@@ -224,7 +224,7 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
-    expect(await screen.findByText(/createKinfolk failed:.*permission-denied/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not create:.*permission-denied/i)).toBeInTheDocument();
     expect(onCreated).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /^add kinfolk$/i })).toBeEnabled();
   });
@@ -313,7 +313,7 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
     expect(await screen.findByText(/^network The household was created/)).toBeInTheDocument();
-    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
+    expect(screen.queryByText(/Could not save/)).toBeNull();
     expect(onCreated).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Save Emergency Contact' }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-kf-1'));
@@ -330,7 +330,7 @@ describe('AddKinfolkDialog', () => {
     await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-ec-0-phone' }), '5125550190');
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
     expect(await screen.findByText(/^network The household was created/)).toBeInTheDocument();
-    expect(screen.queryByText(/saveEmergencyContacts failed/)).toBeNull();
+    expect(screen.queryByText(/Could not save/)).toBeNull();
     expect(saveEmergencyContacts).toHaveBeenCalledTimes(1);
 
     // The editor is still live during the retry (#829): clear it, then retry.
@@ -514,7 +514,7 @@ describe('AddKinfolkDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
     expect(await screen.findByText(offline.message)).toBeInTheDocument();
-    expect(screen.queryByText(/createKinfolk failed/)).toBeNull();
+    expect(screen.queryByText(/Could not create/)).toBeNull();
     expect(onCreated).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /^add kinfolk$/i })).toBeEnabled();
   });

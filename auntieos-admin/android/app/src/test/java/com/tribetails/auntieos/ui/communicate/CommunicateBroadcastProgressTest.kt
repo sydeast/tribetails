@@ -134,7 +134,7 @@ class CommunicateBroadcastProgressTest {
         advanceUntilIdle()
 
         assertNull(vm.uiState.value.broadcastProgress)
-        assertTrue(vm.uiState.value.broadcastError.orEmpty().contains("getBroadcastProgress failed"))
+        assertTrue(vm.uiState.value.broadcastError.orEmpty().contains("Could not load"))
     }
 
     /**

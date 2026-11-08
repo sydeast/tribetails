@@ -17,10 +17,12 @@ class VisitRequestQueueTest {
         kinfolkId: String = "fam-1",
         requestedAtMs: Long? = 100L,
         title: String? = "Evening sit",
+        kinfolkName: String? = "The Devlins",
     ) = CancelRequestDto(
         kinfolkId = kinfolkId,
         batchId = "b1",
         visitId = visitId,
+        kinfolkName = kinfolkName,
         title = title,
         serviceType = "Pet Sitting",
         kinNames = listOf("Nutmeg"),
@@ -36,10 +38,12 @@ class VisitRequestQueueTest {
         kinfolkId: String = "fam-2",
         requestedAtMs: Long? = 200L,
         title: String? = "Morning drop-in",
+        kinfolkName: String? = "The Wrens",
     ) = RescheduleRequestDto(
         kinfolkId = kinfolkId,
         batchId = "b2",
         visitId = visitId,
+        kinfolkName = kinfolkName,
         title = title,
         serviceType = "Drop-in Visit",
         kinNames = listOf("Biscuit"),
@@ -92,6 +96,15 @@ class VisitRequestQueueTest {
     }
 
     @Test
+    fun `#1744 a request with no title names the KinCare, never the stored key`() {
+        val catalog = com.tribetails.auntieos.ui.admin.ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "45"))
+        val row = VisitRequestRow.Cancel(cancel(title = null).copy(serviceType = "visit_45"))
+        assertEquals("Long walk", row.titleIn(catalog))
+        assertEquals("Long walk · Nutmeg", row.subject(catalog))
+        assertEquals("Evening sit", VisitRequestRow.Cancel(cancel()).titleIn(catalog))
+        assertEquals("Visit", VisitRequestRow.Cancel(cancel(title = null).copy(serviceType = null)).titleIn(catalog))
+    }
+    @Test
     fun titleFallsBackToServiceThenToAPlainWord() {
         assertEquals("Evening sit", VisitRequestRow.Cancel(cancel()).title)
         assertEquals("Pet Sitting", VisitRequestRow.Cancel(cancel(title = null)).title)
@@ -126,5 +139,29 @@ class VisitRequestQueueTest {
     @Test
     fun bothQueuesEmptyIsAnEmptyList() {
         assertEquals(emptyList<VisitRequestRow>(), mergeVisitRequests(emptyList(), emptyList()))
+    }
+
+    // ── #1577: whose request it is ──────────────────────────────────────────
+    @Test
+    fun theCardIsTitledWithTheHouseholdNotTheService() {
+        val rows = mergeVisitRequests(listOf(reschedule()), listOf(cancel()))
+        assertEquals(listOf("The Devlins", "The Wrens"), rows.map { it.householdLabel() })
+        assertEquals(listOf("Evening sit · Nutmeg", "Morning drop-in · Biscuit"), rows.map { it.subject() })
+    }
+    @Test
+    fun aHouseholdThatDidNotReadSaysSoRatherThanBorrowingTheServiceName() {
+        val row = mergeVisitRequests(emptyList(), listOf(cancel(kinfolkName = null))).single()
+        assertEquals(HOUSEHOLD_NOT_ON_FILE, row.householdLabel())
+        assertEquals("Cancel this visit", row.acceptConfirmTitle())
+        val blank = mergeVisitRequests(emptyList(), listOf(cancel(kinfolkName = "  "))).single()
+        assertEquals(HOUSEHOLD_NOT_ON_FILE, blank.householdLabel())
+    }
+    @Test
+    fun acceptAndDeclineStepsNameTheHousehold() {
+        val (c, r) = mergeVisitRequests(listOf(reschedule()), listOf(cancel()))
+        assertEquals("Cancel this visit for The Devlins", c.acceptConfirmTitle())
+        assertEquals("Keep this visit for The Devlins", c.declineConfirmTitle())
+        assertEquals("Move this visit for The Wrens", r.acceptConfirmTitle())
+        assertEquals("Decline this new time from The Wrens", r.declineConfirmTitle())
     }
 }

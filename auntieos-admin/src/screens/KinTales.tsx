@@ -1,3 +1,6 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
 import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { kinTaleMatchesSearch, kinTalesPageQuery, type KinTaleEntry } from '../api/kinTales';
@@ -6,7 +9,7 @@ import {
   GENERATED_DRAFTS_MAX,
   type GeneratedDraftRow,
 } from '../api/drafts';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { kinfolkDisplayName } from '../api/directory';
 import {
   kinTaleHousehold,
   kinTaleState,
@@ -19,6 +22,7 @@ import { kinTaleListRows, type KinTaleListRow } from '../lib/kinTaleList';
 import { type Async } from '../lib/async';
 import { createdAtProvenanceNote } from '../lib/createdAtProvenance';
 import { useCollection } from '../lib/firestore';
+import { useAdminAccess } from '../lib/access';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import {
   DenScreenHeading,
@@ -133,6 +137,13 @@ interface KinTalesProps {
    * detail route wires the handler.
    */
   onSelect?: (kinTaleId: string) => void;
+  /** The window the list opens in. Home's draft count links with `all` (#1601). */
+  initialRange?: DateRangeKey;
+  /**
+   * Told when the operator picks another window (#1594), so the route can keep
+   * it in `?range=` and a KinTale opened from this list closes back onto it.
+   */
+  onRangeChange?: (range: DateRangeKey) => void;
 }
 
 /**
@@ -194,9 +205,13 @@ interface KinTalesProps {
  * list's date-windowed, 25-per-page query is the wrong source for them (see
  * `NeedsTriageSection.tsx`'s own header for why).
  */
-export function KinTales({ onSelect }: KinTalesProps) {
+export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeChange }: KinTalesProps) {
+  // #1707: template writes are owner-only in the rules, so "Edit templates"
+  // is the owner's control. Anyone else reaches the read-only list from the rail.
+  const access = useAdminAccess();
+  const canEditTemplates = access?.status === 'admin';
   const [search, setSearch] = useState('');
-  const [range, setRange] = useState<DateRangeKey>(DEFAULT_DATE_RANGE);
+  const [range, setRange] = useState<DateRangeKey>(initialRange);
   const [kinfolkId, setKinfolkId] = useState('');
 
   // Computed once per window choice, never per render: a boundary recreated
@@ -230,7 +245,9 @@ export function KinTales({ onSelect }: KinTalesProps) {
   // The facet's options come from the household DIRECTORY, not from the loaded
   // KinTales. Deriving them from the page would offer only households that are
   // already on screen, which is the opposite of what the control is for.
-  const households = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const households = useKinfolkRoster();
+  // #1592: rows name their service from the catalog, never `visit_60`.
+  const catalog = useBookingCatalog();
   const householdOptions = useMemo(
     () =>
       households.status === 'ready'
@@ -322,12 +339,14 @@ export function KinTales({ onSelect }: KinTalesProps) {
           // which is Auntie Time's "Complete KinTale" (#703). The mock never
           // drew one either.
           trailing={
-            <Link to="/kintale-templates" className="auntie-btn auntie-btn--ghost">
-              <span className="auntie-btn__leading" aria-hidden="true">
-                <Glyph name="settings" />
-              </span>
-              <span className="auntie-btn__label">Edit templates</span>
-            </Link>
+            canEditTemplates ? (
+              <Link to="/kintale-templates" className="auntie-btn auntie-btn--ghost">
+                <span className="auntie-btn__leading" aria-hidden="true">
+                  <Glyph name="settings" />
+                </span>
+                <span className="auntie-btn__label">Edit templates</span>
+              </Link>
+            ) : undefined
           }
         />
       </div>
@@ -343,7 +362,10 @@ export function KinTales({ onSelect }: KinTalesProps) {
           onSearchChange={setSearch}
           searchLabel="Search KinTales"
           range={range}
-          onRangeChange={setRange}
+          onRangeChange={(next) => {
+            setRange(next);
+            onRangeChange?.(next);
+          }}
           facets={[
             {
               id: 'household',
@@ -445,7 +467,7 @@ export function KinTales({ onSelect }: KinTalesProps) {
                       >
                         <ul className="kintales__list" aria-label={bucket.label}>
                           {members.map((entry) => (
-                            <KinTaleRow key={entry._id} entry={entry} bucket={bucket} onSelect={onSelect} />
+                            <KinTaleRow key={entry._id} entry={entry} bucket={bucket} catalog={catalog} onSelect={onSelect} />
                           ))}
                         </ul>
                       </DenPanel>
@@ -490,6 +512,7 @@ export function KinTales({ onSelect }: KinTalesProps) {
 interface KinTaleRowProps {
   entry: KinTaleListRow;
   bucket: BucketDef;
+  catalog: BookingCatalog;
   onSelect?: ((kinTaleId: string) => void) | undefined;
 }
 
@@ -500,7 +523,7 @@ interface KinTaleRowProps {
  * row carries none and neither does Android's, so the tale's title is read on
  * the detail screen rather than guessed from a clamp here.
  */
-function KinTaleRow({ entry, bucket, onSelect }: KinTaleRowProps) {
+function KinTaleRow({ entry, bucket, catalog, onSelect }: KinTaleRowProps) {
   const state = kinTaleState(entry.status ?? '');
   const info = kinTaleStateInfo(state);
   const rawName = (entry.kinfolkName ?? '').trim();
@@ -518,7 +541,9 @@ function KinTaleRow({ entry, bucket, onSelect }: KinTaleRowProps) {
   const mediaCount = (entry.mediaFileIds ?? []).length;
   const kinCount = (entry.kinIds ?? []).length;
   const sentVia = entry.sentVia ?? '';
-  const serviceType = (entry.serviceType ?? '').trim();
+  // Blank stays blank (no "Visit" stand-in on a row that names no service).
+  const storedService = (entry.serviceType ?? '').trim();
+  const serviceType = storedService === '' ? '' : bookingServiceName(storedService, catalog);
   const authorDisplayName = (entry.authorDisplayName ?? '').trim();
   // Only a SENT (or otherwise dispatched) row carries a real channel; a
   // draft's blank sentVia would otherwise read as the misleading "imported"

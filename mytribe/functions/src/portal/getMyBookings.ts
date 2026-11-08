@@ -162,7 +162,12 @@ export async function getMyBookingsHandler(
       kinNames: [],
       auntieDisplayName: null,
       auntieAvatarUrl: null,
-      notes: stringOrNull(s['notes']),
+      // #1628: NEVER the session's `notes`. On `kin_care_sessions` that field
+      // is the office's admin-internal note (Auntie Time's private box: gate
+      // codes, key locations), and the #584 rules comment exists because the
+      // household must not read it. A visit with no booking request has no
+      // household-written note to show here, so there is nothing to project.
+      notes: null,
       requestedByUid: stringOrNull(s['createdBy']),
       createdAtMs: isoMillis(s['createdAt']),
       updatedAtMs: isoMillis(s['updatedAt']),

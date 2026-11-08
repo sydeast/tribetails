@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.generated';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import {
   ledgerCoversBalance,
   ledgerRowAppliedLabel,
@@ -8,6 +9,7 @@ import {
   ledgerRowCaveat,
   paymentDayLabel,
   paymentMethodLabel,
+  paymentsPanelIsEmpty,
   paymentsTotalCents,
   sessionDayLabel,
   sessionServiceLabel,
@@ -15,6 +17,7 @@ import {
   sessionsWithBrokenBacklink,
 } from '../lib/invoiceLedger';
 import { Banner } from './Banner';
+import { InfoTip } from './DenScreenKit';
 import { GhostButton } from './Buttons';
 import './InvoiceLedger.css';
 
@@ -124,12 +127,19 @@ function PaymentsPanel({
         Payments
       </h3>
 
-      {payments.length === 0 ? (
+      {/* #1568: the empty sentence only when NEITHER list has a row. With
+          history rows alone, the history table below is the truth and there is
+          no settlement table to show. On a zero balance the "nothing has come
+          off" clause is dropped: a settled bill with no rows anywhere is a
+          migrated label, and the clause would contradict its $0.00 due. */}
+      {paymentsPanelIsEmpty(ledger) ? (
         <p className="invoice-ledger__empty">
-          No payment has been recorded against this invoice, so nothing has come off its balance.
+          {ledger.amountDueCents > 0
+            ? 'No payment has been recorded against this invoice, so nothing has come off its balance.'
+            : 'No payment has been recorded against this invoice.'}
           {canRecordPayment && ' Use Record payment below to log one.'}
         </p>
-      ) : (
+      ) : payments.length === 0 ? null : (
         <table className="invoice-ledger__table">
           <caption className="invoice-ledger__caption">
             What settled this invoice. Its balance is calculated from these and nothing else.
@@ -195,21 +205,25 @@ function PaymentsPanel({
       {ledgerPayments.length > 0 && (
         <div className="invoice-ledger__scroll">
           <table className="invoice-ledger__table">
+            {/* #1609: the caption names the table. #1595: what the table covers
+                is the caption's info tip, not a paragraph standing above it. */}
             <caption className="invoice-ledger__caption">
-              Payment history. What the client actually paid, recorded for the books, and NOT counted
-              in the figures above. A row reads across as amount = applied + tip + balance; the fee is
-              the processor's cut, taken off what reaches the business rather than off the bill.
+              Payment history{' '}
+              <InfoTip text="What the client actually paid, recorded for the books, and NOT counted in the figures above. A row reads across as amount = applied + tip + balance; the fee is the processor's cut, taken off what reaches the business rather than off the bill." />
             </caption>
             <thead>
               <tr>
+                {/* #1609: the money first. Amount, Applied to, Tip, Fee and Balance
+                    sat past the right edge at phone width behind Method and
+                    Reference #, which now come last. */}
                 <th scope="col">Transaction date</th>
-                <th scope="col">Method</th>
-                <th scope="col">Reference #</th>
                 <th scope="col" className="invoice-ledger__num">Amount</th>
                 <th scope="col">Applied to</th>
                 <th scope="col" className="invoice-ledger__num">Tip</th>
                 <th scope="col" className="invoice-ledger__num">Fee</th>
                 <th scope="col" className="invoice-ledger__num">Balance</th>
+                <th scope="col">Method</th>
+                <th scope="col">Reference #</th>
               </tr>
             </thead>
             <tbody>
@@ -218,14 +232,6 @@ function PaymentsPanel({
                 return (
                   <tr key={row.paymentId}>
                     <td>{row.date.trim() === '' ? 'no date recorded' : row.date}</td>
-                    <td>{paymentMethodLabel(row.method)}</td>
-                    <td>
-                      {row.reference.trim() === '' ? (
-                        <span className="invoice-ledger__missing">none</span>
-                      ) : (
-                        row.reference
-                      )}
-                    </td>
                     {/* THE WHOLE SUM COLLECTED, tip included. Not amount + tip:
                         on the operator's real data the tip is already inside this
                         figure, and adding them counts the gratuity twice.
@@ -307,6 +313,14 @@ function PaymentsPanel({
                         <span className="invoice-ledger__note">held as credit</span>
                       )}
                     </td>
+                    <td>{paymentMethodLabel(row.method)}</td>
+                    <td>
+                      {row.reference.trim() === '' ? (
+                        <span className="invoice-ledger__missing">none</span>
+                      ) : (
+                        row.reference
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -360,13 +374,19 @@ function PaymentsPanel({
 function SessionsPanel({ ledger }: { ledger: GetInvoiceLedgerResult }) {
   const { sessions, missingSessionIds, orphanSessionIds, truncated } = ledger;
   const brokenBacklink = sessionsWithBrokenBacklink(sessions);
+  // #1744: a visit row names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
 
   return (
     <section className="invoice-ledger" aria-labelledby="invoice-ledger-sessions">
-      <h3 className="invoice-ledger__heading" id="invoice-ledger-sessions">
-        Linked visits
-      </h3>
-      <p className="invoice-ledger__subtitle">The visits this invoice bills.</p>
+      {/* #1595: the explanation is the heading's info tip, beside it rather
+          than inside it, so the heading's name stays "Linked visits". */}
+      <div className="invoice-ledger__titlerow">
+        <h3 className="invoice-ledger__heading" id="invoice-ledger-sessions">
+          Linked visits
+        </h3>
+        <InfoTip text="The visits this invoice bills." />
+      </div>
 
       {sessions.length === 0 ? (
         <p className="invoice-ledger__empty">
@@ -391,7 +411,7 @@ function SessionsPanel({ ledger }: { ledger: GetInvoiceLedgerResult }) {
                       for this visit comes FROM the visit, so a figure that looks
                       wrong is corrected there, not here. */}
                   <Link to="/sessions" search={{ sessionId: s.sessionId }}>
-                    {sessionServiceLabel(s.serviceType)}
+                    {sessionServiceLabel(s.serviceType, catalog)}
                   </Link>
                 </td>
                 <td>{sessionDayLabel(s)}</td>

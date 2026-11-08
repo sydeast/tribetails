@@ -104,7 +104,7 @@ class InvitesViewModelTest {
         val state = vm.uiState.value
         assertFalse(state.loaded)
         assertNotNull(state.error)
-        assertTrue(state.error!!.contains("listAllInvites failed"))
+        assertTrue(state.error!!.contains("Could not load"))
         assertTrue(state.error!!.contains("permission-denied"))
         assertTrue(state.all.isEmpty())
     }
@@ -154,12 +154,13 @@ class InvitesViewModelTest {
     // ── pure helpers ────────────────────────────────────────────────────────
 
     /**
-     * "Outstanding" answers "who never accepted". An EXPIRED invite belongs
-     * there; a REVOKED one does not, because revocation was a decision already
-     * taken about it.
+     * #1603: "Outstanding" is the invites still waiting on somebody. An EXPIRED
+     * invite can no longer be accepted, so it is under Expired; a REVOKED one
+     * was a decision already taken. The 2026-11-05 walk found Outstanding
+     * holding only expired rows.
      */
     @Test
-    fun `outstanding is pending, sent and expired, and never revoked`() {
+    fun `outstanding is pending and sent, never expired or revoked`() {
         val rows = listOf(
             invite(id = "p", status = MembersRepository.InviteStatus.PENDING),
             invite(id = "s", status = MembersRepository.InviteStatus.EMAIL_SENT),
@@ -167,7 +168,8 @@ class InvitesViewModelTest {
             invite(id = "a", status = MembersRepository.InviteStatus.ACCEPTED),
             invite(id = "r", status = MembersRepository.InviteStatus.REVOKED),
         )
-        assertEquals(listOf("p", "s", "x"), filterInvites(rows, InviteFilter.OUTSTANDING).map { it.invite.inviteId })
+        assertEquals(listOf("p", "s"), filterInvites(rows, InviteFilter.OUTSTANDING).map { it.invite.inviteId })
+        assertEquals(listOf("x"), filterInvites(rows, InviteFilter.EXPIRED).map { it.invite.inviteId })
         assertEquals(listOf("a"), filterInvites(rows, InviteFilter.ACCEPTED).map { it.invite.inviteId })
         assertEquals(listOf("r"), filterInvites(rows, InviteFilter.REVOKED).map { it.invite.inviteId })
         assertEquals(5, filterInvites(rows, InviteFilter.ALL).size)
@@ -185,7 +187,8 @@ class InvitesViewModelTest {
             status = MembersRepository.InviteStatus.EMAIL_SENT,
             effective = MembersRepository.InviteStatus.EXPIRED,
         )
-        assertEquals(listOf("l"), filterInvites(listOf(lapsed), InviteFilter.OUTSTANDING).map { it.invite.inviteId })
+        assertTrue(filterInvites(listOf(lapsed), InviteFilter.OUTSTANDING).isEmpty())
+        assertEquals(listOf("l"), filterInvites(listOf(lapsed), InviteFilter.EXPIRED).map { it.invite.inviteId })
         assertEquals(
             "Expired",
             groupInvitesByStatus(listOf(lapsed)).first { it.rows.isNotEmpty() }.heading,
@@ -247,14 +250,21 @@ class InvitesViewModelTest {
         assertEquals(listOf("Sent 2026-08-01", "revoked unknown"), adminInviteDateParts(revokedUndated))
     }
 
-    /** The full id is the claim token: the line carries the handle and never a URL. */
+    /**
+     * The full id is the claim token, and a database id (#1592): the line names
+     * the dates only, no part of the id, never a URL.
+     */
     @Test
-    fun `the meta line ends with the truncated handle and never the household`() {
-        val line = adminInviteMetaLine(invite(id = "rq_8fk29aLONGTAIL", household = "the Demos"))
-        assertEquals("Sent 2026-08-01 · expires 2026-08-15 · inviteId rq_8fk29…", line)
-        assertFalse(line.contains("rq_8fk29aLONGTAIL"))
+    fun `the meta line carries the dates, no invite id and never the household`() {
+        val row = invite(id = "rq_8fk29aLONGTAIL", household = "the Demos")
+        val line = adminInviteMetaLine(row)
+        assertEquals("Sent 2026-08-01 · expires 2026-08-15", line)
+        assertFalse(line.contains("rq_8fk29"))
+        assertFalse(line.contains("inviteId"))
         assertFalse(line.contains("?invite="))
         assertFalse(line.contains("the Demos"))
+        // The household Members screen's invite line follows the same rule.
+        assertFalse(inviteMetaLine(row.invite).contains("rq_8fk29"))
     }
 
     /** The mock's own tints, not the shared Members-screen ones. */

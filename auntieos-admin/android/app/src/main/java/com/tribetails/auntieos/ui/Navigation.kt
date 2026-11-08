@@ -151,7 +151,7 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object AdminKinTaleLogs : Screen("admin_kintale_logs", "KinTales", Lucide.LayoutDashboard)
     object AdminTrainingDocs : Screen("admin_training_docs", "Tribal Intel", Lucide.LayoutDashboard)
     object AdminKinCareSessions : Screen("admin_kin_care_sessions", "Auntie Time", Lucide.LayoutDashboard)
-    object KinCareDetail        : Screen("kin_care_detail/{kinCareId}", "Kin Care", Lucide.LayoutDashboard) {
+    object KinCareDetail        : Screen("kin_care_detail/{kinCareId}", "KinCare", Lucide.LayoutDashboard) {
         fun createRoute(kinCareId: String): String = "kin_care_detail/$kinCareId"
     }
     object ServiceManagement : Screen("service_management", "Services", Lucide.LayoutDashboard)
@@ -781,7 +781,21 @@ private fun AuthenticatedNavHost(
                 HomeScreen(
                     viewModel             = homeVm,
                     onNavigateToCommunicate = { navController.navigate(Screen.Communicate.route) },
+                    // #1563: a pending draft opens loaded in Communicate.
+                    onOpenDraft = { draftId ->
+                        commVm.loadDraft(draftId)
+                        navController.navigate(Screen.Communicate.route) { launchSingleTop = true }
+                    },
                     onNavigateToCalls     = { navController.navigate(Screen.Calls.route) },
+                    onNavigateToAuntieTime = {
+                        navController.navigate(Screen.AuntieTime.route) { launchSingleTop = true }
+                    },
+                    onNavigateToKinInCare = {
+                        // Opens the Directory's Kin tab narrowed to the pets the card counted.
+                        com.tribetails.auntieos.ui.directory.DirectoryDeepLink.requestKinInCare()
+                        navController.navigate(Screen.Directory.route) { launchSingleTop = true }
+                    },
+                    onNavigateToInvoices = { navController.navigate(Screen.AdminInvoices.route) },
                     onWriteKinTale        = { sessionId ->
                         navController.navigate(Screen.KinTaleReport.createRoute(sessionId))
                     },
@@ -1193,6 +1207,14 @@ private fun AuthenticatedNavHost(
                 AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
                     KinTaleLogsScreen(
                         onBack = { navController.popBackStack() },
+                        // #1563: rows did nothing here, because nothing was passed.
+                        // A report opens by its visit; a generated draft opens
+                        // loaded in Communicate, where it is reviewed and sent.
+                        onOpenReport = { sessionId -> navController.navigate(Screen.KinTaleReport.createRoute(sessionId)) },
+                        onOpenDraft = { draftId ->
+                            commVm.loadDraft(draftId)
+                            navController.navigate(Screen.Communicate.route) { launchSingleTop = true }
+                        },
                         // The logs mock's "Edit templates" head control.
                         onOpenTemplates = { navController.navigate(Screen.KinTaleTemplates.route) },
                     )

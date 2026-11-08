@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
-import { sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
-import { KIN_QUERY, KINFOLK_QUERY, type Kin, type Kinfolk } from '../api/directory';
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
+import { useCallback, useMemo, useState } from 'react';
+import { overdueBeforeWindowQuery, sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
+import { KIN_QUERY, type Kin } from '../api/directory';
 import { transitionBookingStatus } from '../api/bookingsWrite';
 import {
   sessionState,
@@ -22,10 +23,15 @@ import {
 } from '../lib/sessionFormat';
 import { cardLifecycleActionsFor, lifecycleNowIso } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
+import { completeRefusal } from '../lib/completeRule';
+import { useArrivalRule } from '../lib/useArrivalRule';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { directionsHref } from '../lib/directions';
+import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressCompleteness';
 import { DenScreenHeading, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
 import { AsyncLoading } from '../components/AsyncRegion';
 import { LoadingRow } from '../components/LoadingRow';
@@ -34,6 +40,7 @@ import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { VisitTrackingIndicator } from '../components/VisitTrackingIndicator';
+import { navKicker } from '../lib/nav';
 import './Sessions.css';
 
 /** Which body of data the screen is showing: the day-of board, or older history. */
@@ -157,6 +164,18 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
     [mode, archiveFrom, archiveTo, todayIso],
   );
   const { state: rows, hasMore, more, loadMore, reload } = usePagedCollection<SessionEntry>(spec);
+  // #1607: the overdue visits older than the window, so Overdue here counts the
+  // same visits the Bookings list marks OVERDUE. Board mode only.
+  const olderOverdueSpec = useMemo(() => overdueBeforeWindowQuery(todayIso), [todayIso]);
+  const olderOverdue = useCollection<SessionEntry>(olderOverdueSpec);
+  const withOlderOverdue = useCallback(
+    (data: SessionEntry[]): SessionEntry[] => {
+      if (olderOverdue.status !== 'ready') return data;
+      const seen = new Set(data.map((r) => r._id));
+      return [...data, ...olderOverdue.data.filter((r) => !seen.has(r._id))];
+    },
+    [olderOverdue],
+  );
 
   /**
    * THE TWO JOINS THE CARD NEEDS, both of them household-directory streams this
@@ -172,7 +191,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
    * the photo circles. Never a placeholder address and never a stock face, which
    * is the same rule `Avatar` already applies to a broken photo url.
    */
-  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinfolkState = useKinfolkRoster();
   const kinState = useCollection<Kin>(KIN_QUERY);
   const addressById = useMemo(() => {
     const map = new Map<string, string>();
@@ -186,11 +205,13 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
     for (const k of kinState.data) map.set(k._id, k);
     return map;
   }, [kinState]);
+  const catalog = useBookingCatalog();
 
   const cardContext: CardContext = {
     todayIso,
     addressById,
     kinById,
+    catalog,
     onSelect,
     onWritten: reload,
     ...(onComposeKinTale ? { onComposeKinTale } : {}),
@@ -203,12 +224,12 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
           the Directory mock marks its last word up as `<b>`, this one does not,
           so the kit's optional accent stays off here. */}
       <DenScreenHeading
-        kicker="The Den · Auntie Time"
+        kicker={navKicker('sessions')}
         title="🐾 Auntie Time"
         subtitle={
           mode === 'archive'
             ? 'Older history, by day. Pick a range; the year shows on any day outside this one.'
-            : 'Day-of view. Clock in, clock out, every Kin Care in flight.'
+            : 'Day-of view. Clock in, clock out, every KinCare in flight.'
         }
         trailing={
           <GhostButton
@@ -245,14 +266,14 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
 
       <AsyncRegion
         state={rows}
-        what="Kin Care sessions"
+        what="KinCare sessions"
         // The BOARD is never empty: four phase groups render whatever the data
         // says, so `isEmpty` is false there by construction and the "nothing on
         // the books" line rides UNDER the groups instead of replacing them. The
         // Archive is a plain list and keeps the ordinary empty state.
         isEmpty={(data) => mode === 'archive' && data.length === 0}
-        loading={<LoadingRow label="Loading Kin Care sessions…" className="sessions__hint" />}
-        empty={<EmptyHint>No Kin Cares in this range.</EmptyHint>}
+        loading={<LoadingRow label="Loading KinCare sessions…" className="sessions__hint" />}
+        empty={<EmptyHint>No KinCares in this range.</EmptyHint>}
       >
         {(data) => (
           <>
@@ -268,7 +289,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
                     stagger would clamp them inside the group instead of centring
                     them on the viewport. */}
                 <ul className="sessions__phases">
-                  {groupSessionsByPhase(data, todayIso).map((p) => (
+                  {groupSessionsByPhase(withOlderOverdue(data), todayIso).map((p) => (
                     <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
                       <h3 className="sessions__phase-header">
                         {p.label}
@@ -313,7 +334,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
                 />
                 {more.status === 'error' && (
                   <p className="sessions__more-error" role="alert">
-                    Couldn&rsquo;t load more Kin Care sessions. {more.message} The{' '}
+                    Couldn&rsquo;t load more KinCare sessions. {more.message} The{' '}
                     {String(data.length)} already loaded are unaffected.
                     {more.retry && (
                       <button type="button" className="async-retry" onClick={more.retry}>
@@ -336,6 +357,8 @@ interface CardContext {
   todayIso: string;
   addressById: Map<string, string>;
   kinById: Map<string, Kin>;
+  /** #1744: what a card's service is named against, never the stored `visit_60`. */
+  catalog: BookingCatalog;
   onSelect: (sessionId: string) => void;
   /** Re-runs the paged read after a write that changed the document. */
   onWritten: () => void;
@@ -397,7 +420,7 @@ function messageOf(err: unknown): string {
  * acts.
  */
 function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) {
-  const { todayIso, addressById, kinById, onSelect, onWritten, onComposeKinTale, onViewKinTale } =
+  const { todayIso, addressById, kinById, catalog, onSelect, onWritten, onComposeKinTale, onViewKinTale } =
     ctx;
   const state = sessionState(str(entry.status));
   const info = sessionStateInfo(state);
@@ -416,6 +439,20 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   const [completing, setCompleting] = useState(false);
   const [completeAsked, setCompleteAsked] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  // #1608: the operator's arrival-and-departure rule, checked BEFORE the
+  // confirm. The server still enforces it; this saves asking a question whose
+  // answer is already known to be no, and then making the operator wait for it.
+  const arrivalRule = useArrivalRule();
+
+  function askComplete() {
+    const refusal = completeRefusal(arrivalRule, entry);
+    if (refusal !== null) {
+      setCompleteError(refusal);
+      return;
+    }
+    setCompleteError(null);
+    setCompleteAsked(true);
+  }
 
   async function runComplete() {
     setCompleteAsked(false);
@@ -445,7 +482,9 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   const kinNames = arr<string>(entry.kinNames)
     .map((n) => n.trim())
     .filter((n) => n !== '');
-  const service = str(entry.serviceType).trim();
+  // #1744: the KinCare's name. Blank still drops out of the line.
+  const storedService = str(entry.serviceType).trim();
+  const service = storedService === '' ? '' : bookingServiceName(storedService, catalog);
   const dayKeyValue = sessionDayKey(str(entry.startTime));
   const when = sessionWindow(str(entry.startTime), str(entry.endTime));
   const day = dayKeyValue === 'Undated' ? '' : sessionDayLabel(dayKeyValue, todayIso);
@@ -535,6 +574,12 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           📍 {address}
         </a>
       )}
+      {/* #1602: "18605" was all the walk's chip said, with no hint. */}
+      {addressLooksIncomplete(address) && (
+        <p className="sessions__addr-hint" role="note">
+          {INCOMPLETE_ADDRESS_HINT}
+        </p>
+      )}
       {note !== '' && <p className="sessions__note">{note}</p>}
       {str(entry.invoiceId).trim() !== '' && <p className="sessions__invoice">Invoice linked</p>}
 
@@ -563,7 +608,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           {offersComplete && (
             <GhostButton
               label="Complete"
-              onClick={() => setCompleteAsked(true)}
+              onClick={askComplete}
               disabled={clock.saving || completing}
             />
           )}

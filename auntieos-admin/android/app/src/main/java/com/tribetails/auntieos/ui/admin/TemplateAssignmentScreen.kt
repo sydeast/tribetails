@@ -23,14 +23,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Workflow
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.data.repository.TemplateRepository
 import com.tribetails.auntieos.data.repository.isOverridden
+import com.tribetails.auntieos.data.repository.awaitingImport
+import com.tribetails.auntieos.data.repository.failsOnSend
+import com.tribetails.auntieos.data.repository.missingTemplateNote
 import com.tribetails.auntieos.data.repository.resolvedTemplateMissing
-import com.tribetails.auntieos.data.repository.routingSource
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
@@ -103,6 +104,17 @@ private data class EditTarget(
     val binding: TemplateRepository.TemplateBinding?,
 )
 
+/** #1592: Template Routing copy, with no database path and no function name. */
+internal const val TEMPLATE_MISSING_LINE = "The template this sends is missing, so its next send fails."
+
+internal const val ROUTING_TABLE_EMPTY =
+    "No notifications came back. This list comes with the app, so an empty one means something " +
+        "is broken. Reload, and report it if it stays empty."
+
+internal fun overrideDialogHint(): String =
+    "Without an override this sends its own template, matched by name. Saving here points it at " +
+        "another one, for email only."
+
 /**
  * Standalone Template Routing screen. Kept for direct use; the merged two-tab
  * [TemplatesScreen] renders [TemplateAssignmentBody] inside its shared scaffold.
@@ -165,11 +177,13 @@ fun TemplateAssignmentBody(
     LaunchedEffect(Unit) { reload() }
 
     val bindingByKey = bindings.associateBy { it.catalogKey }
-    val templateTitles = templates.associate { it.templateId to it.title }
+    // #1592: named by what the bank doc holds, never by its id.
+    val templateTitles = templates.associate { it.templateId to bankTemplateName(it) }
     val bankIds = templates.map { it.templateId }.toSet()
     val bankLoaded = !loading && templatesError == null && templates.isNotEmpty()
     val overrideCount = catalogRows.count { isOverridden(it) }
-    val brokenCount = catalogRows.count { resolvedTemplateMissing(it, bankIds, bankLoaded) }
+    val brokenCount = catalogRows.count { failsOnSend(it, bankIds, bankLoaded) }
+    val awaitingImportRows = catalogRows.filter { awaitingImport(it, bankIds, bankLoaded) }
     val templatesMissing = !loading && templatesError == null && templates.isEmpty()
 
     LazyColumn(
@@ -212,7 +226,7 @@ fun TemplateAssignmentBody(
                         onDismiss = { templatesError = null },
                     ) {
                         Text(
-                            "$msg Rows show template ids instead of titles until templates load, and an override cannot be saved.",
+                            "$msg Rows cannot name their templates until the bank loads, and an override cannot be saved.",
                             style = AuntieTheme.typography.bodyMedium,
                             color = c.textPrimary,
                         )
@@ -294,17 +308,18 @@ fun TemplateAssignmentBody(
                 ) {
                     when {
                         loading -> EmptyHint("Loading the routing table…")
-                        catalogRows.isEmpty() -> EmptyHint(
-                            "listCatalogKeys returned no keys. The catalog is compiled into the backend, so treat this as a broken deploy rather than an empty setup.",
-                        )
+                        catalogRows.isEmpty() -> EmptyHint(ROUTING_TABLE_EMPTY)
                         else -> {
                             Text(
                                 buildString {
                                     append("${catalogRows.size} keys route today. ")
                                     append("$overrideCount of them through an override, the rest by name.")
                                     if (brokenCount > 0) {
-                                        val phrase = if (brokenCount == 1) "1 key resolves" else "$brokenCount keys resolve"
-                                        append(" $phrase to a template document that does not exist and will throw on the next send.")
+                                        val phrase = if (brokenCount == 1) "1 key fails" else "$brokenCount keys fail"
+                                        append(" $phrase on the next send because the template does not exist.")
+                                    }
+                                    if (awaitingImportRows.isNotEmpty()) {
+                                        append("\n\n${awaitingImportLine(awaitingImportRows)}")
                                     }
                                 },
                                 style = AuntieTheme.typography.bodyMedium,
@@ -315,7 +330,7 @@ fun TemplateAssignmentBody(
                             AuntieSearchField(
                                 value = query,
                                 onValueChange = { query = it },
-                                placeholder = "Search by catalog key, name or template...",
+                                placeholder = "Search by notification or template...",
                                 onClear = { query = "" },
                                 modifier = Modifier.fillMaxWidth(),
                             )
@@ -327,13 +342,14 @@ fun TemplateAssignmentBody(
                                 val q = query.trim().lowercase()
                                 catalogRows.filter {
                                     it.key.lowercase().contains(q) ||
-                                        it.label.lowercase().contains(q) ||
-                                        it.resolvedTemplateId.lowercase().contains(q)
+                                        catalogKeyName(it).lowercase().contains(q) ||
+                                        it.resolvedTemplateId.lowercase().contains(q) ||
+                                        templateTitles[it.resolvedTemplateId].orEmpty().lowercase().contains(q)
                                 }
                             }
 
                             if (visible.isEmpty()) {
-                                EmptyHint("No catalog keys match \"${query.trim()}\".")
+                                EmptyHint("No notifications match \"${query.trim()}\".")
                             } else {
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(dims.space2),
@@ -343,8 +359,10 @@ fun TemplateAssignmentBody(
                                         RoutingRow(
                                             row = row,
                                             binding = bindingByKey[row.key],
-                                            templateTitle = templateTitles[row.resolvedTemplateId],
-                                            missing = resolvedTemplateMissing(row, bankIds, bankLoaded),
+                                            templateNames = templateTitles,
+                                            bankLoaded = bankLoaded,
+                                            missing = failsOnSend(row, bankIds, bankLoaded),
+                                            missingNote = missingTemplateNote(row, resolvedTemplateMissing(row, bankIds, bankLoaded)),
                                             onEdit = {
                                                 selected = EditTarget(row, bindingByKey[row.key])
                                             },
@@ -407,38 +425,28 @@ fun TemplateAssignmentBody(
 }
 
 /**
- * One catalog key as a Den entity row: the dotted key is the title, the "sends X"
- * line plus where that came from sit in the subtitle, and a missing template document
- * is spelled out rather than left to the reader. An OVERRIDE / BY NAME pill and an
- * Edit ghost button trail.
+ * One catalog key as a Den entity row: the notification's name is the title (#1592:
+ * never the dotted key), the "sends X" line plus where that came from sit in the
+ * subtitle ([routingRowSubtitle]), and a missing template document is spelled out
+ * rather than left to the reader. An OVERRIDE / BY NAME pill and an Edit ghost
+ * button trail.
  */
 @Composable
 private fun RoutingRow(
     row: TemplateRepository.CatalogKey,
     binding: TemplateRepository.TemplateBinding?,
-    templateTitle: String?,
+    templateNames: Map<String, String>,
+    bankLoaded: Boolean,
     missing: Boolean,
+    missingNote: String? = null,
     onEdit: () -> Unit,
 ) {
     val dims = AuntieTheme.dims
 
-    // triggerKey override echo (always on): only renders for a GENUINE override
-    // (triggerKey present AND different from catalogKey). The server defaults a blank
-    // triggerKey to the catalogKey, so this guard stops it firing on every binding.
-    val genuineOverride = genuineTriggerOverride(binding?.triggerKey, row.key)
-
-    val subtitle = buildString {
-        append("sends ${templateTitle ?: row.resolvedTemplateId}")
-        append("\n${routingSource(row)}")
-        binding?.audience?.let { append("\nAudience: $it (stored, no sender reads it)") }
-        genuineOverride?.let { append("\noverride: $it") }
-        if (missing) {
-            append("\nNo emailTemplates/${row.resolvedTemplateId} document. This key throws \"email template missing\" on its next send.")
-        }
-    }
+    val subtitle = routingRowSubtitle(row, binding, templateNames, bankLoaded, missing, missingNote)
 
     AuntieEntityRow(
-        title = row.key,
+        title = catalogKeyName(row),
         subtitle = subtitle,
         leading = {
             AuntieIconTile(icon = Lucide.Workflow, tone = AuntieStatusTone.Purple, size = 38.dp)
@@ -486,14 +494,14 @@ private fun BindingEditorDialog(
 
     AuntieDialog(
         visible = true,
-        title = if (row.bound) "Edit override: ${row.key}" else "Override: ${row.key}",
+        title = overrideDialogTitle(row),
         onDismiss = onDismiss,
         maxWidth = 560.dp,
         closeIcon = Lucide.X,
         leadingIcon = {
             AuntieIconTile(icon = Lucide.Workflow, tone = AuntieStatusTone.Purple, size = 38.dp)
         },
-        hint = "Without an override this key sends emailTemplates/${row.defaultTemplateId}, matched by name. Saving here points it somewhere else, for email only.",
+        hint = overrideDialogHint(),
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
             if (onUnassign != null) {
@@ -530,15 +538,15 @@ private fun BindingEditorDialog(
         // The catalog key is never typed. It is the binding doc id and it comes from
         // the routing table, which is what makes the misspelling in issue #382
         // unenterable on this screen.
-        AuntieFieldLabel(text = "Catalog Key")
+        AuntieFieldLabel(text = "Notification")
         Text(
-            row.key,
-            style = AuntieTheme.typography.mono.copy(fontSize = 14.sp),
+            catalogKeyName(row),
+            style = AuntieTheme.typography.bodyMedium,
             color = c.textPrimary,
             modifier = Modifier.padding(top = dims.space1, bottom = dims.space1),
         )
         AuntieNoteCallout(
-            text = "Catalog key is the binding's identity and cannot be changed here. To route a different key, close this and open that key's row.",
+            text = "The notification cannot be changed here. To route a different one, close this and open its row.",
         )
 
         // Template selector: one selectable chip per EmailTemplate (title + optional
@@ -568,7 +576,7 @@ private fun BindingEditorDialog(
                             AuntieChip(
                                 selected = tpl.templateId == templateId,
                                 onClick = { templateId = tpl.templateId },
-                                label = tpl.title,
+                                label = bankTemplateName(tpl),
                             )
                             tpl.category?.let { cat ->
                                 Text(

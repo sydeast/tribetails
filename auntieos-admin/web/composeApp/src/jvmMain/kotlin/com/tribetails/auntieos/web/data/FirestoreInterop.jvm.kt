@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * Desktop (JVM) Firestore actuals.
@@ -52,6 +53,8 @@ object JvmFirestoreFixtures {
     var trainingDocs: List<TrainingDocument>? = null
     var dynamicFields: List<DynamicField>? = null
     var businessSettings: BusinessSettings? = null
+    /** #1608: the raw `requireArrivalDepartureVerification` value; null reads as an absent key. */
+    var arrivalRuleRaw: Boolean? = null
     var callableResponses: Map<String, String> = emptyMap()
     /** #867 review, #890: callables that answer with this Err message, so a test can show a screen a failed call. */
     var callableErrors: Map<String, String> = emptyMap()
@@ -116,6 +119,7 @@ object JvmFirestoreFixtures {
         voicemails = null; calls = null; sms = null; emails = null
         activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
         callableResponses = emptyMap(); callableErrors = emptyMap(); callableErrorCodes = emptyMap(); broadcastRows = null; incomingKinCares = null
+        arrivalRuleRaw = null
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null; callablePayloads.clear()
         lastWrite = null
@@ -278,6 +282,10 @@ internal actual fun platformInvoicesStream(): Flow<FirestoreResult<List<Invoice>
     JvmFirestoreFixtures.invoices?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<Invoice>("invoices") }
 
+// #1567: a fixture run has no server to re-read, so it answers null and the
+// screen says it cannot tell, which is the honest answer there too.
+internal actual suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject? =
+    if (JvmFirestoreFixtures.invoices != null) null else JvmFirestoreRest.getDocPlain("invoices", invoiceId)
 internal actual fun platformActivityStream(): Flow<FirestoreResult<List<ActivityLogEntry>>> =
     JvmFirestoreFixtures.activity?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<ActivityLogEntry>("activity_log") }
@@ -346,6 +354,19 @@ internal actual fun platformBusinessSettingsStream(): Flow<FirestoreResult<Busin
             lastLoadedBusinessSettings = loaded
             loaded
         }
+
+// #1608: the raw switch, never the decoded model (whose default is `true`).
+// Only an explicit boolean `true` turns the rule on, as in `arrivalVerification.ts`.
+internal actual suspend fun platformArrivalRuleRequired(): WriteResult<Boolean> =
+    if (JvmFirestoreFixtures.active || JvmFirestoreFixtures.arrivalRuleRaw != null) {
+        WriteResult.Ok(JvmFirestoreFixtures.arrivalRuleRaw == true)
+    } else {
+        transportResult("settings read failed") {
+            val raw = JvmFirestoreRest.getDocPlain("business_settings", BUSINESS_SETTINGS_DOC_ID)
+                ?.get("requireArrivalDepartureVerification")
+            WriteResult.Ok((raw as? JsonPrimitive)?.booleanOrNull == true)
+        }
+    }
 
 internal actual fun platformBookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>> =
     JvmFirestoreFixtures.bookingRequests?.let { fixtureFlow(it) }
@@ -542,10 +563,17 @@ internal actual suspend fun platformPickAndUploadKinTaleMedia(sessionId: String,
 // client deletes on media_files outright.
 internal actual suspend fun platformUploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String): WriteResult<MediaFile> =
     JvmMediaUpload.upload(entityId, entityType, bytes, mimeType)
-// Run-4 #4b: bulk multi-file picker is mobile/web-only on desktop (same as the
-// KinTale multi path); single uploads still route through JvmMediaUpload above.
-internal actual suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>> =
-    stubWriteResult("Bulk media upload is mobile-only")
+// Run-4 #4b: the multi-file picker is mobile-only on desktop, but the desktop
+// console is the fallback for the web app, so the Gallery's Upload must work
+// here. It picks ONE file through the Swing chooser (JvmMediaUpload), the same
+// pipeline the single uploads use, instead of reporting "mobile-only" (#1588).
+// An empty chooser result comes back as "No file selected", which the Gallery
+// reads as a cancelled upload.
+internal actual suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int, kinfolkId: String): WriteResult<List<MediaFile>> =
+    when (val r = JvmMediaUpload.upload(entityId, entityType, byteArrayOf(), "", kinfolkId)) {
+        is WriteResult.Ok -> WriteResult.Ok(listOf(r.value))
+        is WriteResult.Err -> r
+    }
 internal actual suspend fun platformCreateKinTaleTemplate(template: KinTaleTemplate): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kintale_templates", jsonOut.encodeToString(template))) }
 // ISSUE #616. This was patchFields("kintale_templates", id, {"deleted": true}), a

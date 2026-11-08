@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 enum class InviteFilter(val label: String) {
     OUTSTANDING("Outstanding"),
     ACCEPTED("Accepted"),
+    EXPIRED("Expired"),
     REVOKED("Revoked"),
     ALL("All"),
 }
@@ -41,17 +42,19 @@ enum class InviteFilter(val label: String) {
 /**
  * The statuses each filter admits, or null for "everything".
  *
- * OUTSTANDING answers "who never accepted", so an EXPIRED invite belongs in it:
- * that is still somebody who never came in, and it is the row most likely to
- * need a second send. REVOKED does not: that one was a decision already taken.
+ * #1603: OUTSTANDING is the invites still waiting on somebody, PENDING and
+ * EMAIL_SENT. An EXPIRED invite can no longer be accepted, so it has its own
+ * filter (the 2026-11-05 walk found Outstanding holding only expired rows).
+ * REVOKED is not outstanding either: that one was a decision already taken.
+ * Same filters as the admin web's Invites screen.
  */
 private fun statusesFor(filter: InviteFilter): Set<MembersRepository.InviteStatus>? = when (filter) {
     InviteFilter.OUTSTANDING -> setOf(
         MembersRepository.InviteStatus.PENDING,
         MembersRepository.InviteStatus.EMAIL_SENT,
-        MembersRepository.InviteStatus.EXPIRED,
     )
     InviteFilter.ACCEPTED -> setOf(MembersRepository.InviteStatus.ACCEPTED)
+    InviteFilter.EXPIRED -> setOf(MembersRepository.InviteStatus.EXPIRED)
     InviteFilter.REVOKED -> setOf(MembersRepository.InviteStatus.REVOKED)
     InviteFilter.ALL -> null
 }
@@ -152,7 +155,7 @@ class InvitesViewModel(
                     // one.
                     _uiState.value = _uiState.value.copy(
                         loading = false,
-                        error = "listAllInvites failed: ${err.message ?: "Load failed"}",
+                        error = "Could not load: ${err.message ?: "Load failed"}",
                     )
                 },
             )

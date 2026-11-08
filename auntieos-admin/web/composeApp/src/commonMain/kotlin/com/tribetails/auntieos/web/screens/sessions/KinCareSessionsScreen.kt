@@ -26,6 +26,7 @@ import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlinx.coroutines.flow.Flow
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import com.tribetails.auntieos.web.observability.rememberReportingScope
@@ -122,6 +123,7 @@ fun KinCareSessionsScreen(
 
 private enum class Phase(val label: String, val tone: AuntieStatusTone) {
     Active        ("Active",   AuntieStatusTone.Teal),
+    Overdue       ("Overdue",  AuntieStatusTone.Warning),
     Upcoming      ("Upcoming", AuntieStatusTone.Orange),
     CompletedToday("Recent",   AuntieStatusTone.Muted),
 }
@@ -145,6 +147,11 @@ private fun AuntieTimeListScreen(
     // §A.8: Business-Settings time blocks drive the "Evening block" descriptor on cards.
     val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val timeBlocks = remember(settingsState) { (settingsState as? FirestoreResult.Data)?.value?.timeBlocks.orEmpty() }
+    // #1608: "Verify arrival and departure", read raw (absent is off, as on the
+    // server). Null until read, or when the read fails: then the server decides.
+    val arrivalRule by produceState<Boolean?>(initialValue = null) {
+        value = (client.arrivalRuleRequired() as? WriteResult.Ok)?.value
+    }
     // Resolve a session's start time onto its block label.
     val timeBlockLabelFor: (KinCareSession) -> String? = { s ->
         resolveTimeBlock(s.startTime, timeBlocks)?.label
@@ -234,10 +241,10 @@ private fun AuntieTimeListScreen(
         // mislabeled Schedule subtitle was removed; that content lives here, not nowhere.
         // TODO(auntie copy): any subtitle rewording to surface "route" is author-owned.
         DenScreenHeading(
-            kicker     = "The Den · Auntie Time",
+            kicker     = "Care Ops · Auntie Time",
             title      = "Auntie",
             accentTail = "Time.",
-            subtitle   = "Day-of view. Clock in, clock out, every Kin Care in flight.",
+            subtitle   = "Day-of view. Clock in, clock out, every KinCare in flight.",
         )
         Spacer(Modifier.height(20.dp))
 
@@ -265,7 +272,7 @@ private fun AuntieTimeListScreen(
             is FirestoreResult.Error ->
                 AuntieBanner(
                     tone  = AuntieBannerTone.Error,
-                    title = "Could not load your Kin Cares",
+                    title = "Could not load your KinCares",
                     icon  = Lucide.TriangleAlert,
                 ) {
                     Text(
@@ -279,7 +286,8 @@ private fun AuntieTimeListScreen(
                 val today = nowIso().take(10)
                 // Only show sessions that are relevant for a day-of operational view:
                 //   Active:   always (any date, currently in flight)
-                //   Upcoming: today and next 14 days only (hides stale migration noise)
+                //   Overdue:  SCHEDULED more than a day past its slot, back 30 days (#702, #1590)
+                //   Upcoming: yesterday through the next 14 days (hides stale migration noise)
                 //   Recent:   completed/cancelled today or yesterday only
                 // NOTE (audit): DRAFT/PENDING bookings are intentionally excluded;
                 // a booking surfaces here only once it is approved to SCHEDULED.
@@ -290,7 +298,7 @@ private fun AuntieTimeListScreen(
                 } else {
                     val grouped = visible
                         .sortedBy { it.startTime }   // earliest first inside each phase
-                        .groupBy { phaseFor(it) }
+                        .groupBy { phaseFor(it, today) }
 
                     // Real stat row, computed from the same stream (no extra fetch):
                     // in-flight count, today's scheduled run, and today's wraps.
@@ -325,15 +333,27 @@ private fun AuntieTimeListScreen(
                                     sessions = items,
                                     kinfolkById = kinfolkById,
                                     kinById = kinById,
+                                    arrivalRule = arrivalRule,
+                                    onRefused = { msg -> showToast("Couldn't complete: $msg", ToastKind.Error) },
                                     breadcrumbsFor = { client.breadcrumbsStream(it) },
                                     timeBlockLabelFor = timeBlockLabelFor,
                                     onOpenDetail = onOpenDetail,
                                     onWriteKinTale = onWriteKinTale,
-                                    onPatch = { id, patch, successMsg ->
+                                    onWrite = { id, write, successMsg ->
                                         scope.launch {
-                                            when (val r = client.patchKinCare(id, patch)) {
+                                            // #1617: the two terminal actions go through
+                                            // transitionBookingStatus; the rules refuse a
+                                            // client write of COMPLETED or CANCELLED.
+                                            val r = when (write) {
+                                                is KinCareWrite.Patch -> client.patchKinCare(id, write.fields)
+                                                is KinCareWrite.Transition -> when (write.action) {
+                                                    "COMPLETE" -> client.completeKinCare(id, write.completedAt.orEmpty())
+                                                    else       -> client.cancelBooking(id)
+                                                }
+                                            }
+                                            when (r) {
                                                 is WriteResult.Ok  -> {
-                                                    when (gpsEffectFor(patch)) {
+                                                    when (gpsEffectAfter(write)) {
                                                         GpsEffect.Start -> startGpsFor(id)
                                                         GpsEffect.Stop  -> stopGpsFor(id)
                                                         GpsEffect.None  -> Unit
@@ -380,7 +400,7 @@ private fun StatRow(activeCount: Int, upcomingToday: Int, recentDone: Int) {
         StatCard(
             label   = "Wrapped today",
             value   = recentDone.toString(),
-            trend   = "completed Kin Cares",
+            trend   = "completed KinCares",
             tone    = AuntieStatusTone.Success,
             modifier = Modifier.weight(1f),
         )
@@ -394,11 +414,13 @@ private fun PhaseGroup(
     sessions: List<KinCareSession>,
     kinfolkById: (String) -> Kinfolk?,
     kinById: Map<String, Kin>,
+    arrivalRule: Boolean?,
+    onRefused: (String) -> Unit,
     breadcrumbsFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
     timeBlockLabelFor: (KinCareSession) -> String?,
     onOpenDetail: (String) -> Unit,
     onWriteKinTale: (String) -> Unit,
-    onPatch: (id: String, patch: Map<String, String>, successMsg: String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     // Each phase is a Den glass panel; the count rides in the panel trailing slot
     // as a toned status pill (replaces the bespoke mockup .phlab chip).
@@ -421,11 +443,13 @@ private fun PhaseGroup(
                     address     = kinfolk?.serviceAddress.orEmpty(),
                     photoUrl    = kinfolk?.profilePictureUrl.orEmpty(),
                     kinAvatars  = kinAvatarsForSession(session, kinById),
+                    arrivalRule = arrivalRule,
+                    onRefused   = onRefused,
                     breadcrumbsFor = breadcrumbsFor,
                     timeBlockLabel = timeBlockLabelFor(session),
                     onOpenDetail = { onOpenDetail(session._id) },
                     onWriteKinTale = { onWriteKinTale(session._id) },
-                    onPatch     = onPatch,
+                    onWrite     = onWrite,
                 )
             }
         }
@@ -438,11 +462,13 @@ private fun KinCareCard(
     address: String,
     photoUrl: String,
     kinAvatars: List<KinAvatar>,
+    arrivalRule: Boolean?,
+    onRefused: (String) -> Unit,
     breadcrumbsFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
     timeBlockLabel: String?,
     onOpenDetail: () -> Unit,
     onWriteKinTale: () -> Unit,
-    onPatch: (id: String, patch: Map<String, String>, successMsg: String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     val tone = statusTone(session.status)
@@ -524,7 +550,8 @@ private fun KinCareCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         if (session.serviceType.isNotBlank()) {
-                            Text(session.serviceType, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            // #1744: the KinCare's name, never the stored `visit_60`.
+                            Text(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current.nameOf(session.serviceType), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             Text("·", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
                         }
                         Text(sessionWindow(session), style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -541,7 +568,7 @@ private fun KinCareCard(
                     tone  = tone,
                     mono  = true,
                 )
-                KebabMenu(session = session, onPatch = onPatch)
+                KebabMenu(session = session, arrivalRule = arrivalRule, onRefused = onRefused, onWrite = onWrite)
             }
 
             // ---- Live GPS indicator (only while ARRIVED + tracking) ----
@@ -565,6 +592,14 @@ private fun KinCareCard(
             if (address.isNotBlank()) {
                 AddressChip(address)
             }
+            // #1602: "18605" was all the walk's chip said, with no hint.
+            if (addressLooksIncomplete(address)) {
+                Text(
+                    INCOMPLETE_ADDRESS_HINT,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.warning,
+                )
+            }
 
             // ---- One-line notes preview ----
             if (session.notes.isNotBlank()) {
@@ -584,7 +619,7 @@ private fun KinCareCard(
             }
 
             // ---- State-aware action row ----
-            ActionRow(session = session, onPatch = onPatch, onWriteKinTale = onWriteKinTale)
+            ActionRow(session = session, onWrite = onWrite, onWriteKinTale = onWriteKinTale)
         }
     }
 }
@@ -592,14 +627,14 @@ private fun KinCareCard(
 @Composable
 private fun ActionRow(
     session: KinCareSession,
-    onPatch: (id: String, patch: Map<String, String>, successMsg: String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
     onWriteKinTale: () -> Unit,
 ) {
     val now = nowIso()
     // Fires [action] through the shared pure patch/message builders so the button
     // wiring holds no transition logic of its own (see kinCarePatch below).
     fun fire(action: AuntieTimeAction) =
-        onPatch(session._id, kinCarePatch(session, action, now), kinCareSuccessMessage(action))
+        onWrite(session._id, kinCareWrite(session, action, now), kinCareSuccessMessage(action))
 
     when (session.status.uppercase()) {
         "SCHEDULED" -> Row(
@@ -678,7 +713,9 @@ private fun ActionRow(
 @Composable
 private fun KebabMenu(
     session: KinCareSession,
-    onPatch: (id: String, patch: Map<String, String>, successMsg: String) -> Unit,
+    arrivalRule: Boolean?,
+    onRefused: (String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     val terminal = session.status.equals("COMPLETED",  ignoreCase = true) ||
@@ -706,8 +743,16 @@ private fun KebabMenu(
                 text = { Text("Mark Completed") },
                 onClick = {
                     open = false
-                    val a = AuntieTimeAction.MarkCompleted
-                    onPatch(session._id, kinCarePatch(session, a, nowIso()), kinCareSuccessMessage(a))
+                    // #1608: a Mark Completed the server is certain to refuse is
+                    // not sent; the operator reads the same sentence straight away.
+                    // #1617: one that may land goes through transitionBookingStatus.
+                    val refusal = completeRefusal(arrivalRule, session)
+                    if (refusal != null) {
+                        onRefused(refusal)
+                    } else {
+                        val a = AuntieTimeAction.MarkCompleted
+                        onWrite(session._id, kinCareWrite(session, a, nowIso()), kinCareSuccessMessage(a))
+                    }
                 },
                 leadingIcon = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(16.dp)) },
             )
@@ -716,7 +761,7 @@ private fun KebabMenu(
                 onClick = {
                     open = false
                     val a = AuntieTimeAction.Cancel
-                    onPatch(session._id, kinCarePatch(session, a, nowIso()), kinCareSuccessMessage(a))
+                    onWrite(session._id, kinCareWrite(session, a, nowIso()), kinCareSuccessMessage(a))
                 },
                 leadingIcon = { Icon(Lucide.Ban, contentDescription = null, modifier = Modifier.size(16.dp)) },
             )
@@ -784,7 +829,7 @@ private fun EmptyState() {
     GlassSurface(cornerRadius = 16.dp, modifier = Modifier.fillMaxWidth()) {
         AuntieEmptyState(
             title   = "Nothing in flight right now",
-            message = "Approved Kin Cares for today and the next two weeks land here, plus anything " +
+            message = "Approved KinCares for today and the next two weeks land here, plus anything " +
                       "completed or cancelled since yesterday. New bookings show up once you approve them " +
                       "on the Bookings screen.",
             icon    = Lucide.PawPrint,
@@ -804,8 +849,9 @@ internal enum class AuntieTimeAction {
 }
 
 /**
- * The exact Firestore patch a transition writes. [now] is the caller's clock
- * (`nowIso()` at composition) so the field set is deterministic under test.
+ * The exact Firestore patch an in-visit clock action writes. [now] is the
+ * caller's clock (`nowIso()` at composition) so the field set is deterministic
+ * under test. Mark Completed and Cancel are not patches; see [kinCareWrite].
  *
  * Undo Arrived is the subtle one: it rewinds to ON_MY_WAY only when the session
  * actually recorded an on-my-way stamp, otherwise all the way to SCHEDULED, and
@@ -839,8 +885,43 @@ internal fun kinCarePatch(
         "arrivalAccuracyMeters"    to "",
         "arrivalLocationCheckedAt" to "",
     )
-    AuntieTimeAction.MarkCompleted -> mapOf("status" to "COMPLETED", "completedAt" to now)
-    AuntieTimeAction.Cancel        -> mapOf("status" to "CANCELLED")
+    AuntieTimeAction.MarkCompleted,
+    AuntieTimeAction.Cancel        -> throw IllegalArgumentException(
+        "$action is a terminal transition and goes through transitionBookingStatus, never a patch (#1617)",
+    )
+}
+
+/**
+ * How one Auntie Time action reaches the server.
+ *
+ * ISSUE #1617: the kebab's Mark Completed and Cancel KinCare used to be a
+ * [kinCarePatch] like the clock buttons, writing `status=COMPLETED` or
+ * `CANCELLED` straight to the document. `firestore.rules`
+ * (`bookingTerminalFieldsUntouched`) refuses a client write of a terminal
+ * status or `completedAt` for every caller, so both items failed every time on
+ * this client. Web (`Sessions.tsx`) and Android (`KinCareRepository`) already
+ * send them through `transitionBookingStatus`, which runs the transition
+ * machine, the operator's arrival rule and the audit trail. This client now
+ * does the same; the in-visit clock stays a direct patch, which the rules allow
+ * so the field app keeps working offline.
+ */
+internal sealed interface KinCareWrite {
+    /** A direct field patch on `kin_care_sessions/{id}`: the in-visit clock. */
+    data class Patch(val fields: Map<String, String>) : KinCareWrite
+
+    /** A `transitionBookingStatus` call. [completedAt] rides only on COMPLETE. */
+    data class Transition(val action: String, val completedAt: String? = null) : KinCareWrite
+}
+
+/** The write [action] makes on [session], with [now] as the stamp. */
+internal fun kinCareWrite(
+    session: KinCareSession,
+    action: AuntieTimeAction,
+    now: String,
+): KinCareWrite = when (action) {
+    AuntieTimeAction.MarkCompleted -> KinCareWrite.Transition("COMPLETE", completedAt = now)
+    AuntieTimeAction.Cancel        -> KinCareWrite.Transition("CANCEL")
+    else                           -> KinCareWrite.Patch(kinCarePatch(session, action, now))
 }
 
 /** Success-toast copy for a transition. */
@@ -855,6 +936,16 @@ internal fun kinCareSuccessMessage(action: AuntieTimeAction): String = when (act
 
 /** What a successful patch does to the per-session GPS tracker. */
 internal enum class GpsEffect { Start, Stop, None }
+
+/**
+ * GPS side effect for a write that has already succeeded. A terminal transition
+ * ends the visit, so it stops tracking, as the COMPLETED and CANCELLED patches
+ * did before #1617.
+ */
+internal fun gpsEffectAfter(write: KinCareWrite): GpsEffect = when (write) {
+    is KinCareWrite.Patch      -> gpsEffectFor(write.fields)
+    is KinCareWrite.Transition -> GpsEffect.Stop
+}
 
 /**
  * GPS side effect for a patch that has already been written successfully.
@@ -877,12 +968,20 @@ internal fun gpsEffectFor(patch: Map<String, String>): GpsEffect =
  * Day-of window filter for the Auntie Time list, given [today] as "YYYY-MM-DD".
  *
  *   in flight (ON_MY_WAY / ARRIVED / DEPARTED) -> always visible, any date
- *   SCHEDULED                                  -> yesterday .. today + 14 days
+ *   SCHEDULED                                  -> any past date .. today + 14 days
  *   COMPLETED / CANCELLED                      -> yesterday onward
  *   anything else (DRAFT / PENDING / REJECTED)  -> hidden BY DESIGN (AO-60)
  *
  * A booking surfaces here only once it is approved to SCHEDULED; the Bookings
  * screen owns the DRAFT/PENDING queue.
+ *
+ * The SCHEDULED lower bound used to be yesterday, so a visit that missed its
+ * slot by more than a day vanished from the board (#702 fixed web and Android;
+ * #1590 brings this console level, because Home now links to the Overdue group).
+ * #1590 still capped it at 30 days back; #1704 drops the cap, because
+ * web's Auntie Time also reads every SCHEDULED visit older than its window
+ * (`overdueBeforeWindowQuery`, #1607's one definition of overdue), so a July visit
+ * nobody closed out is Overdue here and in Home's Today's Pack count too.
  */
 internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Boolean {
     val status    = session.status.uppercase()
@@ -891,12 +990,27 @@ internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Bool
     val cutoff    = dateAddDays(today, 14)
     return when {
         status in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> true
-        status == "SCHEDULED"                               -> date in yesterday..cutoff
+        status == "SCHEDULED"                               -> date.length == 10 && date <= cutoff
         status in setOf("COMPLETED", "CANCELLED")           -> date >= yesterday
         else                                                -> false
     }
 }
-
+/**
+ * A SCHEDULED visit whose slot passed more than a day ago (#702): yesterday is
+ * still "today's run sheet", the day before is a problem to close out.
+ */
+internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean {
+    if (session.status.uppercase() != "SCHEDULED") return false
+    val date = session.startTime.take(10)
+    if (date.length < 10) return false
+    return date < dateSubDays(today, 1)
+}
+/**
+ * How many sessions the board files under Overdue: on the board AND overdue.
+ * Home's Today's Pack reads this so its count is the heading's count (#1590).
+ */
+internal fun overdueOnAuntieTime(sessions: List<KinCareSession>, today: String): Int =
+    sessions.count { isVisibleOnAuntieTime(it, today) && isOverdueScheduled(it, today) }
 // ---------- Status mapping ----------
 
 /** Maps a session status to the Den status tone (color signature). */
@@ -922,9 +1036,9 @@ private fun statusGlyph(status: String) = when (status.uppercase()) {
     else                  -> Lucide.CalendarClock
 }
 
-private fun phaseFor(s: KinCareSession): Phase = when (s.status.uppercase()) {
+private fun phaseFor(s: KinCareSession, today: String): Phase = when (s.status.uppercase()) {
     "ON_MY_WAY", "ARRIVED", "DEPARTED" -> Phase.Active
-    "SCHEDULED"                        -> Phase.Upcoming
+    "SCHEDULED"                        -> if (isOverdueScheduled(s, today)) Phase.Overdue else Phase.Upcoming
     else                               -> Phase.CompletedToday
 }
 

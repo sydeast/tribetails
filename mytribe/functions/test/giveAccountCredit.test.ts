@@ -112,6 +112,8 @@ describe('giveAccountCredit: the owner gives credit', () => {
       event: AUDIT_EVENTS.BILLING_ACCOUNT_CREDIT_GIVEN,
       actorUid: 'owner1',
       familyId: 'fam1',
+      // #1752: words; the household is familyId, not part of the sentence.
+      description: 'Gave $25.00 account credit',
       docId: `account_credit_given_${KEY}`,
       payload: {
         amountCents: 2500,

@@ -31,6 +31,7 @@ import {
   getConversationThreadHandler,
   replyToConversationHandler,
   markConversationReadHandler,
+  markConversationUnreadHandler,
 } from '../src/admin/conversations';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
@@ -371,6 +372,38 @@ describe('markConversationRead (admin)', () => {
   });
 });
 
+describe('markConversationUnread (admin, #1611)', () => {
+  it('sets unreadForAdmin back to true', async () => {
+    const ctx = buildDbMock({ docs: { 'conversations/kf1': { unreadForAdmin: false, lastSenderRole: 'kinfolk' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await markConversationUnreadHandler(req({ kinfolkId: 'kf1' }));
+    expect(res).toEqual({ ok: true, kinfolkId: 'kf1' });
+    const w = ctx.writes.find((x) => x.path === 'conversations/kf1');
+    expect(w?.data.unreadForAdmin).toBe(true);
+  });
+  it('leaves the read receipts on the messages alone', async () => {
+    const ctx = buildDbMock({
+      docs: { 'conversations/kf1': { unreadForAdmin: false } },
+      queryDocs: {
+        'conversations/kf1/messages': [{ id: 'm1', data: { senderRole: 'kinfolk', readAt: 123 } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await markConversationUnreadHandler(req({ kinfolkId: 'kf1' }));
+    expect(ctx.writes.some((w) => w.path.startsWith('conversations/kf1/messages/'))).toBe(false);
+    expect(ctx.writes.find((w) => w.path === 'conversations/kf1')?.data).not.toHaveProperty('lastSenderRole');
+  });
+  it('throws not-found for a missing thread and writes nothing', async () => {
+    const ctx = buildDbMock({ docs: {} });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(markConversationUnreadHandler(req({ kinfolkId: 'nope' }))).rejects.toMatchObject({ code: 'not-found' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('refuses a missing kinfolkId', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: {} }).db);
+    await expect(markConversationUnreadHandler(req({}))).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+});
 describe('markMessagesRead (lib)', () => {
   it('stamps readAt on every unread message from the other side and clears the flag', async () => {
     const ctx = buildDbMock({

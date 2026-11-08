@@ -93,7 +93,11 @@ fun DirectoryScreen(
     onAddKinfolk: () -> Unit
 ) {
     val state by viewModel.directoryState.collectAsState()
-    var selectedTab by remember { mutableIntStateOf(0) }
+    // #1601: Home's "Kin in care" card opens the Kin tab already narrowed to the
+    // pets it counted. Read once, as the screen first composes.
+    val openedFromKinInCare = remember { DirectoryDeepLink.consumeKinInCare() }
+    var selectedTab by remember { mutableIntStateOf(if (openedFromKinInCare) 1 else 0) }
+    var kinInCareOnly by remember { mutableStateOf(openedFromKinInCare) }
     var kinSearch by remember { mutableStateOf("") }
     // The Kin tab's sort sits here beside its search, the same way the Kinfolk
     // tab's sits on the view model beside its own filters.
@@ -243,6 +247,14 @@ fun DirectoryScreen(
                                         options = KIN_SORT_OPTIONS,
                                     )
                                 }
+                                AuntieDropdownField(
+                                    value = if (kinInCareOnly) "In care" else "All kin",
+                                    options = listOf("All kin", "In care"),
+                                    onSelect = { kinInCareOnly = it == "In care" },
+                                    displayText = { it },
+                                    label = "Show",
+                                    modifier = Modifier.width(160.dp),
+                                )
                             }
                         }
                     }
@@ -285,6 +297,7 @@ fun DirectoryScreen(
                             kinSearch = kinSearch,
                             kinTag = activeKinTag,
                             kinSort = kinSort,
+                            inCareOnly = kinInCareOnly,
                             onKinClick = onKinClick,
                         )
                     }
@@ -384,11 +397,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.kinSection(
     kinSearch: String,
     kinTag: String,
     kinSort: SortOption,
+    inCareOnly: Boolean,
     onKinClick: (String) -> Unit,
 ) {
     // The search + tag + sort live in `filterKinDirectory`, so the rule a JUnit
     // test pins is the rule this list actually draws.
-    val allKin = filterKinDirectory(state.kinByKinfolkId.values.flatten(), kinSearch, kinTag, kinSort)
+    val allKin = filterKinDirectory(state.kinByKinfolkId.values.flatten(), kinSearch, kinTag, kinSort, inCareOnly)
 
     when {
         state.isLoading -> item {

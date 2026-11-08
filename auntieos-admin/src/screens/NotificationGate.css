@@ -41,7 +41,8 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.notifgate__tab--active {
+.notifgate__tab--active,
+.notifgate__tab.notifgate__tab--active:hover {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-background);
@@ -154,7 +155,8 @@
 .notifgate__lock:hover {
   color: var(--color-text-dim);
 }
-.notifgate__lock--on {
+.notifgate__lock--on,
+.notifgate__lock.notifgate__lock--on:hover {
   color: var(--color-primary);
 }
 .notifgate__lock:focus-visible {
@@ -317,22 +319,6 @@
   margin: 0;
   color: var(--color-error);
   font-size: var(--type-body-sm-size);
-}
-.notifgate__detail-fields {
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-.notifgate__code {
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  color: var(--color-text-dim);
-  background: var(--color-surface);
-  border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-tight);
-  padding: 0 var(--space-1);
-  overflow-wrap: anywhere;
 }
 .notifgate__delivery-when {
   font-family: var(--font-mono);

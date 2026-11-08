@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.kintales
 
+import com.tribetails.auntieos.web.screens.bookingServiceName
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +51,8 @@ import com.composables.icons.lucide.UserPlus
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.GeneratedDraft
+import com.tribetails.auntieos.web.data.draftsAwaitingReview
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.WriteResult
@@ -108,7 +112,21 @@ private sealed class TriageDialogState {
  * loudly. The triage dialogs write through the audited orphan-triage callables.
  */
 @Composable
-fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
+fun KinTaleLogsScreen(
+    onOpenReport: (sessionId: String) -> Unit = {},
+    /**
+     * #1563: opens one `generated_drafts` doc in Communicate, where a draft is
+     * reviewed, sent or deleted. Drafts were not listed here at all before, so a
+     * draft Home counted could not be found on this screen.
+     */
+    onOpenDraft: (GeneratedDraft) -> Unit = {},
+    /**
+     * #1594: the list's search and sort. App holds it above the list, because
+     * opening a KinTale swaps the list out and a `remember` inside it would come
+     * back empty on Back.
+     */
+    listFilter: KinTaleListFilter = remember { KinTaleListFilter() },
+) {
     var showTemplates by remember { mutableStateOf(false) }
     if (showTemplates) {
         KinTaleTemplateEditorScreen(onClose = { showTemplates = false })
@@ -120,6 +138,13 @@ fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
     // recomposition (otherwise data flickers Loading -> Data each frame).
     val state by remember { client.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #1563: the other half of a KinTale. A KinTale in draft state is a
+    // `generated_drafts` doc (ruling D-2026-08-04); only the unsent ones are listed.
+    val draftsState by remember { client.generatedDraftsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #1592: rows name their service from the KinCare catalog, never `visit_60`.
+    val kinCareSettings by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val kinCareRates = (kinCareSettings as? FirestoreResult.Data)?.value?.serviceRates.orEmpty()
+    val unsentDrafts = draftsAwaitingReview((draftsState as? FirestoreResult.Data)?.value.orEmpty())
 
     val scope = rememberReportingScope()
     var dialog by remember { mutableStateOf<TriageDialogState?>(null) }
@@ -127,8 +152,8 @@ fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
     var toastKind by remember { mutableStateOf(ToastKind.Success) }
     var pendingReportId by remember { mutableStateOf<String?>(null) }
 
-    var search by remember { mutableStateOf("") }
-    var sortMode by remember { mutableStateOf(ReportSort.Newest) }
+    var search by listFilter::search
+    var sortMode by listFilter::sort
 
     ScreenScaffold {
         DenScreenHeading(
@@ -204,7 +229,7 @@ fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
             }
 
             is FirestoreResult.Data -> {
-                if (s.value.isEmpty()) {
+                if (s.value.isEmpty() && unsentDrafts.isEmpty()) {
                     EmptyState()
                 } else {
                     val (orphans, nonOrphans) = partitionForDisplay(s.value)
@@ -223,15 +248,29 @@ fun KinTaleLogsScreen(onOpenReport: (sessionId: String) -> Unit = {}) {
                         val grouped = sortReports(nonOrphans.filter { matchesSearch(it, search) }, sortMode)
                             .groupBy { bucketFor(it) }
 
+                        val drafts = unsentDrafts.filter { matchesDraftSearch(it, search) }
                         listOf(Bucket.Failed, Bucket.Drafts, Bucket.Sent).forEach { bucket ->
                             val items = grouped[bucket].orEmpty()
-                            if (items.isNotEmpty()) {
+                            val bucketDrafts = if (bucket == Bucket.Drafts) drafts else emptyList()
+                            if (items.isNotEmpty() || bucketDrafts.isNotEmpty()) {
                                 BucketGroup(
                                     bucket       = bucket,
                                     reports      = items,
+                                    drafts       = bucketDrafts,
+                                    serviceRates = kinCareRates,
                                     onOpenReport = onOpenReport,
+                                    onOpenDraft  = onOpenDraft,
                                 )
                             }
+                        }
+
+                        // A failed drafts read never passes for "no drafts".
+                        (draftsState as? FirestoreResult.Error)?.let { err ->
+                            Text(
+                                text  = "Drafts could not be loaded (${err.message}), so the Drafts count is missing them.",
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.error,
+                            )
                         }
                     }
                 }
@@ -343,7 +382,7 @@ private fun NeedsTriageSection(
 ) {
     DenPanel(
         title    = "Needs triage",
-        subtitle = "Pre-cutover visit_logs migrated without a Kinfolk link. Assign, mark duplicate, or archive each.",
+        subtitle = "Pre-cutover visit logs migrated without a Kinfolk link. Assign, mark duplicate, or archive each.",
         trailing = {
             AuntieChip(
                 label = "${orphans.size} orphan${if (orphans.size == 1) "" else "s"}",
@@ -400,7 +439,7 @@ private fun OrphanRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text  = report._id.ifBlank { "(no id)" },
+                text  = reportWhen(report, currentYear()),
                 style = AuntieTheme.typography.mono.copy(fontWeight = FontWeight.SemiBold),
                 color = c.textDim,
             )
@@ -468,7 +507,7 @@ private fun AssignKinfolkDialog(
 
     AuntieDialog(
         visible = true,
-        title = "Assign Kinfolk to KinTale ${report._id}",
+        title = TRIAGE_ASSIGN_TITLE,
         onDismiss = onDismiss,
         maxWidth = 520.dp,
         closeIcon = Lucide.X,
@@ -570,7 +609,7 @@ private fun MarkDuplicateDialog(
 
     AuntieDialog(
         visible = true,
-        title = "Mark ${report._id} as duplicate",
+        title = TRIAGE_DUPLICATE_TITLE,
         onDismiss = onDismiss,
         maxWidth = 520.dp,
         closeIcon = Lucide.X,
@@ -589,7 +628,7 @@ private fun MarkDuplicateDialog(
             value = query,
             onValueChange = { query = it },
             label = "Search",
-            placeholder = "report id, kinfolk name, or body text",
+            placeholder = "kinfolk name or body text",
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -609,8 +648,7 @@ private fun MarkDuplicateDialog(
             } else {
                 filtered.forEach { r ->
                     PickerRow(
-                        // id and name joined with a plain hyphen per the no-em-dash rule.
-                        label = "${r._id} - ${r.kinfolkName.ifBlank { "Unnamed" }}",
+                        label = duplicateCandidateLabel(r, currentYear()),
                         sublabel = bodyPreview(r.bodyCopy),
                         selected = selected?._id == r._id,
                         onClick = { selected = r },
@@ -634,11 +672,11 @@ private fun ArchiveBadDataDialog(
 
     AuntieDialog(
         visible = true,
-        title = "Archive ${report._id} as bad data",
+        title = TRIAGE_ARCHIVE_TITLE,
         onDismiss = onDismiss,
         maxWidth = 520.dp,
         closeIcon = Lucide.X,
-        hint = "Reason is required and will be stored on the report doc + activity_log for audit.",
+        hint = TRIAGE_ARCHIVE_HINT,
         leadingIcon = { AuntieIconTile(icon = Lucide.Archive, tone = AuntieStatusTone.Error, size = 36.dp) },
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss)
@@ -687,16 +725,83 @@ private fun PickerRow(
 private fun BucketGroup(
     bucket: Bucket,
     reports: List<KinCareReport>,
+    drafts: List<GeneratedDraft> = emptyList(),
+    serviceRates: Map<String, String> = emptyMap(),
     onOpenReport: (sessionId: String) -> Unit = {},
+    onOpenDraft: (GeneratedDraft) -> Unit = {},
 ) {
     DenPanel(
         title = bucket.label,
-        trailing = { AuntieChip(label = "${reports.size}", mono = true) },
+        trailing = { AuntieChip(label = "${reports.size + drafts.size}", mono = true) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            reports.forEach { ReportRow(it, onOpenReport) }
+            reports.forEach { ReportRow(it, onOpenReport, serviceRates) }
+            drafts.forEach { GeneratedDraftRow(it, onOpenDraft) }
         }
     }
+}
+
+/**
+ * #1563: one `generated_drafts` doc in the Drafts bucket. Same frame as
+ * [ReportRow]; the line under the household names the draft's type and date,
+ * because the generator writes every kind of message into this collection.
+ * Always tappable: it opens the draft in Communicate.
+ */
+@Composable
+private fun GeneratedDraftRow(draft: GeneratedDraft, onOpenDraft: (GeneratedDraft) -> Unit) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val name = draft.household()
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(c.surfaceGlass)
+            .border(dims.borderHairline, c.border, shape)
+            .clickable(onClickLabel = "Open draft") { onOpenDraft(draft) }
+            .padding(horizontal = 15.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(13.dp),
+    ) {
+        AuntieIconTile(icon = Lucide.FileText, tone = AuntieStatusTone.Neutral, size = 36.dp)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                text  = name.ifBlank { "Unnamed Kinfolk" },
+                style = if (name.isBlank()) {
+                    AuntieTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic, fontWeight = FontWeight.Normal)
+                } else {
+                    AuntieTheme.typography.titleMedium
+                },
+                color = if (name.isBlank()) c.textDim else c.textPrimary,
+            )
+            Text(draftSubmeta(draft), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+        // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
+        AuntieStatusPill(label = "Draft", tone = AuntieStatusTone.Neutral)
+    }
+}
+
+/**
+ * #1563: a draft row's line under the household: its type, then its date (with
+ * the year when it is not [currentYear], #1599). Pure; tested.
+ */
+internal fun draftSubmeta(
+    d: GeneratedDraft,
+    currentYear: Int = com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0,
+): String {
+    val type = d.type().replace('_', ' ').ifBlank { "visit report" }
+    val whenText = if (d.created().isBlank()) "Date TBD" else kinTaleShortDateTime(d.created(), currentYear)
+    return "$type · $whenText"
+}
+
+/** #1563: the list search over a draft (household, type, copy). Pure; tested. */
+internal fun matchesDraftSearch(d: GeneratedDraft, query: String): Boolean {
+    val q = query.lowercase().trim()
+    if (q.isBlank()) return true
+    return d.household().lowercase().contains(q) ||
+        d.type().replace('_', ' ').lowercase().contains(q) ||
+        d.body().lowercase().contains(q)
 }
 
 /**
@@ -708,7 +813,11 @@ private fun BucketGroup(
  * present and routes to the report via [onOpenReport].
  */
 @Composable
-private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -> Unit = {}) {
+private fun ReportRow(
+    report: KinCareReport,
+    onOpenReport: (sessionId: String) -> Unit = {},
+    serviceRates: Map<String, String> = emptyMap(),
+) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val tone = statusTone(report.status)
@@ -758,7 +867,7 @@ private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -
                 },
                 color = if (unnamed) c.textDim else c.textPrimary,
             )
-            SubMetaColumn(report)
+            SubMetaColumn(report, serviceRates)
         }
 
         AuntieStatusPill(
@@ -773,12 +882,13 @@ private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -
  * pips (media count, send channel).
  */
 @Composable
-private fun SubMetaColumn(report: KinCareReport) {
+private fun SubMetaColumn(report: KinCareReport, serviceRates: Map<String, String>) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (report.serviceType.isNotBlank()) {
-                Text(report.serviceType, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                // #1592: the operator's KinCare name, never the stored key.
+                Text(bookingServiceName(report.serviceType, serviceRates), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 Text("·", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
             }
             Text(visitTimestamp(report), style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -855,8 +965,26 @@ private fun sortKey(r: KinCareReport): String = sequenceOf(
 ).firstOrNull { it.isNotBlank() } ?: ""
 
 // KT1: operator-chosen ordering for the KinTales list (organizes the Sent bucket).
-internal enum class ReportSort(val label: String) {
+// Public since #1594, because App holds the list's chosen sort in KinTaleListFilter.
+enum class ReportSort(val label: String) {
     Newest("Newest"), Oldest("Oldest"), Kinfolk("Kinfolk A–Z"), Service("Service type"),
+}
+
+/**
+ * #1594: the KinTale list's search and sort, held by App above the list. A
+ * KinTale opened from the list replaces it on screen, so state kept inside the
+ * list was gone on Back and the operator landed on an unfiltered list.
+ */
+@Stable
+class KinTaleListFilter(search: String = "", sort: ReportSort = ReportSort.Newest) {
+    var search by mutableStateOf(search)
+    var sort by mutableStateOf(sort)
+
+    /** Back to an unfiltered list, newest first. */
+    fun reset() {
+        search = ""
+        sort = ReportSort.Newest
+    }
 }
 
 internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<KinCareReport> = when (mode) {
@@ -879,19 +1007,42 @@ internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
         r.bodyCopy.lowercase().contains(q)
 }
 
-private fun visitTimestamp(r: KinCareReport): String {
+private fun visitTimestamp(r: KinCareReport): String = reportWhen(r, currentYear())
+private fun currentYear(): Int =
+    com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0
+/**
+ * #1592: Needs triage named each orphan, and each duplicate candidate, by its
+ * document id (`legacy_79`). The operator reads when it was written and whose
+ * it is instead; the id still keys every write. Same words as web and Android.
+ */
+internal const val TRIAGE_ASSIGN_TITLE = "Assign kinfolk to this KinTale"
+internal const val TRIAGE_DUPLICATE_TITLE = "Mark this KinTale as a duplicate"
+internal const val TRIAGE_ARCHIVE_TITLE = "Archive this KinTale as bad data"
+/** Web's archive hint. It said the reason "will be stored on the report doc + activity_log". */
+internal const val TRIAGE_ARCHIVE_HINT =
+    "Archiving hides the report from these lists and keeps it on file. The reason is recorded in the activity log."
+/** When a report was written, by the list's own precedence: an orphan row's lead, never its id. Pure. */
+internal fun reportWhen(r: KinCareReport, currentYear: Int): String {
     val raw = sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt)
         .firstOrNull { it.isNotBlank() } ?: return "Date TBD"
-    return shortDateTime(raw)
+    return kinTaleShortDateTime(raw, currentYear)
 }
+/** A duplicate candidate: whose KinTale and when, never its id. Pure. */
+internal fun duplicateCandidateLabel(r: KinCareReport, currentYear: Int): String =
+    "${r.kinfolkName.trim().ifBlank { "Unnamed Kinfolk" }} · ${reportWhen(r, currentYear)}"
 
-private fun shortDateTime(iso: String): String =
+/**
+ * "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear]
+ * (#1599: the list spans more than a year). Echoes non-ISO text.
+ */
+internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
     runCatchingCancellable {
         if (iso.length < 16) return@runCatchingCancellable iso
+        val year  = iso.substring(0, 4).toInt()
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]
         val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
         val time  = iso.substring(11, 16)
-        "$month $day · $time"
+        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
     }.getOrDefault(iso)
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")

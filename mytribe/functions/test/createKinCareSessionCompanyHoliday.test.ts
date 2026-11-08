@@ -54,7 +54,7 @@ describe('createKinCareSession company-holiday guard', () => {
       ),
     ).rejects.toMatchObject({ code: 'failed-precondition' });
 
-    expect(ctx.adds.filter((a) => a.collection === 'kin_care_sessions')).toHaveLength(0);
+    expect(ctx.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toHaveLength(0);
   });
 
   it('an open day still creates the session', async () => {

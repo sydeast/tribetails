@@ -81,13 +81,19 @@ describe('createQuote zod validation', () => {
   // "assign it", and it is drawn from the SAME sequence, so a quote and an
   // invoice can never be handed the same number.
   it('assigns a number when the caller sends a blank one, from the shared sequence', async () => {
-    const ctx = buildDbMock({ docs: { 'counters/invoiceNumber': { next: 7 } } });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await createQuoteHandler(req({ ...validPayload, invoiceNumber: '' }));
-    expect(res.ok).toBe(true);
-    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
-    expect(written?.data.invoiceNumber).toBe('INV-2026-0007');
-    expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')?.data.next).toBe(8);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-06T18:00:00Z'));
+    try {
+      const ctx = buildDbMock({ docs: { 'counters/invoiceNumber': { nextPlain: 1027 } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await createQuoteHandler(req({ ...validPayload, invoiceNumber: '' }));
+      expect(res.ok).toBe(true);
+      const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+      expect(written?.data.invoiceNumber).toBe('1027');
+      expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')?.data.nextPlain).toBe(1028);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('keeps a number the caller did send', async () => {
     const ctx = buildDbMock({});

@@ -52,8 +52,24 @@
 .thread__body {
   font-size: var(--type-body-sm-size);
   color: var(--color-text-primary);
-  white-space: pre-wrap;
   word-break: break-word;
+}
+.thread__body p,
+.thread__body ul,
+.thread__body ol,
+.thread__body blockquote {
+  margin: 0 0 var(--space-1);
+}
+.thread__body > :last-child {
+  margin-bottom: 0;
+}
+.thread__body ul,
+.thread__body ol {
+  padding-left: var(--space-4);
+}
+.thread__body blockquote {
+  padding-left: var(--space-2);
+  border-left: var(--border-hairline) solid var(--color-border-soft);
 }
 
 .thread__time {
@@ -92,4 +108,10 @@
   margin: 0;
   font-size: var(--type-body-sm-size);
   color: var(--color-warning);
+}
+
+.thread__heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }

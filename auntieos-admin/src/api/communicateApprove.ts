@@ -2,6 +2,7 @@ import { doc } from 'firebase/firestore';
 import { updateDoc } from '../lib/firestoreWrite';
 import { db, auth } from '../lib/firebase';
 import { call } from '../lib/fns';
+import { ACTIVITY_WORDS } from '../lib/activityWords';
 
 /**
  * Approving an Auntie-voice draft: promote it, record it, then send it.
@@ -93,10 +94,14 @@ export async function approveGeneratedDraft(args: ApproveDraftArgs): Promise<App
   try {
     await call('logActivity', {
       actionType: 'DRAFT_APPROVED',
-      description: `Approved ${DRAFTS_COLLECTION}/${draftId} (${args.kinfolkId ?? 'no kinfolk'})`,
+      // #1747: words for the Activity Log; the draft is the entry's target.
+      description: ACTIVITY_WORDS.draftApproved,
       status: 'SUCCESS',
       targetId: draftId,
       targetCollection: DRAFTS_COLLECTION,
+      ...(args.kinfolkId !== null && args.kinfolkId !== ''
+        ? { familyId: args.kinfolkId }
+        : {}),
     });
   } catch (err) {
     auditWarning = err instanceof Error ? err.message : 'The audit entry could not be written.';

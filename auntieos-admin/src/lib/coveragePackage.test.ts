@@ -10,6 +10,11 @@ import {
   gapWarnings,
   minutesToTime,
   normalizePackage,
+  dayDiffersFromTemplate,
+  uniqueCopyName,
+  parseMaxGapHours,
+  sanitizeStoredRules,
+  storedMaxGapRefusal,
   packagesFromPatterns,
   priceDay,
   pricePackage,
@@ -318,5 +323,80 @@ describe('quoteText', () => {
     expect(text).toContain('Balance · 2 days');
     expect(text).toContain('Lunch (45-min visit)');
     expect(text).toContain('Total');
+  });
+});
+
+describe('dayDiffersFromTemplate (#1605)', () => {
+  const visit = (id: string, time: number, label = 'Check-in') => ({ id, time, durationId: 'd1', label });
+  const base = normalizePackage({ id: 'p', name: 'P', visits: [visit('a', 540), visit('b', 720)] });
+  it('is false with no day copy', () => {
+    expect(dayDiffersFromTemplate(base, 0)).toBe(false);
+  });
+  it('is false for a fresh fork, whatever ids it minted', () => {
+    const forked = { ...base, dayOverrides: { 0: [visit('x', 720), visit('y', 540)] } };
+    expect(dayDiffersFromTemplate(forked, 0)).toBe(false);
+  });
+  it('is true once a time, length, label or count changes', () => {
+    expect(dayDiffersFromTemplate({ ...base, dayOverrides: { 0: [visit('x', 540), visit('y', 780)] } }, 0)).toBe(true);
+    expect(dayDiffersFromTemplate({ ...base, dayOverrides: { 0: [visit('x', 540, 'Walk'), visit('y', 720)] } }, 0)).toBe(true);
+    expect(dayDiffersFromTemplate({ ...base, dayOverrides: { 0: [visit('x', 540)] } }, 0)).toBe(true);
+  });
+  it('feeds the priced row', () => {
+    const forked = { ...base, dayOverrides: { 0: base.visits.map((v) => ({ ...v, id: `n${v.id}` })) } };
+    const row = pricePackage(forked, { days: 1, nights: 0, durations: DURATIONS, overnightDuration: undefined }).rows[0]!;
+    expect(row.customized).toBe(true);
+    expect(row.changed).toBe(false);
+  });
+});
+describe('uniqueCopyName (#1605)', () => {
+  it('adds copy, then numbers further copies', () => {
+    expect(uniqueCopyName('Lean', ['Lean'])).toBe('Lean copy');
+    expect(uniqueCopyName('Lean', ['Lean', 'Lean copy'])).toBe('Lean copy 2');
+    expect(uniqueCopyName('Lean', ['Lean', 'Lean copy', 'Lean copy 2'])).toBe('Lean copy 3');
+  });
+  it('copying a copy extends the original name instead of stacking', () => {
+    expect(uniqueCopyName('Lean copy', ['Lean', 'Lean copy'])).toBe('Lean copy 2');
+    expect(uniqueCopyName('Lean copy 2', ['Lean', 'Lean copy', 'Lean copy 2'])).toBe('Lean copy 3');
+  });
+});
+describe('parseMaxGapHours (#1582)', () => {
+  it('reads whole and fractional hours', () => {
+    expect(parseMaxGapHours('6')).toEqual({ ok: true, value: 6 });
+    expect(parseMaxGapHours(' 4.5 ')).toEqual({ ok: true, value: 4.5 });
+    expect(parseMaxGapHours('1')).toEqual({ ok: true, value: 1 });
+    // No upper bound: how long a gap the client accepts is the operator's call.
+    expect(parseMaxGapHours('30')).toEqual({ ok: true, value: 30 });
+  });
+  it('refuses a minus sign, a bare minus, and anything that is not a plain number', () => {
+    for (const bad of ['-5', '-', '+5', '1e3', 'abc', '4.', '.5', '5h', '1,5']) {
+      expect(parseMaxGapHours(bad).ok, bad).toBe(false);
+    }
+    expect(parseMaxGapHours('-5')).toMatchObject({ ok: false, message: expect.stringMatching(/minus sign/) });
+  });
+  it('refuses blank, zero and under one hour', () => {
+    expect(parseMaxGapHours('')).toMatchObject({ ok: false, message: expect.stringMatching(/Enter the longest gap/) });
+    for (const out of ['0', '0.5']) {
+      expect(parseMaxGapHours(out), out).toMatchObject({ ok: false, message: 'Max gap must be at least 1 hour.' });
+    }
+  });
+});
+describe('sanitizeStoredRules (#1582)', () => {
+  it('keeps a readable max gap as it is', () => {
+    for (const gap of [4.5, 30]) {
+      const rules = { ...DEFAULT_COVERAGE_RULES, maxGapHours: gap };
+      expect(sanitizeStoredRules(rules)).toBe(rules);
+      expect(storedMaxGapRefusal(rules)).toBeNull();
+    }
+  });
+  it('names why a stored gap is refused', () => {
+    expect(storedMaxGapRefusal({ ...DEFAULT_COVERAGE_RULES, maxGapHours: -5 })).toMatch(/minus sign/);
+    expect(storedMaxGapRefusal({ ...DEFAULT_COVERAGE_RULES, maxGapHours: 0 })).toBe('Max gap must be at least 1 hour.');
+  });
+  it('prices an unreadable stored max gap at the default', () => {
+    for (const bad of [-5, 0, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(sanitizeStoredRules({ ...DEFAULT_COVERAGE_RULES, maxGapHours: bad }).maxGapHours, String(bad)).toBe(
+        DEFAULT_COVERAGE_RULES.maxGapHours,
+      );
+    }
   });
 });

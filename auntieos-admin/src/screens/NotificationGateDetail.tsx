@@ -5,7 +5,9 @@ import { listBusinessAdmins, type BusinessAdminRoster } from '../api/businessAdm
 import {
   businessAdminLines,
   businessAdminSourceNote,
+  businessEmailLine,
   deliveryPhrase,
+  deliveryRecipient,
   hasPartialDataNote,
   mergeFieldNames,
   reachesBusinessAdmins,
@@ -14,6 +16,8 @@ import {
   type RowBadge,
 } from '../lib/notificationProvenance';
 import { GhostButton } from '../components/Buttons';
+import { channelLabel } from '../lib/myNotificationsFormat';
+import { humanizeKey } from '../lib/notificationsFeed';
 
 /**
  * The answer half of the notification gate (#396).
@@ -32,6 +36,10 @@ import { GhostButton } from '../components/Buttons';
  */
 
 const pad = (n: number): string => String(n).padStart(2, '0');
+/** A channel as a word ("Email", "SMS", "Push"); an unknown one as it is. */
+function channelWord(channel: string): string {
+  return channel === 'email' || channel === 'sms' || channel === 'push' ? channelLabel(channel) : channel;
+}
 
 /** LOCAL `MM-DD HH:mm`, matching `lib/time.ts` formatWhen but from epoch ms. */
 function whenMs(ms: number | null): string {
@@ -66,7 +74,7 @@ interface DetailProps {
 }
 
 export function GateRowDetail({ entry, matrix }: DetailProps) {
-  const who = recipientLines(entry, matrix.businessAdminCount, matrix.businessAdminRosterPath);
+  const who = recipientLines(entry, matrix.businessAdminCount);
   const templates = templateLines(entry);
   const fields = mergeFieldNames(entry);
 
@@ -97,10 +105,10 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
           </p>
         ) : (
           <ul className="notifgate__detail-list">
+            {/* #1592: the trigger in words only; the source file is a
+                developer detail and stays off the operator's screen. */}
             {entry.emitters.map((emitter) => (
-              <li key={`${emitter.source}:${emitter.trigger}`}>
-                {emitter.trigger} <code className="notifgate__code">{emitter.source}</code>
-              </li>
+              <li key={`${emitter.source}:${emitter.trigger}`}>{emitter.trigger}</li>
             ))}
           </ul>
         )}
@@ -124,11 +132,9 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
             <ul className="notifgate__detail-list">
               {templates.map((line) => (
                 <li key={line.channel}>
-                  {line.channel}: <code className="notifgate__code">{line.path}</code>
+                  {`${channelLabel(line.channel)}: ${line.name}`}
                   {line.missing && ' (this channel is offered with nothing to render it)'}
-                  {line.retargetedFrom && (
-                    <> (retargeted; the catalog default is {line.retargetedFrom})</>
-                  )}
+                  {line.retargetedFrom && <> (retargeted; the default is {line.retargetedFrom})</>}
                 </li>
               ))}
             </ul>
@@ -146,13 +152,12 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
               Anything on this list can appear in the message, and therefore reach whoever the
               recipient rule above resolves to.
             </p>
-            <p className="notifgate__detail-fields">
+            {/* #1592: what each field is, in words; the keys were developer text. */}
+            <ul className="notifgate__detail-list" aria-label="What the body can carry">
               {fields.map((field) => (
-                <code key={field} className="notifgate__code">
-                  {field}
-                </code>
+                <li key={field}>{field}</li>
               ))}
-            </p>
+            </ul>
             {hasPartialDataNote(entry) && (
               <p className="notifgate__detail-note">
                 {entry.emitters
@@ -237,6 +242,7 @@ export function BusinessAdminRosterPanel() {
   const note = businessAdminSourceNote(roster);
   return (
     <>
+      <p className="notifgate__detail-note" data-testid="business-email-line">{businessEmailLine(roster)}</p>
       <p className="notifgate__detail-note">By name:</p>
       {note && <p className="notifgate__detail-note">{note}</p>}
       <ul className="notifgate__detail-list">
@@ -304,7 +310,8 @@ export function DeliveryEvidencePanel({ notificationKey }: { notificationKey: st
             {evidence.deliveries.map((row) => (
               <li key={row.dispatchId}>
                 <span className="notifgate__delivery-when">{whenMs(row.createdAtMs)}</span>{' '}
-                to <code className="notifgate__code">{row.recipientUid || 'unknown recipient'}</code>
+                {/* #1592: the recipient by name, never the bare uid when a name exists. */}
+                to <span className="notifgate__delivery-to">{deliveryRecipient(row)}</span>
                 {row.attempts.length === 0 ? (
                   <>: no channel was attempted (the gate resolved to nothing for them).</>
                 ) : (
@@ -317,14 +324,11 @@ export function DeliveryEvidencePanel({ notificationKey }: { notificationKey: st
                       );
                       return (
                         <li key={attempt.channel} className={`notifgate__attempt notifgate__attempt--${phrase.tone}`}>
-                          <strong>{attempt.channel}</strong>: {phrase.label}. {phrase.detail}
-                          {attempt.providerMessageId && (
-                            <>
-                              {' '}
-                              Provider id{' '}
-                              <code className="notifgate__code">{attempt.providerMessageId}</code>.
-                            </>
-                          )}
+                          {/* #1592: the provider's message id is not shown. Nothing
+                              in the app looks a message up by it, and the provider's
+                              own log is searchable by address and time; it stays on
+                              the dispatch record for a developer. */}
+                          <strong>{channelWord(attempt.channel)}</strong>: {phrase.label}. {phrase.detail}
                           {attempt.attempts > 1 && <> Tried {attempt.attempts} times.</>}
                         </li>
                       );
@@ -360,9 +364,9 @@ export function UngatedSendsPanel({ sends }: { sends: UngatedSend[] }) {
       </p>
       <ul className="notifgate__detail-list">
         {sends.map((send) => (
+          // #1592: named in words; no database path, no source file.
           <li key={`${send.source}:${send.templateId}`}>
-            <code className="notifgate__code">emailTemplates/{send.templateId}</code>, sent when: {send.trigger}{' '}
-            <code className="notifgate__code">{send.source}</code>
+            {`${humanizeKey(send.templateId) || 'An'} email, sent when: ${send.trigger}`}
           </li>
         ))}
       </ul>

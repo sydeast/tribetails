@@ -87,7 +87,7 @@ export async function unarchiveInvoiceHandler(
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId: data.kinfolkId,
-    description: `Invoice ${data.invoiceNumber ?? args.invoiceId} restored from the archive`,
+    description: (await import('../lib/activityWords.js')).invoiceSentence(data.invoiceNumber, 'restored from the archive'),
     payload: { invoiceId: args.invoiceId },
   }).catch((err) => {
     logEvent({

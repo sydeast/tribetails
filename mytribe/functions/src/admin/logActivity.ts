@@ -36,6 +36,9 @@ const Args = z.object({
   actorId: z.string().max(200).optional(),
   targetId: z.string().max(200).optional(),
   targetCollection: z.string().max(200).optional(),
+  // #1747: the household the entry is about. Writers used to put its id in the
+  // description, which the Activity Log shows as written.
+  familyId: z.string().max(200).optional(),
 });
 
 export async function logActivityHandler(
@@ -69,6 +72,7 @@ export async function logActivityHandler(
     actorUid: effectiveActorUid,
     targetUid: args.targetId || undefined,
     targetCollection: args.targetCollection || undefined,
+    familyId: args.familyId || undefined,
     description,
     // Client omits status on the common case (a completed action); default to
     // SUCCESS rather than letting writeAuditEntry guess from severity.

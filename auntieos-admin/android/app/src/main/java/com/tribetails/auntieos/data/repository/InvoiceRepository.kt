@@ -3,6 +3,9 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.contracts.ArchiveInvoiceArgs
+import com.tribetails.auntieos.data.contracts.PreviewInvoiceNoticeArgs
+import com.tribetails.auntieos.data.contracts.PreviewInvoiceNoticeResult
+import com.tribetails.auntieos.data.contracts.decodePreviewInvoiceNoticeResult
 import com.tribetails.auntieos.domain.ReminderOutcome
 import com.tribetails.auntieos.data.contracts.CreateInvoiceArgs
 import com.tribetails.auntieos.data.contracts.CreateInvoiceArgsLineItem
@@ -156,6 +159,23 @@ class InvoiceRepository(
         doc.toObject(Invoice::class.java)
             ?: throw NoSuchElementException("Invoice $invoiceId not found")
     }.onFailure { AuntieLog.e("Failed to get invoice $invoiceId", it) }
+
+    /**
+     * #1567: re-reads one invoice FROM THE SERVER after a send got no answer, and
+     * returns the marks [com.tribetails.auntieos.domain.sendOutcomeAfterSilence]
+     * compares. Source.SERVER, never the cache: the cached copy is the one from
+     * before the press and would always answer "not sent".
+     *
+     * Null when the read fails or the invoice is gone. The caller turns that into
+     * "there is no way to tell from here", which is the truth, never "not sent".
+     */
+    suspend fun readInvoiceSendMarks(invoiceId: String): com.tribetails.auntieos.domain.SendMarks? =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            val doc = firestore.collection("invoices").document(invoiceId)
+                .get(com.google.firebase.firestore.Source.SERVER).await()
+            doc.data?.let { com.tribetails.auntieos.domain.sendMarksOf(it) }
+        }.onFailure { AuntieLog.w("Send re-read failed for invoice $invoiceId", it) }.getOrNull()
 
     /**
      * Slice 2: routes through the createInvoice callable (server mints the id,
@@ -497,6 +517,21 @@ class InvoiceRepository(
      * comes back `sent = false` with the time of the one that already went out,
      * as a success, because the household has been reminded.
      */
+    /**
+     * #1609: who a reminder ("reminder") or a draft send ("reviewSend") will
+     * reach, and by which channel, read before the operator confirms it.
+     * Read-only on the server.
+     */
+    suspend fun previewInvoiceNotice(invoiceId: String, action: String): Result<PreviewInvoiceNoticeResult> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("previewInvoiceNotice")
+                .call(PreviewInvoiceNoticeArgs(invoiceId = invoiceId, action = action).toPayload())
+                .awaitCallable().data as? Map<String, Any?>
+            decodePreviewInvoiceNoticeResult(raw)
+        }.onFailure { AuntieLog.e("previewInvoiceNotice failed for $invoiceId", it) }
+
     suspend fun sendInvoiceReminder(
         invoiceId: String,
         nowMs: Long = System.currentTimeMillis(),

@@ -162,6 +162,14 @@ data class InvoiceEditDraft(
     val date: String,
     val dueDate: String,
     val terms: String,
+    /**
+     * #1609: the terms as the same picker New invoice uses. Null for an invoice
+     * whose terms carry no code (typed or imported); those stay as stored until
+     * a code is picked.
+     */
+    val termsCode: InvoiceTermsCode? = null,
+    /** #1609: the code the invoice carried when the form opened. */
+    val storedTermsCode: InvoiceTermsCode? = null,
     val lines: List<InvoiceEditLine>,
     val invoiceDiscountText: String,
     /**
@@ -204,6 +212,8 @@ fun invoiceEditDraftOf(invoice: Invoice): InvoiceEditDraft? {
         date = invoice.date,
         dueDate = invoice.dueDate,
         terms = invoice.terms,
+        termsCode = invoiceTermsCodeOrNull(invoice.termsCode),
+        storedTermsCode = invoiceTermsCodeOrNull(invoice.termsCode),
         lines = stored.orEmpty().map(::invoiceEditLineOf),
         invoiceDiscountText = if (discount > 0L) centsToInputDollars(discount) else "",
         wasItemized = stored != null,
@@ -293,22 +303,32 @@ private fun isIsoDay(value: String): Boolean {
  */
 fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPatchOutcome {
     val fields = LinkedHashMap<String, JsonElement>()
-    if (draft.invoiceNumber != invoice.invoiceNumber) {
-        val trimmed = draft.invoiceNumber.trim()
-        if (trimmed.isEmpty()) return InvoiceEditPatchOutcome(null, "The invoice number cannot be empty.")
-        fields["invoiceNumber"] = JsonPrimitive(trimmed)
+    // #1609: the same sentence the server, web and Android use.
+    if (draft.invoiceNumber.trim().isEmpty()) {
+        return InvoiceEditPatchOutcome(null, "An invoice needs a number. Type one, or put the old one back.")
     }
+    if (draft.invoiceNumber != invoice.invoiceNumber) {
+        fields["invoiceNumber"] = JsonPrimitive(draft.invoiceNumber.trim())
+    }
+    // #1609: a newly picked code. A non-custom one works out its own due date on
+    // the server, so the due date is not sent alongside it.
+    val pickedTerms = draft.termsCode?.takeIf { it != invoiceTermsCodeOrNull(invoice.termsCode) }
+    val dueDateFromTerms = pickedTerms != null && pickedTerms != InvoiceTermsCode.CUSTOM
     if (draft.date != invoice.date) {
         val trimmed = draft.date.trim()
         if (!isIsoDay(trimmed)) return InvoiceEditPatchOutcome(null, "The invoice date needs to be a date like 2026-10-23.")
         fields["date"] = JsonPrimitive(trimmed)
     }
-    if (draft.dueDate != invoice.dueDate) {
+    if (!dueDateFromTerms && draft.dueDate != invoice.dueDate) {
         val trimmed = draft.dueDate.trim()
         if (!isIsoDay(trimmed)) return InvoiceEditPatchOutcome(null, "The due date needs to be a date like 2026-10-23.")
         fields["dueDate"] = JsonPrimitive(trimmed)
     }
-    if (draft.terms != invoice.terms) fields["terms"] = JsonPrimitive(draft.terms)
+    if (pickedTerms != null) {
+        fields["termsCode"] = JsonPrimitive(pickedTerms.wire)
+    } else if (draft.terms != invoice.terms) {
+        fields["terms"] = JsonPrimitive(draft.terms)
+    }
     // #1198: sent as typed, like `terms`, and only when changed. An emptied
     // field is a real edit (a wrong address cleared) and goes as "".
     for ((key, pair) in listOf(
@@ -397,3 +417,9 @@ fun List<InvoiceEditLine>.movedBy(index: Int, delta: Int): List<InvoiceEditLine>
 
 fun List<InvoiceEditLine>.replacedAt(index: Int, value: InvoiceEditLine): List<InvoiceEditLine> =
     mapIndexed { i, existing -> if (i == index) value else existing }
+
+/** #1609: a stored terms code read back, or null for terms that carry none. */
+fun invoiceTermsCodeOrNull(value: String?): InvoiceTermsCode? {
+    val trimmed = value?.trim() ?: return null
+    return InvoiceTermsCode.entries.firstOrNull { it.wire == trimmed }
+}

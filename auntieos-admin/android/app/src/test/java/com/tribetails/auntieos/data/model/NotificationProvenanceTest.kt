@@ -30,6 +30,7 @@ class NotificationProvenanceTest {
         mergeFields: List<String> = emptyList(),
         emitters: List<NotificationEmitter> = emptyList(),
         emailTemplateRetargetedFrom: String? = null,
+        mergeFieldLabels: Map<String, String> = emptyMap(),
     ) = NotificationCatalogEntry(
         key = "invoice.new",
         label = "New invoice",
@@ -43,6 +44,7 @@ class NotificationProvenanceTest {
         neverFires = neverFires,
         templates = templates,
         mergeFields = mergeFields,
+        mergeFieldLabels = mergeFieldLabels,
         external = external,
         emailTemplateRetargetedFrom = emailTemplateRetargetedFrom,
     )
@@ -152,7 +154,7 @@ class NotificationProvenanceTest {
     @Test
     fun appendsTheLiveRosterSize() {
         assertTrue(
-            notifRecipientLines(businessRow, 3, "businessSettings/admins.uids")[0]
+            notifRecipientLines(businessRow, 3)[0]
                 .contains("3 people"),
         )
     }
@@ -160,22 +162,24 @@ class NotificationProvenanceTest {
     @Test
     fun saysOnePersonNotOnePeople() {
         assertTrue(
-            notifRecipientLines(businessRow, 1, "businessSettings/admins.uids")[0]
+            notifRecipientLines(businessRow, 1)[0]
                 .contains("1 person today"),
         )
     }
 
     @Test
     fun reportsAnUnreadableRosterAsUnknownNeverAsZero() {
-        val line = notifRecipientLines(businessRow, null, "businessSettings/admins.uids")[0]
+        val line = notifRecipientLines(businessRow, null)[0]
         assertTrue(line.contains("unknown"))
         assertFalse(line.contains("0 people"))
+        // #1592: no database path in the sentence.
+        assertFalse(line.contains("businessSettings"))
     }
 
     @Test
     fun saysWhereAnEmptyRosterActuallySends() {
         assertTrue(
-            notifRecipientLines(businessRow, 0, "businessSettings/admins.uids")[0]
+            notifRecipientLines(businessRow, 0)[0]
                 .contains("operator allowlist"),
         )
     }
@@ -185,21 +189,22 @@ class NotificationProvenanceTest {
         val row = entry(whoReceives = listOf("The household's own portal account."))
         assertEquals(
             listOf("The household's own portal account."),
-            notifRecipientLines(row, 3, "x"),
+            notifRecipientLines(row, 3),
         )
     }
 
     // ── templates and merge fields ──────────────────────────────────────────
 
     @Test
-    fun buildsTheTemplatePathPerChannel() {
+    fun namesTheTemplatePerChannelInWordsNeverAPath() {
+        // #1592: the row's own template carries the row's name; another id reads as words.
         val row = entry(
             allowedChannels = listOf("email", "sms"),
-            templates = mapOf("email" to "invoice.new", "sms" to "invoice.new"),
+            templates = mapOf("email" to "invoice.new", "sms" to "invoice.reminder"),
         )
         assertEquals(
-            listOf("emailTemplates/invoice.new", "smsTemplates/invoice.new"),
-            notifTemplateLines(row).map { it.path },
+            listOf(row.displayTitle(), "Invoice reminder"),
+            notifTemplateLines(row).map { it.name },
         )
     }
 
@@ -222,8 +227,8 @@ class NotificationProvenanceTest {
             emailTemplateRetargetedFrom = "invoice.new",
         )
         val lines = notifTemplateLines(row)
-        assertEquals("emailTemplates/invoice.new.v2", lines[0].path)
-        assertEquals("invoice.new", lines[0].retargetedFrom)
+        assertEquals("Invoice new v2", lines[0].name)
+        assertEquals(row.displayTitle(), lines[0].retargetedFrom)
         assertNull(lines[1].retargetedFrom)
     }
     @Test
@@ -246,10 +251,47 @@ class NotificationProvenanceTest {
                 NotificationEmitter("y", "src/b.ts", listOf("stripeEventId")),
             ),
         )
+        // #1592: in words, not keys. No server labels here, so the keys are split.
         assertEquals(
-            listOf("amount", "invoiceId", "kinfolkName", "stripeEventId"),
+            listOf("Amount", "Invoice reference", "Kinfolk name", "Stripe event reference"),
             notifMergeFieldNames(row),
         )
+    }
+    @Test
+    fun usesTheServerWordsAndFoldsTwoKeysThatMeanOneThing() {
+        val row = entry(
+            mergeFields = listOf("Business", "business", "ip"),
+            emitters = listOf(NotificationEmitter("x", "src/a.ts", listOf("startTimeMsList"))),
+            mergeFieldLabels = mapOf(
+                "Business" to "Business name",
+                "business" to "Business name",
+                "ip" to "Sign-in IP address",
+            ),
+        )
+        assertEquals(listOf("Business name", "Sign-in IP address", "Start time"), notifMergeFieldNames(row))
+    }
+    @Test
+    fun splitsAKeyTheServerSentNoWordsFor() {
+        assertEquals("Start time", notifFieldWords("startTimeMs"))
+        assertEquals("Next visit date", notifFieldWords("nextVisit.date"))
+        assertEquals("Kinfolk reference", notifFieldWords("kinfolkId"))
+        assertEquals("Portal link", notifFieldWords("portalUrl"))
+    }
+    @Test
+    fun decodesTheServerWordsOffTheMatrixRow() {
+        val decoded = notificationCatalogEntryFromMap(
+            mapOf("key" to "invoice.new", "mergeFieldLabels" to mapOf("kinfolkId" to " Household reference ", "x" to 3)),
+        )
+        assertEquals(mapOf("kinfolkId" to "Household reference"), decoded!!.mergeFieldLabels)
+    }
+    @Test
+    fun namesTheRecipientAndKeepsTheUidOnlyWhenNobodyAnswers() {
+        val named = notificationDeliveryRowFromMap(mapOf("recipientUid" to "kin1", "recipientName" to "Dre East"))
+        assertEquals("Dre East", notifDeliveryRecipient(named))
+        val ghost = notificationDeliveryRowFromMap(mapOf("recipientUid" to "ghost"))
+        assertNull(ghost.recipientName)
+        assertEquals("ghost", notifDeliveryRecipient(ghost))
+        assertEquals("an unknown recipient", notifDeliveryRecipient(NotificationDeliveryRow()))
     }
 
     // ── delivery evidence wording ───────────────────────────────────────────
@@ -263,7 +305,18 @@ class NotificationProvenanceTest {
 
     @Test
     fun carriesTheSkipReasonAndTheFailureText() {
-        assertTrue(notifDeliveryPhrase("skipped", "no-email-on-file", null).detail.contains("no-email-on-file"))
+        // #1592: a skip code reads as words.
+        assertTrue(notifDeliveryPhrase("skipped", "no-email-on-file", null).detail.contains("no email on file"))
+        assertEquals(
+            "Not sent on this channel: the recipient has no phone number on file.",
+            notifDeliveryPhrase("skipped", "recipient_no_phone", null).detail,
+        )
+        listOf(
+            "recipient_no_email", "recipient_no_phone", "recipient_hard_bounced",
+            "template_missing", "template_text_empty", "unknown",
+        ).forEach { code ->
+            assertFalse(code, notifDeliveryPhrase("skipped", code, null).detail.contains(code))
+        }
         assertTrue(notifDeliveryPhrase("failed", null, "Twilio 21610").detail.contains("Twilio 21610"))
     }
 

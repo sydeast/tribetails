@@ -115,6 +115,38 @@ describe('Communicate screen', () => {
     expect(screen.getByText('1 delivered')).toBeInTheDocument();
   });
 
+  it('lists broadcasts and Inbox replies, not only 1:1 sends (#1610)', async () => {
+    listRecentSends.mockResolvedValue([
+      send({
+        id: 'broadcast_b1',
+        kind: 'broadcast',
+        channel: 'broadcast',
+        recipientRedacted: 'All active kinfolk',
+        subject: 'Holiday hours',
+        recipientCount: 12,
+        channels: ['email', 'sms'],
+        counts: { delivered: 0, opened: 0, clicked: 0, bounced: 0, failed: 0 },
+      }),
+      send({
+        id: 'reply_kf1',
+        kind: 'reply',
+        channel: 'message',
+        recipientRedacted: 'Dre East',
+        subject: null,
+        preview: 'See you Tuesday',
+        counts: { delivered: 0, opened: 0, clicked: 0, bounced: 0, failed: 0 },
+      }),
+    ]);
+    renderRecent();
+    expect(await screen.findByText('Broadcast · All active kinfolk')).toBeInTheDocument();
+    expect(screen.getByText('12 kinfolk · Email, Text')).toBeInTheDocument();
+    expect(screen.getByText('Inbox reply · Dre East')).toBeInTheDocument();
+    expect(screen.getByText('See you Tuesday')).toBeInTheDocument();
+    expect(screen.queryByText(/nothing sent yet/i)).toBeNull();
+    await userEvent.click(screen.getByRole('tab', { name: 'Inbox replies' }));
+    expect(screen.getByText('Inbox reply · Dre East')).toBeInTheDocument();
+    expect(screen.queryByText('Broadcast · All active kinfolk')).toBeNull();
+  });
   it('shows an honest "awaiting delivery events" summary when nothing has landed yet', async () => {
     listRecentSends.mockResolvedValue([
       send({ counts: { delivered: 0, opened: 0, clicked: 0, bounced: 0, failed: 0 } }),
@@ -139,14 +171,14 @@ describe('Communicate screen', () => {
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
     listRecentSends.mockRejectedValueOnce(new Error('permission-denied'));
     renderRecent();
-    expect(await screen.findByText(/listRecentSends failed: permission-denied/)).toBeInTheDocument();
-    expect(screen.queryByText(/no external sends yet/i)).toBeNull();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing sent yet/i)).toBeNull();
   });
 
   it('retries the load on demand via AsyncRegion', async () => {
     listRecentSends.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([send({})]);
     renderRecent();
-    await screen.findByText(/listRecentSends failed/i);
+    await screen.findByText(/Could not load/i);
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('Email · j***@example.com')).toBeInTheDocument();
     expect(listRecentSends).toHaveBeenCalledTimes(2);
@@ -155,7 +187,7 @@ describe('Communicate screen', () => {
   it('renders the proven-empty state only when the load is ready and genuinely empty', async () => {
     listRecentSends.mockResolvedValue([]);
     renderRecent();
-    expect(await screen.findByText(/no external sends yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nothing sent yet/i)).toBeInTheDocument();
   });
 
   it('reloads the list via the Reload button', async () => {
@@ -211,7 +243,7 @@ describe('Communicate screen', () => {
     await screen.findByText('Text · +1***5551212');
     await userEvent.click(screen.getByRole('tab', { name: 'Email' }));
     expect(screen.getByText('Nothing matches this filter.')).toBeInTheDocument();
-    expect(screen.queryByText(/no external sends yet/i)).toBeNull();
+    expect(screen.queryByText(/nothing sent yet/i)).toBeNull();
   });
 
   it('groups a late-evening local send under its LOCAL day, not the UTC-next day a raw slice would give (AO-18)', async () => {
@@ -324,10 +356,10 @@ describe('Communicate screen', () => {
     it('keeps the one heading, "Talk to your kinfolk", across both modes', async () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      expect(screen.getByText('The Den · Communicate')).toBeInTheDocument();
+      expect(screen.getByText('Care Ops · Communicate')).toBeInTheDocument();
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Talk to your kinfolk');
       await userEvent.click(screen.getByRole('tab', { name: 'Broadcast' }));
-      expect(screen.getByText('The Den · Communicate')).toBeInTheDocument();
+      expect(screen.getByText('Care Ops · Communicate')).toBeInTheDocument();
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Talk to your kinfolk');
       expect(screen.queryByText(/many homes/)).toBeNull();
     });
@@ -358,7 +390,7 @@ describe('Communicate screen', () => {
     it('is mounted collapsed, with the heading the other two clients use', async () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
+      await screen.findByText(/nothing sent yet/i);
       // The state carrier, not visibility: DenPanel unmounts the content while
       // collapsed, and the aria-expanded attribute is what a reader announces.
       expect(toggle()).toHaveAttribute('aria-expanded', 'false');
@@ -370,7 +402,7 @@ describe('Communicate screen', () => {
     it('sits in the right column between the compose surface and Recent, in both modes', async () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
+      await screen.findByText(/nothing sent yet/i);
       const panel = document.querySelector('section.communicate__external');
       expect(panel).not.toBeNull();
       const recent = document.querySelector('section.communicate__recent');
@@ -391,7 +423,7 @@ describe('Communicate screen', () => {
     it('expands on its heading and shows the form', async () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
+      await screen.findByText(/nothing sent yet/i);
       await userEvent.click(toggle());
       expect(toggle()).toHaveAttribute('aria-expanded', 'true');
       expect(screen.getByRole('radiogroup', { name: 'Channel' })).toBeInTheDocument();
@@ -409,7 +441,7 @@ describe('Communicate screen', () => {
         recipientRedacted: 'p***@hanasamku.com',
       });
       render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
+      await screen.findByText(/nothing sent yet/i);
       await userEvent.click(toggle());
       await userEvent.type(screen.getByLabelText(/^email address$/i), 'pawsome@hanasamku.com');
       await userEvent.type(screen.getByLabelText(/^subject$/i), 'Your towel');
@@ -435,7 +467,7 @@ describe('Communicate screen', () => {
         recipientRedacted: '+1******4567',
       });
       render(<Communicate />);
-      await screen.findByText(/no external sends yet/i);
+      await screen.findByText(/nothing sent yet/i);
       await userEvent.click(toggle());
       await userEvent.click(screen.getByRole('radio', { name: 'Text' }));
       await userEvent.type(screen.getByLabelText(/^phone number$/i), '+15551234567');

@@ -244,7 +244,7 @@ describe('MyNotificationsEdit screen', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
-    expect(await screen.findByText(/saveMyAdminNotificationPrefs failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save/i)).toBeInTheDocument();
     expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
     // draft preserved, not reverted
     expect(toggle).toHaveAttribute('aria-checked', 'true');

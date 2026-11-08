@@ -4,6 +4,8 @@ import { sessionsForKinfolkQuery, type SessionEntry } from '../api/sessions';
 import type { LinkInvoiceSessionsResult } from '../contracts/invoiceContracts.generated';
 import { useCollection } from '../lib/firestore';
 import { humanizeDate, localDateIso } from '../lib/invoiceFormat';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { sessionState, sessionStateInfo } from '../lib/sessionFormat';
 import { AsyncRegion } from './AsyncRegion';
 import { Banner } from './Banner';
@@ -30,9 +32,10 @@ import './InvoiceLinkVisitsEditor.css';
  * since #1254 the server refuses it (`session_on_other_invoice`, shown in the
  * error banner verbatim), so this is the early, visible form of that rule. Absent, empty and whitespace
  * `invoiceId` are all "unclaimed", the rule `listUninvoicedSessions` uses.
- * Beyond that one rule the editor adds no eligibility of its own: the callable
- * gates on neither status nor editScope, and Android and desktop offer every
- * household visit.
+ * #1609 ADDS ONE MORE: a CANCELLED visit is shown and cannot be newly ticked,
+ * because work that did not happen is not billable and `linkInvoiceSessions`
+ * refuses it (`session_cancelled`). One already in this invoice's set stays
+ * togglable so it can be unlinked. Android and desktop apply the same rule.
  */
 export interface InvoiceLinkVisitsEditorProps {
   invoiceId: string;
@@ -108,7 +111,7 @@ export function InvoiceLinkVisitsEditor({
       setSaving(false);
       onBusyChange?.(false);
       const message = caught instanceof Error && caught.message ? caught.message : 'Save failed';
-      setError(`linkInvoiceSessions failed: ${message}`);
+      setError(`Could not save: ${message}`);
     }
   }
 
@@ -180,6 +183,8 @@ function HouseholdVisits({
   onToggle,
 }: RowsProps & { invoiceId: string; kinfolkId: string; initial: readonly string[] }) {
   const visits = useCollection<SessionEntry>(sessionsForKinfolkQuery(kinfolkId));
+  // #1744: each row names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
   return (
     <AsyncRegion state={visits} what="the household's visits" isEmpty={() => false} empty={null}>
       {(rows) => {
@@ -195,10 +200,15 @@ function HouseholdVisits({
                   <VisitRow
                     key={s._id}
                     session={s}
+                    catalog={catalog}
                     checked={pending.has(s._id)}
                     // Already in this invoice's set: always togglable, even when
                     // its back-link points elsewhere, so a half-link can be undone.
                     elsewhere={!initial.includes(s._id) && onOtherInvoice(s, invoiceId)}
+                    // #1609: a cancelled visit is work that did not happen. It is
+                    // shown, so the list matches the household's record, but it
+                    // cannot be newly ticked (linkInvoiceSessions refuses it).
+                    cancelled={!initial.includes(s._id) && sessionState(s.status ?? '') === 'cancelled'}
                     disabled={disabled}
                     onToggle={onToggle}
                   />
@@ -215,29 +225,33 @@ function HouseholdVisits({
 
 function VisitRow({
   session,
+  catalog,
   checked,
   elsewhere,
+  cancelled,
   disabled,
   onToggle,
 }: {
   session: SessionEntry;
+  catalog: BookingCatalog;
   checked: boolean;
   elsewhere: boolean;
+  cancelled: boolean;
   disabled: boolean;
   onToggle: (id: string) => void;
 }) {
-  const service = session.serviceType?.trim() || 'Visit';
+  const service = bookingServiceName(session.serviceType, catalog);
   const start = session.startTime ?? '';
   const day = start.trim() === '' ? 'no date' : humanizeDate(start.slice(0, 10), localDateIso(new Date()));
   const status = sessionStateInfo(sessionState(session.status ?? '')).label;
   return (
-    <li className={elsewhere ? 'link-visits__row link-visits__row--elsewhere' : 'link-visits__row'}>
+    <li className={elsewhere || cancelled ? 'link-visits__row link-visits__row--elsewhere' : 'link-visits__row'}>
       <label className="link-visits__row-label">
         <input
           type="checkbox"
           checked={checked}
           onChange={() => onToggle(session._id)}
-          disabled={disabled || elsewhere}
+          disabled={disabled || elsewhere || cancelled}
           aria-label={`Link ${service} on ${day}`}
         />
         <span className="link-visits__row-main">
@@ -245,6 +259,7 @@ function VisitRow({
           <span className="link-visits__row-meta">
             {day} · {status}
             {elsewhere ? ' · on another invoice' : ''}
+            {cancelled ? ' · cancelled, not billable' : ''}
           </span>
         </span>
       </label>

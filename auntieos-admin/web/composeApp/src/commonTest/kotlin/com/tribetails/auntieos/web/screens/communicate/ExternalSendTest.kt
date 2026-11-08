@@ -133,4 +133,11 @@ class ExternalSendTest {
             externalSendErrorText("FAILED_PRECONDITION: recipient_hard_bounced"),
         )
     }
+
+    @Test
+    fun `#1592 the sent line names the redacted recipient and no provider id`() {
+        val line = externalSentLine("n***@example.com")
+        kotlin.test.assertEquals("Sent to n***@example.com. The full recipient is never stored in the audit log.", line)
+        kotlin.test.assertFalse(line.contains("Provider"), line)
+    }
 }

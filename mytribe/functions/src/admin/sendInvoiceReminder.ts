@@ -474,7 +474,7 @@ export async function sendInvoiceReminderHandler(
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId,
-    description: `Invoice reminder resent for ${data.invoiceNumber ?? args.invoiceId}`,
+    description: `Invoice reminder resent for ${(await import('../lib/activityWords.js')).invoiceWords(data.invoiceNumber)}`,
     payload: { invoiceId: args.invoiceId, kinfolkId: familyId, recipientUid: recipientUid ?? null },
   }).catch((err) => {
     logEvent({

@@ -73,7 +73,7 @@ export async function markNotificationReadHandler(
     // so the canonical Activity Log "Target" column points to the notification.
     targetUid: args.notificationId,
     targetCollection: 'notifications',
-    description: `Notification ${data.key ?? args.notificationId} viewed`,
+    description: (await import('../lib/activityWords.js')).notificationViewedWords((await import('../notifications/notificationName.js')).notificationName(data.key)),
     payload: { notificationId: args.notificationId, key: data.key, viewedBy: uid, recipientUid: data.recipientUid },
   }).catch((err) => {
     logEvent({
@@ -145,7 +145,7 @@ export async function markNotificationUnreadHandler(
     actorUid: uid,
     targetUid: args.notificationId,
     targetCollection: 'notifications',
-    description: `Notification ${data.key ?? args.notificationId} marked unread`,
+    description: (await import('../lib/activityWords.js')).notificationUnreadWords((await import('../notifications/notificationName.js')).notificationName(data.key)),
     payload: { notificationId: args.notificationId, key: data.key, unreadBy: uid, recipientUid: data.recipientUid },
   }).catch((err) => {
     logEvent({

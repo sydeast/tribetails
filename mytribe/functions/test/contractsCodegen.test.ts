@@ -291,8 +291,8 @@ describe('the committed Contracts module', () => {
     // un-invoiced work: setSessionDoNotInvoice. 28 since docket Q6
     // (2026-09-27): giveAccountCredit and getAccountCreditHistory. 30 since
     // #1003: listUnappliedPayments and resolveUnappliedPayment.
-    // #1113: retryInvoiceCheckoutClose.
-    expect(model.callables).toHaveLength(31);
+    // #1113: retryInvoiceCheckoutClose. 32 since #1609: previewInvoiceNotice.
+    expect(model.callables).toHaveLength(32);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);
@@ -335,9 +335,11 @@ describe('the committed booking Contracts module (ADR-0003 follow-up)', () => {
   // had no office-facing surface at all: the admin's Bookings list streams
   // kin_care_sessions, and a `requested` envelope has no session yet.
   // 16 since #1283 added getBookingNotes: the household's own notes, read back.
-  it('covers all 16 booking callables, both directions where a schema exists', () => {
+  // 17 since #1580 added listVisitInternalNotes: the visit's one internal-notes list.
+  it('covers all 17 booking callables, both directions where a schema exists', () => {
     const model = readModel(BOOKING_CONTRACT_REGISTRY);
-    expect(model.callables).toHaveLength(16);
+    expect(model.callables).toHaveLength(17);
+    expect(model.callables.map((c) => c.name)).toContain('listVisitInternalNotes');
     // getMyBookings is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

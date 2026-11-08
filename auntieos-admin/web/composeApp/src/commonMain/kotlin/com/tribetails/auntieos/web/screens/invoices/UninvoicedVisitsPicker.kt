@@ -317,7 +317,8 @@ internal fun UninvoicedVisitsPicker(
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    s.serviceType.ifBlank { "Visit" },
+                                    // #1744: the KinCare's name, never the stored `visit_60`.
+                                    com.tribetails.auntieos.web.screens.LocalServiceCatalog.current.nameOf(s.serviceType),
                                     style = AuntieTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = c.textPrimary,
@@ -417,7 +418,7 @@ internal fun UninvoicedVisitsPicker(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    e.serviceType.ifBlank { "Visit" },
+                                    com.tribetails.auntieos.web.screens.LocalServiceCatalog.current.nameOf(e.serviceType),
                                     style = AuntieTheme.typography.bodyMedium,
                                     color = c.textPrimary,
                                 )

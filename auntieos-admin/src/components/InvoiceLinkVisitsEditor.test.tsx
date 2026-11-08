@@ -18,6 +18,12 @@ vi.mock('../lib/firestore', async (orig) => ({
   useCollection: (spec: unknown) => useCollection(spec),
 }));
 
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
+}));
+
 import {
   InvoiceLinkVisitsEditor,
   linkVisitsSavedText,
@@ -66,6 +72,15 @@ beforeEach(() => {
 });
 
 describe('InvoiceLinkVisitsEditor', () => {
+  it('#1744: names each visit by its KinCare, never the stored key', () => {
+    useCollection.mockReturnValue(ready([visit('s1', { serviceType: 'visit_45' })]));
+    render(
+      <InvoiceLinkVisitsEditor invoiceId="inv1" kinfolkId="kf1" linkedIds={[]} onCancel={vi.fn()} onSaved={vi.fn()} />,
+    );
+    expect(screen.getByRole('checkbox', { name: /^Link Long walk on / })).toBeInTheDocument();
+    expect(screen.getByText('Long walk')).toBeInTheDocument();
+    expect(screen.queryByText(/visit_45/)).toBeNull();
+  });
   it("lists the household's visits from the household query, linked ones ticked", () => {
     useCollection.mockReturnValue(ready([visit('s1', { invoiceId: 'inv1' }), visit('s2')]));
     render(
@@ -204,7 +219,7 @@ describe('InvoiceLinkVisitsEditor', () => {
     await user.click(box('s2'));
     await user.click(saveButton());
 
-    expect(await screen.findByText('linkInvoiceSessions failed: Session(s) not found: s2.')).toBeInTheDocument();
+    expect(await screen.findByText('Could not save: Session(s) not found: s2.')).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled();
     expect(screen.getByRole('region', { name: 'Link visits' })).toBeInTheDocument();
     expect(box('s1').checked).toBe(true);

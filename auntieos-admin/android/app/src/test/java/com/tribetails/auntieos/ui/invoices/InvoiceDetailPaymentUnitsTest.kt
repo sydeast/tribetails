@@ -240,7 +240,7 @@ class InvoiceDetailPaymentUnitsTest {
         // Fail-loud. There is deliberately no fallback to the old raw Firestore
         // read: falling back would restore the 100x defect on exactly the days
         // the callable is unhealthy.
-        mount(Result.failure(RuntimeException("getInvoiceLedger failed: unavailable")))
+        mount(Result.failure(RuntimeException("Could not load: unavailable")))
         rule.onNodeWithText("$137.50").assertDoesNotExist()
         rule.onNodeWithText("$13,750.00").assertDoesNotExist()
         rule.onNodeWithText("NOT INVOICE-LINKED").assertDoesNotExist()

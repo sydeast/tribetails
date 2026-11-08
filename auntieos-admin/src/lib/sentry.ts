@@ -73,3 +73,22 @@ export function reportError(error: unknown, context?: string): void {
     // A reporter must never become the thing that crashes the caller.
   }
 }
+
+/**
+ * #1592: a callable's raw refusal, kept for triage after the operator's copy of
+ * the message is made plain (`fns.ts`). A breadcrumb, not an event: the screen
+ * decides whether the failure is worth reporting, and when it does, the event
+ * carries the function name, code and server text alongside.
+ */
+export function noteCallableFailure(name: string, code: string, rawMessage: string, details?: unknown): void {
+  try {
+    Sentry.addBreadcrumb({
+      category: 'callable',
+      level: 'warning',
+      message: `${name}: ${rawMessage}`,
+      data: { code, ...(details !== undefined ? { details } : {}) },
+    });
+  } catch {
+    // Same rule as reportError.
+  }
+}

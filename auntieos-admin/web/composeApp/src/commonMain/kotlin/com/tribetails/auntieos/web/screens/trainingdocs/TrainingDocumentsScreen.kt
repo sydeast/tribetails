@@ -115,7 +115,7 @@ fun TrainingDocumentsScreen() {
             kicker     = "The Den · Tribal Intel",
             title      = "Tribal",
             accentTail = "Intel.",
-            subtitle   = "Guides and educational resources for care delivery",
+            subtitle   = TRIBAL_INTEL_SUBTITLE,
             trailing   = {
                 if (flags.trainingDocsCreate) {
                     // Backed by the createTrainingDocument admin callable (spec 23).
@@ -438,7 +438,7 @@ private fun DocCard(
 private fun EmptyState() {
     AuntieEmptyState(
         title   = "No Tribal Intel yet",
-        message = "Training materials and guides will appear here once uploaded",
+        message = TRIBAL_INTEL_EMPTY_MESSAGE,
         icon    = Lucide.BookOpen,
         modifier = Modifier.padding(vertical = AuntieTheme.dims.space5),
     )
@@ -478,19 +478,15 @@ private fun AddDocumentForm(
 
     GlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 18.dp) {
         Column(modifier = Modifier.padding(AuntieTheme.dims.space5)) {
-            Text(
-                text  = if (draft.editingId == null) "New Tribal Intel" else "Edit Tribal Intel",
-                style = AuntieTheme.typography.headlineSmall,
-                color = c.textPrimary,
-            )
-            Spacer(Modifier.height(AuntieTheme.dims.space2))
-            Text(
-                text  = "Saved intel is queued for the next reconcile pass, then folded into the " +
-                    "targeted client's dossier and the pet's 411. Attachments are cited as provenance " +
-                    "only (the AI does not read image contents).",
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
-            )
+            // #1595: the explanation is the title's info tip, not standing copy.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text  = if (draft.editingId == null) "New Tribal Intel" else "Edit Tribal Intel",
+                    style = AuntieTheme.typography.headlineSmall,
+                    color = c.textPrimary,
+                )
+                com.tribetails.auntieos.web.ui.components.AuntieInfoTip(text = TRIBAL_INTEL_FORM_TIP)
+            }
 
             // Fail-loud error banner (upload or save failure).
             state.errorMessage?.let { msg ->
@@ -631,3 +627,11 @@ private fun AddDocumentForm(
         }
     }
 }
+
+/** #1616: what this screen holds. The same two strings ship on web and Android. */
+internal const val TRIBAL_INTEL_SUBTITLE = "Notes about a household, a person or a pet, written for the dossier and the 411."
+internal const val TRIBAL_INTEL_EMPTY_MESSAGE = "Notes about a household, a person or a pet appear here once you add them."
+/** The Tribal Intel form's info tip (#1595), the same words as admin web and Android. */
+internal const val TRIBAL_INTEL_FORM_TIP =
+    "Saved notes are folded into the household's dossier and the pet's 411 overnight. " +
+        "Attachments are listed as sources: only their names and links are read, never what an image shows."

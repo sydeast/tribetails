@@ -202,6 +202,44 @@ describe('batchUpdateBookings kinCares -> kin_care_sessions mirror', () => {
     expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1')?.data.status).toBe('CANCELLED');
   });
 
+  it('CANCEL mirrors onto the session the visit names when it is not vis_{visitId} (#1726)', async () => {
+    // An approved desktop draft keeps its own session id; its record's visit
+    // stores it as sessionId. Desktop and web send the visit id for a linked row.
+    const ctx = buildDbMock({
+      docs: { 'kin_care_sessions/draft1': { status: 'SCHEDULED' } },
+      collectionGroupDocs: {
+        kinCares: [
+          {
+            id: 'ses_draft1',
+            path: 'families/kf1/bookings/ses_draft1/kinCares/ses_draft1',
+            data: { status: 'confirmed', sessionId: 'draft1' },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await batchUpdateBookingsHandler(req({ ids: ['ses_draft1'], action: 'CANCEL' }));
+    expect(res.failed).toEqual([]);
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/draft1')?.data.status).toBe('CANCELLED');
+  });
+  it('APPROVE of a confirmed visit whose named session exists writes nothing (#1726)', async () => {
+    const ctx = buildDbMock({
+      docs: { 'kin_care_sessions/draft1': { status: 'SCHEDULED' } },
+      collectionGroupDocs: {
+        kinCares: [
+          {
+            id: 'ses_draft1',
+            path: 'families/kf1/bookings/ses_draft1/kinCares/ses_draft1',
+            data: { status: 'confirmed', sessionId: 'draft1' },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await batchUpdateBookingsHandler(req({ ids: ['ses_draft1'], action: 'APPROVE' }));
+    expect(core.approve).not.toHaveBeenCalled();
+    expect(ctx.writes).toEqual([]);
+  });
   it('does not write a session mirror when none exists (still-pending request, never approved)', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);

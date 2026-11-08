@@ -523,3 +523,46 @@ describe('rules: #984 an Auntie assigned a tribe is still not kinfolk', () => {
     await assertSucceeds(db.doc('invoices/inv1').get());
   });
 });
+/**
+ * #1580, operator ruling 2026-11-05: two kinds of internal visit note, shared
+ * and admin-only; Aunties see only shared ones. The kinds are two paths, so the
+ * boundary is the rule on each path.
+ */
+describe('rules: #1580 admin-only visit notes are the owner\'s alone', () => {
+  afterEach(async () => cleanup());
+  afterAll(async () => shutdown());
+  const VISIT = 'families/f1/bookings/b1/kinCares/v1';
+  it('the owner reads both kinds', async () => {
+    const env = await getEnv();
+    await seed(`${VISIT}/internalNotes/n1`, { body: 'shared', visibility: 'shared' });
+    await seed(`${VISIT}/adminNotes/n2`, { body: 'admin only', visibility: 'adminOnly' });
+    const db = asOwner(env).firestore();
+    await assertSucceeds(db.doc(`${VISIT}/internalNotes/n1`).get());
+    await assertSucceeds(db.doc(`${VISIT}/adminNotes/n2`).get());
+  });
+  it('an Auntie reads the shared kind and is refused the admin-only one', async () => {
+    const env = await getEnv();
+    await seed(`${VISIT}/internalNotes/n1`, { body: 'shared', visibility: 'shared' });
+    await seed(`${VISIT}/adminNotes/n2`, { body: 'admin only', visibility: 'adminOnly' });
+    const db = asAuntie(env).firestore();
+    await assertSucceeds(db.doc(`${VISIT}/internalNotes/n1`).get());
+    await assertFails(db.doc(`${VISIT}/adminNotes/n2`).get());
+    await assertFails(db.collection(`${VISIT}/adminNotes`).get());
+  });
+  it('a double-claimed account degrades to the Auntie and is refused', async () => {
+    const env = await getEnv();
+    await seed(`${VISIT}/adminNotes/n2`, { body: 'admin only', visibility: 'adminOnly' });
+    await assertFails(asDoubleClaimed(env).firestore().doc(`${VISIT}/adminNotes/n2`).get());
+  });
+  it('a household member is refused it', async () => {
+    const env = await getEnv();
+    await seed(`${VISIT}/adminNotes/n2`, { body: 'admin only', visibility: 'adminOnly' });
+    const db = env.authenticatedContext('u-kin', { role: 'kinfolk', kinfolkId: 'f1' }).firestore();
+    await assertFails(db.doc(`${VISIT}/adminNotes/n2`).get());
+  });
+  it('no client writes it, not even the owner', async () => {
+    const env = await getEnv();
+    await assertFails(asOwner(env).firestore().doc(`${VISIT}/adminNotes/n3`).set({ body: 'x' }));
+    await assertFails(asAuntie(env).firestore().doc(`${VISIT}/adminNotes/n3`).set({ body: 'x' }));
+  });
+});

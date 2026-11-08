@@ -80,8 +80,14 @@
   min-width: 0;
 }
 
+/* ISSUE #1612: `overflow-wrap: anywhere` because a Google Calendar id
+   (`c_...@group.calendar.google.com`) has no space to break at. In a hint or
+   a server message it kept its full width, pushed the page sideways and took
+   the app sidebar off screen. Inherited, so it covers every section, banners
+   included, and it only breaks a word that would not otherwise fit. */
 .settings__panelArea {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ISSUE #708: every section renders straight into this div, and a section

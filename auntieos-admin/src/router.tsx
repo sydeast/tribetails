@@ -223,7 +223,10 @@ const invoicesRoute = createRoute({
 const directoryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory',
-  component: lazyRouteComponent(() => import('./screens/Directory'), 'Directory'),
+  // `tab=kin` opens the Kin tab; `inCare=1` narrows it to the pets Home's "Kin
+  // in care" card counts (#1601).
+  validateSearch: optionalIdSearch(['tab', 'inCare'] as const),
+  component: lazyRouteComponent(() => import('./routes/DirectoryView'), 'DirectoryView'),
 });
 
 // Every household's invites in one list. Distinct from
@@ -251,7 +254,8 @@ const directoryProfileRoute = createRoute({
   // #1003: the `invoice.payment.unapplied` notice lands here with
   // `?section=unapplied-payments&paymentId=...`, which opens the Account credit
   // panel's "Payments needing a decision" list and that payment's dialog.
-  validateSearch: optionalIdSearch(['section', 'paymentId'] as const),
+  // `view` is the profile's sub-view (#1594): `household` or `edit`.
+  validateSearch: optionalIdSearch(['section', 'paymentId', 'view'] as const),
   component: lazyRouteComponent(
     () => import('./routes/DirectoryProfileView'),
     'DirectoryProfileView',
@@ -313,13 +317,16 @@ const sessionDetailRoute = createRoute({
 const kinTalesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintales',
+  // `range` is the list's date window (7d / 30d / 90d / all). Home's "KinTales
+  // to review" card and its pending rows send `all`, because the drafts Home
+  // counts are not limited to the last week (#1601).
   // `kinTaleId` opens one report in DETAIL (a kintale notification's "Open").
   // `sessionId` opens the COMPOSER scaffolded from that visit, which is where
   // Auntie Time's "Complete KinTale" button routes (#703): the write-up belongs
   // to a visit, and the composer already takes a `sessionId` to seed a draft
   // from one. Two ids because they name two different things and two different
   // destinations, never one id the view has to guess the meaning of.
-  validateSearch: optionalIdSearch(['kinTaleId', 'sessionId'] as const),
+  validateSearch: optionalIdSearch(['kinTaleId', 'sessionId', 'range'] as const),
   component: lazyRouteComponent(() => import('./routes/KinTalesView'), 'KinTalesView'),
 });
 
@@ -332,7 +339,9 @@ const galleryRoute = createRoute({
 const templatesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'templates',
-  component: lazyRouteComponent(() => import('./screens/Templates'), 'Templates'),
+  // `template` is the open editor (#1594): a template id, or `new`. Absent is the bank.
+  validateSearch: optionalIdSearch(['template'] as const),
+  component: lazyRouteComponent(() => import('./routes/TemplatesView'), 'TemplatesView'),
 });
 
 /**
@@ -387,7 +396,11 @@ const settingsRoute = createRoute({
 const communicateRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'communicate',
-  component: lazyRouteComponent(() => import('./screens/Communicate'), 'Communicate'),
+  // `draftId` opens one stored `generated_drafts` doc in Personalize for
+  // review, send or delete (#1563). It is where KinTales > Drafts and Home's
+  // "KinTales pending" rows land; without it every stored draft was stranded.
+  validateSearch: optionalIdSearch(['draftId'] as const),
+  component: lazyRouteComponent(() => import('./routes/CommunicateView'), 'CommunicateView'),
 });
 
 // Scheduled campaigns: Communicate's sibling, the same act at a later time.

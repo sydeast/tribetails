@@ -45,6 +45,9 @@ class AdminDataViewModelTest {
         mockRepo = mockk()
         mockInvoiceRepo = mockk()
         mockKinCareRepo = mockk()
+        // #1567: receipt sends read the invoice's stamp first. Tests that care
+        // about the re-read override this.
+        coEvery { mockInvoiceRepo.readInvoiceSendMarks(any()) } returns null
     }
 
     @After
@@ -754,76 +757,105 @@ class AdminDataViewModelTest {
         assertFalse(vm.bulkReadInFlight.value)
     }
 
+    // ─── #1675: answering a waiting request from its notification ─────────────
+    //
+    // The row's targetId is the request's envelope id (batchId). It used to go
+    // to batchUpdateBookings, which only knows visit ids, so every press came
+    // back not-found. It answers the whole request through manageBookingSeries
+    // now, as the Schedule screen's incoming requests do.
+
+    private fun seriesResult(
+        affected: Int = 1,
+        failed: Int = 0,
+        notified: Boolean = true,
+        newlyConfirmed: Int = affected,
+    ) = com.tribetails.auntieos.data.repository.ManageSeriesResult(
+        affectedVisits = affected,
+        failedVisits = failed,
+        householdNotified = notified,
+        newlyConfirmed = newlyConfirmed,
+    )
+
     @Test
-    fun `quickBookingAction approves the linked booking`() = runTest(testDispatcher) {
-        coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") } returns
-            Result.success(com.tribetails.auntieos.data.repository.BatchBookingResult("APPROVE", 1, emptyList()))
+    fun `answerBookingRequest approves the whole request by household and request id`() = runTest(testDispatcher) {
+        coEvery { mockRepo.manageBookingSeries("APPROVE", "kf1", "req_b1", any(), any(), any()) } returns
+            Result.success(seriesResult())
         coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
-        vm.quickBookingAction("bk-1", "APPROVE")
+        vm.answerBookingRequest("kf1", "req_b1", approve = true)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") }
-        assertEquals("Booking approve.", vm.bulkReadMessage.value)
+        coVerify(exactly = 1) { mockRepo.manageBookingSeries("APPROVE", "kf1", "req_b1", any(), any(), any()) }
+        coVerify(exactly = 0) { mockRepo.batchUpdateBookings(any(), any()) }
+        assertEquals("Approved. The household has been told once, with every date.", vm.bulkReadMessage.value)
     }
 
     @Test
-    fun `quickBookingAction surfaces a per-id failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "REJECT") } returns
-            Result.success(
-                com.tribetails.auntieos.data.repository.BatchBookingResult(
-                    "REJECT", 0,
-                    listOf(com.tribetails.auntieos.data.repository.BatchBookingFailure("bk-1", "already_cancelled")),
-                ),
-            )
+    fun `answerBookingRequest declines the whole request`() = runTest(testDispatcher) {
+        coEvery { mockRepo.manageBookingSeries("CANCEL", "kf1", "req_b1", any(), any(), any()) } returns
+            Result.success(seriesResult())
         coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
-        vm.quickBookingAction("bk-1", "REJECT")
+        vm.answerBookingRequest("kf1", "req_b1", approve = false)
         advanceUntilIdle()
 
-        assertTrue(vm.bulkReadMessage.value!!.contains("already_cancelled"))
+        coVerify(exactly = 1) { mockRepo.manageBookingSeries("CANCEL", "kf1", "req_b1", any(), any(), any()) }
+        assertEquals("Declined. Nothing was booked and the household has your answer.", vm.bulkReadMessage.value)
     }
 
     @Test
-    fun `quickBookingAction shows the busy conflict that stopped the approval (#1099)`() = runTest(testDispatcher) {
+    fun `answerBookingRequest shows the busy conflict that stopped the approval (#1099)`() = runTest(testDispatcher) {
         val busy = "That time overlaps a busy block on your Google Calendar."
-        coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") } returns
-            Result.success(
-                com.tribetails.auntieos.data.repository.BatchBookingResult(
-                    "APPROVE", 0,
-                    listOf(com.tribetails.auntieos.data.repository.BatchBookingFailure("bk-1", busy)),
-                ),
-            )
+        coEvery { mockRepo.manageBookingSeries("APPROVE", "kf1", "req_b1", any(), any(), any()) } returns
+            Result.failure(IllegalStateException(busy))
         coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
         val vm = buildViewModel()
-        vm.quickBookingAction("bk-1", "APPROVE")
+        vm.answerBookingRequest("kf1", "req_b1", approve = true)
         advanceUntilIdle()
         assertEquals("Couldn't approve: $busy", vm.bulkReadMessage.value)
     }
+
     @Test
-    fun `quickBookingAction shows the server's refusal for an Overnight with no start time (#1098)`() = runTest(testDispatcher) {
-        coEvery { mockRepo.batchUpdateBookings(listOf("bk-1"), "APPROVE") } returns
-            Result.success(
-                com.tribetails.auntieos.data.repository.BatchBookingResult(
-                    "APPROVE", 0,
-                    listOf(
-                        com.tribetails.auntieos.data.repository.BatchBookingFailure(
-                            "bk-1", "Set the start time before approving this Overnight.",
-                        ),
-                    ),
-                ),
-            )
+    fun `answerBookingRequest shows the server's refusal for an Overnight with no start time (#1098)`() = runTest(testDispatcher) {
+        val refusal = "Set a start time for the Overnight on Nov 9 before approving."
+        coEvery { mockRepo.manageBookingSeries("APPROVE", "kf1", "req_b1", any(), any(), any()) } returns
+            Result.failure(IllegalStateException(refusal))
         coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
 
         val vm = buildViewModel()
-        vm.quickBookingAction("bk-1", "APPROVE")
+        vm.answerBookingRequest("kf1", "req_b1", approve = true)
         advanceUntilIdle()
 
+        assertEquals("Couldn't approve: $refusal", vm.bulkReadMessage.value)
+    }
+
+    @Test
+    fun `answerBookingRequest sends nothing without a household`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        vm.answerBookingRequest("", "req_b1", approve = true)
+        advanceUntilIdle()
+        coVerify(exactly = 0) { mockRepo.manageBookingSeries(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `bookingRequestAnswerMessage reports what the server did`() {
         assertEquals(
-            "Couldn't approve: Set the start time before approving this Overnight.",
-            vm.bulkReadMessage.value,
+            "Approved 2 of 3 visits. The rest did not go through and the household has not been told. Open the request in Bookings to finish it.",
+            bookingRequestAnswerMessage(true, seriesResult(affected = 2, failed = 1)),
+        )
+        assertEquals(
+            "This was already booked. Nothing changed and the household was not told again.",
+            bookingRequestAnswerMessage(true, seriesResult(newlyConfirmed = 0)),
+        )
+        assertEquals(
+            "Approved, but the message to the household did not go out, so tell them another way.",
+            bookingRequestAnswerMessage(true, seriesResult(notified = false)),
+        )
+        assertEquals(
+            "Declined, but the message to the household did not go out, so tell them another way.",
+            bookingRequestAnswerMessage(false, seriesResult(notified = false)),
         )
     }
 
@@ -876,6 +908,45 @@ class AdminDataViewModelTest {
         assertNull(vm.error.value)
     }
 
+    // ── #1567: a row send that got no answer is re-read, never reported as failed ──
+    @Test
+    fun `#1567 a silent draft send that landed confirms it and refreshes the list`() = runTest(testDispatcher) {
+        val draft = TestFixtures.invoice1.copy(id = "inv-d", kinfolkId = "fam1", status = "draft")
+        coEvery { mockInvoiceRepo.reviewAndSendDraftInvoice("inv-d", "fam1") } returns Result.failure(
+            io.mockk.mockk<com.google.firebase.functions.FirebaseFunctionsException>(relaxed = true).also {
+                io.mockk.every { it.code } returns com.google.firebase.functions.FirebaseFunctionsException.Code.DEADLINE_EXCEEDED
+            },
+        )
+        coEvery { mockInvoiceRepo.readInvoiceSendMarks("inv-d") } returns
+            com.tribetails.auntieos.domain.SendMarks("open", null, null, null)
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+        val vm = buildViewModel()
+        vm.reviewAndSendDraftInvoice(draft)
+        advanceUntilIdle()
+        assertEquals(
+            "Draft sent. The answer came late, so this was confirmed by re-reading the invoice.",
+            vm.invoiceActionMessage.value,
+        )
+        assertNull(vm.error.value)
+        coVerify(exactly = 1) { mockInvoiceRepo.getInvoices() }
+    }
+    @Test
+    fun `#1567 a silent draft send that did not land says not sent, never failed`() = runTest(testDispatcher) {
+        val draft = TestFixtures.invoice1.copy(id = "inv-d", kinfolkId = "fam1", status = "draft")
+        coEvery { mockInvoiceRepo.reviewAndSendDraftInvoice("inv-d", "fam1") } returns Result.failure(
+            java.net.SocketTimeoutException("timeout"),
+        )
+        coEvery { mockInvoiceRepo.readInvoiceSendMarks("inv-d") } returns
+            com.tribetails.auntieos.domain.SendMarks("draft", null, null, null)
+        val vm = buildViewModel()
+        vm.reviewAndSendDraftInvoice(draft)
+        advanceUntilIdle()
+        assertEquals(
+            "Tribe Tails did not answer within 70 seconds. The invoice is still a draft, so it has not gone out. Send it again.",
+            vm.error.value,
+        )
+        assertNull(vm.invoiceActionMessage.value)
+    }
     @Test
     fun `#1511 reviewAndSendDraftInvoice says when the invoice reached the household in the app only`() = runTest(testDispatcher) {
         val draft = TestFixtures.invoice1.copy(id = "inv-d", kinfolkId = "fam1", status = "draft")

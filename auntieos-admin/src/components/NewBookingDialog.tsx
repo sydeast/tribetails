@@ -1,10 +1,10 @@
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createMultiDateBookingRequest } from '../api/bookingsWrite';
 import { mintBookingIdempotencyKey } from '../lib/bookingIdempotency';
 import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import type { CreateMultiDateBookingRequestResult } from '../contracts/bookingContracts.generated';
 import {
-  KINFOLK_QUERY,
   KIN_ROSTER_MAX,
   SORT_OPTION_DEFAULT,
   activeKinByKinfolk,
@@ -12,7 +12,6 @@ import {
   kinForHouseholdQuery,
   kinfolkDisplayName,
   type Kin,
-  type Kinfolk,
 } from '../api/directory';
 import {
   AVAILABILITY_BUSY_SLOTS_QUERY,
@@ -140,7 +139,7 @@ interface NewBookingDialogProps {
  * The caller's success copy says so.
  */
 export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) {
-  const households = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const households = useKinfolkRoster();
 
   const [state, setState] = useState<WizardState>(initialWizardState);
   // Scoped to the chosen household, not the whole `kin` collection: a shared cap
@@ -422,7 +421,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
       // failed would offer the same losing move twice.
       setBusyOverridable(isOverridableBusyRefusal(err, overrideBusyConflict));
       setError(
-        `createMultiDateBookingRequest failed: ${err instanceof Error ? err.message : 'Create failed'}`,
+        `Could not create: ${err instanceof Error ? err.message : 'Create failed'}`,
       );
     }
   }

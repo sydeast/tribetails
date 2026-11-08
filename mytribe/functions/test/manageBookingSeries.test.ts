@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
@@ -14,6 +14,17 @@ vi.mock('firebase-admin/firestore', async () => {
 
 import { manageBookingSeriesHandler } from '../src/admin/manageBookingSeries';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
+
+// #1702: approval refuses a visit whose start has already passed. These
+// fixtures date their visits from June 2026 on, so the clock stands before
+// them; the past-start refusal itself is tested in approveIntoPast.test.ts.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-01T00:00:00.000Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -193,6 +204,24 @@ describe('manageBookingSeries', () => {
     expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_v1')?.data.status).toBe('CANCELLED');
   });
 
+  it('CANCEL: cancels the session the visit names when it is not vis_{visitId} (#1726)', async () => {
+    // An approved desktop draft keeps its own session id; its record's visit
+    // stores it as sessionId.
+    const ctx = buildDbMock({
+      docs: {
+        'families/kf1/bookings/ses_draft1': { envelopeStatus: 'confirmed' },
+        'kin_care_sessions/draft1': { status: 'SCHEDULED', kinCareVisitId: 'ses_draft1' },
+      },
+      queryDocs: {
+        'families/kf1/bookings/ses_draft1/kinCares': [
+          { id: 'ses_draft1', data: { status: 'confirmed', sessionId: 'draft1' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await manageBookingSeriesHandler(req({ action: 'CANCEL', kinfolkId: 'kf1', batchId: 'ses_draft1' }));
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/draft1')?.data.status).toBe('CANCELLED');
+  });
   it('SAD: missing envelope rejected (not-found)', async () => {
     const ctx = buildDbMock({ docs: {} });
     mocks.dbFn.mockReturnValue(ctx.db);

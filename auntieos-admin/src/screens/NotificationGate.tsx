@@ -121,7 +121,7 @@ export function NotificationGate() {
     saveBusinessNotificationOverride(entry.key, override)
       .then(() => setSaveError(null))
       .catch((err: unknown) => {
-        setSaveError(`saveBusinessNotificationOverride failed: ${errMessage(err)}`);
+        setSaveError(`Could not save: ${errMessage(err)}`);
         load();
       });
   }

@@ -19,11 +19,12 @@ import {
 import { getBusinessSettings } from '../api/settings';
 import type { ListPendingBookingRequestsResultRequestVisit } from '../contracts/bookingContracts.generated';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
+import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { BOOKING_BUSY_CONFLICT_CODE, callableConflictCode } from '../lib/bookingWizard';
 import { nightLabel, startTimeOnNight } from '../lib/businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
-import { useOneShot } from '../lib/useOneShot';
-import { useToast } from './Toast';
+import { useRefreshingLoad } from '../lib/useOneShot';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -93,7 +94,12 @@ export function requestKey(row: VisitRequest): string {
   return `${row.kind}/${row.request.kinfolkId}/${row.request.batchId}/${row.request.visitId}`;
 }
 
-/** Oldest first: the household that has been waiting longest is the one to answer. */
+/**
+ * NEWEST FIRST (#1607). The walk filed a request and watched it land at the
+ * bottom of the queue, under five older ones, which reads as "nothing new
+ * arrived". The newest ask is the one the office has not seen yet; the
+ * oldest is still on the list, with its date.
+ */
 export function mergeQueues(
   reschedule: RescheduleRequestDto[],
   cancel: CancelRequestDto[],
@@ -104,13 +110,12 @@ export function mergeQueues(
     ...cancel.map((request): VisitRequest => ({ kind: 'cancel', request })),
     ...newBookings.map((request): VisitRequest => ({ kind: 'newBooking', request })),
   ];
-  // A row with no `requestedAtMs` sorts last rather than to 1970: an unknown
-  // wait is not a long one, and putting it at the top would push a household
-  // that really has been waiting since July down the list.
+  // A row with no `requestedAtMs` sorts last: an unknown time is neither the
+  // newest nor the oldest, and putting it on top would claim it just arrived.
   return rows.sort(
     (a, b) =>
-      (a.request.requestedAtMs ?? Number.MAX_SAFE_INTEGER) -
-      (b.request.requestedAtMs ?? Number.MAX_SAFE_INTEGER),
+      (b.request.requestedAtMs ?? Number.MIN_SAFE_INTEGER) -
+      (a.request.requestedAtMs ?? Number.MIN_SAFE_INTEGER),
   );
 }
 
@@ -146,12 +151,37 @@ function reasonOf(err: unknown): string {
   return err instanceof Error ? err.message : 'the read did not land';
 }
 
-export function VisitRequestsSection() {
-  const loaded = useOneShot(loadQueues, 'visit requests');
+/** #1607: how often the waiting queue reads again while the screen is open. */
+export const VISIT_REQUESTS_REFRESH_MS = 60_000;
+
+export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number } = {}) {
+  // #1744: a request names its KinCare off the catalog, never a stored key.
+  const catalog = useBookingCatalog();
+  // #1607: the waiting count stayed at 6 after a new request until a reload.
+  // It now reads again every minute, when the tab comes back into view, and
+  // whenever this screen itself files a request (`refreshKey`).
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setTick((n) => n + 1);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') bump();
+    };
+    const id = setInterval(bump, VISIT_REQUESTS_REFRESH_MS);
+    window.addEventListener('focus', bump);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('focus', bump);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+  const loaded = useRefreshingLoad(loadQueues, 'visit requests', `${String(refreshKey)}:${String(tick)}`);
   const [resolvedKeys, setResolvedKeys] = useState<ReadonlySet<string>>(new Set());
   const [activeSheet, setActiveSheet] = useState<
     { row: VisitRequest; decision: 'accept' | 'decline' } | null
   >(null);
+  /** #1577: the request whose card body was pressed, open in its detail sheet. */
+  const [detailRow, setDetailRow] = useState<VisitRequest | null>(null);
   /**
    * #704: the queue reads as ONE compact banner until asked to open.
    *
@@ -163,7 +193,24 @@ export function VisitRequestsSection() {
    * is one press away and the rows are unchanged underneath it.
    */
   const [open, setOpen] = useState(false);
-  const { showToast } = useToast();
+  /**
+   * #1577: what the last answer did, and for whom, kept on the screen until the
+   * operator dismisses it. It used to be a toast, and that was not enough: the QA walk pressed
+   * Accept, watched "Working…" for 4 seconds, saw the sheet close and read no
+   * result, because a 5-second toast is easy to miss while the list re-renders
+   * and the answered card leaves it.
+   */
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const outcomeBanner =
+    outcome === null ? null : (
+      <Banner
+        tone="success"
+        title="Done"
+        trailing={<GhostButton label="Dismiss" onClick={() => setOutcome(null)} />}
+      >
+        <span role="status">{outcome}</span>
+      </Banner>
+    );
 
   if (loaded.status === 'loading') {
     return (
@@ -190,22 +237,26 @@ export function VisitRequestsSection() {
 
   const rows = loaded.data.requests.filter((r) => !resolvedKeys.has(requestKey(r)));
   const { failures } = loaded.data;
+  function onResolved(row: VisitRequest, message: string) {
+    // #1577: the answer names who it was for, and stays on the screen.
+    const said = `${householdLabel(row)}: ${message}`;
+    setResolvedKeys((prev) => new Set(prev).add(requestKey(row)));
+    setActiveSheet(null);
+    setOutcome(said);
+  }
+
   if (rows.length === 0 && failures.length === 0) {
     return (
       <section className="visit-requests">
+        {outcomeBanner}
         <p className="visit-requests__empty">No visit requests waiting.</p>
       </section>
     );
   }
 
-  function onResolved(row: VisitRequest, message: string) {
-    setResolvedKeys((prev) => new Set(prev).add(requestKey(row)));
-    setActiveSheet(null);
-    showToast(message);
-  }
-
   return (
     <section className="visit-requests">
+      {outcomeBanner}
       {failures.length > 0 && (
         <Banner tone="error" title="One of these queues didn't load">
           {`${failures.join(' ')} Anything waiting there is not on this list.`}
@@ -233,24 +284,25 @@ export function VisitRequestsSection() {
           <ul className="visit-requests__list">
             {rows.map((row) => (
               <li key={requestKey(row)} className="visit-requests__row">
-                <div className="visit-requests__row-meta">
-                  <span className="visit-requests__row-kind" data-kind={row.kind}>
-                    {rowKindLabel(row.kind)}
+                {/* #1577: the card body opens the request. A button, so it is
+                    reachable from the keyboard and reads as one control. */}
+                <button
+                  type="button"
+                  className="visit-requests__row-open"
+                  onClick={() => setDetailRow(row)}
+                >
+                  <span className="visit-requests__row-meta">
+                    <span className="visit-requests__row-kind" data-kind={row.kind}>
+                      {rowKindLabel(row.kind)}
+                    </span>
+                    <span className="visit-requests__row-title">{householdLabel(row)}</span>
                   </span>
-                  <span className="visit-requests__row-title">{rowTitle(row)}</span>
-                  {row.request.kinNames.length > 0 && (
-                    <>
-                      <span className="visit-requests__row-dot" aria-hidden="true">
-                        ·
-                      </span>
-                      <span>{row.request.kinNames.join(', ')}</span>
-                    </>
+                  <span className="visit-requests__row-subject">{rowSubject(row, catalog)}</span>
+                  <span className="visit-requests__row-when">{rowWhen(row)}</span>
+                  {reasonOfRow(row) !== null && (
+                    <span className="visit-requests__row-reason">{reasonOfRow(row)}</span>
                   )}
-                </div>
-                <p className="visit-requests__row-when">{rowWhen(row)}</p>
-                {reasonOfRow(row) !== null && (
-                  <p className="visit-requests__row-reason">{reasonOfRow(row)}</p>
-                )}
+                </button>
                 <div className="visit-requests__row-actions">
                   <PrimaryButton
                     label="Accept"
@@ -268,6 +320,16 @@ export function VisitRequestsSection() {
         </>
       )}
 
+      {detailRow && (
+        <RequestDetailDialog
+          row={detailRow}
+          onClose={() => setDetailRow(null)}
+          onDecide={(decision) => {
+            setDetailRow(null);
+            setActiveSheet({ row: detailRow, decision });
+          }}
+        />
+      )}
       {activeSheet && (
         <DecisionDialog
           row={activeSheet.row}
@@ -336,12 +398,23 @@ function nightsLabel(
   return awaitingTime ? `Nights of ${list}, start times not set` : `The nights of ${list}`;
 }
 
+/**
+ * #1744: a stored service as the operator's KinCare name, or null when the
+ * request carries none (so each caller keeps its own stand-in).
+ */
+function serviceNameOrNull(raw: string | null | undefined, catalog: BookingCatalog): string | null {
+  if (raw === null || raw === undefined || raw.trim() === '') return null;
+  return bookingServiceName(raw, catalog);
+}
+
 /** What the time field calls one night: its KinCare and its date. */
 function nightFieldName(
   visit: ListPendingBookingRequestsResultRequestVisit,
   request: PendingBookingRequestDto,
+  catalog: BookingCatalog,
 ): string {
-  const kinCare = visit.serviceType ?? request.serviceType ?? 'KinCare';
+  const kinCare =
+    serviceNameOrNull(visit.serviceType, catalog) ?? serviceNameOrNull(request.serviceType, catalog) ?? 'KinCare';
   return visit.requestedDate ? `${kinCare} on ${nightLabel(visit.requestedDate)}` : kinCare;
 }
 
@@ -379,12 +452,143 @@ function rowKindLabel(kind: VisitRequest['kind']): string {
   return kind === 'cancel' ? 'Cancel' : 'Reschedule';
 }
 
-/** A new request has no `title`; it is named by its service and household. */
-function rowTitle(row: VisitRequest): string {
-  if (row.kind === 'newBooking') {
-    return row.request.serviceType ?? row.request.kinfolkName ?? 'Care request';
-  }
-  return row.request.title ?? row.request.serviceType ?? 'Visit';
+/**
+ * #1577: WHO is asking, the first thing an operator needs before answering.
+ * All three queues carry `kinfolkName` (the household's `displayName`), null
+ * only when the household record would not read.
+ */
+export function householdLabel(row: VisitRequest): string {
+  const name = row.request.kinfolkName?.trim() ?? '';
+  return name === '' ? 'Household name not on file' : name;
+}
+/** What the request is about: the service, then the Kin it covers. */
+export function rowSubject(row: VisitRequest, catalog: BookingCatalog = EMPTY_BOOKING_CATALOG): string {
+  const service =
+    row.kind === 'newBooking'
+      ? (serviceNameOrNull(row.request.serviceType, catalog) ?? 'Care request')
+      : (row.request.title ?? serviceNameOrNull(row.request.serviceType, catalog) ?? 'Visit');
+  const kin = row.request.kinNames.filter((n) => n.trim() !== '').join(', ');
+  return kin === '' ? service : `${service} · ${kin}`;
+}
+/** " for The Wrens", or nothing when the household name did not read. */
+function forHousehold(row: VisitRequest, preposition: 'for' | 'from'): string {
+  const name = row.request.kinfolkName?.trim() ?? '';
+  return name === '' ? '' : ` ${preposition} ${name}`;
+}
+/** "30 min", "1 hr 30 min". Null when the length is not known. */
+function lengthLabel(minutes: number | null): string | null {
+  if (minutes === null || minutes <= 0) return null;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${String(m)} min`;
+  return m === 0 ? `${String(h)} hr` : `${String(h)} hr ${String(m)} min`;
+}
+/**
+ * One line per visit a request covers, so the detail sheet lists the days
+ * rather than a span. A night awaiting its start time (#1098) is named by its
+ * date. `visits` is absent on a payload from a server older than #1098, so
+ * the start list stands in for it.
+ */
+export function requestVisitLines(
+  request: PendingBookingRequestDto,
+  catalog: BookingCatalog = EMPTY_BOOKING_CATALOG,
+): string[] {
+  const visits = request.visits ?? [];
+  if (visits.length === 0) return request.startTimeMsList.map((ms) => whenLabel(ms));
+  return visits.map((v) => {
+    const when =
+      v.startTimeMs !== null
+        ? whenLabel(v.startTimeMs)
+        : `Night of ${v.requestedDate ? nightLabel(v.requestedDate) : 'a date not on file'}, start time not set`;
+    const parts = [when, serviceNameOrNull(v.serviceType, catalog), v.timeBlockLabel, lengthLabel(v.lengthMinutes)].filter(
+      (p): p is string => p !== null && p !== undefined && p !== '',
+    );
+    return parts.join(' · ');
+  });
+}
+interface RequestDetailDialogProps {
+  row: VisitRequest;
+  onClose: () => void;
+  onDecide: (decision: 'accept' | 'decline') => void;
+}
+/**
+ * #1577: the request opened from its card. Everything the office needs to
+ * answer it, household first, with the same Accept and Decline the card
+ * carries. Answering still goes through `DecisionDialog`, so the confirm step
+ * and its copy are one path whichever way the operator got there.
+ */
+function RequestDetailDialog({ row, onClose, onDecide }: RequestDetailDialogProps) {
+  const catalog = useBookingCatalog();
+  const reason = reasonOfRow(row);
+  const kin = row.request.kinNames.filter((n) => n.trim() !== '');
+  return (
+    <Dialog
+      title={`${rowKindLabel(row.kind)}${forHousehold(row, 'from')}`}
+      onClose={onClose}
+      footer={
+        <>
+          <GhostButton label="Close" onClick={onClose} />
+          <GhostButton label="Decline" onClick={() => onDecide('decline')} />
+          <PrimaryButton label="Accept" onClick={() => onDecide('accept')} />
+        </>
+      }
+    >
+      <dl className="visit-requests__facts">
+        <div className="visit-requests__fact">
+          <dt>Household</dt>
+          <dd>{householdLabel(row)}</dd>
+        </div>
+        <div className="visit-requests__fact">
+          <dt>Service</dt>
+          <dd>
+            {row.kind === 'newBooking'
+              ? (serviceNameOrNull(row.request.serviceType, catalog) ?? 'Not on the request')
+              : (row.request.title ?? serviceNameOrNull(row.request.serviceType, catalog) ?? 'Not on the visit')}
+          </dd>
+        </div>
+        <div className="visit-requests__fact">
+          <dt>Kin</dt>
+          <dd>{kin.length > 0 ? kin.join(', ') : 'Not on the request'}</dd>
+        </div>
+        {row.kind === 'newBooking' ? (
+          <div className="visit-requests__fact">
+            <dt>{row.request.visitCount === 1 ? 'Visit' : `${String(row.request.visitCount)} visits`}</dt>
+            <dd>
+              <ul className="visit-requests__fact-list">
+                {requestVisitLines(row.request, catalog).map((line, i) => (
+                  <li key={`${String(i)}-${line}`}>{line}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        ) : row.kind === 'cancel' ? (
+          <div className="visit-requests__fact">
+            <dt>Visit</dt>
+            <dd>{whenLabel(row.request.startTimeMs)}</dd>
+          </div>
+        ) : (
+          <>
+            <div className="visit-requests__fact">
+              <dt>Booked for</dt>
+              <dd>{whenLabel(row.request.currentStartTimeMs)}</dd>
+            </div>
+            <div className="visit-requests__fact">
+              <dt>Asked to move to</dt>
+              <dd>{whenLabel(row.request.proposedStartTimeMs)}</dd>
+            </div>
+          </>
+        )}
+        <div className="visit-requests__fact">
+          <dt>{row.kind === 'newBooking' ? 'Notes on the request' : 'Reason given'}</dt>
+          <dd>{reason ?? 'None given'}</dd>
+        </div>
+        <div className="visit-requests__fact">
+          <dt>Asked</dt>
+          <dd>{whenLabel(row.request.requestedAtMs)}</dd>
+        </div>
+      </dl>
+    </Dialog>
+  );
 }
 
 interface DecisionDialogProps {
@@ -400,6 +604,7 @@ interface DecisionDialogProps {
  * sets for every other booking decision in this app.
  */
 function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogProps) {
+  const catalog = useBookingCatalog();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -486,7 +691,7 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
 
   return (
     <Dialog
-      title={dialogTitle(row.kind, decision)}
+      title={dialogTitle(row, decision)}
       onClose={onClose}
       footer={
         <>
@@ -499,11 +704,15 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
         </>
       }
     >
+      <p className="visit-requests__dialog-household">
+        {householdLabel(row)}
+        <span className="visit-requests__dialog-subject">{rowSubject(row, catalog)}</span>
+      </p>
       <p className="visit-requests__dialog-line">{dialogLine(row, decision)}</p>
       {nights.length > 0 && row.kind === 'newBooking' && (
         <ul className="visit-requests__nights">
           {nights.map((v) => {
-            const name = nightFieldName(v, row.request);
+            const name = nightFieldName(v, row.request, catalog);
             const id = `visit-request-start-${v.visitId}`;
             return (
               <li key={v.visitId} className="visit-requests__night">
@@ -696,14 +905,21 @@ async function submitCancel(
     : 'Cancelled. This visit was still a request, so it had no schedule row to take off.';
 }
 
-function dialogTitle(kind: VisitRequest['kind'], decision: 'accept' | 'decline'): string {
-  if (kind === 'newBooking') {
-    return decision === 'decline' ? 'Turn down this request' : 'Book this request';
+/** #1577: the title names the household, so nobody answers the wrong one. */
+export function dialogTitle(row: VisitRequest, decision: 'accept' | 'decline'): string {
+  if (row.kind === 'newBooking') {
+    return decision === 'decline'
+      ? `Turn down this request${forHousehold(row, 'from')}`
+      : `Book this request${forHousehold(row, 'for')}`;
   }
-  if (kind === 'cancel') {
-    return decision === 'decline' ? 'Keep this visit' : 'Cancel this visit';
+  if (row.kind === 'cancel') {
+    return decision === 'decline'
+      ? `Keep this visit${forHousehold(row, 'for')}`
+      : `Cancel this visit${forHousehold(row, 'for')}`;
   }
-  return decision === 'decline' ? 'Decline this new time' : 'Move this visit';
+  return decision === 'decline'
+    ? `Decline this new time${forHousehold(row, 'from')}`
+    : `Move this visit${forHousehold(row, 'for')}`;
 }
 
 function confirmLabel(kind: VisitRequest['kind'], decision: 'accept' | 'decline'): string {

@@ -1,5 +1,9 @@
 import { rec, str } from './coerce';
 import { type ActivityLogEntry } from '../api/activityLog';
+import { businessInstantMs, businessWallClock } from './businessZoneTime';
+import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
+import { formatTime } from './denFormat';
+import { activityDescriptionWords } from './activityWords';
 
 /**
  * What an Activity Log row shows when it is OPENED.
@@ -37,18 +41,32 @@ export interface ActivityDetailRow {
  * "which second" is routinely the question when reconciling an audit trail
  * against a provider's logs.
  */
-export function activityDetailRows(entry: ActivityLogEntry): ActivityDetailRow[] {
+export function activityDetailRows(
+  entry: ActivityLogEntry,
+  zone: string = DEFAULT_BUSINESS_TIME_ZONE,
+  /** uid -> name (`useStaffNames`), #1592. A uid it does not know shows as it is. */
+  names: ReadonlyMap<string, string> = new Map(),
+): ActivityDetailRow[] {
   const rows: ActivityDetailRow[] = [];
   const push = (label: string, value: string): void => {
     if (value.trim() !== '') rows.push({ label, value });
   };
 
   push('When', str(entry.timestamp));
+  // The stored stamp is UTC; the row above it reads in the business zone (#1585).
+  // Showing both is what lets someone reconcile the two without doing the sum.
+  const when = activityWhen(str(entry.timestamp), zone);
+  if (when !== null) push('Business time', `${when.dayKey} ${when.clock}`);
   push('Action', str(entry.actionType));
   push('Status', str(entry.status));
   push('Severity', str(entry.severity));
-  push('Actor', str(entry.actorId));
-  push('Actor role', str(entry.actorRole));
+  // #1592: the person by name. The uid stays on the opened record beside it,
+  // because this is the evidence log and the uid is what the record holds.
+  const actorId = str(entry.actorId).trim();
+  const actorName = names.get(actorId);
+  push('Actor', actorName ?? actorId);
+  if (actorName !== undefined) push('Actor id', actorId);
+  push('Actor role', actorRoleLabel(str(entry.actorRole)));
   push('Household', str(entry.familyId));
   // A path, not a link. Where a route exists the screen offers one separately;
   // where none does, the path is still the most useful thing that can honestly
@@ -137,11 +155,12 @@ export function activityPayloadRows(entry: ActivityLogEntry): ActivityDetailRow[
 }
 
 /**
- * A leaf value as text. `null` prints as "null" rather than blank, because a
- * recorded null is a decision the writer made and blanking it would hide that.
+ * A leaf value as text. A recorded null prints as "none" rather than blank,
+ * because it is a decision the writer made and blanking it would hide that; it
+ * is a word rather than the literal "null" because an operator reads it (#1592).
  */
 function renderScalar(v: unknown): string {
-  if (v === null) return 'null';
+  if (v === null) return 'none';
   if (v === undefined) return '';
   if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
@@ -157,13 +176,21 @@ function renderScalar(v: unknown): string {
  * entry mentioning this booking id" is the actual question an operator has, and
  * the id is almost always in the payload rather than in the description.
  */
-export function activityMatchesQuery(entry: ActivityLogEntry, query: string): boolean {
+export function activityMatchesQuery(
+  entry: ActivityLogEntry,
+  query: string,
+  /** #1592: so the actor can be found by the name the row shows. */
+  names: ReadonlyMap<string, string> = new Map(),
+): boolean {
   const q = query.trim().toLowerCase();
   if (q === '') return true;
   const haystack = [
     str(entry.actionType),
     str(entry.description),
+    // #1747: the words the row shows, so a search for them finds a stored path's row.
+    activityDescriptionWords(str(entry.description)),
     str(entry.actorId),
+    names.get(str(entry.actorId).trim()) ?? '',
     str(entry.actorRole),
     str(entry.targetId),
     str(entry.targetCollection),
@@ -206,44 +233,59 @@ export function activityMatchesStatus(
 // tested here so the two clients cannot label the same entry differently.
 
 /**
- * The mock's six filter chips. Same taxonomy as Android's `ActivityFilter`, and
- * the same overlapping prefix rules: a category is a QUESTION asked of the
- * action type ("is this about a booking?"), not a partition, so one entry can
- * answer yes to two chips (ADMIN_TRIAGE_ORPHAN_REPORT is both KinTales and
- * Admin). The tile tone picks the first match in this order.
+ * The filter chips: the mock's six plus Billing (#1613).
+ *
+ * A category is a PARTITION: every action type lands under exactly one chip,
+ * chosen by the first rule below that claims it, so the filter and the row's tile
+ * can never disagree and a billing event cannot sit under KinTales. It used to be
+ * a set of overlapping substring questions ("DRAFT" was KinTales, so
+ * BILLING_DRAFT_INVOICE_SENT filed there), and Admin matched almost nothing
+ * because the real admin events (THEME_*, MEMBERSHIP_*, PERM_*, RETENTION_*, ...)
+ * were never listed. Android and the desktop console carry the same rules, in the
+ * same order; change all three together.
  */
-export type ActivityCategory = 'all' | 'auth' | 'bookings' | 'kintales' | 'notifications' | 'admin';
-
-export function activityMatchesCategory(entry: ActivityLogEntry, category: ActivityCategory): boolean {
-  if (category === 'all') return true;
-  const a = str(entry.actionType).toUpperCase();
-  switch (category) {
-    case 'auth':
-      return a.startsWith('AUTH') || a.includes('LOGIN') || a.includes('LOGOUT');
-    case 'bookings':
-      return a.startsWith('BOOKING') || a.startsWith('KINCARE') || a.includes('SESSION') || a.includes('VISIT');
-    case 'kintales':
-      return a.includes('KINTALE') || a.includes('CONTENT') || a.includes('DRAFT') || a.includes('REPORT');
-    case 'notifications':
-      return a.includes('NOTIFICATION') || a.includes('NOTIF');
-    case 'admin':
-      return a.startsWith('ADMIN') || a.includes('TRIAGE') || a.startsWith('UPDATE_SETTINGS') || a.startsWith('SETTINGS');
-  }
-}
-
-const CATEGORY_ORDER: readonly Exclude<ActivityCategory, 'all'>[] = [
-  'auth',
-  'bookings',
-  'kintales',
-  'notifications',
-  'admin',
+export type ActivityCategory = 'all' | 'auth' | 'bookings' | 'kintales' | 'notifications' | 'billing' | 'admin';
+type RealCategory = Exclude<ActivityCategory, 'all'>;
+const startsWithAny = (a: string, prefixes: readonly string[]): boolean => prefixes.some((p) => a.startsWith(p));
+const includesAny = (a: string, needles: readonly string[]): boolean => needles.some((n) => a.includes(n));
+/** First match wins, so the order is part of the contract. Money first: it must never fall to a later, broader rule. */
+const CATEGORY_RULES: readonly (readonly [RealCategory, (a: string) => boolean])[] = [
+  ['billing', (a) => startsWithAny(a, ['BILLING_', 'EXPENSE_']) || includesAny(a, ['INVOICE', 'PAYMENT', 'QUOTE'])],
+  ['auth', (a) => startsWithAny(a, ['AUTH', 'SECRETS_']) || includesAny(a, ['LOGIN', 'LOGOUT'])],
+  [
+    'notifications',
+    (a) =>
+      includesAny(a, ['NOTIFICATION', 'NOTIF']) ||
+      startsWithAny(a, ['CONVERSATION', 'EXTERNAL_MESSAGE', 'BROADCAST', 'MARKETING_BLAST']),
+  ],
+  [
+    'admin',
+    (a) =>
+      startsWithAny(a, [
+        'ADMIN', 'UPDATE_SETTINGS', 'SETTINGS', 'THEME_', 'MEMBERSHIP_', 'PERM_', 'SAVE_FORM_SCHEMA',
+        'DELETE_FORM_SCHEMA', 'BUSINESS_', 'BRANDING_', 'EMAIL_FRAME_', 'VET_CLINIC_', 'CREATE_KINFOLK',
+        'ARCHIVE_KIN', 'RESTORE_KIN', 'KIN_REMOVAL', 'CREATE_TRAINING', 'UPDATE_TRAINING', 'DELETE_TRAINING',
+        'SUPPL', 'EXPIRATION_', 'INTEGRATION_', 'AUDIENCE_SEGMENT', 'EXTERNAL_SUPPRESSION', 'OPERATOR_',
+        'RETENTION_', 'ERROR_', 'PROFILE_', 'HOME_ACCESS', 'EMERGENCY_CONTACT',
+      ]) || a.includes('TRIAGE'),
+  ],
+  [
+    'kintales',
+    (a) => startsWithAny(a, ['CONTENT_', 'MEDIA_']) || includesAny(a, ['KINTALE', 'TALE_', 'DRAFT', 'REPORT']),
+  ],
+  [
+    'bookings',
+    (a) => includesAny(a, ['BOOKING', 'KINCARE', 'SESSION', 'VISIT', 'RESCHEDULE', 'BLOCKED_TIME_SLOT', 'CANCEL_REQUEST']),
+  ],
 ];
-
-/** The category that paints the row's glyph tile, or null for an action nothing claims. */
-export function activityCategoryOf(entry: ActivityLogEntry): Exclude<ActivityCategory, 'all'> | null {
-  return CATEGORY_ORDER.find((c) => activityMatchesCategory(entry, c)) ?? null;
+/** The one category an entry belongs to, or null for an action nothing claims (it still shows under All). */
+export function activityCategoryOf(entry: ActivityLogEntry): RealCategory | null {
+  const a = str(entry.actionType).toUpperCase();
+  return CATEGORY_RULES.find(([, claims]) => claims(a))?.[0] ?? null;
 }
-
+export function activityMatchesCategory(entry: ActivityLogEntry, category: ActivityCategory): boolean {
+  return category === 'all' || activityCategoryOf(entry) === category;
+}
 /** `KINCARE_ARRIVED` reads as "Kincare arrived": the mock's bold line. Mirrors Android's `humanizeAction`. */
 export function humanizeAction(actionType: string): string {
   const lower = actionType.toLowerCase().replace(/_/g, ' ').trim();
@@ -274,6 +316,26 @@ export function activityDayLabel(day: string, today: string): string {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/** A log timestamp read on the business's calendar: its day key and its compact clock ("9:34p"). */
+export interface ActivityWhen {
+  dayKey: string;
+  clock: string;
+}
+/**
+ * Reads a log timestamp in the BUSINESS zone (#1585), never the device's and
+ * never the UTC wall clock the string happens to carry. A stamp with a zone
+ * (`...Z`, `+05:00`) is an instant; one without is already the business's wall
+ * clock (the same reading `businessInstantMs` gives visit times). Null when the
+ * string has no readable date and time, so the caller can say "Undated" instead
+ * of inventing one.
+ */
+export function activityWhen(timestamp: string, zone: string = DEFAULT_BUSINESS_TIME_ZONE): ActivityWhen | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(timestamp)) return null;
+  const ms = businessInstantMs(timestamp, zone);
+  if (ms === null) return null;
+  const wc = businessWallClock(ms, zone);
+  return { dayKey: wc.dateIso, clock: formatTime(`${wc.dateIso}T${wc.hhmm}`) };
+}
 /** Local `YYYY-MM-DD` for a Date, the shape `activityDayLabel` compares against. */
 export function localDayKey(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
@@ -286,4 +348,31 @@ function dayBefore(day: string): string {
     Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)) - 1),
   );
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The audit trail's actor role in words (#1592). The server writes `AUNTIE` for
+ * every staff caller, the owner included, so it reads "Staff", never "Auntie";
+ * PRIMARY and SECONDARY are the household's kinfolk. Display only: the stored
+ * value, and the search over it, are unchanged. Blank stays blank so the row is
+ * dropped.
+ */
+export function actorRoleLabel(role: string): string {
+  const key = role.trim().toUpperCase();
+  switch (key) {
+    case '':
+      return '';
+    case 'AUNTIE':
+      return 'Staff';
+    case 'PRIMARY':
+      return 'Primary kinfolk';
+    case 'SECONDARY':
+      return 'Secondary kinfolk';
+    case 'SYSTEM':
+      return 'System';
+    default: {
+      const words = key.toLowerCase().split(/[_\s]+/).filter(Boolean).join(' ');
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    }
+  }
 }

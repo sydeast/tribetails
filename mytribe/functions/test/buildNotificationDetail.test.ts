@@ -311,3 +311,46 @@ describe('buildNotificationDetail withholds staff-only fields from a household c
     );
   });
 });
+describe('the card names the KinCare, not its stored key (#1749)', () => {
+  const settings = (rates: Record<string, string>, durations: Record<string, string>) => ({
+    timeZone: 'America/New_York',
+    serviceRates: rates,
+    serviceDurations: durations,
+  });
+  it('a visit stored as visit_60 reads "60 Minute" on the Service row', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'business_settings/business_settings': settings({ '30Minute': '25', '60Minute': '40' }, { '30Minute': '30', '60Minute': '60' }),
+          'families/fam1': { displayName: 'The Rivera Home' },
+        },
+      }).db,
+    );
+    const detail = await buildNotificationDetail(
+      'kincare.auntie.departed',
+      'cli1',
+      { kinfolkId: 'fam1', serviceType: 'visit_60' },
+      null,
+      'kinfolk',
+    );
+    expect(detail!.serviceType).toBe('60 Minute');
+  });
+  it('a code the KinCare list cannot place leaves no Service row', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'business_settings/business_settings': settings({ Walk: '20', Sit: '30' }, { Walk: '60', Sit: '60' }),
+          'families/fam1': { displayName: 'The Rivera Home' },
+        },
+      }).db,
+    );
+    const detail = await buildNotificationDetail(
+      'kincare.auntie.departed',
+      'cli1',
+      { kinfolkId: 'fam1', serviceType: 'visit_60' },
+      null,
+      'kinfolk',
+    );
+    expect(detail?.serviceType).toBeUndefined();
+  });
+});

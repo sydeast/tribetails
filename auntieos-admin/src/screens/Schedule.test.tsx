@@ -29,14 +29,22 @@ vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }));
  * WIRING: that a row opens the sheet for the right session, and that the
  * sheet's navigation callbacks reach the router.
  */
-vi.mock('../components/BookingDetailModal', () => ({
+vi.mock('../components/BookingDetailModal', async () => {
+  // #1576: the stub renders the caller's Actions slot, so this suite can see
+  // what the Schedule composes into the sheet. The real panel needs a toast host.
+  const { ToastProvider } = await vi.importActual<typeof import('../components/Toast')>('../components/Toast');
+  return {
   BookingDetailModal: (props: {
     entry: { _id: string; kinfolkId?: string | undefined };
     onClose: () => void;
     onOpenKinfolk?: (id: string) => void;
     onOpenKinTale?: (id: string) => void;
+    actions?: import('react').ReactNode;
   }) => (
     <div data-testid="booking-detail-modal" data-entry-id={props.entry._id}>
+      <div data-testid="booking-detail-actions">
+        <ToastProvider>{props.actions}</ToastProvider>
+      </div>
       <button type="button" onClick={() => props.onOpenKinfolk?.(props.entry.kinfolkId ?? '')}>
         stub open kinfolk
       </button>
@@ -48,7 +56,8 @@ vi.mock('../components/BookingDetailModal', () => ({
       </button>
     </div>
   ),
-}));
+  };
+});
 
 /**
  * The three write surfaces (#397 M11/M12/M13). Only the CALLABLES are stubbed:
@@ -56,7 +65,14 @@ vi.mock('../components/BookingDetailModal', () => ({
  * these assertions are about what actually reaches the wire.
  */
 const { rescheduleBooking } = vi.hoisted(() => ({ rescheduleBooking: vi.fn() }));
-vi.mock('../api/bookingsWrite', () => ({ rescheduleBooking }));
+// #1576: the sheet's Actions panel imports the other transition writers too.
+vi.mock('../api/bookingsWrite', () => ({
+  rescheduleBooking,
+  approveBooking: vi.fn(),
+  rejectBooking: vi.fn(),
+  cancelBooking: vi.fn(),
+  markBookingCompleted: vi.fn(),
+}));
 const { createBlockedTimeSlot, createKinCareSession, deleteBlockedTimeSlot } = vi.hoisted(() => ({
   createBlockedTimeSlot: vi.fn(),
   createKinCareSession: vi.fn(),
@@ -218,7 +234,8 @@ describe('Schedule screen', () => {
       // session should appear in that day's agenda, not be silently absent
       // because it landed under tomorrow's UTC-sliced key instead.
       expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toBeInTheDocument();
-      expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+      // #1606: the 20:00 visit is also drawn on the grid now, so the agenda is the scope.
+      expect(within(agenda()).getByText('The Whitfields')).toBeInTheDocument();
     });
   });
 
@@ -505,6 +522,20 @@ describe('Schedule screen', () => {
     expect(screen.getByTestId('booking-detail-modal')).toHaveAttribute('data-entry-id', 'sess-42');
   });
 
+  /**
+   * #1576: the sheet opened from the calendar carries the same Actions panel
+   * Bookings composes into it, so a scheduled visit can be closed out or called
+   * off where it was found.
+   */
+  it('the calendar\u2019s sheet offers Mark Completed and Cancel for a scheduled visit', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [todaySession({ status: 'SCHEDULED' })] } });
+    render(<Schedule />);
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
+    const actions = screen.getByTestId('booking-detail-actions');
+    expect(within(actions).getByRole('button', { name: 'Mark Completed' })).toBeInTheDocument();
+    expect(within(actions).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
   it('closing the detail sheet returns to the agenda', async () => {
     mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
     render(<Schedule />);
@@ -641,7 +672,7 @@ describe('Schedule screen', () => {
     // AsyncRegion itself doesn't treat this as empty (the stream has a row),
     // so the agenda panel renders; it's the LEGEND specifically that must be
     // scoped away, never a stale row for a type entirely outside the view.
-    expect(await screen.findByText('No Kin Care sessions on this day.')).toBeInTheDocument();
+    expect(await screen.findByText('No KinCare sessions on this day.')).toBeInTheDocument();
     expect(screen.queryByLabelText('Service type legend')).toBeNull();
     expect(screen.queryByText('Overnight Stay')).toBeNull();
   });
@@ -649,6 +680,8 @@ describe('Schedule screen', () => {
   it('orders the legend by configured duration: two of five configured types render, in duration order', async () => {
     getBusinessSettings.mockResolvedValue({
       serviceDurations: { 'Half-Day 6Hrs': '360', '30Minute': '30', Consultation: '20', '90Minute': '90', '2Hrs': '120' },
+      // getBusinessSettings always returns the map (`pickMap`); the legend names against it (#1592).
+      serviceRates: {},
     });
     mockCollections({
       sessions: {
@@ -674,7 +707,7 @@ describe('Schedule screen', () => {
   });
 
   it('a type on screen but missing from business_settings still gets a legend row', async () => {
-    getBusinessSettings.mockResolvedValue({ serviceDurations: { '30Minute': '30' } });
+    getBusinessSettings.mockResolvedValue({ serviceDurations: { '30Minute': '30' }, serviceRates: {} });
     mockCollections({
       sessions: {
         status: 'ready',
@@ -691,6 +724,82 @@ describe('Schedule screen', () => {
     // sorts last -- but it is never dropped.
     const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
     expect(items).toEqual(['30Minute', 'Off-Book Visit', 'Busy']);
+  });
+
+  it('#1736: a visit is not a house sit, so its swatch and pill are orange, not purple', async () => {
+    // "Off-Book Visit" and the stored `visit_60` both contain "sit" inside
+    // "vi-sit". Android and the desktop console paint them orange (AO-19); the
+    // web painted them house-sitting purple.
+    getBusinessSettings.mockResolvedValue({ serviceDurations: {}, serviceRates: {} });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          todaySession({ _id: 'a', serviceType: 'Off-Book Visit' }),
+          todaySession({ _id: 'b', serviceType: 'House Sit' }),
+        ],
+      },
+    });
+    const { container } = render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    await screen.findAllByText('Off-Book Visit');
+    const swatch = (name: string) =>
+      Array.from(container.querySelectorAll('.schedule__legend-item')).find((el) => el.textContent === name);
+    expect(swatch('Off-Book Visit')).toHaveAttribute('data-tone', 'orange');
+    expect(swatch('House Sit')).toHaveAttribute('data-tone', 'purple');
+    expect(within(agenda()).getByText('Off-Book Visit')).toHaveAttribute('data-tone', 'orange');
+    expect(within(agenda()).getByText('House Sit')).toHaveAttribute('data-tone', 'purple');
+  });
+
+  it('#1592: names stored keys from the KinCare catalog, one legend row per service', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: { '60Minute': '45', '30Minute': '30' },
+      serviceDurations: {},
+    });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          // Two spellings of the one 60-minute KinCare, the shape the live
+          // collection holds.
+          todaySession({ _id: 'a', serviceType: 'visit_60' }),
+          todaySession({ _id: 'b', serviceType: '60Mins' }),
+        ],
+      },
+    });
+    const { container } = render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    await waitFor(() => {
+      const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
+      expect(items).toEqual(['60Minute', 'Busy']);
+    });
+    expect(screen.queryByText('visit_60')).toBeNull();
+    expect(within(agenda()).getAllByText('60Minute')).toHaveLength(2);
+  });
+
+  it('#1592: the legend swatch, the agenda pill and the week and month blocks share the resolved name\'s tone', async () => {
+    // The stored `visit_60` tones orange on its own (a visit, #1736); the
+    // KinCare it resolves to is "Dog walk", which tones teal. Every mark must
+    // follow the name.
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: { 'Dog walk': '45' },
+      serviceDurations: { 'Dog walk': '60' },
+    });
+    mockCollections({ sessions: { status: 'ready', data: [todaySession({ _id: 'a', serviceType: 'visit_60' })] } });
+    const { container } = render(<Schedule />);
+    await waitFor(() => {
+      const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
+      expect(items).toEqual(['Dog walk', 'Busy']);
+    });
+    const swatch = container.querySelector('.schedule__legend-item') as HTMLElement;
+    expect(swatch).toHaveAttribute('data-tone', 'teal');
+    expect(within(agenda()).getByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
+    const week = screen.getByRole('group', { name: 'Week' });
+    expect(week.querySelector('[data-session-id="a"]')).toHaveAttribute('data-tone', 'teal');
+
+    await user.click(screen.getByRole('tab', { name: 'Month' }));
+    const month = screen.getByRole('group', { name: 'Month' });
+    expect(month.querySelector('[data-session-id="a"]')).toHaveAttribute('data-tone', 'teal');
   });
 
   it('the "in view" stat counts only sessions within the visible week, honestly reflecting a listener error as unknown (not zero)', () => {
@@ -1045,6 +1154,18 @@ describe('Schedule month grid', () => {
  * and that a refusal is shown rather than swallowed.
  */
 describe('Schedule write surfaces', () => {
+  // #1574: these grid visits sit at 9:00 LOCAL today and a drag moves them a
+  // little; a visit is never moved into the past, so the clock is pinned to the
+  // start of today (Date only, so userEvent's timers run as normal).
+  beforeEach(() => {
+    const real = new Date();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(real.getFullYear(), real.getMonth(), real.getDate(), 0, 0, 0, 0));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   /** A visit at 9:00-10:30 LOCAL today, so it lands inside the 8a-6p grid in any zone. */
   function gridSession(): ScheduleSessionEntry {
     const today = new Date();
@@ -1080,6 +1201,16 @@ describe('Schedule write surfaces', () => {
     const at = (hh: number, mm: number) =>
       new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0).toISOString();
     expect(rescheduleBooking).toHaveBeenCalledWith('sess-42', at(10, 0), at(11, 30), {});
+  });
+  /** #1574: a visit is never moved into the past. At noon, a drop onto 10:00 is refused before the callable. */
+  it('a drag onto an hour that has passed is refused here and sends nothing', async () => {
+    const real = new Date();
+    vi.setSystemTime(new Date(real.getFullYear(), real.getMonth(), real.getDate(), 12, 0, 0, 0));
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX); // 9:00 -> 10:00, two hours ago
+    await screen.findByText('That time has already passed. A visit can only be moved to a time still ahead.');
+    expect(rescheduleBooking).not.toHaveBeenCalled();
   });
   /**
    * A drop that resolves back to the visit's own start writes nothing: no
@@ -1362,6 +1493,18 @@ describe('Schedule on the business clock, device in another zone (#1158)', () =>
   afterAll(() => {
     if (outerTz === undefined) delete process.env.TZ;
     else process.env.TZ = outerTz;
+  });
+
+  // #1574: the drop below lands on 15:00 Chicago today, and a visit is never
+  // moved into the past, so the clock is pinned to the start of the business's
+  // today (Date only).
+  beforeEach(() => {
+    const startOfBizToday = businessWallClockToMs(businessTodayIso(BIZ), '00:00', BIZ)!;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(startOfBizToday));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   /** A Chicago wall clock on the business's today, as the UTC instant a session stores. */

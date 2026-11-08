@@ -399,4 +399,21 @@ class DashboardInsightsTest {
         assertEquals("2h 00m", formatDuration(120))
         assertEquals("0m", formatDuration(-5))
     }
+
+    // ── KinTales to review (#1601) ───────────────────────────────────────────
+    @Test
+    fun `isDraftAwaitingReview counts generated, pending and blank, never approved`() {
+        assertTrue(isDraftAwaitingReview("generated"))
+        assertTrue(isDraftAwaitingReview("PENDING"))
+        assertTrue(isDraftAwaitingReview(""))
+        assertTrue(!isDraftAwaitingReview("approved"))
+        assertTrue(!isDraftAwaitingReview("mystery"))
+    }
+    // ── Today's Pack overdue line (#1590) ────────────────────────────────────
+    @Test
+    fun `todaysPackOverdueLabel is silent at zero and counts in words otherwise`() {
+        assertNull(todaysPackOverdueLabel(0))
+        assertEquals("1 overdue visit to close out in Auntie Time", todaysPackOverdueLabel(1))
+        assertEquals("6 overdue visits to close out in Auntie Time", todaysPackOverdueLabel(6))
+    }
 }

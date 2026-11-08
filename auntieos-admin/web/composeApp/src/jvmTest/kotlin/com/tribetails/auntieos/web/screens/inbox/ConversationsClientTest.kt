@@ -59,4 +59,22 @@ class ConversationsClientTest {
         val r = FirestoreClient().listConversations()
         assertTrue(r is WriteResult.Err)
     }
+
+    @Test
+    fun getRecordingAudioDecodesTheBytesTheServerFetched() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "getRecordingAudio" to """{"ok":true,"source":"twilio","contentType":"audio/mpeg","base64":"SUQzAAEC","bytes":6}""",
+        )
+        val r = FirestoreClient().getRecordingAudio("voicemail", "vm1")
+        assertTrue(r is WriteResult.Ok)
+        val audio = (r as WriteResult.Ok).value
+        assertTrue(audio is RecordingAudio.Bytes)
+        assertEquals(6, (audio as RecordingAudio.Bytes).bytes.size)
+    }
+    @Test
+    fun getRecordingAudioSurfacesAnUnplayableAnswerAsErr() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf("getRecordingAudio" to """{"ok":true,"source":"twilio","base64":""}""")
+        val r = FirestoreClient().getRecordingAudio("voicemail", "vm1")
+        assertTrue(r is WriteResult.Err)
+    }
 }

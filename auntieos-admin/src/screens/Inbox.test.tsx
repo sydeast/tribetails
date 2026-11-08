@@ -206,14 +206,14 @@ describe('Inbox screen', () => {
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
     listConversations.mockRejectedValueOnce(new Error('permission-denied'));
     render(<Inbox />);
-    expect(await screen.findByText(/listConversations failed: permission-denied/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
     expect(screen.queryByText(/no messages yet/i)).toBeNull();
   });
 
   it('retries the load on demand via AsyncRegion', async () => {
     listConversations.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([thread({})]);
     render(<Inbox />);
-    await screen.findByText(/listConversations failed/i);
+    await screen.findByText(/Could not load/i);
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByText('The Alvarez Household')).toBeInTheDocument();
     expect(listConversations).toHaveBeenCalledTimes(2);
@@ -370,7 +370,7 @@ describe('Inbox screen', () => {
 describe('Inbox waiting/answered sections', () => {
   it('sorts the list into Waiting on a reply above Answered', async () => {
     listConversations.mockResolvedValue([
-      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', lastSenderRole: 'auntie', unreadForAdmin: false }),
       thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
     ]);
     render(<Inbox />);
@@ -379,9 +379,20 @@ describe('Inbox waiting/answered sections', () => {
     expect(sections).toEqual(['Waiting on a reply', 'Answered']);
   });
 
+  it('keeps a read thread nobody has answered under Waiting on a reply (#1572)', async () => {
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k-opened', kinfolkName: 'Opened Household', lastSenderRole: 'kinfolk', unreadForAdmin: false }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText('Opened Household');
+    const waiting = screen.getByRole('heading', { level: 3, name: 'Waiting on a reply' }).closest('li');
+    expect(waiting).toHaveTextContent('Opened Household');
+    expect(screen.queryByText('Nothing is waiting on a reply.')).toBeNull();
+    expect(screen.getByText('No answered threads yet.')).toBeInTheDocument();
+  });
   it('says a section is empty rather than dropping its header', async () => {
     listConversations.mockResolvedValue([
-      thread({ kinfolkId: 'k1', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k1', kinfolkName: 'Answered Household', lastSenderRole: 'auntie', unreadForAdmin: false }),
     ]);
     render(<Inbox />);
     await screen.findByText('Answered Household');
@@ -392,7 +403,7 @@ describe('Inbox waiting/answered sections', () => {
   it('drops the Answered header under the Unread chip rather than claiming nothing was answered', async () => {
     listConversations.mockResolvedValue([
       thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
-      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', lastSenderRole: 'auntie', unreadForAdmin: false }),
     ]);
     render(<Inbox />);
     await screen.findByText('Answered Household');
@@ -429,7 +440,7 @@ describe('Inbox arrangement flag (auntieos.inbox.waitingSections)', () => {
   it('OFF: draws one flat list with no waiting/answered headers', async () => {
     arrangement(false);
     listConversations.mockResolvedValue([
-      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', lastSenderRole: 'auntie', unreadForAdmin: false }),
       thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
     ]);
     render(<Inbox />);
@@ -514,7 +525,7 @@ describe('Inbox arrangement flag (auntieos.inbox.waitingSections)', () => {
   // is not a safe "off" for this flag, it is the other layout, so a failed read
   // falls back to the catalog default and the operator sees today's Inbox.
   it('falls back to the shipped sections when the flag read fails, and still lists the threads', async () => {
-    getFeatureFlags.mockRejectedValue(new Error('getFeatureFlags failed'));
+    getFeatureFlags.mockRejectedValue(new Error('Could not load'));
     listConversations.mockResolvedValue([
       thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
     ]);
@@ -839,7 +850,7 @@ describe('Inbox channels', () => {
     });
     render(<Inbox />);
     await screen.findByText('Channels');
-    expect(screen.getByText('+15559998888')).toBeInTheDocument();
+    expect(screen.getByText('(555) 999-8888')).toBeInTheDocument();
   });
 });
 
@@ -911,7 +922,7 @@ describe('Inbox on the glass ground (#755)', () => {
 
     const call = rowOf('Okafor Household');
     expect(call.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'error');
-    expect(within(call).getByText('· +17375550192')).toHaveClass('inbox__row-counterpart');
+    expect(within(call).getByText('· (737) 555-0192')).toHaveClass('inbox__row-counterpart');
 
     const sms = rowOf('Bell Household');
     expect(sms.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'orange');
@@ -952,7 +963,7 @@ describe('Inbox on the glass ground (#755)', () => {
     streams({ voicemails: ready([voicemail({ kinfolkId: null, kinfolkName: '', callerNumber: '+15559998888' })]) });
     render(<Inbox />);
     await screen.findByText('Channels');
-    const row = screen.getByText('+15559998888').closest('.inbox__row') as HTMLElement;
+    const row = screen.getByText('(555) 999-8888').closest('.inbox__row') as HTMLElement;
     expect(row.querySelector('.inbox__row-counterpart')).toBeNull();
   });
 

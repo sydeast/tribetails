@@ -16,3 +16,6 @@ expect fun openUrl(url: String)
 /** Copy [text] to the system clipboard. No-op on blank. Best-effort: callers
  *  still SHOW the value (e.g. in a dialog) so a clipboard failure never hides it. */
 expect fun copyToClipboard(text: String)
+
+/** Save [bytes] to a temporary file named [fileName] and open it in the system's default audio player. */
+expect fun openAudioBytes(bytes: ByteArray, fileName: String)
