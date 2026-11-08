@@ -166,6 +166,7 @@ import com.tribetails.auntieos.data.model.notifDeliveryPhrase
 import com.tribetails.auntieos.data.model.notifReachesBusinessAdmins
 import com.tribetails.auntieos.data.model.notifMergeFieldNames
 import com.tribetails.auntieos.data.model.notifRecipientLines
+import com.tribetails.auntieos.data.model.notifChannelLabel
 import com.tribetails.auntieos.data.model.notifRowBadges
 import com.tribetails.auntieos.data.model.notifTemplateLines
 import com.tribetails.auntieos.data.model.VetClinic
@@ -1399,7 +1400,8 @@ private fun NotifUngatedList(matrix: NotificationMatrix) {
         )
         matrix.ungated.forEach { send ->
             Text(
-                "emailTemplates/${send.templateId}, sent when: ${send.trigger}  ${send.source}",
+                // #1592: named in words; no database path, no source file.
+                "${humanizeKey(send.templateId).ifEmpty { "An" }} email, sent when: ${send.trigger}",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -1538,7 +1540,7 @@ private fun NotifRowDetail(
     ) {
         NotifDetailBlock(
             title = "WHO RECEIVES IT",
-            lines = notifRecipientLines(entry, matrix.businessAdminCount, matrix.businessAdminRosterPath),
+            lines = notifRecipientLines(entry, matrix.businessAdminCount),
             empty = "The server sent no recipient rule for this row. Update MyTribe functions to see it.",
         )
         if (notifReachesBusinessAdmins(entry)) {
@@ -1546,7 +1548,8 @@ private fun NotifRowDetail(
         }
         NotifDetailBlock(
             title = "WHAT FIRES IT",
-            lines = entry.emitters.map { "${it.trigger}  ${it.source}" },
+            // #1592: the trigger in words only; the source file stays off the screen.
+            lines = entry.emitters.map { it.trigger },
             empty = "Nothing in the platform dispatches this notification, so nothing sets it off. " +
                 "The toggles on this row change what nobody receives.",
         )
@@ -1558,10 +1561,10 @@ private fun NotifRowDetail(
                 val suffix = when {
                     line.missing -> " (this channel is offered with nothing to render it)"
                     line.retargetedFrom != null ->
-                        " (retargeted; the catalog default is ${line.retargetedFrom})"
+                        " (retargeted; the default is ${line.retargetedFrom})"
                     else -> ""
                 }
-                "${line.channel}: ${line.path}$suffix"
+                "${notifChannelLabel(line.channel)}: ${line.name}$suffix"
             },
             empty = "This row offers no channels at all.",
         )

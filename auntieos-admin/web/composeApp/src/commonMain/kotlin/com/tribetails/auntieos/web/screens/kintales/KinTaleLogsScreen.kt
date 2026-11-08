@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.kintales
 
+import com.tribetails.auntieos.web.screens.bookingServiceName
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -140,6 +141,9 @@ fun KinTaleLogsScreen(
     // #1563: the other half of a KinTale. A KinTale in draft state is a
     // `generated_drafts` doc (ruling D-2026-08-04); only the unsent ones are listed.
     val draftsState by remember { client.generatedDraftsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #1592: rows name their service from the KinCare catalog, never `visit_60`.
+    val kinCareSettings by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val kinCareRates = (kinCareSettings as? FirestoreResult.Data)?.value?.serviceRates.orEmpty()
     val unsentDrafts = draftsAwaitingReview((draftsState as? FirestoreResult.Data)?.value.orEmpty())
 
     val scope = rememberReportingScope()
@@ -253,6 +257,7 @@ fun KinTaleLogsScreen(
                                     bucket       = bucket,
                                     reports      = items,
                                     drafts       = bucketDrafts,
+                                    serviceRates = kinCareRates,
                                     onOpenReport = onOpenReport,
                                     onOpenDraft  = onOpenDraft,
                                 )
@@ -722,6 +727,7 @@ private fun BucketGroup(
     bucket: Bucket,
     reports: List<KinCareReport>,
     drafts: List<GeneratedDraft> = emptyList(),
+    serviceRates: Map<String, String> = emptyMap(),
     onOpenReport: (sessionId: String) -> Unit = {},
     onOpenDraft: (GeneratedDraft) -> Unit = {},
 ) {
@@ -730,7 +736,7 @@ private fun BucketGroup(
         trailing = { AuntieChip(label = "${reports.size + drafts.size}", mono = true) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            reports.forEach { ReportRow(it, onOpenReport) }
+            reports.forEach { ReportRow(it, onOpenReport, serviceRates) }
             drafts.forEach { GeneratedDraftRow(it, onOpenDraft) }
         }
     }
@@ -808,7 +814,11 @@ internal fun matchesDraftSearch(d: GeneratedDraft, query: String): Boolean {
  * present and routes to the report via [onOpenReport].
  */
 @Composable
-private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -> Unit = {}) {
+private fun ReportRow(
+    report: KinCareReport,
+    onOpenReport: (sessionId: String) -> Unit = {},
+    serviceRates: Map<String, String> = emptyMap(),
+) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val tone = statusTone(report.status)
@@ -858,7 +868,7 @@ private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -
                 },
                 color = if (unnamed) c.textDim else c.textPrimary,
             )
-            SubMetaColumn(report)
+            SubMetaColumn(report, serviceRates)
         }
 
         AuntieStatusPill(
@@ -873,12 +883,13 @@ private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -
  * pips (media count, send channel).
  */
 @Composable
-private fun SubMetaColumn(report: KinCareReport) {
+private fun SubMetaColumn(report: KinCareReport, serviceRates: Map<String, String>) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (report.serviceType.isNotBlank()) {
-                Text(report.serviceType, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                // #1592: the operator's KinCare name, never the stored key.
+                Text(bookingServiceName(report.serviceType, serviceRates), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 Text("·", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
             }
             Text(visitTimestamp(report), style = AuntieTheme.typography.bodySmall, color = c.textDim)

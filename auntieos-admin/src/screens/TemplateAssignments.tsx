@@ -483,8 +483,8 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           loading={<LoadingRow label="Loading the routing table…" className="tassign__hint" />}
           empty={
             <EmptyHint>
-              listCatalogKeys returned no keys. The catalog is compiled into the backend, so this
-              should not be possible; treat it as a broken deploy rather than an empty setup.
+              No notifications came back. This list comes with the app, so an empty one means
+              something is broken. Reload, and report it if it stays empty.
             </EmptyHint>
           }
         >
@@ -528,8 +528,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
                         </span>
                         {missing && (
                           <span className="tassign__row-broken" role="alert">
-                            No emailTemplates/{row.resolvedTemplateId} document. This key throws
-                            "email template missing" on its next send.
+                            The template this sends is missing, so its next send fails.
                           </span>
                         )}
                         {missingNote !== null && (

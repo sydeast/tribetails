@@ -158,6 +158,14 @@ describe('BookingDetailModal: the request note on a booked visit (#1579)', () =>
   });
 });
 describe('BookingDetailModal fact rows', () => {
+  it('#1592: names the requested service from the KinCare catalog, never the stored key', () => {
+    open(
+      { serviceType: '30minute' },
+      { catalog: { serviceRates: { '30Minute': '30' }, serviceDurations: {}, timeBlocks: [] } },
+    );
+    expect(factValue('Requested services')).toHaveTextContent(/^30Minute$/);
+  });
+
   it('is a real dialog, not a styled div', () => {
     open();
     expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true');

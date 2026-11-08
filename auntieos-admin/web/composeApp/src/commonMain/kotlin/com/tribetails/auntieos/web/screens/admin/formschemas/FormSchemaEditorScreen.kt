@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.admin.formschemas
 
+import com.tribetails.auntieos.web.screens.appliesToLabel
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -204,7 +205,8 @@ fun FormSchemaEditorScreen(
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     FormSchema.APPLIES_TO.forEach { target ->
                         AuntieChip(
-                            label    = target,
+                            // #1592: words, never the stored NONE / KINFOLK constants.
+                            label    = appliesToLabel(target),
                             selected = state.schema.appliesTo == target,
                             onClick  = { viewModel.updateAppliesTo(target) },
                             tone     = AuntieChipTone.Orange,

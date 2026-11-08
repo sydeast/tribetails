@@ -775,9 +775,15 @@ describe('ServicePill', () => {
     expect(screen.getByText('walk')).toBeInTheDocument();
   });
 
-  it('falls back to "visit" for a blank service type', () => {
+  it('falls back to "Visit" for a blank service type', () => {
     render(<ServicePill serviceType="   " />);
-    expect(screen.getByText('visit')).toBeInTheDocument();
+    expect(screen.getByText('Visit')).toBeInTheDocument();
+  });
+
+  it('#1592: says the resolved name, toned from the stored type', () => {
+    render(<ServicePill serviceType="dog_walk_60" label="Dog Walk" />);
+    expect(screen.getByText('Dog Walk')).toHaveAttribute('data-tone', 'teal');
+    expect(screen.queryByText('dog_walk_60')).toBeNull();
   });
 
   it('tones itself from the service type', () => {

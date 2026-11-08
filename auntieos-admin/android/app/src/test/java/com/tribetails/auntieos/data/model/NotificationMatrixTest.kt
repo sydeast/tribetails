@@ -64,7 +64,8 @@ class NotificationMatrixTest {
             booking.copy(label = "Booking confirmed", description = "desc").displayTitle(),
         )
         assertEquals("desc", booking.copy(label = "", description = "desc").displayTitle())
-        assertEquals("booking.confirmed", booking.copy(label = " ", description = "").displayTitle())
+        // #1592: the key as words, never the key itself.
+        assertEquals("Booking confirmed", booking.copy(label = " ", description = "").displayTitle())
     }
 
     @Test

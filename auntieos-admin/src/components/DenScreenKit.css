@@ -508,15 +508,15 @@
   font-family: var(--type-mono-family);
   font-size: 10.5px;
   font-weight: var(--type-mono-weight);
-  text-transform: lowercase;
+  /* No text-transform (#1592): a KinCare name is shown as the operator wrote it. */
 }
 
 /* ── status pill ─────────────────────────────────────────────────────────────
    The mocks' `.statuspill`: mono, uppercase, tracked, in a rounded tinted
    capsule with a hairline of the same hue. It is a different object from the
    service pill above, and the mocks draw both on one screen: the service pill
-   is lowercase and says what the visit IS, this one is uppercase and says where
-   the visit has GOT to.
+   says what the visit IS, in the operator's own words, and this one is
+   uppercase and says where the visit has GOT to.
 
    Every value is mixed from `--den-tone`, so one rule covers all seven session
    states instead of a block per state. The mocks' own capsule is the teal one,

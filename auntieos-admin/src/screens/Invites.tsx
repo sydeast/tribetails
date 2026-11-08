@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   formatInviteDate,
-  inviteHandle,
   inviteStatusLabel,
   listAllInvites,
   type AdminInvite,
@@ -59,8 +58,8 @@ import './Invites.css';
  * invite under Pending would send the operator chasing something that is over.
  *
  * THE INVITE ID IS A BEARER TOKEN. The claim link is `?invite=<inviteId>`, so
- * the document id doubles as the secret. Cards show `inviteHandle`'s truncated
- * form, for matching a row against the activity log, and never the full id or
+ * the document id doubles as the secret. Cards show no part of it (#1592: it
+ * is a database id; the address and household name the invite), and never
  * anything resembling a claim URL.
  *
  * FAIL LOUD. A failed read renders `AsyncRegion`'s error, never an empty
@@ -224,8 +223,8 @@ function InviteCard({ invite }: { invite: AdminInvite }) {
           {inviteDateParts(invite).map((part) => (
             <span key={part}>{part}</span>
           ))}
-          {/* Truncated on purpose. The full id is the claim token. */}
-          <span className="invites__handle">inviteId {inviteHandle(invite.inviteId)}</span>
+          {/* #1592: no invite id, not even truncated. It is a database id (and
+              the claim token); the address and household name the invite. */}
         </p>
         <div className="invites__pills">
           <StatusPill label={inviteStatusLabel(invite.effectiveStatus)} tone={tone} />

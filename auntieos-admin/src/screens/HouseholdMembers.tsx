@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   PERMISSION_META,
   formatInviteDate,
-  inviteHandle,
   inviteStatusLabel,
   inviteStatusTone,
   listHouseholdInvites,
@@ -371,14 +370,12 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
     setRecovering(true);
     setRecoveryError(null);
     try {
-      const { inviteId } = await executePrimaryRecovery({
+      await executePrimaryRecovery({
         familyId: kinfolkId,
         newEmail: recoveryChoice,
         oldUid: sittingPrimary.uid,
       });
-      showToast(
-        `Claim link sent to ${recoveryChoice}. ${memberLabel(sittingPrimary)} is suspended (${inviteHandle(inviteId)}).`,
-      );
+      showToast(`Claim link sent to ${recoveryChoice}. ${memberLabel(sittingPrimary)} is suspended.`);
       setRecoveryOpen(false);
       loadMembers();
       loadInvites();
@@ -923,6 +920,6 @@ export function inviteMetaLine(invite: HouseholdInvite): string {
       parts.push(invite.effectiveStatus === 'EXPIRED' ? `expired ${expires}` : `expires ${expires}`);
     }
   }
-  parts.push(inviteHandle(invite.inviteId));
+  // #1592: no invite id on the row. It is a database id; the address names it.
   return parts.join(' · ');
 }

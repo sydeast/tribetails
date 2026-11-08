@@ -21,6 +21,7 @@ import {
   sessionDayLabel,
 } from '../lib/sessionFormat';
 import { sortServiceTypesByDuration } from '../lib/newBooking';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
 import {
   SNAP_MINUTES_OFF,
   SNAP_MINUTES_ON,
@@ -223,6 +224,15 @@ export function Schedule({ onSelect }: ScheduleProps) {
    * comes back unpriceable. See `NewVisitDialog`'s doc for the whole chain.
    */
   const [serviceRates, setServiceRates] = useState<Record<string, string>>({});
+  /**
+   * #1592: the catalog a stored `serviceType` is NAMED against, so the legend
+   * and the agenda say the operator's KinCare name instead of `visit_60`.
+   * Time blocks play no part in a name, so none are read for it.
+   */
+  const serviceCatalog = useMemo<BookingCatalog>(
+    () => ({ serviceRates, serviceDurations, timeBlocks: [] }),
+    [serviceRates, serviceDurations],
+  );
   /**
    * "Snap drag-to-reschedule to 15 min", off by default.
    *
@@ -499,7 +509,12 @@ export function Schedule({ onSelect }: ScheduleProps) {
           // which changes the legend along with it, and a view with nothing
           // scheduled yields an empty legend rather than a stale full list.
           const sessionsInView = daysInView.flatMap((day) => byDay.get(day) ?? []);
-          const legend = sortServiceTypesByDuration(distinctServiceTypes(sessionsInView), serviceDurations);
+          // #1592: named against the catalog, then deduped, so two spellings
+          // of one KinCare (`visit_60`, `60Mins`) are one legend row.
+          const legend = sortServiceTypesByDuration(
+            [...new Set(distinctServiceTypes(sessionsInView).map((t) => bookingServiceName(t, serviceCatalog)))],
+            serviceDurations,
+          );
           const selectedSessions = (byDay.get(selected) ?? [])
             .slice()
             .sort(
@@ -548,6 +563,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                         key={entry._id}
                         entry={entry}
                         businessZone={businessZone}
+                        catalog={serviceCatalog}
                         onSelect={onSelect ?? setOpenSessionId}
                       />
                     ))}
@@ -625,6 +641,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                 <BookingDetailModal
                   entry={openSession}
                   businessZone={businessZone}
+                  catalog={serviceCatalog}
                   onClose={() => setOpenSessionId(null)}
                   // #1576: the same Actions panel Bookings composes into this
                   // sheet (Mark Completed / Cancel on a scheduled visit,
@@ -1020,12 +1037,14 @@ interface AgendaRowProps {
   entry: ScheduleSessionEntry;
   /** #1158: the window reads on the business's clock, the same hour the grid block shows. */
   businessZone: string;
+  /** #1592: names the service pill, so a stored key reads as the KinCare it is. */
+  catalog: BookingCatalog;
   /** Always wired now (the screen falls back to its own sheet opener), kept
    *  optional so the static branch below stays reachable if that ever changes. */
   onSelect?: ((sessionId: string) => void) | undefined;
 }
 
-function AgendaRow({ entry, businessZone, onSelect }: AgendaRowProps) {
+function AgendaRow({ entry, businessZone, catalog, onSelect }: AgendaRowProps) {
   // str() on every field read: `ScheduleSessionEntry` is a cast over the raw
   // `kin_care_sessions` doc, and the absent-field fallbacks these helpers
   // already carry ('unknown', 'Unnamed Kinfolk', 'Time TBD', 'visit') only get
@@ -1040,7 +1059,10 @@ function AgendaRow({ entry, businessZone, onSelect }: AgendaRowProps) {
       <span className="schedule__row-when">{businessWindowLabel(str(entry.startTime), str(entry.endTime), businessZone)}</span>
       <span className="schedule__row-who">
         <span className="schedule__row-name">{household}</span>
-        <ServicePill serviceType={str(entry.serviceType)} />
+        <ServicePill
+          serviceType={str(entry.serviceType)}
+          label={bookingServiceName(str(entry.serviceType), catalog)}
+        />
       </span>
       <span className="schedule__row-status">
         <StatusPill label={info.chipLabel} tone={SESSION_STATE_TONE[state]} struck={state === 'cancelled'} />

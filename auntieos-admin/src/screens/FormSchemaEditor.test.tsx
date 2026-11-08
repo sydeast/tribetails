@@ -745,6 +745,14 @@ describe('FormSchemaEditor: edit mode', () => {
     expect(screen.getByDisplayValue('firstName')).toBeInTheDocument();
   });
 
+  it('#1592: Applies to reads as words, never the stored NONE', async () => {
+    getFormSchema.mockResolvedValue(schema({ appliesTo: 'NONE' }));
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(await screen.findByDisplayValue('Nothing yet')).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'NONE' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'KinTales' })).toHaveValue('KINTALE');
+  });
+
   it('fails loud when getFormSchema rejects, naming the callable', async () => {
     getFormSchema.mockRejectedValue(new Error("Schema 'tribeProfile' not found."));
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);

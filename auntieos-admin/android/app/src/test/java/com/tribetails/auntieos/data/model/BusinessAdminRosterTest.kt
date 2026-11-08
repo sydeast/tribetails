@@ -171,8 +171,10 @@ class BusinessAdminRosterTest {
         val note = businessAdminSourceNote(
             BusinessAdminRoster(members = members, source = BusinessAdminRosterSource.OperatorAllowlist),
         )
-        assertTrue(note!!.contains("businessSettings/admins.uids"))
-        assertTrue(note.contains("provisionBusinessAdmins"))
+        assertTrue(note!!.contains("roster is empty"))
+        // #1592: no database path and no function name in operator copy.
+        assertFalse(note.contains("businessSettings"))
+        assertFalse(note.contains("provisionBusinessAdmins"))
         assertNull(
             businessAdminSourceNote(
                 BusinessAdminRoster(members = members, source = BusinessAdminRosterSource.Roster),

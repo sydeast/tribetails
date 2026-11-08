@@ -99,6 +99,14 @@ describe('TemplateAssignments routing table', () => {
     expect(within(row).getByText(/default, matched by name/i)).toBeInTheDocument();
   });
 
+  it('#1592: an empty routing table names no function', async () => {
+    listTemplateBindings.mockResolvedValue([]);
+    listCatalogKeys.mockResolvedValue([]);
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    expect(await screen.findByText(/No notifications came back/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('listCatalogKeys');
+  });
+
   it('counts how many keys route by override and how many by name', async () => {
     listTemplateBindings.mockResolvedValue([]);
     listCatalogKeys.mockResolvedValue(noOverridesAnywhere());
@@ -153,8 +161,10 @@ describe('TemplateAssignments routing table', () => {
     render(<TemplateAssignments onClose={vi.fn()} />);
     const row = (await screen.findByText('invite.primary')).closest('li')!;
     expect(
-      within(row).getByText(/no emailTemplates\/invite\.primary document/i),
+      within(row).getByText(/the template this sends is missing, so its next send fails/i),
     ).toBeInTheDocument();
+    // #1592: no database path on the row.
+    expect(row.textContent).not.toContain('emailTemplates/');
     expect(
       await screen.findByText(/1 key fails on the next send because the template does not exist/i),
     ).toBeInTheDocument();
@@ -186,7 +196,7 @@ describe('TemplateAssignments routing table', () => {
     const kin = screen.getByText('kin.removal.requested').closest('li')!;
     expect(within(kin).getByText(/sends generic wording that cannot say what happened/i)).toBeInTheDocument();
     const verify = screen.getByText('invite.verify-email').closest('li')!;
-    expect(within(verify).getByRole('alert').textContent).toMatch(/throws "email template missing"/);
+    expect(within(verify).getByRole('alert').textContent).toMatch(/its next send fails/);
     expect(within(verify).getByText('The repo has a copy. Load it from Template Import.')).toBeInTheDocument();
     const broadcast = screen.getByText('broadcast.message').closest('li')!;
     expect(within(broadcast).getByText(/no template is used/i)).toBeInTheDocument();

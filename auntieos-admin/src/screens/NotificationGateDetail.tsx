@@ -15,6 +15,8 @@ import {
   type RowBadge,
 } from '../lib/notificationProvenance';
 import { GhostButton } from '../components/Buttons';
+import { channelLabel } from '../lib/myNotificationsFormat';
+import { humanizeKey } from '../lib/notificationsFeed';
 
 /**
  * The answer half of the notification gate (#396).
@@ -67,7 +69,7 @@ interface DetailProps {
 }
 
 export function GateRowDetail({ entry, matrix }: DetailProps) {
-  const who = recipientLines(entry, matrix.businessAdminCount, matrix.businessAdminRosterPath);
+  const who = recipientLines(entry, matrix.businessAdminCount);
   const templates = templateLines(entry);
   const fields = mergeFieldNames(entry);
 
@@ -98,10 +100,10 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
           </p>
         ) : (
           <ul className="notifgate__detail-list">
+            {/* #1592: the trigger in words only; the source file is a
+                developer detail and stays off the operator's screen. */}
             {entry.emitters.map((emitter) => (
-              <li key={`${emitter.source}:${emitter.trigger}`}>
-                {emitter.trigger} <code className="notifgate__code">{emitter.source}</code>
-              </li>
+              <li key={`${emitter.source}:${emitter.trigger}`}>{emitter.trigger}</li>
             ))}
           </ul>
         )}
@@ -125,11 +127,9 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
             <ul className="notifgate__detail-list">
               {templates.map((line) => (
                 <li key={line.channel}>
-                  {line.channel}: <code className="notifgate__code">{line.path}</code>
+                  {`${channelLabel(line.channel)}: ${line.name}`}
                   {line.missing && ' (this channel is offered with nothing to render it)'}
-                  {line.retargetedFrom && (
-                    <> (retargeted; the catalog default is {line.retargetedFrom})</>
-                  )}
+                  {line.retargetedFrom && <> (retargeted; the default is {line.retargetedFrom})</>}
                 </li>
               ))}
             </ul>
@@ -362,9 +362,9 @@ export function UngatedSendsPanel({ sends }: { sends: UngatedSend[] }) {
       </p>
       <ul className="notifgate__detail-list">
         {sends.map((send) => (
+          // #1592: named in words; no database path, no source file.
           <li key={`${send.source}:${send.templateId}`}>
-            <code className="notifgate__code">emailTemplates/{send.templateId}</code>, sent when: {send.trigger}{' '}
-            <code className="notifgate__code">{send.source}</code>
+            {`${humanizeKey(send.templateId) || 'An'} email, sent when: ${send.trigger}`}
           </li>
         ))}
       </ul>

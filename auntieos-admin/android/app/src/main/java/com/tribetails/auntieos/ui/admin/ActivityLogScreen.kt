@@ -582,7 +582,7 @@ internal fun activityDetailRows(
     val actorName = names[entry.actorId.trim()]
     add("Actor", actorName ?: entry.actorId)
     if (actorName != null) add("Actor id", entry.actorId)
-    add("Actor role", entry.actorRole)
+    add("Actor role", actorRoleLabel(entry.actorRole))
     add("Household", entry.familyId)
     add("Detail", entry.description)
     // A path, not a link. Where no route exists the path is still the most useful
@@ -628,7 +628,8 @@ internal fun activityPayloadRows(entry: ActivityLogEntry): List<Pair<String, Str
 
     fun renderScalar(v: Any?): String = when (v) {
         // A recorded null is a decision the writer made; blanking it hides that.
-        null -> "null"
+        // It reads as the word "none", not the literal "null" (#1592).
+        null -> "none"
         is String -> v
         is Number, is Boolean -> v.toString()
         else -> v.toString()

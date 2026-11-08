@@ -13,7 +13,49 @@ import {
   notificationsForFilter,
   unreadNotifications,
   unreadNotificationCount,
+  humanizeKey,
+  notificationTitle,
+  notificationCategoryLabel,
 } from './notificationsFeed';
+
+describe('#1592 notification words, never keys', () => {
+  it('a row with no title reads its key as words', () => {
+    expect(notificationTitle({ key: 'account.welcome.kinfolk' })).toBe('Account welcome kinfolk');
+    expect(notificationTitle({ key: 'account.welcome.kinfolk', title: '' })).toBe('Account welcome kinfolk');
+  });
+
+  it('a title that is only the key is treated as missing', () => {
+    expect(notificationTitle({ key: 'account.welcome.kinfolk', title: 'account.welcome.kinfolk' })).toBe(
+      'Account welcome kinfolk',
+    );
+  });
+
+  it('the catalog title wins when there is one', () => {
+    expect(notificationTitle({ key: 'account.welcome.kinfolk', title: 'Welcome to MyTribe' })).toBe(
+      'Welcome to MyTribe',
+    );
+  });
+
+  it('never blank', () => {
+    expect(notificationTitle({ key: '' })).toBe('Notification');
+  });
+
+  it('category chips read as words, not slugs', () => {
+    expect(notificationCategoryLabel('visit')).toBe('Visits');
+    expect(notificationCategoryLabel('invoice')).toBe('Billing');
+    expect(notificationCategoryLabel('kintale')).toBe('KinTales');
+    expect(notificationCategoryLabel('')).toBe('Other');
+    expect(notificationCategoryLabel(undefined)).toBe('Other');
+    expect(notificationCategoryLabel('uncategorized')).toBe('Other');
+    // A category this list does not know yet still reads as a word.
+    expect(notificationCategoryLabel('booking_requests')).toBe('Booking requests');
+  });
+
+  it('humanizeKey splits dots, underscores and dashes', () => {
+    expect(humanizeKey('visit_60')).toBe('Visit 60');
+    expect(humanizeKey('  ')).toBe('');
+  });
+});
 
 function ts(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;

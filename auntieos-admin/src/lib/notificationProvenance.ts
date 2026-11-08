@@ -6,6 +6,8 @@ import {
 } from '../api/myNotifications';
 import type { BusinessAdminRoster } from '../api/businessAdmins';
 import { alwaysEnabledFor } from './notificationGateEdit';
+import { displayTitle } from './myNotificationsFormat';
+import { humanizeKey } from './notificationsFeed';
 
 /**
  * Turns a catalog row into the sentences the notification gate shows (#396).
@@ -143,12 +145,12 @@ export function rowBadges(
 export function recipientLines(
   entry: NotificationCatalogEntry,
   businessAdminCount: number | null,
-  rosterPath: string,
 ): string[] {
   return entry.whoReceives.map((sentence) => {
     if (!sentence.includes('business admin')) return sentence;
     if (businessAdminCount === null) {
-      return `${sentence} The roster at ${rosterPath} could not be read just now, so the number is unknown.`;
+      // #1592: the roster is named, never its database path.
+      return `${sentence} The roster could not be read just now, so the number is unknown.`;
     }
     if (businessAdminCount === 0) {
       return `${sentence} Nobody is on that roster right now, so sends fall back to the operator allowlist.`;
@@ -214,16 +216,20 @@ export function businessEmailLine(roster: Pick<BusinessAdminRoster, 'businessEma
  */
 export function businessAdminSourceNote(roster: BusinessAdminRoster): string | null {
   if (roster.source !== 'operatorAllowlist') return null;
-  return `Nobody is stored at ${roster.rosterPath}, so these are the operator allowlist accounts `
-    + 'the next business notification would fall back to. Call provisionBusinessAdmins to make the '
-    + 'roster explicit.';
+  // #1592: no database path and no function name in what the operator reads.
+  return 'The business admin roster is empty, so these are the operator allowlist accounts '
+    + 'the next business notification would fall back to.';
 }
 
-/** One "channel → template document" line per channel the row can use. */
+/** One "channel → template" line per channel the row can use. */
 export interface TemplateLine {
   channel: NotificationChannel;
-  /** The Firestore document that renders this channel's body. */
-  path: string;
+  /**
+   * The template that renders this channel's body, in words (#1592: it was the
+   * database path `emailTemplates/<id>`). The row's own template carries the
+   * row's own name; any other template id reads as words.
+   */
+  name: string;
   /** True when the row does not offer this channel at all. */
   missing: boolean;
   /**
@@ -237,15 +243,20 @@ export interface TemplateLine {
   retargetedFrom?: string;
 }
 
+/** A template id as the operator reads it: the row's own name, or the id as words. */
+export function templateName(id: string, entry: NotificationCatalogEntry): string {
+  return id === entry.key ? displayTitle(entry) : humanizeKey(id) || 'a template';
+}
+
 export function templateLines(entry: NotificationCatalogEntry): TemplateLine[] {
   return NOTIFICATION_CHANNELS.filter((c) => entry.allowedChannels.includes(c)).map((channel) => {
     const id = entry.templates[channel];
     const retargetedFrom = channel === 'email' ? entry.emailTemplateRetargetedFrom : undefined;
     return {
       channel,
-      path: id ? `${channel}Templates/${id}` : 'no template recorded',
+      name: id ? templateName(id, entry) : 'no template recorded',
       missing: !id,
-      ...(retargetedFrom ? { retargetedFrom } : {}),
+      ...(retargetedFrom ? { retargetedFrom: templateName(retargetedFrom, entry) } : {}),
     };
   });
 }

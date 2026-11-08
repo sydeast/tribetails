@@ -97,7 +97,7 @@ export function FeatureFlags() {
         kicker="The Den · Admin"
         title="Feature"
         accentTail="flags."
-        subtitle="Toggle the central auntieos.* flags. Writes business_settings/feature_flags; takes effect on the next app load."
+        subtitle="Turn a feature on or off. A change takes effect the next time the app loads."
       />
 
       {writeError ? (
@@ -123,7 +123,7 @@ export function FeatureFlags() {
                 <li key={meta.key} className="flags__row">
                   <div className="flags__meta">
                     <span className="flags__label">{meta.label}</span>
-                    <code className="flags__key">{meta.key}</code>
+                    {/* #1592: no flag key here; the label is the flag's name. */}
                     <span className="flags__detail">{meta.detail}</span>
                   </div>
                   {savingKey === meta.key ? (

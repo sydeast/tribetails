@@ -191,9 +191,9 @@ class HouseholdMembersViewModelTest {
         val group = INVITE_GROUPS.single { revoked.effectiveStatus in it.statuses }
         assertEquals("Revoked", group.heading)
         assertTrue(inviteMetaLine(revoked).contains("revoked 2026-05-19"))
-        // The claim link never appears, and the id is truncated.
+        // The claim link never appears, and no part of the id does (#1592).
         assertFalse(inviteMetaLine(revoked).contains("?invite="))
-        assertFalse(inviteMetaLine(revoked).contains("rq_1LONG"))
+        assertFalse(inviteMetaLine(revoked).contains("rq_1"))
     }
 
     @Test fun `ERROR a failed revoke names the invite and leaves the row alone`() = runTest(testDispatcher) {
@@ -397,7 +397,8 @@ class HouseholdMembersViewModelTest {
 
     @Test fun `invite meta omits a date the server did not send, rather than substituting today`() {
         val bare = invite().copy(sentToInviteeAt = null, createdAt = null, expiresAt = null)
-        assertEquals("rq_1", inviteMetaLine(bare))
+        // #1592: no invite id stands in for the missing dates.
+        assertEquals("", inviteMetaLine(bare))
     }
 
     @Test fun `EMAIL_SENT reads as Email sent and the rest in sentence case`() {

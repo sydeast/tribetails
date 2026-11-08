@@ -4,7 +4,6 @@ import {
   PERMISSION_META,
   formatInviteDate,
   getInvite,
-  inviteHandle,
   inviteStatusLabel,
   type AdminInviteDetail,
   type InviteParty,
@@ -32,7 +31,8 @@ import './InviteDetail.css';
  * same one. It does not grow a second Revoke beside the one that already exists.
  *
  * THE INVITE ID IS A BEARER TOKEN. The URL carries it because the email link
- * does; the page shows only `inviteHandle`'s truncated form.
+ * does; the page shows no part of it (#1592: it is a database id, and the
+ * address and household already name the invite).
  */
 
 function errText(err: unknown, fallback: string): string {
@@ -122,10 +122,6 @@ function InviteFacts({ invite }: { invite: AdminInviteDetail }) {
           <Row label="Claimed">{claimedLabel(invite)}</Row>
           <Row label="Permissions">{perms.length === 0 ? 'None' : perms.join(', ')}</Row>
           {invite.source !== null && <Row label="Source">{invite.source}</Row>}
-          <Row label="Invite">
-            {/* Truncated on purpose. The full id is the claim token. */}
-            <span className="invite-detail__handle">inviteId {inviteHandle(invite.inviteId)}</span>
-          </Row>
         </dl>
       </DenPanel>
 

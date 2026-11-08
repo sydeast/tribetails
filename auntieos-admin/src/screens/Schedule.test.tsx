@@ -680,6 +680,8 @@ describe('Schedule screen', () => {
   it('orders the legend by configured duration: two of five configured types render, in duration order', async () => {
     getBusinessSettings.mockResolvedValue({
       serviceDurations: { 'Half-Day 6Hrs': '360', '30Minute': '30', Consultation: '20', '90Minute': '90', '2Hrs': '120' },
+      // getBusinessSettings always returns the map (`pickMap`); the legend names against it (#1592).
+      serviceRates: {},
     });
     mockCollections({
       sessions: {
@@ -705,7 +707,7 @@ describe('Schedule screen', () => {
   });
 
   it('a type on screen but missing from business_settings still gets a legend row', async () => {
-    getBusinessSettings.mockResolvedValue({ serviceDurations: { '30Minute': '30' } });
+    getBusinessSettings.mockResolvedValue({ serviceDurations: { '30Minute': '30' }, serviceRates: {} });
     mockCollections({
       sessions: {
         status: 'ready',
@@ -722,6 +724,32 @@ describe('Schedule screen', () => {
     // sorts last -- but it is never dropped.
     const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
     expect(items).toEqual(['30Minute', 'Off-Book Visit', 'Busy']);
+  });
+
+  it('#1592: names stored keys from the KinCare catalog, one legend row per service', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: { '60Minute': '45', '30Minute': '30' },
+      serviceDurations: {},
+    });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          // Two spellings of the one 60-minute KinCare, the shape the live
+          // collection holds.
+          todaySession({ _id: 'a', serviceType: 'visit_60' }),
+          todaySession({ _id: 'b', serviceType: '60Mins' }),
+        ],
+      },
+    });
+    const { container } = render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    await waitFor(() => {
+      const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
+      expect(items).toEqual(['60Minute', 'Busy']);
+    });
+    expect(screen.queryByText('visit_60')).toBeNull();
+    expect(within(agenda()).getAllByText('60Minute')).toHaveLength(2);
   });
 
   it('the "in view" stat counts only sessions within the visible week, honestly reflecting a listener error as unknown (not zero)', () => {

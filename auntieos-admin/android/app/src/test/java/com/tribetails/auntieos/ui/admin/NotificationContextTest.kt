@@ -84,13 +84,18 @@ class NotificationContextTest {
         assertEquals("Visit confirmed", notificationHeadline(entry))
     }
 
-    @Test fun `falls back to the key for rows dispatched before titles existed`() {
-        val entry = NotificationEntry(id = "n1", key = "kincare.booking.confirm")
-        assertEquals("kincare.booking.confirm", notificationHeadline(entry))
+    @Test fun `reads the key as words for rows dispatched before titles existed (#1592)`() {
+        val entry = NotificationEntry(id = "n1", key = "account.welcome.kinfolk")
+        assertEquals("Account welcome kinfolk", notificationHeadline(entry))
     }
 
-    @Test fun `falls back to a marker when there is no key either`() {
-        assertEquals("(no key)", notificationHeadline(NotificationEntry(id = "n1")))
+    @Test fun `a title that is only the key is treated as missing (#1592)`() {
+        val entry = NotificationEntry(id = "n1", key = "account.welcome.kinfolk", title = "account.welcome.kinfolk")
+        assertEquals("Account welcome kinfolk", notificationHeadline(entry))
+    }
+
+    @Test fun `falls back to a word when there is no key either`() {
+        assertEquals("Notification", notificationHeadline(NotificationEntry(id = "n1")))
     }
 
     // ── issue #706: Approve/Deny and Create quote narrowed by the dispatch key ──

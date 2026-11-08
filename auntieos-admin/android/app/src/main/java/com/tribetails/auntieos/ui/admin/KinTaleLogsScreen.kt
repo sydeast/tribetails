@@ -116,6 +116,8 @@ fun KinTaleLogsScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val kinfolkList by viewModel.kinfolkDirectory.collectAsState()
     val triageResult by viewModel.triageResult.collectAsState()
+    // #1592: rows name their service from the KinCare catalog, never `visit_60`.
+    val serviceRates by viewModel.serviceRates.collectAsState()
     // Read for the count chip only. A failed read leaves `isLoading` false and
     // the list empty, so without this the chip would report "0 loaded" about a
     // collection it never managed to read. The screen's own empty state over a
@@ -261,6 +263,7 @@ fun KinTaleLogsScreen(
                                     bucket       = bucket,
                                     reports      = items,
                                     drafts       = drafts,
+                                    serviceRates = serviceRates,
                                     onOpenReport = onOpenReport,
                                     onOpenDraft  = onOpenDraft,
                                 )
@@ -654,6 +657,7 @@ private fun BucketGroup(
     bucket: Bucket,
     reports: List<KinCareReport>,
     drafts: List<Draft> = emptyList(),
+    serviceRates: Map<String, String> = emptyMap(),
     onOpenReport: (sessionId: String) -> Unit = {},
     onOpenDraft: (draftId: String) -> Unit = {},
 ) {
@@ -664,7 +668,7 @@ private fun BucketGroup(
         meta = "${reports.size + drafts.size}",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            reports.forEach { ReportRow(it, onOpenReport) }
+            reports.forEach { ReportRow(it, onOpenReport, serviceRates) }
             drafts.forEach { GeneratedDraftRow(it, onOpenDraft) }
         }
     }
@@ -724,7 +728,11 @@ private fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> Un
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -> Unit = {}) {
+private fun ReportRow(
+    report: KinCareReport,
+    onOpenReport: (sessionId: String) -> Unit = {},
+    serviceRates: Map<String, String> = emptyMap(),
+) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val tone = statusTone(report.status)
@@ -770,7 +778,7 @@ private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -
                 },
                 color = if (unnamed) c.textDim else c.textPrimary,
             )
-            SubMetaColumn(report)
+            SubMetaColumn(report, serviceRates)
         }
 
         // The mock's `.pill`: the compact capsule at the row's right edge.
@@ -787,11 +795,11 @@ private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -
  * pips (media count, send channel).
  */
 @Composable
-private fun SubMetaColumn(report: KinCareReport) {
+private fun SubMetaColumn(report: KinCareReport, serviceRates: Map<String, String>) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            val serviceType = report.serviceType.orEmpty()
+            val serviceType = kinTaleServiceLabel(report.serviceType, serviceRates)
             if (serviceType.isNotBlank()) {
                 Text(serviceType, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 Text("·", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
@@ -1002,6 +1010,12 @@ internal fun listOutcome(loaded: Int, matching: Int, orphans: Int, isLoading: Bo
         loaded > 0 && matching == 0              -> ListOutcome.NoMatch
         else                                     -> ListOutcome.Rows
     }
+
+/** #1592: a KinTale row's service in words; blank stays blank (no "Visit" stand-in). */
+internal fun kinTaleServiceLabel(serviceType: String?, serviceRates: Map<String, String>): String {
+    val stored = serviceType?.trim().orEmpty()
+    return if (stored.isEmpty()) "" else bookingServiceName(stored, serviceRates)
+}
 
 /**
  * #1563: a draft row's line under the household: its type, then its date

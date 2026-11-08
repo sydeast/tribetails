@@ -124,29 +124,31 @@ describe('recipientLines answers "how many people is that"', () => {
   });
 
   it('appends the live roster size', () => {
-    const [line] = recipientLines(businessRow, 3, 'businessSettings/admins.uids');
+    const [line] = recipientLines(businessRow, 3);
     expect(line).toContain('3 people');
   });
 
   it('says one person, not one people', () => {
-    const [line] = recipientLines(businessRow, 1, 'businessSettings/admins.uids');
+    const [line] = recipientLines(businessRow, 1);
     expect(line).toContain('1 person');
   });
 
   it('reports an unreadable roster as unknown, never as zero', () => {
-    const [line] = recipientLines(businessRow, null, 'businessSettings/admins.uids');
+    const [line] = recipientLines(businessRow, null);
     expect(line).toContain('unknown');
     expect(line).not.toContain('0 people');
+    // #1592: no database path in the sentence.
+    expect(line).not.toContain('businessSettings');
   });
 
   it('says where an empty roster actually sends instead', () => {
-    const [line] = recipientLines(businessRow, 0, 'businessSettings/admins.uids');
+    const [line] = recipientLines(businessRow, 0);
     expect(line).toContain('operator allowlist');
   });
 
   it('leaves a household sentence alone', () => {
     const row = entry({ whoReceives: ["The household's own portal account."] });
-    expect(recipientLines(row, 3, 'x')).toEqual(["The household's own portal account."]);
+    expect(recipientLines(row, 3)).toEqual(["The household's own portal account."]);
   });
 });
 
@@ -221,22 +223,25 @@ describe('the business admin roster, resolved to people', () => {
   });
   it('warns when the list is the allowlist fallback rather than the stored roster', () => {
     const note = businessAdminSourceNote(roster({ source: 'operatorAllowlist', members: [member()] }));
-    expect(note).toContain('businessSettings/admins.uids');
-    expect(note).toContain('provisionBusinessAdmins');
+    expect(note).toContain('roster is empty');
+    // #1592: no database path and no function name in operator copy.
+    expect(note).not.toContain('businessSettings');
+    expect(note).not.toContain('provisionBusinessAdmins');
   });
   it('adds no caveat when the stored roster answered', () => {
     expect(businessAdminSourceNote(roster({ members: [member()] }))).toBeNull();
   });
 });
 describe('templateLines names the document that writes each body', () => {
-  it('builds the collection path per channel', () => {
+  it('names the template per channel in words, never a database path (#1592)', () => {
     const row = entry({
       allowedChannels: ['email', 'sms'],
-      templates: { email: 'invoice.new', sms: 'invoice.new' },
+      templates: { email: 'invoice.new', sms: 'invoice.reminder' },
     });
     expect(templateLines(row)).toEqual([
-      { channel: 'email', path: 'emailTemplates/invoice.new', missing: false },
-      { channel: 'sms', path: 'smsTemplates/invoice.new', missing: false },
+      // The row's own template carries the row's own name.
+      { channel: 'email', name: 'New invoice', missing: false },
+      { channel: 'sms', name: 'Invoice reminder', missing: false },
     ]);
   });
 
@@ -260,9 +265,9 @@ describe('templateLines names the document that writes each body', () => {
     const lines = templateLines(row);
     expect(lines[0]).toEqual({
       channel: 'email',
-      path: 'emailTemplates/invoice.new.v2',
+      name: 'Invoice new v2',
       missing: false,
-      retargetedFrom: 'invoice.new',
+      retargetedFrom: 'New invoice',
     });
     expect(lines[1]?.retargetedFrom).toBeUndefined();
   });
