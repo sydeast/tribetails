@@ -593,7 +593,9 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                   {approved !== null && (
                     <Banner tone="success" title="Draft approved">
                       {approved.delivered
-                        ? `Approved and sent.${approved.providerId !== null ? ` Provider id ${approved.providerId}.` : ''}`
+                        ? // #1592: no provider message id; it is a support trace, not
+                          // something the operator reads.
+                          'Approved and sent.'
                         : 'Approved and logged to the audit trail. Nothing was sent, this message type delivers elsewhere.'}
                       {approved.auditWarning !== null
                         ? ` The audit entry could not be written: ${approved.auditWarning}`

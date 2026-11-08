@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.activity
 
+import com.tribetails.auntieos.web.screens.unreadableTimesNote
 import com.tribetails.auntieos.web.screens.media.rememberUploaderNames
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -263,9 +264,7 @@ private fun LogPanel(
                 dashed = true,
             ) {
                 Text(
-                    "$unparseable of ${capped.size} entries have a timestamp this screen can't read as ISO-8601. " +
-                        "The audit writer may be storing a Firestore Timestamp object instead of a string, " +
-                        "which breaks day-grouping and ordering. Day/time shown as best-effort below.",
+                    unreadableTimesNote(unparseable, capped.size),
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
