@@ -788,7 +788,7 @@ describe('ServicePill', () => {
   });
 
   it('#1592: the tone follows the resolved name, not the stored key', () => {
-    // `visit_60` alone tones purple (it contains "sit"); the KinCare it names is a walk.
+    // `visit_60` alone tones orange (a visit, not a sit); the KinCare it names is a walk.
     render(<ServicePill serviceType="visit_60" label="Dog walk" />);
     expect(screen.getByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
   });
@@ -808,7 +808,7 @@ describe('bookingServiceTone', () => {
   const catalog = { serviceRates: { 'Dog walk': '45' }, serviceDurations: { 'Dog walk': '60' }, timeBlocks: [] };
 
   it('#1592: tones a stored key by the KinCare it resolves to', () => {
-    expect(serviceTone('visit_60')).toBe('purple');
+    expect(serviceTone('visit_60')).toBe('orange');
     expect(bookingServiceTone('visit_60', catalog)).toBe('teal');
   });
 
@@ -826,6 +826,12 @@ describe('serviceTone', () => {
     ['Overnight', 'purple'],
     ['Meet and Greet', 'success'],
     ['something else', 'orange'],
+    // #1736: the "sit" inside "visit" is not a house sit.
+    ['visit_60', 'orange'],
+    ['Off-Book Visit', 'orange'],
+    ['KinCare Visit', 'orange'],
+    ['House Sit', 'purple'],
+    ['Pet Sitting', 'purple'],
   ])('maps %s to %s', (service, tone) => {
     expect(serviceTone(service)).toBe(tone);
   });

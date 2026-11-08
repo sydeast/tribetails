@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { Link, type LinkProps } from '@tanstack/react-router';
 import { type ResolvedScalar } from '../lib/async';
 import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
+import { serviceTone as denServiceTone } from '../lib/denFormat';
 import './DenScreenKit.css';
 
 /**
@@ -22,15 +23,12 @@ import './DenScreenKit.css';
 /** Mirrors Compose `AuntieStatusTone`. Resolved to a token in the CSS, never here. */
 export type DenTone = 'neutral' | 'success' | 'warning' | 'error' | 'teal' | 'purple' | 'orange' | 'muted';
 
-/** Maps a free-text service type to a brand tone, per the Compose `serviceTone`. */
-export function serviceTone(serviceType: string): DenTone {
-  const s = serviceType.toLowerCase();
-  if (s.includes('walk')) return 'teal';
-  if (s.includes('drop')) return 'orange';
-  if (s.includes('sit') || s.includes('house') || s.includes('overnight')) return 'purple';
-  if (s.includes('meet') || s.includes('greet')) return 'success';
-  return 'orange';
-}
+/**
+ * Maps a free-text service type to a brand tone, per the Compose `serviceTone`.
+ * One implementation, in `lib/denFormat`: this file kept its own copy and the
+ * two drifted from the Kotlin together (#1736).
+ */
+export const serviceTone: (serviceType: string) => DenTone = denServiceTone;
 
 /**
  * THE tone of a stored booking `serviceType`, for every mark that colours a

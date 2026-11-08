@@ -726,6 +726,31 @@ describe('Schedule screen', () => {
     expect(items).toEqual(['30Minute', 'Off-Book Visit', 'Busy']);
   });
 
+  it('#1736: a visit is not a house sit, so its swatch and pill are orange, not purple', async () => {
+    // "Off-Book Visit" and the stored `visit_60` both contain "sit" inside
+    // "vi-sit". Android and the desktop console paint them orange (AO-19); the
+    // web painted them house-sitting purple.
+    getBusinessSettings.mockResolvedValue({ serviceDurations: {}, serviceRates: {} });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          todaySession({ _id: 'a', serviceType: 'Off-Book Visit' }),
+          todaySession({ _id: 'b', serviceType: 'House Sit' }),
+        ],
+      },
+    });
+    const { container } = render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    await screen.findAllByText('Off-Book Visit');
+    const swatch = (name: string) =>
+      Array.from(container.querySelectorAll('.schedule__legend-item')).find((el) => el.textContent === name);
+    expect(swatch('Off-Book Visit')).toHaveAttribute('data-tone', 'orange');
+    expect(swatch('House Sit')).toHaveAttribute('data-tone', 'purple');
+    expect(within(agenda()).getByText('Off-Book Visit')).toHaveAttribute('data-tone', 'orange');
+    expect(within(agenda()).getByText('House Sit')).toHaveAttribute('data-tone', 'purple');
+  });
+
   it('#1592: names stored keys from the KinCare catalog, one legend row per service', async () => {
     getBusinessSettings.mockResolvedValue({
       serviceRates: { '60Minute': '45', '30Minute': '30' },
@@ -753,7 +778,7 @@ describe('Schedule screen', () => {
   });
 
   it('#1592: the legend swatch, the agenda pill and the week and month blocks share the resolved name\'s tone', async () => {
-    // The stored `visit_60` tones purple on its own (it contains "sit"); the
+    // The stored `visit_60` tones orange on its own (a visit, #1736); the
     // KinCare it resolves to is "Dog walk", which tones teal. Every mark must
     // follow the name.
     getBusinessSettings.mockResolvedValue({
