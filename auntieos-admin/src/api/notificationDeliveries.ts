@@ -43,6 +43,11 @@ export interface DeliveryRow {
   dispatchId: string;
   key: string;
   recipientUid: string;
+  /**
+   * #1592: who `recipientUid` is, by name (household, else staff), from the
+   * server. Null when nobody answers to the uid, or the server predates it.
+   */
+  recipientName: string | null;
   status: string;
   mode: string;
   channels: string[];
@@ -74,6 +79,7 @@ interface RawDelivery {
   dispatchId?: string;
   key?: string;
   recipientUid?: string;
+  recipientName?: string | null;
   status?: string;
   mode?: string;
   channels?: string[];
@@ -116,6 +122,7 @@ function decodeDelivery(raw: RawDelivery): DeliveryRow {
     dispatchId: str(raw.dispatchId),
     key: str(raw.key),
     recipientUid: str(raw.recipientUid),
+    recipientName: nullableStr(typeof raw.recipientName === 'string' ? raw.recipientName.trim() : null),
     status: str(raw.status) || 'unknown',
     mode: str(raw.mode),
     // `arr` not `?? []`: a non-array `channels` throws on `.map` and blanks the

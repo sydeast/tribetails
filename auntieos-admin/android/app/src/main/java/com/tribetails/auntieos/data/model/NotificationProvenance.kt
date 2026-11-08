@@ -276,7 +276,55 @@ fun notifTemplateLines(entry: NotificationCatalogEntry): List<NotifTemplateLine>
  * it to whoever the recipient rule resolved.
  */
 fun notifMergeFieldNames(entry: NotificationCatalogEntry): List<String> =
-    (entry.mergeFields + entry.emitters.flatMap { it.dataKeys }).distinct().sorted()
+    (entry.mergeFields + entry.emitters.flatMap { it.dataKeys })
+        .distinct()
+        // #1592: in words, not keys: the server's words, else the key split.
+        .map { key -> entry.mergeFieldLabels[key] ?: notifFieldWords(key) }
+        .distinct()
+        .sorted()
+/**
+ * A merge field key as words, for a key the server sent no label for (#1592):
+ * `startTimeMs` reads "Start time", `nextVisit.date` "Next visit date",
+ * `kinfolkId` "Kinfolk reference". Same rule as web's `fieldWords`.
+ */
+fun notifFieldWords(key: String): String {
+    val words = key.trim()
+        .replace(Regex("([a-z0-9])([A-Z])"), "$1 $2")
+        .split(Regex("[._\\-\\s]+"))
+        .map { it.lowercase() }
+        .filter { it.isNotEmpty() && it != "ms" && it != "iso" && it != "list" }
+        .map {
+            when (it) {
+                "id", "uid" -> "reference"
+                "url" -> "link"
+                else -> it
+            }
+        }
+    val joined = words.joinToString(" ")
+    return if (joined.isEmpty()) key else joined.replaceFirstChar { it.uppercase() }
+}
+/**
+ * The channel senders' skip codes in words (#1592: the log printed
+ * `recipient_no_phone`). Same table as web's `skipReasonWords`; a code this
+ * does not know is split into words rather than printed as a key.
+ */
+private val SKIP_REASON_WORDS = mapOf(
+    "recipient_no_email" to "the recipient has no email address on file",
+    "recipient_no_phone" to "the recipient has no phone number on file",
+    "recipient_hard_bounced" to "an earlier email to this address bounced, so it is not mailed again",
+    "template_missing" to "there is no text message template for it",
+    "template_text_empty" to "its text message template is empty",
+    "unknown" to "the sender gave no reason",
+)
+fun notifSkipReasonWords(code: String): String =
+    SKIP_REASON_WORDS[code] ?: notifFieldWords(code).lowercase()
+/**
+ * Who a delivery went to (#1592: the log printed the uid). The server's name,
+ * else the uid as it is: a recipient nobody answers to is what the operator
+ * needs to see, and is never shown blank.
+ */
+fun notifDeliveryRecipient(row: NotificationDeliveryRow): String =
+    row.recipientName ?: row.recipientUid.ifBlank { "an unknown recipient" }
 
 /** How a delivery attempt should read to a human. */
 enum class NotifDeliveryTone { Good, Warn, Bad, Neutral }
@@ -316,16 +364,16 @@ fun notifDeliveryPhrase(
             skipReason.isNullOrBlank() -> "Not sendable on this channel; no reason was recorded."
             skipReason == BUSINESS_EMAIL_UNSET ->
                 "The business email in Settings > Business was blank, so this email had nowhere to go."
-            else -> "Not sendable on this channel: $skipReason."
+            else -> "Not sent on this channel: ${notifSkipReasonWords(skipReason)}."
         },
         tone = NotifDeliveryTone.Warn,
     )
     "failed" -> NotifDeliveryPhrase(
         label = "Failed",
         detail = if (errorMessage.isNullOrBlank()) {
-            "The send threw, with no message recorded."
+            "The send failed, with no message recorded."
         } else {
-            "The send threw: $errorMessage"
+            "The send failed: $errorMessage"
         },
         tone = NotifDeliveryTone.Bad,
     )

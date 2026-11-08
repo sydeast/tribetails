@@ -320,22 +320,6 @@
   color: var(--color-error);
   font-size: var(--type-body-sm-size);
 }
-.notifgate__detail-fields {
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-.notifgate__code {
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  color: var(--color-text-dim);
-  background: var(--color-surface);
-  border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-tight);
-  padding: 0 var(--space-1);
-  overflow-wrap: anywhere;
-}
 .notifgate__delivery-when {
   font-family: var(--font-mono);
   font-size: 0.78rem;
