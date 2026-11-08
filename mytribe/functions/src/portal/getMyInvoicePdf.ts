@@ -89,8 +89,11 @@ export async function getMyInvoicePdfHandler(
     severity: 'info',
     actorRole: 'PRIMARY',
     actorUid: uid,
+    // #1752: the invoice is the target, the household is `familyId`.
+    targetUid: args.invoiceId,
     targetCollection: 'invoices',
-    description: `Kinfolk downloaded invoice PDF for ${args.invoiceId}`,
+    familyId: kinfolkId,
+    description: (await import('../lib/activityWords.js')).invoicePdfDownloadedWords(data['invoiceNumber']),
     payload: { invoiceId: args.invoiceId, kinfolkId },
   }).catch((err) => {
     logEvent({ severity: 'warn', function: 'getMyInvoicePdf', event: 'audit.write.failed', uid, errorMessage: (err as Error)?.message });

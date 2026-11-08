@@ -1,5 +1,9 @@
 package com.tribetails.auntieos.web.screens.schedule
 
+import com.tribetails.auntieos.web.screens.LocalServiceCatalog
+import com.tribetails.auntieos.web.screens.ServiceCatalog
+import com.tribetails.auntieos.web.screens.bookingServiceTone
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -133,6 +137,11 @@ fun ScheduleScreen() {
     // the "Couldn't load busy blocks" error, since there is nothing to load.
     val scheduleSettingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val scheduleSettings = (scheduleSettingsState as? FirestoreResult.Data)?.value
+    // #1592: one catalog for every service mark here, so a stored key is named
+    // and coloured the same on the agenda, the week blocks and the legend.
+    val serviceCatalog = remember(scheduleSettings?.serviceRates, scheduleSettings?.serviceDurations) {
+        ServiceCatalog(scheduleSettings?.serviceRates.orEmpty(), scheduleSettings?.serviceDurations.orEmpty())
+    }
     val calendarSyncConfigured = (scheduleSettings?.calendarSyncId ?: "").isNotBlank()
     // #9: drag-to-reschedule snaps to 15 min when the operator enabled it, else to
     // minute precision (snap = 1). Default OFF preserves the prior minute-precision drop.
@@ -309,18 +318,21 @@ fun ScheduleScreen() {
                     title = agendaLabel.ifBlank { "Day agenda" },
                     subtitle = "Tap a visit to open its booking detail and notes.",
                 ) {
-                    DayAgenda(
-                        selected = selected,
-                        sessions = selectedItems,
-                        localZone = localZone,
-                        onSessionClick = { selectedSession = it },
-                    )
+                    CompositionLocalProvider(LocalServiceCatalog provides serviceCatalog) {
+                        DayAgenda(
+                            selected = selected,
+                            sessions = selectedItems,
+                            localZone = localZone,
+                            onSessionClick = { selectedSession = it },
+                        )
+                    }
                 }
                 Spacer(Modifier.height(18.dp))
 
                 when (viewMode) {
                     ScheduleView.Day -> { /* day view: the agenda above is the detail */ }
                     ScheduleView.Week -> GlassSurface(cornerRadius = 22.dp) {
+                        CompositionLocalProvider(LocalServiceCatalog provides serviceCatalog) {
                         WeekCalendar(
                             days = selected?.let(::weekStripDays).orEmpty(),
                             today = today,
@@ -333,6 +345,7 @@ fun ScheduleScreen() {
                             onReschedule = ::onRescheduleDrop,
                             snapMinutes = dragSnapMinutes,
                         )
+                        }
                     }
                     ScheduleView.Month -> GlassSurface(cornerRadius = 18.dp) {
                         MonthGrid(
@@ -866,7 +879,10 @@ private fun EventBlock(
             .padding(horizontal = 9.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        val household = session.kinfolkName.ifBlank { session.serviceType.ifBlank { "KinCare Visit" } }
+        // #1744: with no household name, the block names the KinCare, never the stored key.
+        val household = session.kinfolkName.ifBlank {
+            if (session.serviceType.isBlank()) "KinCare Visit" else LocalServiceCatalog.current.nameOf(session.serviceType)
+        }
         if (blockHeight < COMPACT_BLOCK_HEIGHT) {
             // #1606: at 30 minutes the stacked time pushed the household out of
             // the block, so a short visit read as a bare time. One line instead.
@@ -898,7 +914,8 @@ private fun EventBlock(
         }
         if (blockHeight >= 56.dp && session.serviceType.isNotBlank()) {
             Text(
-                text = session.serviceType,
+                // #1592: the operator's KinCare name, never the stored key.
+                text = LocalServiceCatalog.current.nameOf(session.serviceType),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
                 maxLines = 1,
@@ -1034,6 +1051,7 @@ private fun MonthGrid(
     }
 }
 
+
 @Composable
 private fun DayAgenda(
     selected: LocalDate?,
@@ -1096,8 +1114,10 @@ private fun DayAgenda(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        val catalog = LocalServiceCatalog.current
                         Text(
-                            text = session.serviceType.ifBlank { "KinCare Visit" },
+                            // #1592: the operator's KinCare name, never the stored key.
+                            text = if (session.serviceType.isBlank()) "KinCare Visit" else catalog.nameOf(session.serviceType),
                             style = AuntieTheme.typography.titleLarge,
                             color = c.textPrimary,
                         )
@@ -1105,7 +1125,8 @@ private fun DayAgenda(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            ServicePill(session.serviceType, serviceTone(session.serviceType))
+                            // Toned by the name it shows, the legend swatch's key (#1592).
+                            ServicePill(catalog.nameOf(session.serviceType))
                             AuntieStatusPill(
                                 label = statusBadge(session.status),
                                 tone = statusTone(session.status),
@@ -1222,8 +1243,9 @@ private fun monthAbbrev(date: LocalDate): String =
     date.month.name.take(3).lowercase().replaceFirstChar(Char::titlecase)
 
 /**
- * Service-type color, resolved through the shared [serviceTone] mapping (the same
- * key the rest of the Den uses), so the legend, pills, and grid blocks all agree.
+ * Service-type color, keyed on the resolved service NAME ([bookingServiceTone],
+ * #1592), the same key the legend swatch and the agenda pill use, so a block
+ * stored as `visit_60` wears its KinCare's colour and a rename moves both.
  * Cancelled visits fade to faint. Free-text keys with no match (e.g. "visit_60")
  * resolve to Orange via [serviceTone], which is what the legend's "Other /
  * unmapped" swatch shows.
@@ -1239,7 +1261,7 @@ private fun monthAbbrev(date: LocalDate): String =
 private fun serviceTint(serviceType: String, status: String): Color {
     val c = AuntieTheme.colors
     if (status.uppercase() == "CANCELLED") return c.textFaint
-    return serviceTone(serviceType).color(c)
+    return bookingServiceTone(serviceType, LocalServiceCatalog.current).color(c)
 }
 
 private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {

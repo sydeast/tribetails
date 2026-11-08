@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.data.repository.MembersRepository
 import com.tribetails.auntieos.data.repository.inviteDate
-import com.tribetails.auntieos.data.repository.inviteHandle
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieChipGroup
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
@@ -74,8 +73,8 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * No panel wraps the sections, because the mock draws none.
  *
  * THE INVITE ID IS A BEARER TOKEN. The claim link is `?invite=<inviteId>`, so
- * the document id doubles as the secret. Rows show `inviteHandle`'s truncated
- * form only, and never a claim URL.
+ * the document id doubles as the secret. Rows show no part of it (#1592: it is
+ * a database id), and never a claim URL.
  */
 @Composable
 fun InvitesScreen(
@@ -350,9 +349,9 @@ internal fun adminInviteDateParts(invite: MembersRepository.Invite): List<String
 }
 
 /**
- * The row's provenance line: the dates, then the truncated handle. The
- * household is a separate line above it, not part of this string.
+ * The row's provenance line: the dates. No invite id, not even truncated
+ * (#1592: it is a database id; the address and household name the invite).
+ * The household is a separate line above it, not part of this string.
  */
 internal fun adminInviteMetaLine(row: MembersRepository.AdminInvite): String =
-    (adminInviteDateParts(row.invite) + "inviteId ${inviteHandle(row.invite.inviteId)}")
-        .joinToString(" · ")
+    adminInviteDateParts(row.invite).joinToString(" · ")

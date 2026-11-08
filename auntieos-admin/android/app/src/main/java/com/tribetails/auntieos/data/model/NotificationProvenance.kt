@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.data.model
 
+import com.tribetails.auntieos.ui.admin.humanizeKey
+
 /**
  * Android mirror of `auntieos-admin/src/lib/notificationProvenance.ts` (#396).
  *
@@ -143,12 +145,12 @@ fun notifRowBadges(
 fun notifRecipientLines(
     entry: NotificationCatalogEntry,
     businessAdminCount: Int?,
-    rosterPath: String,
 ): List<String> = entry.whoReceives.map { sentence ->
     when {
         !sentence.contains("business admin") -> sentence
         businessAdminCount == null ->
-            "$sentence The roster at $rosterPath could not be read just now, so the number is unknown."
+            // #1592: the roster is named, never its database path.
+            "$sentence The roster could not be read just now, so the number is unknown."
         businessAdminCount == 0 ->
             "$sentence Nobody is on that roster right now, so sends fall back to the operator allowlist."
         businessAdminCount == 1 -> "$sentence That is 1 person today."
@@ -222,14 +224,18 @@ fun businessEmailNotice(value: String): String? =
  */
 fun businessAdminSourceNote(roster: BusinessAdminRoster): String? {
     if (roster.source != BusinessAdminRosterSource.OperatorAllowlist) return null
-    return "Nobody is stored at ${roster.rosterPath}, so these are the operator allowlist accounts " +
-        "the next business notification would fall back to. Call provisionBusinessAdmins to make " +
-        "the roster explicit."
+    // #1592: no database path and no function name in what the operator reads.
+    return "The business admin roster is empty, so these are the operator allowlist accounts " +
+        "the next business notification would fall back to."
 }
-/** One "channel -> template document" line for a channel the row offers. */
+/** One "channel -> template" line for a channel the row offers. */
 data class NotifTemplateLine(
     val channel: String,
-    val path: String,
+    /**
+     * The template in words (#1592: it was the database path `emailTemplates/<id>`).
+     * The row's own template carries the row's own name; another id reads as words.
+     */
+    val name: String,
     /** True when the row offers this channel with nothing to render it. */
     val missing: Boolean,
     /**
@@ -241,14 +247,22 @@ data class NotifTemplateLine(
     val retargetedFrom: String? = null,
 )
 
+/** A template id as the operator reads it: the row's own name, or the id as words. */
+fun notifTemplateName(id: String, entry: NotificationCatalogEntry): String =
+    if (id == entry.key) entry.displayTitle() else humanizeKey(id).ifEmpty { "a template" }
+
 fun notifTemplateLines(entry: NotificationCatalogEntry): List<NotifTemplateLine> =
     NOTIF_CHANNEL_ORDER.filter { it in entry.allowedChannels }.map { channel ->
         val id = entry.templates[channel]
         NotifTemplateLine(
             channel = channel,
-            path = if (id.isNullOrBlank()) "no template recorded" else "${channel}Templates/$id",
+            name = if (id.isNullOrBlank()) "no template recorded" else notifTemplateName(id, entry),
             missing = id.isNullOrBlank(),
-            retargetedFrom = if (channel == "email") entry.emailTemplateRetargetedFrom else null,
+            retargetedFrom = if (channel == "email") {
+                entry.emailTemplateRetargetedFrom?.let { notifTemplateName(it, entry) }
+            } else {
+                null
+            },
         )
     }
 
@@ -262,7 +276,55 @@ fun notifTemplateLines(entry: NotificationCatalogEntry): List<NotifTemplateLine>
  * it to whoever the recipient rule resolved.
  */
 fun notifMergeFieldNames(entry: NotificationCatalogEntry): List<String> =
-    (entry.mergeFields + entry.emitters.flatMap { it.dataKeys }).distinct().sorted()
+    (entry.mergeFields + entry.emitters.flatMap { it.dataKeys })
+        .distinct()
+        // #1592: in words, not keys: the server's words, else the key split.
+        .map { key -> entry.mergeFieldLabels[key] ?: notifFieldWords(key) }
+        .distinct()
+        .sorted()
+/**
+ * A merge field key as words, for a key the server sent no label for (#1592):
+ * `startTimeMs` reads "Start time", `nextVisit.date` "Next visit date",
+ * `kinfolkId` "Kinfolk reference". Same rule as web's `fieldWords`.
+ */
+fun notifFieldWords(key: String): String {
+    val words = key.trim()
+        .replace(Regex("([a-z0-9])([A-Z])"), "$1 $2")
+        .split(Regex("[._\\-\\s]+"))
+        .map { it.lowercase() }
+        .filter { it.isNotEmpty() && it != "ms" && it != "iso" && it != "list" }
+        .map {
+            when (it) {
+                "id", "uid" -> "reference"
+                "url" -> "link"
+                else -> it
+            }
+        }
+    val joined = words.joinToString(" ")
+    return if (joined.isEmpty()) key else joined.replaceFirstChar { it.uppercase() }
+}
+/**
+ * The channel senders' skip codes in words (#1592: the log printed
+ * `recipient_no_phone`). Same table as web's `skipReasonWords`; a code this
+ * does not know is split into words rather than printed as a key.
+ */
+private val SKIP_REASON_WORDS = mapOf(
+    "recipient_no_email" to "the recipient has no email address on file",
+    "recipient_no_phone" to "the recipient has no phone number on file",
+    "recipient_hard_bounced" to "an earlier email to this address bounced, so it is not mailed again",
+    "template_missing" to "there is no text message template for it",
+    "template_text_empty" to "its text message template is empty",
+    "unknown" to "the sender gave no reason",
+)
+fun notifSkipReasonWords(code: String): String =
+    SKIP_REASON_WORDS[code] ?: notifFieldWords(code).lowercase()
+/**
+ * Who a delivery went to (#1592: the log printed the uid). The server's name,
+ * else the uid as it is: a recipient nobody answers to is what the operator
+ * needs to see, and is never shown blank.
+ */
+fun notifDeliveryRecipient(row: NotificationDeliveryRow): String =
+    row.recipientName ?: row.recipientUid.ifBlank { "an unknown recipient" }
 
 /** How a delivery attempt should read to a human. */
 enum class NotifDeliveryTone { Good, Warn, Bad, Neutral }
@@ -302,16 +364,16 @@ fun notifDeliveryPhrase(
             skipReason.isNullOrBlank() -> "Not sendable on this channel; no reason was recorded."
             skipReason == BUSINESS_EMAIL_UNSET ->
                 "The business email in Settings > Business was blank, so this email had nowhere to go."
-            else -> "Not sendable on this channel: $skipReason."
+            else -> "Not sent on this channel: ${notifSkipReasonWords(skipReason)}."
         },
         tone = NotifDeliveryTone.Warn,
     )
     "failed" -> NotifDeliveryPhrase(
         label = "Failed",
         detail = if (errorMessage.isNullOrBlank()) {
-            "The send threw, with no message recorded."
+            "The send failed, with no message recorded."
         } else {
-            "The send threw: $errorMessage"
+            "The send failed: $errorMessage"
         },
         tone = NotifDeliveryTone.Bad,
     )

@@ -133,6 +133,47 @@ describe('ActivityLog', () => {
     expect(screen.queryByRole('img', { name: 'Verifying…' })).not.toBeInTheDocument();
   });
 });
+
+describe('ActivityLog stored draft paths (#1747)', () => {
+  it('shows a stored generated_drafts path as words on the row, without rewriting the entry', () => {
+    const stored = entry({
+      _id: 'e9',
+      actionType: 'DRAFT_APPROVED',
+      description: 'Approved generated_drafts/aB3dE9 (kf-robyn)',
+    });
+    useCollection.mockReturnValue({ status: 'ready', data: [stored] });
+    render(<ActivityLog />);
+    expect(screen.getByText(/Approved an Auntie AI draft/)).toBeInTheDocument();
+    expect(screen.queryByText(/Approved generated_drafts/)).toBeNull();
+    expect(stored.description).toBe('Approved generated_drafts/aB3dE9 (kf-robyn)');
+  });
+});
+
+describe('ActivityLog stored ids and keys (#1752)', () => {
+  it('shows a stored credit and a stored delivery as words, and finds them by those words', async () => {
+    const credit = entry({
+      _id: 'e10',
+      actionType: 'BILLING_ACCOUNT_CREDIT_GIVEN',
+      description: 'Account credit of 2500 cents given to household kf_rivera',
+    });
+    const delivered = entry({
+      _id: 'e11',
+      actionType: 'NOTIFICATION_RECEIVED',
+      description: 'Notification kincare.booking.confirm delivered via email',
+    });
+    useCollection.mockReturnValue({ status: 'ready', data: [credit, delivered] });
+    render(<ActivityLog />);
+    expect(screen.getByText(/Gave \$25\.00 account credit/)).toBeInTheDocument();
+    expect(screen.getByText(/Delivered "Kincare booking confirm" by email/)).toBeInTheDocument();
+    expect(screen.queryByText(/given to household kf_rivera/)).toBeNull();
+    expect(screen.queryByText(/kincare\.booking\.confirm delivered/)).toBeNull();
+    await userEvent.type(screen.getByPlaceholderText(/Search actor/), 'account credit');
+    expect(screen.getByText(/Gave \$25\.00 account credit/)).toBeInTheDocument();
+    expect(screen.queryByText(/Delivered "Kincare booking confirm"/)).toBeNull();
+    expect(credit.description).toBe('Account credit of 2500 cents given to household kf_rivera');
+  });
+});
+
 /**
  * R5 on the Activity Log, verbatim: "the Activity Log is seriously lacking, cant
  * see shit or what the fuck actually happened."

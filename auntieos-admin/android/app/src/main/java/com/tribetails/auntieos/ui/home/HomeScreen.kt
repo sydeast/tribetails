@@ -29,7 +29,10 @@ import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.ui.branding.brandIdentity
+import com.tribetails.auntieos.ui.admin.ServiceCatalog
+import com.tribetails.auntieos.ui.admin.bookingServiceTone
 import com.tribetails.auntieos.ui.admin.overdueOnAuntieTime
+import com.tribetails.auntieos.ui.admin.serviceCatalog
 import com.tribetails.auntieos.ui.branding.homeHeading
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
@@ -50,7 +53,6 @@ import com.tribetails.auntieos.ui.components.SlideInCard
 import com.tribetails.auntieos.ui.components.denCurrentHour
 import com.tribetails.auntieos.ui.components.formatTime
 import com.tribetails.auntieos.ui.components.greetingForHour
-import com.tribetails.auntieos.ui.components.serviceTone
 import com.tribetails.auntieos.ui.components.statusLabel
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -366,6 +368,7 @@ fun HomeScreen(
                                             SlideInCard(visible = true) {
                                                 TodayVisitCardView(
                                                     card = card,
+                                                    catalog = state.businessSettings.serviceCatalog(),
                                                     defaultEtaMinutes = state.businessSettings.defaultEtaMinutes,
                                                     etaOptions = state.businessSettings.etaMinuteOptions,
                                                     actionPending = state.pendingActionSessionId == card.session.id,
@@ -505,7 +508,7 @@ fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 if (state.isLoading) EmptyHint("Loading visits…")
-                                else OverdueVisitsWidget(state.allSessions, java.time.LocalDate.now().toString())
+                                else OverdueVisitsWidget(state.allSessions, java.time.LocalDate.now().toString(), state.businessSettings.serviceCatalog())
                             }
                             DashKey.PET_BREAKDOWN -> DenPanel(
                                 title = "Pets by type",
@@ -548,6 +551,7 @@ fun HomeScreen(
                                     sessionsLoading = state.isLoading,
                                     kinfolkResult = state.safeboxKinfolk,
                                     nowIso = java.time.Instant.now().toString(),
+                                    catalog = state.businessSettings.serviceCatalog(),
                                 )
                             }
                             DashKey.CARE_FLAGS -> DenPanel(
@@ -944,6 +948,8 @@ private fun TaleRow(draft: Draft, index: Int, onOpen: () -> Unit) {
 @Composable
 private fun TodayVisitCardView(
     card: TodayVisitCard,
+    /** #1592: the card names the KinCare, never the stored `visit_60`. */
+    catalog: ServiceCatalog,
     defaultEtaMinutes: Int,
     etaOptions: List<Int>,
     actionPending: Boolean,
@@ -958,7 +964,8 @@ private fun TodayVisitCardView(
     val session = card.session
     val status = runCatching { VisitStatus.valueOf(session.status) }.getOrDefault(VisitStatus.SCHEDULED)
     val kinName = card.kinfolk?.displayName ?: session.kinfolkName.ifBlank { "Unknown kinfolk" }
-    val tone = serviceTone(session.serviceType)
+    val serviceName = catalog.nameOf(session.serviceType)
+    val tone = bookingServiceTone(session.serviceType, catalog)
 
     var etaMinutes by remember(session.id) { mutableStateOf(defaultEtaMinutes) }
 
@@ -977,12 +984,12 @@ private fun TodayVisitCardView(
             Column(modifier = Modifier.weight(1f)) {
                 Text(kinName, style = AuntieTheme.typography.titleSmall, color = AuntieTheme.colors.textPrimary)
                 Text(
-                    session.serviceType.ifBlank { "Visit" },
+                    serviceName,
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim
                 )
             }
-            ServicePill(session.serviceType, tone)
+            ServicePill(serviceName, tone)
             Spacer(Modifier.width(4.dp))
             Column(horizontalAlignment = Alignment.End) {
                 Text(formatTime(session.startTime), style = AuntieTheme.typography.titleSmall, color = AuntieTheme.colors.textPrimary)

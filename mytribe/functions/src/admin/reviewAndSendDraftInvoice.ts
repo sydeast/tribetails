@@ -186,7 +186,7 @@ export async function reviewAndSendDraftInvoiceHandler(
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId,
-    description: `Draft invoice ${data.invoiceNumber ?? args.invoiceId} reviewed and sent`,
+    description: `Draft ${(await import('../lib/activityWords.js')).invoiceWords(data.invoiceNumber).replace(/^an /, '')} reviewed and sent`,
     payload: { invoiceId: args.invoiceId, kinfolkId: familyId, recipientUid: recipientUid ?? null },
   }).catch((err) => {
     logEvent({

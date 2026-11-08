@@ -463,7 +463,7 @@ class CommunicateViewModelTest {
     // an entry written after a FAILED promote would assert an approval that does
     // not exist.
     @Test
-    fun `approveDraft writes a DRAFT_APPROVED audit entry naming the draft and the household`() =
+    fun `approveDraft writes a DRAFT_APPROVED audit entry with the draft as target and the household as familyId`() =
         runTest(testDispatcher) {
             val entry = slot<com.tribetails.auntieos.data.admin.ActivityLogEntry>()
             coEvery { mockRepo.generate(any()) } returns
@@ -482,7 +482,9 @@ class CommunicateViewModelTest {
             assertEquals("d1", entry.captured.targetId)
             assertEquals("generated_drafts", entry.captured.targetCollection)
             assertEquals("SUCCESS", entry.captured.status)
-            assertTrue(entry.captured.description.contains("kf1"))
+            // #1747: words for the Activity Log; the household rides as familyId.
+            assertEquals("Approved an Auntie AI draft", entry.captured.description)
+            assertEquals("kf1", entry.captured.familyId)
         }
     @Test
     fun `approveDraft writes NO audit entry when the Firestore promote fails`() = runTest(testDispatcher) {

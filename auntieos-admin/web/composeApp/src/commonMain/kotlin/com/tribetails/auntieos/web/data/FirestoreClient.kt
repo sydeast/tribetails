@@ -4135,6 +4135,9 @@ data class ActivityLogEntry(
     val actorId: String = "",        // user/auth uid that triggered the event
     val targetId: String = "",       // optional doc id the action applied to
     val targetCollection: String = "",
+    // #1747: the household the entry is about. `logActivity` seals it onto the
+    // entry, so an id that used to ride in the description has a field of its own.
+    val familyId: String = "",
     // Hash-chain seal (written by writeAuditEntry). Legacy/admin-SDK entries that
     // predate the chain have no seq and carry blank hashes.
     val seq: Int? = null,
@@ -4152,6 +4155,8 @@ data class ActivityLogEntry(
 data class NotificationEntry(
     val _id: String = "",
     val key: String = "",            // catalog key, e.g. 'kincare.booking.confirm'
+    // AO-28: the catalog label the dispatcher writes; blank on older rows (#1592).
+    val title: String = "",
     val category: String = "",
     val recipientUid: String = "",
     val actorUid: String? = null,

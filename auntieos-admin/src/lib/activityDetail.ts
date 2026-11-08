@@ -3,6 +3,7 @@ import { type ActivityLogEntry } from '../api/activityLog';
 import { businessInstantMs, businessWallClock } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { formatTime } from './denFormat';
+import { activityDescriptionWords } from './activityWords';
 
 /**
  * What an Activity Log row shows when it is OPENED.
@@ -65,7 +66,7 @@ export function activityDetailRows(
   const actorName = names.get(actorId);
   push('Actor', actorName ?? actorId);
   if (actorName !== undefined) push('Actor id', actorId);
-  push('Actor role', str(entry.actorRole));
+  push('Actor role', actorRoleLabel(str(entry.actorRole)));
   push('Household', str(entry.familyId));
   // A path, not a link. Where a route exists the screen offers one separately;
   // where none does, the path is still the most useful thing that can honestly
@@ -154,11 +155,12 @@ export function activityPayloadRows(entry: ActivityLogEntry): ActivityDetailRow[
 }
 
 /**
- * A leaf value as text. `null` prints as "null" rather than blank, because a
- * recorded null is a decision the writer made and blanking it would hide that.
+ * A leaf value as text. A recorded null prints as "none" rather than blank,
+ * because it is a decision the writer made and blanking it would hide that; it
+ * is a word rather than the literal "null" because an operator reads it (#1592).
  */
 function renderScalar(v: unknown): string {
-  if (v === null) return 'null';
+  if (v === null) return 'none';
   if (v === undefined) return '';
   if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
@@ -185,6 +187,8 @@ export function activityMatchesQuery(
   const haystack = [
     str(entry.actionType),
     str(entry.description),
+    // #1747: the words the row shows, so a search for them finds a stored path's row.
+    activityDescriptionWords(str(entry.description)),
     str(entry.actorId),
     names.get(str(entry.actorId).trim()) ?? '',
     str(entry.actorRole),
@@ -344,4 +348,31 @@ function dayBefore(day: string): string {
     Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)) - 1),
   );
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The audit trail's actor role in words (#1592). The server writes `AUNTIE` for
+ * every staff caller, the owner included, so it reads "Staff", never "Auntie";
+ * PRIMARY and SECONDARY are the household's kinfolk. Display only: the stored
+ * value, and the search over it, are unchanged. Blank stays blank so the row is
+ * dropped.
+ */
+export function actorRoleLabel(role: string): string {
+  const key = role.trim().toUpperCase();
+  switch (key) {
+    case '':
+      return '';
+    case 'AUNTIE':
+      return 'Staff';
+    case 'PRIMARY':
+      return 'Primary kinfolk';
+    case 'SECONDARY':
+      return 'Secondary kinfolk';
+    case 'SYSTEM':
+      return 'System';
+    default: {
+      const words = key.toLowerCase().split(/[_\s]+/).filter(Boolean).join(' ');
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    }
+  }
 }

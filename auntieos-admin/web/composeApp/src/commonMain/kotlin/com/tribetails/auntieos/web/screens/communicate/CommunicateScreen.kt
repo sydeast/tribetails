@@ -70,6 +70,7 @@ import com.tribetails.auntieos.web.data.N8nClient
 import com.tribetails.auntieos.web.data.TagDef
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.screens.invoices.humanizeDate
+import com.tribetails.auntieos.web.screens.humanizeKey
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -150,6 +151,38 @@ internal enum class MessageType(val label: String, val type: CommunicationType, 
     Blog("Blog", CommunicationType.BLOG_POST, false),
 }
 
+/**
+ * The draft callout's detail line: who it is for and what kind of message it
+ * is, in the words of this console's chips. #1592: it also printed the model
+ * name and the draft id ("for Dana · visit_report · claude-sonnet-4-5 · draft
+ * #d7"). A type this console has no chip for reads as words, never its key.
+ * Pure; tested.
+ */
+internal fun draftCalloutLine(kinfolkName: String?, communicationType: String?): String {
+    val wire = communicationType?.trim().orEmpty()
+    val type = when (wire.lowercase()) {
+        "" -> null
+        "sms" -> MessageType.Text.label
+        "email" -> MessageType.Email.label
+        "blog_post" -> MessageType.Blog.label
+        "visit_report" -> MessageType.Visit.label
+        "push" -> "Push"
+        "social_post" -> "Social"
+        "general" -> "General"
+        else -> humanizeKey(wire)
+    }
+    return listOfNotNull(
+        kinfolkName?.trim()?.takeIf { it.isNotEmpty() }?.let { "for $it" },
+        type,
+    ).joinToString(" · ")
+}
+/**
+ * The one-to-one send's confirmation. #1592: it also printed the provider's
+ * message id, a support trace the operator has no use for. Same words as web.
+ * Pure; tested.
+ */
+internal fun externalSentLine(recipientRedacted: String): String =
+    "Sent to $recipientRedacted. The full recipient is never stored in the audit log."
 /** Recipient sent to generate(): empty for recipient-less types (blog/social). Pure; tested. */
 internal fun generateRecipient(type: MessageType, recipientName: String): String =
     if (type.needsRecipient) recipientName else ""
@@ -413,9 +446,12 @@ fun CommunicateScreen(
                             client = firestore,
                             actorId = actorUid,
                             actionType = "DRAFT_APPROVED",
-                            description = "Approved generated_drafts/$draftId (${r.kinfolk_id ?: "no-kinfolk"})",
+                            // #1747: words for the Activity Log. The draft is the
+                            // entry's target and the household its familyId.
+                            description = com.tribetails.auntieos.web.data.ActivityWords.DRAFT_APPROVED,
                             targetId = draftId,
                             targetCollection = "generated_drafts",
+                            familyId = r.kinfolk_id.orEmpty(),
                         )
                     },
                     channel = channel,
@@ -432,7 +468,7 @@ fun CommunicateScreen(
                     } else null,
                 )
                 showToast(
-                    approveOutcomeText(draftId, outcome),
+                    approveOutcomeText(outcome),
                     when (outcome) {
                         is ApproveOutcome.Sent, ApproveOutcome.Approved -> ToastKind.Success
                         else -> ToastKind.Error
@@ -872,12 +908,7 @@ private fun ComposePanel(
             // ── Generated draft callout + editor ──────────────────────────────
             result?.let { r ->
                 DraftCallout(
-                    subtitle = listOfNotNull(
-                        r.kinfolk_name?.let { "for $it" },
-                        r.communication_type,
-                        r.model,
-                        r.draft_id?.let { "draft #$it" },
-                    ).joinToString(" · "),
+                    subtitle = draftCalloutLine(r.kinfolk_name, r.communication_type),
                 )
                 MultilineField(
                     value = editedCopy,
@@ -2157,8 +2188,7 @@ private fun ExternalSendPanel(
                     pillLabel = r.channel.uppercase(),
                 ) {
                     Text(
-                        text = "Sent to ${r.recipientRedacted}. Provider id ${r.providerMessageId}. " +
-                            "The full recipient is never stored in the audit log.",
+                        text = externalSentLine(r.recipientRedacted),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textDim,
                     )

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type { ActivityLogEntry } from '../api/activityLog';
 import {
   activityCategoryOf,
+  actorRoleLabel,
   activityChainRows,
   activityDayLabel,
   activityDetailRows,
@@ -77,6 +78,23 @@ describe('activityDetailRows', () => {
     expect(labels).toContain('User agent');
   });
 
+  /**
+   * #1592. The server's audit vocabulary writes actorRole AUNTIE for ANY staff
+   * caller, the owner included, so an admin sign-in read "AUNTIE". The row says
+   * what the role is in words; the stored value is unchanged.
+   */
+  it('names the actor role in words, never the stored constant', () => {
+    const role = (actorRole: string) =>
+      activityDetailRows(entry({ actorRole })).find((r) => r.label === 'Actor role')?.value;
+    expect(role('AUNTIE')).toBe('Staff');
+    expect(role('PRIMARY')).toBe('Primary kinfolk');
+    expect(role('SECONDARY')).toBe('Secondary kinfolk');
+    expect(role('SYSTEM')).toBe('System');
+    expect(actorRoleLabel('auntie')).toBe('Staff');
+    // A role this list does not know yet still reads as a word.
+    expect(actorRoleLabel('SOME_NEW_ROLE')).toBe('Some new role');
+  });
+
   it('renders the target as a path, never a fabricated link', () => {
     const rows = activityDetailRows(entry({ targetCollection: 'notifications', targetId: 'n1' }));
     expect(rows).toContainEqual({ label: 'Target', value: 'notifications/n1' });
@@ -145,11 +163,15 @@ describe('activityPayloadRows', () => {
 
   /**
    * A recorded null is a decision the writer made. Blanking it would hide that,
-   * and in an audit trail "the writer recorded null here" is evidence.
+   * so it stays on the list, but as a word the operator reads (#1592), not the
+   * programming literal "null".
    */
-  it('prints a recorded null as null, and an empty map as {}', () => {
+  it('prints a recorded null as none, and an empty map as {}', () => {
     expect(activityPayloadRows(entry({ payload: { providerMessageId: null } }))).toEqual([
-      { label: 'providerMessageId', value: 'null' },
+      { label: 'providerMessageId', value: 'none' },
+    ]);
+    expect(activityPayloadRows(entry({ payload: { ids: ['a', null] } }))).toEqual([
+      { label: 'ids', value: 'a, none' },
     ]);
     expect(activityPayloadRows(entry({ payload: { extra: {} } }))).toEqual([
       { label: 'extra', value: '{}' },

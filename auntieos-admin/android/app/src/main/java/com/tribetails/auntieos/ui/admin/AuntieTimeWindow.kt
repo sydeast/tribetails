@@ -146,6 +146,14 @@ internal fun sortSessions(sessions: List<KinCareSession>): List<KinCareSession> 
  * way the mock writes them. The web board builds the same line in
  * `Sessions.tsx` (`metaLine`).
  */
+/**
+ * #1744: a visit's service as the Auntie Time card and visit detail name it:
+ * the KinCare's name off the catalog, never the stored `visit_60`. Blank stays
+ * blank, so the line drops it rather than saying "Visit".
+ */
+internal fun auntieTimeServiceName(serviceType: String, catalog: ServiceCatalog): String =
+    if (serviceType.isBlank()) "" else catalog.nameOf(serviceType)
+
 internal fun auntieTimeIdentityLine(
     service: String,
     kinNames: List<String>,

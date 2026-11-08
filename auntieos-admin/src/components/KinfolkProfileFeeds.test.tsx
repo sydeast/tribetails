@@ -45,6 +45,16 @@ vi.mock('../lib/firestore', async (orig) => ({
   useCollection: (spec: unknown) => useCollection(spec),
 }));
 
+// #1592: services are named from the KinCare catalog. "Long walk" runs 60
+// minutes, so a stored `visit_60` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({
+    serviceRates: { 'Long walk': '45' },
+    serviceDurations: { 'Long walk': '60' },
+    timeBlocks: [],
+  }),
+}));
+
 import {
   RecentKinTalesPanel,
   UpcomingVisitsPanel,
@@ -157,6 +167,17 @@ describe('RecentKinTalesPanel', () => {
 
 describe('UpcomingVisitsPanel', () => {
   const now = new Date('2026-08-17T12:00:00Z');
+
+  it('#1592: names the KinCare, and the dot and the pill wear its tone', () => {
+    useCollection.mockReturnValue(
+      ready([{ _id: 's1', kinfolkId: 'k1', status: 'SCHEDULED', startTime: '2026-08-19T09:00:00Z', serviceType: 'visit_60' }]),
+    );
+    const { container } = render(<UpcomingVisitsPanel kinfolkId="k1" now={now} />);
+
+    expect(screen.getByText('Long walk')).toHaveAttribute('data-tone', 'teal');
+    expect(container.querySelector('.kfeed__dot')).toHaveAttribute('data-tone', 'teal');
+    expect(screen.queryByText('visit_60')).toBeNull();
+  });
 
   it('shows the booked visits inside the window and links each to its session', () => {
     useCollection.mockReturnValue(

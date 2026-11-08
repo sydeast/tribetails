@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.data.model
 
+import com.tribetails.auntieos.ui.admin.humanizeKey
+
 /**
  * Phase 15.2 + notification-settings revamp, admin notification-type x channel matrix
  * (Android mirror of the web model). Backed by the businessNotificationOverride
@@ -88,6 +90,12 @@ data class NotificationCatalogEntry(
     val emailTemplateRetargetedFrom: String? = null,
     /** Merge fields the server hydrates for this key's templates. */
     val mergeFields: List<String> = emptyList(),
+    /**
+     * #1592: the server's words for each merge field and emitter data key. A
+     * server older than this field sends none; `notifMergeFieldNames` then
+     * splits the key into words itself.
+     */
+    val mergeFieldLabels: Map<String, String> = emptyMap(),
     /** True when an outside system delivers it and this gate controls nothing. */
     val external: Boolean = false,
 ) {
@@ -110,8 +118,9 @@ data class NotificationCatalogEntry(
     fun alwaysEnabledFor(stream: String): Boolean =
         alwaysEnabled && (alwaysEnabledStreams.isEmpty() || stream in alwaysEnabledStreams)
 
-    /** Row title for the UI: the catalog label, else the description, else the key. */
-    fun displayTitle(): String = label.ifBlank { description.ifBlank { key } }
+    /** Row title for the UI: the catalog label, else the description, else the key as words (#1592). */
+    fun displayTitle(): String =
+        label.ifBlank { description.ifBlank { humanizeKey(key).ifEmpty { "Notification" } } }
 
     /** A channel toggle is locked when the catalog marks that channel required. */
     fun channelLocked(channel: String): Boolean = required[channel] == true
@@ -436,6 +445,9 @@ fun notificationCatalogEntryFromMap(m: Map<*, *>): NotificationCatalogEntry? {
         emailTemplateRetargetedFrom = (m["emailTemplateRetargetedFrom"] as? String)
             ?.takeIf { it.isNotBlank() },
         mergeFields = stringList(m["mergeFields"]),
+        mergeFieldLabels = stringMap(m["mergeFieldLabels"])
+            .mapValues { it.value.trim() }
+            .filterValues { it.isNotEmpty() },
         external = m["external"] as? Boolean ?: false,
     )
 }

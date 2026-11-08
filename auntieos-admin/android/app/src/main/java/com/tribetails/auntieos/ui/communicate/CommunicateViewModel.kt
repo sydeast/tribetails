@@ -699,10 +699,13 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                         repo.logActivity(
                             ActivityLogEntry(
                                 actionType = "DRAFT_APPROVED",
-                                description = "Approved generated_drafts/$draftId (${state.kinfolkId ?: "no kinfolk"})",
+                                // #1747: words for the Activity Log. The draft is
+                                // the entry's target and the household its familyId.
+                                description = com.tribetails.auntieos.ui.admin.ActivityWords.DRAFT_APPROVED,
                                 status = "SUCCESS",
                                 targetId = draftId,
                                 targetCollection = "generated_drafts",
+                                familyId = state.kinfolkId.orEmpty(),
                             ),
                         ).exceptionOrNull()
                     } catch (t: Throwable) {
@@ -724,9 +727,9 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                             isSaving       = false,
                             savedDraftId   = draftId,
                             successMessage = if (auditFailure == null) {
-                                "Draft #$draftId approved and logged to the audit trail."
+                                "Draft approved and logged to the audit trail."
                             } else {
-                                "Draft #$draftId approved.$auditNote"
+                                "Draft approved.$auditNote"
                             },
                         )
                         return@onSuccess
@@ -747,7 +750,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                         _uiState.value = _uiState.value.copy(
                             isSaving       = false,
                             savedDraftId   = draftId,
-                            successMessage = "Draft #$draftId approved and sent by " +
+                            successMessage = "Draft approved and sent by " +
                                 (if (channel == ExternalChannel.Email) "email" else "text") +
                                 " to ${result.recipientRedacted}.$auditNote",
                         )

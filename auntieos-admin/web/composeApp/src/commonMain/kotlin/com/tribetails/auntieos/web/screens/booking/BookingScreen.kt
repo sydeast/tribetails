@@ -2,6 +2,7 @@
 
 package com.tribetails.auntieos.web.screens.booking
 
+import com.tribetails.auntieos.web.screens.bookingServiceName
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -258,6 +259,10 @@ private fun BookingListScreen(
     val timeBlocks = remember(settingsState) {
         (settingsState as? FirestoreResult.Data)?.value?.timeBlocks.orEmpty()
     }
+    // #1592: the KinCare catalog each card names its service against.
+    val kinCareRates = remember(settingsState) {
+        (settingsState as? FirestoreResult.Data)?.value?.serviceRates.orEmpty()
+    }
     val timeBlockLabelFor: (KinCareSession) -> String? = { b ->
         resolveTimeBlock(b.startTime, timeBlocks)?.label
     }
@@ -480,6 +485,7 @@ private fun BookingListScreen(
                             onCancel  = null,
                             onOpenDetail = { selectedBooking = booking },
                             timeBlockLabel = timeBlockLabelFor(booking),
+                            serviceRates = kinCareRates,
                         )
                     }
                 }
@@ -512,6 +518,7 @@ private fun BookingListScreen(
                             onCancel  = { runCancel(booking) },
                             onOpenDetail = { selectedBooking = booking },
                             timeBlockLabel = timeBlockLabelFor(booking),
+                            serviceRates = kinCareRates,
                         )
                     }
                 }
@@ -539,9 +546,9 @@ private fun BookingListScreen(
                 history.isEmpty() ->
                     AuntieBannerEmpty()
                 else -> Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    HistorySubsection("Completed", buckets.completed, selecting, timeBlockLabelFor) { selectedBooking = it }
-                    HistorySubsection("Cancelled", buckets.cancelled, selecting, timeBlockLabelFor) { selectedBooking = it }
-                    HistorySubsection("Other", buckets.other, selecting, timeBlockLabelFor) { selectedBooking = it }
+                    HistorySubsection("Completed", buckets.completed, selecting, timeBlockLabelFor, kinCareRates) { selectedBooking = it }
+                    HistorySubsection("Cancelled", buckets.cancelled, selecting, timeBlockLabelFor, kinCareRates) { selectedBooking = it }
+                    HistorySubsection("Other", buckets.other, selecting, timeBlockLabelFor, kinCareRates) { selectedBooking = it }
                 }
             }
         }
@@ -572,6 +579,7 @@ private fun HistorySubsection(
     bookings: List<KinCareSession>,
     selecting: Boolean,
     timeBlockLabelFor: (KinCareSession) -> String?,
+    serviceRates: Map<String, String>,
     onOpenDetail: (KinCareSession) -> Unit,
 ) {
     if (bookings.isEmpty()) return
@@ -598,6 +606,7 @@ private fun HistorySubsection(
                 onCancel  = null,
                 onOpenDetail = { onOpenDetail(booking) },
                 timeBlockLabel = timeBlockLabelFor(booking),
+                serviceRates = serviceRates,
             )
         }
         if (bookings.size > HISTORY_PAGE) {
@@ -760,7 +769,7 @@ private fun IncomingSeriesCard(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(series.householdLabel(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-            Text(series.subject(), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { confirming = "approve" }, enabled = !locked)
@@ -785,7 +794,7 @@ private fun IncomingSeriesCard(
             )
         },
     ) {
-        Text(series.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
         Text(
             when {
                 confirming == "cancel" -> "Nothing will be booked. The household will be told."
@@ -822,7 +831,7 @@ private fun IncomingSeriesCard(
         },
     ) {
         IncomingFact("Household", series.householdLabel())
-        IncomingFact("Service", series.serviceType.ifBlank { "Not on the request" })
+        IncomingFact("Service", series.serviceName(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current).ifBlank { "Not on the request" })
         IncomingFact(
             if (series.visitCount == 1) "Visit" else "${series.visitCount} visits",
             series.visitLines(zone).joinToString("\n"),
@@ -852,6 +861,8 @@ private fun BookingCard(
     timeBlockLabel: String? = null,
     selected: Boolean = false,
     onToggleSelect: (() -> Unit)? = null,
+    /** #1592: the KinCare catalog the service is named against. */
+    serviceRates: Map<String, String> = emptyMap(),
 ) {
     val c    = AuntieTheme.colors
     val tone = bookingStatusTone(booking.status)
@@ -899,7 +910,7 @@ private fun BookingCard(
                         color = if (hasName) c.textPrimary else c.textFaint,
                     )
                     Text(
-                        text  = "${booking.serviceType.ifBlank { "Visit" }} · ${bookingDateLabel(booking)}" +
+                        text  = "${bookingServiceName(booking.serviceType, serviceRates)} · ${bookingDateLabel(booking)}" +
                                 (timeBlockLabel?.let { " · $it block" } ?: ""),
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,

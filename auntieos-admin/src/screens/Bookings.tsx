@@ -819,6 +819,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           <BookingDetailModal
             entry={detailEntry}
             businessZone={businessZone}
+            catalog={catalog}
             onClose={closeDetail}
             actions={
               <BookingStatusActions

@@ -77,6 +77,8 @@ describe('transitionBookingStatus happy paths', () => {
         actorRole: 'AUNTIE',
         actorUid: 'admin1',
         targetCollection: 'kin_care_sessions',
+        // #1752: words, the session id stays the target.
+        description: 'Approved the visit: requested to scheduled',
         payload: expect.objectContaining({
           action: 'APPROVE',
           from: 'PENDING',

@@ -250,14 +250,21 @@ class InvitesViewModelTest {
         assertEquals(listOf("Sent 2026-08-01", "revoked unknown"), adminInviteDateParts(revokedUndated))
     }
 
-    /** The full id is the claim token: the line carries the handle and never a URL. */
+    /**
+     * The full id is the claim token, and a database id (#1592): the line names
+     * the dates only, no part of the id, never a URL.
+     */
     @Test
-    fun `the meta line ends with the truncated handle and never the household`() {
-        val line = adminInviteMetaLine(invite(id = "rq_8fk29aLONGTAIL", household = "the Demos"))
-        assertEquals("Sent 2026-08-01 · expires 2026-08-15 · inviteId rq_8fk29…", line)
-        assertFalse(line.contains("rq_8fk29aLONGTAIL"))
+    fun `the meta line carries the dates, no invite id and never the household`() {
+        val row = invite(id = "rq_8fk29aLONGTAIL", household = "the Demos")
+        val line = adminInviteMetaLine(row)
+        assertEquals("Sent 2026-08-01 · expires 2026-08-15", line)
+        assertFalse(line.contains("rq_8fk29"))
+        assertFalse(line.contains("inviteId"))
         assertFalse(line.contains("?invite="))
         assertFalse(line.contains("the Demos"))
+        // The household Members screen's invite line follows the same rule.
+        assertFalse(inviteMetaLine(row.invite).contains("rq_8fk29"))
     }
 
     /** The mock's own tints, not the shared Members-screen ones. */

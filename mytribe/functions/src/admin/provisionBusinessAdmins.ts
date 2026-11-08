@@ -330,10 +330,12 @@ export async function listBusinessAdminsHandler(
       members: [],
       source: 'none',
       rosterPath: ROSTER_PATH,
+      // #1592: the operator reads this sentence verbatim on the notification
+      // gate (web and Android), so it names no database path and no function.
+      // Computed per call and never stored: no saved row carries the old text.
       reason:
-        `${ROSTER_PATH} is empty and this function has no operator allowlist to fall back on, `
-        + 'so a business notification currently reaches nobody and fails to dispatch. '
-        + 'Call provisionBusinessAdmins as an operator to seed the roster.',
+        'Nobody is on the business admin roster, so business notifications reach nobody '
+        + 'and fail to send until someone is added to it.',
       businessEmail,
     };
   }

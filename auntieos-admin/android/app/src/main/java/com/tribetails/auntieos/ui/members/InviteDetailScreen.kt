@@ -15,7 +15,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.tribetails.auntieos.data.repository.inviteHandle
 import com.tribetails.auntieos.ui.components.AuntieKeyValueRow
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
@@ -35,7 +34,7 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * [HouseholdMembersScreen] (the 2026-08-04 invite ruling). This screen offers
  * that same one, as a button, and does not grow a second Revoke.
  *
- * THE INVITE ID IS A BEARER TOKEN: only [inviteHandle]'s truncated form shows.
+ * THE INVITE ID IS A BEARER TOKEN, and a database id: no part of it shows (#1592).
  */
 @Composable
 fun InviteDetailScreen(
@@ -120,12 +119,6 @@ fun InviteDetailBody(
                         },
                     )
                 }
-                AuntieKeyValueRow(
-                    label = "Invite",
-                    value = "inviteId ${inviteHandle(invite.inviteId)}",
-                    valueMono = true,
-                    showDivider = false,
-                )
             }
         }
         if (detail.admin.tribeId.isNotBlank()) {

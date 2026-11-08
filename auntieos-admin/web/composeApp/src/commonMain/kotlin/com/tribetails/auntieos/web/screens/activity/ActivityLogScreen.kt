@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.activity
 
+import com.tribetails.auntieos.web.screens.unreadableTimesNote
 import com.tribetails.auntieos.web.screens.media.rememberUploaderNames
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.TriangleAlert
 import com.composables.icons.lucide.UserCheck
 import com.tribetails.auntieos.web.data.ActivityLogEntry
+import com.tribetails.auntieos.web.data.activityDescriptionWords
 import com.tribetails.auntieos.web.data.ChainVerifyResult
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
@@ -263,9 +265,7 @@ private fun LogPanel(
                 dashed = true,
             ) {
                 Text(
-                    "$unparseable of ${capped.size} entries have a timestamp this screen can't read as ISO-8601. " +
-                        "The audit writer may be storing a Firestore Timestamp object instead of a string, " +
-                        "which breaks day-grouping and ordering. Day/time shown as best-effort below.",
+                    unreadableTimesNote(unparseable, capped.size),
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
@@ -585,7 +585,8 @@ private fun ActivityDetailModal(
                 AuntieKeyValueRow(label = "Actor", value = entry.actorId.ifBlank { "-" }, valueMono = true)
             }
             if (entry.description.isNotBlank()) {
-                AuntieKeyValueRow(label = "Detail", value = entry.description)
+                // #1747: a stored path reads as words; the entry is never rewritten.
+                AuntieKeyValueRow(label = "Detail", value = activityDescriptionWords(entry.description))
             }
             AuntieKeyValueRow(label = "Target", value = target.ifBlank { "-" }, valueMono = true, showDivider = false)
         }
@@ -637,6 +638,7 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
         entry.actionType,
         humanizeAction(entry.actionType),
         entry.description,
+        activityDescriptionWords(entry.description),
         entry.actorId,
         names[entry.actorId.trim()].orEmpty(),
         entry.targetId,
@@ -649,7 +651,8 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
 /** Actor + target context line built only from real fields. */
 internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = emptyMap()): String {
     val parts = buildList {
-        if (entry.description.isNotBlank()) add(entry.description)
+        // #1747: a stored path reads as words; the entry itself is never rewritten.
+        if (entry.description.isNotBlank()) add(activityDescriptionWords(entry.description))
         // #1592: the actor's name, not their uid, once listStaff has answered.
         if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
         val target = when {

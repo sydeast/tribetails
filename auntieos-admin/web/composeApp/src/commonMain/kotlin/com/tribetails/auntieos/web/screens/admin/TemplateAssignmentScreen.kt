@@ -1,7 +1,6 @@
 package com.tribetails.auntieos.web.screens.admin
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -17,32 +16,31 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Workflow
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.web.data.CatalogKeyRow
 import com.tribetails.auntieos.web.data.TemplateService
+import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.failingKeysWithRepoCopy
 import com.tribetails.auntieos.web.data.keysAwaitingImport
 import com.tribetails.auntieos.web.data.keysFailingOnSend
-import com.tribetails.auntieos.web.data.computeUnboundCatalogKeys
-import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.resolvedTemplateMissing
+import com.tribetails.auntieos.web.observability.rememberReportingScope
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.web.ui.components.AuntieChip
 import com.tribetails.auntieos.web.ui.components.AuntieChipTone
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
-import com.tribetails.auntieos.web.ui.components.AuntieEmptyState
+import com.tribetails.auntieos.web.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.web.ui.components.AuntieIconTile
+import com.tribetails.auntieos.web.ui.components.AuntieNoteCallout
 import com.tribetails.auntieos.web.ui.components.AuntieSearchField
 import com.tribetails.auntieos.web.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
@@ -52,36 +50,56 @@ import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.DenScreenHeading
 import com.tribetails.auntieos.web.ui.components.EmptyHint
 import com.tribetails.auntieos.web.ui.components.GhostButton
-import com.tribetails.auntieos.web.ui.components.GlassSurface
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
+
+/**
+ * Template Routing on the desktop console, the shape web (`TemplateAssignments.tsx`)
+ * and Android (`ui/admin/TemplateAssignmentScreen.kt`) moved to in #382 and #384
+ * (#1739).
+ *
+ * WHAT THIS SCREEN SHOWS. It used to list the `notificationTemplateBindings`
+ * collection, and on a business with no overrides that read "No bindings yet",
+ * which the operator rightly called false: routing happens by NAME. The server
+ * looks for a binding for a catalog key and, finding none, sends the template of
+ * the same name. A binding is an OVERRIDE on a system that already works. So the
+ * list is the routing table from `listCatalogKeys`: every notification, the
+ * template it sends right now, and why.
+ *
+ * THE NOTIFICATION IS NEVER TYPED. The old Add Binding dialog took the catalog key
+ * as free text (`e.g. kincare.booking.confirm`), and a misspelled key wrote a
+ * binding nothing reads; the server now refuses an unknown key, but the operator
+ * should never be asked to spell one. Every editable row comes from the table, and
+ * its Override / Change override action opens the editor for that notification.
+ *
+ * Two limits stated rather than implied, matching web and Android: an override
+ * changes the EMAIL template only, and the binding's audience is stored and read
+ * by no sender.
+ */
 
 // Verbatim audience list from source (kinfolk, auntie, admin, guest). Single-select,
 // nullable: clicking the selected one clears it back to null.
 private val AUDIENCES = listOf("kinfolk", "auntie", "admin", "guest")
 
 /**
- * The "override: {triggerKey}" echo only renders for a GENUINE override: the stored
- * triggerKey is present, non-blank, AND differs from the catalogKey. The server
- * (MyTribe assignTemplate) defaults a blank triggerKey to the catalogKey, so this
- * guard keeps an echo from firing on every binding. Pure, so it is unit-tested
- * directly (mirrors the Android helper).
+ * The "Trigger:" echo only renders for a GENUINE override: the stored triggerKey is
+ * present, non-blank, AND differs from the catalogKey. The server (MyTribe
+ * assignTemplate) defaults a blank triggerKey to the catalogKey, so this guard keeps
+ * an echo from firing on every binding. Pure, so it is unit-tested directly (mirrors
+ * the Android helper).
  */
 internal fun genuineTriggerOverride(triggerKey: String?, catalogKey: String): String? =
     triggerKey?.takeIf { it.isNotBlank() && it != catalogKey }
 
-// The per-card "override: {triggerKey}" echo only renders when the stored
-// triggerKey is a genuine override (differs from catalogKey). The server (MyTribe
-// assignTemplate) defaults a blank triggerKey to the catalogKey, so the guard
-// keeps an unguarded echo from firing on every binding.
-//
-// The "unbound catalog keys" hint is wired to the listCatalogKeys callable: it
-// shows catalog keys that have no template binding yet (computeUnboundCatalogKeys
-// diffs the catalog set against the bound set). Fail-loud on load error.
+/** The row being edited: the routing row, plus its binding when it already has one. */
+internal data class RoutingEditTarget(
+    val row: CatalogKeyRow,
+    val binding: TemplateService.TemplateBinding?,
+)
 
 /**
- * Standalone Template Assignment screen. Kept for the desktop screenshot harness;
+ * Standalone Template Routing screen. Kept for the desktop screenshot harness;
  * the merged two-tab [TemplatesScreen] renders [TemplateAssignmentBody] directly
  * inside its shared scaffold.
  */
@@ -93,10 +111,9 @@ fun TemplateAssignmentScreen(
 }
 
 /**
- * Template Assignment content WITHOUT the outer [ScreenScaffold]. Renders inside
+ * Template Routing content WITHOUT the outer [ScreenScaffold]. Renders inside
  * either the standalone screen above or the merged [TemplatesScreen]'s scaffold.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TemplateAssignmentBody(
     templateService: TemplateService = remember { TemplateService() },
@@ -106,28 +123,27 @@ fun TemplateAssignmentBody(
     val scope = rememberReportingScope()
     var bindings by remember { mutableStateOf<List<TemplateService.TemplateBinding>>(emptyList()) }
     var templates by remember { mutableStateOf<List<TemplateService.EmailTemplate>>(emptyList()) }
-    var catalogKeys by remember { mutableStateOf<List<String>>(emptyList()) }
-    // #1586: the routing rows, so the screen can name the keys that really fail.
+    // The routing table itself. It comes from listCatalogKeys, so a bindings
+    // failure cannot make it wrong; it only costs the audience line and the
+    // editor's starting values.
     var catalogRows by remember { mutableStateOf<List<CatalogKeyRow>>(emptyList()) }
-    var catalogKeysError by remember { mutableStateOf<String?>(null) }
+    var catalogError by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
-    // Two distinct error channels so a bindings failure and a templates failure are
-    // not conflated. The old single `error` var let a listTemplates Err coexist with
-    // a populated bindings list and never cleared a stale bindings error.
+    // Separate read-error channels, so a bindings failure and a templates failure
+    // are never conflated and a recovered call drops its own stale banner.
     var bindingsError by remember { mutableStateOf<String?>(null) }
     var templatesError by remember { mutableStateOf<String?>(null) }
-    // Write-path error from assignTemplate (surfaced loudly, dismissable).
+    // Write-path error from assignTemplate / unassignTemplate, loud and dismissable.
     var saveError by remember { mutableStateOf<String?>(null) }
-    var selected by remember { mutableStateOf<TemplateService.TemplateBinding?>(null) }
-    // SUGGESTION: client-side search over the binding list. Filters the already-loaded
-    // bindings and never alters any callable or data wiring. // SUGGESTION
+    var selected by remember { mutableStateOf<RoutingEditTarget?>(null) }
+    // Client-side search over the loaded routing table. Pure in-memory filter.
     var query by remember { mutableStateOf("") }
 
     suspend fun reload() {
         loading = true
-        // Clear both channels up front so a recovered call drops its stale banner.
         bindingsError = null
         templatesError = null
+        catalogError = null
         when (val r = templateService.listBindings()) {
             is WriteResult.Ok -> bindings = r.value
             is WriteResult.Err -> bindingsError = r.message
@@ -136,29 +152,29 @@ fun TemplateAssignmentBody(
             is WriteResult.Ok -> templates = r.value
             is WriteResult.Err -> templatesError = r.message
         }
-        catalogKeysError = null
         when (val r = templateService.listCatalogKeyRows()) {
-            is WriteResult.Ok -> {
-                catalogRows = r.value
-                catalogKeys = r.value.map { it.key }
-            }
-            is WriteResult.Err -> catalogKeysError = r.message
+            is WriteResult.Ok -> catalogRows = r.value
+            is WriteResult.Err -> catalogError = r.message
         }
         loading = false
     }
 
     LaunchedEffect(Unit) { reload() }
 
-    val activeCount = bindings.count { it.active }
-    val pausedCount = bindings.size - activeCount
+    val bindingByKey = bindings.associateBy { it.catalogKey }
+    // #1592: the operator reads names, never a template id or a catalog key.
+    val templateNames = templates.associate { it.templateId to bankTemplateName(it) }
+    val bankIds = templates.map { it.templateId }.toSet()
+    val bankLoaded = !loading && templatesError == null && templates.isNotEmpty()
     val templatesMissing = !loading && templatesError == null && templates.isEmpty()
+    val overrideCount = catalogRows.count(::isOverridden)
 
     Column(Modifier.fillMaxWidth()) {
         DenScreenHeading(
             kicker = "The Den · Admin",
             title = "Template",
-            accentTail = "Assignment.",
-            subtitle = "Bind email templates to notification triggers.",
+            accentTail = "Routing.",
+            subtitle = "Every notification already sends a template. An override points one at another.",
         )
         Spacer(Modifier.height(20.dp))
 
@@ -166,12 +182,16 @@ fun TemplateAssignmentBody(
         bindingsError?.let { msg ->
             AuntieBanner(
                 tone = AuntieBannerTone.Error,
-                title = "Could not load bindings",
+                title = "Could not load overrides",
                 icon = Lucide.Workflow,
                 onDismiss = { bindingsError = null },
                 modifier = Modifier.padding(bottom = dims.space3),
             ) {
-                Text(msg, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                Text(
+                    "$msg What each notification sends below is still correct, but the audience on an override is not shown and the editor opens without it.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                )
             }
         }
         templatesError?.let { msg ->
@@ -183,7 +203,7 @@ fun TemplateAssignmentBody(
                 modifier = Modifier.padding(bottom = dims.space3),
             ) {
                 Text(
-                    "$msg The template picker and Add Binding stay disabled until templates load.",
+                    "$msg Rows cannot name their templates until the bank loads, and an override cannot be saved.",
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textPrimary,
                 )
@@ -210,43 +230,42 @@ fun TemplateAssignmentBody(
                 modifier = Modifier.padding(bottom = dims.space3),
             ) {
                 Text(
-                    "Add Binding is disabled until at least one email template exists in the Template Bank.",
+                    "The Template Bank is empty, so no override can be saved until at least one template exists.",
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textPrimary,
                 )
             }
         }
-
-        // Unbound catalog keys hint: catalog keys (listCatalogKeys) that have no
-        // binding yet. Real, fail-loud: a load error surfaces; an empty set means
-        // every catalog key is bound.
-        catalogKeysError?.let { msg ->
+        // Without the catalog there is no routing table at all, which is a
+        // different failure from the ones above.
+        catalogError?.let { msg ->
             AuntieBanner(
                 tone = AuntieBannerTone.Error,
-                title = "Could not load catalog keys",
+                title = "Could not load the routing table",
                 icon = Lucide.Workflow,
-                onDismiss = { catalogKeysError = null },
+                onDismiss = { catalogError = null },
                 modifier = Modifier.padding(bottom = dims.space3),
             ) {
-                Text(msg, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                Text(
+                    "$msg Nothing below is trustworthy until this loads.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                )
             }
         }
-        if (!loading && catalogKeysError == null && catalogRows.isNotEmpty()) {
-            val bankIds = templates.map { it.templateId }.toSet()
-            val bankLoaded = templatesError == null && templates.isNotEmpty()
+        if (!loading && catalogError == null && catalogRows.isNotEmpty()) {
             val failing = keysFailingOnSend(catalogRows, bankIds, bankLoaded)
             val loadable = failingKeysWithRepoCopy(catalogRows, bankIds, bankLoaded)
             val awaiting = keysAwaitingImport(catalogRows, bankIds, bankLoaded)
             if (failing.isNotEmpty()) {
                 AuntieBanner(
                     tone = AuntieBannerTone.Error,
-                    title = "${failing.size} ${if (failing.size == 1) "key fails" else "keys fail"} on the next send",
+                    title = "${failing.size} ${if (failing.size == 1) "notification fails" else "notifications fail"} on the next send",
                     icon = Lucide.Workflow,
                     modifier = Modifier.padding(bottom = dims.space3),
                 ) {
                     Text(
-                        "The template does not exist: ${failing.joinToString(", ")}." +
-                            if (loadable.isEmpty()) "" else " The repo has a copy of ${loadable.joinToString(", ")}. Load it from Template Import.",
+                        failingKeysLine(failing, loadable, catalogRows),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )
@@ -260,54 +279,26 @@ fun TemplateAssignmentBody(
                     modifier = Modifier.padding(bottom = dims.space3),
                 ) {
                     Text(
-                        "${awaiting.joinToString(", ")}. Load them from Template Import.",
+                        awaitingImportLine(awaiting, catalogRows),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )
                 }
             }
         }
-        if (!loading && catalogKeysError == null && catalogKeys.isNotEmpty()) {
-            val unbound = computeUnboundCatalogKeys(catalogKeys, bindings.map { it.catalogKey }.toSet())
-            if (unbound.isNotEmpty()) {
-                AuntieBanner(
-                    tone = AuntieBannerTone.Warning,
-                    title = "${unbound.size} unbound catalog ${if (unbound.size == 1) "key" else "keys"}",
-                    icon = Lucide.Workflow,
-                    modifier = Modifier.padding(bottom = dims.space3),
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-                        Text(
-                            "These catalog keys have no template binding yet, so they fall back to catalog defaults:",
-                            style = AuntieTheme.typography.bodyMedium,
-                            color = c.textPrimary,
-                        )
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            unbound.forEach { key ->
-                                AuntieChip(label = key, selected = false, onClick = {}, tone = AuntieChipTone.Orange)
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         DenPanel(
-            title = "Bindings",
-            subtitle = "Each catalog key maps to one email template, with an optional audience and trigger override.",
+            title = "What each notification sends today",
+            subtitle = "Every notification, the template that renders it right now, and where that choice came from.",
             trailing = {
-                if (!loading && bindings.isNotEmpty()) {
+                if (!loading && catalogRows.isNotEmpty()) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(dims.space2),
                     ) {
+                        AuntieStatusPill(label = "Override $overrideCount", tone = AuntieStatusTone.Success, showDot = true)
                         AuntieStatusPill(
-                            label = "Active $activeCount",
-                            tone = AuntieStatusTone.Success,
-                            showDot = true,
-                        )
-                        AuntieStatusPill(
-                            label = "Paused $pausedCount",
+                            label = "By name ${catalogRows.size - overrideCount}",
                             tone = AuntieStatusTone.Muted,
                             showDot = true,
                         )
@@ -316,44 +307,43 @@ fun TemplateAssignmentBody(
             },
         ) {
             when {
-                loading -> EmptyHint("Loading bindings…")
-                bindings.isEmpty() -> AuntieEmptyState(
-                    title = "No bindings yet",
-                    message = "No bindings yet. Defaults from the catalog apply until you assign one.",
-                    icon = Lucide.Workflow,
-                    compact = true,
-                )
+                loading -> EmptyHint("Loading the routing table…")
+                catalogError != null -> EmptyHint("The routing table did not load.", error = true)
+                catalogRows.isEmpty() -> EmptyHint(ROUTING_TABLE_EMPTY)
                 else -> {
-                    // SUGGESTION: client-side search field over the loaded bindings.
-                    // Pure in-memory filter; touches no callable. // SUGGESTION
+                    Text(routingSummary(catalogRows), style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                    Spacer(Modifier.height(dims.space3))
                     AuntieSearchField(
                         value = query,
                         onValueChange = { query = it },
-                        placeholder = "Search by catalog key or template...",
+                        placeholder = "Search by notification or template...",
                         onClear = { query = "" },
                         modifier = Modifier.fillMaxWidth().widthIn(min = 240.dp),
                     )
                     Spacer(Modifier.height(dims.space3))
 
-                    val visible = if (query.isBlank()) {
-                        bindings
-                    } else {
-                        val q = query.trim().lowercase()
-                        bindings.filter {
-                            it.catalogKey.lowercase().contains(q) ||
-                                it.templateId.lowercase().contains(q)
-                        }
-                    }
-
+                    val visible = filterRoutingRows(catalogRows, query, templateNames)
                     if (visible.isEmpty()) {
-                        EmptyHint("No bindings match \"${query.trim()}\".")
+                        EmptyHint("No notifications match \"${query.trim()}\".")
                     } else {
                         Column(
-                            verticalArrangement = Arrangement.spacedBy(dims.space3),
+                            verticalArrangement = Arrangement.spacedBy(dims.space2),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            visible.forEach { binding ->
-                                BindingCard(binding = binding, onEdit = { selected = binding })
+                            visible.forEach { row ->
+                                val binding = bindingByKey[row.key]
+                                RoutingRow(
+                                    row = row,
+                                    subtitle = routingRowSubtitle(
+                                        row = row,
+                                        binding = binding,
+                                        namesById = templateNames,
+                                        bankLoaded = bankLoaded,
+                                        missing = failsOnSend(row, bankIds, bankLoaded),
+                                        missingNote = missingTemplateNote(row, resolvedTemplateMissing(row, bankIds, bankLoaded)),
+                                    ),
+                                    onEdit = { selected = RoutingEditTarget(row, binding) },
+                                )
                             }
                         }
                     }
@@ -361,42 +351,23 @@ fun TemplateAssignmentBody(
             }
 
             Spacer(Modifier.height(dims.space4))
-            // Add Binding is gated on having at least one template to assign. With an
-            // empty templates list the editor's picker is unselectable and Save can
-            // never enable, so the button stays disabled (see fail-loud banner above).
-            val canAdd = templates.isNotEmpty()
-            PrimaryButton(
-                label = "Add Binding",
-                enabled = canAdd && !loading,
-                onClick = {
-                    selected = TemplateService.TemplateBinding(
-                        catalogKey = "",
-                        templateId = templates.firstOrNull()?.templateId ?: "",
-                        audience = null,
-                        triggerKey = null,
-                        active = true,
-                    )
-                },
+            AuntieNoteCallout(
+                text = "An override changes the EMAIL template only. SMS and push send the template the catalog names and never look at an override. Audience is stored with the override and no sender reads it, so it records intent and changes nothing.",
             )
         }
     }
 
-    selected?.let { current ->
-        BindingEditorOverlay(
-            binding = current,
+    selected?.let { target ->
+        OverrideEditorDialog(
+            target = target,
             templates = templates,
-            // catalogKey is the Firestore doc ID. On an existing binding it is
-            // immutable here: editing it would orphan the old doc and create a new
-            // one. The field is locked on edit; removing the binding entirely goes
-            // through Unassign (AO-56), not a catalogKey rename.
-            isNew = current.catalogKey.isBlank(),
             onDismiss = { selected = null },
-            // AO-56: unassign an existing binding via the unassignTemplate callable.
-            // Null for a brand-new (unsaved) binding, so the action only shows on edit.
-            onUnassign = if (current.catalogKey.isBlank()) null else {
+            // AO-56: remove the override via unassignTemplate. Null when the key has
+            // no binding yet, so the action only shows where there is one to remove.
+            onUnassign = if (!target.row.bound) null else {
                 {
                     scope.launch {
-                        when (val r = templateService.unassignTemplate(current.catalogKey)) {
+                        when (val r = templateService.unassignTemplate(target.row.key)) {
                             is WriteResult.Ok -> {
                                 selected = null
                                 saveError = null
@@ -431,114 +402,91 @@ fun TemplateAssignmentBody(
     }
 }
 
+/**
+ * One notification in the routing table: its name is the title (#1592: never the
+ * dotted key), what it sends and why sit in the subtitle ([routingRowSubtitle]),
+ * and an OVERRIDE / BY NAME pill and the Override / Change override action trail.
+ */
 @Composable
-private fun BindingCard(
-    binding: TemplateService.TemplateBinding,
+private fun RoutingRow(
+    row: CatalogKeyRow,
+    subtitle: String,
     onEdit: () -> Unit,
 ) {
-    val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    GlassSurface(cornerRadius = 16.dp) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(dims.space4),
-            verticalArrangement = Arrangement.spacedBy(dims.space2),
-        ) {
+    AuntieEntityRow(
+        title = catalogKeyName(row),
+        subtitle = subtitle,
+        leading = { AuntieIconTile(icon = Lucide.Workflow, tone = AuntieStatusTone.Purple, size = 38.dp) },
+        trailing = {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dims.space2),
             ) {
-                // catalogKey is the card title; mono face since these are dotted keys.
-                Text(
-                    binding.catalogKey,
-                    style = AuntieTheme.typography.mono.copy(fontSize = 15.sp),
-                    color = c.textPrimary,
-                )
-                // ACTIVE / PAUSED pill, success when active, muted when paused.
                 AuntieStatusPill(
-                    label = if (binding.active) "ACTIVE" else "PAUSED",
-                    tone = if (binding.active) AuntieStatusTone.Success else AuntieStatusTone.Muted,
+                    label = if (isOverridden(row)) "OVERRIDE" else "BY NAME",
+                    tone = if (isOverridden(row)) AuntieStatusTone.Success else AuntieStatusTone.Muted,
                     mono = true,
                 )
+                GhostButton(label = routingActionLabel(row), onClick = onEdit)
             }
-            // "→ {templateId}" reproduced verbatim from source (a plain right arrow,
-            // not an em dash).
-            Text("→ ${binding.templateId}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            // Optional "Audience: {a}", only rendered when binding.audience != null.
-            binding.audience?.let { a ->
-                Text("Audience: $a", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            }
-            // triggerKey override echo. The server defaults a blank triggerKey to the
-            // catalogKey, so this only renders for a GENUINE override (triggerKey present
-            // AND different from catalogKey). Without that guard the line would fire on
-            // every binding echoing the catalogKey.
-            val genuineOverride = genuineTriggerOverride(binding.triggerKey, binding.catalogKey)
-            if (genuineOverride != null) {
-                Text("override: $genuineOverride", style = AuntieTheme.typography.bodySmall, color = c.accent)
-            }
-            Box(modifier = Modifier.padding(top = dims.space1)) {
-                GhostButton(label = "Edit", onClick = onEdit)
-            }
-        }
-    }
+        },
+        showDivider = true,
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BindingEditorOverlay(
-    binding: TemplateService.TemplateBinding,
+private fun OverrideEditorDialog(
+    target: RoutingEditTarget,
     templates: List<TemplateService.EmailTemplate>,
-    isNew: Boolean,
     onDismiss: () -> Unit,
     onSave: (TemplateService.TemplateBinding) -> Unit,
-    // AO-56: edit-mode only. Null on a new binding (nothing to unassign yet).
+    // AO-56: only where a binding exists. Null when the notification routes by name.
     onUnassign: (() -> Unit)? = null,
 ) {
-    var catalogKey by remember(binding.catalogKey) { mutableStateOf(binding.catalogKey) }
-    var templateId by remember(binding.templateId) { mutableStateOf(binding.templateId) }
-    var audience by remember(binding) { mutableStateOf(binding.audience) }
-    var triggerKey by remember(binding) { mutableStateOf(binding.triggerKey ?: "") }
-    var active by remember(binding) { mutableStateOf(binding.active) }
-    // Two-tap confirm for the destructive unassign, rather than a second nested
+    val row = target.row
+    val binding = target.binding
+    // Seeded from what the notification sends TODAY rather than from blank, so
+    // opening a by-name row and saving records the template it already uses.
+    var templateId by remember(row.key) { mutableStateOf(binding?.templateId ?: row.resolvedTemplateId) }
+    var audience by remember(row.key) { mutableStateOf(binding?.audience) }
+    var triggerKey by remember(row.key) { mutableStateOf(binding?.triggerKey ?: "") }
+    var active by remember(row.key) { mutableStateOf(binding?.active ?: true) }
+    // Two-tap confirm for the destructive removal, rather than a second nested
     // dialog (two AuntieDialogs would fight over dismiss).
-    var confirmingUnassign by remember(binding) { mutableStateOf(false) }
+    var confirmingUnassign by remember(row.key) { mutableStateOf(false) }
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
 
     AuntieDialog(
         visible = true,
-        // "New Binding" when catalogKey is blank, else "Edit: {catalogKey}".
-        title = if (isNew) "New Binding" else "Edit: ${binding.catalogKey}",
+        title = overrideDialogTitle(row),
         onDismiss = onDismiss,
         maxWidth = 560.dp,
         closeIcon = Lucide.X,
-        leadingIcon = {
-            AuntieIconTile(icon = Lucide.Workflow, tone = AuntieStatusTone.Purple, size = 38.dp)
-        },
-        // Backend reality: catalog key (+ optional audience / trigger override) maps
-        // onto a Firestore email template; the dispatcher resolves per trigger.
-        hint = "Catalog key + optional audience / trigger override binds to a Firestore email template. The dispatcher resolves the right template per notification trigger.",
+        leadingIcon = { AuntieIconTile(icon = Lucide.Workflow, tone = AuntieStatusTone.Purple, size = 38.dp) },
+        hint = OVERRIDE_DIALOG_HINT,
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
             if (onUnassign != null) {
                 GhostButton(
-                    // First tap arms, second tap unassigns: a lightweight confirm on a
+                    // First tap arms, second tap removes: a lightweight confirm on a
                     // change that alters what dispatch sends.
-                    label = if (confirmingUnassign) "Confirm unassign" else "Unassign",
+                    label = if (confirmingUnassign) "Confirm remove" else "Remove override",
                     onClick = { if (confirmingUnassign) onUnassign() else confirmingUnassign = true },
                     modifier = Modifier.weight(1f),
                 )
             }
             PrimaryButton(
-                label = "Save",
-                // Save enabled only when catalogKey AND templateId are both non-blank.
-                enabled = catalogKey.isNotBlank() && templateId.isNotBlank(),
+                label = "Save override",
+                // The notification comes from the table, so only the template can be
+                // unset. Save enables once one is chosen.
+                enabled = templateId.isNotBlank(),
                 onClick = {
                     onSave(
-                        binding.copy(
-                            // On edit the catalogKey is locked, so this always equals
-                            // the original doc ID (no orphan-rename path).
-                            catalogKey = catalogKey,
+                        TemplateService.TemplateBinding(
+                            catalogKey = row.key,
                             templateId = templateId,
                             audience = audience,
                             triggerKey = triggerKey.ifBlank { null },
@@ -550,44 +498,25 @@ private fun BindingEditorOverlay(
             )
         },
     ) {
-        if (isNew) {
-            BottomBorderField(
-                value = catalogKey,
-                onValueChange = { catalogKey = it },
-                label = "Catalog Key",
-                placeholder = "e.g. kincare.booking.confirm",
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            // catalogKey is the immutable doc ID on an existing binding. Editing it
-            // here would create a second orphaned doc (no delete callable to clean up),
-            // so it is shown read-only with a note instead of an editable field.
-            AuntieFieldLabel(text = "Catalog Key")
-            Text(
-                binding.catalogKey,
-                style = AuntieTheme.typography.mono.copy(fontSize = 14.sp),
-                color = c.textPrimary,
-                modifier = Modifier.padding(top = dims.space1, bottom = dims.space1),
-            )
-            Text(
-                "Catalog key is the binding's identity and cannot be changed. To rebind a different key, add a new binding.",
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
-            )
-        }
+        // The notification is never typed: it is the row the operator opened.
+        AuntieFieldLabel(text = "Notification")
+        Text(
+            catalogKeyName(row),
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+            modifier = Modifier.padding(top = dims.space1, bottom = dims.space1),
+        )
+        AuntieNoteCallout(
+            text = "The notification cannot be changed here. To route a different one, close this and open its row.",
+        )
 
-        // Template selector: one selectable row per EmailTemplate (title + optional
-        // category). Selected row washes the brand accent and warms its border. If no
-        // templates loaded, the picker would be empty, so fail loud instead.
+        // Template selector: one selectable chip per Template Bank doc, by name.
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
             AuntieFieldLabel(text = "Template")
             if (templates.isEmpty()) {
-                AuntieBanner(
-                    tone = AuntieBannerTone.Warning,
-                    title = "No templates to choose from",
-                ) {
+                AuntieBanner(tone = AuntieBannerTone.Warning, title = "No templates to choose from") {
                     Text(
-                        "No email templates loaded, so this binding cannot be saved. Add a template in the Template Bank first.",
+                        "No email templates loaded, so this override cannot be saved. Add a template in the Template Bank first.",
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )
@@ -596,7 +525,7 @@ private fun BindingEditorOverlay(
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space1)) {
                     templates.forEach { tpl ->
                         AuntieChip(
-                            label = tpl.title,
+                            label = bankTemplateName(tpl),
                             secondaryLabel = tpl.category,
                             selected = tpl.templateId == templateId,
                             onClick = { templateId = tpl.templateId },
@@ -610,7 +539,7 @@ private fun BindingEditorOverlay(
 
         // Audience pills: single-select; clicking the selected one clears it (nullable).
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-            AuntieFieldLabel(text = "Audience")
+            AuntieFieldLabel(text = "Audience (stored, unused)")
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(dims.space2),
@@ -635,14 +564,15 @@ private fun BindingEditorOverlay(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        // active toggle + "Active" / "Paused" label.
+        // A paused override falls back to the name-matched default, which is what
+        // the server does at send time.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(dims.space3),
         ) {
             AuntieToggle(checked = active, onCheckedChange = { active = it })
             Text(
-                if (active) "Active" else "Paused",
+                if (active) "Active" else "Paused, sends the name-matched default",
                 style = AuntieTheme.typography.bodyMedium,
                 color = c.textPrimary,
             )

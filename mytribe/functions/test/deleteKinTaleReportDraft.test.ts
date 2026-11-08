@@ -56,6 +56,9 @@ describe('deleteKinTaleReportDraft', () => {
       severity: 'warn',
       targetCollection: 'kin_care_reports',
       targetUid: 'r1',
+      // #1747: words, never the `kin_care_reports/<id>` path.
+      description: 'Deleted a KinTale draft',
+      payload: { reportId: 'r1' },
     });
   });
 

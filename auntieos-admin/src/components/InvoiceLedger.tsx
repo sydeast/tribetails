@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.generated';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import {
   ledgerCoversBalance,
   ledgerRowAppliedLabel,
@@ -373,6 +374,8 @@ function PaymentsPanel({
 function SessionsPanel({ ledger }: { ledger: GetInvoiceLedgerResult }) {
   const { sessions, missingSessionIds, orphanSessionIds, truncated } = ledger;
   const brokenBacklink = sessionsWithBrokenBacklink(sessions);
+  // #1744: a visit row names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
 
   return (
     <section className="invoice-ledger" aria-labelledby="invoice-ledger-sessions">
@@ -408,7 +411,7 @@ function SessionsPanel({ ledger }: { ledger: GetInvoiceLedgerResult }) {
                       for this visit comes FROM the visit, so a figure that looks
                       wrong is corrected there, not here. */}
                   <Link to="/sessions" search={{ sessionId: s.sessionId }}>
-                    {sessionServiceLabel(s.serviceType)}
+                    {sessionServiceLabel(s.serviceType, catalog)}
                   </Link>
                 </td>
                 <td>{sessionDayLabel(s)}</td>

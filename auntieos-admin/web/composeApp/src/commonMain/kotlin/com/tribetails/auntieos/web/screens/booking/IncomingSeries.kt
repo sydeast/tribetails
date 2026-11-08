@@ -33,11 +33,18 @@ private fun householdSuffix(name: String, preposition: String): String =
 /** #1577: WHO is asking, the card's title. Matches the web and Android queues. */
 fun BookingSeries.householdLabel(): String = kinfolkName.trim().ifEmpty { HOUSEHOLD_NOT_ON_FILE }
 
+/**
+ * #1744: the request's service as the operator's KinCare name, never a stored
+ * key. Blank stays blank, so each caller keeps its own stand-in.
+ */
+fun BookingSeries.serviceName(catalog: com.tribetails.auntieos.web.screens.ServiceCatalog): String =
+    if (serviceType.isBlank()) "" else catalog.nameOf(serviceType)
+
 /** What the request covers: its visit count and service. */
-fun BookingSeries.subject(): String = buildString {
+fun BookingSeries.subject(catalog: com.tribetails.auntieos.web.screens.ServiceCatalog = com.tribetails.auntieos.web.screens.ServiceCatalog()): String = buildString {
     append(if (visitCount == 1) "1 visit" else "$visitCount visits")
     if (isSeries) append(" · recurring series")
-    if (serviceType.isNotBlank()) append(" · $serviceType")
+    if (serviceType.isNotBlank()) append(" · ${serviceName(catalog)}")
 }
 
 /** #1577: the confirm step for Approve, titled with the household. */

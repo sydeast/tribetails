@@ -102,7 +102,7 @@ export async function archiveVetClinicHandler(
       actorUid: uid,
       targetUid: args.clinicId,
       targetCollection: 'vet_clinics',
-      description: `Vet clinic archive refused: '${args.clinicId}' not found`,
+      description: (await import('../lib/activityWords.js')).vetClinicNotFoundWords('archive'),
       payload: { refusalCode: 'vet_clinic_not_found', clinicId: args.clinicId },
     }).catch(() => undefined);
     throw new HttpsError('not-found', `Clinic '${args.clinicId}' not found.`, {

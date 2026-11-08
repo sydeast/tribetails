@@ -73,7 +73,7 @@ export async function archiveNotificationHandler(
     actorUid: uid,
     targetUid: args.id,
     targetCollection: 'notifications',
-    description: `Notification ${data?.key ?? args.id} archived`,
+    description: (await import('../lib/activityWords.js')).notificationArchivedWords((await import('../notifications/notificationName.js')).notificationName(data?.key)),
     payload: { notificationId: args.id, key: data?.key, archived, archivedBy: uid },
   }).catch((err) => {
     logEvent({
@@ -255,7 +255,7 @@ export async function unarchiveNotificationHandler(
     actorUid: uid,
     targetUid: args.id,
     targetCollection: 'notifications',
-    description: `Notification ${data?.key ?? args.id} restored to the active inbox`,
+    description: (await import('../lib/activityWords.js')).notificationRestoredWords((await import('../notifications/notificationName.js')).notificationName(data?.key)),
     payload: { notificationId: args.id, key: data?.key, unarchived, restoredBy: uid },
   }).catch((err) => {
     logEvent({

@@ -127,7 +127,7 @@ describe('approveGeneratedDraft payloads', () => {
     expect('subject' in (updateDocMock.mock.calls[0] as [unknown, Record<string, unknown>])[1]).toBe(false);
   });
 
-  it('writes a DRAFT_APPROVED audit entry naming the draft and the household', async () => {
+  it('writes a DRAFT_APPROVED audit entry with the draft as its target and the household as its familyId', async () => {
     await approveGeneratedDraft(args());
     const [name, payload] = callMock.mock.calls[0] as [string, Record<string, unknown>];
     expect(name).toBe('logActivity');
@@ -135,14 +135,16 @@ describe('approveGeneratedDraft payloads', () => {
     expect(payload['targetId']).toBe('d1');
     expect(payload['targetCollection']).toBe('generated_drafts');
     expect(payload['status']).toBe('SUCCESS');
-    expect(String(payload['description'])).toContain('d1');
-    expect(String(payload['description'])).toContain('kf1');
+    // #1747: the Activity Log shows the description as written, so it is words.
+    expect(payload['description']).toBe('Approved an Auntie AI draft');
+    expect(payload['familyId']).toBe('kf1');
   });
 
-  it('says so plainly in the audit entry when there was no household', async () => {
+  it('sends no household when there was none', async () => {
     await approveGeneratedDraft(args({ kinfolkId: null }));
     const payload = (callMock.mock.calls[0] as [string, Record<string, unknown>])[1];
-    expect(String(payload['description'])).toContain('no kinfolk');
+    expect(payload['description']).toBe('Approved an Auntie AI draft');
+    expect('familyId' in payload).toBe(false);
   });
 
   it('refuses a blank draft id instead of patching a doc path that is a bare collection', async () => {

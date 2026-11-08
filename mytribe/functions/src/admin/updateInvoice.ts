@@ -430,7 +430,7 @@ async function finishEdit(
     targetUid: invoiceId,
     targetCollection: 'invoices',
     familyId: data.kinfolkId,
-    description: `Invoice ${data.invoiceNumber ?? invoiceId} edited`,
+    description: (await import('../lib/activityWords.js')).invoiceSentence(data.invoiceNumber, 'edited'),
     payload: {
       invoiceId,
       fields: Object.keys(patch),

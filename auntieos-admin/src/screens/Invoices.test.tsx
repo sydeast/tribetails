@@ -59,6 +59,11 @@ const { useCollection, useDocById } = vi.hoisted(() => ({
   useDocById: vi.fn(),
 }));
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
+// #1744: the detail sheet's visit rows name their KinCare off the catalog, a
+// `business_settings` read; the empty catalog keeps it off the network.
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
+}));
 
 // InvoiceDetail / InvoiceCreate (now wired in, see the header comment on
 // Invoices.tsx) both reach these callables. Mocked here so nothing under this

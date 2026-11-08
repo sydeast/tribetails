@@ -80,7 +80,7 @@ export async function recordAuntieNoticeSkipped(args: {
       actorRole: 'SYSTEM',
       actorUid: args.uid,
       familyId: args.familyId,
-      description: `Invite ${args.inviteId} was sent, but the Auntie notice was not: ${args.missingVar} is not configured.`,
+      description: (await import('./activityWords.js')).inviteNoticeSkippedWords(args.missingVar),
       payload: { function: args.functionName, inviteId: args.inviteId, missingVar: args.missingVar },
     });
   } catch {

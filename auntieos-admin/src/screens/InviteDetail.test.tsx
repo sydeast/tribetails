@@ -99,9 +99,11 @@ describe('InviteDetail screen', () => {
     expect(fact('Sent')).toBe('2026-10-01');
     expect(fact('Expires')).toBe('2026-10-08');
     expect(fact('Claimed')).toBe('Not claimed');
-    // The invite id is the claim token: the page shows only the handle.
-    expect(fact('Invite')).toBe('inviteId rq_8fk29…');
-    expect(document.body.textContent).not.toContain('rq_8fk29abcdef');
+    // The invite id is the claim token and a database id (#1592): the page
+    // names the invite by its address and shows no part of the id.
+    expect(fact('Invite')).toBeNull();
+    expect(document.body.textContent).not.toContain('inviteId');
+    expect(document.body.textContent).not.toContain('rq_8fk29');
   });
 
   it('shows a loading cue while the read is in flight', () => {

@@ -218,9 +218,8 @@ export function ExternalSendPanel({
 
         {sentRedacted !== null && (
           <Banner tone="info" title="Delivered to the provider">
-            Sent to {sentRedacted.redacted}.
-            {sentRedacted.providerId !== null ? ` Provider id ${sentRedacted.providerId}.` : ''} The full recipient is
-            never stored in the audit log.
+            {/* #1592: no provider message id; it is a support trace, not the operator's to read. */}
+            Sent to {sentRedacted.redacted}. The full recipient is never stored in the audit log.
           </Banner>
         )}
 

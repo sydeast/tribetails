@@ -7,6 +7,8 @@ import { sessionClock, sessionHousehold, sessionState, sessionStateInfo } from '
 import { str } from '../../lib/coerce';
 import { todayPack, type TodayPack } from '../../lib/dashboardInsights';
 import { overdueSessionCount } from '../../lib/sessionFormat';
+import { bookingServiceName } from '../../lib/bookingFormat';
+import { useBookingCatalog } from '../../lib/useBookingCatalog';
 import { useSessionsStream, useSessionsWindowStream, useTodayIso } from './homeData';
 import './widgets.css';
 
@@ -46,6 +48,8 @@ export function TodaysPackWidget({ onOpenSessions }: TodaysPackWidgetProps) {
   const sessions = useSessionsStream();
   const todayIso = useTodayIso();
   const lateWindow = useSessionsWindowStream(todayIso);
+  // #1592: each row's pill names the KinCare, never the stored `visit_60`.
+  const catalog = useBookingCatalog();
   const overdue = useMemo(
     () => (lateWindow.status === 'ready' ? overdueSessionCount(lateWindow.data, todayIso) : null),
     [lateWindow, todayIso],
@@ -87,7 +91,10 @@ export function TodaysPackWidget({ onOpenSessions }: TodaysPackWidgetProps) {
                     <span className="pack-row__who" title={sessionHousehold(str(visit.kinfolkName))}>
                       {sessionHousehold(str(visit.kinfolkName))}
                     </span>
-                    <ServicePill serviceType={str(visit.serviceType)} />
+                    <ServicePill
+                      serviceType={str(visit.serviceType)}
+                      label={bookingServiceName(str(visit.serviceType), catalog)}
+                    />
                     <span className="pack-row__time">{sessionClock(str(visit.startTime))}</span>
                     <span className="pack-row__state">{info.label}</span>
                   </li>

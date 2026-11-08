@@ -645,7 +645,7 @@ async function giveUpCreditNotice(
       targetUid: invoiceId,
       targetCollection: 'invoices',
       familyId: notice.kinfolkId,
-      description: `Payment notification for invoice ${invoiceId} was not delivered after ${cap.attempts} retries`,
+      description: (await import('./activityWords.js')).paymentNoticeGaveUpWords(cap.attempts),
       payload: {
         invoiceId,
         paymentId: notice.paymentId,

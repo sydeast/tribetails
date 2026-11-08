@@ -680,6 +680,8 @@ describe('Schedule screen', () => {
   it('orders the legend by configured duration: two of five configured types render, in duration order', async () => {
     getBusinessSettings.mockResolvedValue({
       serviceDurations: { 'Half-Day 6Hrs': '360', '30Minute': '30', Consultation: '20', '90Minute': '90', '2Hrs': '120' },
+      // getBusinessSettings always returns the map (`pickMap`); the legend names against it (#1592).
+      serviceRates: {},
     });
     mockCollections({
       sessions: {
@@ -705,7 +707,7 @@ describe('Schedule screen', () => {
   });
 
   it('a type on screen but missing from business_settings still gets a legend row', async () => {
-    getBusinessSettings.mockResolvedValue({ serviceDurations: { '30Minute': '30' } });
+    getBusinessSettings.mockResolvedValue({ serviceDurations: { '30Minute': '30' }, serviceRates: {} });
     mockCollections({
       sessions: {
         status: 'ready',
@@ -722,6 +724,82 @@ describe('Schedule screen', () => {
     // sorts last -- but it is never dropped.
     const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
     expect(items).toEqual(['30Minute', 'Off-Book Visit', 'Busy']);
+  });
+
+  it('#1736: a visit is not a house sit, so its swatch and pill are orange, not purple', async () => {
+    // "Off-Book Visit" and the stored `visit_60` both contain "sit" inside
+    // "vi-sit". Android and the desktop console paint them orange (AO-19); the
+    // web painted them house-sitting purple.
+    getBusinessSettings.mockResolvedValue({ serviceDurations: {}, serviceRates: {} });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          todaySession({ _id: 'a', serviceType: 'Off-Book Visit' }),
+          todaySession({ _id: 'b', serviceType: 'House Sit' }),
+        ],
+      },
+    });
+    const { container } = render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    await screen.findAllByText('Off-Book Visit');
+    const swatch = (name: string) =>
+      Array.from(container.querySelectorAll('.schedule__legend-item')).find((el) => el.textContent === name);
+    expect(swatch('Off-Book Visit')).toHaveAttribute('data-tone', 'orange');
+    expect(swatch('House Sit')).toHaveAttribute('data-tone', 'purple');
+    expect(within(agenda()).getByText('Off-Book Visit')).toHaveAttribute('data-tone', 'orange');
+    expect(within(agenda()).getByText('House Sit')).toHaveAttribute('data-tone', 'purple');
+  });
+
+  it('#1592: names stored keys from the KinCare catalog, one legend row per service', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: { '60Minute': '45', '30Minute': '30' },
+      serviceDurations: {},
+    });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          // Two spellings of the one 60-minute KinCare, the shape the live
+          // collection holds.
+          todaySession({ _id: 'a', serviceType: 'visit_60' }),
+          todaySession({ _id: 'b', serviceType: '60Mins' }),
+        ],
+      },
+    });
+    const { container } = render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    await waitFor(() => {
+      const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
+      expect(items).toEqual(['60Minute', 'Busy']);
+    });
+    expect(screen.queryByText('visit_60')).toBeNull();
+    expect(within(agenda()).getAllByText('60Minute')).toHaveLength(2);
+  });
+
+  it('#1592: the legend swatch, the agenda pill and the week and month blocks share the resolved name\'s tone', async () => {
+    // The stored `visit_60` tones orange on its own (a visit, #1736); the
+    // KinCare it resolves to is "Dog walk", which tones teal. Every mark must
+    // follow the name.
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: { 'Dog walk': '45' },
+      serviceDurations: { 'Dog walk': '60' },
+    });
+    mockCollections({ sessions: { status: 'ready', data: [todaySession({ _id: 'a', serviceType: 'visit_60' })] } });
+    const { container } = render(<Schedule />);
+    await waitFor(() => {
+      const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
+      expect(items).toEqual(['Dog walk', 'Busy']);
+    });
+    const swatch = container.querySelector('.schedule__legend-item') as HTMLElement;
+    expect(swatch).toHaveAttribute('data-tone', 'teal');
+    expect(within(agenda()).getByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
+    const week = screen.getByRole('group', { name: 'Week' });
+    expect(week.querySelector('[data-session-id="a"]')).toHaveAttribute('data-tone', 'teal');
+
+    await user.click(screen.getByRole('tab', { name: 'Month' }));
+    const month = screen.getByRole('group', { name: 'Month' });
+    expect(month.querySelector('[data-session-id="a"]')).toHaveAttribute('data-tone', 'teal');
   });
 
   it('the "in view" stat counts only sessions within the visible week, honestly reflecting a listener error as unknown (not zero)', () => {

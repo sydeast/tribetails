@@ -163,9 +163,11 @@ import com.tribetails.auntieos.data.model.businessAdminLines
 import com.tribetails.auntieos.data.model.businessEmailLine
 import com.tribetails.auntieos.data.model.businessAdminSourceNote
 import com.tribetails.auntieos.data.model.notifDeliveryPhrase
+import com.tribetails.auntieos.data.model.notifDeliveryRecipient
 import com.tribetails.auntieos.data.model.notifReachesBusinessAdmins
 import com.tribetails.auntieos.data.model.notifMergeFieldNames
 import com.tribetails.auntieos.data.model.notifRecipientLines
+import com.tribetails.auntieos.data.model.notifChannelLabel
 import com.tribetails.auntieos.data.model.notifRowBadges
 import com.tribetails.auntieos.data.model.notifTemplateLines
 import com.tribetails.auntieos.data.model.VetClinic
@@ -1399,7 +1401,8 @@ private fun NotifUngatedList(matrix: NotificationMatrix) {
         )
         matrix.ungated.forEach { send ->
             Text(
-                "emailTemplates/${send.templateId}, sent when: ${send.trigger}  ${send.source}",
+                // #1592: named in words; no database path, no source file.
+                "${humanizeKey(send.templateId).ifEmpty { "An" }} email, sent when: ${send.trigger}",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -1538,7 +1541,7 @@ private fun NotifRowDetail(
     ) {
         NotifDetailBlock(
             title = "WHO RECEIVES IT",
-            lines = notifRecipientLines(entry, matrix.businessAdminCount, matrix.businessAdminRosterPath),
+            lines = notifRecipientLines(entry, matrix.businessAdminCount),
             empty = "The server sent no recipient rule for this row. Update MyTribe functions to see it.",
         )
         if (notifReachesBusinessAdmins(entry)) {
@@ -1546,7 +1549,8 @@ private fun NotifRowDetail(
         }
         NotifDetailBlock(
             title = "WHAT FIRES IT",
-            lines = entry.emitters.map { "${it.trigger}  ${it.source}" },
+            // #1592: the trigger in words only; the source file stays off the screen.
+            lines = entry.emitters.map { it.trigger },
             empty = "Nothing in the platform dispatches this notification, so nothing sets it off. " +
                 "The toggles on this row change what nobody receives.",
         )
@@ -1558,10 +1562,10 @@ private fun NotifRowDetail(
                 val suffix = when {
                     line.missing -> " (this channel is offered with nothing to render it)"
                     line.retargetedFrom != null ->
-                        " (retargeted; the catalog default is ${line.retargetedFrom})"
+                        " (retargeted; the default is ${line.retargetedFrom})"
                     else -> ""
                 }
-                "${line.channel}: ${line.path}$suffix"
+                "${notifChannelLabel(line.channel)}: ${line.name}$suffix"
             },
             empty = "This row offers no channels at all.",
         )
@@ -1714,7 +1718,8 @@ private fun NotifDeliveryEvidenceBlock(notificationKey: String) {
                 // than paraphrased, so the two clients cannot soften it differently.
                 Text(ev.sentMeaning, style = AuntieTheme.typography.bodySmall, color = c.textFaint)
                 ev.deliveries.forEach { row ->
-                    val recipient = row.recipientUid.ifBlank { "unknown recipient" }
+                    // #1592: the recipient by name, not the uid.
+                    val recipient = notifDeliveryRecipient(row)
                     Text(
                         "to $recipient",
                         style = AuntieTheme.typography.bodySmall,
@@ -1723,8 +1728,9 @@ private fun NotifDeliveryEvidenceBlock(notificationKey: String) {
                     row.attempts.forEach { attempt ->
                         val phrase = notifDeliveryPhrase(attempt.status, attempt.skipReason, attempt.errorMessage)
                         Text(
-                            "  ${attempt.channel}: ${phrase.label}. ${phrase.detail}" +
-                                (attempt.providerMessageId?.let { " Provider id $it." } ?: "") +
+                            // #1592: no provider message id. Nothing in the app looks a
+                            // message up by it; it stays on the dispatch record.
+                            "  ${notifChannelLabel(attempt.channel)}: ${phrase.label}. ${phrase.detail}" +
                                 (if (attempt.attempts > 1) " Tried ${attempt.attempts} times." else ""),
                             style = AuntieTheme.typography.bodySmall,
                             color = when (phrase.tone) {

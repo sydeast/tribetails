@@ -103,7 +103,7 @@ export async function syncVisitToGoogleCalendarHandler(
     actorRole: 'AUNTIE',
     actorUid: uid,
     targetCollection: SESSIONS_COLLECTION,
-    description: `Synced visit ${sessionId} to Google Calendar (${outcome.action})`,
+    description: (await import('../../lib/activityWords.js')).calendarSyncWords(outcome.action),
     payload: {
       sessionId,
       action: outcome.action,

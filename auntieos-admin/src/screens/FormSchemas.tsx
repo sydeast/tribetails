@@ -7,7 +7,7 @@ import {
 import { listBusinessAdmins } from '../api/businessAdmins';
 import { useStaffNames } from '../lib/useStaffNames';
 import { type Async } from '../lib/async';
-import { formSchemaUpdatedFull } from '../lib/formSchemaFormat';
+import { formSchemaUpdatedFull, schemaCountLabel } from '../lib/formSchemaFormat';
 import { DenScreenHeading } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -387,7 +387,7 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
   }
 
   const shownCount = schemas.status === 'ready' ? filterSchemas(schemas.data, query).length : 0;
-  const countLabel = shownCount > 0 ? `${shownCount} schemas` : null; // hide the chip on empty (wasm parity)
+  const countLabel = shownCount > 0 ? schemaCountLabel(shownCount) : null; // hide the chip on empty (wasm parity)
 
   return (
     <div className="screen">

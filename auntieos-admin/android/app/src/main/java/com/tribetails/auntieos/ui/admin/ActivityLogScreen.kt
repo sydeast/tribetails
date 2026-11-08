@@ -249,9 +249,7 @@ private fun LogPanel(
                         dashed = true,
                     ) {
                         Text(
-                            "$unparseable of ${sortedAll.size} entries have a timestamp this screen can't read as ISO-8601. " +
-                                "The audit writer may be storing a Firestore Timestamp object instead of a string, " +
-                                "which breaks day-grouping and ordering. Day/time shown as best-effort below.",
+                            unreadableTimesNote(unparseable, sortedAll.size),
                             style = AuntieTheme.typography.bodySmall,
                             color = AuntieTheme.colors.textDim,
                         )
@@ -582,9 +580,10 @@ internal fun activityDetailRows(
     val actorName = names[entry.actorId.trim()]
     add("Actor", actorName ?: entry.actorId)
     if (actorName != null) add("Actor id", entry.actorId)
-    add("Actor role", entry.actorRole)
+    add("Actor role", actorRoleLabel(entry.actorRole))
     add("Household", entry.familyId)
-    add("Detail", entry.description)
+    // #1747: a stored path reads as words; the entry itself is never rewritten.
+    add("Detail", activityDescriptionWords(entry.description))
     // A path, not a link. Where no route exists the path is still the most useful
     // thing that can honestly be shown (spec 22 item 1: "render the path
     // read-only, do not fabricate a link").
@@ -628,7 +627,8 @@ internal fun activityPayloadRows(entry: ActivityLogEntry): List<Pair<String, Str
 
     fun renderScalar(v: Any?): String = when (v) {
         // A recorded null is a decision the writer made; blanking it hides that.
-        null -> "null"
+        // It reads as the word "none", not the literal "null" (#1592).
+        null -> "none"
         is String -> v
         is Number, is Boolean -> v.toString()
         else -> v.toString()
@@ -793,6 +793,7 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
         entry.actionType,
         humanizeAction(entry.actionType),
         entry.description,
+        activityDescriptionWords(entry.description),
         entry.actorId,
         names[entry.actorId.trim()].orEmpty(),
         entry.targetId,
@@ -805,7 +806,8 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
 /** Actor + target context line built only from real fields. */
 internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = emptyMap()): String {
     val parts = buildList {
-        if (entry.description.isNotBlank()) add(entry.description)
+        // #1747: a stored path reads as words; the entry itself is never rewritten.
+        if (entry.description.isNotBlank()) add(activityDescriptionWords(entry.description))
         // #1592: the actor's name, not their uid, once `listStaff` has answered.
         if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
         val target = when {

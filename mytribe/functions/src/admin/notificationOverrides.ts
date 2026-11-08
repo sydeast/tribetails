@@ -17,6 +17,7 @@ import {
   NEVER_FIRES,
   NOTIFICATION_EMITTERS,
   UNGATED_SENDS,
+  mergeFieldLabelsFor,
   whoReceives,
   type EmitterDescriptor,
   type UngatedSend,
@@ -143,6 +144,12 @@ interface GetResult {
     emailTemplateRetargetedFrom?: string;
     /** Merge fields `enrichTemplateData` hydrates for this key's templates. */
     mergeFields: string[];
+    /**
+     * #1592: each of `mergeFields` and the emitters' `dataKeys` in words, so
+     * the gate's "What the body can carry" list is readable. Keys this table
+     * has no words for are absent; clients split those into words.
+     */
+    mergeFieldLabels: Record<string, string>;
     /** True when an outside system delivers it and this gate controls nothing. */
     external: boolean;
   }>;
@@ -238,6 +245,10 @@ export async function getBusinessNotificationOverridesHandler(
       } as Record<string, string>,
       ...(retargeted && catalogEmailId ? { emailTemplateRetargetedFrom: catalogEmailId } : {}),
       mergeFields: [...(TEMPLATE_FIELDS[def.key] ?? [])],
+      mergeFieldLabels: mergeFieldLabelsFor([
+        ...(TEMPLATE_FIELDS[def.key] ?? []),
+        ...(NOTIFICATION_EMITTERS[def.key] ?? []).flatMap((e) => e.dataKeys),
+      ]),
       external: def.external === true,
     };
   });

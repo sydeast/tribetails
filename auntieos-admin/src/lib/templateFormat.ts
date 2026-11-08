@@ -37,6 +37,16 @@ export function templateRowTitle(tpl: Pick<TemplateSummary, 'title' | 'templateI
   return tpl.title.trim() !== '' ? tpl.title : tpl.templateId;
 }
 
+/**
+ * The notice after a template is saved (#1747): its title, or "the untitled
+ * template" when it has none, never its id. Same words on Android and the
+ * desktop console (`TemplateBankScreen.kt#templateSavedNotice`).
+ */
+export function templateSavedNotice(title: string): string {
+  const name = title.trim();
+  return name === '' ? 'Saved the untitled template.' : `Saved ${name}.`;
+}
+
 /** "No subject set" fallback, ported verbatim from `TemplateCard`'s `tpl.subject.ifBlank { "No subject set" }`. */
 export function templateSubjectPreview(tpl: Pick<TemplateSummary, 'subject'>): string {
   return tpl.subject.trim() !== '' ? tpl.subject : 'No subject set';

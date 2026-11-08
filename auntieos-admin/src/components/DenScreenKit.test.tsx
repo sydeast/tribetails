@@ -39,6 +39,7 @@ import {
   EmptyHint,
   ErrorHint,
   ServicePill,
+  bookingServiceTone,
   StatCard,
   StatusPill,
   serviceTone,
@@ -775,9 +776,21 @@ describe('ServicePill', () => {
     expect(screen.getByText('walk')).toBeInTheDocument();
   });
 
-  it('falls back to "visit" for a blank service type', () => {
+  it('falls back to "Visit" for a blank service type', () => {
     render(<ServicePill serviceType="   " />);
-    expect(screen.getByText('visit')).toBeInTheDocument();
+    expect(screen.getByText('Visit')).toBeInTheDocument();
+  });
+
+  it('#1592: says the resolved name, toned from the stored type', () => {
+    render(<ServicePill serviceType="dog_walk_60" label="Dog Walk" />);
+    expect(screen.getByText('Dog Walk')).toHaveAttribute('data-tone', 'teal');
+    expect(screen.queryByText('dog_walk_60')).toBeNull();
+  });
+
+  it('#1592: the tone follows the resolved name, not the stored key', () => {
+    // `visit_60` alone tones orange (a visit, not a sit); the KinCare it names is a walk.
+    render(<ServicePill serviceType="visit_60" label="Dog walk" />);
+    expect(screen.getByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
   });
 
   it('tones itself from the service type', () => {
@@ -791,6 +804,20 @@ describe('ServicePill', () => {
   });
 });
 
+describe('bookingServiceTone', () => {
+  const catalog = { serviceRates: { 'Dog walk': '45' }, serviceDurations: { 'Dog walk': '60' }, timeBlocks: [] };
+
+  it('#1592: tones a stored key by the KinCare it resolves to', () => {
+    expect(serviceTone('visit_60')).toBe('orange');
+    expect(bookingServiceTone('visit_60', catalog)).toBe('teal');
+  });
+
+  it('an unresolved type keeps its own tone', () => {
+    expect(bookingServiceTone('Overnight sit', catalog)).toBe('purple');
+    expect(bookingServiceTone(undefined, catalog)).toBe(serviceTone('Visit'));
+  });
+});
+
 describe('serviceTone', () => {
   it.each([
     ['Dog Walk', 'teal'],
@@ -799,6 +826,12 @@ describe('serviceTone', () => {
     ['Overnight', 'purple'],
     ['Meet and Greet', 'success'],
     ['something else', 'orange'],
+    // #1736: the "sit" inside "visit" is not a house sit.
+    ['visit_60', 'orange'],
+    ['Off-Book Visit', 'orange'],
+    ['KinCare Visit', 'orange'],
+    ['House Sit', 'purple'],
+    ['Pet Sitting', 'purple'],
   ])('maps %s to %s', (service, tone) => {
     expect(serviceTone(service)).toBe(tone);
   });

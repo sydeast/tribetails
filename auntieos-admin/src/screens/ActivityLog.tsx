@@ -9,6 +9,7 @@ import {
 import { useCollection } from '../lib/firestore';
 import { useStaffNames } from '../lib/useStaffNames';
 import { str } from '../lib/coerce';
+import { activityDescriptionWords } from '../lib/activityWords';
 import { type Async } from '../lib/async';
 import {
   activityCategoryOf,
@@ -461,7 +462,9 @@ function rowTile(entry: ActivityLogEntry): { glyph: string; tone: IconTileTone }
 /** The mock's `.meta small`: description, actor, target, whichever are on the record. */
 function rowContext(entry: ActivityLogEntry, names: ReadonlyMap<string, string>): string {
   const parts: string[] = [];
-  if (str(entry.description).trim() !== '') parts.push(str(entry.description).trim());
+  // #1747: a stored path reads as words; the entry itself is never rewritten.
+  const description = activityDescriptionWords(str(entry.description));
+  if (description !== '') parts.push(description);
   // #1592: the actor's name, not their uid, once `listStaff` has answered.
   const actor = str(entry.actorId).trim();
   if (actor !== '') parts.push(names.get(actor) ?? actor);

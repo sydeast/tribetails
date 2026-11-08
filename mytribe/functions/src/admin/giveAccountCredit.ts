@@ -198,7 +198,8 @@ export async function giveAccountCreditHandler(
     targetUid: args.kinfolkId,
     targetCollection: 'families',
     familyId: args.kinfolkId,
-    description: `Account credit of ${args.amountCents} cents given to household ${args.kinfolkId}`,
+    // #1752: words; the household is `familyId` and the target.
+    description: (await import('../lib/activityWords.js')).accountCreditGivenWords(args.amountCents),
     payload: {
       kinfolkId: args.kinfolkId,
       creditId: eventRef.id,
