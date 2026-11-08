@@ -541,7 +541,11 @@ fun DenPanel(
 
 // ── service pill ─────────────────────────────────────────────────────────────
 
-/** A small lowercase mono pill tinted to a service [tone]. */
+/**
+ * A small mono pill tinted to a service [tone]. By default the tone follows the
+ * text shown: hand it the resolved name (`bookingServiceName`) and it wears the
+ * same colour as that name's legend swatch and calendar marks (#1592).
+ */
 @Composable
 fun ServicePill(serviceType: String, tone: AuntieStatusTone = serviceTone(serviceType)) {
     val c = AuntieTheme.colors

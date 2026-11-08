@@ -195,6 +195,11 @@ private fun ScheduleViewScreenContent(
     // Business-Settings timeBlocks now exist (Stage 1 §A.8). Always on, same as
     // Auntie Time's block pills; null (no segment) when unresolved.
     val timeBlocks = state.businessSettings.timeBlocks
+    // #1592: one catalog for every service mark on this screen, so the legend,
+    // the rows and the month dots name and colour a stored key the same way.
+    val serviceCatalog = remember(state.businessSettings.serviceRates, state.businessSettings.serviceDurations) {
+        ServiceCatalog(state.businessSettings.serviceRates, state.businessSettings.serviceDurations)
+    }
     val timeBlockLabelFor: (EnhancedBooking) -> String? = { b ->
         resolveTimeBlock(b.startDateTime, timeBlocks)?.label
     }
@@ -400,8 +405,10 @@ private fun ScheduleViewScreenContent(
                 )
             }
 
-            // B7 (A8): colour key for the schedule, painted with the same
-            // serviceTone the agenda rows use so the key always matches.
+            // B7 (A8): colour key for the schedule. Each entry is the resolved
+            // name, toned by `serviceTone(name)`: the key `bookingServiceTone`
+            // gives the agenda pill and the month dots (#1592), so a stored key
+            // and its legend swatch always match.
             //
             // #392 (operator mark 5, 2026-08-17 walk): SCOPED to the types
             // actually present in the CURRENT view (`filteredBookings` -- the
@@ -421,7 +428,7 @@ private fun ScheduleViewScreenContent(
                 // operator's own name and two spellings of one service are one row.
                 distinctServiceTypes(
                     bookingsInView.map {
-                        if (it.baseServiceTitle.isBlank()) "" else bookingServiceName(it.baseServiceTitle, state.businessSettings.serviceRates, state.businessSettings.serviceDurations)
+                        if (it.baseServiceTitle.isBlank()) "" else serviceCatalog.nameOf(it.baseServiceTitle)
                     },
                 ),
                 state.businessSettings.serviceDurations,
@@ -703,7 +710,7 @@ private fun ScheduleViewScreenContent(
                                 val dragged = state.dragState?.draggedBooking?.id == booking.id
                                 AdminBookingAgendaRow(
                                     booking = booking,
-                                    serviceRates = state.businessSettings.serviceRates,
+                                    catalog = serviceCatalog,
                                     onClick = { viewModel.selectBooking(booking) },
                                     // #9 already made this operator choice for the
                                     // reschedule FORM; the drag reads the same
@@ -736,6 +743,7 @@ private fun ScheduleViewScreenContent(
                             currentDate     = state.selectedDate,
                             bookings        = filteredBookings,
                             timeSlots       = state.timeSlots,
+                            catalog         = serviceCatalog,
                             onBookingClick  = { viewModel.selectBooking(it) },
                             onDateClick     = { date ->
                                 viewModel.selectDate(date)
@@ -799,7 +807,7 @@ private fun ScheduleViewScreenContent(
                     val booking = pendingBookings[i]
                     BookingSectionCard(
                         booking = booking,
-                        serviceRates = state.businessSettings.serviceRates,
+                        catalog = serviceCatalog,
                         onClick = { viewModel.selectBooking(booking) },
                         onApprove = { viewModel.approveBooking(booking) },
                         onReject = { viewModel.cancelBooking(booking) },
@@ -837,7 +845,7 @@ private fun ScheduleViewScreenContent(
                     val booking = scheduledBookings[i]
                     BookingSectionCard(
                         booking = booking,
-                        serviceRates = state.businessSettings.serviceRates,
+                        catalog = serviceCatalog,
                         onClick = { viewModel.selectBooking(booking) },
                         onApprove = null,
                         onReject = null,
@@ -867,8 +875,8 @@ private fun ScheduleViewScreenContent(
             } else {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        HistorySubsection("Completed", completedHistory, timeBlockLabelFor, state.businessSettings.serviceRates) { viewModel.selectBooking(it) }
-                        HistorySubsection("Cancelled", cancelledHistory, timeBlockLabelFor, state.businessSettings.serviceRates) { viewModel.selectBooking(it) }
+                        HistorySubsection("Completed", completedHistory, timeBlockLabelFor, serviceCatalog) { viewModel.selectBooking(it) }
+                        HistorySubsection("Cancelled", cancelledHistory, timeBlockLabelFor, serviceCatalog) { viewModel.selectBooking(it) }
                     }
                 }
             }
@@ -1448,8 +1456,8 @@ private fun BookingSectionHead(
 private fun AdminBookingAgendaRow(
     booking: EnhancedBooking,
     onClick: () -> Unit,
-    /** #1592: the KinCare catalog the service is named against. */
-    serviceRates: Map<String, String> = emptyMap(),
+    /** #1592: the KinCare catalog the service is named and coloured against. */
+    catalog: ServiceCatalog = ServiceCatalog(),
     /** 15 when the operator turned on "Snap drag-to-reschedule to 15 min", else 1. Parity with web. */
     snapMinutes: Int = DRAG_MINUTE_SNAP,
     isDragging: Boolean = false,
@@ -1461,8 +1469,8 @@ private fun AdminBookingAgendaRow(
     onDragCancel: (() -> Unit)? = null,
 ) {
     val c = AuntieTheme.colors
-    val accent = bookingServiceTint(booking)
-    val serviceName = booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { bookingServiceName(it, serviceRates) }
+    val accent = bookingServiceTint(booking, catalog)
+    val serviceName = booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { catalog.nameOf(it) }
     val serviceText = serviceName ?: booking.title.ifBlank { "KinCare Visit" }
     val bookingStart = parseIsoDateTimeOrNull(booking.startDateTime)
     // No start time we can read is no window we can move: the row still opens,
@@ -1541,7 +1549,8 @@ private fun AdminBookingAgendaRow(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (serviceName != null) {
-                    ServicePill(serviceName, serviceTone(booking.baseServiceTitle))
+                    // The pill tones by the name it shows, the legend swatch's key (#1592).
+                    ServicePill(serviceName)
                 }
                 Text(text = bookingSubtitle(booking), style = AuntieTheme.typography.bodySmall, color = c.textDim)
             }
@@ -1581,7 +1590,7 @@ private fun HistorySubsection(
     label: String,
     bookings: List<EnhancedBooking>,
     timeBlockLabelFor: (EnhancedBooking) -> String?,
-    serviceRates: Map<String, String>,
+    catalog: ServiceCatalog,
     onSelect: (EnhancedBooking) -> Unit,
 ) {
     if (bookings.isEmpty()) return
@@ -1598,7 +1607,7 @@ private fun HistorySubsection(
         visible.forEach { booking ->
             BookingSectionCard(
                 booking = booking,
-                serviceRates = serviceRates,
+                catalog = catalog,
                 onClick = { onSelect(booking) },
                 onApprove = null,
                 onReject = null,
@@ -1636,7 +1645,7 @@ private fun BookingSectionCard(
     booking: EnhancedBooking,
     onClick: () -> Unit,
     /** #1592: the KinCare catalog the service is named against. */
-    serviceRates: Map<String, String> = emptyMap(),
+    catalog: ServiceCatalog = ServiceCatalog(),
     onApprove: (() -> Unit)?,
     onReject: (() -> Unit)?,
     onCancel: (() -> Unit)?,
@@ -1687,7 +1696,7 @@ private fun BookingSectionCard(
                         color = if (hasName) c.textPrimary else c.textFaint,
                     )
                     Text(
-                        text = "${booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { bookingServiceName(it, serviceRates) } ?: booking.title.ifBlank { "Visit" }} · ${bookingDateLabel(booking)}" +
+                        text = "${booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { catalog.nameOf(it) } ?: booking.title.ifBlank { "Visit" }} · ${bookingDateLabel(booking)}" +
                             (timeBlockLabel?.let { " · $it block" } ?: ""),
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
@@ -1794,12 +1803,17 @@ private fun BusySwatch(modifier: Modifier = Modifier) {
     )
 }
 
-/** Service-type tint for a booking, faded when cancelled, via the shared serviceTone. */
+/**
+ * Service-type tint for a booking, faded when cancelled. Keyed on the resolved
+ * service name ([bookingServiceTone], #1592), the same key the legend swatch
+ * and the agenda pill use, so a stored `visit_60` wears its KinCare's colour.
+ */
 @Composable
-private fun bookingServiceTint(booking: EnhancedBooking): Color {
+private fun bookingServiceTint(booking: EnhancedBooking, catalog: ServiceCatalog): Color {
     val c = AuntieTheme.colors
     if (booking.status == BookingStatus.REJECTED) return c.textFaint
-    return serviceTone(booking.baseServiceTitle.ifBlank { booking.title }).color(c)
+    val tone = if (booking.baseServiceTitle.isBlank()) serviceTone(booking.title) else bookingServiceTone(booking.baseServiceTitle, catalog)
+    return tone.color(c)
 }
 
 /** Den status tone for a booking, keyed to its lifecycle (active-now is its own tone). */
@@ -2142,6 +2156,8 @@ fun EnhancedMonthView(
     currentDate: LocalDate,
     bookings: List<EnhancedBooking>,
     timeSlots: List<BookingTimeSlot>,
+    /** #1592: a dot is tinted by the name its legend swatch carries. */
+    catalog: ServiceCatalog = ServiceCatalog(),
     onBookingClick: (EnhancedBooking) -> Unit,
     onDateClick: (LocalDate) -> Unit,
     onTimeSlotClick: (BookingTimeSlot) -> Unit
@@ -2187,6 +2203,7 @@ fun EnhancedMonthView(
                             date           = date,
                             bookings       = dayBookings,
                             timeSlots      = dayTimeSlots,
+                            catalog        = catalog,
                             modifier       = Modifier.weight(1f),
                             onDateClick    = onDateClick,
                             onBookingClick = onBookingClick,
@@ -2205,6 +2222,7 @@ fun EnhancedDayCell(
     date: LocalDate,
     bookings: List<EnhancedBooking>,
     timeSlots: List<BookingTimeSlot>,
+    catalog: ServiceCatalog = ServiceCatalog(),
     modifier: Modifier,
     onDateClick: (LocalDate) -> Unit,
     onBookingClick: (EnhancedBooking) -> Unit,
@@ -2249,7 +2267,7 @@ fun EnhancedDayCell(
                 bookings.take(3).forEach { booking ->
                     Box(
                         modifier = Modifier.size(4.dp).clip(CircleShape)
-                            .background(bookingServiceTint(booking))
+                            .background(bookingServiceTint(booking, catalog))
                             .clickable { onBookingClick(booking) }
                     )
                 }
