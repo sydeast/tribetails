@@ -50,6 +50,7 @@ class UninvoicedVisitsPickerTest {
         onOpenVisit: (String) -> Unit = {},
         onDoNotInvoice: (List<String>, Boolean, String) -> Unit = { _, _, _ -> },
         loadFailure: Throwable? = null,
+        catalog: ServiceCatalog = ServiceCatalog(),
     ) {
         rule.setContent {
             AuntieOSTheme {
@@ -66,6 +67,7 @@ class UninvoicedVisitsPickerTest {
                     onSessionsLoaded = {},
                     onWriteBlankInvoice = {},
                     onOpenVisit = onOpenVisit,
+                    catalog = catalog,
                     load = { _, _, _ ->
                         if (loadFailure != null) Result.failure(loadFailure) else Result.success(loaded)
                     },
@@ -103,6 +105,16 @@ class UninvoicedVisitsPickerTest {
         truncated = truncated,
     )
 
+    @Test
+    fun `#1744 a row names the KinCare, never the stored key`() {
+        // "Long walk" runs 45 minutes, so a stored `visit_45` reads as "Long walk".
+        mount(
+            result(listOf(session("s1", 2500L, service = "visit_45"))),
+            catalog = ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "45")),
+        )
+        rule.onNodeWithText("Long walk").assertExists()
+        rule.onNodeWithText("visit_45").assertDoesNotExist()
+    }
     @Test
     fun `a priced visit shows its price and never a field to type over it`() {
         mount(result(listOf(session("s1", 2500L))))

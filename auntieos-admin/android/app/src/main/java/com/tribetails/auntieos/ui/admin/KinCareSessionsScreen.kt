@@ -493,6 +493,8 @@ private fun KinCareCard(
     onTransition: (BookingTransitionAction, String, String) -> Unit,
     /** #1580: see [PhaseGroup]'s `onNotice`. */
     onNotice: (String, Boolean) -> Unit = { _, _ -> },
+    /** #1744: the card names the KinCare, never the stored `visit_60`. */
+    catalog: ServiceCatalog = rememberServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
     val tone = kinCareStatusTone(session.status)
@@ -559,7 +561,7 @@ private fun KinCareCard(
                     // mock writes all of it as one sentence.
                     Text(
                         text = auntieTimeIdentityLine(
-                            service = session.serviceType,
+                            service = auntieTimeServiceName(session.serviceType, catalog),
                             kinNames = kinNames,
                             window = sessionWindow(session, todayIso),
                             timeBlockLabel = timeBlockLabel,

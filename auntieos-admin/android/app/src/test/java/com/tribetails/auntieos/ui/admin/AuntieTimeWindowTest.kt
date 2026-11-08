@@ -14,6 +14,17 @@ import org.junit.Test
  */
 class AuntieTimeWindowTest {
 
+    @Test
+    fun `#1744 the card names the KinCare, never the stored key, and blank stays blank`() {
+        val catalog = ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "45"))
+        assertEquals("Long walk", auntieTimeServiceName("visit_45", catalog))
+        assertEquals("", auntieTimeServiceName("  ", catalog))
+        assertEquals(
+            "Long walk · Biscuit · 09:00 - 09:45",
+            auntieTimeIdentityLine(auntieTimeServiceName("visit_45", catalog), listOf("Biscuit"), "09:00 - 09:45", null),
+        )
+    }
+
     private val today = "2026-07-16"
 
     private fun session(

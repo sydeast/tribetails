@@ -555,6 +555,7 @@ private fun ScheduleViewScreenContent(
                                     onApprove = { viewModel.approveSeries(series) },
                                     onCancel = { viewModel.cancelSeries(series) },
                                     loadNotes = { viewModel.loadRequestNotes(series) },
+                                    catalog = serviceCatalog,
                                 )
                             }
                         }
@@ -626,6 +627,7 @@ private fun ScheduleViewScreenContent(
                                     onResolve = { decision, note ->
                                         viewModel.resolveVisitRequest(row, decision, note)
                                     },
+                                    catalog = serviceCatalog,
                                 )
                             }
                         }
@@ -3091,6 +3093,8 @@ internal fun VisitRequestRowCard(
     inFlight: Boolean,
     actionsLocked: Boolean,
     onResolve: (decision: String, note: String?) -> Unit,
+    /** #1744: the request names its KinCare, never a stored key. */
+    catalog: ServiceCatalog = ServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
     val zone = LocalBusinessZone.current
@@ -3112,7 +3116,7 @@ internal fun VisitRequestRowCard(
                 )
                 Text(text = row.householdLabel(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
             }
-            Text(text = row.subject(), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            Text(text = row.subject(catalog), style = AuntieTheme.typography.bodySmall, color = c.textDim)
             Text(text = visitRequestWhen(row, zone), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
             row.reason?.takeIf { it.isNotBlank() }?.let {
                 Text(text = it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -3171,7 +3175,7 @@ internal fun VisitRequestRowCard(
             )
         },
     ) {
-        Text(text = row.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(text = row.subject(catalog), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
         Text(text = visitRequestWhen(row, zone), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
     }
     AuntieDialog(
@@ -3199,7 +3203,7 @@ internal fun VisitRequestRowCard(
         },
     ) {
         RequestFact("Household", row.householdLabel())
-        RequestFact("Visit", row.title)
+        RequestFact("Visit", row.titleIn(catalog))
         RequestFact("Kin", row.kinNames.ifBlank { "Not on the visit" })
         when (row) {
             is VisitRequestRow.Cancel -> RequestFact("Booked for", visitRequestTime(row.dto.startTimeMs, zone))
@@ -3260,6 +3264,8 @@ internal fun IncomingSeriesRow(
     onApprove: () -> Unit,
     onCancel: () -> Unit,
     loadNotes: suspend () -> Result<String> = { Result.success("") },
+    /** #1744: the request names its KinCare, never a stored key. */
+    catalog: ServiceCatalog = ServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
     val zone = LocalBusinessZone.current
@@ -3281,7 +3287,7 @@ internal fun IncomingSeriesRow(
                 color = c.textPrimary,
             )
             Text(
-                text = series.subject(),
+                text = series.subject(catalog),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -3291,7 +3297,8 @@ internal fun IncomingSeriesRow(
         // booking wizard uses, and Approve waits until every night has one.
         nights.forEach { night ->
             val picked = startTimes[seriesNightKey(series, night.visitId)]
-            val name = night.serviceType.ifBlank { series.serviceType.ifBlank { "KinCare" } }
+            val name = (if (night.serviceType.isBlank()) "" else catalog.nameOf(night.serviceType))
+                .ifBlank { series.serviceName(catalog).ifBlank { "KinCare" } }
             val title = if (night.requestedDate.isBlank()) name else "$name on ${nightLabel(night.requestedDate)}"
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = title, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
@@ -3356,7 +3363,7 @@ internal fun IncomingSeriesRow(
             )
         },
     ) {
-        Text(text = series.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(text = series.subject(catalog), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
         Text(
             text = if (confirming == "cancel") {
                 "Nothing will be booked. The household will be told."
@@ -3396,11 +3403,11 @@ internal fun IncomingSeriesRow(
             },
         ) {
             RequestFact("Household", series.householdLabel())
-            RequestFact("Service", series.serviceType.ifBlank { "Not on the request" })
+            RequestFact("Service", series.serviceName(catalog).ifBlank { "Not on the request" })
             RequestFact("Kin", series.kinNames.joinToString(", ").ifBlank { "Not on the request" })
             RequestFact(
                 if (series.visitCount == 1) "Visit" else "${series.visitCount} visits",
-                series.visitLines(zone).joinToString("\n"),
+                series.visitLines(zone, catalog).joinToString("\n"),
             )
             val loaded = notes
             when {

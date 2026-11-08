@@ -34,6 +34,30 @@ class InvoiceComposerTest {
         unitCents = unitCents,
     )
 
+    // ── #1744: the line names the KinCare ──────────────────────────────────────
+
+    /** "Long walk" runs 45 minutes, so a stored `visit_45` reads as "Long walk". */
+    private val catalog = ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "45"))
+
+    @Test
+    fun `#1744 a visit line names the KinCare the household reads, never the stored key`() {
+        assertEquals("Long walk, 2026-08-11", visitLineDescription(session("s1", service = "visit_45"), catalog))
+        assertEquals("Visit, 2026-08-11", visitLineDescription(session("s1", service = ""), catalog))
+    }
+
+    @Test
+    fun `#1744 the composer's lines carry the KinCare name`() {
+        val money = composerMoney(
+            sessions = listOf(session("s1", service = "visit_45")),
+            selected = setOf("s1"),
+            prices = emptyMap(),
+            drafts = emptyList(),
+            invoiceDiscountText = "",
+            catalog = catalog,
+        )
+        assertEquals("Long walk, 2026-08-11", money.lines?.single()?.description)
+    }
+
     // ── bound lines ───────────────────────────────────────────────────────────
 
     @Test

@@ -12,6 +12,8 @@ import type {
 } from '../contracts/invoiceContracts.generated';
 import { computeInvoiceTotals, centsToDollars, type InvoiceLineItemInput } from '../lib/invoiceMath';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
+import { EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { localDateIso } from '../lib/invoiceFormat';
 import { parseDollarsToCents, normalizeMoneyText, MAX_UNIT_CENTS } from '../lib/invoiceMoneyInput';
 import { invoiceTermsDefs, resolveDueDate, type InvoiceTermsCode } from '../lib/invoiceTerms';
@@ -150,11 +152,13 @@ export function buildBoundLines(
   sessions: readonly ListUninvoicedSessionsResultSession[],
   selected: ReadonlySet<string>,
   prices: Readonly<Record<string, string>>,
+  /** #1744: what names each line's service; the household reads this text. */
+  catalog: BookingCatalog = EMPTY_BOOKING_CATALOG,
 ): BoundLinesOutcome {
   const lines: InvoiceLineItemInput[] = [];
   for (const s of sessions) {
     if (!selected.has(s.sessionId)) continue;
-    const description = visitLineDescription(s);
+    const description = visitLineDescription(s, catalog);
     let unitCents = s.unitCents;
     if (unitCents === null) {
       const typed = (prices[s.sessionId] ?? '').trim();
@@ -232,6 +236,7 @@ export function buildBoundLines(
 export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: InvoiceCreateProps) {
   const kinfolkState = useKinfolkRoster();
   const households = kinfolkState.status === 'ready' ? kinfolkState.data : [];
+  const catalog = useBookingCatalog();
 
   const [kind, setKind] = useState<InvoiceCreateMode>(mode);
   const [kinfolkId, setKinfolkId] = useState(seedKinfolkId ?? '');
@@ -321,7 +326,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   /** The lines this invoice would carry, and the live total under them. */
   const money = useMemo(() => {
     if (!onWork) return null;
-    const bound = buildBoundLines(sessions, selected, prices);
+    const bound = buildBoundLines(sessions, selected, prices, catalog);
     if (bound.error !== null) return { lines: null, error: bound.error, totals: null, invoiceDiscountCents: 0 };
     const typed = parseDraftLines(extraLines, invoiceDiscountText);
     if (typed.error !== null) return { lines: null, error: typed.error, totals: null, invoiceDiscountCents: 0 };
@@ -332,7 +337,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
       totals: computeInvoiceTotals(lines, typed.invoiceDiscountCents!, 0),
       invoiceDiscountCents: typed.invoiceDiscountCents!,
     };
-  }, [onWork, sessions, selected, prices, extraLines, invoiceDiscountText]);
+  }, [onWork, sessions, selected, prices, extraLines, invoiceDiscountText, catalog]);
 
   /**
    * Why the create button cannot run yet, or null when it can.

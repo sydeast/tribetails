@@ -31,6 +31,11 @@ const { useCollection, useDocById } = vi.hoisted(() => ({
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
 vi.mock('../api/settings', () => ({ getBusinessSettings }));
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+vi.mock('../lib/useBookingCatalog', () => ({
+  useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
+}));
 const { useBreadcrumbs } = vi.hoisted(() => ({ useBreadcrumbs: vi.fn() }));
 vi.mock('../lib/breadcrumbs', async (importOriginal) => {
   // The NORMALIZERS stay real: `routePointsFromGpsSummary` is what turns the
@@ -102,6 +107,10 @@ function panelTitles(container: HTMLElement): (string | null)[] {
 }
 
 describe('SessionDetail', () => {
+  it('#1744: the title names the KinCare, never the stored key', () => {
+    render(<SessionDetail entry={entry({ serviceType: 'visit_45' })} onBack={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: 'Biscuit & Gravy · Long walk' })).toBeInTheDocument();
+  });
   it('renders the session fields from the passed entry, and its internal notes from the one list', async () => {
     listVisitInternalNotes.mockResolvedValue({
       notes: [{ id: 'session:sess1', body: 'Bring the long leash.', authorRole: 'unknown', authorName: null, createdAtMs: null, visibility: 'shared', source: 'visitRecord' }],
