@@ -138,7 +138,7 @@ fun KinCareDetailScreen(
         SectionHeader(
             title    = session.kinfolkName.ifBlank { "KinCare" },
             subtitle = listOfNotNull(
-                session.serviceType.takeIf { it.isNotBlank() },
+                session.serviceType.takeIf { it.isNotBlank() }?.let { com.tribetails.auntieos.web.screens.LocalServiceCatalog.current.nameOf(it) },
                 sessionWindowFor(session),
             ).joinToString(" · "),
             icon     = Lucide.PawPrint,
@@ -204,7 +204,7 @@ fun KinCareDetailScreen(
             PanelHeading("Details", Lucide.PawPrint)
             Spacer(Modifier.height(6.dp))
             session.serviceType.takeIf { it.isNotBlank() }?.let {
-                AuntieKeyValueRow(label = "Service", value = it)
+                AuntieKeyValueRow(label = "Service", value = com.tribetails.auntieos.web.screens.LocalServiceCatalog.current.nameOf(it))
             }
             // #1581: a stored 0 falls back to the visit's own window.
             shownVisitLengthMinutes(session.serviceDurationMinutes, session.startTime, session.endTime)?.let {
@@ -370,7 +370,7 @@ private fun HeroPanel(
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    text  = heroTitle(session),
+                    text  = heroTitle(session, com.tribetails.auntieos.web.screens.LocalServiceCatalog.current),
                     style = AuntieTheme.typography.headlineLarge,
                     color = c.textPrimary,
                 )
@@ -418,9 +418,10 @@ private fun KinPhotos(kinIds: List<String>, kinById: Map<String, Kin>) {
     }
 }
 
-private fun heroTitle(s: KinCareSession): String {
+/** #1744: the household, then the KinCare's name, never the stored `visit_60`. */
+internal fun heroTitle(s: KinCareSession, catalog: com.tribetails.auntieos.web.screens.ServiceCatalog): String {
     val name = s.kinfolkName.ifBlank { "KinCare" }
-    return if (s.serviceType.isNotBlank()) "$name · ${s.serviceType}" else name
+    return if (s.serviceType.isNotBlank()) "$name · ${catalog.nameOf(s.serviceType)}" else name
 }
 
 // ---- Lifecycle rail --------------------------------------------------------

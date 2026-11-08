@@ -879,7 +879,10 @@ private fun EventBlock(
             .padding(horizontal = 9.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        val household = session.kinfolkName.ifBlank { session.serviceType.ifBlank { "KinCare Visit" } }
+        // #1744: with no household name, the block names the KinCare, never the stored key.
+        val household = session.kinfolkName.ifBlank {
+            if (session.serviceType.isBlank()) "KinCare Visit" else LocalServiceCatalog.current.nameOf(session.serviceType)
+        }
         if (blockHeight < COMPACT_BLOCK_HEIGHT) {
             // #1606: at 30 minutes the stacked time pushed the household out of
             // the block, so a short visit read as a bare time. One line instead.

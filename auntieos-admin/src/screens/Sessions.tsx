@@ -28,6 +28,8 @@ import { useArrivalRule } from '../lib/useArrivalRule';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { directionsHref } from '../lib/directions';
 import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressCompleteness';
 import { DenScreenHeading, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
@@ -203,11 +205,13 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
     for (const k of kinState.data) map.set(k._id, k);
     return map;
   }, [kinState]);
+  const catalog = useBookingCatalog();
 
   const cardContext: CardContext = {
     todayIso,
     addressById,
     kinById,
+    catalog,
     onSelect,
     onWritten: reload,
     ...(onComposeKinTale ? { onComposeKinTale } : {}),
@@ -353,6 +357,8 @@ interface CardContext {
   todayIso: string;
   addressById: Map<string, string>;
   kinById: Map<string, Kin>;
+  /** #1744: what a card's service is named against, never the stored `visit_60`. */
+  catalog: BookingCatalog;
   onSelect: (sessionId: string) => void;
   /** Re-runs the paged read after a write that changed the document. */
   onWritten: () => void;
@@ -414,7 +420,7 @@ function messageOf(err: unknown): string {
  * acts.
  */
 function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) {
-  const { todayIso, addressById, kinById, onSelect, onWritten, onComposeKinTale, onViewKinTale } =
+  const { todayIso, addressById, kinById, catalog, onSelect, onWritten, onComposeKinTale, onViewKinTale } =
     ctx;
   const state = sessionState(str(entry.status));
   const info = sessionStateInfo(state);
@@ -476,7 +482,9 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   const kinNames = arr<string>(entry.kinNames)
     .map((n) => n.trim())
     .filter((n) => n !== '');
-  const service = str(entry.serviceType).trim();
+  // #1744: the KinCare's name. Blank still drops out of the line.
+  const storedService = str(entry.serviceType).trim();
+  const service = storedService === '' ? '' : bookingServiceName(storedService, catalog);
   const dayKeyValue = sessionDayKey(str(entry.startTime));
   const when = sessionWindow(str(entry.startTime), str(entry.endTime));
   const day = dayKeyValue === 'Undated' ? '' : sessionDayLabel(dayKeyValue, todayIso);

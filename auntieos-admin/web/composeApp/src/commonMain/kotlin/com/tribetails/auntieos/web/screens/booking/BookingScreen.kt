@@ -769,7 +769,7 @@ private fun IncomingSeriesCard(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(series.householdLabel(), style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-            Text(series.subject(), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { confirming = "approve" }, enabled = !locked)
@@ -794,7 +794,7 @@ private fun IncomingSeriesCard(
             )
         },
     ) {
-        Text(series.subject(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
         Text(
             when {
                 confirming == "cancel" -> "Nothing will be booked. The household will be told."
@@ -831,7 +831,7 @@ private fun IncomingSeriesCard(
         },
     ) {
         IncomingFact("Household", series.householdLabel())
-        IncomingFact("Service", series.serviceType.ifBlank { "Not on the request" })
+        IncomingFact("Service", series.serviceName(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current).ifBlank { "Not on the request" })
         IncomingFact(
             if (series.visitCount == 1) "Visit" else "${series.visitCount} visits",
             series.visitLines(zone).joinToString("\n"),

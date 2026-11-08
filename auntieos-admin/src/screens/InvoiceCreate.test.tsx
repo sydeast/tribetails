@@ -50,6 +50,15 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   setSessionDoNotInvoice,
 }));
 
+// #1744: services are named from the KinCare catalog. "Long walk" runs 45
+// minutes, so a stored `visit_45` reads as "Long walk".
+const CATALOG = vi.hoisted(() => ({
+  serviceRates: { 'Long walk': '45' },
+  serviceDurations: { 'Long walk': '45' },
+  timeBlocks: [],
+}));
+vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => CATALOG }));
+
 import { InvoiceCreate, buildBoundLines, isValidInvoiceDate, validateBlankInvoice } from './InvoiceCreate';
 
 function kinfolk(over: Partial<Kinfolk>): Kinfolk {
@@ -171,6 +180,11 @@ describe('buildBoundLines (pure)', () => {
     expect(out.lines[0]?.qty).toBe(1);
   });
 
+  it('#1744: names the line by the KinCare, never the stored key', () => {
+    const out = buildBoundLines([session({ serviceType: 'visit_45' })], new Set(['s1']), {}, CATALOG);
+    expect(out.lines[0]?.description).toBe('Long walk, 2026-07-10');
+  });
+
   it('ignores a visit that is not ticked', () => {
     expect(buildBoundLines([session()], new Set(), {}).lines).toEqual([]);
   });
@@ -282,6 +296,16 @@ describe('InvoiceCreate work path', () => {
     // An older `createInvoice` mock answers no `appOnly`, which reads as false.
     expect(onCreated).toHaveBeenCalledWith('inv-1', { quote: false, appOnly: false });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('#1744: the line the household reads names the KinCare, not the stored key', async () => {
+    listUninvoicedSessions.mockResolvedValue(work({ sessions: [session({ serviceType: 'visit_45' })] }));
+    render(<InvoiceCreate mode="invoice" onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await screen.findByRole('checkbox');
+    await userEvent.click(screen.getByRole('button', { name: /create invoice for 1 visit/i }));
+    await waitFor(() => expect(createInvoice).toHaveBeenCalledTimes(1));
+    expect(createInvoice.mock.calls[0]?.[0].lineItems[0].description).toBe('Long walk, 2026-07-10');
   });
 
   it('states the derived total and offers nowhere to type one', async () => {

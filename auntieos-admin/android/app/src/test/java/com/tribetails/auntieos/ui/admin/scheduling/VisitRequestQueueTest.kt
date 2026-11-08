@@ -96,6 +96,15 @@ class VisitRequestQueueTest {
     }
 
     @Test
+    fun `#1744 a request with no title names the KinCare, never the stored key`() {
+        val catalog = com.tribetails.auntieos.ui.admin.ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "45"))
+        val row = VisitRequestRow.Cancel(cancel(title = null).copy(serviceType = "visit_45"))
+        assertEquals("Long walk", row.titleIn(catalog))
+        assertEquals("Long walk · Nutmeg", row.subject(catalog))
+        assertEquals("Evening sit", VisitRequestRow.Cancel(cancel()).titleIn(catalog))
+        assertEquals("Visit", VisitRequestRow.Cancel(cancel(title = null).copy(serviceType = null)).titleIn(catalog))
+    }
+    @Test
     fun titleFallsBackToServiceThenToAPlainWord() {
         assertEquals("Evening sit", VisitRequestRow.Cancel(cancel()).title)
         assertEquals("Pet Sitting", VisitRequestRow.Cancel(cancel(title = null)).title)

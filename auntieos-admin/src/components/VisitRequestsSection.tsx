@@ -19,6 +19,8 @@ import {
 import { getBusinessSettings } from '../api/settings';
 import type { ListPendingBookingRequestsResultRequestVisit } from '../contracts/bookingContracts.generated';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
+import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
+import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { BOOKING_BUSY_CONFLICT_CODE, callableConflictCode } from '../lib/bookingWizard';
 import { nightLabel, startTimeOnNight } from '../lib/businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
@@ -153,6 +155,8 @@ function reasonOf(err: unknown): string {
 export const VISIT_REQUESTS_REFRESH_MS = 60_000;
 
 export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number } = {}) {
+  // #1744: a request names its KinCare off the catalog, never a stored key.
+  const catalog = useBookingCatalog();
   // #1607: the waiting count stayed at 6 after a new request until a reload.
   // It now reads again every minute, when the tab comes back into view, and
   // whenever this screen itself files a request (`refreshKey`).
@@ -293,7 +297,7 @@ export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number }
                     </span>
                     <span className="visit-requests__row-title">{householdLabel(row)}</span>
                   </span>
-                  <span className="visit-requests__row-subject">{rowSubject(row)}</span>
+                  <span className="visit-requests__row-subject">{rowSubject(row, catalog)}</span>
                   <span className="visit-requests__row-when">{rowWhen(row)}</span>
                   {reasonOfRow(row) !== null && (
                     <span className="visit-requests__row-reason">{reasonOfRow(row)}</span>
@@ -394,12 +398,23 @@ function nightsLabel(
   return awaitingTime ? `Nights of ${list}, start times not set` : `The nights of ${list}`;
 }
 
+/**
+ * #1744: a stored service as the operator's KinCare name, or null when the
+ * request carries none (so each caller keeps its own stand-in).
+ */
+function serviceNameOrNull(raw: string | null | undefined, catalog: BookingCatalog): string | null {
+  if (raw === null || raw === undefined || raw.trim() === '') return null;
+  return bookingServiceName(raw, catalog);
+}
+
 /** What the time field calls one night: its KinCare and its date. */
 function nightFieldName(
   visit: ListPendingBookingRequestsResultRequestVisit,
   request: PendingBookingRequestDto,
+  catalog: BookingCatalog,
 ): string {
-  const kinCare = visit.serviceType ?? request.serviceType ?? 'KinCare';
+  const kinCare =
+    serviceNameOrNull(visit.serviceType, catalog) ?? serviceNameOrNull(request.serviceType, catalog) ?? 'KinCare';
   return visit.requestedDate ? `${kinCare} on ${nightLabel(visit.requestedDate)}` : kinCare;
 }
 
@@ -447,11 +462,11 @@ export function householdLabel(row: VisitRequest): string {
   return name === '' ? 'Household name not on file' : name;
 }
 /** What the request is about: the service, then the Kin it covers. */
-export function rowSubject(row: VisitRequest): string {
+export function rowSubject(row: VisitRequest, catalog: BookingCatalog = EMPTY_BOOKING_CATALOG): string {
   const service =
     row.kind === 'newBooking'
-      ? (row.request.serviceType ?? 'Care request')
-      : (row.request.title ?? row.request.serviceType ?? 'Visit');
+      ? (serviceNameOrNull(row.request.serviceType, catalog) ?? 'Care request')
+      : (row.request.title ?? serviceNameOrNull(row.request.serviceType, catalog) ?? 'Visit');
   const kin = row.request.kinNames.filter((n) => n.trim() !== '').join(', ');
   return kin === '' ? service : `${service} · ${kin}`;
 }
@@ -474,7 +489,10 @@ function lengthLabel(minutes: number | null): string | null {
  * date. `visits` is absent on a payload from a server older than #1098, so
  * the start list stands in for it.
  */
-export function requestVisitLines(request: PendingBookingRequestDto): string[] {
+export function requestVisitLines(
+  request: PendingBookingRequestDto,
+  catalog: BookingCatalog = EMPTY_BOOKING_CATALOG,
+): string[] {
   const visits = request.visits ?? [];
   if (visits.length === 0) return request.startTimeMsList.map((ms) => whenLabel(ms));
   return visits.map((v) => {
@@ -482,7 +500,7 @@ export function requestVisitLines(request: PendingBookingRequestDto): string[] {
       v.startTimeMs !== null
         ? whenLabel(v.startTimeMs)
         : `Night of ${v.requestedDate ? nightLabel(v.requestedDate) : 'a date not on file'}, start time not set`;
-    const parts = [when, v.serviceType, v.timeBlockLabel, lengthLabel(v.lengthMinutes)].filter(
+    const parts = [when, serviceNameOrNull(v.serviceType, catalog), v.timeBlockLabel, lengthLabel(v.lengthMinutes)].filter(
       (p): p is string => p !== null && p !== undefined && p !== '',
     );
     return parts.join(' · ');
@@ -500,6 +518,7 @@ interface RequestDetailDialogProps {
  * and its copy are one path whichever way the operator got there.
  */
 function RequestDetailDialog({ row, onClose, onDecide }: RequestDetailDialogProps) {
+  const catalog = useBookingCatalog();
   const reason = reasonOfRow(row);
   const kin = row.request.kinNames.filter((n) => n.trim() !== '');
   return (
@@ -523,8 +542,8 @@ function RequestDetailDialog({ row, onClose, onDecide }: RequestDetailDialogProp
           <dt>Service</dt>
           <dd>
             {row.kind === 'newBooking'
-              ? (row.request.serviceType ?? 'Not on the request')
-              : (row.request.title ?? row.request.serviceType ?? 'Not on the visit')}
+              ? (serviceNameOrNull(row.request.serviceType, catalog) ?? 'Not on the request')
+              : (row.request.title ?? serviceNameOrNull(row.request.serviceType, catalog) ?? 'Not on the visit')}
           </dd>
         </div>
         <div className="visit-requests__fact">
@@ -536,7 +555,7 @@ function RequestDetailDialog({ row, onClose, onDecide }: RequestDetailDialogProp
             <dt>{row.request.visitCount === 1 ? 'Visit' : `${String(row.request.visitCount)} visits`}</dt>
             <dd>
               <ul className="visit-requests__fact-list">
-                {requestVisitLines(row.request).map((line, i) => (
+                {requestVisitLines(row.request, catalog).map((line, i) => (
                   <li key={`${String(i)}-${line}`}>{line}</li>
                 ))}
               </ul>
@@ -585,6 +604,7 @@ interface DecisionDialogProps {
  * sets for every other booking decision in this app.
  */
 function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogProps) {
+  const catalog = useBookingCatalog();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -686,13 +706,13 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
     >
       <p className="visit-requests__dialog-household">
         {householdLabel(row)}
-        <span className="visit-requests__dialog-subject">{rowSubject(row)}</span>
+        <span className="visit-requests__dialog-subject">{rowSubject(row, catalog)}</span>
       </p>
       <p className="visit-requests__dialog-line">{dialogLine(row, decision)}</p>
       {nights.length > 0 && row.kind === 'newBooking' && (
         <ul className="visit-requests__nights">
           {nights.map((v) => {
-            const name = nightFieldName(v, row.request);
+            const name = nightFieldName(v, row.request, catalog);
             const id = `visit-request-start-${v.visitId}`;
             return (
               <li key={v.visitId} className="visit-requests__night">

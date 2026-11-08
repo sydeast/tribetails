@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin.scheduling
 
 import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.data.repository.IncomingKinCare
+import com.tribetails.auntieos.ui.admin.ServiceCatalog
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
@@ -37,11 +38,17 @@ data class IncomingSeries(
 /** #1577: WHO is asking, the card's title. */
 fun IncomingSeries.householdLabel(): String =
     kinfolkName.trim().takeIf { it.isNotEmpty() } ?: HOUSEHOLD_NOT_ON_FILE
+/**
+ * #1744: the request's service as the operator's KinCare name, never a stored
+ * key. Blank stays blank, so each caller keeps its own stand-in.
+ */
+fun IncomingSeries.serviceName(catalog: ServiceCatalog): String =
+    if (serviceType.isBlank()) "" else catalog.nameOf(serviceType)
 /** What the request covers: its visit count, service and Kin, for the line under the household. */
-fun IncomingSeries.subject(): String = buildString {
+fun IncomingSeries.subject(catalog: ServiceCatalog = ServiceCatalog()): String = buildString {
     append(if (visitCount == 1) "1 visit" else "$visitCount visits")
     if (isSeries) append(" · recurring series")
-    if (serviceType.isNotBlank()) append(" · $serviceType")
+    if (serviceType.isNotBlank()) append(" · ${serviceName(catalog)}")
     if (kinNames.isNotEmpty()) append(" · ${kinNames.joinToString(", ")}")
 }
 /** #1577: the confirm step for Approve, titled with the household. */
@@ -53,14 +60,14 @@ fun IncomingSeries.declineConfirmTitle(): String = "Turn down this request${hous
  * start on the business clock, or the night asked for when it awaits a start
  * time (#1098), then its service when it differs from the request's.
  */
-fun IncomingSeries.visitLines(zone: ZoneId): List<String> = visits.map { v ->
+fun IncomingSeries.visitLines(zone: ZoneId, catalog: ServiceCatalog = ServiceCatalog()): List<String> = visits.map { v ->
     val start = runCatching { java.time.Instant.parse(v.startTime) }.getOrNull()
     val whenText = when {
         start != null -> start.atZone(zone).format(VISIT_LINE_FORMAT)
         v.requestedDate.isNotBlank() -> "Night of ${nightLabel(v.requestedDate)}, start time not set"
         else -> "Time not on file"
     }
-    if (v.serviceType.isNotBlank() && v.serviceType != serviceType) "$whenText · ${v.serviceType}" else whenText
+    if (v.serviceType.isNotBlank() && v.serviceType != serviceType) "$whenText · ${catalog.nameOf(v.serviceType)}" else whenText
 }
 private val VISIT_LINE_FORMAT = DateTimeFormatter.ofPattern("EEE, MMM d 'at' h:mm a", Locale.US)
 

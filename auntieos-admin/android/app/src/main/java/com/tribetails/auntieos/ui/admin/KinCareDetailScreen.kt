@@ -141,8 +141,14 @@ fun KinCareDetailScreen(
     // zone-less start on. Null until read, and on a failed read: [businessZone]
     // then resolves to America/Chicago, the server's own default, never the phone's.
     var businessTimeZone by remember { mutableStateOf<String?>(null) }
+    // #1744: the KinCare catalog the title and Service row name the visit by,
+    // off the same settings read. Empty until it lands, which names nothing.
+    var serviceCatalog by remember { mutableStateOf(ServiceCatalog()) }
     LaunchedEffect(Unit) {
-        repo.getBusinessSettings().onSuccess { businessTimeZone = it.timeZone }
+        repo.getBusinessSettings().onSuccess {
+            businessTimeZone = it.timeZone
+            serviceCatalog = it.serviceCatalog()
+        }
     }
 
     LaunchedEffect(kinCareId, retryNonce) {
@@ -262,7 +268,9 @@ fun KinCareDetailScreen(
                 .mapNotNull { kinById[it]?.name?.takeIf { n -> n.isNotBlank() } }
                 .joinToString(" & ")
             val household = s.kinfolkName.ifBlank { "KinCare" }
-            val heroTitle = listOf(kinLabel, s.serviceType)
+            // #1744: the KinCare's name, never the stored `visit_60`.
+            val serviceName = auntieTimeServiceName(s.serviceType, serviceCatalog)
+            val heroTitle = listOf(kinLabel, serviceName)
                 .filter { it.isNotBlank() }
                 .joinToString(" · ")
                 .ifBlank { household }
@@ -390,7 +398,7 @@ fun KinCareDetailScreen(
             // detail and the Bookings sheet.
             item {
                 DetailSection("Details") {
-                    DetailFieldRow("Service", s.serviceType)
+                    DetailFieldRow("Service", serviceName)
                     // #1581: a stored 0 falls back to the visit's own window.
                     val lengthMinutes = com.tribetails.auntieos.domain.shownVisitLengthMinutes(
                         s.serviceDurationMinutes, s.startTime, s.endTime,

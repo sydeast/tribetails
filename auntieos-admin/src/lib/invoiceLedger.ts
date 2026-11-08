@@ -3,6 +3,7 @@ import type {
   GetInvoiceLedgerResultPayment,
   GetInvoiceLedgerResultSession,
 } from '../contracts/invoiceContracts.generated';
+import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from './bookingFormat';
 
 /**
  * The pure reading rules for `getInvoiceLedger`'s answer.
@@ -71,10 +72,12 @@ export function sessionStatusLabel(status: string): string {
   return trimmed === '' ? 'no status' : trimmed.toLowerCase().replace(/_/g, ' ');
 }
 
-/** What a visit is called, or a neutral stand-in when the field is blank. */
-export function sessionServiceLabel(serviceType: string): string {
-  const trimmed = serviceType.trim();
-  return trimmed === '' ? 'Visit' : trimmed;
+/**
+ * What a visit is called: the KinCare's name off the catalog, never the stored
+ * `visit_60` (#1744), or a neutral stand-in when the field is blank.
+ */
+export function sessionServiceLabel(serviceType: string, catalog: BookingCatalog = EMPTY_BOOKING_CATALOG): string {
+  return bookingServiceName(serviceType, catalog);
 }
 
 /**

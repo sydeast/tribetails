@@ -1358,7 +1358,11 @@ private fun InvoiceLineTotalsRows(
 }
 
 @Composable
-private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
+private fun LinkedSessionRow(
+    session: KinCareSession,
+    showDivider: Boolean,
+    catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog = com.tribetails.auntieos.ui.admin.rememberServiceCatalog(),
+) {
     val c = AuntieTheme.colors
     val hairline = AuntieTheme.dims.borderHairline
     val ruleColor = c.borderSoft
@@ -1385,7 +1389,7 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                session.serviceType.ifBlank { "Service" },
+                linkedSessionServiceLabel(session, catalog),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textPrimary,
             )
@@ -1877,6 +1881,29 @@ internal fun recordPaymentBalanceCopy(unappliedCents: Long?, autoApply: Boolean)
 // ── Edit dialog: "Link Sessions" ─────────────────────────────────────────────
 
 @OptIn(ExperimentalLayoutApi::class)
+/**
+ * #1744: a linked visit's row names its KinCare off the catalog, never the
+ * stored `visit_60`. A blank service keeps its "Service" stand-in.
+ */
+internal fun linkedSessionServiceLabel(
+    session: KinCareSession,
+    catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog,
+): String = if (session.serviceType.isBlank()) "Service" else catalog.nameOf(session.serviceType)
+
+/** #1744: one link-picker chip: the visit's KinCare name, its day, and why it cannot be ticked. */
+internal fun linkPickerChipLabel(
+    session: KinCareSession,
+    dateLabel: String,
+    elsewhere: Boolean,
+    cancelled: Boolean,
+    catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog,
+): String {
+    val service = if (session.serviceType.isBlank()) "Session" else catalog.nameOf(session.serviceType)
+    return "$service · $dateLabel" +
+        (if (elsewhere) " · on another invoice" else "") +
+        (if (cancelled) " · cancelled, not billable" else "")
+}
+
 @Composable
 private fun LinkSessionsDialog(
     available: List<KinCareSession>,
@@ -1888,6 +1915,7 @@ private fun LinkSessionsDialog(
     onSave: () -> Unit,
     onDismiss: () -> Unit,
     saveLoading: Boolean,
+    catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog = com.tribetails.auntieos.ui.admin.rememberServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
     AuntieModal(
@@ -1930,9 +1958,7 @@ private fun LinkSessionsDialog(
                     val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
                     // #1609: a cancelled visit is not billable.
                     val cancelled = linkPickerCancelled(session, storedIds)
-                    val chipLabel = "${session.serviceType.ifBlank { "Session" }} · $dateLabel" +
-                        (if (elsewhere) " · on another invoice" else "") +
-                        (if (cancelled) " · cancelled, not billable" else "")
+                    val chipLabel = linkPickerChipLabel(session, dateLabel, elsewhere, cancelled, catalog)
                     AuntieChip(
                         label    = chipLabel,
                         selected = session.id in selectedIds,
