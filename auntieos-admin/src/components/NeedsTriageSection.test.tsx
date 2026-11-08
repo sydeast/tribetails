@@ -91,16 +91,18 @@ describe('NeedsTriageSection: loading, empty, error', () => {
 
     listOrphanReports.mockResolvedValueOnce([orphan()]);
     await user.click(screen.getByRole('button', { name: /retry/i }));
-    expect(await screen.findByText('legacy_79')).toBeInTheDocument();
+    expect(await screen.findByText('Fed and walked, all calm today.')).toBeInTheDocument();
     expect(listOrphanReports).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('NeedsTriageSection: the row', () => {
-  it('shows the id, a friendly channel label, and the body preview, with all three actions', async () => {
+  it('shows when it was written, a friendly channel label, and the body preview, with all three actions', async () => {
     listOrphanReports.mockResolvedValue([orphan()]);
     render(<NeedsTriageSection kinfolk={readyKinfolk([])} candidateReports={[]} />);
-    expect(await screen.findByText('legacy_79')).toBeInTheDocument();
+    expect(await screen.findByText(/^05-1[67] \d\d:\d\d$/)).toBeInTheDocument();
+    // #1592: never the document id.
+    expect(screen.queryByText(/legacy_79/)).toBeNull();
     expect(screen.getByText('imported')).toBeInTheDocument(); // legacy_visit_logs collapses, never leaks raw
     expect(screen.getByText('Fed and walked, all calm today.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Assign' })).toBeInTheDocument();
@@ -123,18 +125,19 @@ describe('NeedsTriageSection: Assign', () => {
     render(
       <NeedsTriageSection kinfolk={readyKinfolk([kf({ _id: 'kf1', firstName: 'Loretta', lastName: 'Wall' })])} candidateReports={[]} />,
     );
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Assign' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Assign kinfolk to legacy_79' });
+    const dialog = screen.getByRole('dialog', { name: 'Assign kinfolk to this KinTale' });
     await user.click(within(dialog).getByRole('button', { name: 'Loretta Wall' }));
     await user.click(within(dialog).getByRole('button', { name: 'Assign' }));
 
     expect(assignKinfolkToOrphanReport).toHaveBeenCalledWith('legacy_79', 'kf1', 'Loretta Wall');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     // The row is gone (triaged) and the whole section quietly disappears (empty again).
-    expect(screen.queryByText('legacy_79')).toBeNull();
-    expect(await screen.findByText(/Assigned legacy_79 to Loretta Wall/)).toBeInTheDocument();
+    expect(screen.queryByText('Fed and walked, all calm today.')).toBeNull();
+    expect(await screen.findByText('Assigned the KinTale to Loretta Wall.')).toBeInTheDocument();
+    expect(screen.queryByText(/legacy_79/)).toBeNull();
   });
 
   it('excludes an archived kinfolk from the search results', async () => {
@@ -145,7 +148,7 @@ describe('NeedsTriageSection: Assign', () => {
         candidateReports={[]}
       />,
     );
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Assign' }));
     expect(screen.queryByRole('button', { name: 'Old Record' })).toBeNull();
     expect(screen.getByText('No matching kinfolk.')).toBeInTheDocument();
@@ -156,7 +159,7 @@ describe('NeedsTriageSection: Assign', () => {
     render(
       <NeedsTriageSection kinfolk={{ status: 'error', message: 'deadline-exceeded' }} candidateReports={[]} />,
     );
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Assign' }));
     expect(screen.getByText(/Kinfolk directory unavailable/)).toBeInTheDocument();
     expect(screen.getByText('deadline-exceeded')).toBeInTheDocument();
@@ -165,7 +168,7 @@ describe('NeedsTriageSection: Assign', () => {
   it('keeps the Assign button disabled until a kinfolk is picked', async () => {
     listOrphanReports.mockResolvedValue([orphan()]);
     render(<NeedsTriageSection kinfolk={readyKinfolk([kf()])} candidateReports={[]} />);
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Assign' }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByRole('button', { name: 'Assign' })).toBeDisabled();
@@ -177,7 +180,7 @@ describe('NeedsTriageSection: Assign', () => {
       new Error('kinfolk/kf1 not found or has no displayable name'),
     );
     render(<NeedsTriageSection kinfolk={readyKinfolk([kf()])} candidateReports={[]} />);
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Assign' }));
     const dialog = screen.getByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Loretta Wall' }));
@@ -187,13 +190,13 @@ describe('NeedsTriageSection: Assign', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     // Nothing was removed: the orphan is still there once the dialog is closed.
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByText('legacy_79')).toBeInTheDocument();
+    expect(screen.getByText('Fed and walked, all calm today.')).toBeInTheDocument();
   });
 
   it('cancels without calling the write', async () => {
     listOrphanReports.mockResolvedValue([orphan()]);
     render(<NeedsTriageSection kinfolk={readyKinfolk([kf()])} candidateReports={[]} />);
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Assign' }));
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -211,22 +214,24 @@ describe('NeedsTriageSection: Mark duplicate', () => {
         candidateReports={[tale({ _id: 'tale1', kinfolkName: 'The Whitfields' })]}
       />,
     );
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Mark duplicate' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Mark legacy_79 as duplicate' });
-    await user.click(within(dialog).getByText(/tale1 - The Whitfields/));
+    const dialog = screen.getByRole('dialog', { name: 'Mark this KinTale as a duplicate' });
+    await user.click(within(dialog).getByText('The Whitfields · Date TBD'));
+    expect(within(dialog).queryByText(/tale1/)).toBeNull();
     await user.click(within(dialog).getByRole('button', { name: 'Mark duplicate' }));
 
     expect(markOrphanReportAsDuplicate).toHaveBeenCalledWith('legacy_79', 'tale1');
-    expect(await screen.findByText(/Marked legacy_79 as a duplicate of tale1/)).toBeInTheDocument();
-    expect(screen.queryByText('legacy_79')).toBeNull();
+    expect(await screen.findByText('Marked as a duplicate of The Whitfields · Date TBD.')).toBeInTheDocument();
+    expect(screen.queryByText(/legacy_79|tale1/)).toBeNull();
+    expect(screen.queryByText('Fed and walked, all calm today.')).toBeNull();
   });
 
   it('says so when there are no candidates to search, rather than an empty list', async () => {
     listOrphanReports.mockResolvedValue([orphan()]);
     render(<NeedsTriageSection kinfolk={readyKinfolk([])} candidateReports={[]} />);
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Mark duplicate' }));
     expect(screen.getByText('No matching reports.')).toBeInTheDocument();
   });
@@ -241,7 +246,7 @@ describe('NeedsTriageSection: Mark duplicate', () => {
         candidateReports={[tale({ _id: 'legacy_80', kinfolkName: 'Should not appear' })]}
       />,
     );
-    await screen.findByText('legacy_79');
+    await screen.findAllByText('Fed and walked, all calm today.');
     const rows = screen.getAllByRole('button', { name: 'Mark duplicate' });
     await user.click(rows[0]!);
     expect(screen.queryByText(/Should not appear/)).toBeNull();
@@ -254,10 +259,10 @@ describe('NeedsTriageSection: Mark duplicate', () => {
     render(
       <NeedsTriageSection kinfolk={readyKinfolk([])} candidateReports={[tale({ _id: 'tale1' })]} />,
     );
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Mark duplicate' }));
     const dialog = screen.getByRole('dialog');
-    await user.click(within(dialog).getByText(/tale1/));
+    await user.click(within(dialog).getByText(/The Whitfields/));
     await user.click(within(dialog).getByRole('button', { name: 'Mark duplicate' }));
     expect(await screen.findByText(/Canonical report not found/)).toBeInTheDocument();
   });
@@ -268,10 +273,10 @@ describe('NeedsTriageSection: Archive', () => {
     listOrphanReports.mockResolvedValue([orphan()]);
     archiveOrphanReportAsBadData.mockResolvedValue({ ok: true, action: 'ARCHIVE', reportId: 'legacy_79' });
     render(<NeedsTriageSection kinfolk={readyKinfolk([])} candidateReports={[]} />);
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Archive' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Archive legacy_79 as bad data' });
+    const dialog = screen.getByRole('dialog', { name: 'Archive this KinTale as bad data' });
     await user.type(within(dialog).getByLabelText(/Archive reason/), 'test data from the May migration');
     await user.click(within(dialog).getByRole('button', { name: 'Archive' }));
 
@@ -279,14 +284,14 @@ describe('NeedsTriageSection: Archive', () => {
       'legacy_79',
       'test data from the May migration',
     );
-    expect(await screen.findByText(/Archived legacy_79/)).toBeInTheDocument();
-    expect(screen.queryByText('legacy_79')).toBeNull();
+    expect(await screen.findByText('Archived the KinTale.')).toBeInTheDocument();
+    expect(screen.queryByText('Fed and walked, all calm today.')).toBeNull();
   });
 
   it('blocks a reason shorter than 5 characters, and says so', async () => {
     listOrphanReports.mockResolvedValue([orphan()]);
     render(<NeedsTriageSection kinfolk={readyKinfolk([])} candidateReports={[]} />);
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     const dialog = screen.getByRole('dialog');
     await user.type(within(dialog).getByLabelText(/Archive reason/), 'bad');
@@ -299,13 +304,13 @@ describe('NeedsTriageSection: Archive', () => {
     listOrphanReports.mockResolvedValue([orphan()]);
     archiveOrphanReportAsBadData.mockRejectedValueOnce(new Error('permission-denied'));
     render(<NeedsTriageSection kinfolk={readyKinfolk([])} candidateReports={[]} />);
-    await screen.findByText('legacy_79');
+    await screen.findByText('Fed and walked, all calm today.');
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     const dialog = screen.getByRole('dialog');
     await user.type(within(dialog).getByLabelText(/Archive reason/), 'known test data row');
     await user.click(within(dialog).getByRole('button', { name: 'Archive' }));
     expect(await screen.findByText(/permission-denied/)).toBeInTheDocument();
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByText('legacy_79')).toBeInTheDocument();
+    expect(screen.getByText('Fed and walked, all calm today.')).toBeInTheDocument();
   });
 });
