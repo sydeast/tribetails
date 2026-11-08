@@ -218,7 +218,7 @@ kotlin {
             //   SerializationException: Serializer for class 'Any' is not found
             // when callers pass Map<String, Any?> payloads. The native call()
             // accepts HashMap and returns HashMap, no serializer layer.
-            implementation("com.google.firebase:firebase-functions:22.1.1")
+            implementation("com.google.firebase:firebase-functions:23.0.0")
             // #1282: native Firestore for document reads, for the same reason
             // (gitlive 2.x decodes a document through a serializer, and there is
             // none for Map<String, Any?>). Already on the classpath through
