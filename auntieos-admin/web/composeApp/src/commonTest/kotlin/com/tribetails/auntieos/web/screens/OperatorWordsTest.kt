@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /** #1592: the operator reads words, never a stored key. The web and Android rules exactly. */
 class OperatorWordsTest {
@@ -42,5 +43,18 @@ class OperatorWordsTest {
         assertEquals("Off-Book Visit", bookingServiceName("Off-Book Visit", rates))
         assertEquals("Visit", bookingServiceName(" ", rates))
         assertEquals("visit_60", bookingServiceName("visit_60", null))
+    }
+
+    @Test
+    fun `#1592 template preview hint and activity time warning name no machinery`() {
+        val marks = listOf("Firestore", "Timestamp", "audit writer", "SendGrid", "dumb pipe", "ISO-8601")
+        val note = unreadableTimesNote(2, 40)
+        for (text in listOf(TEMPLATE_PREVIEW_HINT, note)) {
+            for (m in marks) assertFalse(text.contains(m), "\"$text\" carries \"$m\"")
+        }
+        assertEquals(
+            "2 of 40 entries have a time this screen cannot read, so their day and order below are a best guess.",
+            note,
+        )
     }
 }

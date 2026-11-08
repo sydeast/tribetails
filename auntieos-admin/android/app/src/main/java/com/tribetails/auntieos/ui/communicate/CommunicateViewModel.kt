@@ -724,9 +724,9 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                             isSaving       = false,
                             savedDraftId   = draftId,
                             successMessage = if (auditFailure == null) {
-                                "Draft #$draftId approved and logged to the audit trail."
+                                "Draft approved and logged to the audit trail."
                             } else {
-                                "Draft #$draftId approved.$auditNote"
+                                "Draft approved.$auditNote"
                             },
                         )
                         return@onSuccess
@@ -747,7 +747,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                         _uiState.value = _uiState.value.copy(
                             isSaving       = false,
                             savedDraftId   = draftId,
-                            successMessage = "Draft #$draftId approved and sent by " +
+                            successMessage = "Draft approved and sent by " +
                                 (if (channel == ExternalChannel.Email) "email" else "text") +
                                 " to ${result.recipientRedacted}.$auditNote",
                         )
