@@ -7,6 +7,7 @@ import type { TemplateSummary } from '../api/templates';
 import {
   templateFieldErrors,
   templateRowTitle,
+  templateSavedNotice,
   templateSubjectPreview,
   previewTags,
   isUntagged,
@@ -66,6 +67,12 @@ function fields(over: Partial<TemplateFormFields> = {}): TemplateFormFields {
   };
 }
 
+describe('templateSavedNotice (#1747)', () => {
+  it('names the template by its title, and an untitled one as untitled, never by its id', () => {
+    expect(templateSavedNotice('Booking Confirmed')).toBe('Saved Booking Confirmed.');
+    expect(templateSavedNotice('   ')).toBe('Saved the untitled template.');
+  });
+});
 describe('templateRowTitle', () => {
   it('uses the title when present', () => {
     expect(templateRowTitle(tpl({ title: 'Booking Confirmed' }))).toBe('Booking Confirmed');

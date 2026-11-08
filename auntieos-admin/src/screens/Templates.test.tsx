@@ -536,9 +536,9 @@ describe('Templates screen', () => {
     await waitFor(() => expectBankShowing());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
-    // No Display name was typed, so the toast falls back to the template key,
-    // the same fallback `templateRowTitle` uses for the row itself.
-    expect(await screen.findByText('Saved booking.confirmed.')).toBeInTheDocument();
+    // No Display name was typed. #1747: the toast says so in words; it used to
+    // fall back to the template key.
+    expect(await screen.findByText('Saved the untitled template.')).toBeInTheDocument();
   });
 
   it('deleting a template through the editor closes it and reloads the list', async () => {

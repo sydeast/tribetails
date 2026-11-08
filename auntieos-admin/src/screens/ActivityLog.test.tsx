@@ -133,6 +133,22 @@ describe('ActivityLog', () => {
     expect(screen.queryByRole('img', { name: 'Verifying…' })).not.toBeInTheDocument();
   });
 });
+
+describe('ActivityLog stored draft paths (#1747)', () => {
+  it('shows a stored generated_drafts path as words on the row, without rewriting the entry', () => {
+    const stored = entry({
+      _id: 'e9',
+      actionType: 'DRAFT_APPROVED',
+      description: 'Approved generated_drafts/aB3dE9 (kf-robyn)',
+    });
+    useCollection.mockReturnValue({ status: 'ready', data: [stored] });
+    render(<ActivityLog />);
+    expect(screen.getByText(/Approved an Auntie AI draft/)).toBeInTheDocument();
+    expect(screen.queryByText(/Approved generated_drafts/)).toBeNull();
+    expect(stored.description).toBe('Approved generated_drafts/aB3dE9 (kf-robyn)');
+  });
+});
+
 /**
  * R5 on the Activity Log, verbatim: "the Activity Log is seriously lacking, cant
  * see shit or what the fuck actually happened."

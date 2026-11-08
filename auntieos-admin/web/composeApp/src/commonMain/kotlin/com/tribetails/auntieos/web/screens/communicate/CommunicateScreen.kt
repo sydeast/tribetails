@@ -446,9 +446,12 @@ fun CommunicateScreen(
                             client = firestore,
                             actorId = actorUid,
                             actionType = "DRAFT_APPROVED",
-                            description = "Approved generated_drafts/$draftId (${r.kinfolk_id ?: "no-kinfolk"})",
+                            // #1747: words for the Activity Log. The draft is the
+                            // entry's target and the household its familyId.
+                            description = com.tribetails.auntieos.web.data.ActivityWords.DRAFT_APPROVED,
                             targetId = draftId,
                             targetCollection = "generated_drafts",
+                            familyId = r.kinfolk_id.orEmpty(),
                         )
                     },
                     channel = channel,

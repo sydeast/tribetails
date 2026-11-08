@@ -21,6 +21,8 @@ object AuditLog {
         targetId: String = "",
         targetCollection: String = "",
         status: String = "SUCCESS",
+        /** The household the entry is about, when there is one (#1747). */
+        familyId: String = "",
     ) {
         val entry = ActivityLogEntry(
             actionType       = actionType,
@@ -29,6 +31,7 @@ object AuditLog {
             actorId          = actorId,
             targetId         = targetId,
             targetCollection = targetCollection,
+            familyId         = familyId,
         )
         scope.launch { client.logActivity(entry) }
     }

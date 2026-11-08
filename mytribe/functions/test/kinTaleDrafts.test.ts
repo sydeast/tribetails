@@ -118,6 +118,15 @@ describe('publishGeneratedDraft', () => {
     expect(audit.find((a) => a['event'] === 'KINTALE_DRAFT_PUBLISHED')).toBeDefined();
   });
 
+  it('#1747: the published entry says what happened in words, the ids stay in the payload', async () => {
+    db({ 'generated_drafts/d1': { ...MIGRATED_DRAFT }, 'kinfolk/kf-robyn': { firstName: 'Robyn', lastName: 'Hale' } });
+    const res = await publishGeneratedDraftHandler(admin({ draftId: 'd1', bodyCopy: 'Biscuit had a great walk.' }));
+    const audit = auditMock.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    const entry = audit.find((a) => a['event'] === 'KINTALE_DRAFT_PUBLISHED');
+    expect(entry?.['description']).toBe('Sent a KinTale draft');
+    expect(entry?.['payload']).toMatchObject({ draftId: 'd1', reportId: res.reportId });
+  });
+
   it('reads the snake_case spelling generate.js writes, title included', async () => {
     const { ctx } = db({
       'generated_drafts/d2': { ...GENERATE_JS_DRAFT },
@@ -243,6 +252,9 @@ describe('deleteGeneratedDraft', () => {
     expect(audit.find((a) => a['event'] === 'KINTALE_DRAFT_DELETED')).toMatchObject({
       severity: 'warn',
       targetCollection: 'generated_drafts',
+      // #1747: words, never the `generated_drafts/<id>` path.
+      description: 'Deleted a KinTale draft',
+      payload: { draftId: 'd1' },
     });
   });
 

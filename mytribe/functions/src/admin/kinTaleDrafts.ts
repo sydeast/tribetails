@@ -180,7 +180,10 @@ export async function publishGeneratedDraftHandler(
       actorUid,
       targetUid: outcome.reportId,
       targetCollection: 'kin_care_reports',
-      description: `Sent draft generated_drafts/${args.draftId} as KinTale ${outcome.reportId} (${outcome.kinfolkId})`,
+      // #1747: the Activity Log shows this text as written, so it is words. The
+      // draft, the KinTale and the household stay on the entry as its target
+      // and payload, which is where the evidence log keeps ids.
+      description: 'Sent a KinTale draft',
       payload: { draftId: args.draftId, reportId: outcome.reportId, kinfolkId: outcome.kinfolkId },
     });
   }
@@ -231,7 +234,7 @@ export async function deleteGeneratedDraftHandler(
     actorUid,
     targetUid: draftId,
     targetCollection: 'generated_drafts',
-    description: `Deleted draft generated_drafts/${draftId} (${kinfolkId || 'no household'})`,
+    description: 'Deleted a KinTale draft',
     payload: { draftId, kinfolkId: kinfolkId || null },
   });
   logEvent({

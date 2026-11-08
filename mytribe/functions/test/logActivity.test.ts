@@ -53,6 +53,22 @@ describe('logActivityHandler', () => {
     expect(args.status).toBe('SUCCESS');
   });
 
+  it('#1747: seals the household onto the entry, so its id never rides in the description', async () => {
+    await logActivityHandler(
+      req({
+        actionType: 'DRAFT_APPROVED',
+        description: 'Approved an Auntie AI draft',
+        targetId: 'd1',
+        targetCollection: 'generated_drafts',
+        familyId: 'kf-42',
+      }),
+    );
+    expect(writeAuditEntryMock.mock.calls[0][0].familyId).toBe('kf-42');
+  });
+  it('#1747: sends no household when the caller names none', async () => {
+    await logActivityHandler(req({ actionType: 'DRAFT_APPROVED', familyId: '' }));
+    expect(writeAuditEntryMock.mock.calls[0][0].familyId).toBeUndefined();
+  });
   it('rejects non-SCREAMING_SNAKE actionType', async () => {
     await expect(
       logActivityHandler(req({ actionType: 'kinfolk.updated' })),
