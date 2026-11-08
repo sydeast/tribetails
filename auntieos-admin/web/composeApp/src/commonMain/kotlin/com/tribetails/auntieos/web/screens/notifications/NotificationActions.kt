@@ -103,6 +103,14 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
 }
 
 /**
+ * How many rows wait on a decision from the operator: the ones offered
+ * Approve/Deny by [applicableActions], so the stat and the buttons can never
+ * disagree. Replaces the "Dispatched" tile (#1592), as web's
+ * `Notifications.tsx` "Needs a decision" did under R5. Pure; unit-tested.
+ */
+fun needsDecisionCount(entries: List<NotificationEntry>): Int =
+    entries.count { NotificationAction.ApproveBooking in applicableActions(it) }
+/**
  * The one catalog key that means "a booking request is waiting on a decision"
  * (mytribe/functions/src/notifications/catalog.ts: "Kinfolk requested a KinCare
  * visit"), fired once at the moment of the ask by onBookingEnvelopeCreate.ts.

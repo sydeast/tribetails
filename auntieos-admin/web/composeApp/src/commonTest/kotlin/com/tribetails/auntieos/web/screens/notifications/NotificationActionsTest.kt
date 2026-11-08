@@ -48,6 +48,21 @@ class NotificationActionsTest {
         assertTrue(NotificationAction.Archive in applicableActions(NotificationEntry()))
     }
 
+    /**
+     * #1592: the stat strip counts rows waiting on a decision, the same rows
+     * [applicableActions] offers Approve/Deny on, instead of "Dispatched".
+     */
+    @Test
+    fun needsDecisionCountsOnlyTheRowsOfferedApproveAndDeny() {
+        val household = kotlinx.serialization.json.buildJsonObject {
+            put("kinfolkId", kotlinx.serialization.json.JsonPrimitive("kf1"))
+        }
+        val waiting = NotificationEntry(_id = "w", key = "kincare.requested", targetType = "booking", targetId = "bk1", data = household)
+        val confirmation = NotificationEntry(_id = "c", key = "kincare.booking.confirm", targetType = "booking", targetId = "bk2", data = household)
+        val dispatched = NotificationEntry(_id = "d", key = "invoice.new", status = "dispatched")
+        assertEquals(1, needsDecisionCount(listOf(waiting, confirmation, dispatched)))
+        assertEquals(0, needsDecisionCount(emptyList()))
+    }
     @Test
     fun bookingTargetOffersApproveDenyAndOpen() {
         val actions = applicableActions(
