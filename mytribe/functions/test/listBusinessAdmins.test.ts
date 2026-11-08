@@ -148,7 +148,9 @@ describe('listBusinessAdmins', () => {
 
     expect(res.members).toEqual([]);
     expect(res.source).toBe('none');
-    expect(res.reason).toContain('provisionBusinessAdmins');
+    expect(res.reason).toMatch(/nobody is on the business admin roster/i);
+    // #1592: the gate shows this sentence as written, so no path, no function.
+    expect(res.reason).not.toMatch(/businessSettings|provisionBusinessAdmins|\//);
     expect(ctx.writes.filter((w) => w.path === DOC)).toEqual([]);
   });
 

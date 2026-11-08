@@ -1,18 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), getUsers: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: mocks.dbFn,
   auth: vi.fn(),
-  getAdmin: vi.fn(),
+  getAdmin: () => ({ auth: () => ({ getUsers: mocks.getUsers }) }),
 }));
+vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/operatorAllowlist', () => ({
   isAuntieOperator: () => true,
   requireAuntieOperator: vi.fn(),
 }));
 
-beforeEach(() => mocks.dbFn.mockReset());
+beforeEach(() => {
+  mocks.dbFn.mockReset();
+  mocks.getUsers.mockReset().mockResolvedValue({ users: [], notFound: [] });
+});
 
 import { listNotificationDeliveriesHandler } from '../src/admin/listNotificationDeliveries';
 
@@ -161,6 +165,53 @@ describe('listNotificationDeliveriesHandler', () => {
     expect(res.receiptAvailable).toBe(false);
   });
 
+  // #1592: the gate's delivery log printed the recipient's uid. The server names
+  // them in the order the email sender looks a recipient up: household first,
+  // then staff (record, then sign-in name). Nobody found is null, not a guess.
+  it('names each recipient: household, then staff, then null', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/kin1': { firstName: 'Dre', lastName: 'East', email: 'x' },
+        'staff/kin2': { displayName: 'Syd Daniels' },
+      },
+      queryDocs: {
+        notificationDispatch: [
+          { id: 'd1', data: { key: 'invoice.new', recipientUid: 'kin1', createdAt: new Date(3) } },
+          { id: 'd2', data: { key: 'invoice.new', recipientUid: 'kin2', createdAt: new Date(2) } },
+          { id: 'd3', data: { key: 'invoice.new', recipientUid: 'ghost', createdAt: new Date(1) } },
+          { id: 'd4', data: { key: 'invoice.new', recipientUid: 'kin1', createdAt: new Date(0) } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listNotificationDeliveriesHandler({ data: {}, ...REQ } as any);
+    expect(res.deliveries.map((d) => d.recipientName)).toEqual([
+      'Dre East',
+      'Syd Daniels',
+      null,
+      'Dre East',
+    ]);
+    // The uid still rides the wire: it is what the dispatch record holds.
+    expect(res.deliveries[2].recipientUid).toBe('ghost');
+  });
+  it('prefers a household display name, and reaches the sign-in name for staff', async () => {
+    mocks.getUsers.mockResolvedValue({
+      users: [{ uid: 'op1', displayName: 'Ops Person', email: '' }],
+      notFound: [],
+    });
+    const ctx = buildDbMock({
+      docs: { 'clients/kin1': { displayName: 'The East Household', firstName: 'Dre' } },
+      queryDocs: {
+        notificationDispatch: [
+          { id: 'd1', data: { key: 'invoice.new', recipientUid: 'kin1', createdAt: new Date(2) } },
+          { id: 'd2', data: { key: 'invoice.new', recipientUid: 'op1', createdAt: new Date(1) } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listNotificationDeliveriesHandler({ data: {}, ...REQ } as any);
+    expect(res.deliveries.map((d) => d.recipientName)).toEqual(['The East Household', 'Ops Person']);
+  });
   it('rejects a limit outside the allowed range', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock().db);
     await expect(

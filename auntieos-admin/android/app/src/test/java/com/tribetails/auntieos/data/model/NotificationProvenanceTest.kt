@@ -30,6 +30,7 @@ class NotificationProvenanceTest {
         mergeFields: List<String> = emptyList(),
         emitters: List<NotificationEmitter> = emptyList(),
         emailTemplateRetargetedFrom: String? = null,
+        mergeFieldLabels: Map<String, String> = emptyMap(),
     ) = NotificationCatalogEntry(
         key = "invoice.new",
         label = "New invoice",
@@ -43,6 +44,7 @@ class NotificationProvenanceTest {
         neverFires = neverFires,
         templates = templates,
         mergeFields = mergeFields,
+        mergeFieldLabels = mergeFieldLabels,
         external = external,
         emailTemplateRetargetedFrom = emailTemplateRetargetedFrom,
     )
@@ -249,10 +251,47 @@ class NotificationProvenanceTest {
                 NotificationEmitter("y", "src/b.ts", listOf("stripeEventId")),
             ),
         )
+        // #1592: in words, not keys. No server labels here, so the keys are split.
         assertEquals(
-            listOf("amount", "invoiceId", "kinfolkName", "stripeEventId"),
+            listOf("Amount", "Invoice reference", "Kinfolk name", "Stripe event reference"),
             notifMergeFieldNames(row),
         )
+    }
+    @Test
+    fun usesTheServerWordsAndFoldsTwoKeysThatMeanOneThing() {
+        val row = entry(
+            mergeFields = listOf("Business", "business", "ip"),
+            emitters = listOf(NotificationEmitter("x", "src/a.ts", listOf("startTimeMsList"))),
+            mergeFieldLabels = mapOf(
+                "Business" to "Business name",
+                "business" to "Business name",
+                "ip" to "Sign-in IP address",
+            ),
+        )
+        assertEquals(listOf("Business name", "Sign-in IP address", "Start time"), notifMergeFieldNames(row))
+    }
+    @Test
+    fun splitsAKeyTheServerSentNoWordsFor() {
+        assertEquals("Start time", notifFieldWords("startTimeMs"))
+        assertEquals("Next visit date", notifFieldWords("nextVisit.date"))
+        assertEquals("Kinfolk reference", notifFieldWords("kinfolkId"))
+        assertEquals("Portal link", notifFieldWords("portalUrl"))
+    }
+    @Test
+    fun decodesTheServerWordsOffTheMatrixRow() {
+        val decoded = notificationCatalogEntryFromMap(
+            mapOf("key" to "invoice.new", "mergeFieldLabels" to mapOf("kinfolkId" to " Household reference ", "x" to 3)),
+        )
+        assertEquals(mapOf("kinfolkId" to "Household reference"), decoded!!.mergeFieldLabels)
+    }
+    @Test
+    fun namesTheRecipientAndKeepsTheUidOnlyWhenNobodyAnswers() {
+        val named = notificationDeliveryRowFromMap(mapOf("recipientUid" to "kin1", "recipientName" to "Dre East"))
+        assertEquals("Dre East", notifDeliveryRecipient(named))
+        val ghost = notificationDeliveryRowFromMap(mapOf("recipientUid" to "ghost"))
+        assertNull(ghost.recipientName)
+        assertEquals("ghost", notifDeliveryRecipient(ghost))
+        assertEquals("an unknown recipient", notifDeliveryRecipient(NotificationDeliveryRow()))
     }
 
     // ── delivery evidence wording ───────────────────────────────────────────
@@ -266,7 +305,18 @@ class NotificationProvenanceTest {
 
     @Test
     fun carriesTheSkipReasonAndTheFailureText() {
-        assertTrue(notifDeliveryPhrase("skipped", "no-email-on-file", null).detail.contains("no-email-on-file"))
+        // #1592: a skip code reads as words.
+        assertTrue(notifDeliveryPhrase("skipped", "no-email-on-file", null).detail.contains("no email on file"))
+        assertEquals(
+            "Not sent on this channel: the recipient has no phone number on file.",
+            notifDeliveryPhrase("skipped", "recipient_no_phone", null).detail,
+        )
+        listOf(
+            "recipient_no_email", "recipient_no_phone", "recipient_hard_bounced",
+            "template_missing", "template_text_empty", "unknown",
+        ).forEach { code ->
+            assertFalse(code, notifDeliveryPhrase("skipped", code, null).detail.contains(code))
+        }
         assertTrue(notifDeliveryPhrase("failed", null, "Twilio 21610").detail.contains("Twilio 21610"))
     }
 

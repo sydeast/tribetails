@@ -163,6 +163,7 @@ import com.tribetails.auntieos.data.model.businessAdminLines
 import com.tribetails.auntieos.data.model.businessEmailLine
 import com.tribetails.auntieos.data.model.businessAdminSourceNote
 import com.tribetails.auntieos.data.model.notifDeliveryPhrase
+import com.tribetails.auntieos.data.model.notifDeliveryRecipient
 import com.tribetails.auntieos.data.model.notifReachesBusinessAdmins
 import com.tribetails.auntieos.data.model.notifMergeFieldNames
 import com.tribetails.auntieos.data.model.notifRecipientLines
@@ -1717,7 +1718,8 @@ private fun NotifDeliveryEvidenceBlock(notificationKey: String) {
                 // than paraphrased, so the two clients cannot soften it differently.
                 Text(ev.sentMeaning, style = AuntieTheme.typography.bodySmall, color = c.textFaint)
                 ev.deliveries.forEach { row ->
-                    val recipient = row.recipientUid.ifBlank { "unknown recipient" }
+                    // #1592: the recipient by name, not the uid.
+                    val recipient = notifDeliveryRecipient(row)
                     Text(
                         "to $recipient",
                         style = AuntieTheme.typography.bodySmall,
@@ -1726,8 +1728,9 @@ private fun NotifDeliveryEvidenceBlock(notificationKey: String) {
                     row.attempts.forEach { attempt ->
                         val phrase = notifDeliveryPhrase(attempt.status, attempt.skipReason, attempt.errorMessage)
                         Text(
-                            "  ${attempt.channel}: ${phrase.label}. ${phrase.detail}" +
-                                (attempt.providerMessageId?.let { " Provider id $it." } ?: "") +
+                            // #1592: no provider message id. Nothing in the app looks a
+                            // message up by it; it stays on the dispatch record.
+                            "  ${notifChannelLabel(attempt.channel)}: ${phrase.label}. ${phrase.detail}" +
                                 (if (attempt.attempts > 1) " Tried ${attempt.attempts} times." else ""),
                             style = AuntieTheme.typography.bodySmall,
                             color = when (phrase.tone) {

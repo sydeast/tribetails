@@ -1,6 +1,7 @@
 import { onCall, CallableRequest } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
+import { resolveStaffIdentities } from '../lib/staffIdentity';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { DISPATCH_COLLECTION } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -64,6 +65,12 @@ export interface DeliveryRow {
   dispatchId: string;
   key: string;
   recipientUid: string;
+  /**
+   * Who `recipientUid` is, by name (#1592): the household's `clients/{uid}`
+   * name, else the staff name `listStaff` shows. Null when neither has one;
+   * the client then shows the uid, never a blank.
+   */
+  recipientName: string | null;
   /** 'pending' | 'dispatched' | 'no-channels' from the work order. */
   status: string;
   /** trigger / debounced / batched / scheduled. */
@@ -125,6 +132,44 @@ function strOrNull(value: unknown): string | null {
   return typeof value === 'string' && value !== '' ? value : null;
 }
 
+function trimmed(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+/**
+ * A name for each recipient uid (#1592: the delivery log printed the uid).
+ *
+ * The same order the email sender looks a recipient up in
+ * (`senders/emailChannel.ts#lookupRecipientEmail`): a household's
+ * `clients/{uid}` first, then staff. A household name is its `displayName`,
+ * else first and last name (`previewInvoiceNotice`'s rule); a staff name is
+ * `resolveStaffIdentities`', the one `listStaff` and the business admin roster
+ * use. A uid nobody answers to maps to nothing.
+ */
+async function recipientNames(uids: readonly string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(uids.filter((u) => u !== ''))];
+  if (unique.length === 0) return out;
+  const firestore = db();
+  const clientSnaps = await firestore.getAll(
+    ...unique.map((uid) => firestore.collection('clients').doc(uid)),
+  );
+  const staffUids: string[] = [];
+  unique.forEach((uid, i) => {
+    const data = (clientSnaps[i]?.exists ? clientSnaps[i]!.data() : undefined) as
+      | Record<string, unknown>
+      | undefined;
+    const name = data
+      ? trimmed(data['displayName'])
+        || [trimmed(data['firstName']), trimmed(data['lastName'])].filter(Boolean).join(' ')
+      : '';
+    if (name !== '') out.set(uid, name);
+    else staffUids.push(uid);
+  });
+  for (const who of await resolveStaffIdentities(staffUids, 'listNotificationDeliveries')) {
+    if (who.displayName) out.set(who.uid, who.displayName);
+  }
+  return out;
+}
 export async function listNotificationDeliveriesHandler(
   req: CallableRequest<unknown>,
 ): Promise<ListDeliveriesResult> {
@@ -160,6 +205,7 @@ export async function listNotificationDeliveriesHandler(
         dispatchId: doc.id,
         key: str(d.key),
         recipientUid: str(d.recipientUid),
+        recipientName: null,
         status: str(d.status) || 'unknown',
         mode: str(d.mode),
         channels: Array.isArray(d.channels) ? d.channels.map((c) => String(c)) : [],
@@ -169,6 +215,8 @@ export async function listNotificationDeliveriesHandler(
     }),
   );
 
+  const names = await recipientNames(deliveries.map((row) => row.recipientUid));
+  for (const row of deliveries) row.recipientName = names.get(row.recipientUid) ?? null;
   return { deliveries, sentMeaning: SENT_MEANING, receiptAvailable: false };
 }
 
