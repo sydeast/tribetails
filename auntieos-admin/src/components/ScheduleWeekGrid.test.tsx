@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { EMPTY_BOOKING_CATALOG } from '../lib/bookingFormat';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ScheduleWeekGrid } from './ScheduleWeekGrid';
 import { HOUR_HEIGHT_PX, SNAP_MINUTES_ON, rescheduleTimesForDrop } from '../lib/scheduleGrid';
@@ -87,6 +88,7 @@ function renderGrid(rows: ScheduleSessionEntry[], busy: BusySlotEntry[] = []) {
       selected="2026-07-16"
       byDay={byDay}
       busyByDate={busyByDate}
+      catalog={EMPTY_BOOKING_CATALOG}
       snapMinutes={SNAP_MINUTES_ON}
       pendingSessionId={null}
       onSelectDay={onSelectDay}
@@ -289,6 +291,7 @@ describe('ScheduleWeekGrid', () => {
         selected="2026-07-16"
         byDay={byDay}
         busyByDate={new Map()}
+        catalog={EMPTY_BOOKING_CATALOG}
         snapMinutes={SNAP_MINUTES_ON}
         pendingSessionId="sess-1"
         onSelectDay={onSelectDay}

@@ -39,6 +39,7 @@ import {
   EmptyHint,
   ErrorHint,
   ServicePill,
+  bookingServiceTone,
   StatCard,
   StatusPill,
   serviceTone,
@@ -786,6 +787,12 @@ describe('ServicePill', () => {
     expect(screen.queryByText('dog_walk_60')).toBeNull();
   });
 
+  it('#1592: the tone follows the resolved name, not the stored key', () => {
+    // `visit_60` alone tones purple (it contains "sit"); the KinCare it names is a walk.
+    render(<ServicePill serviceType="visit_60" label="Dog walk" />);
+    expect(screen.getByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
+  });
+
   it('tones itself from the service type', () => {
     render(<ServicePill serviceType="Dog Walk" />);
     expect(screen.getByText('Dog Walk')).toHaveAttribute('data-tone', 'teal');
@@ -794,6 +801,20 @@ describe('ServicePill', () => {
   it('takes an explicit tone override', () => {
     render(<ServicePill serviceType="Dog Walk" tone="error" />);
     expect(screen.getByText('Dog Walk')).toHaveAttribute('data-tone', 'error');
+  });
+});
+
+describe('bookingServiceTone', () => {
+  const catalog = { serviceRates: { 'Dog walk': '45' }, serviceDurations: { 'Dog walk': '60' }, timeBlocks: [] };
+
+  it('#1592: tones a stored key by the KinCare it resolves to', () => {
+    expect(serviceTone('visit_60')).toBe('purple');
+    expect(bookingServiceTone('visit_60', catalog)).toBe('teal');
+  });
+
+  it('an unresolved type keeps its own tone', () => {
+    expect(bookingServiceTone('Overnight sit', catalog)).toBe('purple');
+    expect(bookingServiceTone(undefined, catalog)).toBe(serviceTone('Visit'));
   });
 });
 

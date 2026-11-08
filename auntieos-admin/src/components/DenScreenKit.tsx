@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, type LinkProps } from '@tanstack/react-router';
 import { type ResolvedScalar } from '../lib/async';
+import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
 import './DenScreenKit.css';
 
 /**
@@ -29,6 +30,22 @@ export function serviceTone(serviceType: string): DenTone {
   if (s.includes('sit') || s.includes('house') || s.includes('overnight')) return 'purple';
   if (s.includes('meet') || s.includes('greet')) return 'success';
   return 'orange';
+}
+
+/**
+ * THE tone of a stored booking `serviceType`, for every mark that colours a
+ * visit: the Schedule legend swatch, the agenda and row pills, the week and
+ * month blocks (#1592).
+ *
+ * The key is the NAME `bookingServiceName` resolves, never the stored text. The
+ * legend names each service against the catalog and dedupes on that name, so it
+ * can only colour by the name; a block that coloured by the stored `visit_60`
+ * while its legend row coloured by the KinCare it resolves to ("Dog walk") drew
+ * two colours for one service, and renaming a KinCare moved the swatch without
+ * the blocks. Everything colours through here, so both always move together.
+ */
+export function bookingServiceTone(rawServiceType: string | undefined, catalog: BookingCatalog): DenTone {
+  return serviceTone(bookingServiceName(rawServiceType, catalog));
 }
 
 // ── breadcrumbs ─────────────────────────────────────────────────────────────
@@ -702,12 +719,12 @@ function Chevron({ expanded }: { expanded: boolean }) {
 // ── service pill ────────────────────────────────────────────────────────────
 
 interface ServicePillProps {
+  /** The stored `serviceType`, shown as written when no `label` is given. */
   serviceType: string;
   /**
-   * What the pill says, when the caller resolved a name for the stored
+   * What the pill says: the name the caller resolved for the stored
    * `serviceType` (#1592: `bookingServiceName`, so `visit_60` reads as the
-   * operator's own KinCare name). The tone still follows `serviceType`, so a
-   * pill and the block it labels keep one colour.
+   * operator's own KinCare name).
    */
   label?: string;
   tone?: DenTone;
@@ -717,11 +734,18 @@ interface ServicePillProps {
  * A small mono pill tinted to a service tone. The text is shown as written:
  * a KinCare name is the operator's own, and lowercasing it made "30Minute"
  * read as the key "30minute" (#1592).
+ *
+ * THE TONE FOLLOWS WHAT THE PILL SAYS. With a `label`, that is the resolved
+ * name, the same key `bookingServiceTone` gives the Schedule legend and the
+ * week and month blocks, so a pill, its legend swatch and its block are one
+ * colour and a KinCare rename recolours all of them together. Without one, the
+ * stored text is both what it says and what it is coloured by.
  */
 export function ServicePill({ serviceType, label, tone }: ServicePillProps) {
-  const shown = (label ?? serviceType).trim() === '' ? 'Visit' : (label ?? serviceType);
+  const named = label ?? serviceType;
+  const shown = named.trim() === '' ? 'Visit' : named;
   return (
-    <span className="den-pill" data-tone={tone ?? serviceTone(serviceType)}>
+    <span className="den-pill" data-tone={tone ?? serviceTone(named)}>
       {shown}
     </span>
   );

@@ -57,6 +57,7 @@ import {
   StatusPill,
   EmptyHint,
   serviceTone,
+  bookingServiceTone,
   type DenTone,
 } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -614,6 +615,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   selected={selected}
                   byDay={byDay}
                   busyByDate={busyByDate}
+                  catalog={serviceCatalog}
                   snapMinutes={snapMinutes}
                   pendingSessionId={pendingSessionId}
                   scrollToBusyRequestId={busyScrollRequestId}
@@ -632,6 +634,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   selected={selected}
                   byDay={byDay}
                   busyByDate={busyByDate}
+                  catalog={serviceCatalog}
                   onSelectDay={setSelected}
                   onOpenSession={onSelect ?? setOpenSessionId}
                 />
@@ -769,9 +772,11 @@ function dragHint(snapMinutes: number): string {
  * A SWATCH, NOT A PILL. The 2026-09-10 pass drew each type as a `ServicePill`
  * here, and the pill is the right object on a row (it says what THAT visit
  * is); the legend is a key to the colours on the grid, and the mock keys them
- * with a square of the colour. `data-tone` carries the same `serviceTone`
- * mapping the month blocks and week blocks read, so the swatch and the block
- * it stands for resolve to one token.
+ * with a square of the colour. Each entry is already the NAME the catalog
+ * resolves, and `data-tone` is that name's `serviceTone`: the same key
+ * `bookingServiceTone` gives the month and week blocks and `ServicePill` gives
+ * the agenda pill (#1592), so the swatch and the block it stands for resolve
+ * to one token even when the stored type is a key like `visit_60`.
  */
 function ScheduleLegend({ serviceTypes, dragHint }: { serviceTypes: string[]; dragHint: string | null }) {
   return (
@@ -877,6 +882,8 @@ interface MonthGridProps {
   byDay: Map<string, ScheduleSessionEntry[]>;
   /** Google Calendar + manually blocked windows, by local date (#697). */
   busyByDate: Map<string, BusySlotEntry[]>;
+  /** #1592: a block is tinted by the name its legend swatch carries. */
+  catalog: BookingCatalog;
   onSelectDay: (day: string) => void;
   onOpenSession: (sessionId: string) => void;
 }
@@ -891,9 +898,9 @@ interface MonthGridProps {
  * calendar", against a mock whose cells draw the visits themselves.
  *
  * SO EACH CELL NOW LISTS ITS DAY: a short block per visit, tinted by service
- * type through the SAME `serviceTone` the legend's pills and every service pill
- * in the app use, carrying the household and the local start time; a hatched,
- * read-only block per busy window; and "+N more" when the day's VISITS run past
+ * type through the SAME resolved-name tone the legend swatch and the agenda
+ * pill use (`bookingServiceTone`, #1592), carrying the household and the local
+ * start time; a hatched, read-only block per busy window; and "+N more" when the day's VISITS run past
  * {@link MONTH_CELL_BLOCK_CAP}. Busy windows are outside that cap and always
  * drawn, for the reason the cap's own doc gives.
  *
@@ -917,6 +924,7 @@ function MonthGrid({
   selected,
   byDay,
   busyByDate,
+  catalog,
   onSelectDay,
   onOpenSession,
 }: MonthGridProps) {
@@ -949,6 +957,7 @@ function MonthGrid({
                     <li key={item.key}>
                       <MonthVisitBlock
                         entry={item.entry}
+                        catalog={catalog}
                         startMinute={item.minute}
                         onOpen={() => onOpenSession(item.entry._id)}
                       />
@@ -986,22 +995,24 @@ function blockTimeLabel(startMinute: number | null): string {
 
 function MonthVisitBlock({
   entry,
+  catalog,
   startMinute,
   onOpen,
 }: {
   entry: ScheduleSessionEntry;
+  catalog: BookingCatalog;
   startMinute: number | null;
   onOpen: () => void;
 }) {
   // str() on every field read: `serviceType` is absent on 76 of the 99 live
-  // sessions, and `serviceTone` reads it as a string.
+  // sessions. The tone is the resolved name's, the legend swatch's (#1592).
   const household = sessionHousehold(str(entry.kinfolkName));
   const when = blockTimeLabel(startMinute);
   return (
     <button
       type="button"
       className="schedule__month-block schedule__month-block--visit"
-      data-tone={serviceTone(str(entry.serviceType))}
+      data-tone={bookingServiceTone(str(entry.serviceType), catalog)}
       data-session-id={entry._id}
       onClick={onOpen}
       aria-label={`${household} at ${when}. Open this visit.`}
