@@ -35,7 +35,7 @@ class ApproveSendTest {
         )
         assertEquals(listOf("write", "audit", "send"), steps)
         assertEquals(ApproveOutcome.Sent(ExternalChannel.Email, "c***@hanasamku.com"), outcome)
-        assertEquals("Draft #d1 approved and sent by email to c***@hanasamku.com.", approveOutcomeText("d1", outcome))
+        assertEquals("Draft approved and sent by email to c***@hanasamku.com.", approveOutcomeText(outcome))
     }
 
     @Test fun `a refused write sends nothing and logs nothing`() = runTest {
@@ -51,6 +51,18 @@ class ApproveSendTest {
         assertFalse(audited)
         assertTrue(outcome is ApproveOutcome.WriteRefused)
     }
+    @Test fun `#1592 the toasts name no draft id and no database`() {
+        val texts = listOf(
+            approveOutcomeText(ApproveOutcome.WriteRefused("Missing or insufficient permissions.")),
+            approveOutcomeText(ApproveOutcome.Approved),
+            approveOutcomeText(ApproveOutcome.Sent(ExternalChannel.Sms, "***0100")),
+        )
+        assertEquals("Could not approve: Missing or insufficient permissions.", texts[0])
+        for (t in texts) {
+            assertFalse(t.contains("#"), t)
+            assertFalse(t.contains("Firestore"), t)
+        }
+    }
 
     @Test fun `a refused send says the household did not get it`() = runTest {
         val outcome = runApprove(
@@ -59,7 +71,7 @@ class ApproveSendTest {
             channel = ExternalChannel.Sms,
             send = { WriteResult.Err("recipient_opted_out") },
         )
-        val text = approveOutcomeText("d1", outcome)
+        val text = approveOutcomeText(outcome)
         assertTrue(text.startsWith("The draft is approved, but the send failed"), text)
         assertFalse(text.contains("queued"))
     }
@@ -67,7 +79,7 @@ class ApproveSendTest {
     @Test fun `a KinTale approve sends nothing and does not claim a delivery`() = runTest {
         val outcome = runApprove(write = { WriteResult.Ok(Unit) }, audit = {}, channel = null, send = null)
         assertEquals(ApproveOutcome.Approved, outcome)
-        val text = approveOutcomeText("d1", outcome)
+        val text = approveOutcomeText(outcome)
         assertFalse(text.contains("queued"))
         assertFalse(text.contains("sent by"))
     }

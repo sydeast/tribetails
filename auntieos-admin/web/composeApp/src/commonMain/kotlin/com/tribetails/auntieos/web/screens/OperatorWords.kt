@@ -109,3 +109,17 @@ fun bookingServiceName(
     }
     return label
 }
+/**
+ * The Template Bank preview's hint. #1592: it read "Stored in Firestore,
+ * rendered with Handlebars. SendGrid delivers as a dumb pipe.", which names the
+ * database, the template engine and the mail vendor instead of telling the
+ * operator anything about the template.
+ */
+const val TEMPLATE_PREVIEW_HINT = "Merge fields fill in for each recipient when it sends."
+/**
+ * The Activity Log's warning when some entries' times will not read. #1592: it
+ * blamed "a Firestore Timestamp object" and the "audit writer", which is a
+ * developer's diagnosis, not something the operator can act on.
+ */
+fun unreadableTimesNote(unreadable: Int, total: Int): String =
+    "$unreadable of $total entries have a time this screen cannot read, so their day and order below are a best guess."

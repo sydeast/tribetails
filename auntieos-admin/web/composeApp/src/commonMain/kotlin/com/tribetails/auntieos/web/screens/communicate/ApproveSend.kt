@@ -81,10 +81,12 @@ internal suspend fun runApprove(
 }
 
 /** The toast line for an [ApproveOutcome]. Never claims a delivery that did not happen. Pure. */
-internal fun approveOutcomeText(draftId: String, outcome: ApproveOutcome): String = when (outcome) {
-    is ApproveOutcome.WriteRefused -> "Approve failed: Firestore rejected it (${outcome.message})."
-    ApproveOutcome.Approved -> "Draft #$draftId approved and logged. This type sends nothing from here."
+internal fun approveOutcomeText(outcome: ApproveOutcome): String = when (outcome) {
+    // #1592: no draft id and no database name; the operator knows which draft
+    // they just approved, and "Firestore rejected it" named the store.
+    is ApproveOutcome.WriteRefused -> "Could not approve: ${outcome.message}"
+    ApproveOutcome.Approved -> "Draft approved and logged. This type sends nothing from here."
     is ApproveOutcome.Sent ->
-        "Draft #$draftId approved and sent by ${if (outcome.channel == ExternalChannel.Email) "email" else "text"} to ${outcome.recipientRedacted}."
+        "Draft approved and sent by ${if (outcome.channel == ExternalChannel.Email) "email" else "text"} to ${outcome.recipientRedacted}."
     is ApproveOutcome.SendFailed -> "The draft is approved, but the send failed: ${outcome.message}"
 }
