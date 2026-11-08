@@ -351,10 +351,26 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
   it('lists the merge fields, emitter data keys included, as the leak surface', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
     await open();
-    expect(await screen.findByText('amount')).toBeInTheDocument();
+    // #1592: in words. The row carries no server labels, so the client splits
+    // the keys; `kinfolkId` and `dueDate` were printed as they are stored.
+    expect(await screen.findByText('Amount')).toBeInTheDocument();
     // This one existed only in source before now: it is what the emitter puts
     // in the bag, and it is the half that matters for a leak.
-    expect(screen.getByText('invoiceId')).toBeInTheDocument();
+    expect(screen.getByText('Invoice reference')).toBeInTheDocument();
+    expect(screen.getByText('Due date')).toBeInTheDocument();
+    for (const key of ['amount', 'invoiceId', 'kinfolkId', 'dueDate']) {
+      expect(screen.queryByText(key)).not.toBeInTheDocument();
+    }
+  });
+  it('#1592: shows the server words for a merge field when it sends them', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [{ ...documented, mergeFieldLabels: { kinfolkId: 'Household reference' } }],
+      }),
+    );
+    await open();
+    expect(await screen.findByText('Household reference')).toBeInTheDocument();
+    expect(screen.queryByText('Kinfolk reference')).not.toBeInTheDocument();
   });
   it('says a row nothing fires controls nothing', async () => {
     getNotificationMatrix.mockResolvedValue(
@@ -397,6 +413,7 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
           dispatchId: 'd1',
           key: 'invoice.new',
           recipientUid: 'kin1',
+          recipientName: 'Dre East',
           status: 'dispatched',
           mode: 'trigger',
           channels: ['email'],
@@ -422,7 +439,47 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
     await open();
     expect(await screen.findByText(/Handed to the provider/)).toBeInTheDocument();
     expect(screen.queryByText(/Delivered/)).not.toBeInTheDocument();
-    expect(screen.getByText('smtp-1')).toBeInTheDocument();
+    // #1592: the recipient by name, and no uid or provider message id.
+    expect(screen.getByText('Dre East')).toBeInTheDocument();
+    expect(screen.queryByText('kin1')).not.toBeInTheDocument();
+    expect(screen.queryByText(/smtp-1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Provider id/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Handed to the provider/).closest('li')?.textContent).toMatch(/^Email: /);
+  });
+  it('#1592: says a skip in words, not the sender code', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    listNotificationDeliveries.mockResolvedValue({
+      deliveries: [
+        {
+          dispatchId: 'd1',
+          key: 'invoice.new',
+          recipientUid: 'kin1',
+          recipientName: 'Dre East',
+          status: 'dispatched',
+          mode: 'trigger',
+          channels: ['sms'],
+          createdAtMs: 1,
+          attempts: [
+            {
+              channel: 'sms',
+              status: 'skipped',
+              providerMessageId: null,
+              skipReason: 'recipient_no_phone',
+              errorMessage: null,
+              attempts: 1,
+              sentAtMs: null,
+              failedAtMs: null,
+              skippedAtMs: 2,
+            },
+          ],
+        },
+      ],
+      sentMeaning: 'x',
+      receiptAvailable: false,
+    });
+    await open();
+    expect(await screen.findByText(/no phone number on file/)).toBeInTheDocument();
+    expect(screen.queryByText(/recipient_no_phone/)).not.toBeInTheDocument();
   });
   it('shows a failure with its provider error rather than hiding it', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
@@ -432,6 +489,7 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
           dispatchId: 'd1',
           key: 'invoice.new',
           recipientUid: 'kin1',
+          recipientName: null,
           status: 'dispatched',
           mode: 'trigger',
           channels: ['sms'],
@@ -586,11 +644,11 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
       members: [],
       source: 'none',
       rosterPath: 'businessSettings/admins.uids',
-      reason: 'businessSettings/admins.uids is empty, so this reaches nobody. Call provisionBusinessAdmins.',
+      reason: 'Nobody is on the business admin roster, so business notifications reach nobody.',
       businessEmail: '',
     });
     await open();
-    expect(await screen.findByText(/Call provisionBusinessAdmins/)).toBeInTheDocument();
+    expect(await screen.findByText(/reach nobody/)).toBeInTheDocument();
   });
   it('surfaces a roster read failure with a way to try again', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow] }));

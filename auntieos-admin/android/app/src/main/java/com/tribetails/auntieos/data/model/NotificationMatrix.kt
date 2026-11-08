@@ -90,6 +90,12 @@ data class NotificationCatalogEntry(
     val emailTemplateRetargetedFrom: String? = null,
     /** Merge fields the server hydrates for this key's templates. */
     val mergeFields: List<String> = emptyList(),
+    /**
+     * #1592: the server's words for each merge field and emitter data key. A
+     * server older than this field sends none; `notifMergeFieldNames` then
+     * splits the key into words itself.
+     */
+    val mergeFieldLabels: Map<String, String> = emptyMap(),
     /** True when an outside system delivers it and this gate controls nothing. */
     val external: Boolean = false,
 ) {
@@ -439,6 +445,9 @@ fun notificationCatalogEntryFromMap(m: Map<*, *>): NotificationCatalogEntry? {
         emailTemplateRetargetedFrom = (m["emailTemplateRetargetedFrom"] as? String)
             ?.takeIf { it.isNotBlank() },
         mergeFields = stringList(m["mergeFields"]),
+        mergeFieldLabels = stringMap(m["mergeFieldLabels"])
+            .mapValues { it.value.trim() }
+            .filterValues { it.isNotEmpty() },
         external = m["external"] as? Boolean ?: false,
     )
 }
