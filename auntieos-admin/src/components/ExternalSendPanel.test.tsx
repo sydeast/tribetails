@@ -103,7 +103,7 @@ describe('ExternalSendPanel', () => {
     expect(sendMock.mock.calls[0]?.[0]?.transactional).toBe(false);
   });
 
-  it('reports the send with the redacted recipient and the provider id, never the raw address', async () => {
+  it('reports the send with the redacted recipient, never the raw address or the provider id (#1592)', async () => {
     reset();
     sendMock.mockResolvedValue({ ok: true, channel: 'email', providerMessageId: 'p-42', recipientRedacted: 'd***@example.com' });
     const user = userEvent.setup();
@@ -111,7 +111,8 @@ describe('ExternalSendPanel', () => {
     await fill(user, 'dana@example.com', 'Nova', 'Body');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText(/d\*\*\*@example\.com/)).toBeInTheDocument();
-    expect(await screen.findByText(/p-42/)).toBeInTheDocument();
+    expect(screen.queryByText(/p-42/)).toBeNull();
+    expect(screen.queryByText(/Provider id/)).toBeNull();
   });
 
   it('replaces the opt-out sentinel with copy that says what happened and what to do', async () => {

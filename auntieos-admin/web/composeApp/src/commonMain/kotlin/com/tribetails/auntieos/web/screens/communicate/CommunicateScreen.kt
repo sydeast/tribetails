@@ -176,6 +176,13 @@ internal fun draftCalloutLine(kinfolkName: String?, communicationType: String?):
         type,
     ).joinToString(" · ")
 }
+/**
+ * The one-to-one send's confirmation. #1592: it also printed the provider's
+ * message id, a support trace the operator has no use for. Same words as web.
+ * Pure; tested.
+ */
+internal fun externalSentLine(recipientRedacted: String): String =
+    "Sent to $recipientRedacted. The full recipient is never stored in the audit log."
 /** Recipient sent to generate(): empty for recipient-less types (blog/social). Pure; tested. */
 internal fun generateRecipient(type: MessageType, recipientName: String): String =
     if (type.needsRecipient) recipientName else ""
@@ -2178,8 +2185,7 @@ private fun ExternalSendPanel(
                     pillLabel = r.channel.uppercase(),
                 ) {
                     Text(
-                        text = "Sent to ${r.recipientRedacted}. Provider id ${r.providerMessageId}. " +
-                            "The full recipient is never stored in the audit log.",
+                        text = externalSentLine(r.recipientRedacted),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textDim,
                     )
