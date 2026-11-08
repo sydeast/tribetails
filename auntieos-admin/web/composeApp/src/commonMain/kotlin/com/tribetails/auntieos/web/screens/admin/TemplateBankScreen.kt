@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.admin
 
+import com.tribetails.auntieos.web.screens.TEMPLATE_PREVIEW_HINT
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -594,7 +595,7 @@ private fun TemplateViewOverlay(
         onDismiss = onDismiss,
         maxWidth = 860.dp,
         closeIcon = Lucide.X,
-        hint = "Stored in Firestore, rendered with Handlebars. SendGrid delivers as a dumb pipe.",
+        hint = TEMPLATE_PREVIEW_HINT,
         footer = {
             GhostButton(label = "Close", onClick = onDismiss, modifier = Modifier.weight(1f))
             PrimaryButton(
@@ -747,7 +748,7 @@ private fun TemplateEditorOverlay(
         onDismiss = onDismiss,
         maxWidth = 860.dp,
         closeIcon = Lucide.X,
-        hint = "Stored in Firestore, rendered with Handlebars. SendGrid delivers as a dumb pipe.",
+        hint = TEMPLATE_PREVIEW_HINT,
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
             if (mode != TemplateEditMode.READ_ONLY) {

@@ -729,6 +729,7 @@ interface ServicePillProps {
   label?: string;
   tone?: DenTone;
 }
+
 /**
  * A small mono pill tinted to a service tone. The text is shown as written:
  * a KinCare name is the operator's own, and lowercasing it made "30Minute"
@@ -749,6 +750,7 @@ export function ServicePill({ serviceType, label, tone }: ServicePillProps) {
     </span>
   );
 }
+
 // ── status pill ─────────────────────────────────────────────────────────────
 
 interface StatusPillProps {

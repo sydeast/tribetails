@@ -4,6 +4,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.serviceTone
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /** #1592: the operator reads words, never a stored key. The web and Android rules exactly. */
 class OperatorWordsTest {
@@ -54,6 +55,7 @@ class OperatorWordsTest {
         // The legend swatch for that KinCare is `serviceTone(name)`.
         assertEquals(serviceTone(catalog.nameOf("visit_60")), bookingServiceTone("visit_60", catalog))
     }
+
     @Test
     fun theCatalogNamesWithBothMaps() {
         // The agenda named with the rates alone, so a length kept only in
@@ -61,5 +63,18 @@ class OperatorWordsTest {
         val catalog = ServiceCatalog(mapOf("Dog walk" to "45"), mapOf("Dog walk" to "60"))
         assertEquals("Dog walk", catalog.nameOf("visit_60"))
         assertEquals("visit_60", bookingServiceName("visit_60", catalog.serviceRates))
+    }
+
+    @Test
+    fun `#1592 template preview hint and activity time warning name no machinery`() {
+        val marks = listOf("Firestore", "Timestamp", "audit writer", "SendGrid", "dumb pipe", "ISO-8601")
+        val note = unreadableTimesNote(2, 40)
+        for (text in listOf(TEMPLATE_PREVIEW_HINT, note)) {
+            for (m in marks) assertFalse(text.contains(m), "\"$text\" carries \"$m\"")
+        }
+        assertEquals(
+            "2 of 40 entries have a time this screen cannot read, so their day and order below are a best guess.",
+            note,
+        )
     }
 }

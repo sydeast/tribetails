@@ -771,6 +771,7 @@ describe('Schedule screen', () => {
     expect(within(agenda()).getByText('Dog walk')).toHaveAttribute('data-tone', 'teal');
     const week = screen.getByRole('group', { name: 'Week' });
     expect(week.querySelector('[data-session-id="a"]')).toHaveAttribute('data-tone', 'teal');
+
     await user.click(screen.getByRole('tab', { name: 'Month' }));
     const month = screen.getByRole('group', { name: 'Month' });
     expect(month.querySelector('[data-session-id="a"]')).toHaveAttribute('data-tone', 'teal');

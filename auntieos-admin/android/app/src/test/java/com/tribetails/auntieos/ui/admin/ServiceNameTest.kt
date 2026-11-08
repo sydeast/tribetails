@@ -47,6 +47,7 @@ class ServiceNameTest {
         assertEquals(AuntieStatusTone.Teal, bookingServiceTone("visit_60", catalog))
         assertEquals(serviceTone(catalog.nameOf("visit_60")), bookingServiceTone("visit_60", catalog))
     }
+
     @Test fun `the catalog names with both maps, as the legend does`() {
         // The rows used the rates alone, so a length kept only in
         // `serviceDurations` named the legend and left the row raw.
@@ -54,6 +55,7 @@ class ServiceNameTest {
         assertEquals("Dog walk", catalog.nameOf("visit_60"))
         assertEquals("visit_60", bookingServiceName("visit_60", catalog.serviceRates))
     }
+
     @Test fun `an unresolved service keeps its own colour`() {
         val catalog = ServiceCatalog(mapOf("Dog walk" to "45"))
         assertEquals(AuntieStatusTone.Purple, bookingServiceTone("Overnight sit", catalog))

@@ -1,4 +1,5 @@
 package com.tribetails.auntieos.ui.admin
+
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.serviceTone
 
@@ -56,6 +57,7 @@ data class ServiceCatalog(
     /** [bookingServiceName] against this catalog. */
     fun nameOf(rawServiceType: String?): String = bookingServiceName(rawServiceType, serviceRates, serviceDurations)
 }
+
 /**
  * THE tone of a stored booking service, for every mark that colours a visit:
  * the legend swatch, the agenda pill, the month dot (#1592).
@@ -69,6 +71,7 @@ data class ServiceCatalog(
  */
 fun bookingServiceTone(rawServiceType: String?, catalog: ServiceCatalog): AuntieStatusTone =
     serviceTone(catalog.nameOf(rawServiceType))
+
 /** Letters and digits only, lowercased: "30 Minute", "30Minute" and "30-minute" are one id. */
 private fun normaliseServiceKey(raw: String): String = raw.lowercase().replace(Regex("[^a-z0-9]"), "")
 

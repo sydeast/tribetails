@@ -1,4 +1,5 @@
 package com.tribetails.auntieos.web.screens
+
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.serviceTone
 
@@ -111,6 +112,7 @@ fun bookingServiceName(
     }
     return label
 }
+
 /**
  * The KinCare catalog a stored service is named and coloured against:
  * `business_settings.serviceRates` and `serviceDurations` together (#1592), one
@@ -124,6 +126,7 @@ data class ServiceCatalog(
     /** [bookingServiceName] against this catalog. */
     fun nameOf(rawServiceType: String?): String = bookingServiceName(rawServiceType, serviceRates, serviceDurations)
 }
+
 /**
  * THE tone of a stored booking service, for every mark that colours a visit:
  * the legend swatch, the agenda pill, the week block (#1592). Keyed on the
@@ -133,3 +136,18 @@ data class ServiceCatalog(
  */
 fun bookingServiceTone(rawServiceType: String?, catalog: ServiceCatalog): AuntieStatusTone =
     serviceTone(catalog.nameOf(rawServiceType))
+
+/**
+ * The Template Bank preview's hint. #1592: it read "Stored in Firestore,
+ * rendered with Handlebars. SendGrid delivers as a dumb pipe.", which names the
+ * database, the template engine and the mail vendor instead of telling the
+ * operator anything about the template.
+ */
+const val TEMPLATE_PREVIEW_HINT = "Merge fields fill in for each recipient when it sends."
+/**
+ * The Activity Log's warning when some entries' times will not read. #1592: it
+ * blamed "a Firestore Timestamp object" and the "audit writer", which is a
+ * developer's diagnosis, not something the operator can act on.
+ */
+fun unreadableTimesNote(unreadable: Int, total: Int): String =
+    "$unreadable of $total entries have a time this screen cannot read, so their day and order below are a best guess."

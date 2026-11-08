@@ -375,6 +375,28 @@ describe('approve', () => {
     expect(typeof approveGeneratedDraft.mock.calls[0]?.[0]?.deliver).toBe('function');
   });
 
+  it('#1592: a delivered approve says it was sent, never the provider message id', async () => {
+    const user = setup();
+    approveGeneratedDraft.mockResolvedValue({
+      ok: true,
+      auditWarning: null,
+      providerId: 'SG.msg-123',
+      delivered: true,
+    });
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'email' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'Email' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await user.type(screen.getByLabelText(/^subject$/i), 'Nova at the park');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText(/Approved and sent\./)).toBeInTheDocument();
+    expect(screen.queryByText(/SG\.msg-123/)).toBeNull();
+    expect(screen.queryByText(/Provider id/)).toBeNull();
+  });
+
   it('refuses to approve a draft the server never saved', async () => {
     const user = setup();
     await draftReady(user, { draft_id: null, draftWriteFailed: true, warnings: [] });
