@@ -79,6 +79,18 @@ class SettingsViewModelTest {
         assertEquals(loaded, (state.settingsResult as FirestoreResult.Data<BusinessSettings>).value)
         assertNull(ds.lastSavedBusinessSettings, "nothing reached the store")
     }
+
+    /** #1593: a server field refusal is the sentence the operator reads, shown as it is. */
+    @Test
+    fun `a settings refusal shows the server sentence without the save failed prefix`() = runTest {
+        val sentence = "Enter the price for \"Drop-in\" in dollars, like 25 or 25.50."
+        val ds = FakeAuntieDataSource(saveShouldFail = true, saveFailMessage = sentence, saveFailCode = SETTINGS_REFUSED_CODE)
+        val vm = buildViewModel(ds)
+        ds.emitBusinessSettings(FirestoreResult.Data(BusinessSettings(businessName = "TribeTails")))
+        vm.saveSettings(BusinessSettings(businessName = "TribeTails", serviceRates = mapOf("Drop-in" to "abc")))
+        assertEquals(sentence, vm.uiState.value.saveError)
+        assertFalse(vm.uiState.value.saveSuccess)
+    }
     @Test
     fun `save settings carries calendarSyncId through to the data source`() = runTest {
         // Editing the Google Calendar id in Settings persists onto BusinessSettings;

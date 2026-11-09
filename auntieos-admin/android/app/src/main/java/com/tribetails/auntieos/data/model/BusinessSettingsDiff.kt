@@ -147,7 +147,7 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     // any other panel hands back the raw map it read and is not a change, while
     // the Payment options panel writes the raw map [withPaymentDraft] built,
     // which carries every key it does not model forward untouched. Merged key by
-    // key under `SetOptions.merge()`, the same as the web's `merge: true`.
+    // key by `saveBusinessSettings`, the same as the web's save.
     "paymentOptions" to SettingsDiffField(
         write = { it.paymentOptions },
         compare = { decodePaymentOptions(it.paymentOptions) },
@@ -190,8 +190,8 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
  * `business_settings` fields this client must never write, and who owns each.
  *
  * - `id`         the document id (`@DocumentId`, never serialised anyway)
- * - `updatedAt`  stamped at write time by the repository, never round-tripped
- * - `updatedBy`  same, from the caller's actor string
+ * - `updatedAt`  stamped by the `saveBusinessSettings` callable, never sent
+ * - `updatedBy`  same, from the caller's sign-in
  *
  * The four `calendarSyncLast*` receipt fields are not listed because they are not
  * on this model at all; see the file header.
@@ -199,28 +199,61 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
 internal val BUSINESS_SETTINGS_SERVER_OWNED = setOf("id", "updatedAt", "updatedBy")
 
 /**
- * Map fields this client always writes WHOLE, where a key it left out is a
- * key the operator removed.
+ * #1593: [changes] as the `saveBusinessSettings` callable can carry it.
  *
- * `SetOptions.merge()` merges a nested map key by key, so a `serviceRates`
- * write that no longer carries "Walk" leaves the stored "Walk" exactly where
- * it was, and the KinCare types editor's Remove would come back on the next
- * load (the one case it worked was removing the LAST type, since an empty map
- * does overwrite). The rate card is a flat name-to-value map one editor owns
- * outright, so a write naming it goes out under `SetOptions.mergeFields`,
- * which replaces each named top-level field wholesale and still leaves every
- * field the write does not name untouched. Mirrors `WHOLE_MAP_FIELDS` in the
- * React admin's `settingsWrite.ts`.
+ * The callable serializer takes null, String, Boolean, numbers, Map and List
+ * and nothing else, where Firestore's `.set()` used to map a Kotlin class as a
+ * POJO. So every value goes out as plain data, under the SAME field names that
+ * mapper produced, because the stored document, the web admin and the server
+ * checks all read those names:
  *
- * Not the rule for every write: `mytribePortal` is a nested map more than one
- * client writes a slice of, and the key-by-key merge is what keeps one save
- * from clobbering another's.
+ *  - [TimeBlockDefinition] becomes `{ id, label, startTime, endTime, active }`.
+ *    `active`, not `isActive`: the mapper names a Kotlin `isX` Boolean by its
+ *    getter, which drops the `is`, and the server checks `active`.
+ *  - An enum goes out as its name (what the mapper wrote).
+ *  - A Long inside a raw map read back from Firestore stays a number; one that
+ *    fits an Int is sent as an Int so the wire carries a plain number.
+ *  - Maps keep their key order and recurse; lists recurse.
+ *
+ * Anything else throws, naming the field, rather than reach the serializer and
+ * fail there with a message nobody can act on.
+ *
+ * What the server does with the patch (nested maps merge key by key, the
+ * KinCare rate card replaces whole, arrays replace, `updatedAt`/`updatedBy`
+ * stamped there) is `mytribe/functions/src/admin/saveBusinessSettings.ts`.
  */
-internal val BUSINESS_SETTINGS_WHOLE_MAP_FIELDS = setOf("serviceRates", "serviceDurations", "serviceStartTimeBooking")
+internal fun businessSettingsWireChanges(changes: Map<String, Any?>): Map<String, Any?> {
+    val out = LinkedHashMap<String, Any?>()
+    for ((field, value) in changes) out[field] = settingsWireValue(field, value)
+    return out
+}
 
-/** True when [changes] names a field that must replace, not merge, the stored value. */
-internal fun businessSettingsReplacesWholeFields(changes: Map<String, Any?>): Boolean =
-    changes.keys.any { it in BUSINESS_SETTINGS_WHOLE_MAP_FIELDS }
+private fun settingsWireValue(field: String, value: Any?): Any? = when (value) {
+    null, is String, is Boolean -> value
+    is Int, is Double, is Float, is Short, is Byte -> value
+    is Long -> if (value in Int.MIN_VALUE..Int.MAX_VALUE) value.toInt() else value
+    is Enum<*> -> value.name
+    is TimeBlockDefinition -> linkedMapOf(
+        "id" to value.id,
+        "label" to value.label,
+        "startTime" to value.startTime,
+        "endTime" to value.endTime,
+        "active" to value.isActive,
+    )
+    is Map<*, *> -> {
+        val out = LinkedHashMap<String, Any?>()
+        for ((k, v) in value) {
+            require(k is String) { "$field has a key that is not text, so it cannot be saved." }
+            out[k] = settingsWireValue(field, v)
+        }
+        out
+    }
+    is Iterable<*> -> value.map { settingsWireValue(field, it) }
+    is Array<*> -> value.map { settingsWireValue(field, it) }
+    else -> throw IllegalArgumentException(
+        "$field holds a ${value::class.java.simpleName}, which this app cannot send. Reload Settings and try again.",
+    )
+}
 
 /**
  * The fields [edited] changes relative to [loaded], keyed by Firestore field

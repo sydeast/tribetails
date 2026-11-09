@@ -34,8 +34,16 @@ enum class PaymentMethodKind { CHECKOUT, LINK, INSTRUCTIONS }
 /** The `BusinessSettings` top-level field a LINK method keeps its handle in. */
 enum class PaymentHandleField(val wireName: String, val placeholder: String) {
     VENMO("venmoHandle", "@tribetails"),
-    PAYPAL("paypalHandle", "paypal.me/tribetails"),
+    // #1593: the name alone. "paypal.me/..." is refused by the server's
+    // `paypalHandleProblem`, and the link is built as https://paypal.me/<name>.
+    PAYPAL("paypalHandle", "tribetails"),
     CASHAPP("cashappHandle", "\$tribetails"),
+}
+/** #1593: what is wrong with a typed handle, or null. The server's sentence for each field. */
+fun PaymentHandleField.problem(raw: String): String? = when (this) {
+    PaymentHandleField.VENMO -> SettingsChecks.venmoHandleProblem(raw)
+    PaymentHandleField.PAYPAL -> SettingsChecks.paypalHandleProblem(raw)
+    PaymentHandleField.CASHAPP -> SettingsChecks.cashappHandleProblem(raw)
 }
 
 /** Fee schedule, admin-only display. Basis points and integer cents, never a float percentage. */

@@ -3,6 +3,8 @@ package com.tribetails.auntieos.ui.admin
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -130,6 +132,43 @@ class PaymentOptionsPanelTest {
             .performSemanticsAction(SemanticsActions.OnClick)
         rule.waitForIdle()
         assertFalse("switches hold still during the save", shown("Write what kinfolk should do"))
+        assertEquals(0, calls)
+    }
+
+    /**
+     * #1593: the web left "paypal.me/tribetails" stored, which the server's
+     * PayPal.Me check refuses. Its sentence shows under the box; it is not
+     * sent unless changed, so it does not hold the Cash edit back.
+     */
+    @Test
+    fun `a stored handle the server would refuse says so without holding other edits`() {
+        mount()
+        assertTrue(shown("Enter the PayPal.Me name: up to 20 letters and numbers."))
+        rule.onNodeWithContentDescription("Offer Cash", useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.OnClick)
+        rule.waitForIdle()
+        rule.onNodeWithText("Save payment options").assertIsEnabled()
+    }
+
+    /** #1593: a changed handle the server would refuse holds Save, and Cancel puts everything back. */
+    @Test
+    fun `a bad new handle holds Save, and Cancel restores the saved values`() {
+        var calls = 0
+        mount(onSave = { calls++ })
+        rule.onNodeWithText("Cancel").assertIsNotEnabled()
+        val venmoBox = rule.onAllNodes(hasSetTextAction(), useUnmergedTree = true).fetchSemanticsNodes()
+            .indexOfFirst { it.config.getOrNull(SemanticsProperties.EditableText)?.text == "@tribetails" }
+        assertTrue(venmoBox >= 0)
+        rule.onAllNodes(hasSetTextAction(), useUnmergedTree = true)[venmoBox].performTextInput(" !")
+        rule.waitForIdle()
+        assertTrue(shown("Enter the Venmo username: 5 to 30 letters, numbers, - or _."))
+        rule.onNodeWithText("Save payment options").assertIsNotEnabled()
+
+        rule.onNodeWithText("Cancel").assertIsEnabled()
+        rule.onNodeWithText("Cancel").performClick()
+        rule.waitForIdle()
+        assertFalse(shown("Enter the Venmo username"))
+        rule.onNodeWithText("Cancel").assertIsNotEnabled()
         assertEquals(0, calls)
     }
 

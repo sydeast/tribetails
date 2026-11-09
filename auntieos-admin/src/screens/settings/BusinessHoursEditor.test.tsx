@@ -50,6 +50,11 @@ describe('BusinessHoursEditor', () => {
     render(<BusinessHoursEditor data={{ businessHours: { Monday: 'by appointment' } }} onSave={vi.fn()} />);
     expect(screen.getByLabelText('Monday hours')).toHaveValue('by appointment');
     expect(screen.getByText('Check format')).toBeInTheDocument();
+    // #1593: the server checks the whole week this panel sends, so the
+    // refusal shows on open, beside the day, and holds Save.
+    expect(screen.getByLabelText('Monday hours')).toHaveAccessibleErrorMessage(
+      'Enter both an opening and a closing time.',
+    );
   });
 
   it('toggling a closed day open seeds the default range, and Save writes the full businessHours patch', async () => {
@@ -105,5 +110,114 @@ describe('BusinessHoursEditor', () => {
     expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^save$/i })).toBeEnabled();
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+  });
+});
+
+/** #1593: a day's hours are refused beside the day, and Save waits on them. */
+describe('BusinessHoursEditor checks', () => {
+  const SAVE = { name: /^save$/i };
+  const CLOSE_BEFORE_OPEN = 'The closing time has to be after the opening time.';
+  const BOTH_TIMES = 'Enter both an opening and a closing time.';
+
+  it('refuses a close before the open beside that day, and Save stays off', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<BusinessHoursEditor data={{ businessHours: { Monday: '09:00-17:00' } }} onSave={onSave} />);
+    const close = screen.getByLabelText('Monday close time');
+    await userEvent.clear(close);
+    await userEvent.type(close, '08:00');
+    expect(close).toHaveAttribute('aria-invalid', 'true');
+    expect(close).toHaveAccessibleErrorMessage(CLOSE_BEFORE_OPEN);
+    expect(screen.getByLabelText('Monday open time')).toHaveAccessibleErrorMessage(CLOSE_BEFORE_OPEN);
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('a close equal to the open is refused too', async () => {
+    render(<BusinessHoursEditor data={{ businessHours: { Friday: '09:00-17:00' } }} onSave={vi.fn()} />);
+    const close = screen.getByLabelText('Friday close time');
+    await userEvent.clear(close);
+    await userEvent.type(close, '09:00');
+    expect(screen.getByText(CLOSE_BEFORE_OPEN)).toBeInTheDocument();
+  });
+
+  it('refuses a cleared time instead of saving "-17:00"', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<BusinessHoursEditor data={{ businessHours: { Monday: '09:00-17:00' } }} onSave={onSave} />);
+    await userEvent.clear(screen.getByLabelText('Monday open time'));
+    expect(screen.getByText(BOTH_TIMES)).toBeInTheDocument();
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+  });
+
+  it('fixing the time clears the sentence and saves the range', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<BusinessHoursEditor data={{ businessHours: { Monday: '09:00-17:00' } }} onSave={onSave} />);
+    const close = screen.getByLabelText('Monday close time');
+    await userEvent.clear(close);
+    await userEvent.type(close, '08:00');
+    await userEvent.clear(close);
+    await userEvent.type(close, '18:00');
+    expect(screen.queryByText(CLOSE_BEFORE_OPEN)).toBeNull();
+    expect(close).not.toHaveAttribute('aria-invalid');
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).toHaveBeenCalledWith({ businessHours: { Monday: '09:00-18:00' } });
+  });
+
+  it('a closed day is never refused, whatever its hidden times say', async () => {
+    render(<BusinessHoursEditor data={{ businessHours: { Monday: '09:00-17:00' } }} onSave={vi.fn()} />);
+    const close = screen.getByLabelText('Monday close time');
+    await userEvent.clear(close);
+    await userEvent.type(close, '08:00');
+    await userEvent.click(screen.getByRole('switch', { name: 'Toggle Monday open' }));
+    expect(screen.queryByText(CLOSE_BEFORE_OPEN)).toBeNull();
+    expect(screen.getByRole('button', SAVE)).toBeEnabled();
+  });
+
+  it('the text fallback is held to the same range, and clearing it reads as Closed', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<BusinessHoursEditor data={{ businessHours: { Monday: 'by appointment' } }} onSave={onSave} />);
+    const box = screen.getByLabelText('Monday hours');
+    await userEvent.clear(box);
+    await userEvent.type(box, '17:00-09:00');
+    expect(box).toHaveAccessibleErrorMessage(CLOSE_BEFORE_OPEN);
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+    await userEvent.clear(box);
+    expect(box).not.toHaveAttribute('aria-invalid');
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).toHaveBeenCalledWith({ businessHours: { Monday: '' } });
+  });
+
+  it('puts a server refusal that names a day beside that day', async () => {
+    const onSave = vi.fn().mockRejectedValue(
+      Object.assign(new Error(`Tuesday: ${CLOSE_BEFORE_OPEN}`), {
+        details: {
+          code: 'settings_refused',
+          field: 'businessHours',
+          refusals: [{ field: 'businessHours', message: `Tuesday: ${CLOSE_BEFORE_OPEN}` }],
+        },
+      }),
+    );
+    render(<BusinessHoursEditor data={{ businessHours: {} }} onSave={onSave} />);
+    await userEvent.click(screen.getByRole('switch', { name: 'Toggle Tuesday open' }));
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(await screen.findByText(CLOSE_BEFORE_OPEN)).toBeInTheDocument();
+    expect(screen.getByLabelText('Tuesday open time')).toHaveAccessibleErrorMessage(CLOSE_BEFORE_OPEN);
+    expect(screen.queryByText('Save failed')).toBeNull();
+  });
+
+  it('shows a server refusal that names no day in the banner, word for word', async () => {
+    const onSave = vi.fn().mockRejectedValue(
+      Object.assign(new Error('The weekly hours did not arrive as a list. Reload and try again.'), {
+        details: {
+          code: 'settings_refused',
+          field: 'businessHours',
+          refusals: [{ field: 'businessHours', message: 'The weekly hours did not arrive as a list. Reload and try again.' }],
+        },
+      }),
+    );
+    render(<BusinessHoursEditor data={{ businessHours: {} }} onSave={onSave} />);
+    await userEvent.click(screen.getByRole('switch', { name: 'Toggle Tuesday open' }));
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(await screen.findByText('The weekly hours did not arrive as a list. Reload and try again.')).toBeInTheDocument();
   });
 });

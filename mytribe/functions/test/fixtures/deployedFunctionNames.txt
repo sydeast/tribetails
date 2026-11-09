@@ -243,6 +243,7 @@ rotateOldFcmTokens
 runAutoApply
 saveAudienceSegment
 saveBusinessNotificationOverride
+saveBusinessSettings
 saveChecklistBankItem
 saveDashboardLayout
 saveEmailFrame

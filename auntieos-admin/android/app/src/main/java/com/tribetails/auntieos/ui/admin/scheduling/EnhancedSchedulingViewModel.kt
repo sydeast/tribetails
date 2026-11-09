@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import com.tribetails.auntieos.ui.admin.settingsSaveFailureText
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -2948,7 +2949,7 @@ class EnhancedSchedulingViewModel(
                 // saved. Only the fields this save changed go back.
                 _state.value = _state.value.copy(
                     businessSettings = revertUnsavedSettings(_state.value.businessSettings, newSettings),
-                    errorMessage = "Failed to save settings: ${e.message}"
+                    errorMessage = settingsSaveFailureText("Failed to save settings", e)
                 )
             }
         }

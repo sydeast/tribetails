@@ -172,7 +172,7 @@ beforeEach(() => {
     mergeBusinessSettings({
       businessName: 'Tribe Tails Pet Care',
       businessEmail: 'hello@tribetails.com',
-      businessPhone: '555-0199',
+      businessPhone: '512-555-0199',
       businessAddress: '100 Creekside Ln',
     }),
   );
@@ -397,11 +397,11 @@ describe('Account business profile', () => {
     expect(g.getByLabelText('Address')).toHaveValue('100 Creekside Ln');
     // Its own Save, separate from the hero's (the mock draws both).
     await user.clear(g.getByLabelText('Phone'));
-    await user.type(g.getByLabelText('Phone'), '555-0122');
+    await user.type(g.getByLabelText('Phone'), '512-555-0122');
     await user.click(g.getByRole('button', { name: 'Save' }));
 
     expect(saveBusinessSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ businessPhone: '555-0122' }),
+      expect.objectContaining({ businessPhone: '512-555-0122' }),
     );
     expect(saveUserProfile).not.toHaveBeenCalled();
   });
@@ -455,14 +455,14 @@ describe('Account business profile', () => {
     const panel = (await screen.findByText('Business profile')).closest('section') as HTMLElement;
     const g = within(panel);
     await user.clear(g.getByLabelText('Phone'));
-    await user.type(g.getByLabelText('Phone'), '555-0133');
+    await user.type(g.getByLabelText('Phone'), '512-555-0133');
     // The hero Save re-reads the profile. That must not unmount the sibling
     // panels and throw away what the operator typed in this one.
     await user.clear(screen.getByLabelText('Display name'));
     await user.type(screen.getByLabelText('Display name'), 'Auntie N');
     await user.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
-    expect(g.getByLabelText('Phone')).toHaveValue('555-0133');
+    expect(g.getByLabelText('Phone')).toHaveValue('512-555-0133');
     expect(saveBusinessSettings).not.toHaveBeenCalled();
     // And the sibling loads did not run again.
     expect(listBusinessAdmins).toHaveBeenCalledTimes(1);
@@ -649,5 +649,84 @@ describe('Account screen: profile photo', () => {
     await screen.findByRole('button', { name: 'Change photo' });
     expect(await screen.findByLabelText('Change photo', { selector: 'input' })).toBeEnabled();
     expect(screen.queryByRole('status')).toBeNull();
+  });
+});
+
+// #1593: the Account copy of the business profile runs the same checks, has
+// a Cancel beside Save, and shows a server refusal beside its field.
+describe('Account business profile #1593', () => {
+  async function businessPanel() {
+    render(<Account />);
+    await heroName();
+    const panel = (await screen.findByText('Business profile')).closest('section') as HTMLElement;
+    return within(panel);
+  }
+
+  it('refuses a bad email and phone beside each field, and Save stays off until both are fixed', async () => {
+    const user = userEvent.setup();
+    const g = await businessPanel();
+    const email = g.getByLabelText('Email');
+    const phone = g.getByLabelText('Phone');
+    await user.clear(email);
+    await user.type(email, 'hello at tribetails');
+    await user.clear(phone);
+    await user.type(phone, '555-0199');
+    expect(email).toHaveAccessibleErrorMessage('Enter an email like name@example.com, or leave it blank.');
+    expect(phone).toHaveAccessibleErrorMessage('Enter a 10-digit phone number, or leave it blank.');
+    expect(g.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.clear(email);
+    await user.type(email, 'hello@tribetails.com');
+    await user.clear(phone);
+    await user.type(phone, '(512) 555-0199');
+    expect(g.queryByRole('alert')).toBeNull();
+    await user.click(g.getByRole('button', { name: 'Save' }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ businessEmail: 'hello@tribetails.com', businessPhone: '(512) 555-0199' }),
+    );
+  });
+
+  it('Cancel puts the saved values back, and is off until something changes', async () => {
+    const user = userEvent.setup();
+    const g = await businessPanel();
+    const cancel = g.getByRole('button', { name: 'Cancel' });
+    expect(cancel).toBeDisabled();
+    await user.clear(g.getByLabelText('Address'));
+    await user.type(g.getByLabelText('Address'), '1 Elsewhere Rd');
+    expect(cancel).toBeEnabled();
+    await user.click(cancel);
+    expect(g.getByLabelText('Address')).toHaveValue('100 Creekside Ln');
+    expect(g.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(saveBusinessSettings).not.toHaveBeenCalled();
+  });
+
+  it('shows the server refusal sentence beside the field it names', async () => {
+    const user = userEvent.setup();
+    saveBusinessSettings.mockRejectedValueOnce(
+      Object.assign(new Error('Enter an email like name@example.com, or leave it blank.'), {
+        details: {
+          code: 'settings_refused',
+          field: 'businessEmail',
+          refusals: [{ field: 'businessEmail', message: 'Enter an email like name@example.com, or leave it blank.' }],
+        },
+      }),
+    );
+    const g = await businessPanel();
+    await user.clear(g.getByLabelText('Address'));
+    await user.type(g.getByLabelText('Address'), '1 Elsewhere Rd');
+    await user.click(g.getByRole('button', { name: 'Save' }));
+    expect(await g.findByText('Enter an email like name@example.com, or leave it blank.')).toBeInTheDocument();
+    expect(g.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
+    expect(g.queryByText('Save failed')).toBeNull();
+  });
+
+  it('shows any other failure in the panel banner', async () => {
+    const user = userEvent.setup();
+    saveBusinessSettings.mockRejectedValueOnce(new Error('You are offline. Nothing was sent.'));
+    const g = await businessPanel();
+    await user.clear(g.getByLabelText('Address'));
+    await user.type(g.getByLabelText('Address'), '1 Elsewhere Rd');
+    await user.click(g.getByRole('button', { name: 'Save' }));
+    expect(await g.findByText('You are offline. Nothing was sent.')).toBeInTheDocument();
+    expect(g.getByText('Save failed')).toBeInTheDocument();
   });
 });

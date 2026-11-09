@@ -5,6 +5,8 @@ import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
+import { dayHoursError, hoursRangeError, settingsRefusalsOf } from '../../lib/settingsChecks';
+import { FieldError, fieldErrorAttrs } from './sections';
 import '../SettingsEdit.css';
 import './BusinessHoursEditor.css';
 
@@ -78,6 +80,27 @@ function wireValue(state: DayState): string {
   return state.open ? `${state.start}-${state.end}` : '';
 }
 
+/**
+ * #1593: why this day cannot be saved, or null. An open day needs both times,
+ * closing after opening; a hand-typed fallback is held to the same range, and
+ * a cleared one reads as Closed. Every day is checked, touched or not, because
+ * the server checks the whole week this panel sends.
+ */
+function dayError(state: DayState): string | null {
+  if (state.mode === 'fallback') return state.raw.trim() === '' ? null : hoursRangeError(state.raw);
+  return state.open ? dayHoursError(state.start, state.end) : null;
+}
+
+/** The day a server refusal names (`"Monday: ..."`), with the sentence after it. */
+function refusalByDay(err: unknown): { day: string; message: string } | null {
+  for (const r of settingsRefusalsOf(err)) {
+    if (r.field !== 'businessHours') continue;
+    const day = DAYS_OF_WEEK.find((d) => r.message.startsWith(`${d}: `));
+    if (day) return { day, message: r.message.slice(day.length + 2) };
+  }
+  return null;
+}
+
 export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) {
   // Seeded ONCE from `data` at mount, per day, into its own edit state.
   const [days, setDays] = useState<Record<string, DayState>>(() => {
@@ -88,6 +111,8 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  // #1593: a server refusal that names a day, beside that day until it is edited.
+  const [serverError, setServerError] = useState<{ day: string; message: string } | null>(null);
 
   // The patch: the ORIGINAL map (whatever keys the doc actually had, same
   // sparse shape `getBusinessSettings` returned), with ONLY the days that
@@ -108,20 +133,31 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
     }
   }
 
+  const dayErrors: Record<string, string> = {};
+  for (const day of DAYS_OF_WEEK) {
+    const message = dayError(days[day]!);
+    if (message !== null) dayErrors[day] = message;
+  }
+  const invalid = Object.keys(dayErrors).length > 0;
+
   function patchDay(day: string, next: DayState) {
     setDays((d) => ({ ...d, [day]: next }));
+    setServerError((e) => (e?.day === day ? null : e));
     setJustSaved(false);
   }
 
   async function handleSave() {
-    if (!dirty || busy) return;
+    if (!dirty || busy || invalid) return;
     setBusy(true);
     setError(null);
+    setServerError(null);
     try {
       await onSave({ businessHours: hours });
       setJustSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
+      const byDay = refusalByDay(err);
+      if (byDay) setServerError(byDay);
+      else setError(err instanceof Error ? err.message : 'Save failed.');
     } finally {
       setBusy(false);
     }
@@ -132,6 +168,7 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
     for (const day of DAYS_OF_WEEK) seed[day] = initialDayState(data.businessHours[day] ?? '');
     setDays(seed);
     setError(null);
+    setServerError(null);
     setJustSaved(false);
   }
 
@@ -149,6 +186,8 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
       <ul className="businessHours__list">
         {DAYS_OF_WEEK.map((day) => {
           const state = days[day]!;
+          const message = dayErrors[day] ?? (serverError?.day === day ? serverError.message : null);
+          const errorId = `businessHours-${day}`;
           return (
             <li key={day} className="businessHours__row">
               <span className="businessHours__day">{day}</span>
@@ -178,6 +217,7 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
                           value={state.start}
                           disabled={busy}
                           onChange={(e) => patchDay(day, { ...state, start: e.target.value })}
+                          {...fieldErrorAttrs(errorId, message)}
                         />
                       </label>
                       <label className="businessHours__timeField">
@@ -189,6 +229,7 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
                           value={state.end}
                           disabled={busy}
                           onChange={(e) => patchDay(day, { ...state, end: e.target.value })}
+                          {...fieldErrorAttrs(errorId, message)}
                         />
                       </label>
                     </span>
@@ -205,10 +246,12 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
                     value={state.raw}
                     disabled={busy}
                     onChange={(e) => patchDay(day, { mode: 'fallback', raw: e.target.value })}
+                    {...fieldErrorAttrs(errorId, message)}
                   />
                   <span className="businessHours__warning">Check format</span>
                 </span>
               )}
+              <FieldError id={errorId} message={message} />
             </li>
           );
         })}
@@ -219,7 +262,7 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save'}
           onClick={() => void handleSave()}
-          disabled={!dirty || busy}
+          disabled={!dirty || busy || invalid}
           busy={busy}
         />
         {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}

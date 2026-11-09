@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.map
 class FakeAuntieDataSource(
     private val saveShouldFail: Boolean = false,
     private val saveFailMessage: String = "write failed",
+    /** #1593: the `details.code` a failed settings save carries, e.g. `settings_refused`. */
+    private val saveFailCode: String? = null,
     private val sendShouldFail: Boolean = false,
     private val sendFailMessage: String = "send failed",
     val uploadShouldFail: Boolean = false,
@@ -152,7 +154,7 @@ class FakeAuntieDataSource(
 
     override suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> =
         if (saveShouldFail) {
-            WriteResult.Err(saveFailMessage)
+            WriteResult.Err(saveFailMessage, saveFailCode)
         } else {
             lastSavedBusinessSettings = settings
             WriteResult.Ok(Unit)

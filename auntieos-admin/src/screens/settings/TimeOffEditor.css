@@ -85,6 +85,17 @@
   min-width: 10rem;
 }
 
+/* #1593: why Add is off, a full-width line under the add row; gone when empty. */
+.timeOff__addErrors {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.timeOff__addErrors:empty {
+  display: none;
+}
+
 .timeOff__presetRow {
   display: flex;
   flex-direction: column;

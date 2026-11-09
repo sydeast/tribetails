@@ -1199,7 +1199,8 @@ internal fun BookingCreateScreen(
                 onSelectionChange = { next -> next.firstOrNull()?.let { serviceType = it } },
                 label             = { it },
                 singleSelect      = true,
-                monoSuffix        = { type -> serviceRates[type]?.let { "$$it" } },
+                // #1593: a rate shows only when it reads as dollars; blank says "No price set".
+                monoSuffix        = { type -> serviceRates[type]?.let { com.tribetails.auntieos.web.data.SettingsChecks.priceLabel(type, it) } },
                 modifier          = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(20.dp))

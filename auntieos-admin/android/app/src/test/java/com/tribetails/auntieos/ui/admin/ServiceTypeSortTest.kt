@@ -63,6 +63,14 @@ class ServiceTypeSortTest {
         )
     }
 
+    /** #1593: a stored rate that is not a price never reaches the picker as "$abc". */
+    @Test fun aRateThatIsNotAPriceShowsTheNameAlone() {
+        assertEquals("Walk", serviceChipLabel(ServiceOption("Walk", "abc", null)))
+        assertEquals("Walk", serviceChipLabel(ServiceOption("Walk", "-5", null)))
+        assertEquals("Walk", serviceChipLabel(ServiceOption("Walk", "", null)))
+        assertEquals("Walk · \$25.50", serviceChipLabel(ServiceOption("Walk", "25.50", null)))
+    }
+
     @Test fun emptyServiceRatesYieldNoOptions() {
         assertEquals(emptyList<ServiceOption>(), serviceOptionsFromRates(emptyMap()))
     }

@@ -28,12 +28,18 @@ package com.tribetails.auntieos.ui.admin
  * rename carries the flag. The server ends such a visit by the type's length,
  * so a flagged row with no length anywhere is refused at Save
  * ([kinCareStartTimeMissingLength]).
+ *
+ * [existing] is true for a row read from the stored rate card (#1593). Its
+ * name cleared to blank is an error the operator has to see
+ * ([kinCareRowProblems]); only a freshly added row left entirely empty is
+ * dropped without a word.
  */
 data class KinCareTypeRow(
     val type: String,
     val duration: String,
     val rate: String,
     val startTime: Boolean = false,
+    val existing: Boolean = false,
 ) {
     companion object {
         val BLANK = KinCareTypeRow(type = "", duration = "", rate = "")
@@ -74,12 +80,15 @@ fun kinCareRows(
             duration = durations[type].orEmpty(),
             rate = rate,
             startTime = startTimes[type] == true,
+            existing = true,
         )
     }
 
 /**
  * Rows to the rate map: blank-name rows dropped, last row wins on a duplicate
- * (the wasm editor's `associate`), every value trimmed.
+ * (the wasm editor's `associate`), every value trimmed. Save is held while
+ * [kinCareRowProblems] names a blank or duplicate name (#1593), so the dropping
+ * only ever applies to an abandoned add.
  */
 fun foldKinCareRates(rows: List<KinCareTypeRow>): Map<String, String> {
     val edited = LinkedHashMap<String, String>()
@@ -172,15 +181,22 @@ fun kinCareDurationPlaceholder(row: KinCareTypeRow): String {
     return "$implied (from the name)"
 }
 
-/** The booking wizard's own label for a row, the preview panel's chip text. */
-fun kinCarePreviewLabel(row: KinCareTypeRow): String =
-    serviceChipLabel(
-        ServiceOption(
-            name = row.type.trim().ifEmpty { "Untitled" },
-            rate = row.rate.trim(),
-            durationMinutes = kinCareRowMinutes(row),
-        ),
+/**
+ * The preview panel's chip text: the booking wizard's own label, with "No price
+ * set" for a blank rate. A rate that does not pass [priceProblem] ("abc", "-5")
+ * shows no price at all rather than "$abc" (#1593); the sentence under the
+ * field says what is wrong with it.
+ */
+fun kinCarePreviewLabel(row: KinCareTypeRow): String {
+    val name = row.type.trim().ifEmpty { "Untitled" }
+    if (row.rate.isBlank()) return "$name · $KIN_CARE_NO_PRICE"
+    return serviceChipLabel(
+        ServiceOption(name = name, rate = row.rate.trim(), durationMinutes = kinCareRowMinutes(row)),
     )
+}
+
+/** The preview's words for a type with no rate yet. */
+const val KIN_CARE_NO_PRICE = "No price set"
 
 /** "1 type" / "3 types", the rows panel's detail line. */
 fun kinCareTypeCount(count: Int): String = if (count == 1) "1 type" else "$count types"

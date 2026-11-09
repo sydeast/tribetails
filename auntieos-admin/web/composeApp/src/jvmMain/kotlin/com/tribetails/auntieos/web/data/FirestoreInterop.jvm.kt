@@ -125,6 +125,8 @@ object JvmFirestoreFixtures {
         lastWrite = null
         restTransport = null
         JvmFirestoreRest.clearTimestampPaths()
+        // #1593: the settings baseline is the last read; a new test has read nothing.
+        resetBusinessSettingsBaseline()
     }
 }
 
@@ -325,15 +327,26 @@ internal actual fun platformBookingTimeSlotsStream(): Flow<FirestoreResult<List<
  * the only thing a save is allowed to diff against.
  *
  * NULL UNTIL A READ LANDS, which is load-bearing rather than tidy: with no
- * baseline there is nothing to compare, and the save falls back to the
- * whole-object merge it has always done rather than guessing that the shipped
- * Kotlin defaults are what the server holds.
+ * baseline there is nothing to compare, and the save refuses (#1593) rather
+ * than guessing that the shipped Kotlin defaults are what the server holds.
  *
  * It advances on every poll AND after every write this console makes, so a
  * second save does not re-send the first save's fields.
  */
 @Volatile
 private var lastLoadedBusinessSettings: BusinessSettings? = null
+
+/** #1593: the settings save callable's name. */
+internal const val SAVE_BUSINESS_SETTINGS_CALLABLE = "saveBusinessSettings"
+
+/** #1593: what a save says before any settings read has landed. */
+internal const val BUSINESS_SETTINGS_NOT_LOADED_MESSAGE = "Settings have not loaded yet. Reload and try again."
+
+/** Test seam: forget the last settings read, so one test's baseline never leaks into the next. */
+internal fun resetBusinessSettingsBaseline() {
+    lastLoadedBusinessSettings = null
+}
+
 /**
  * #1155: the business's zone as a `java.time.ZoneId`, from the last
  * `business_settings` this console loaded (or the test fixture), else
@@ -347,7 +360,9 @@ internal fun businessZoneId(): java.time.ZoneId = java.time.ZoneId.of(
         .id,
 )
 internal actual fun platformBusinessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> =
-    JvmFirestoreFixtures.businessSettings?.let { flowOf(FirestoreResult.Data(it)) }
+    // A test's fixture IS the last read, so a save from a rendered panel diffs
+    // against it the way the live app diffs against the last poll.
+    JvmFirestoreFixtures.businessSettings?.let { lastLoadedBusinessSettings = it; flowOf(FirestoreResult.Data(it)) }
         ?: JvmFirestoreRest.pollingScalar {
             val loaded = JvmFirestoreRest.getDoc<BusinessSettings>("business_settings", BUSINESS_SETTINGS_DOC_ID)
                 ?: BusinessSettings()
@@ -615,49 +630,50 @@ internal actual suspend fun platformRecordPayment(payment: Payment, idempotencyK
         )
     }
 /**
- * Always write the canonical doc id `business_settings`, and write ONLY the
- * fields that changed since this console read the document.
+ * #1593: every settings save goes through the `saveBusinessSettings` callable
+ * (`mytribe/functions/src/admin/saveBusinessSettings.ts`). The rules deny
+ * `business_settings/business_settings` to every client, so a direct REST write
+ * from here would be refused.
  *
- * ISSUE #519. This used to serialise the whole model and merge it. `merge`
- * protects fields OUTSIDE the written map and does nothing about stale fields
- * INSIDE it, and every field of the model was inside it — so a panel saving one
- * toggle wrote all ~50 back at whatever this console had last polled, reverting
- * anything the React admin or the phone had changed since. Both of those
- * surfaces have written diffs for a while; this was the last whole-object
- * writer, and #519's three new panels multiply how often it saves.
+ * ONLY THE FIELDS THAT CHANGED since this console read the document go out
+ * (ISSUE #519): a panel saving one toggle must not write every other field back
+ * at whatever this console last polled. [businessSettingsSaveChanges] builds the
+ * `changes` map, never naming a server-owned field; the callable stamps
+ * `updatedAt`/`updatedBy` itself.
  *
- * The stamp rides along with the changes, and ONLY with changes: an empty diff
- * writes nothing at all, because `updatedAt` says when the document last changed
- * and moving it for a save that changed nothing makes it lie. The caller still
- * gets `Ok` — "saved" and "nothing to save" are the same outcome to an operator.
+ * NO BASELINE, NO SAVE. Before a read has landed there is nothing to diff
+ * against, and writing the whole model would put the shipped Kotlin defaults
+ * over the operator's document. It used to fall back to a whole-object merge;
+ * now it says so and writes nothing.
  *
- * With no baseline (no read has landed yet) it falls back to the whole-object
- * merge rather than diffing against Kotlin defaults, which would write every
- * field at its shipped value.
+ * An empty diff makes no call and still answers Ok: "saved" and "nothing to
+ * save" are the same outcome to an operator.
+ *
+ * The call goes through [platformInvokeCallable], the revocation-aware path, so
+ * a refusal that means the session is over signs out here too. A refusal
+ * (`invalid-argument`, `details.code = "settings_refused"`) comes back as the
+ * Err carrying the server's sentence and that code. The baseline moves only on
+ * Ok, so a refused save is re-sent whole on the next press.
  */
-internal actual suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> =
-    transportResult("save failed") {
-        val baseline = lastLoadedBusinessSettings
-        val stampedAt = com.tribetails.auntieos.web.util.nowIso()
-        if (baseline == null) {
-            val stamped = settings.copy(_id = BUSINESS_SETTINGS_DOC_ID, updatedAt = stampedAt)
-            JvmFirestoreRest.mergeDoc("business_settings", BUSINESS_SETTINGS_DOC_ID, jsonOut.encodeToString(stamped))
-            return@transportResult WriteResult.Ok(Unit)
+internal actual suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> {
+    val baseline = lastLoadedBusinessSettings
+        ?: return WriteResult.Err(BUSINESS_SETTINGS_NOT_LOADED_MESSAGE)
+    val changes = businessSettingsSaveChanges(baseline, settings, jsonOut)
+    if (changes.isEmpty()) return WriteResult.Ok(Unit)
+    val payload = jsonOut.encodeToString(
+        JsonObject.serializer(),
+        buildJsonObject { put("changes", JsonObject(changes)) },
+    )
+    return when (val r = platformInvokeCallable(SAVE_BUSINESS_SETTINGS_CALLABLE, payload)) {
+        is WriteResult.Ok -> {
+            // The baseline moves to what the server now holds. Without this a
+            // second save re-sends the first save's fields.
+            lastLoadedBusinessSettings = settings
+            WriteResult.Ok(Unit)
         }
-        val changes = businessSettingsChangedFields(baseline, settings, jsonOut)
-        if (changes.isEmpty()) return@transportResult WriteResult.Ok(Unit)
-        val ok = JvmFirestoreRest.patchFields(
-            "business_settings",
-            BUSINESS_SETTINGS_DOC_ID,
-            changes + mapOf("updatedAt" to JsonPrimitive(stampedAt)),
-        )
-        if (!ok) error("Firestore write failed")
-        // The baseline moves to what the server now holds. Without this a second
-        // save re-sends the first save's fields, which is the same clobber one
-        // step later.
-        lastLoadedBusinessSettings = settings
-        WriteResult.Ok(Unit)
+        is WriteResult.Err -> r
     }
+}
 internal actual suspend fun platformCreateBookingRequest(booking: KinCareSession): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_sessions", jsonOut.encodeToString(booking))) }
 /**

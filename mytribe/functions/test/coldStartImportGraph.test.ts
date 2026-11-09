@@ -170,8 +170,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * imports are already resident. 430 is not reachable without moving modules
  * out of the graph, so the bound sits at the measured count with no slack:
  * the next eager module has to be looked at.
+ *
+ * 436 since #1593: `admin/saveBusinessSettings.ts` is a new FUNCTIONS entry,
+ * in this graph by construction (the one Settings save; the rules now deny
+ * the document to every client). Its field checks,
+ * `lib/businessSettingsChecks.ts`, load with `await import()` inside the
+ * handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 435;
+const MAX_OWN_EAGER_MODULES = 436;
 
 interface Edge {
   spec: string;

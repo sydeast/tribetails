@@ -371,7 +371,7 @@ export interface BusinessSettings {
    *
    * Only `true` entries exist: an unflagged type has no key, and the server
    * (`readStartTimeServiceIds` in mytribe/functions) honours a flag only when
-   * it is exactly `true`. Written whole (`WHOLE_MAP_FIELDS`), so clearing a
+   * it is exactly `true`. Written whole (the server replaces the rate card), so clearing a
    * flag or renaming the type removes the old key.
    */
   serviceStartTimeBooking: Record<string, true>;
