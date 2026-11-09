@@ -1729,12 +1729,15 @@ private fun recentSendDot(channel: String, c: AuntieColors): Color =
 // Formatting helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** "MMM d" label from an ISO timestamp or date string; falls back to the raw string. */
-private fun humanizeDate(date: String): String {
+/**
+ * "MMM d" label from an ISO timestamp or date string, "MMM d, yyyy" when it is
+ * not [currentYear] (#1599); falls back to the raw string.
+ */
+internal fun humanizeDate(date: String, currentYear: Int = java.time.LocalDate.now().year): String {
     val iso = isoDatePrefixOrNull(date) ?: return date.trim()
     return runCatching {
         val d = java.time.LocalDate.parse(iso)
         val month = d.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
-        "$month ${d.dayOfMonth}"
+        if (d.year == currentYear) "$month ${d.dayOfMonth}" else "$month ${d.dayOfMonth}, ${d.year}"
     }.getOrDefault(date.trim())
 }

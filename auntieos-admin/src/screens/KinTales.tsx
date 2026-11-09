@@ -3,7 +3,13 @@ import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
 import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { kinTaleMatchesSearch, kinTalesPageQuery, type KinTaleEntry } from '../api/kinTales';
+import {
+  KINTALES_LEGACY_MAX,
+  kinTaleMatchesSearch,
+  kinTalesLegacyQuery,
+  kinTalesPageQuery,
+  type KinTaleEntry,
+} from '../api/kinTales';
 import {
   GENERATED_DRAFTS_QUERY,
   GENERATED_DRAFTS_MAX,
@@ -149,7 +155,7 @@ interface KinTalesProps {
 /**
  * Admin KinTales list ("The Den · KinTales", nav slug `kintales` per
  * `lib/nav.ts`). Reads the flat `kin_care_reports` collection a PAGE at a time
- * through `usePagedCollection` (createdAt desc, windowed by the toolbar's date
+ * through `usePagedCollection` (ISO `createdAt` desc, windowed by the toolbar's date
  * preset), then classifies every row through the enumerated `kinTaleState`
  * (never by negation, see lib/kinTaleFormat.ts for the AO-12-style
  * rationale) for both the summary stat strip and the filter tabs.
@@ -192,6 +198,18 @@ interface KinTalesProps {
  * archive's own KinTale search was client-side too; what is new is that the
  * scope is now visible instead of implied by an invisible cap.
  *
+ * ── MIGRATED ROWS WITH FREE-TEXT DATES (#1599) ─────────────────────────────
+ * 83 `kin_care_reports` rows hold "September 3, 2025 2:02pm" in `createdAt`.
+ * Firestore compares strings by byte, so the pager (`createdAt desc`) would put
+ * them first, alphabetical by month name, and every `>=` window would admit
+ * them. The pager is therefore bounded to ISO rows, and these rows come from a
+ * second bounded read (`kinTalesLegacyQuery`) and are placed by their parsed
+ * date in `kinTaleListRows`, inside the same window. While older ISO pages are
+ * still unloaded, a migrated row older than the oldest loaded one is held back
+ * so "Load more" never inserts rows above it. A row whose date cannot be read
+ * is kept, last, and shown as stored. No data is rewritten: the operator's
+ * backfill stays optional.
+ *
  * List/feed only: composing or editing a KinTale (KinTaleComposeScreen), the
  * per-report detail/comment-thread/share-link view (KinTaleReportScreen), and
  * template editing are separate surfaces. `onSelect` is this screen's only
@@ -225,6 +243,11 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
   // Home's widget uses, so the two surfaces share one Watch target and can
   // never report two different draft sets (see api/drafts.ts).
   const drafts = useCollection<GeneratedDraftRow>(GENERATED_DRAFTS_QUERY);
+  // #1599: the migrated reports whose `createdAt` is free text. The pager
+  // cannot order or window them (see kinTalesPageQuery), so they are read as
+  // their own bounded set and placed by parsed date in `kinTaleListRows`.
+  const legacySpec = useMemo(() => kinTalesLegacyQuery(kinfolkId), [kinfolkId]);
+  const legacy = useCollection<KinTaleEntry>(legacySpec);
 
   // The joined list. `reports` decides the region's status: it is the paged,
   // server-windowed side, and a first-page failure there means the list really
@@ -235,12 +258,14 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
     if (reports.status !== 'ready') return reports;
     return {
       status: 'ready',
-      data: kinTaleListRows(reports.data, drafts.status === 'ready' ? drafts.data : [], {
-        startIso,
-        kinfolkId,
-      }),
+      data: kinTaleListRows(
+        reports.data,
+        drafts.status === 'ready' ? drafts.data : [],
+        { startIso, kinfolkId },
+        { rows: legacy.status === 'ready' ? legacy.data : [], hasMore },
+      ),
     };
-  }, [reports, drafts, startIso, kinfolkId]);
+  }, [reports, drafts, legacy, hasMore, startIso, kinfolkId]);
 
   // The facet's options come from the household DIRECTORY, not from the loaded
   // KinTales. Deriving them from the page would offer only households that are
@@ -320,6 +345,16 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
           ? `Drafts are the newest ${String(GENERATED_DRAFTS_MAX)} only; older drafts are not counted.`
           : '';
 
+  // The imported half, said out loud for the same reason the drafts half is:
+  // an unread or full set is a partial list, not an empty one.
+  const legacyNote =
+    legacy.status === 'loading'
+      ? 'Imported KinTales are still loading, so older rows may be missing for now.'
+      : legacy.status === 'error'
+        ? `Imported KinTales could not be loaded (${legacy.message}), so they are missing from this list.`
+        : legacy.data.length >= KINTALES_LEGACY_MAX
+          ? `Imported KinTales are capped at ${String(KINTALES_LEGACY_MAX)}, so some are not shown.`
+          : '';
   return (
     <div className="screen kintales">
       {/* d1 / d2 / d3: the Den entrance stagger (styles/base.css). Three blocks
@@ -411,6 +446,11 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
         {draftsNote !== '' && (
           <p className="kintales__stats-note" {...(drafts.status === 'error' ? { role: 'alert' } : {})}>
             {draftsNote}
+          </p>
+        )}
+        {legacyNote !== '' && (
+          <p className="kintales__stats-note" {...(legacy.status === 'error' ? { role: 'alert' } : {})}>
+            {legacyNote}
           </p>
         )}
       </div>
