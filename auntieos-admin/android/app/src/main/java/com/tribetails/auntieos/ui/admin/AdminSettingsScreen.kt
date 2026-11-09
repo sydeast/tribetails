@@ -108,6 +108,8 @@ import com.tribetails.auntieos.data.model.PaymentMethodRow
 import com.tribetails.auntieos.data.model.PaymentOptionDraft
 import com.tribetails.auntieos.data.model.formatFeeSchedule
 import com.tribetails.auntieos.data.model.paymentDraftOf
+import com.tribetails.auntieos.data.model.unknownPaymentMethodIds
+import com.tribetails.auntieos.data.model.unknownPaymentMethodSentence
 import com.tribetails.auntieos.data.model.withPaymentDraft
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -1164,6 +1166,11 @@ internal fun PaymentOptionsPanel(
                 if (index < PAYMENT_METHOD_CATALOGUE.lastIndex) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(c.border))
                 }
+            }
+            // #1785: a stored method this app does not list shows its sentence and
+            // is left as stored; it holds back only a save that touches it.
+            unknownPaymentMethodIds(settings.paymentOptions).forEach { id ->
+                Text(unknownPaymentMethodSentence(id), style = AuntieTheme.typography.bodySmall, color = c.warning)
             }
             val blocked = paymentHandlesBlockSave(draft, saved)
             Row(horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {

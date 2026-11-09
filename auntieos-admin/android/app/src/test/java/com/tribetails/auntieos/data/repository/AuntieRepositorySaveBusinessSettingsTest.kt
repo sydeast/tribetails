@@ -192,6 +192,27 @@ class AuntieRepositorySaveBusinessSettingsTest {
         val sections = ((wire["mytribePortal"] as Map<String, Any?>)["home"] as Map<String, Any?>)["sections"] as List<Map<String, Any?>>
         assertTrue(sections[1]["limit"] is Int)
     }
+    /** #1785: the callable payload for a Venmo edit names venmo alone, with a stale unknown id stored. */
+    @Test
+    fun `a payments save sends only the changed method and not a stored unknown id`() = runBlocking {
+        val loaded = BusinessSettings(
+            paymentOptions = mapOf(
+                "venmo" to mapOf("enabled" to true, "instructions" to ""),
+                "oldcoin" to mapOf("enabled" to true, "instructions" to ""),
+            ),
+        )
+        val draft = paymentDraftOf(loaded).let { d ->
+            d.copy(options = d.options + ("venmo" to com.tribetails.auntieos.data.model.PaymentOptionDraft(false, "")))
+        }
+        val changes = businessSettingsFieldChanges(loaded, loaded.withPaymentDraft(draft))
+        val functions = mockk<FirebaseFunctions>()
+        val payload = stub(functions)
+        repoWith(functions).updateBusinessSettingsFields(changes, "admin").getOrThrow()
+        @Suppress("UNCHECKED_CAST")
+        val options = changesOf(payload.captured)["paymentOptions"] as Map<String, Map<String, Any?>>
+        assertEquals(setOf("venmo"), options.keys)
+        assertEquals(false, options["venmo"]!!["enabled"])
+    }
     @Test
     fun `payment options are a map of method id to enabled and instructions`() {
         val loaded = BusinessSettings()

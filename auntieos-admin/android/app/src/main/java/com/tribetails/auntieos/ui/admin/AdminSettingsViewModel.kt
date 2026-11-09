@@ -8,6 +8,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
+import com.tribetails.auntieos.data.model.paymentOptionsSaveProblem
 import com.tribetails.auntieos.data.model.revertBusinessSettingsFields
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.TagScope
@@ -204,6 +205,12 @@ class AdminSettingsViewModel(
             _uiState.value = _uiState.value.copy(
                 error = "Still saving the last change. Try again in a moment.",
             )
+            return
+        }
+        // #1785: a save that touches a payment id the server does not list is
+        // refused with the server's sentence; one that leaves it alone is not.
+        paymentOptionsSaveProblem(baseline, settings)?.let { sentence ->
+            _uiState.value = _uiState.value.copy(saveSuccess = false, error = sentence)
             return
         }
         val changes = businessSettingsFieldChanges(baseline, settings)
