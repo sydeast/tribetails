@@ -5,7 +5,15 @@ import {
   alignPinnedToDurations,
   buildDayPatterns,
   coverageForDay,
+  DATE_ORDER_REFUSAL,
+  dateRangeRefusal,
   daysBetween,
+  BUFFER_REFUSAL,
+  DISCOUNT_REFUSAL,
+  PACKAGE_DEFAULTS,
+  parseBufferHours,
+  parseDiscountPct,
+  storedPackageRefusals,
   durationsFromServiceRates,
   gapWarnings,
   minutesToTime,
@@ -398,5 +406,65 @@ describe('sanitizeStoredRules (#1582)', () => {
         DEFAULT_COVERAGE_RULES.maxGapHours,
       );
     }
+  });
+});
+
+describe('parseDiscountPct (#1593)', () => {
+  it('reads blank as no discount and takes whole and decimal percents from 0 to 100', () => {
+    expect(parseDiscountPct('')).toEqual({ ok: true, value: 0 });
+    expect(parseDiscountPct('  ')).toEqual({ ok: true, value: 0 });
+    expect(parseDiscountPct('0')).toEqual({ ok: true, value: 0 });
+    expect(parseDiscountPct(' 12.5 ')).toEqual({ ok: true, value: 12.5 });
+    expect(parseDiscountPct('100')).toEqual({ ok: true, value: 100 });
+  });
+  it('refuses 150, -20, abc and anything that is not a plain number, never capping it', () => {
+    for (const bad of ['150', '100.5', '-20', '-', 'abc', '+5', '1e2', '10%', '1,5', '5.']) {
+      expect(parseDiscountPct(bad), bad).toEqual({ ok: false, message: DISCOUNT_REFUSAL });
+    }
+    expect(DISCOUNT_REFUSAL).toBe('Enter a discount from 0 to 100 percent.');
+  });
+});
+describe('parseBufferHours (#1593)', () => {
+  it('takes 0 or more hours, whole or decimal, with no upper bound', () => {
+    expect(parseBufferHours('0')).toEqual({ ok: true, value: 0 });
+    expect(parseBufferHours('1')).toEqual({ ok: true, value: 1 });
+    expect(parseBufferHours(' 1.5 ')).toEqual({ ok: true, value: 1.5 });
+    expect(parseBufferHours('12')).toEqual({ ok: true, value: 12 });
+  });
+  it('refuses abc, -1, blank and anything that is not a plain number', () => {
+    for (const bad of ['abc', '-1', '-', '', '  ', '+1', '1e2', '1.', '2h']) {
+      expect(parseBufferHours(bad), JSON.stringify(bad)).toEqual({ ok: false, message: BUFFER_REFUSAL });
+    }
+    expect(BUFFER_REFUSAL).toBe('Enter the buffer in hours, 0 or more, like 1 or 1.5.');
+  });
+});
+describe('stored discount and buffer (#1593)', () => {
+  it('names a stored value the field would refuse, as stored', () => {
+    expect(storedPackageRefusals({ discountPct: 150, overnightBufferHours: -1 })).toEqual({ discount: '150', buffer: '-1' });
+    expect(storedPackageRefusals({ discountPct: 10, overnightBufferHours: 1.5 })).toEqual({ discount: null, buffer: null });
+    // Absent means the default, not a refusal.
+    expect(storedPackageRefusals({})).toEqual({ discount: null, buffer: null });
+  });
+  it('prices a refused stored value at the default, and keeps a readable one', () => {
+    const refused = normalizePackage({ id: 'x', discountPct: 150, overnightBufferHours: -1 });
+    expect(refused.discountPct).toBe(PACKAGE_DEFAULTS.discountPct);
+    expect(refused.overnightBufferHours).toBe(PACKAGE_DEFAULTS.overnightBufferHours);
+    const kept = normalizePackage({ id: 'y', discountPct: 12.5, overnightBufferHours: 0 });
+    expect(kept.discountPct).toBe(12.5);
+    // 0 is a real buffer, not a missing one.
+    expect(kept.overnightBufferHours).toBe(0);
+    expect(normalizePackage({ id: 'z' }).overnightBufferHours).toBe(PACKAGE_DEFAULTS.overnightBufferHours);
+  });
+});
+describe('dateRangeRefusal (#1593)', () => {
+  it('refuses an End before the Start', () => {
+    expect(dateRangeRefusal('2026-07-05', '2026-07-01')).toBe(DATE_ORDER_REFUSAL);
+    expect(DATE_ORDER_REFUSAL).toBe('The end date has to be on or after the start date.');
+  });
+  it('takes the same day, a later End, and a range not yet set', () => {
+    expect(dateRangeRefusal('2026-07-01', '2026-07-01')).toBeNull();
+    expect(dateRangeRefusal('2026-07-01', '2026-07-05')).toBeNull();
+    expect(dateRangeRefusal('2026-07-01', '')).toBeNull();
+    expect(dateRangeRefusal('', '2026-07-01')).toBeNull();
   });
 });

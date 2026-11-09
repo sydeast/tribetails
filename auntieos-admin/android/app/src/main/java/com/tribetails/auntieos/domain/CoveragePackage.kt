@@ -284,6 +284,55 @@ fun parseMaxGapHours(text: String): MaxGapParse {
     }
     return MaxGapParse.Ok(value)
 }
+
+/** What a package's Discount % or Buffer (hrs) field made of its typed text (#1593). */
+sealed interface PackageFieldParse {
+    data class Ok(val value: Double) : PackageFieldParse
+    data class Refused(val message: String) : PackageFieldParse
+}
+const val DISCOUNT_REFUSAL = "Enter a discount from 0 to 100 percent."
+const val BUFFER_REFUSAL = "Enter the buffer in hours, 0 or more, like 1 or 1.5."
+const val DATE_ORDER_REFUSAL = "The end date has to be on or after the start date."
+/**
+ * Reads what was typed into a package's Discount %.
+ *
+ * REFUSES instead of coercing (#1593). The field used to read "150" as 100 and
+ * "-20" or "abc" as 0, with no message. Blank still means no discount; anything
+ * else must be a plain number from 0 to 100. The caller keeps the last good value.
+ * Mirrors `parseDiscountPct` in `auntieos-admin/src/lib/coveragePackage.ts`.
+ */
+fun parseDiscountPct(text: String): PackageFieldParse {
+    val t = text.trim()
+    if (t.isEmpty()) return PackageFieldParse.Ok(0.0)
+    val value = t.toDoubleOrNull()
+    if (!MAX_GAP_TEXT.matches(t) || value == null || !value.isFinite() || value > 100.0) {
+        return PackageFieldParse.Refused(DISCOUNT_REFUSAL)
+    }
+    return PackageFieldParse.Ok(value)
+}
+/**
+ * Reads what was typed into a package's overnight Buffer (hrs).
+ *
+ * REFUSES instead of coercing (#1593). "abc" and blank used to become 0 and "-1"
+ * was kept but priced as 0. No upper bound: how early the sitter arrives is the
+ * operator's call. Mirrors `parseBufferHours` in the web lib.
+ */
+fun parseBufferHours(text: String): PackageFieldParse {
+    val t = text.trim()
+    val value = t.toDoubleOrNull()
+    if (!MAX_GAP_TEXT.matches(t) || value == null || !value.isFinite()) return PackageFieldParse.Refused(BUFFER_REFUSAL)
+    return PackageFieldParse.Ok(value)
+}
+/**
+ * The message beside End when it falls before Start, or null (#1593). A reversed
+ * range used to price nothing with no reason given. Mirrors `dateRangeRefusal`.
+ */
+fun dateRangeRefusal(start: String, end: String): String? {
+    if (start.isBlank() || end.isBlank()) return null
+    val s = runCatching { LocalDate.parse(start) }.getOrNull() ?: return null
+    val e = runCatching { LocalDate.parse(end) }.getOrNull() ?: return null
+    return if (e.isBefore(s)) DATE_ORDER_REFUSAL else null
+}
 val DEFAULT_COVERAGE_RULES = CoverageRules(
     wakeStart = "07:00",
     wakeEnd = "22:00",
@@ -655,6 +704,8 @@ fun pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
         )
     }
     val subtotal = rows.sumOf { it.dayCost }
+    // The Discount field refuses anything outside 0..100 (#1593); this clamp is a
+    // guard, never the thing that reads a typed value.
     val pct = min(100.0, max(0.0, pkg.discountPct))
     val discount = subtotal * (pct / 100)
     return PricedPackage(rows, subtotal, pct, discount, subtotal - discount)
@@ -689,7 +740,7 @@ fun quoteText(input: QuoteInput): String {
     }
 
     lines.add("Subtotal   ${money(input.priced.subtotal)}")
-    if (input.priced.discountPct > 0) lines.add("${pkg.discountLabel.ifBlank { "Discount" }} (${input.priced.discountPct.roundToInt()}%)   -${money(input.priced.discount)}")
+    if (input.priced.discountPct > 0) lines.add("${pkg.discountLabel.ifBlank { "Discount" }} (${numLabel(input.priced.discountPct)}%)   -${money(input.priced.discount)}")
     lines.add("Total   ${money(input.priced.total)}")
     return lines.joinToString("\n")
 }

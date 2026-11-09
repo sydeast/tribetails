@@ -5,6 +5,7 @@ import {
   alignPinnedToDurations,
   buildDayPatterns,
   dateLabel,
+  dateRangeRefusal,
   daysBetween,
   durationsFromServiceRates,
   effectiveVisits,
@@ -14,11 +15,14 @@ import {
   minutesToTime,
   normalizePackage,
   packagesFromPatterns,
+  parseBufferHours,
+  parseDiscountPct,
   pricePackage,
   quoteText,
   uniqueCopyName,
   sanitizeStoredRules,
   storedMaxGapRefusal,
+  storedPackageRefusals,
   timeToMinutes,
   todayIso,
   uid,
@@ -138,17 +142,31 @@ interface StoredQuote {
   tiersSeeded: boolean;
 }
 
-function loadQuote(): Partial<StoredQuote> {
+/** A package's Discount % or Buffer (hrs) field, as a key into the typed-text map. */
+type PackageField = 'discount' | 'buffer';
+const fieldKey = (pkgId: string, field: PackageField): string => `${pkgId}:${field}`;
+interface LoadedQuote extends Partial<StoredQuote> {
+  /** Stored discount / buffer values the fields would refuse, keyed by `fieldKey`, shown as stored (#1593). */
+  refusedText: Record<string, string>;
+}
+function loadQuote(): LoadedQuote {
   try {
     const raw = window.localStorage.getItem(QUOTE_KEY);
-    if (!raw) return {};
+    if (!raw) return { refusedText: {} };
     const parsed = JSON.parse(raw) as Partial<StoredQuote>;
-    return {
-      ...parsed,
-      packages: Array.isArray(parsed.packages) ? parsed.packages.map(normalizePackage) : [],
-    };
+    const refusedText: Record<string, string> = {};
+    const packages = Array.isArray(parsed.packages)
+      ? parsed.packages.map((stored) => {
+          const pkg = normalizePackage(stored);
+          const refused = storedPackageRefusals(stored);
+          if (refused.discount !== null) refusedText[fieldKey(pkg.id, 'discount')] = refused.discount;
+          if (refused.buffer !== null) refusedText[fieldKey(pkg.id, 'buffer')] = refused.buffer;
+          return pkg;
+        })
+      : [];
+    return { ...parsed, packages, refusedText };
   } catch {
-    return {};
+    return { refusedText: {} };
   }
 }
 
@@ -196,6 +214,9 @@ function Builder({ settings }: BuilderProps) {
 
   const days = daysBetween(startDate, endDate);
   const nights = Math.max(0, days - 1); // last day is a return day — client home that night
+  // End before Start is refused beside End and prices nothing (#1593). Derived from
+  // the dates, so a stored quote with a reversed range opens with the message.
+  const dateError = dateRangeRefusal(startDate, endDate);
 
   // Persist the quote on every change (survives a reload; "Start new quote" clears it).
   // The per-client rules travel here, NOT in the saved global config.
@@ -217,7 +238,10 @@ function Builder({ settings }: BuilderProps) {
   }, [durations, overnightDurationId]);
 
   // Date range shrank: drop overnight toggles / day overrides for days that no longer exist.
+  // A refused (reversed) range is not a shrink: picking the wrong End must not wipe
+  // the operator's overnight nights and day edits (#1593).
   useEffect(() => {
+    if (dateError !== null) return;
     setPackages((prev) => {
       let changed = false;
       const next = prev.map((p) => {
@@ -235,7 +259,7 @@ function Builder({ settings }: BuilderProps) {
       });
       return changed ? next : prev;
     });
-  }, [nights, days]);
+  }, [nights, days, dateError]);
 
   const overnightDuration = durations.find((d) => d.id === overnightDurationId);
   const visitDurations = durations.filter((d) => d.kind === 'visit');
@@ -349,6 +373,24 @@ function Builder({ settings }: BuilderProps) {
   };
   const patchPackage = (id: string, patch: Partial<Package>) =>
     setPackages((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  // What is typed in each package's Discount % and Buffer (hrs), kept apart from the
+  // value pricing uses (#1593, the #1582 Max gap pattern). Once a field is touched its
+  // text stays exactly as typed; a refused entry shows its message beside the field and
+  // the package keeps its last good value. A stored value the field would refuse opens
+  // as stored, with its message, and prices at the default until it is retyped.
+  const [fieldText, setFieldText] = useState<Record<string, string>>(stored.refusedText);
+  const fieldParse = (field: PackageField) => (field === 'discount' ? parseDiscountPct : parseBufferHours);
+  const fieldError = (pkgId: string, field: PackageField): string => {
+    const text = fieldText[fieldKey(pkgId, field)];
+    if (text === undefined) return '';
+    const parsed = fieldParse(field)(text);
+    return parsed.ok ? '' : parsed.message;
+  };
+  const changePackageField = (pkgId: string, field: PackageField, text: string) => {
+    setFieldText((prev) => ({ ...prev, [fieldKey(pkgId, field)]: text }));
+    const parsed = fieldParse(field)(text);
+    if (parsed.ok) patchPackage(pkgId, field === 'discount' ? { discountPct: parsed.value } : { overnightBufferHours: parsed.value });
+  };
 
   const patchVisit = (pkgId: string, visitId: string, patch: Partial<Visit>) =>
     setPackages((prev) =>
@@ -460,7 +502,7 @@ function Builder({ settings }: BuilderProps) {
 
   const startNewQuote = () => {
     // Everything this wipes comes back whole with Undo (#1605).
-    const snapshot = { packages, detailId, clientName, startDate, endDate, rules, overnightDurationId, gapText, gapError };
+    const snapshot = { packages, detailId, clientName, startDate, endDate, rules, overnightDurationId, gapText, gapError, fieldText };
     offerUndo('Started a new quote.', () => {
       setPackages(snapshot.packages);
       setDetailId(snapshot.detailId);
@@ -471,6 +513,8 @@ function Builder({ settings }: BuilderProps) {
       // The Max gap text and its message come back with the rule they feed (#1582).
       setGapText(snapshot.gapText);
       setGapError(snapshot.gapError);
+      // So do each package's typed Discount and Buffer (#1593).
+      setFieldText(snapshot.fieldText);
       setOvernightDurationId(snapshot.overnightDurationId);
     });
     // Rules are per-client, so reset them for the next one, repointed at the menu
@@ -485,6 +529,7 @@ function Builder({ settings }: BuilderProps) {
     setRules(freshRules);
     setGapText(String(freshRules.maxGapHours));
     setGapError('');
+    setFieldText({});
   };
 
   // ── pricing ─────────────────────────────────────────────────────────────────
@@ -569,10 +614,24 @@ function Builder({ settings }: BuilderProps) {
             <span className="cpb__fieldLabel">Start</span>
             <input className="cpb__input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </label>
-          <label className="cpb__field">
-            <span className="cpb__fieldLabel">End</span>
-            <input className="cpb__input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </label>
+          {/* A div, not a wrapping label: the message must not become part of the field's name. */}
+          <div className="cpb__field">
+            <label className="cpb__fieldLabel" htmlFor="cpb-end">End</label>
+            <input
+              id="cpb-end"
+              className="cpb__input"
+              type="date"
+              value={endDate}
+              aria-invalid={dateError !== null ? true : undefined}
+              aria-describedby={dateError !== null ? 'cpb-end-error' : undefined}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+            {dateError !== null ? (
+              <span id="cpb-end-error" className="cpb__fieldError" role="alert">
+                {dateError}
+              </span>
+            ) : null}
+          </div>
         </div>
         {days > 0 ? (
           <p className="cpb__dayCount">
@@ -723,10 +782,24 @@ function Builder({ settings }: BuilderProps) {
                     <span className="cpb__fieldLabel">Starts</span>
                     <input className="cpb__input" type="time" value={pkg.overnightStart} onChange={(e) => patchPackage(pkg.id, { overnightStart: e.target.value })} />
                   </label>
-                  <label className="cpb__field">
-                    <span className="cpb__fieldLabel">Buffer (hrs)</span>
-                    <input className="cpb__input" type="number" min="0" step="0.5" value={pkg.overnightBufferHours} onChange={(e) => patchPackage(pkg.id, { overnightBufferHours: parseFloat(e.target.value) || 0 })} />
-                  </label>
+                  <div className="cpb__field">
+                    <label className="cpb__fieldLabel" htmlFor={`cpb-buffer-${pkg.id}`}>Buffer (hrs)</label>
+                    <input
+                      id={`cpb-buffer-${pkg.id}`}
+                      className="cpb__input"
+                      type="text"
+                      inputMode="decimal"
+                      value={fieldText[fieldKey(pkg.id, 'buffer')] ?? String(pkg.overnightBufferHours)}
+                      aria-invalid={fieldError(pkg.id, 'buffer') !== '' ? true : undefined}
+                      aria-describedby={fieldError(pkg.id, 'buffer') !== '' ? `cpb-buffer-error-${pkg.id}` : undefined}
+                      onChange={(e) => changePackageField(pkg.id, 'buffer', e.target.value)}
+                    />
+                    {fieldError(pkg.id, 'buffer') !== '' ? (
+                      <span id={`cpb-buffer-error-${pkg.id}`} className="cpb__fieldError" role="alert">
+                        {fieldError(pkg.id, 'buffer')} Prices still use {pkg.overnightBufferHours}h.
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 {overnightDuration ? (
                   <p className="cpb__cfgNote">
@@ -735,7 +808,7 @@ function Builder({ settings }: BuilderProps) {
                 ) : null}
 
                 {nights === 0 ? (
-                  <p className="cpb__miniEmpty">{days > 0 ? 'Single day — no nights.' : 'Set a date range above.'}</p>
+                  <p className="cpb__miniEmpty">{days > 0 ? 'Single day — no nights.' : dateError !== null ? 'Fix the end date above.' : 'Set a date range above.'}</p>
                 ) : !overnightDuration ? (
                   <p className="cpb__miniEmpty">No overnight in your KinCare types (add one in Settings).</p>
                 ) : (
@@ -758,14 +831,29 @@ function Builder({ settings }: BuilderProps) {
                 <div className="cpb__discountRow">
                   <input className="cpb__input cpb__input--grow" placeholder="e.g. Military" value={pkg.discountLabel} onChange={(e) => patchPackage(pkg.id, { discountLabel: e.target.value })} />
                   <span className="cpb__unitField cpb__pctField">
-                    <input className="cpb__input cpb__input--num" type="number" min="0" max="100" step="1" placeholder="0" aria-label="Discount percent" value={pkg.discountPct || ''} onChange={(e) => patchPackage(pkg.id, { discountPct: parseFloat(e.target.value) || 0 })} />
+                    <input
+                      className="cpb__input cpb__input--num"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0"
+                      aria-label="Discount percent"
+                      value={fieldText[fieldKey(pkg.id, 'discount')] ?? (pkg.discountPct ? String(pkg.discountPct) : '')}
+                      aria-invalid={fieldError(pkg.id, 'discount') !== '' ? true : undefined}
+                      aria-describedby={fieldError(pkg.id, 'discount') !== '' ? `cpb-discount-error-${pkg.id}` : undefined}
+                      onChange={(e) => changePackageField(pkg.id, 'discount', e.target.value)}
+                    />
                     <span className="cpb__unit">%</span>
                   </span>
                 </div>
+                {fieldError(pkg.id, 'discount') !== '' ? (
+                  <span id={`cpb-discount-error-${pkg.id}`} className="cpb__fieldError" role="alert">
+                    {fieldError(pkg.id, 'discount')} Prices still use {pkg.discountPct}%.
+                  </span>
+                ) : null}
 
                 <div className="cpb__pkgTotals">
                   {days === 0 ? (
-                    <p className="cpb__miniEmpty">Set a date range to price this.</p>
+                    <p className="cpb__miniEmpty">{dateError !== null ? 'Fix the end date above to price this.' : 'Set a date range to price this.'}</p>
                   ) : (
                     <>
                       <div className="cpb__totalLine">
