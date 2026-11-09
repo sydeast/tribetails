@@ -10,7 +10,7 @@ import {
 import { type BusinessSettings } from '../../api/settings';
 import { type Async } from '../../lib/async';
 import { AsyncRegion } from '../../components/AsyncRegion';
-import { DenPanel, InfoTip } from '../../components/DenScreenKit';
+import { DenPanel, TitleWithTip } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { GhostButton } from '../../components/Buttons';
 import { IconTile } from '../../components/IconTile';
@@ -202,15 +202,11 @@ function IntegrationCard({ integration, declaredKnown, calendarOpen, onToggleCal
         size={40}
       />
       <div className="integrations__body">
-        <h4 className="integrations__name">
+        {/* #1758: the purpose tip sits BESIDE the name, so the name's text and
+            accessible name are the service's name alone. */}
+        <TitleWithTip as="h4" className="integrations__name" tip={integration.purpose}>
           {integration.name}
-          {integration.purpose !== '' ? (
-            <>
-              {' '}
-              <InfoTip text={integration.purpose} />
-            </>
-          ) : null}
-        </h4>
+        </TitleWithTip>
 
         <p className="integrations__summary">{integration.summary}</p>
 

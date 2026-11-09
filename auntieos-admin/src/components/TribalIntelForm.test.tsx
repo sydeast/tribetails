@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Kin, Kinfolk } from '../api/directory';
 import type { TribalIntelEntry } from '../api/tribalIntel';
@@ -56,6 +56,14 @@ describe('TribalIntelForm', () => {
     const tip = screen.getByRole('tooltip', { hidden: true });
     expect(tip).toHaveTextContent(/folded into the household's dossier and the pet's 411 overnight/i);
     expect(document.querySelector('.tribal-form__blurb')).toBeNull();
+  });
+
+  it('names the heading by its title alone, the tip beside it as its description (#1758)', () => {
+    renderForm();
+    const heading = screen.getByRole('heading', { name: 'New Tribal Intel' });
+    expect(heading.textContent).toBe('New Tribal Intel');
+    expect(heading).toHaveAccessibleDescription(/folded into the household's dossier/i);
+    expect(within(heading).queryByRole('button', { hidden: true })).toBeNull();
   });
 
   it('creates with the exact callable payload the deployed contract parses', async () => {

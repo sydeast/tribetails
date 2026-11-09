@@ -27,7 +27,7 @@ import {
 } from '../lib/pendingAddKinfolk';
 import { OfflineCallError } from '../lib/offlineWrite';
 import { AddressAutofillField } from './AddressAutofillField';
-import { InfoTip } from './DenScreenKit';
+import { TitleWithTip } from './DenScreenKit';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { EmergencyContactsEditor } from './EmergencyContactsEditor';
@@ -452,9 +452,10 @@ export function AddKinfolkDialog({
           (`createdId !== null`) this editor is the only thing left to retry, so
           it stays enabled while the fields above it are locked. */}
       <div className="add-kinfolk__section">
-        <h3 className="add-kinfolk__label add-kinfolk__section-title">
-          Emergency Contacts <InfoTip text={EMERGENCY_CONTACT_WHO_GETS_CALLED} />
-        </h3>
+        {/* #1758: the tip beside the heading, so its name is "Emergency Contacts" alone. */}
+        <TitleWithTip as="h3" className="add-kinfolk__label add-kinfolk__section-title" tip={EMERGENCY_CONTACT_WHO_GETS_CALLED}>
+          Emergency Contacts
+        </TitleWithTip>
         <EmergencyContactsEditor idPrefix="add-kinfolk" value={ecDrafts} onChange={changeContacts} disabled={saving} />
       </div>
 

@@ -259,10 +259,15 @@ describe('AddKinfolkDialog', () => {
 
   it('titles the section "Emergency Contacts", with its sentence behind an info button beside the title', async () => {
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
-    const heading = screen.getByRole('heading', { name: /^Emergency Contacts/ });
-    const tip = within(heading).getByRole('tooltip', { hidden: true });
+    // #1758: the heading is named by its title alone; the tip is its sibling
+    // and its description, so the sentence still reaches a screen reader.
+    const heading = screen.getByRole('heading', { name: 'Emergency Contacts' });
+    expect(heading.textContent).toBe('Emergency Contacts');
+    expect(heading).toHaveAccessibleDescription('Called only when no kinfolk can be reached.');
+    const row = heading.parentElement as HTMLElement;
+    const tip = within(row).getByRole('tooltip', { hidden: true });
     expect(tip).toHaveTextContent('Called only when no kinfolk can be reached.');
-    await userEvent.click(within(heading).getByRole('button', { name: 'About this section' }));
+    await userEvent.click(within(row).getByRole('button', { name: 'About this section' }));
     expect(tip).toBeVisible();
   });
 
