@@ -308,10 +308,12 @@ export function activityIsFailure(entry: ActivityLogEntry): boolean {
 export function activityDayLabel(day: string, today: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
   const month = MONTHS[Number(day.slice(5, 7)) - 1] ?? day.slice(5, 7);
-  const pretty = `${month} ${String(Number(day.slice(8, 10)))}`;
-  if (day === today) return `Today · ${pretty}`;
-  if (day === dayBefore(today)) return `Yesterday · ${pretty}`;
-  return pretty;
+  // #1599: the log spans more than a year, so a day from another year says which.
+  const sameYear = day.slice(0, 4) === today.slice(0, 4);
+  const monthDay = `${month} ${String(Number(day.slice(8, 10)))}`;
+  if (day === today) return `Today · ${monthDay}`;
+  if (day === dayBefore(today)) return `Yesterday · ${monthDay}`;
+  return sameYear ? monthDay : `${monthDay}, ${day.slice(0, 4)}`;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

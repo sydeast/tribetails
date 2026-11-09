@@ -35,7 +35,7 @@ class UninvoicedVisitsPickerTest {
     @get:Rule
     val rule = createAndroidComposeRule<ComponentActivity>()
 
-    private fun session(id: String, unitCents: Long?, service: String = "Dog walk") =
+    private fun session(id: String, unitCents: Long?, service: String = "Dog walk", pricedAs: String? = null) =
         ListUninvoicedSessionsResultSession(
             sessionId = id,
             kinfolkId = "kf1",
@@ -43,6 +43,7 @@ class UninvoicedVisitsPickerTest {
             durationMinutes = 30.0,
             startTime = "2026-08-11T15:00:00.000Z",
             unitCents = unitCents,
+            pricedAs = pricedAs,
         )
 
     private fun mount(
@@ -136,6 +137,35 @@ class UninvoicedVisitsPickerTest {
         rule.onNodeWithText("$0.00").assertDoesNotExist()
         // Selected by default, so the price field is already asking.
         rule.onNodeWithText("PRICE FOR THIS VISIT ($)").assertExists()
+    }
+
+    @Test
+    fun `#1750 a resolved key says which KinCare it was priced as`() {
+        mount(
+            result(listOf(session("s1", 4500L, service = "visit_45", pricedAs = "Long walk"))),
+            catalog = ServiceCatalog(mapOf("Long walk" to "45"), mapOf("Long walk" to "45")),
+        )
+        rule.onNodeWithText("priced as Long walk").assertExists()
+        rule.onNodeWithText("$45.00").assertExists()
+    }
+
+    @Test
+    fun `#1750 a key on the card as written says nothing about resolving`() {
+        mount(result(listOf(session("s1", 2500L))))
+        rule.onNodeWithText("$25.00").assertExists()
+        rule.onNodeWithText("priced as", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `#1750 an unpriced row never claims a resolved price`() {
+        mount(
+            result(
+                listOf(session("s1", null, pricedAs = "Long walk")),
+                unpriceable = listOf(ListUninvoicedSessionsResultUnpriceable("s1", "Dog walk")),
+            ),
+        )
+        rule.onNodeWithText("not on the rate card").assertExists()
+        rule.onNodeWithText("priced as", substring = true).assertDoesNotExist()
     }
 
     @Test

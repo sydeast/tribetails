@@ -2,6 +2,7 @@
 
 package com.kinfolk.portal.screens.account
 
+import kotlin.test.assertEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
@@ -252,5 +253,30 @@ class AccountSettingsScreenTest {
         // Typed-save tail (Billing + Sign Out) still renders below the schema form.
         onNodeWithText("Billing Details").assertExists()
         onNodeWithText("Sign Out").assertExists()
+    }
+
+    /** #1504: opening Account wakes saveMyAccount once, after the account loads, and typing never fires it again. */
+    @Test
+    fun opening_warmsSaveMyAccountOnce_andTypingDoesNotFireItAgain() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubAccount(fake)
+        setThemedContent { AccountSettingsScreen("The Foster", PortalApi(fake)) }
+        waitForIdle()
+        assertEquals(listOf("saveMyAccount"), fake.warmCalls)
+        onNodeWithTag("account-phone").performTextInput("abc123")
+        waitForIdle()
+        assertEquals(listOf("saveMyAccount"), fake.warmCalls)
+        assertTrue(fake.calls.none { it.first == "saveMyAccount" }, "a warm call is not a save")
+    }
+    @Test
+    fun aFailedWarmCall_staysOffTheScreen() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubAccount(fake)
+        fake.stubError("saveMyAccount", IllegalStateException("UNAVAILABLE: cold start"))
+        setThemedContent { AccountSettingsScreen("The Foster", PortalApi(fake)) }
+        waitForIdle()
+        assertEquals(listOf("saveMyAccount"), fake.warmCalls)
+        onNodeWithText("Profile").assertExists()
+        assertTrue(onAllNodesWithText("UNAVAILABLE", substring = true).fetchSemanticsNodes().isEmpty())
     }
 }

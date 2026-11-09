@@ -1122,6 +1122,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'scanned',
       'sessions[].durationMinutes',
       'sessions[].kinfolkId',
+      // #1750: the KinCare a resolved stored key was priced as, or null.
+      'sessions[].pricedAs',
       'sessions[].serviceType',
       'sessions[].sessionId',
       'sessions[].startTime',

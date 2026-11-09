@@ -572,7 +572,7 @@ class AdminDataViewModel(
             _error.value = null
 
             kinCareRepository.getAllKinCareReports().onSuccess { reportList ->
-                _kinCareReports.value = reportList.sortedByDescending { sortKey(it) }
+                _kinCareReports.value = reportList.sortedWith(kinTaleDateComparator(true, ::sortMillis))
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load KinTales"
             }
@@ -594,10 +594,10 @@ class AdminDataViewModel(
             }
         }
     }
-    private fun sortKey(r: KinCareReport): String = sequenceOf(
-        r.sentAt, r.updatedAt, r.visitDate, r.createdAt,
-    ).firstOrNull { !it.isNullOrBlank() } ?: ""
-
+    /** #1599: the loaded order is by parsed date; raw strings put the migrated free text first. */
+    private fun sortMillis(r: KinCareReport): Long? = kinTaleSortMillis(
+        sequenceOf(r.sentAt, r.updatedAt, r.visitDate, r.createdAt).firstOrNull { !it.isNullOrBlank() },
+    )
     fun loadActivityLog() {
         // The zone read does not hold the log back: rows draw on the default zone and
         // re-read when it lands.

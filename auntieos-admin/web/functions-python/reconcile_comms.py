@@ -64,6 +64,8 @@ LOG_COLLECTIONS = {
 # Maximum number of pending logs to process in one pass — keeps each invocation
 # bounded so a backlog doesn't take the whole worker down on an exception.
 DEFAULT_MAX_PER_RUN = 25
+ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-5-5"
+NO_THINKING_BODY = {"thinking": {"type": "between_tools"}}
 
 
 # ---------- helpers ----------
@@ -371,7 +373,7 @@ def claude_recap(entries: list[dict]) -> str:
     api_key = env.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY missing from env / Secret Manager (fail-loud)")
-    model = env.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+    model = env.get("ANTHROPIC_MODEL", ANTHROPIC_MODEL_DEFAULT)
 
     lines = "\n".join(f"[{e['channel']} | {e['timestamp']}] {e['text']}" for e in entries)
     system = (
@@ -382,7 +384,7 @@ def claude_recap(entries: list[dict]) -> str:
     user = f"Recent communications (newest first):\n\n{lines}\n\nWrite the 1-2 sentence recap."
     client = Anthropic(api_key=api_key)
     resp = client.messages.create(
-        model=model, max_tokens=200, temperature=0.2,
+        model=model, max_tokens=200, extra_body=NO_THINKING_BODY,
         system=system, messages=[{"role": "user", "content": user}],
     )
     return (resp.content[0].text if resp.content else "").strip()
@@ -418,7 +420,7 @@ def claude_merge(kinfolk_name: str, existing_summary: str, channel: str, log_id:
     api_key = env.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY missing from env / Secret Manager (fail-loud)")
-    model = env.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+    model = env.get("ANTHROPIC_MODEL", ANTHROPIC_MODEL_DEFAULT)
 
     body = extract_log_body(log)
     new_entry = {
@@ -433,7 +435,7 @@ def claude_merge(kinfolk_name: str, existing_summary: str, channel: str, log_id:
     resp = client.messages.create(
         model=model,
         max_tokens=1500,
-        temperature=0.2,
+        extra_body=NO_THINKING_BODY,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )
@@ -547,7 +549,7 @@ def claude_merge_411(kin_name: str, kin_species: str, existing_summary: str, cha
     api_key = env.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY missing from env / Secret Manager (fail-loud)")
-    model = env.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+    model = env.get("ANTHROPIC_MODEL", ANTHROPIC_MODEL_DEFAULT)
 
     body = extract_log_body(log)
     new_entry = {
@@ -561,7 +563,7 @@ def claude_merge_411(kin_name: str, kin_species: str, existing_summary: str, cha
     resp = client.messages.create(
         model=model,
         max_tokens=1500,
-        temperature=0.2,
+        extra_body=NO_THINKING_BODY,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )
@@ -634,7 +636,7 @@ def claude_merge_bank(household_label: str, existing_summary: str, channel: str,
     api_key = env.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY missing from env / Secret Manager (fail-loud)")
-    model = env.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+    model = env.get("ANTHROPIC_MODEL", ANTHROPIC_MODEL_DEFAULT)
 
     body = extract_log_body(log)
     new_entry = {
@@ -648,7 +650,7 @@ def claude_merge_bank(household_label: str, existing_summary: str, channel: str,
     resp = client.messages.create(
         model=model,
         max_tokens=1500,
-        temperature=0.2,
+        extra_body=NO_THINKING_BODY,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )

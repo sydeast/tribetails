@@ -53,6 +53,17 @@ function installForegroundHandler(
   });
 }
 
+/** Longest each step may take before it ends in a named, coded error (#1547). */
+export const PUSH_TIMEOUTS_MS = {
+  /** The native prompt waits on a person, so this is long; it only exists so a prompt that never resolves cannot hang the button. */
+  permission: 120_000,
+  /** Lookup, registration and activation of the app-shell worker. */
+  serviceWorker: 10_000,
+  /** FCM getToken: two network round trips to the push service. */
+  token: 20_000,
+  /** The registerFcmToken callable. */
+  register: 30_000,
+} as const;
 /** Which step of [registerForPush] threw. */
 export type PushFailureStage = 'permission' | 'service-worker' | 'token' | 'register';
 
@@ -76,8 +87,8 @@ export type PushRegistrationOutcome =
   | { status: 'denied' }
   | {
       /**
-       * `getRegistration()` resolved null: the app-shell worker is not installed
-       * in this browser. Nothing threw, so there is no error or code, but the
+       * No app-shell worker is registered and registering it failed: the
+       * worker is not installed in this browser. Nothing threw, so there is no error or code, but the
        * same snapshot as the error branch rides along (#1550) so the banner,
        * the console and Sentry can say what the browser looked like.
        */
@@ -117,6 +128,51 @@ function serviceWorkerStateOf(reg: ServiceWorkerRegistration | null | undefined)
   return 'none';
 }
 
+/** A step outlived its budget. The code names the step: `push/token-timeout`, `push/service-worker-timeout`, ... */
+class PushTimeoutError extends Error {
+  readonly code: string;
+  constructor(stage: PushFailureStage, ms: number) {
+    super(`The ${stage} step did not finish within ${Math.round(ms / 1000)} seconds.`);
+    this.name = 'PushTimeoutError';
+    this.code = `push/${stage}-timeout`;
+  }
+}
+/** Races [work] against a timer; the timer is always cleared so tests and the page leave nothing pending. */
+function withTimeout<T>(work: Promise<T>, stage: PushFailureStage, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new PushTimeoutError(stage, ms)), ms);
+  });
+  return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+}
+/**
+ * The worker the app shell ships (vite-plugin-pwa injectManifest, filename
+ * sw.ts, so the build emits sw.js at the site root). Registering it here is
+ * the same call the plugin's boot script makes; the browser returns the
+ * existing registration when one is already there.
+ */
+const APP_SHELL_WORKER_URL = '/sw.js';
+/**
+ * Resolves the app-shell registration with an ACTIVE worker. If none is
+ * registered yet (the boot script has not run, or the browser dropped it) this
+ * registers it, then waits on `serviceWorker.ready`. Returns null only when
+ * registration is impossible, so the caller can report `no-service-worker`.
+ * Each await is bounded by the caller's timeout.
+ */
+async function resolveServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  const container = navigator.serviceWorker;
+  let reg = await container.getRegistration();
+  if (!reg) {
+    try {
+      reg = await container.register(APP_SHELL_WORKER_URL, { scope: '/' });
+    } catch {
+      return null;
+    }
+  }
+  if (reg.active) return reg;
+  // .ready waits for an active worker, covering installing and waiting states.
+  return container.ready;
+}
 /** getToken resolved with an empty string: no throw, no token, nothing to register. */
 class NoTokenError extends Error {
   readonly code = 'no-token';
@@ -174,24 +230,29 @@ export async function registerForPush(): Promise<PushRegistrationOutcome> {
 
     if (Notification.permission === 'denied') return { status: 'denied' };
     if (Notification.permission !== 'granted') {
-      const result = await Notification.requestPermission();
+      const result = await withTimeout(Notification.requestPermission(), 'permission', PUSH_TIMEOUTS_MS.permission);
       if (result !== 'granted') return { status: 'denied' };
     }
 
-    // getRegistration() (not .ready) so a failed/absent registration resolves
-    // to null instead of suspending forever.
+    // Not .ready alone: with no registration it never resolves. Look it up,
+    // register the app-shell worker if it is missing, then wait for it to be
+    // active, all inside one budget so a stuck install ends in a coded error.
     stage = 'service-worker';
-    swReg = await navigator.serviceWorker.getRegistration();
+    swReg = await withTimeout(resolveServiceWorker(), 'service-worker', PUSH_TIMEOUTS_MS.serviceWorker);
     if (!swReg) return { status: 'no-service-worker', diagnostics: diagnosticsOf(swReg) };
 
     stage = 'token';
     const messaging = getMessaging(app);
-    const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
+    const token = await withTimeout(
+      getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg }),
+      'token',
+      PUSH_TIMEOUTS_MS.token,
+    );
     if (!token) return failure(new NoTokenError(), 'token', swReg);
 
     stage = 'register';
     cachedToken = token;
-    await registerFcmToken(token);
+    await withTimeout(registerFcmToken(token), 'register', PUSH_TIMEOUTS_MS.register);
     installForegroundHandler(messaging, swReg);
     return { status: 'registered' };
   } catch (err) {

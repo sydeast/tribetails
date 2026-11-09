@@ -165,6 +165,7 @@ function uninvoicedResult(over: Record<string, unknown> = {}): Record<string, un
         durationMinutes: 30,
         startTime: '2026-07-01T14:00:00.000Z',
         unitCents: 2500,
+        pricedAs: null,
       },
     ],
     unpriceable: [],
@@ -545,9 +546,26 @@ const CASES: Array<{
               durationMinutes: 720,
               startTime: '2026-07-01T22:00:00.000Z',
               unitCents: null,
+              pricedAs: null,
             },
           ],
           unpriceable: [{ sessionId: 's1', serviceType: 'Overnight' }],
+        }),
+      ],
+      [
+        '#1750: a visit priced from the one KinCare its stored key resolves to, named',
+        uninvoicedResult({
+          sessions: [
+            {
+              sessionId: 's1',
+              kinfolkId: 'fam1',
+              serviceType: 'visit_60',
+              durationMinutes: 60,
+              startTime: '2026-07-01T14:00:00.000Z',
+              unitCents: 4000,
+              pricedAs: 'Long walk',
+            },
+          ],
         }),
       ],
       ['an empty window, honestly reported', uninvoicedResult({ sessions: [], scanned: 0 })],
@@ -591,7 +609,25 @@ const CASES: Array<{
         'an ABSENT unitCents instead of an explicit null',
         uninvoicedResult({
           sessions: [
-            { sessionId: 's1', kinfolkId: 'fam1', serviceType: 'Dog walking', durationMinutes: 30, startTime: '2026-07-01T14:00:00.000Z' },
+            { sessionId: 's1', kinfolkId: 'fam1', serviceType: 'Dog walking', durationMinutes: 30, startTime: '2026-07-01T14:00:00.000Z', pricedAs: null },
+          ],
+        }),
+      ],
+      // #1750: same reasoning. A client must be told "this was not resolved",
+      // not left to infer it from a missing key.
+      [
+        'an ABSENT pricedAs instead of an explicit null',
+        uninvoicedResult({
+          sessions: [
+            { sessionId: 's1', kinfolkId: 'fam1', serviceType: 'Dog walking', durationMinutes: 30, startTime: '2026-07-01T14:00:00.000Z', unitCents: 2500 },
+          ],
+        }),
+      ],
+      [
+        'an EMPTY pricedAs, which would print "priced as" and nothing',
+        uninvoicedResult({
+          sessions: [
+            { sessionId: 's1', kinfolkId: 'fam1', serviceType: 'visit_60', durationMinutes: 60, startTime: '2026-07-01T14:00:00.000Z', unitCents: 4000, pricedAs: '' },
           ],
         }),
       ],
@@ -610,7 +646,7 @@ const CASES: Array<{
         'a Timestamp-shaped startTime, which this collection never stores',
         uninvoicedResult({
           sessions: [
-            { sessionId: 's1', kinfolkId: 'fam1', serviceType: 'Dog walking', durationMinutes: 30, startTime: { seconds: 1 }, unitCents: 2500 },
+            { sessionId: 's1', kinfolkId: 'fam1', serviceType: 'Dog walking', durationMinutes: 30, startTime: { seconds: 1 }, unitCents: 2500, pricedAs: null },
           ],
         }),
       ],

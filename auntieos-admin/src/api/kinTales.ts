@@ -282,12 +282,50 @@ export function kinTalesPageQuery({ startIso, kinfolkId }: KinTalesPageOptions):
   const filters: CollectionSpec['filters'] = [];
   if (kinfolkId !== undefined && kinfolkId !== '') filters.push(['kinfolkId', '==', kinfolkId]);
   if (startIso !== null) filters.push(['createdAt', '>=', startIso]);
-
+  // #1599: the pager reads ISO rows only. A free-text `createdAt` ("September
+  // 3, 2025 2:02pm") starts with a letter, so as a STRING it is greater than
+  // every ISO value: it would head the descending order, alphabetical by month
+  // name, and pass every `>=` window including "last 7 days". Those rows come
+  // from `kinTalesLegacyQuery` and are placed by their parsed date.
+  filters.push(['createdAt', '<', LEGACY_CREATED_AT_FLOOR]);
   return {
     path: 'kin_care_reports',
     order: ['createdAt', 'desc'],
     pageSize: KINTALES_PAGE_SIZE,
-    ...(filters.length > 0 ? { filters } : {}),
+    filters,
+  };
+}
+/**
+ * The first string that sorts after every ISO timestamp. ISO text starts with a
+ * digit; "A" is above every digit and below every letter, so `createdAt <` this
+ * is the ISO rows and `createdAt >=` this is the free-text ones.
+ */
+export const LEGACY_CREATED_AT_FLOOR = 'A';
+/**
+ * The most migrated rows the legacy read returns. The May 2026 migration wrote
+ * 83; this leaves room for a re-run and for the rows the operator has not yet
+ * triaged. Reaching it is stated on screen (KinTales.tsx), never silent.
+ */
+export const KINTALES_LEGACY_MAX = 500;
+/**
+ * Every KinTale whose `createdAt` is free text instead of ISO (#1599): the 83
+ * `visit_logs` rows the May 2026 migration wrote before it learned to store
+ * the parsed instant. A bounded listener, not a pager, because Firestore cannot
+ * order them by date (string order puts "September" before "August"); the list
+ * parses their dates in the client and places them among the ISO rows.
+ *
+ * Same index as the pager: range plus order on `createdAt`, with the household
+ * equality covered by `kin_care_reports (kinfolkId ASC, createdAt DESC)`.
+ */
+export function kinTalesLegacyQuery(kinfolkId?: string): CollectionSpec {
+  const filters: CollectionSpec['filters'] = [];
+  if (kinfolkId !== undefined && kinfolkId !== '') filters.push(['kinfolkId', '==', kinfolkId]);
+  filters.push(['createdAt', '>=', LEGACY_CREATED_AT_FLOOR]);
+  return {
+    path: 'kin_care_reports',
+    order: ['createdAt', 'desc'],
+    max: KINTALES_LEGACY_MAX,
+    filters,
   };
 }
 

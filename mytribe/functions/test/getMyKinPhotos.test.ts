@@ -237,4 +237,35 @@ describe('getMyKinPhotosHandler', () => {
     const res = await getMyKinPhotosHandler(callableRequest({}, { uid: 'u1' }));
     expect(res.photos.map((p) => p.id)).toEqual(['sent']);
   });
+
+  it('orders migrated free-text tales by parsed date and pages across both sources (#1775)', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        'media_files/a': mediaDoc('https://cdn/a.jpg'),
+        'media_files/b': mediaDoc('https://cdn/b.jpg'),
+        'media_files/c': mediaDoc('https://cdn/c.jpg'),
+      },
+      queryDocs: {
+        kin_care_reports: [
+          tale('legacy-sep', 'September 3, 2025 2:02pm', ['b']),
+          tale('iso-new', SENT_NEW, ['a']),
+          tale('legacy-jan', 'January 9, 2026 10:00am', ['c']),
+        ],
+        'families/f1/kin': [],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinPhotosHandler } = await import('../src/portal/getMyKinPhotos');
+    const page1 = await getMyKinPhotosHandler(callableRequest({ limit: 2 }, { uid: 'u1' }));
+    expect(page1.photos.map((p) => p.taleId)).toEqual(['iso-new', 'legacy-jan']);
+    expect(page1.photos[1].takenAtMs).toBe(Date.UTC(2026, 0, 9, 16, 0));
+    expect(page1.hasMore).toBe(true);
+    const page2 = await getMyKinPhotosHandler(
+      callableRequest({ limit: 2, before: page1.nextBefore as number }, { uid: 'u1' }),
+    );
+    expect(page2.photos.map((p) => p.taleId)).toEqual(['legacy-sep']);
+    expect(page2.hasMore).toBe(false);
+    expect(page2.nextBefore).toBeNull();
+  });
 });

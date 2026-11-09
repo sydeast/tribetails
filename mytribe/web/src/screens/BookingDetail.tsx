@@ -8,6 +8,7 @@ import { addBookingNote, getBookingNotes, requestBookingCancellation, requestBoo
 import { ReschedulePicker } from '../components/ReschedulePicker';
 import type { RescheduleProposal } from '../lib/rescheduleTime';
 import { useSignOut } from '../lib/auth';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
@@ -113,6 +114,10 @@ export function BookingDetail() {
       await queryClient.invalidateQueries({ queryKey: ['bookingNotes', kinfolkId] });
     },
   }, { policy: 'abandon', what: 'your note' });
+  // #1504: the note box is open whenever this visit can still take a note (a
+  // booked, unfinished visit; see the "Add a note" card below), so the save's
+  // instance is woken once the visit has loaded.
+  useWarmOnOpen('addBookingNote', !!found?.batchId && !finished);
 
   // HOLD. `requestBookingCancellation` returns `alreadyPending: true` without
   // writing when a request is already open on the visit, and the write itself

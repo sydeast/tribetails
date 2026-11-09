@@ -448,4 +448,27 @@ class BookingDetailsScreenTest {
         onNodeWithText("office is offline").performScrollTo().assertIsDisplayed()
         onNodeWithText("Send request").performScrollTo().assertIsDisplayed()
     }
+
+    /** #1504: an unfinished visit shows the note box, so opening it wakes addBookingNote once. */
+    @Test
+    fun openingAnUnfinishedVisit_warmsAddBookingNoteOnce() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubBooking(fake, "b1", fixedNow + tenHoursMs)
+        setThemedContent {
+            KinCareDetailScreen(kinCareId = "b1", kinfolkId = "3", portalApi = PortalApi(fake), onBack = {}, nowMs = { fixedNow })
+        }
+        waitForIdle()
+        kotlin.test.assertEquals(listOf("addBookingNote"), fake.warmCalls)
+    }
+    /** A cancelled visit has no note box, so nothing is woken. */
+    @Test
+    fun openingACancelledVisit_warmsNothing() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubBooking(fake, "b1", fixedNow + tenHoursMs, status = "cancelled")
+        setThemedContent {
+            KinCareDetailScreen(kinCareId = "b1", kinfolkId = "3", portalApi = PortalApi(fake), onBack = {}, nowMs = { fixedNow })
+        }
+        waitForIdle()
+        kotlin.test.assertEquals(emptyList<String>(), fake.warmCalls)
+    }
 }

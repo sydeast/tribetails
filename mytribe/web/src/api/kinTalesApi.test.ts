@@ -13,6 +13,7 @@ import {
   revokeShareLink,
   shortTimestamp,
   taleMetaLabel,
+  taleSentLabel,
   threadComments,
   type KinTaleCommentDto,
 } from './kinTalesApi';
@@ -193,6 +194,29 @@ describe('taleMetaLabel', () => {
 
   it('is empty when there is no media and no timestamp', () => {
     expect(taleMetaLabel(tale({ mediaIds: [], sentAtMs: null }))).toBe('');
+  });
+  it('shows the stored text as written when the server read no date from it (#1775)', () => {
+    expect(taleMetaLabel(tale({ mediaIds: ['a'], sentAtMs: null, sentAtText: 'sometime in the spring' }))).toBe(
+      '1 PHOTO · sometime in the spring',
+    );
+    expect(taleMetaLabel(tale({ sentAtMs: null, sentAtText: 'sometime in the spring' }))).toBe('sometime in the spring');
+  });
+  it('prefers the parsed time over any stored text', () => {
+    const sentAtMs = new Date(2026, 5, 10, 9, 14).getTime();
+    expect(taleMetaLabel(tale({ sentAtMs, sentAtText: 'ignored' }), sentAtMs)).toBe('TODAY, 9:14 AM');
+  });
+});
+describe('taleSentLabel', () => {
+  it('formats a migrated row like any other once the server has parsed it', () => {
+    // "September 3, 2025 2:02pm" Chicago = 19:02 UTC; the label is the device-zone clock for that instant
+    const sentAtMs = Date.UTC(2025, 8, 3, 19, 2);
+    const now = Date.UTC(2026, 10, 9);
+    expect(taleSentLabel(tale({ sentAtMs }), now)).toBe(shortTimestamp(sentAtMs, now));
+    expect(taleSentLabel(tale({ sentAtMs }), now)).not.toBe('');
+  });
+  it('is blank for a blank stored text, never a placeholder date', () => {
+    expect(taleSentLabel(tale({ sentAtMs: null, sentAtText: '   ' }))).toBe('');
+    expect(taleSentLabel(tale({ sentAtMs: null }))).toBe('');
   });
 });
 

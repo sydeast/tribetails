@@ -271,7 +271,7 @@ export function Home() {
                       <b>{t.title || t.body.slice(0, 60)}</b>
                       <p>{t.body}</p>
                       <div className="meta">
-                        {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : ''}`}
+                        {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : t.sentAtText ? ` · ${t.sentAtText}` : ''}`}
                       </div>
                     </div>
                   </Link>

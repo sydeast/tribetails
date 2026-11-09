@@ -161,7 +161,11 @@ fun VisitInternalNotesPanel(
 
 /** "Admin only · Syd · Nov 5, 3:00 PM"; the session's older text reads "On the visit record". */
 @OptIn(ExperimentalTime::class)
-internal fun visitNoteByline(note: VisitInternalNote, zone: TimeZone): String {
+internal fun visitNoteByline(
+    note: VisitInternalNote,
+    zone: TimeZone,
+    currentYear: Int = com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0,
+): String {
     if (note.source == "visitRecord") return "On the visit record"
     val who = note.authorName?.takeIf { it.isNotBlank() } ?: when (note.authorRole) {
         "auntie" -> "Auntie"
@@ -173,7 +177,9 @@ internal fun visitNoteByline(note: VisitInternalNote, zone: TimeZone): String {
         val month = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[t.monthNumber - 1]
         val h12 = if (t.hour % 12 == 0) 12 else t.hour % 12
         val ampm = if (t.hour < 12) "AM" else "PM"
-        "$month ${t.dayOfMonth}, $h12:${t.minute.toString().padStart(2, '0')} $ampm"
+        // #1599: the year when the note is from another one.
+        val year = if (t.year == currentYear) "" else ", ${t.year}"
+        "$month ${t.dayOfMonth}$year, $h12:${t.minute.toString().padStart(2, '0')} $ampm"
     }
     return listOfNotNull(if (note.visibility == "adminOnly") "Admin only" else null, who, whenText).joinToString(" · ")
 }

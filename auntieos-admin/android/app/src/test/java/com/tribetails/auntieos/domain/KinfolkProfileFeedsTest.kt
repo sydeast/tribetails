@@ -99,6 +99,16 @@ class KinfolkProfileFeedsTest {
     }
 
     @Test
+    fun recentTales_migratedFreeTextOrdersByDate_unreadableLast() {
+        val reports = listOf(
+            KinCareReport(id = "legacy-sep", kinfolkId = "k1", status = "SENT", sentAt = "September 3, 2025 2:02pm"),
+            KinCareReport(id = "iso-new", kinfolkId = "k1", status = "SENT", sentAt = "2026-08-10T00:00:00Z"),
+            KinCareReport(id = "legacy-apr", kinfolkId = "k1", status = "SENT", sentAt = "April 10, 2026 4:30pm"),
+            KinCareReport(id = "junk", kinfolkId = "k1", status = "SENT", sentAt = "sometime in spring"),
+        )
+        assertEquals(listOf("iso-new", "legacy-apr", "legacy-sep", "junk"), recentTalesFor(reports, "k1").map { it.id })
+    }
+    @Test
     fun invoices_forKinfolk_newestFirst() {
         val invs = listOf(
             Invoice(id = "i1", kinfolkId = "k1", date = "2026-05-01"),

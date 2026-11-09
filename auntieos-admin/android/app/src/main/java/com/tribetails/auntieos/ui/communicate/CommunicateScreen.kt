@@ -170,7 +170,7 @@ internal fun communicateMessageTypeLabel(wire: String): String = commTypeDisplay
 /**
  * The draft callout's detail line: who it is for and what kind of message it
  * is, by its chip label. #1592: it also printed the model name and the draft
- * id ("for Dana · visit_report · claude-sonnet-4-5 · draft #d7"), which are
+ * id ("for Dana · visit_report · claude-sonnet-5-5 · draft #d7"), which are
  * the generator's and the database's, not the operator's. Same line as web's
  * `draftSubtitle`.
  */
@@ -1729,12 +1729,15 @@ private fun recentSendDot(channel: String, c: AuntieColors): Color =
 // Formatting helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** "MMM d" label from an ISO timestamp or date string; falls back to the raw string. */
-private fun humanizeDate(date: String): String {
+/**
+ * "MMM d" label from an ISO timestamp or date string, "MMM d, yyyy" when it is
+ * not [currentYear] (#1599); falls back to the raw string.
+ */
+internal fun humanizeDate(date: String, currentYear: Int = java.time.LocalDate.now().year): String {
     val iso = isoDatePrefixOrNull(date) ?: return date.trim()
     return runCatching {
         val d = java.time.LocalDate.parse(iso)
         val month = d.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)
-        "$month ${d.dayOfMonth}"
+        if (d.year == currentYear) "$month ${d.dayOfMonth}" else "$month ${d.dayOfMonth}, ${d.year}"
     }.getOrDefault(date.trim())
 }

@@ -440,6 +440,27 @@ class PortalApiTest {
     }
 
     @Test
+    fun `getMyKinTales keeps the server order and decodes sentAtMs and sentAtText (1775)`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject { put("id", "new"); put("body", "b"); put("shared", false); put("sentAtMs", 1_790_000_000_000L) })
+                add(buildJsonObject { put("id", "migrated"); put("body", "b"); put("shared", false); put("sentAtMs", 1_756_926_120_000L) })
+                add(buildJsonObject {
+                    put("id", "junk"); put("body", "b"); put("shared", false)
+                    put("sentAtText", "sometime in the spring")
+                })
+            })
+        })
+        val res = PortalApi(fake).getMyKinTales()
+        assertEquals(listOf("new", "migrated", "junk"), res.tales.map { it.id })
+        assertEquals(1_756_926_120_000L, res.tales[1].sentAtMs)
+        assertEquals(null, res.tales[1].sentAtText)
+        assertEquals(null, res.tales[2].sentAtMs)
+        assertEquals("sometime in the spring", res.tales[2].sentAtText)
+    }
+    @Test
     fun `getMyKinTales decodes null arrivedAtIso departedAtIso as null, not a crash`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyKinTales", buildJsonObject {

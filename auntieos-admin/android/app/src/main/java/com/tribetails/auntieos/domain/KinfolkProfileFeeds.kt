@@ -84,7 +84,7 @@ fun recentTalesFor(
     reports.asSequence()
         .filter { it.kinfolkId == kinfolkId }
         .filter { it.status.equals("SENT", ignoreCase = true) }
-        .sortedByDescending { it.sentAt.orEmpty().ifBlank { it.visitDate } }
+        .sortedWith(com.tribetails.auntieos.ui.admin.kinTaleDateComparator(true) { r -> com.tribetails.auntieos.ui.admin.kinTaleSortMillis(r.sentAt.orEmpty().ifBlank { r.visitDate }) }) // #1599: by parsed date
         .take(limit)
         .toList()
 

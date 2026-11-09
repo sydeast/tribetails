@@ -46,6 +46,8 @@ import com.kinfolk.portal.portal.BusinessCalendar
 import com.kinfolk.portal.portal.label
 import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.WarmOnOpen
+import com.kinfolk.portal.portal.WarmableSave
 import com.kinfolk.portal.portal.RescheduleRequestStatus
 import com.kinfolk.portal.portal.canRequestCancellation
 import com.kinfolk.portal.portal.awaitingStartTime
@@ -120,6 +122,10 @@ fun KinCareDetailScreen(
     // Reschedule ask: same two-part state as the cancellation above. The local
     // flag covers the gap between a successful call and the next reload; the
     // DTO's rescheduleRequestStatus takes over from there.
+    // #1504: the note card is open whenever this visit can still take a note
+    // (an unfinished visit; see KinCareDetailBody), so the save's instance is
+    // woken once the visit has loaded.
+    WarmOnOpen(portalApi, WarmableSave.AddBookingNote, enabled = kinCare?.let { !it.isFinished() } ?: false)
     var reschedulePendingLocal by remember { mutableStateOf(false) }
     var rescheduleSending by remember { mutableStateOf(false) }
     var rescheduleError by remember { mutableStateOf<String?>(null) }

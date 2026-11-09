@@ -207,6 +207,24 @@ catch an added / removed / renamed field; neither checks a value-TYPE change
 `auntieos-admin/docs/2026-07-18-AO5-AO8-shared-contract-design.md` for the
 shared-package vs. guarded-mirror options.
 
+## Warm calls (#1504, every callable behind `wrapCallable`)
+- REQUEST: exactly `{ "__warm": true }`, no other key. Any other payload,
+  including the marker plus one more field, is a real call and goes to the
+  handler and its own schema.
+- RESPONSE: `{ ok: true, warm: true }`. Clients drop it.
+- GATE: the same pre-handler steps as any call (App Check observation, session
+  revocation), then sign-in: an unauthenticated warm call is refused
+  `unauthenticated`. The handler never runs, so its own checks (staff gate,
+  rate limits, access) do not either: nothing is read past the session check,
+  nothing is written, no notification goes out. A signed-in household that sent
+  the marker to an admin callable gets the warm reply; that reveals nothing and
+  changes nothing.
+- LOG: `<name>.warm` at info, never `<name>.success`. No audit entry.
+- CALLERS: the kinfolk portal (web `lib/useWarmOnOpen.ts`, Android
+  `portal/WarmOnOpen.kt`), when a form opens, for that form's save:
+  `saveMyAccount`, `saveTribeProfile` and `saveHomeAccess`,
+  `saveMyNotificationPrefs`, `addBookingNote`, `requestBooking`, `addKin`,
+  `updateKin`, `createShareLink`, `generate` and `sendKinfolkMessage`.
 ## Widget callables (admin-gated)
 
 ### optimizeRoute (AO-35)
@@ -859,7 +877,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### listUninvoicedSessions
 - req `{ from: string /* YYYY-MM-DD, inclusive */, to: string /* YYYY-MM-DD, inclusive */ }`
-- res `{ sessions: Array<{ sessionId: string, kinfolkId: string, serviceType: string, durationMinutes: number, startTime: string /* ISO */, unitCents: number | null }>, unpriceable: Array<{ sessionId: string, serviceType: string }>, unplaceable: Array<{ sessionId: string, kinfolkId: string }>, rateCardLoaded: boolean, scanned: number, truncated: boolean }`
+- res `{ sessions: Array<{ sessionId: string, kinfolkId: string, serviceType: string, durationMinutes: number, startTime: string /* ISO */, unitCents: number | null, pricedAs: string | null }>, unpriceable: Array<{ sessionId: string, serviceType: string }>, unplaceable: Array<{ sessionId: string, kinfolkId: string }>, rateCardLoaded: boolean, scanned: number, truncated: boolean }`
 - Read only. Completed visits in the window that no invoice has claimed, priced
   from `business_settings.serviceRates` where that is possible.
 - `unitCents` is NULL, never 0, when the visit cannot be priced, and the session
@@ -867,6 +885,13 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   real work and look deliberate on the invoice. `rateCardLoaded` separates "this
   service is not on the card" from "there is no card", which are different
   operator problems.
+- A stored `serviceType` the card does not hold as written is resolved by the
+  display-name rule (`lib/serviceDisplayName.ts` `matchServiceKey`: the key on
+  letters and digits, then the one KinCare of that length) and priced ONLY when
+  exactly one KinCare matches (#1750). `pricedAs` is then that KinCare's name,
+  and the composer row says "priced as <name>". Null when the stored key is on
+  the card as written, and whenever `unitCents` is null. Two matches or none
+  stay unpriced.
 - **The unclaimed test is done IN MEMORY and this is not an optimisation to
   undo.** `createKinCareSession` and `approveBookingSeriesCore` never write
   `invoiceId` at all, and Firestore equality SKIPS documents that lack the field,
@@ -2899,7 +2924,9 @@ read pair takes `notificationId`, the archive family takes `id` / `ids`.
 - PAGINATION IS BY TALE. A tale can carry twenty photos or none, so a
   photo-count page would either split a visit across pages or need a second
   cursor inside one. `nextBefore` is the last tale's `sentAtMs`, the same
-  opaque cursor `getMyKinTales` uses.
+  cursor `getMyKinTales` uses: strictly older than that instant, and the order
+  is by PARSED send date across ISO and migrated free-text rows (see
+  getMyKinTales below, #1775).
 - `portraits` is populated on the FIRST page only (no `before`), and is empty
   after that: they have no timestamp to sort into the archive by, and repeating
   them under every scroll shows the same faces over and over.
@@ -2909,6 +2936,33 @@ read pair takes `notificationId`, the archive family takes `id` / `ids`.
   tile, and a file attached to two tales appears once, credited to the more
   recent.
 - kinfolk portal only. `mytribe/web/src/screens/Gallery.tsx` is the surface.
+## Portal KinTales list (kinfolk)
+`src/portal/getMyKinTales.ts`, read through `src/lib/sentKinTales.ts` (shared
+with `getMyKinPhotos`). Hand-typed on both clients (`mytribe/web/src/api/types.ts`,
+`KinTaleDtos.kt` and `PortalApi.kt`); not in the contracts registry.
+- req `{ kinfolkId?: string, before?: number, limit?: number }`. `before` is the
+  last tale's `sentAtMs` from the previous page; tales strictly older come
+  back. A non-finite or out-of-range `before` is `invalid-argument`. `limit`
+  defaults to 20, max 50.
+- res `{ tales: KinTale[], hasMore: boolean }`. Each tale has `sentAtMs:
+  number | null` and, only when `sentAtMs` is null, `sentAtText?: string`, the
+  stored `sentAt` text, so a client shows what was stored.
+- ORDER: newest first by parsed send instant. `kin_care_reports.sentAt` holds
+  ISO text for tales sent since May 2026 and the migration's free text
+  ("September 3, 2025 2:02pm") for the migrated rows. The free text is read as
+  America/Chicago wall time. Nothing is written; migrated rows keep their text.
+- WHY NOT ONE QUERY: Firestore orders strings by byte, so every letter sorts
+  above every digit and `orderBy('sentAt')` put all migrated rows first, by
+  month name, with an ISO cursor below all of them. The ISO pager is now
+  `sentAt < 'A'`; the free-text rows are a separate read (`sentAt >= 'A'`,
+  capped at 500, `portal.kintales.legacyCapReached` is logged if hit) merged in
+  by parsed instant.
+- PAGE EDGES: a page never ends inside a tie (equal instants), so it may hold a
+  row or two more than `limit`. Rows with no readable date sort last and all
+  arrive on the page that exhausts the dated rows, with `hasMore: false`;
+  clients stop paging when the last tale has no `sentAtMs`, so a tail split
+  across pages would be unreachable.
+- GATE and tenant scoping unchanged: `resolveKinfolkAccess`, `kinfolkId ==`.
 ## Card on file (kinfolk, billing access)
 The four callables behind the portal's Billing Details "Manage" button
 (`src/portal/billing.ts`, issue #399 item 3). Card state has no generated
