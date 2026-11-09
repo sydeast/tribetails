@@ -720,5 +720,9 @@ private fun openInBrowser(context: Context, url: String) {
     CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url))
 }
 
-private fun formatTimestamp(millis: Long): String =
-    SimpleDateFormat("MMM d, h:mm a", Locale.US).format(Date(millis))
+/** "Nov 5, 3:00 PM", with the year when it is not this one (#1599: the call log spans more than a year). */
+internal fun formatTimestamp(millis: Long, nowMillis: Long = System.currentTimeMillis()): String {
+    val year = SimpleDateFormat("yyyy", Locale.US)
+    val pattern = if (year.format(Date(millis)) == year.format(Date(nowMillis))) "MMM d, h:mm a" else "MMM d, yyyy, h:mm a"
+    return SimpleDateFormat(pattern, Locale.US).format(Date(millis))
+}

@@ -60,7 +60,7 @@ class VisitInternalNotesClientTest {
     fun bylineMarksAdminOnlyAndNamesTheVisitRecord() {
         val zone = TimeZone.of("America/Chicago")
         val admin = VisitInternalNote("a1", "x", "admin", "Syd", 1_700_000_000_000L, "adminOnly", "thread")
-        assertEquals("Admin only · Syd · Nov 14, 4:13 PM", visitNoteByline(admin, zone))
+        assertEquals("Admin only · Syd · Nov 14, 4:13 PM", visitNoteByline(admin, zone, 2023))
         val legacy = VisitInternalNote("session:s", "x", "unknown", null, null, "shared", "visitRecord")
         assertEquals("On the visit record", visitNoteByline(legacy, zone))
         val auntie = VisitInternalNote("n1", "x", "auntie", null, null, "shared", "thread")

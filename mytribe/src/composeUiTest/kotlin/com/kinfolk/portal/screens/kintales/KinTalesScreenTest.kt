@@ -330,4 +330,26 @@ class KinTalesScreenTest {
         onNodeWithText("Deep tale body.").assertIsDisplayed()
         kotlin.test.assertEquals(2, fake.calls.count { it.first == "getMyKinTales" })
     }
+
+    @Test
+    fun aMigratedTaleWithNoReadableDateShowsItsStoredText() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "junk")
+                    put("body", "A migrated visit.")
+                    put("authorDisplayName", "Maya")
+                    put("mediaIds", buildJsonArray {})
+                    put("sentAtText", "sometime in the spring")
+                    put("shared", false)
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("A migrated visit.").assertIsDisplayed()
+        onNodeWithText("sometime in the spring").assertIsDisplayed()
+    }
 }

@@ -48,6 +48,8 @@ import com.kinfolk.portal.portal.isInvitableEmail
 import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.PaymentMethodState
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.WarmOnOpen
+import com.kinfolk.portal.portal.WarmableSave
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
@@ -118,6 +120,9 @@ fun AccountSettingsScreen(
     // keeps its values in a map, so it is checked the same way.
     val phoneError = phoneProblem(if (accountSchema != null) accountValues["phone"].orEmpty() else phone)
     val backupPhoneError = phoneProblem(if (accountSchema != null) accountValues["backupPhone"].orEmpty() else backupPhone)
+    // #1504: the form is open once the account has loaded; wake the save's
+    // instance so Save lands on a running one. After the screen's reads (#1561).
+    WarmOnOpen(portalApi, WarmableSave.SaveMyAccount, enabled = loaded != null)
     // #1282: the three reads start together. They used to run one after the
     // other, and two of them (getFormSchema, getMyPaymentMethod) carry no
     // minInstances, so a first open paid two cold starts back to back. Only

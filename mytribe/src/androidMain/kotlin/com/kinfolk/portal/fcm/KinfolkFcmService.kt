@@ -77,12 +77,17 @@ class KinfolkFcmService : FirebaseMessagingService() {
                 "platform" to "android-mytribe",
             )
             FirebaseFunctions.getInstance().getHttpsCallable("registerFcmToken").call(data)
-                .addOnFailureListener { Log.w(TAG, "registerFcmToken failed", it) }
+                .addOnFailureListener { Log.w(TAG, "registerFcmToken failed: ${failureSummary(it)}", it) }
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            Log.w(TAG, "registerFcmToken threw", t)
+            Log.w(TAG, "registerFcmToken threw: ${failureSummary(t)}", t)
         }
+    }
+    /** Class, callable code (when it is a FirebaseFunctionsException) and message, never the token (#1547). */
+    private fun failureSummary(t: Throwable): String {
+        val code = (t as? com.google.firebase.functions.FirebaseFunctionsException)?.code
+        return "${t::class.simpleName}${if (code != null) " [$code]" else ""}: ${t.message}"
     }
 
     private fun showCatalogNotification(

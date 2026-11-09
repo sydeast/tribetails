@@ -33,6 +33,8 @@ class PortalApi(
     private val fns: FunctionsClient,
     private val firestore: FirestoreClient? = null,
 ) {
+    /** #1504: the client the warm-on-open call goes through (see WarmOnOpen.kt). */
+    internal val functionsClient: FunctionsClient get() = fns
 
     // -- Access (operator-aware kinfolkIds list) --
     suspend fun getMyAccess(): MyAccessResult {
@@ -840,6 +842,7 @@ class PortalApi(
                 authorDisplayName = o["authorDisplayName"]?.jsonPrimitive?.contentOrNull,
                 mediaIds = (o["mediaIds"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
                 sentAtMs = o["sentAtMs"]?.jsonPrimitive?.longOrNull,
+                sentAtText = o["sentAtText"]?.jsonPrimitive?.contentOrNull,
                 shared = o["shared"]?.jsonPrimitive?.booleanOrNull ?: false,
                 gpsRoute = route,
                 gpsDistanceMeters  = summary?.get("distanceMeters")?.jsonPrimitive?.doubleOrNull,

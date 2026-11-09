@@ -551,3 +551,31 @@ describe('KinTales: a focused tale past the first page (#1363)', () => {
     expect(mocks.getMyKinTales).toHaveBeenCalledTimes(2);
   });
 });
+describe('KinTales: migrated tales order and date (#1775)', () => {
+  it('shows the server order as given, a migrated row where the server placed it', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        tale({ id: 'new', title: 'Newest walk', sentAtMs: Date.UTC(2026, 9, 1, 15) }),
+        tale({ id: 'legacy', title: 'Migrated nap', sentAtMs: Date.UTC(2025, 8, 3, 19, 2) }),
+        tale({ id: 'oldest', title: 'Oldest tale', sentAtMs: Date.UTC(2024, 0, 1) }),
+      ],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+    await screen.findByText('Migrated nap');
+    const titles = Array.from(container.querySelectorAll('h2, h3, b'))
+      .map((el) => el.textContent ?? '')
+      .filter((t) => ['Newest walk', 'Migrated nap', 'Oldest tale'].includes(t));
+    expect(titles.indexOf('Newest walk')).toBeLessThan(titles.indexOf('Migrated nap'));
+    expect(titles.indexOf('Migrated nap')).toBeLessThan(titles.indexOf('Oldest tale'));
+  });
+  it('shows the stored text for a row with no readable date', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ id: 'junk', title: 'Spring visit', sentAtMs: null, sentAtText: 'sometime in the spring' })],
+      hasMore: false,
+    });
+    renderScreen();
+    await screen.findByText('Spring visit');
+    expect(screen.getAllByText(/sometime in the spring/).length).toBeGreaterThan(0);
+  });
+});

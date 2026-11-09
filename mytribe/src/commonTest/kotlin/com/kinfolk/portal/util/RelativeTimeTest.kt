@@ -40,6 +40,22 @@ class RelativeTimeTest {
         assertTrue(s.length in 5..7, "expected 'Mon DD' style, got '$s'")
         assertTrue(!s.endsWith("ago"))
     }
+    @Test
+    fun `a date in an earlier year carries the year, one in this year does not (1775)`() {
+        // 2023-11-14 22:13 UTC; two years back is far enough that no zone shares the year.
+        val twoYearsBack = now - 2 * 365L * 86_400_000L
+        val old = relativeTime(twoYearsBack, nowMillis = now)
+        assertTrue(old.endsWith(", 2021"), "expected the year on an older date, got '$old'")
+        val thisYear = relativeTime(now - 20L * 86_400_000L, nowMillis = now)
+        assertTrue(!thisYear.contains(","), "expected no year within the current year, got '$thisYear'")
+    }
+    @Test
+    fun `a tale sent label prefers the parsed time and falls back to the stored text (1775)`() {
+        assertEquals("5m ago", kinTaleSentLabel(now - 5 * 60_000L, "ignored", nowMillis = now))
+        assertEquals("sometime in the spring", kinTaleSentLabel(null, "  sometime in the spring ", nowMillis = now))
+        assertEquals("", kinTaleSentLabel(null, "   ", nowMillis = now))
+        assertEquals("", kinTaleSentLabel(null, null, nowMillis = now))
+    }
 }
 
 /**

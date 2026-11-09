@@ -5,6 +5,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { KinAdd } from './KinAdd';
+import { warmSave } from '../lib/warmSave';
 
 const mocks = vi.hoisted(() => ({
   addKin: vi.fn<(kin: unknown, kinfolkId?: string) => Promise<{ kinId: string }>>(),
@@ -251,5 +252,16 @@ describe('KinAdd', () => {
 
     expect(await screen.findByText('Missing or insufficient permissions.')).toBeInTheDocument();
     expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe('KinAdd: warm on open (#1504)', () => {
+  it('wakes addKin once when the form opens, and typing never fires it again', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    expect(vi.mocked(warmSave).mock.calls).toEqual([['addKin']]);
+    await user.type(screen.getByLabelText(/^Name/i), 'Rex');
+    expect(vi.mocked(warmSave).mock.calls).toEqual([['addKin']]);
+    expect(mocks.addKin).not.toHaveBeenCalled();
   });
 });

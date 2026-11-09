@@ -3,6 +3,7 @@ import type { SessionEntry } from '../api/sessions';
 import type { InvoiceEntry } from '../api/invoices';
 import { formatJoinDate } from './joinDate';
 import { str } from './coerce';
+import { parseFlexibleDate } from './bookingFormat';
 
 /**
  * The three feed joins on the household profile: Recent KinTales, Upcoming
@@ -37,8 +38,16 @@ export function recentTalesFor(
   return reports
     .filter((r) => str(r.kinfolkId) === kinfolkId)
     .filter((r) => str(r.status).toUpperCase() === 'SENT')
-    .slice()
-    .sort((a, b) => taleSortKey(b).localeCompare(taleSortKey(a)))
+    .map((r, index) => ({ r, index, at: parseFlexibleDate(taleSortKey(r))?.getTime() ?? null }))
+    // #1599: by parsed date. The migrated rows hold "September 3, 2025 2:02pm",
+    // which a string compare puts above every ISO row. Unreadable dates last.
+    .sort((x, y) => {
+      if (x.at === null && y.at === null) return x.index - y.index;
+      if (x.at === null) return 1;
+      if (y.at === null) return -1;
+      return y.at - x.at || x.index - y.index;
+    })
+    .map((entry) => entry.r)
     .slice(0, limit);
 }
 

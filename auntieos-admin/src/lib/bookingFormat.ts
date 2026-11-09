@@ -185,9 +185,14 @@ export function parseFlexibleDate(raw: string): Date | null {
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** "Jul 16" in the LOCAL zone. The date half of {@link formatLocalDateTime}. */
-export function formatLocalDate(d: Date): string {
-  return `${MONTH_NAMES[d.getMonth()] ?? ''} ${d.getDate()}`;
+/**
+ * "Jul 16" in the LOCAL zone, or "Jul 16, 2025" when [d] is not in [now]'s
+ * year (#1599: the Bookings list spans more than a year). The date half of
+ * {@link formatLocalDateTime}. `now` is for tests.
+ */
+export function formatLocalDate(d: Date, now: Date = new Date()): string {
+  const monthDay = `${MONTH_NAMES[d.getMonth()] ?? ''} ${d.getDate()}`;
+  return d.getFullYear() === now.getFullYear() ? monthDay : `${monthDay}, ${d.getFullYear()}`;
 }
 
 /** "9:00 AM" in the LOCAL zone. The clock half of {@link formatLocalDateTime}. */
@@ -205,8 +210,8 @@ export function formatLocalTime(d: Date): string {
  * AO-18 discipline lib/time.ts applies to real Firestore Timestamps, applied
  * here to this collection's free-text timestamp-shaped strings.
  */
-export function formatLocalDateTime(d: Date): string {
-  return `${formatLocalDate(d)}, ${formatLocalTime(d)}`;
+export function formatLocalDateTime(d: Date, now: Date = new Date()): string {
+  return `${formatLocalDate(d, now)}, ${formatLocalTime(d)}`;
 }
 
 /**

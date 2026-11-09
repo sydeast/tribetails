@@ -509,6 +509,9 @@ private fun TaleRow(tale: KinTale, onOpen: () -> Unit) {
             tale.sentAtMs?.let {
                 append(" · ")
                 append(relativeTime(it).uppercase())
+            } ?: tale.sentAtText?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                append(" · ")
+                append(it)
             }
         }
         Text(meta, style = type.sansMeta)
