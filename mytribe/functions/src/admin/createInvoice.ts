@@ -18,7 +18,7 @@ import {
   formatUsd,
   formatUsdCents,
 } from '../lib/invoiceMath';
-import { InvoiceDayArg } from '../lib/invoiceDay';
+import { DUE_BEFORE_INVOICE_DATE_CODE, InvoiceDayArg, dueDateOrderProblem } from '../lib/invoiceDay';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
 import { invoiceNumberTaken, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
@@ -260,6 +260,10 @@ export async function createInvoiceHandler(
       throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });
     }
     termsFields = outcome.fields;
+  }
+  const dueOrder = dueDateOrderProblem(args.date, termsFields['dueDate'], args.termsCode);
+  if (dueOrder) {
+    throw new HttpsError('invalid-argument', dueOrder, { code: DUE_BEFORE_INVOICE_DATE_CODE, field: 'dueDate' });
   }
   const ref =
     args.idempotencyKey !== undefined

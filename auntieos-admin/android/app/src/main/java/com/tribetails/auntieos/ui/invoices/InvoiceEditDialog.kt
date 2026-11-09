@@ -18,6 +18,8 @@ import com.tribetails.auntieos.domain.formatQty
 import com.tribetails.auntieos.domain.lineAmountCents
 import com.tribetails.auntieos.domain.parseDollarsToCents
 import com.tribetails.auntieos.domain.parseQty
+import com.tribetails.auntieos.ui.admin.FieldProblem
+import com.tribetails.auntieos.ui.admin.NO_FIGURE
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDialog
@@ -75,6 +77,8 @@ internal fun InvoiceEditDialog(
     val storedTerms = draft.terms
     val termsSetDueDate = draft.termsCode != null && draft.termsCode != storedTermsCode &&
         draft.termsCode != InvoiceTermsCode.CUSTOM
+    // #1593: under the due date field, and Save held back while it stands.
+    val dueOrderProblem = invoiceEditDueOrderProblem(draft)
     AuntieDialog(
         visible = true,
         title = "Edit invoice",
@@ -85,7 +89,7 @@ internal fun InvoiceEditDialog(
                 label = if (saving) "Saving…" else "Save changes",
                 onClick = onSave,
                 loading = saving,
-                enabled = enabled,
+                enabled = enabled && dueOrderProblem == null,
             )
         },
     ) {
@@ -117,15 +121,19 @@ internal fun InvoiceEditDialog(
                 enabled = enabled,
                 modifier = Modifier.weight(1f),
             )
-            AuntieField(
-                value = draft.dueDate,
-                onValueChange = { onChange(draft.copy(dueDate = it)) },
-                label = "Due date",
-                // #1609: picked terms other than custom set the due date on save.
-                placeholder = if (termsSetDueDate) "set by the terms" else "YYYY-MM-DD",
-                enabled = enabled && !termsSetDueDate,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                AuntieField(
+                    value = draft.dueDate,
+                    onValueChange = { onChange(draft.copy(dueDate = it)) },
+                    label = "Due date",
+                    // #1609: picked terms other than custom set the due date on save.
+                    placeholder = if (termsSetDueDate) "set by the terms" else "YYYY-MM-DD",
+                    enabled = enabled && !termsSetDueDate,
+                    isError = dueOrderProblem != null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                dueOrderProblem?.let { FieldProblem(it) }
+            }
         }
         // #1609: the same choices as New invoice, not free text. An invoice whose
         // terms carry no code offers them as stored, first.
@@ -233,6 +241,7 @@ private fun EditableLines(
     val c = AuntieTheme.colors
     val lines = draft.lines
     fun setLines(next: List<InvoiceEditLine>) = onChange(draft.copy(lines = next))
+    val preview = invoiceEditPreviewOf(lines, draft.invoiceDiscountText)
 
     if (lines.isEmpty()) {
         Text(
@@ -274,6 +283,7 @@ private fun EditableLines(
                     )
                 }
             } else {
+                val lineProblem = preview.lineProblems.getOrNull(index)
                 AuntieField(
                     value = line.description,
                     onValueChange = { setLines(lines.replacedAt(index, line.copy(description = it))) },
@@ -303,14 +313,18 @@ private fun EditableLines(
                         onValueChange = { setLines(lines.replacedAt(index, line.copy(discountText = it))) },
                         label = "Off ($)",
                         enabled = enabled,
+                        isError = lineProblem != null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.weight(1f),
                     )
                 }
+                lineProblem?.let { FieldProblem(it) }
                 val qty = parseQty(line.qtyText)
                 val unit = parseDollarsToCents(line.unitText)
                 Text(
-                    if (qty != null && unit != null) {
+                    if (lineProblem != null) {
+                        NO_FIGURE
+                    } else if (qty != null && unit != null) {
                         val discount = if (line.discountText.isBlank()) 0L else parseDollarsToCents(line.discountText) ?: 0L
                         formatCents(lineAmountCents(InvoiceLineItem(qty = qty, unitCents = unit, discountCents = discount)))
                     } else {
@@ -341,12 +355,14 @@ private fun EditableLines(
         onValueChange = { onChange(draft.copy(invoiceDiscountText = it)) },
         label = "Invoice discount ($), optional",
         enabled = enabled,
+        isError = preview.discountProblem != null,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier.fillMaxWidth(),
     )
-    val preview = invoiceEditPreviewOf(lines, draft.invoiceDiscountText)
+    preview.discountProblem?.let { FieldProblem(it) }
+    // #1593: refused money has no total. The sentence above says what to change.
     Text(
-        "Total ${formatCents(preview.totalCents)}",
+        if (preview.hasTotal) "Total ${formatCents(preview.totalCents)}" else "Total $NO_FIGURE",
         style = AuntieTheme.typography.bodyMedium,
         color = c.textPrimary,
     )

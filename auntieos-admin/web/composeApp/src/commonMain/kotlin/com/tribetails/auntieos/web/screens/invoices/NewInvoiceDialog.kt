@@ -171,6 +171,19 @@ internal fun NewInvoiceDialogContent(
     )
     val termsNote = composerTermsNote(termsCode, due, date)
 
+    // #1593: each refusal under the field it is about, while it is wrong.
+    val dueOrderProblem = if (termsCode == InvoiceTermsCode.CUSTOM) {
+        dueDateOrderProblem(date, customDueDate, InvoiceTermsCode.CUSTOM.wire)
+    } else {
+        null
+    }
+    // An empty Total is refused too, but by the line beside the button rather
+    // than flagged in red before anything has been typed.
+    val totalFieldProblem = if (!onWork && totalText.isNotBlank()) blankTotalProblem(totalText) else null
+    val discountProblem = invoiceDiscountProblemOf(money?.error)
+    val saidBesideAField = listOfNotNull(termsNote, dueOrderProblem, totalFieldProblem, discountProblem) +
+        extraLines.mapNotNull { lineDiscountProblemOf(money?.error, it.description) }
+
     val submit: () -> Unit = submit@{
         if (submitting) return@submit
         if (blocked != null) {
@@ -271,6 +284,8 @@ internal fun NewInvoiceDialogContent(
                     onValueChange = { totalText = it },
                     label = "Total ($)",
                     enabled = !submitting,
+                    isError = totalFieldProblem != null,
+                    errorMessage = totalFieldProblem,
                     keyboardType = KeyboardType.Decimal,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -289,6 +304,8 @@ internal fun NewInvoiceDialogContent(
                 invoiceDiscountText = invoiceDiscountText,
                 onInvoiceDiscountChange = { invoiceDiscountText = it },
                 enabled = !submitting,
+                discountProblem = discountProblem,
+                lineDiscountProblem = { lineDiscountProblemOf(money?.error, it) },
             )
             // No figure until there is one: an empty invoice is not a $0.00 invoice.
             val lines = money?.lines
@@ -298,6 +315,9 @@ internal fun NewInvoiceDialogContent(
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textPrimary,
                 )
+            } else if (money?.error != null && (selected.isNotEmpty() || extraLines.isNotEmpty())) {
+                // #1593: refused money has no total; the field above says why.
+                Text("Total $NO_FIGURE", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
             }
         }
 
@@ -319,7 +339,9 @@ internal fun NewInvoiceDialogContent(
                 // Locked unless the terms hand the date back; the note below says why.
                 enabled = !submitting && termsCode == InvoiceTermsCode.CUSTOM,
                 isError = termsCode == InvoiceTermsCode.CUSTOM &&
-                    customDueDate.isNotBlank() && !isValidNewInvoiceIsoDate(customDueDate),
+                    customDueDate.isNotBlank() && !isValidNewInvoiceIsoDate(customDueDate) ||
+                    dueOrderProblem != null,
+                errorMessage = dueOrderProblem,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -352,7 +374,7 @@ internal fun NewInvoiceDialogContent(
         }
 
         // The disabled button's reason, not repeated when the terms note already says it.
-        if (blocked != null && blocked != termsNote && !submitting) {
+        if (blocked != null && blocked !in saidBesideAField && !submitting) {
             Text(blocked, style = AuntieTheme.typography.bodySmall, color = c.error)
         }
 
@@ -374,6 +396,8 @@ private fun ExtraChargesEditor(
     invoiceDiscountText: String,
     onInvoiceDiscountChange: (String) -> Unit,
     enabled: Boolean,
+    discountProblem: String? = null,
+    lineDiscountProblem: (String) -> String? = { null },
 ) {
     val c = AuntieTheme.colors
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -409,6 +433,8 @@ private fun ExtraChargesEditor(
                         onValueChange = { onChange(drafts.replacedAt(index, draft.copy(discountText = it))) },
                         label = "Less ($)",
                         enabled = enabled,
+                        isError = lineDiscountProblem(draft.description) != null,
+                        errorMessage = lineDiscountProblem(draft.description),
                         keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
@@ -426,6 +452,8 @@ private fun ExtraChargesEditor(
             onValueChange = onInvoiceDiscountChange,
             label = "Discount off the whole invoice ($)",
             enabled = enabled,
+            isError = discountProblem != null,
+            errorMessage = discountProblem,
             keyboardType = KeyboardType.Decimal,
             modifier = Modifier.fillMaxWidth(),
         )

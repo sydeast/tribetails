@@ -156,7 +156,7 @@ class InvoiceComposerTest {
             blocked(termsCode = InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, selected = emptySet(), drafts = listOf(ComposerDraftLine("M", "1", "4")))!!
                 .startsWith("These terms count from the last visit"),
         )
-        val badTotal = "Total must be a dollar amount of zero or more, for example 120.00"
+        val badTotal = "Enter the total as dollars, zero or more, like 120.00."
         assertEquals(badTotal, blocked(path = InvoiceCreatePath.BLANK, totalText = ""))
         // Never sent as a number the server cannot store, nor a fraction of a cent.
         for (bad in listOf("NaN", "1e5", "-5", "12.345", "Infinity")) {

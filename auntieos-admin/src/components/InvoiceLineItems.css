@@ -315,3 +315,10 @@
 .invoice-lines__visit-link {
   display: block;
 }
+/* #1593: a refusal stated beside the field it is about. */
+.invoice-lines-editor__field-error {
+  margin: 0;
+  color: var(--color-error);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}

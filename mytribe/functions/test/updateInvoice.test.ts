@@ -173,6 +173,37 @@ describe('updateInvoice happy path', () => {
   });
 });
 
+describe('#1593 a typed due date stays on or after the invoice date', () => {
+  it('refuses an edit that types a due date before the invoice date', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-10', dueDate: '2026-07-10' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { dueDate: '2026-06-01' } }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'The due date has to be on or after the invoice date.',
+      details: { code: 'invoice_due_before_date', field: 'dueDate' },
+    });
+    expect(invoiceWrite(ctx)).toBeUndefined();
+  });
+  it('refuses an edit that moves the invoice date past the stored due date', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-10', dueDate: '2026-07-10' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { date: '2026-08-01' } }))).rejects.toMatchObject({
+      details: { code: 'invoice_due_before_date' },
+    });
+  });
+  it('an edit that leaves the dates alone is not refused for an old bad pair', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-10', dueDate: '2026-06-01' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { address: '2 Elm St' } }));
+    expect(invoiceWrite(ctx)!.data.address).toBe('2 Elm St');
+  });
+  it('a stored free-text due date from the old system is not judged by the order check', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-10', dueDate: 'upon receipt' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { date: '2026-06-12' } }));
+    expect(invoiceWrite(ctx)!.data.date).toBe('2026-06-12');
+  });
+});
 describe('updateInvoice does not invent totals for an un-itemized invoice', () => {
   it('leaves the legacy total alone when the invoice has no line items and the patch adds none', async () => {
     // THE REGRESSION THIS GUARDS. Every invoice that exists today is

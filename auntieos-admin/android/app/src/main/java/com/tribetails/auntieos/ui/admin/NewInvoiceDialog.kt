@@ -171,6 +171,19 @@ fun NewInvoiceDialog(
     )
     val termsNote = composerTermsNote(termsCode, due, date)
 
+    // #1593: each refusal under the field it is about, while it is wrong.
+    val dueOrderProblem = if (termsCode == InvoiceTermsCode.CUSTOM) {
+        dueDateOrderProblem(date, customDueDate, InvoiceTermsCode.CUSTOM.wire)
+    } else {
+        null
+    }
+    // An empty Total is refused too, but by the line beside the button rather
+    // than flagged in red before anything has been typed.
+    val totalFieldProblem = if (!onWork && totalText.isNotBlank()) blankTotalProblem(totalText) else null
+    val discountProblem = invoiceDiscountProblemOf(money?.error)
+    val saidBesideAField = listOfNotNull(termsNote, dueOrderProblem, totalFieldProblem, discountProblem) +
+        extraLines.mapNotNull { lineDiscountProblemOf(money?.error, it.description) }
+
     val submit: () -> Unit = submit@{
         if (submitting) return@submit
         val reason = blocked
@@ -222,7 +235,7 @@ fun NewInvoiceDialog(
         } else {
             val typed = normalizeMoneyText(totalText)?.toDoubleOrNull()
             if (typed == null) {
-                validationError = "Total must be zero or greater"
+                validationError = BLANK_TOTAL_PROBLEM
                 return@submit
             }
             base.total = typed
@@ -337,9 +350,11 @@ fun NewInvoiceDialog(
                     onValueChange = { totalText = it },
                     label = "Total ($)",
                     enabled = !submitting,
+                    isError = totalFieldProblem != null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                totalFieldProblem?.let { FieldProblem(it) }
                 GhostButton(
                     label = "Bill this household's logged work instead",
                     onClick = { path = InvoiceCreatePath.WORK },
@@ -355,6 +370,8 @@ fun NewInvoiceDialog(
                 invoiceDiscountText = invoiceDiscountText,
                 onInvoiceDiscountChange = { invoiceDiscountText = it },
                 enabled = !submitting,
+                discountProblem = discountProblem,
+                lineDiscountProblem = { lineDiscountProblemOf(money?.error, it) },
             )
             // NO FIGURE IS PROMISED UNTIL THERE IS ONE. With nothing on the
             // invoice the arithmetic is a perfectly valid $0.00, and printing it
@@ -366,6 +383,9 @@ fun NewInvoiceDialog(
                     "This invoice will be created for ${formatCents(money.totalCents)}, worked out from the " +
                         "work it covers. There is nowhere to type a total, so it can never say a different " +
                         "number from the work it lists."
+                } else if (money?.error != null && (selected.isNotEmpty() || extraLines.isNotEmpty())) {
+                    // #1593: refused money has no total; the field above says why.
+                    "Total $NO_FIGURE"
                 } else {
                     "Totals are worked out from the work this invoice covers. Tick a visit above, or add a " +
                         "line of your own."
@@ -388,19 +408,23 @@ fun NewInvoiceDialog(
                 isError = date.isNotBlank() && !isValidNewInvoiceIsoDate(date),
                 modifier = Modifier.weight(1f),
             )
-            AuntieField(
-                value = if (termsCode == InvoiceTermsCode.CUSTOM) customDueDate else due.dueDate.orEmpty(),
-                onValueChange = { customDueDate = it },
-                label = "Due date (YYYY-MM-DD)",
-                placeholder = "YYYY-MM-DD",
-                // DISABLED WITH THE REASON STATED BELOW, never hidden. The terms
-                // decide this date, and the way to change it is to change them.
-                enabled = !submitting && termsCode == InvoiceTermsCode.CUSTOM,
-                isError = termsCode == InvoiceTermsCode.CUSTOM &&
-                    customDueDate.isNotBlank() &&
-                    !isValidNewInvoiceIsoDate(customDueDate),
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                AuntieField(
+                    value = if (termsCode == InvoiceTermsCode.CUSTOM) customDueDate else due.dueDate.orEmpty(),
+                    onValueChange = { customDueDate = it },
+                    label = "Due date (YYYY-MM-DD)",
+                    placeholder = "YYYY-MM-DD",
+                    // DISABLED WITH THE REASON STATED BELOW, never hidden. The terms
+                    // decide this date, and the way to change it is to change them.
+                    enabled = !submitting && termsCode == InvoiceTermsCode.CUSTOM,
+                    isError = termsCode == InvoiceTermsCode.CUSTOM &&
+                        customDueDate.isNotBlank() &&
+                        !isValidNewInvoiceIsoDate(customDueDate) ||
+                        dueOrderProblem != null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                dueOrderProblem?.let { FieldProblem(it) }
+            }
         }
 
         AuntieDropdownField(
@@ -441,7 +465,7 @@ fun NewInvoiceDialog(
         // left for the operator to work out by clicking it. Not repeated when the
         // terms line above is already saying the same sentence: a reason printed
         // twice reads as two problems.
-        if (blocked != null && blocked != termsNote && !submitting) {
+        if (blocked != null && blocked !in saidBesideAField && !submitting) {
             Text(blocked, style = AuntieTheme.typography.bodySmall, color = c.error)
         }
 
@@ -471,6 +495,8 @@ private fun ExtraChargesEditor(
     invoiceDiscountText: String,
     onInvoiceDiscountChange: (String) -> Unit,
     enabled: Boolean,
+    discountProblem: String? = null,
+    lineDiscountProblem: (String) -> String? = { null },
 ) {
     val c = AuntieTheme.colors
     Column(
@@ -519,10 +545,12 @@ private fun ExtraChargesEditor(
                         onValueChange = { onChange(drafts.replacedAt(index, draft.copy(discountText = it))) },
                         label = "Less ($)",
                         enabled = enabled,
+                        isError = lineDiscountProblem(draft.description) != null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.weight(1f),
                     )
                 }
+                lineDiscountProblem(draft.description)?.let { FieldProblem(it) }
                 GhostButton(
                     label = "Remove this charge",
                     onClick = { onChange(drafts.filterIndexed { i, _ -> i != index }) },
@@ -540,9 +568,11 @@ private fun ExtraChargesEditor(
             onValueChange = onInvoiceDiscountChange,
             label = "Discount off the whole invoice ($)",
             enabled = enabled,
+            isError = discountProblem != null,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.fillMaxWidth(),
         )
+        discountProblem?.let { FieldProblem(it) }
     }
 }
 

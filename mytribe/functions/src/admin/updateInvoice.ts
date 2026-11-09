@@ -19,6 +19,7 @@ import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/payment
 import { randomUUID } from 'node:crypto';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
+import { DUE_BEFORE_INVOICE_DATE_CODE, dueDateOrderProblem } from '../lib/invoiceDay';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
@@ -330,6 +331,21 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
     update['terms'] = outcome.fields.terms;
     update['termsCode'] = outcome.fields.termsCode;
     update['dueDate'] = outcome.fields.dueDate;
+  }
+  // #1593: the invoice as it would be after this edit, so moving the invoice
+  // date past an existing typed due date is caught as well as typing an early
+  // due date. Only an edit that touches the dates or the terms is checked: an
+  // old invoice that already carries the bad order can still take a payment
+  // note or a new address.
+  if (patch.date !== undefined || patch.dueDate !== undefined || patch.termsCode !== undefined) {
+    const dueOrder = dueDateOrderProblem(
+      'date' in update ? update['date'] : data.date,
+      'dueDate' in update ? update['dueDate'] : data.dueDate,
+      'termsCode' in update ? update['termsCode'] : (data as { termsCode?: unknown }).termsCode,
+    );
+    if (dueOrder) {
+      throw new HttpsError('invalid-argument', dueOrder, { code: DUE_BEFORE_INVOICE_DATE_CODE, field: 'dueDate' });
+    }
   }
   if (patch.kinfolkName !== undefined) update['kinfolkName'] = patch.kinfolkName;
   if (patch.client !== undefined) update['client'] = patch.client;
