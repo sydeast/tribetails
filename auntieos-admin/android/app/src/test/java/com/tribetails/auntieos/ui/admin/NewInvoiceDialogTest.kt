@@ -59,6 +59,7 @@ class NewInvoiceDialogTest {
         durationMinutes = 30.0,
         startTime = "2026-08-11T15:00:00.000Z",
         unitCents = unitCents,
+        pricedAs = null,
     )
 
     private fun mount(

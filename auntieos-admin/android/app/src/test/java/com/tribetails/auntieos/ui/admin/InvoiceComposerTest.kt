@@ -32,6 +32,7 @@ class InvoiceComposerTest {
         durationMinutes = minutes,
         startTime = start,
         unitCents = unitCents,
+        pricedAs = null,
     )
 
     // ── #1744: the line names the KinCare ──────────────────────────────────────

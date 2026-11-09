@@ -13,6 +13,7 @@ import {
   isSessionUnclaimed,
   sessionDoNotInvoiceReason,
 } from '../lib/sessionInvoicing';
+import { catalogServiceName, matchServiceKey, serviceNameCatalogFrom, type ServiceNameCatalog } from '../lib/serviceDisplayName';
 
 /**
  * Completed visits that no invoice has claimed yet, priced from the rate card
@@ -82,6 +83,21 @@ import {
  * household nothing for real work and look deliberate on the invoice. The
  * caller is told which sessions need a price typed in, and `rateCardLoaded`
  * distinguishes "this service is not on the card" from "there is no card".
+ *
+ * A STORED KEY THE CARD DOES NOT HOLD AS WRITTEN IS RESOLVED (#1750).
+ * `serviceType` is free text, and visits carry `visit_60`, `60Mins` and
+ * `30 Minute` for KinCares the card keys as `60Minute` and `30Minute`. The
+ * composer names such a visit by its KinCare (#1744, `lib/serviceDisplayName`),
+ * so pricing resolves the stored key by the same rule the name does
+ * (`matchServiceKey`): the key on letters and digits, then the one KinCare of
+ * the stated length. It prices only when EXACTLY ONE KinCare matches. Two keys
+ * that agree on letters and digits, two KinCares of the same length, or none
+ * at all stay unpriced exactly as before, because a guess between two rates
+ * bills the household one of them on a coin toss. A visit priced this way
+ * carries `pricedAs`, the KinCare's name, and the composer row says so before
+ * the invoice is sent. A key the card holds as written is priced as it always
+ * was and its rate is final: a bad rate there is unpriceable, never a reason to
+ * try another key.
  */
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -145,6 +161,14 @@ const UninvoicedSessionSchema = z
      * handled.
      */
     unitCents: CentsSchema.nullable(),
+    /**
+     * #1750: the KinCare's name when `unitCents` came from a catalog key that is
+     * NOT the stored `serviceType` (`visit_60` priced as "60 Minute"), so the
+     * composer can say which rate it used. Null when the stored key is on the
+     * card as written, and whenever `unitCents` is null. Nullable, not
+     * optional, for the reason `unitCents` is.
+     */
+    pricedAs: z.string().min(1).nullable(),
   })
   .strict();
 
@@ -225,6 +249,25 @@ function rateToCents(rate: unknown): number | null {
   return Math.round(dollars * 100);
 }
 
+/**
+ * A visit's price from the card, and the KinCare it was priced as when that is
+ * not the stored key. See "A STORED KEY ..." in the header for the rule.
+ */
+export function priceFromCard(
+  serviceType: string,
+  rates: Record<string, unknown>,
+  catalog: ServiceNameCatalog,
+): { unitCents: number | null; pricedAs: string | null } {
+  if (Object.prototype.hasOwnProperty.call(rates, serviceType)) {
+    return { unitCents: rateToCents(rates[serviceType]), pricedAs: null };
+  }
+  const match = matchServiceKey(serviceType, catalog);
+  if (match.kind !== 'key') return { unitCents: null, pricedAs: null };
+  const unitCents = rateToCents(rates[match.key]);
+  if (unitCents === null) return { unitCents: null, pricedAs: null };
+  return { unitCents, pricedAs: catalogServiceName(match.key) };
+}
+
 /** A string field read off a document nothing validates on write. */
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
@@ -268,6 +311,8 @@ export async function listUninvoicedSessionsHandler(
   const rateCardLoaded =
     typeof rawRates === 'object' && rawRates !== null && !Array.isArray(rawRates);
   const rates = rateCardLoaded ? (rawRates as Record<string, unknown>) : {};
+  // Both maps off the same read: the length step needs `serviceDurations`.
+  const catalog = serviceNameCatalogFrom(settingsSnap.data());
 
   // The ordered read above cannot reach a session whose startTime is '' while a
   // window is set, and sorts it last when one is not. One extra equality read
@@ -290,6 +335,7 @@ export async function listUninvoicedSessionsHandler(
   const unpriceable: Array<{ sessionId: string; serviceType: string }> = [];
   const unplaceable: Array<{ sessionId: string; kinfolkId: string }> = [];
   const excluded: ExcludedSession[] = [];
+  let pricedByResolvedKey = 0;
 
   for (const d of unplaceableSnap.docs) {
     const data = d.data() as Record<string, unknown>;
@@ -323,8 +369,11 @@ export async function listUninvoicedSessionsHandler(
       continue;
     }
 
-    const unitCents = rateCardLoaded ? rateToCents(rates[serviceType]) : null;
+    const { unitCents, pricedAs } = rateCardLoaded
+      ? priceFromCard(serviceType, rates, catalog)
+      : { unitCents: null, pricedAs: null };
     if (unitCents === null) unpriceable.push({ sessionId: d.id, serviceType });
+    if (pricedAs !== null) pricedByResolvedKey += 1;
 
     sessions.push({
       sessionId: d.id,
@@ -334,6 +383,7 @@ export async function listUninvoicedSessionsHandler(
         typeof data['serviceDurationMinutes'] === 'number' ? data['serviceDurationMinutes'] : 0,
       startTime: str(data['startTime']),
       unitCents,
+      pricedAs,
     });
   }
 
@@ -350,6 +400,7 @@ export async function listUninvoicedSessionsHandler(
       matched: sessions.length,
       excluded: excluded.length,
       unpriceable: unpriceable.length,
+      pricedByResolvedKey,
       unplaceable: unplaceable.length,
       rateCardLoaded,
     },

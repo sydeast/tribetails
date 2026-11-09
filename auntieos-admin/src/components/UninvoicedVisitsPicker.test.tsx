@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { type ReactNode, useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   ListUninvoicedSessionsResult,
@@ -77,6 +77,7 @@ function session(over: Partial<ListUninvoicedSessionsResultSession> = {}): ListU
     durationMinutes: 60,
     startTime: '2026-07-10T14:00:00.000Z',
     unitCents: 2500,
+    pricedAs: null,
     ...over,
   };
 }
@@ -249,6 +250,34 @@ describe('UninvoicedVisitsPicker pricing', () => {
     render(<Harness />);
     expect(await screen.findByText(/business settings has no service rates/i)).toBeInTheDocument();
     expect(screen.getByText(/needs a price/i)).toBeInTheDocument();
+  });
+
+  it('#1750: says which KinCare a resolved key was priced as, beside the price', async () => {
+    listUninvoicedSessions.mockResolvedValue(
+      result({ sessions: [session({ serviceType: 'visit_45', unitCents: 4500, pricedAs: 'Long walk' })] }),
+    );
+    render(<Harness />);
+    const row = (await screen.findByRole('checkbox', { name: 'Bill Long walk on 2026-07-10' })).closest('li')!;
+    expect(within(row).getByText('priced as Long walk')).toBeInTheDocument();
+    expect(within(row).getByText('$45.00')).toBeInTheDocument();
+  });
+
+  it('#1750: says nothing about resolving when the stored key was on the card as written', async () => {
+    render(<Harness />);
+    expect(await screen.findByText('$25.00')).toBeInTheDocument();
+    expect(screen.queryByText(/priced as/i)).toBeNull();
+  });
+
+  it('#1750: says nothing about resolving on an unpriced row, even if a field arrives', async () => {
+    listUninvoicedSessions.mockResolvedValue(
+      result({
+        sessions: [session({ unitCents: null, pricedAs: 'Long walk' })],
+        unpriceable: [{ sessionId: 's1', serviceType: 'Dog walk' }],
+      }),
+    );
+    render(<Harness />);
+    expect(await screen.findByText(/not on the rate card/i)).toBeInTheDocument();
+    expect(screen.queryByText(/priced as/i)).toBeNull();
   });
 });
 

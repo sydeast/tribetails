@@ -944,6 +944,7 @@ data class ListUninvoicedSessionsResultSession(
     val durationMinutes: Double,
     val startTime: String,
     val unitCents: Long?,
+    val pricedAs: String?,
 )
 
 /**
@@ -959,6 +960,7 @@ internal fun decodeListUninvoicedSessionsResultSession(raw: Map<String, Any?>?):
         durationMinutes = (raw?.get("durationMinutes") as? Number)?.toDouble() ?: 0.0,
         startTime = (raw?.get("startTime") as? String).orEmpty(),
         unitCents = (raw?.get("unitCents") as? Number)?.toLong(),
+        pricedAs = raw?.get("pricedAs") as? String,
     )
 
 /** Nested in the `listUninvoicedSessions` contract. */

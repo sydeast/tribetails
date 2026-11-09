@@ -47,7 +47,11 @@ data class InvoiceLineItem(
     val sessionId: String = "",
 )
 
-/** One un-invoiced completed visit. [unitCents] null means the rate card could not price it. */
+/**
+ * One un-invoiced completed visit. [unitCents] null means the rate card could
+ * not price it. [pricedAs] (#1750) is the KinCare the server priced it as when
+ * the stored key is not on the card as written; null otherwise.
+ */
 data class UninvoicedSession(
     val sessionId: String,
     val kinfolkId: String,
@@ -55,6 +59,7 @@ data class UninvoicedSession(
     val durationMinutes: Double,
     val startTime: String,
     val unitCents: Long?,
+    val pricedAs: String? = null,
 )
 
 data class UninvoicedUnpriceable(val sessionId: String, val serviceType: String)
@@ -213,6 +218,7 @@ fun decodeUninvoicedSessionsResult(json: String): UninvoicedSessionsResult {
                 durationMinutes = (s["durationMinutes"] as? JsonPrimitive)?.doubleOrNull ?: 0.0,
                 startTime = s.str("startTime"),
                 unitCents = (s["unitCents"] as? JsonPrimitive)?.longOrNull,
+                pricedAs = (s["pricedAs"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() },
             )
         }.filter { it.sessionId.isNotBlank() },
         unpriceable = o.objects("unpriceable").map { UninvoicedUnpriceable(it.str("sessionId"), it.str("serviceType")) },

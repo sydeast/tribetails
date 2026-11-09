@@ -4,6 +4,7 @@ import { buildDbMock } from './_helpers/mockDb';
 import {
   EMPTY_SERVICE_NAME_CATALOG,
   looksLikeServiceCode,
+  matchServiceKey,
   serviceDisplayName,
   serviceNameCatalogFrom,
 } from '../src/lib/serviceDisplayName';
@@ -50,6 +51,21 @@ describe('serviceDisplayName (#1297)', () => {
     expect(serviceDisplayName('visit_60', EMPTY_SERVICE_NAME_CATALOG)).toBeNull();
     expect(serviceDisplayName('', CATALOG)).toBeNull();
     expect(serviceDisplayName(undefined, CATALOG)).toBeNull();
+  });
+
+  it('matchServiceKey hands back the catalog key as stored, and every key when more than one matches (#1750)', () => {
+    expect(matchServiceKey('visit_60', CATALOG)).toEqual({ kind: 'key', key: '60Minute', via: 'length' });
+    expect(matchServiceKey('30 minute', CATALOG)).toEqual({ kind: 'key', key: '30Minute', via: 'letters' });
+    const padded = serviceNameCatalogFrom({ serviceRates: { ' Long walk ': '40' }, serviceDurations: {} });
+    expect(matchServiceKey('long walk', padded)).toEqual({ kind: 'key', key: ' Long walk ', via: 'letters' });
+    const twins = serviceNameCatalogFrom({ serviceRates: { '30Minute': '25', '30 Minute': '35' }, serviceDurations: {} });
+    expect(matchServiceKey('30-minute', twins)).toEqual({ kind: 'ambiguous', via: 'letters', keys: ['30Minute', '30 Minute'] });
+    const twoHours = serviceNameCatalogFrom({ serviceRates: { Walk: '20', Sit: '30' }, serviceDurations: { Walk: '60', Sit: '60' } });
+    expect(matchServiceKey('visit_60', twoHours)).toEqual({ kind: 'ambiguous', via: 'length', keys: ['Walk', 'Sit'] });
+    expect(matchServiceKey('visit_90', CATALOG)).toEqual({ kind: 'none' });
+    expect(matchServiceKey('', CATALOG)).toEqual({ kind: 'none' });
+    // The name still takes the first of two spellings of one key, as it always did.
+    expect(serviceDisplayName('30-minute', twins)).toBe('30 Minute');
   });
 
   it('tells a code from a name', () => {

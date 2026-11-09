@@ -10,7 +10,8 @@ vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevo
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 
-import { listUninvoicedSessionsHandler } from '../src/admin/listUninvoicedSessions';
+import { listUninvoicedSessionsHandler, priceFromCard } from '../src/admin/listUninvoicedSessions';
+import { serviceDisplayName, serviceNameCatalogFrom } from '../src/lib/serviceDisplayName';
 import { wrapAdminCallable } from '../src/lib/wrapAdminCallable';
 
 beforeEach(() => mocks.dbFn.mockReset());
@@ -395,5 +396,155 @@ describe('listUninvoicedSessions do-not-invoice', () => {
     const ctx = seed([session('s1', { status: 'COMPLETED' })]);
     mocks.dbFn.mockReturnValue(ctx.db);
     expect((await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }))).excluded).toEqual([]);
+  });
+});
+
+/**
+ * #1750: a stored key the card does not hold as written is resolved by the
+ * display-name rule, and priced only when exactly one KinCare matches.
+ */
+describe('listUninvoicedSessions prices a resolved key (#1750)', () => {
+  /** A card with lengths, as `business_settings` stores it. */
+  function seedCard(
+    sessions: Array<{ id: string; data: Record<string, unknown> }>,
+    serviceRates: Record<string, unknown>,
+    serviceDurations: Record<string, unknown> = {},
+  ) {
+    return buildDbMock({
+      docs: { 'business_settings/business_settings': { serviceRates, serviceDurations } },
+      queryDocs: { kin_care_sessions: sessions },
+    });
+  }
+
+  async function only(
+    serviceType: string,
+    serviceRates: Record<string, unknown>,
+    serviceDurations: Record<string, unknown> = {},
+  ) {
+    mocks.dbFn.mockReturnValue(
+      seedCard([session('s1', { status: 'COMPLETED', serviceType })], serviceRates, serviceDurations).db,
+    );
+    return listUninvoicedSessionsHandler(req(RANGE));
+  }
+
+  it('prices a key the card holds as written, and says nothing about resolving it', async () => {
+    const res = await only('60Minute', { '30Minute': '25', '60Minute': '40' });
+    expect(res.sessions[0]!.unitCents).toBe(4000);
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+    expect(res.unpriceable).toEqual([]);
+  });
+
+  it('prices a near-spelling from the one key it matches on letters and digits', async () => {
+    const res = await only('30 minute', { '30Minute': '25', '60Minute': '40' });
+    expect(res.sessions[0]!.unitCents).toBe(2500);
+    expect(res.sessions[0]!.pricedAs).toBe('30 Minute');
+    expect(res.unpriceable).toEqual([]);
+  });
+
+  it('prices a stored code from the one KinCare of that length, and names it', async () => {
+    const res = await only('visit_60', { 'Quick check': '25', 'Long walk': '40' }, { 'Quick check': 30, 'Long walk': '60' });
+    expect(res.sessions[0]!.unitCents).toBe(4000);
+    expect(res.sessions[0]!.pricedAs).toBe('Long walk');
+    expect(res.sessions[0]!.serviceType).toBe('visit_60');
+    expect(res.unpriceable).toEqual([]);
+  });
+
+  it('reaches 60Mins too, the other shape the live collection holds', async () => {
+    const res = await only('60Mins', { '30Minute': '25', '60Minute': '40' });
+    expect(res.sessions[0]!.unitCents).toBe(4000);
+    expect(res.sessions[0]!.pricedAs).toBe('60 Minute');
+  });
+
+  it('leaves the visit unpriced when two KinCares run that long', async () => {
+    const res = await only('visit_60', { Walk: '20', Sit: '30' }, { Walk: '60', Sit: '60' });
+    expect(res.sessions[0]!.unitCents).toBeNull();
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+    expect(res.unpriceable).toEqual([{ sessionId: 's1', serviceType: 'visit_60' }]);
+  });
+
+  it('leaves the visit unpriced when two keys agree on letters and digits, even at different rates', async () => {
+    const res = await only('30-minute', { '30Minute': '25', '30 Minute': '35' });
+    expect(res.sessions[0]!.unitCents).toBeNull();
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+    expect(res.unpriceable).toEqual([{ sessionId: 's1', serviceType: '30-minute' }]);
+  });
+
+  it('leaves the visit unpriced when nothing on the card matches', async () => {
+    const res = await only('visit_90', { '30Minute': '25', '60Minute': '40' });
+    expect(res.sessions[0]!.unitCents).toBeNull();
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+    expect(res.unpriceable).toEqual([{ sessionId: 's1', serviceType: 'visit_90' }]);
+  });
+
+  it('leaves the visit unpriced when its stored key is a service the catalog does not hold at all', async () => {
+    const res = await only('Grooming', { '30Minute': '25', '60Minute': '40' });
+    expect(res.sessions[0]!.unitCents).toBeNull();
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+    expect(res.unpriceable).toEqual([{ sessionId: 's1', serviceType: 'Grooming' }]);
+  });
+
+  it('leaves the visit unpriced when the one match has no usable rate, rather than calling it free', async () => {
+    const res = await only('visit_60', { '30Minute': '25', '60Minute': '0' });
+    expect(res.sessions[0]!.unitCents).toBeNull();
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+    expect(res.unpriceable).toHaveLength(1);
+  });
+
+  it('never tries another key when the stored key is on the card with a bad rate', async () => {
+    // `60Minute` is on the card as written with a blank rate. The length step
+    // would reach `60 Minute` at 40, but a rate the operator wrote against the
+    // exact key is the answer, and a blank there is theirs to fill in.
+    const res = await only('60Minute', { '60Minute': '', 'Hour walk': '40' }, { 'Hour walk': 60 });
+    expect(res.sessions[0]!.unitCents).toBeNull();
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+  });
+
+  it('leaves an empty serviceType unpriced', async () => {
+    const res = await only('', { '30Minute': '25' });
+    expect(res.sessions[0]!.unitCents).toBeNull();
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+  });
+
+  it('resolves nothing when there is no rate card, exactly as before', async () => {
+    mocks.dbFn.mockReturnValue(seed([session('s1', { status: 'COMPLETED', serviceType: 'visit_60' })], null).db);
+    const res = await listUninvoicedSessionsHandler(req(RANGE));
+    expect(res.sessions[0]!.unitCents).toBeNull();
+    expect(res.sessions[0]!.pricedAs).toBeNull();
+    expect(res.rateCardLoaded).toBe(false);
+  });
+});
+
+/**
+ * Parity (#1750): the composer names a row with `serviceDisplayName` and the
+ * server prices it with `priceFromCard`. Run both over the same cases, so a
+ * row can never read "Long walk" while priced at another KinCare's rate.
+ */
+describe('price and name resolve to the same KinCare (#1750 parity)', () => {
+  const CARD = {
+    serviceRates: { '30Minute': '25', 'Long walk': '40', Overnight: '120', Walk90: '55', Sit90: '60' },
+    serviceDurations: { 'Long walk': 60, Overnight: '720', Walk90: 90, Sit90: 90 },
+  };
+  const catalog = serviceNameCatalogFrom(CARD);
+  const CASES = ['30Minute', '30 Minute', '30minute', 'visit_30', 'visit_60', '60Mins', 'overnight', 'visit_90', 'Grooming', ''];
+
+  it.each(CASES)('%j', (stored) => {
+    const priced = priceFromCard(stored, CARD.serviceRates, catalog);
+    const name = serviceDisplayName(stored, catalog);
+    if (priced.pricedAs !== null) {
+      expect(priced.pricedAs).toBe(name);
+    }
+    if (priced.unitCents === null) {
+      expect(priced.pricedAs).toBeNull();
+    }
+  });
+
+  it('agrees on the cases that matter, by value', () => {
+    expect(priceFromCard('visit_60', CARD.serviceRates, catalog)).toEqual({ unitCents: 4000, pricedAs: 'Long walk' });
+    expect(serviceDisplayName('visit_60', catalog)).toBe('Long walk');
+    expect(priceFromCard('visit_90', CARD.serviceRates, catalog)).toEqual({ unitCents: null, pricedAs: null });
+    expect(serviceDisplayName('visit_90', catalog)).toBeNull();
+    expect(priceFromCard('30 Minute', CARD.serviceRates, catalog)).toEqual({ unitCents: 2500, pricedAs: '30 Minute' });
+    expect(serviceDisplayName('30 Minute', catalog)).toBe('30 Minute');
+    expect(priceFromCard('30Minute', CARD.serviceRates, catalog)).toEqual({ unitCents: 2500, pricedAs: null });
   });
 });
