@@ -64,7 +64,6 @@ class EnhancedSchedulingViewModelBookingWizardTest {
 
         coEvery { serviceRepo.getBaseServices() } returns Result.success(emptyList())
         coEvery { serviceRepo.getSupplementalServices() } returns Result.success(emptyList())
-        coEvery { serviceRepo.getBusinessHours() } returns Result.success(emptyList())
         coEvery { auntieRepo.getKinfolk() } returns Result.success(emptyList())
         coEvery { auntieRepo.isTestAdminActive() } returns false
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings())

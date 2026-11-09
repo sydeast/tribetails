@@ -915,7 +915,6 @@ class EnhancedSchedulingViewModel(
                 // Load services, settings, and kinfolk
                 val servicesResult = serviceRepository.getBaseServices()
                 val supplementalResult = serviceRepository.getSupplementalServices()
-                val businessHoursResult = serviceRepository.getBusinessHours()
                 val kinfolkResult = auntieRepository.getKinfolk()
                 // Unified settings (2026-06-05): booking config + timeBlocks now
                 // live on business_settings, read via AuntieRepository.
@@ -931,7 +930,10 @@ class EnhancedSchedulingViewModel(
                     baseServices = servicesResult.getOrNull() ?: emptyList(),
                     supplementalServices = supplementalResult.getOrNull() ?: emptyList(),
                     allKinfolk = kinfolkResult.getOrDefault(emptyList()),
-                    businessHours = businessHoursResult.getOrNull() ?: emptyList(),
+                    // #1764: the days business_settings.businessHours says open or
+                    // closed, the map the server's booking checks read. A day that
+                    // is not set, or cannot be read, has no row and earns no warning.
+                    businessHours = com.tribetails.auntieos.ui.admin.businessHoursOf(businessSettings.businessHours),
                     businessSettings = businessSettings,
                     calendarSyncRun = calendarSyncRun,
                     bookingMode = businessSettings.defaultBookingModeEnum,

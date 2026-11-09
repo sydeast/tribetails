@@ -678,9 +678,9 @@ fun PromoCodeCard(promoCode: PromoCode, onEdit: () -> Unit = {}) {
 
 @Composable
 fun SettingsTab(
-    businessHours: List<BusinessHours>,
+    businessHours: List<com.tribetails.auntieos.ui.admin.WeeklyHoursRow>,
     businessSettings: BusinessSettings,
-    onUpdateBusinessHours: (List<BusinessHours>) -> Unit,
+    onUpdateBusinessHours: (com.tribetails.auntieos.ui.admin.WeeklyHoursRow) -> Unit,
     onUpdateBusinessSettings: (BusinessSettings) -> Unit
 ) {
     LazyColumn(
@@ -714,21 +714,22 @@ fun SettingsTab(
             )
         }
 
-        items(businessHours.sortedBy { it.dayOfWeek }) { hours ->
+        // #1764: business_settings.businessHours, the map the web and the phone
+        // line read. One day per card; the dialog saves that day alone.
+        if (com.tribetails.auntieos.ui.admin.noWeeklyHoursSet(businessHours)) {
+            item {
+                Text(
+                    text = "No hours are set yet.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+            }
+        }
+
+        items(businessHours, key = { it.dayOfWeek }) { hours ->
             BusinessHoursCard(
                 hours  = hours,
-                onSave = { edited ->
-                    // Merge the edited day back into the full week list,
-                    // matching by id (or dayOfWeek for unsaved rows), then
-                    // hand off to the viewModel which writes the full set
-                    // through ServiceRepository.updateBusinessHours.
-                    val merged = businessHours.map { existing ->
-                        if (existing.id == edited.id && existing.id.isNotBlank()) edited
-                        else if (existing.id.isBlank() && existing.dayOfWeek == edited.dayOfWeek) edited
-                        else existing
-                    }
-                    onUpdateBusinessHours(merged)
-                },
+                onSave = onUpdateBusinessHours,
             )
         }
     }

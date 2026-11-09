@@ -6,7 +6,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.tribetails.auntieos.AuntieOSApp
-import com.tribetails.auntieos.data.model.BusinessHours
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
 import com.tribetails.auntieos.data.model.revertBusinessSettingsFields
@@ -30,7 +29,13 @@ import com.tribetails.auntieos.util.runCatchingCancellable
 
 data class AdminSettingsUiState(
     val businessSettings: BusinessSettings = BusinessSettings(),
-    val businessHours: List<BusinessHours> = emptyList(),
+    /**
+     * #1764: the Business hours panel's draft, seven rows Monday first, read
+     * from [businessSettings]' `businessHours` map when the document loads.
+     * Empty until then. Edits stay here until Save; a save the server took
+     * leaves the rows as they are, which is now what is stored.
+     */
+    val businessHours: List<WeeklyHoursRow> = emptyList(),
     val profile: UserProfile = UserProfile(),
     val isLoading: Boolean = false,
     val isUploadingAvatar: Boolean = false,
@@ -143,6 +148,7 @@ class AdminSettingsViewModel(
                     settingsBaseline = settings
                     _uiState.value = _uiState.value.copy(
                         businessSettings = settings,
+                        businessHours = weeklyHoursRows(settings.businessHours),
                         isLoading = false
                     )
                 },
@@ -322,51 +328,39 @@ class AdminSettingsViewModel(
 
     // ---- Business hours ----
 
-    fun loadBusinessHours() {
-        viewModelScope.launch {
-            repository.getBusinessHours().fold(
-                onSuccess = { rows ->
-                    _uiState.value = _uiState.value.copy(
-                        businessHours = ensureSevenDays(rows),
-                        error         = null,
-                    )
-                },
-                onFailure = { e ->
-                    _uiState.value = _uiState.value.copy(
-                        error = "Failed to load business hours: ${e.message}",
-                    )
-                }
+    /**
+     * #1764: save the Business hours panel through the same Settings save as
+     * every other panel, writing `business_settings.businessHours`, the map the
+     * web, the desktop console, the phone line and the booking checks read.
+     *
+     * Only the days that changed are sent (see `businessHours` in
+     * `BusinessSettingsDiff.kt`). Refused here, with the row's sentence, while
+     * any day shows one, including a stored day the panel could not read: the
+     * Save button is off then, so this is the guard behind it.
+     */
+    fun saveBusinessHours() {
+        val rows = _uiState.value.businessHours
+        val problem = rows.firstOrNull { it.problem != null }
+        if (problem != null) {
+            _uiState.value = _uiState.value.copy(
+                saveSuccess = false,
+                error = "${problem.dayName}: ${problem.problem}",
             )
+            return
         }
+        val current = _uiState.value.businessSettings
+        saveSettingsDiff(
+            current.copy(businessHours = withWeeklyHours(current.businessHours, rows)),
+            failureLabel = "Failed to save business hours",
+        )
     }
 
-    fun updateBusinessHours(hours: List<BusinessHours>) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(businessHours = hours, saveSuccess = false)
-            repository.saveBusinessHours(hours).fold(
-                onSuccess = {
-                    _uiState.value = _uiState.value.copy(
-                        businessHours = hours,
-                        saveSuccess   = true,
-                        error         = null,
-                    )
-                },
-                onFailure = { e ->
-                    _uiState.value = _uiState.value.copy(
-                        error       = "Failed to save business hours: ${e.message}",
-                        saveSuccess = false,
-                    )
-                }
-            )
-        }
-    }
-
-    /** Local-only single-row edit. Persisted when the user hits the save button. */
-    fun setBusinessHourRow(row: BusinessHours) {
-        val next = _uiState.value.businessHours.map {
-            if (it.dayOfWeek == row.dayOfWeek) row else it
-        }
-        _uiState.value = _uiState.value.copy(businessHours = next, saveSuccess = false)
+    /** Local-only single-row edit. Saved when the operator presses Save. */
+    fun setBusinessHourRow(row: WeeklyHoursRow) {
+        _uiState.value = _uiState.value.copy(
+            businessHours = _uiState.value.businessHours.withRow(row),
+            saveSuccess = false,
+        )
     }
 
     // ---- User profile ----

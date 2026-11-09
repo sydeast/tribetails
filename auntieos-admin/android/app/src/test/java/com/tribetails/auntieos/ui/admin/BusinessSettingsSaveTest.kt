@@ -469,7 +469,6 @@ class ServiceManagementSettingsSaveTest {
         coEvery { serviceRepo.getSurcharges(any()) } returns Result.success(emptyList())
         coEvery { serviceRepo.getDiscounts(any()) } returns Result.success(emptyList())
         coEvery { serviceRepo.getPromoCodes(any()) } returns Result.success(emptyList())
-        coEvery { serviceRepo.getBusinessHours() } returns Result.success(emptyList())
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(stored)
         coEvery { auntieRepo.updateBusinessSettingsFields(any(), any()) } returns Result.success(Unit)
     }
@@ -526,7 +525,6 @@ class SchedulingSettingsSaveTest {
 
         coEvery { serviceRepo.getBaseServices() } returns Result.success(emptyList())
         coEvery { serviceRepo.getSupplementalServices() } returns Result.success(emptyList())
-        coEvery { serviceRepo.getBusinessHours() } returns Result.success(emptyList())
         coEvery { auntieRepo.getKinfolk() } returns Result.success(emptyList())
         coEvery { auntieRepo.isTestAdminActive() } returns false
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(stored)

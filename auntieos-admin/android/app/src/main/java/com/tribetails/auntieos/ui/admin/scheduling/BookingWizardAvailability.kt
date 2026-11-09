@@ -24,7 +24,7 @@ import java.time.ZoneId
  *    The server refuses it too, but `overrideBusyConflict` exists precisely so
  *    an operator can knowingly go past it ("the operator is the business"), so
  *    this reads as a warning and the refusal offers a "Create anyway" retry.
- *  - OUTSIDE HOURS (`business_hours`). A warning only. Nothing refuses it.
+ *  - OUTSIDE HOURS (`business_settings.businessHours`, #1764). A warning only here.
  *
  * WARNINGS ARE COMPUTED PER CONCRETE VISIT, not as a day-by-time cross product.
  * The web wizard collects all selected days and all distinct times and calls
@@ -76,7 +76,7 @@ data class BookingAvailability(
     val closures: List<ClosureEntry> = emptyList(),
     /** `booking_time_slots` blocked rows, grouped by their local `YYYY-MM-DD`. */
     val blockedByDate: Map<String, List<BookingTimeSlot>> = emptyMap(),
-    /** The `business_hours` rows, `dayOfWeek` 1 = Monday .. 7 = Sunday. */
+    /** The days `business_settings.businessHours` sets ([businessHoursOf]), `dayOfWeek` 1 = Monday .. 7 = Sunday. */
     val businessHours: List<BusinessHours> = emptyList(),
     /** Non-null when a read failed, so the step can say so instead of guessing. */
     val unknown: String? = null,
@@ -99,7 +99,7 @@ data class BookingAvailability(
     fun blockedWindows(date: LocalDate): List<String> =
         blockedByDate[date.toString()].orEmpty().map { formatWindow(it.startTime, it.endTime) }
 
-    /** The day's opening row, or null when `business_hours` says nothing about it. */
+    /** The day's opening row, or null when the weekly hours say nothing readable about it. */
     fun hoursFor(date: LocalDate): BusinessHours? =
         businessHours.firstOrNull { it.dayOfWeek == date.dayOfWeek.value }
 

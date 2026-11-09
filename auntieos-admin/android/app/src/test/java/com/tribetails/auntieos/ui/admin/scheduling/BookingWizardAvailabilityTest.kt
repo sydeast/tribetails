@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.admin.scheduling
 import com.tribetails.auntieos.data.model.BookingTimeSlot
 import com.tribetails.auntieos.data.model.BusinessHours
 import com.tribetails.auntieos.data.repository.NewBookingVisit
+import com.tribetails.auntieos.ui.admin.businessHoursOf
 import com.tribetails.auntieos.ui.admin.parseClosureEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -161,10 +162,32 @@ class BookingWizardAvailabilityTest {
     }
 
     @Test
-    fun `a day the business_hours rows say nothing about earns no warning`() {
+    fun `a day the weekly hours say nothing about earns no warning`() {
         assertEquals(
             emptyList<String>(),
             bookingSelectionWarnings(listOf(visitAt(monday, 22)), BookingAvailability(), zone),
+        )
+    }
+
+    @Test
+    fun `the warnings read the settings map, and a day not set or unreadable stays silent`() {
+        val saturday = LocalDate.of(2027, 8, 7)
+        val sunday = LocalDate.of(2027, 8, 8)
+        val availability = BookingAvailability(
+            businessHours = businessHoursOf(
+                mapOf("Monday" to "9:00-17:00", "Saturday" to "", "Sunday" to "noon-ish"),
+            ),
+        )
+        assertEquals(
+            listOf(
+                "Aug 2 at 7:00 PM: outside business hours (9:00 AM to 5:00 PM).",
+                "Aug 7: the business is closed that day.",
+            ),
+            bookingSelectionWarnings(
+                listOf(visitAt(monday, 19), visitAt(tuesday, 22), visitAt(saturday, 10), visitAt(sunday, 10)),
+                availability,
+                zone,
+            ),
         )
     }
 

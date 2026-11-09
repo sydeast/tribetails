@@ -53,6 +53,12 @@ package com.tribetails.auntieos.data.model
 internal class SettingsDiffField(
     val write: (BusinessSettings) -> Any?,
     val compare: (BusinessSettings) -> Any? = write,
+    /**
+     * For a map the server merges key by key: the value to write given both
+     * copies, or null to write nothing. Set only where sending the whole map
+     * would put back a stale value for a key this save did not change.
+     */
+    val writeChange: ((loaded: BusinessSettings, edited: BusinessSettings) -> Any?)? = null,
 )
 
 /**
@@ -76,7 +82,17 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     // True entries only, compared the same way, so a decoded `false` neither
     // reads as an edit nor is ever written back (#1092).
     "serviceStartTimeBooking" to SettingsDiffField({ settings -> settings.serviceStartTimeBooking.filterValues { it } }),
-    "businessHours" to SettingsDiffField({ it.businessHours }),
+    // #1764: ONLY THE DAYS THAT CHANGED. The server merges this map key by key,
+    // so the days left out keep what is stored, including a day the web changed
+    // after this phone read the document. A day missing from the edited copy
+    // is not sent at all: there is no "unset" in a key-by-key merge, and an
+    // empty map would land as `{}` over the whole week.
+    "businessHours" to SettingsDiffField(
+        write = { it.businessHours },
+        writeChange = { loaded, edited ->
+            edited.businessHours.filter { (day, value) -> loaded.businessHours[day] != value }.ifEmpty { null }
+        },
+    ),
     // --- GPS / tracking ---
     "enableGPSTrackingForAllVisits" to SettingsDiffField({ it.enableGPSTrackingForAllVisits }),
     "enablePhotoLocationTagging" to SettingsDiffField({ it.enablePhotoLocationTagging }),
@@ -273,7 +289,13 @@ internal fun businessSettingsFieldChanges(
 ): Map<String, Any?> {
     val changes = LinkedHashMap<String, Any?>()
     for ((field, spec) in BUSINESS_SETTINGS_DIFF_FIELDS) {
-        if (spec.compare(edited) != spec.compare(loaded)) changes[field] = spec.write(edited)
+        if (spec.compare(edited) == spec.compare(loaded)) continue
+        val byKey = spec.writeChange
+        if (byKey == null) {
+            changes[field] = spec.write(edited)
+        } else {
+            changes[field] = byKey(loaded, edited) ?: continue
+        }
     }
     return changes
 }

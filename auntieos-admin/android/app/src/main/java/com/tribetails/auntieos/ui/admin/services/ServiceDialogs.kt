@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin.services
 
+import com.tribetails.auntieos.ui.admin.DayHoursKind
+import com.tribetails.auntieos.ui.admin.WeeklyHoursRow
 import com.tribetails.auntieos.ui.admin.businessHoursRowProblem
 import com.tribetails.auntieos.ui.admin.SettingsFieldProblem
 import com.composables.icons.lucide.*
@@ -785,45 +787,48 @@ fun SettingItem(label: String, value: String) {
 
 @Composable
 fun BusinessHoursCard(
-    hours: BusinessHours,
-    onSave: ((BusinessHours) -> Unit)? = null,
+    hours: WeeklyHoursRow,
+    onSave: ((WeeklyHoursRow) -> Unit)? = null,
 ) {
-    val dayNames = listOf("", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-    var showEditDialog by remember(hours.id) { mutableStateOf(false) }
+    var showEditDialog by remember(hours.dayOfWeek) { mutableStateOf(false) }
+    // A stored value the parser cannot read says so on the card, before anyone opens the dialog.
+    val problem = hours.problem
 
     AuntieCard(
         modifier = Modifier.fillMaxWidth(),
         containerColor = if (hours.isOpen) AuntieTheme.colors.surface else AuntieTheme.colors.surface.copy(alpha = 0.6f)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = dayNames.getOrNull(hours.dayOfWeek) ?: "Unknown",
-                style = AuntieTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
-                color = AuntieTheme.colors.textPrimary,
-                modifier = Modifier.width(80.dp)
-            )
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = hours.dayName,
+                    style = AuntieTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = AuntieTheme.colors.textPrimary,
+                    modifier = Modifier.width(80.dp)
+                )
 
-            if (hours.isOpen) {
-                Text(text = "${hours.openTime} - ${hours.closeTime}", style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
-            } else {
-                Text(text = "Closed", style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.6f))
-            }
+                Text(
+                    text = hours.display,
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = if (hours.isOpen) AuntieTheme.colors.textPrimary else AuntieTheme.colors.textPrimary.copy(alpha = 0.6f),
+                )
 
-            AuntieIconBtn(onClick = { if (onSave != null) showEditDialog = true }) {
-                Icon(Lucide.Pencil, contentDescription = "Edit Hours", tint = AuntieTheme.colors.kinfolkOrange, modifier = Modifier.size(18.dp))
+                AuntieIconBtn(onClick = { if (onSave != null) showEditDialog = true }) {
+                    Icon(Lucide.Pencil, contentDescription = "Edit Hours", tint = AuntieTheme.colors.kinfolkOrange, modifier = Modifier.size(18.dp))
+                }
             }
+            SettingsFieldProblem(problem)
         }
     }
 
     if (showEditDialog && onSave != null) {
         EditBusinessHoursDialog(
             initial = hours,
-            dayName = dayNames.getOrNull(hours.dayOfWeek) ?: "Unknown",
             onDismiss = { showEditDialog = false },
             onSave    = { edited ->
                 onSave(edited)
@@ -834,25 +839,24 @@ fun BusinessHoursCard(
 }
 
 /**
- * Edit-hours dialog for a single BusinessHours day row. Pure data in/out -
- * caller wires the save back to the ServiceManagementViewModel which already
- * has updateBusinessHours wired to the Firestore writer. Time format is a
- * free-form HH:mm string today (matching the seed defaults); a proper time
- * picker is a separate UX polish pass.
+ * Edit-hours dialog for one day of `business_settings.businessHours` (#1764).
+ * Pure data in/out: the caller hands the row to
+ * [ServiceManagementViewModel.updateBusinessHours], which saves it through the
+ * same Settings save as the Settings Business hours panel.
+ *
+ * Open or closed and the two times, which is all the map holds. The break and
+ * notes fields this dialog had were part of the old `business_hours` rows,
+ * which nothing else read; the map has no place for them.
  */
 @Composable
 private fun EditBusinessHoursDialog(
-    initial: BusinessHours,
-    dayName: String,
+    initial: WeeklyHoursRow,
     onDismiss: () -> Unit,
-    onSave: (BusinessHours) -> Unit,
+    onSave: (WeeklyHoursRow) -> Unit,
 ) {
-    var isOpen by remember(initial.id) { mutableStateOf(initial.isOpen) }
-    var openTime by remember(initial.id) { mutableStateOf(initial.openTime) }
-    var closeTime by remember(initial.id) { mutableStateOf(initial.closeTime) }
-    var breakStart by remember(initial.id) { mutableStateOf(initial.breakStart.orEmpty()) }
-    var breakEnd by remember(initial.id) { mutableStateOf(initial.breakEnd.orEmpty()) }
-    var notes by remember(initial.id) { mutableStateOf(initial.notes) }
+    var isOpen by remember(initial.dayOfWeek) { mutableStateOf(initial.isOpen) }
+    var openTime by remember(initial.dayOfWeek) { mutableStateOf(initial.openTime) }
+    var closeTime by remember(initial.dayOfWeek) { mutableStateOf(initial.closeTime) }
     // #1593: the same check the Settings hours panel runs, with the server's
     // sentence under the two times. Save stays off while it shows.
     val hoursProblem = if (isOpen) businessHoursRowProblem(openTime.trim(), closeTime.trim()) else null
@@ -872,7 +876,7 @@ private fun EditBusinessHoursDialog(
                     verticalAlignment     = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text       = "Edit $dayName Hours",
+                        text       = "Edit ${initial.dayName} Hours",
                         style      = AuntieTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color      = AuntieTheme.colors.textPrimary,
@@ -885,6 +889,9 @@ private fun EditBusinessHoursDialog(
                 Box(modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth().height(1.dp).background(AuntieTheme.colors.border))
 
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (initial.kind == DayHoursKind.NOT_SET) {
+                        Text("Not set yet.", color = AuntieTheme.colors.textPrimary)
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         AuntieCheckbox(checked = isOpen, onCheckedChange = { isOpen = it })
                         Text(
@@ -912,31 +919,7 @@ private fun EditBusinessHoursDialog(
                             )
                         }
                         SettingsFieldProblem(hoursProblem)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AuntieField(
-                                value         = breakStart,
-                                onValueChange = { breakStart = it },
-                                label         = "Break start (optional)",
-                                modifier      = Modifier.weight(1f),
-                            )
-                            AuntieField(
-                                value         = breakEnd,
-                                onValueChange = { breakEnd = it },
-                                label         = "Break end (optional)",
-                                modifier      = Modifier.weight(1f),
-                            )
-                        }
                     }
-
-                    AuntieField(
-                        value         = notes,
-                        onValueChange = { notes = it },
-                        label         = "Notes",
-                        singleLine    = false,
-                        minLines      = 2,
-                        maxLines      = 4,
-                        modifier      = Modifier.fillMaxWidth(),
-                    )
                 }
 
                 Box(modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth().height(1.dp).background(AuntieTheme.colors.border))
@@ -947,17 +930,14 @@ private fun EditBusinessHoursDialog(
                 ) {
                     GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
                     PrimaryButton(
-                        label   = "Save",
+                        label   = if (isOpen) "Save" else "Save as closed",
                         onClick = {
                             onSave(
-                                initial.copy().apply {
-                                    this.isOpen      = isOpen
-                                    this.openTime    = openTime.trim()
-                                    this.closeTime   = closeTime.trim()
-                                    this.breakStart  = breakStart.trim().takeIf { it.isNotBlank() }
-                                    this.breakEnd    = breakEnd.trim().takeIf { it.isNotBlank() }
-                                    this.notes       = notes.trim()
-                                },
+                                initial.copy(
+                                    kind      = if (isOpen) DayHoursKind.OPEN else DayHoursKind.CLOSED,
+                                    openTime  = openTime.trim(),
+                                    closeTime = closeTime.trim(),
+                                ),
                             )
                         },
                         // Off only while the sentence above says why.
