@@ -656,7 +656,11 @@ private fun ConnectedGoogleCalendarBody(
         )
 
         if (state.calendars.isEmpty()) {
-            GhostButton(label = "Load calendars", onClick = onRefreshCalendars)
+            GhostButton(
+                label = if (state.loadingCalendars) "Loading calendars…" else "Load calendars",
+                onClick = onRefreshCalendars,
+                enabled = !state.loadingCalendars,
+            )
         } else {
             Text(
                 "Pick the calendar visits are pushed to:",
