@@ -68,6 +68,18 @@ describe('recentTalesFor', () => {
     expect(rows.map((r) => r._id)).toEqual(['newest', 'byVisit', 'old']);
   });
 
+  it('#1599: orders migrated free-text dates by their date, not above every ISO row', () => {
+    const rows = recentTalesFor(
+      [
+        tale({ _id: 'legacy-sep', sentAt: 'September 3, 2025 2:02pm' }),
+        tale({ _id: 'iso-new', sentAt: '2026-08-10T00:00:00Z' }),
+        tale({ _id: 'legacy-apr', sentAt: 'April 10, 2026 4:30pm' }),
+        tale({ _id: 'junk', sentAt: 'sometime in spring' }),
+      ],
+      'k1',
+    );
+    expect(rows.map((r) => r._id)).toEqual(['iso-new', 'legacy-apr', 'legacy-sep', 'junk']);
+  });
   it('survives a legacy row with no status and no dates', () => {
     expect(recentTalesFor([{ _id: 'bare' } as KinTaleEntry], 'k1')).toEqual([]);
   });

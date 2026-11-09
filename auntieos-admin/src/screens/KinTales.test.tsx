@@ -177,6 +177,8 @@ const user = userEvent.setup();
  */
 let householdsState: Async<Kinfolk[]> = { status: 'ready', data: [] };
 let draftsState: Async<GeneratedDraftRow[]> = { status: 'ready', data: [] };
+// #1599: the free-text-dated reports, read as their own set.
+let legacyState: Async<KinTaleEntry[]> = { status: 'ready', data: [] };
 const setHouseholds = (state: Async<Kinfolk[]>) => (householdsState = state);
 const setDrafts = (rows: GeneratedDraftRow[], over?: Async<GeneratedDraftRow[]>) =>
   (draftsState = over ?? { status: 'ready', data: rows });
@@ -187,8 +189,9 @@ beforeEach(() => {
   usePagedCollection.mockReset().mockReturnValue(paged([]));
   householdsState = { status: 'ready', data: [] };
   draftsState = { status: 'ready', data: [] };
+  legacyState = { status: 'ready', data: [] };
   useCollection.mockReset().mockImplementation((spec: { path: string }) =>
-    spec.path === 'generated_drafts' ? draftsState : householdsState,
+    spec.path === 'generated_drafts' ? draftsState : spec.path === 'kin_care_reports' ? legacyState : householdsState,
   );
   // NeedsTriageSection's own read. Empty unless a case needs it; see the note above.
   listOrphanReports.mockReset().mockResolvedValue([]);
@@ -472,13 +475,16 @@ describe('KinTales screen: the date window', () => {
       'aria-selected',
       'true',
     );
-    expect(lastSpec().filters?.map((f) => [f[0], f[1]])).toEqual([['createdAt', '>=']]);
+    expect(lastSpec().filters?.map((f) => [f[0], f[1]])).toEqual([
+      ['createdAt', '>='],
+      ['createdAt', '<'],
+    ]);
   });
 
   it('opens in the window it is told to, so Home can link to the archive its draft count covers (#1601)', () => {
     render(<KinTales initialRange="all" />);
     expect(screen.getByRole('tab', { name: 'All (archive)' })).toHaveAttribute('aria-selected', 'true');
-    expect(lastSpec().filters ?? []).toEqual([]);
+    expect(lastSpec().filters).toEqual([['createdAt', '<', 'A']]);
   });
 
   it('tells the route which window was picked, so a closed KinTale lands back on it (#1594)', async () => {
@@ -496,10 +502,10 @@ describe('KinTales screen: the date window', () => {
     expect(String(bound)).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it('drops the predicate entirely for All (archive), never widening to an always-true one', async () => {
+  it('adds no window bound for All (archive), only the ISO ceiling (#1599)', async () => {
     render(<KinTales />);
     await user.click(screen.getByRole('tab', { name: 'All (archive)' }));
-    expect(lastSpec().filters).toBeUndefined();
+    expect(lastSpec().filters).toEqual([['createdAt', '<', 'A']]);
   });
 
   it('moves the bound out when a longer window is picked', async () => {
@@ -557,6 +563,7 @@ describe('KinTales screen: the kinfolk facet', () => {
     expect(filters.map((f) => [f[0], f[1]])).toEqual([
       ['kinfolkId', '=='],
       ['createdAt', '>='],
+      ['createdAt', '<'],
     ]);
     expect(filters[0]?.[2]).toBe('kf2');
   });
@@ -1031,5 +1038,91 @@ describe('KinTales screen: the drafts read states what it is worth', () => {
     expect(screen.queryByText(/Drafts are the newest/)).toBeNull();
     expect(screen.queryByText(/Drafts could not be loaded/)).toBeNull();
     expect(screen.queryByText(/Drafts are still loading/)).toBeNull();
+  });
+});
+/**
+ * #1599: the 83 migrated reports hold free text in createdAt ("September 3, 2025
+ * 2:02pm"). The pager reads ISO rows only; these rows arrive on a second read
+ * and are placed by their parsed date.
+ */
+describe('KinTales screen: migrated rows with free-text dates (#1599)', () => {
+  const MONTHS = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  /** The legacy free-text spelling of an instant `daysAgo` days back, in the local zone the parser reads. */
+  const legacyStamp = (daysAgo: number): string => {
+    const d = new Date(Date.now() - daysAgo * 86_400_000);
+    const h = d.getHours() % 12 === 0 ? 12 : d.getHours() % 12;
+    return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} ${h}:${String(d.getMinutes()).padStart(2, '0')}${d.getHours() >= 12 ? 'pm' : 'am'}`;
+  };
+  const isoAgo = (daysAgo: number): string => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+  it('reads the free-text rows with their own query', () => {
+    render(<KinTales />);
+    const legacySpecs = useCollection.mock.calls
+      .map((c) => c[0] as { path: string; filters?: [string, string, unknown][] })
+      .filter((s) => s.path === 'kin_care_reports');
+    expect(legacySpecs.at(-1)?.filters).toEqual([['createdAt', '>=', 'A']]);
+  });
+  it('places a free-text row between the ISO rows by its date', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'new', kinfolkName: 'Newest Home', createdAt: isoAgo(1) }),
+        entry({ _id: 'old', kinfolkName: 'Oldest Home', createdAt: isoAgo(6) }),
+      ]),
+    );
+    legacyState = {
+      status: 'ready',
+      data: [entry({ _id: 'legacy', kinfolkName: 'Migrated Home', createdAt: legacyStamp(3) })],
+    };
+    render(<KinTales />);
+    const text = document.body.textContent ?? '';
+    expect(text.indexOf('Newest Home')).toBeGreaterThan(-1);
+    expect(text.indexOf('Newest Home')).toBeLessThan(text.indexOf('Migrated Home'));
+    expect(text.indexOf('Migrated Home')).toBeLessThan(text.indexOf('Oldest Home'));
+  });
+  it('keeps a free-text row from last year out of "last 7 days", which the server bound could not', () => {
+    legacyState = {
+      status: 'ready',
+      data: [entry({ _id: 'legacy', kinfolkName: 'Migrated Home', createdAt: 'September 3, 2025 2:02pm' })],
+    };
+    render(<KinTales />);
+    expect(screen.queryByText('Migrated Home')).toBeNull();
+  });
+  it('shows that same row in the archive', async () => {
+    legacyState = {
+      status: 'ready',
+      data: [entry({ _id: 'legacy', kinfolkName: 'Migrated Home', createdAt: 'September 3, 2025 2:02pm' })],
+    };
+    render(<KinTales initialRange="all" />);
+    expect(screen.getByText('Migrated Home')).toBeInTheDocument();
+  });
+  it('keeps a row whose date cannot be read, and shows it last', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'iso', kinfolkName: 'Dated Home', createdAt: isoAgo(1) })]));
+    legacyState = {
+      status: 'ready',
+      data: [entry({ _id: 'junk', kinfolkName: 'Undated Home', createdAt: 'sometime in spring' })],
+    };
+    render(<KinTales initialRange="all" />);
+    const text = document.body.textContent ?? '';
+    expect(text.indexOf('Dated Home')).toBeLessThan(text.indexOf('Undated Home'));
+  });
+  it('says so when the imported rows could not be read, and still lists the pager rows', () => {
+    usePagedCollection.mockReturnValue(paged([entry({})]));
+    legacyState = { status: 'error', message: 'permission-denied' } as Async<KinTaleEntry[]>;
+    render(<KinTales />);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Imported KinTales could not be loaded (permission-denied), so they are missing from this list.',
+    );
+    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+  });
+  it('says the imported rows are still loading', () => {
+    legacyState = { status: 'loading' };
+    render(<KinTales />);
+    expect(screen.getByText(/Imported KinTales are still loading/)).toBeInTheDocument();
+  });
+  it('makes no imported-rows caveat when they all arrived', () => {
+    render(<KinTales />);
+    expect(screen.queryByText(/Imported KinTales/)).toBeNull();
   });
 });

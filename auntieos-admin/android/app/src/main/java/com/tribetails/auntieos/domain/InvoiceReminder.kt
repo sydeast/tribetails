@@ -71,25 +71,35 @@ fun quoteCreatedMessage(sent: Boolean, appOnly: Boolean): String = when {
 const val PAYMENT_CONFIRMATION_APP_ONLY_NOTE =
     " The confirmation reached the household in the app only. $APP_ONLY_NOTE"
 
-/** "Sep 14, 3:05 PM", in [zone] (the device's own zone unless a test pins one). */
-fun formatReminderTime(ms: Long, zone: TimeZone = TimeZone.getDefault()): String =
-    SimpleDateFormat("MMM d, h:mm a", Locale.US).apply { timeZone = zone }.format(Date(ms))
+/**
+ * "Sep 14, 3:05 PM", or "Sep 14, 2025, 3:05 PM" when it is not [nowMs]'s year
+ * (#1599), in [zone] (the device's own zone unless a test pins one).
+ */
+fun formatReminderTime(ms: Long, zone: TimeZone = TimeZone.getDefault(), nowMs: Long = System.currentTimeMillis()): String {
+    val year = SimpleDateFormat("yyyy", Locale.US).apply { timeZone = zone }
+    val pattern = if (year.format(Date(ms)) == year.format(Date(nowMs))) "MMM d, h:mm a" else "MMM d, yyyy, h:mm a"
+    return SimpleDateFormat(pattern, Locale.US).apply { timeZone = zone }.format(Date(ms))
+}
 
 /** The toast or banner line after a press. */
-fun reminderOutcomeMessage(outcome: ReminderOutcome, zone: TimeZone = TimeZone.getDefault()): String {
+fun reminderOutcomeMessage(
+    outcome: ReminderOutcome,
+    zone: TimeZone = TimeZone.getDefault(),
+    nowMs: Long = System.currentTimeMillis(),
+): String {
     val next = outcome.nextReminderAllowedAtMs
     val last = outcome.lastReminderAtMs
     return when (outcome.reason) {
         "sent" -> if (outcome.appOnly) "Reminder sent in the app only. $APP_ONLY_NOTE" else "Reminder sent."
         "in-progress" ->
             "Not sent: a reminder for this invoice is already being sent." +
-                (next?.let { " If it does not arrive, try again after ${formatReminderTime(it, zone)}." } ?: "")
+                (next?.let { " If it does not arrive, try again after ${formatReminderTime(it, zone, nowMs)}." } ?: "")
         "suppressed" ->
             "Not sent: this household's notification settings block payment reminders, so no reminder went out."
         else ->
-            (last?.let { "Not sent: a reminder already went out ${formatReminderTime(it, zone)}." }
+            (last?.let { "Not sent: a reminder already went out ${formatReminderTime(it, zone, nowMs)}." }
                 ?: "Not sent: a reminder already went out recently.") +
-                (next?.let { " The next one can go out after ${formatReminderTime(it, zone)}." } ?: "")
+                (next?.let { " The next one can go out after ${formatReminderTime(it, zone, nowMs)}." } ?: "")
     }
 }
 
@@ -100,6 +110,11 @@ fun reminderOutcomeMessage(outcome: ReminderOutcome, zone: TimeZone = TimeZone.g
  * (`reminderNotifiedAppOnly`). Only an explicit true adds "app only"; a stamp
  * from before the flag existed, or one copied from the dedupe ledger, has none.
  */
-fun lastReminderLabel(stampMs: Long?, zone: TimeZone = TimeZone.getDefault(), appOnly: Boolean? = false): String =
-    if (stampMs != null && stampMs > 0L) formatReminderTime(stampMs, zone) + (if (appOnly == true) ", app only" else "")
+fun lastReminderLabel(
+    stampMs: Long?,
+    zone: TimeZone = TimeZone.getDefault(),
+    appOnly: Boolean? = false,
+    nowMs: Long = System.currentTimeMillis(),
+): String =
+    if (stampMs != null && stampMs > 0L) formatReminderTime(stampMs, zone, nowMs) + (if (appOnly == true) ", app only" else "")
     else "none sent"

@@ -11,7 +11,9 @@ import {
   draftTypeLabel,
   draftsInWindow,
   kinTaleListRows,
+  legacyReportsInList,
   mergeByCreatedDesc,
+  reportsNewestFirst,
   rowFromDraft,
   rowFromReport,
   type KinTaleListRow,
@@ -224,10 +226,8 @@ describe('merging the two lists newest-first', () => {
   });
 
   it('NEVER reorders the reports among themselves, whatever the merge decides', () => {
-    // The server ordered these by comparing createdAt as STRINGS. These two
-    // free-text values parse to instants in the opposite order to their string
-    // order, so a naive combined sort would silently reshuffle a paged list
-    // against its own cursor. The merge must leave them exactly as they came.
+    // The merge only chooses which list to take from; ordering the reports is
+    // `reportsNewestFirst`'s job (#1599), done before the merge.
     const reports = [
       row('r1', 'September 3, 2025 2:02pm', 'kin_care_reports'),
       row('r2', '2026-07-20T00:00:00.000Z', 'kin_care_reports'),
@@ -286,5 +286,96 @@ describe('draftIdFromListRowId', () => {
   });
   it('is null for a bare prefix with no id after it', () => {
     expect(draftIdFromListRowId('generated_drafts/')).toBeNull();
+  });
+});
+
+describe('reportsNewestFirst: sorting on the parsed date (#1599)', () => {
+  const at = (id: string, createdAt: string) => ({ _id: id, createdAt });
+  const ids = (rows: readonly { _id: string }[]) => rows.map((r) => r._id);
+  it('orders ISO rows newest first', () => {
+    const rows = [at('a', '2026-03-01T00:00:00.000Z'), at('b', '2026-05-01T00:00:00.000Z'), at('c', '2026-04-01T00:00:00.000Z')];
+    expect(ids(reportsNewestFirst(rows))).toEqual(['b', 'c', 'a']);
+  });
+  it('orders the legacy free text by its date, not alphabetically by month name', () => {
+    // String order would give September, March, August, April (S > M > A, and
+    // "April" < "August"). The dates run Apr 2026, Mar 2026, Sep 2025, Aug 2025.
+    const rows = [
+      at('sep', 'September 3, 2025 2:02pm'),
+      at('mar', 'March 9, 2026 10:15am'),
+      at('aug', 'August 6, 2025 8:00am'),
+      at('apr', 'April 10, 2026 4:30pm'),
+    ];
+    expect(ids(reportsNewestFirst(rows))).toEqual(['apr', 'mar', 'sep', 'aug']);
+  });
+  it('interleaves free text and ISO rows by date', () => {
+    const rows = [
+      at('legacy-old', 'August 6, 2025 8:00am'),
+      at('iso-new', '2026-07-16T12:00:00.000Z'),
+      at('legacy-mid', 'April 10, 2026 4:30pm'),
+      at('iso-old', '2025-09-01T12:00:00.000Z'),
+    ];
+    expect(ids(reportsNewestFirst(rows))).toEqual(['iso-new', 'legacy-mid', 'iso-old', 'legacy-old']);
+  });
+  it('puts unparseable and blank dates last, in arrival order, and drops nothing', () => {
+    const rows = [at('junk', 'last Tuesday-ish'), at('iso', '2026-07-16T12:00:00.000Z'), at('blank', ''), at('legacy', 'April 10, 2026 4:30pm')];
+    expect(ids(reportsNewestFirst(rows))).toEqual(['iso', 'legacy', 'junk', 'blank']);
+  });
+  it('keeps equal dates in arrival order (stable)', () => {
+    const rows = [at('first', '2026-07-16T12:00:00.000Z'), at('second', '2026-07-16T12:00:00.000Z')];
+    expect(ids(reportsNewestFirst(rows))).toEqual(['first', 'second']);
+  });
+  it('does not mutate its input', () => {
+    const rows = [at('a', '2026-01-01T00:00:00.000Z'), at('b', '2026-02-01T00:00:00.000Z')];
+    reportsNewestFirst(rows);
+    expect(ids(rows)).toEqual(['a', 'b']);
+  });
+});
+describe('legacyReportsInList: placing the free-text rows (#1599)', () => {
+  const at = (id: string, createdAt: string) => ({ _id: id, createdAt });
+  const ids = (rows: readonly { _id: string }[]) => rows.map((r) => r._id);
+  it('keeps every row for the archive once the pager is exhausted', () => {
+    const legacy = [at('a', 'August 6, 2025 8:00am'), at('b', 'April 10, 2026 4:30pm')];
+    expect(ids(legacyReportsInList(legacy, [], { startIso: null, hasMore: false }))).toEqual(['a', 'b']);
+  });
+  it('applies the toolbar window to the parsed date, so an old row no longer passes "last 7 days"', () => {
+    const legacy = [at('old', 'August 6, 2025 8:00am'), at('recent', 'April 10, 2026 4:30pm')];
+    const rows = legacyReportsInList(legacy, [], { startIso: '2026-04-01T00:00:00.000Z', hasMore: false });
+    expect(ids(rows)).toEqual(['recent']);
+  });
+  it('holds back rows older than the oldest loaded ISO row while the pager has more', () => {
+    const legacy = [at('older', 'August 6, 2025 8:00am'), at('newer', 'April 10, 2026 4:30pm')];
+    const page = [at('p1', '2026-07-16T12:00:00.000Z'), at('p2', '2026-02-01T12:00:00.000Z')];
+    expect(ids(legacyReportsInList(legacy, page, { startIso: null, hasMore: true }))).toEqual(['newer']);
+  });
+  it('shows them all once the pager has nothing older to load', () => {
+    const legacy = [at('older', 'August 6, 2025 8:00am'), at('newer', 'April 10, 2026 4:30pm')];
+    const page = [at('p1', '2026-07-16T12:00:00.000Z'), at('p2', '2026-02-01T12:00:00.000Z')];
+    expect(ids(legacyReportsInList(legacy, page, { startIso: null, hasMore: false }))).toEqual(['older', 'newer']);
+  });
+  it('keeps an unreadable date through every window, so no row vanishes unseen', () => {
+    const legacy = [at('junk', 'sometime in spring')];
+    const page = [at('p1', '2026-07-16T12:00:00.000Z')];
+    expect(ids(legacyReportsInList(legacy, page, { startIso: '2026-07-01T00:00:00.000Z', hasMore: true }))).toEqual(['junk']);
+  });
+  it('with an empty first page and more to load there is no floor, so nothing is held back', () => {
+    const legacy = [at('a', 'April 10, 2026 4:30pm')];
+    expect(ids(legacyReportsInList(legacy, [], { startIso: null, hasMore: true }))).toEqual(['a']);
+  });
+});
+describe('kinTaleListRows with the legacy rows', () => {
+  it('lists ISO, free-text and draft rows in one date order, the free text where its date puts it', () => {
+    const rows = kinTaleListRows(
+      [report({ _id: 'iso-new', createdAt: '2026-07-16T12:00:00.000Z' }), report({ _id: 'iso-old', createdAt: '2025-12-01T12:00:00.000Z' })],
+      [draft({ _id: 'dr', createdOn: '2026-05-01T12:00:00.000Z' })],
+      { startIso: null },
+      {
+        rows: [report({ _id: 'legacy-a', createdAt: 'April 10, 2026 4:30pm' }), report({ _id: 'legacy-b', createdAt: 'September 3, 2025 2:02pm' })],
+        hasMore: false,
+      },
+    );
+    expect(rows.map((r) => r._id)).toEqual(['iso-new', 'generated_drafts/dr', 'legacy-a', 'iso-old', 'legacy-b']);
+  });
+  it('reads exactly as before when there are no legacy rows', () => {
+    expect(kinTaleListRows([report()], [], { startIso: null }).map((r) => r._id)).toEqual(['r1']);
   });
 });

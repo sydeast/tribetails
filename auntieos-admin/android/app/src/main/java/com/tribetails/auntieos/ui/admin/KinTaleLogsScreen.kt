@@ -934,9 +934,13 @@ private fun SortChipRow(selected: ReportSort, onSelect: (ReportSort) -> Unit) {
     }
 }
 
-/** Raw ISO date key for ordering (first non-blank). Mirror of the web sortKey. */
-private fun sortKey(r: KinCareReport): String =
-    sequenceOf(r.sentAt, r.visitDate, r.arrivedAt, r.createdAt).firstOrNull { !it.isNullOrBlank() } ?: ""
+/**
+ * The date a row sorts on: the first non-blank of its date fields, PARSED
+ * (#1599). Raw strings put the migrated free text ("September 3, 2025 2:02pm")
+ * above every ISO row, so this is epoch milliseconds, null when unreadable.
+ */
+internal fun sortMillis(r: KinCareReport): Long? =
+    kinTaleSortMillis(sequenceOf(r.sentAt, r.visitDate, r.arrivedAt, r.createdAt).firstOrNull { !it.isNullOrBlank() })
 
 /** KT1 (A8): operator-chosen ordering for the KinTales list. Mirror of web ReportSort. */
 internal enum class ReportSort(val label: String) {
@@ -944,13 +948,13 @@ internal enum class ReportSort(val label: String) {
 }
 
 internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<KinCareReport> = when (mode) {
-    ReportSort.Newest  -> reports.sortedByDescending { sortKey(it) }
-    ReportSort.Oldest  -> reports.sortedBy { sortKey(it) }
+    ReportSort.Newest  -> reports.sortedWith(kinTaleDateComparator(true, ::sortMillis))
+    ReportSort.Oldest  -> reports.sortedWith(kinTaleDateComparator(false, ::sortMillis))
     ReportSort.Kinfolk -> reports.sortedWith(
-        compareBy<KinCareReport> { it.kinfolkName.lowercase() }.thenByDescending { sortKey(it) },
+        compareBy<KinCareReport> { it.kinfolkName.lowercase() }.then(kinTaleDateComparator(true, ::sortMillis)),
     )
     ReportSort.Service -> reports.sortedWith(
-        compareBy<KinCareReport> { it.serviceType.orEmpty().lowercase() }.thenByDescending { sortKey(it) },
+        compareBy<KinCareReport> { it.serviceType.orEmpty().lowercase() }.then(kinTaleDateComparator(true, ::sortMillis)),
     )
 }
 
@@ -1076,6 +1080,11 @@ private fun visitTimestamp(r: KinCareReport): String {
  */
 internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
     runCatching {
+        parseLegacyKinTaleStamp(iso)?.let { s ->
+            val time = "%02d:%02d".format(s.hour, s.minute)
+            val month = MONTHS[s.month - 1]
+            return@runCatching if (s.year == currentYear) "$month ${s.day} · $time" else "$month ${s.day}, ${s.year} · $time"
+        }
         if (iso.length < 16) return@runCatching iso
         val year  = iso.substring(0, 4).toInt()
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]

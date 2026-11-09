@@ -872,12 +872,13 @@ private fun isParseableTimestamp(iso: String): Boolean = runCatching {
 }.getOrDefault(false)
 
 /** Mockup-style relative-day label: "Today / May 27", "Yesterday / May 26", else "May 24". */
-private fun relativeDayLabel(dateIso: String, todayKey: String, yesterdayKey: String): String {
+internal fun relativeDayLabel(dateIso: String, todayKey: String, yesterdayKey: String): String {
     val pretty = prettyDate(dateIso)
     return when (dateIso) {
         todayKey     -> "Today · $pretty"
         yesterdayKey -> "Yesterday · $pretty"
-        else         -> pretty
+        // #1599: a day from another year says which, the log spans more than one.
+        else         -> if (dateIso.take(4) == todayKey.take(4)) pretty else "$pretty, ${dateIso.take(4)}"
     }
 }
 
