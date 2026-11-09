@@ -51,6 +51,12 @@ data class AdminSettingsUiState(
      * state the web panel has.
      */
     val settingsSaving: Boolean = false,
+    /**
+     * #1593: the server's refusal of the last settings save, kept until the next
+     * save starts so the open section can show it beside the toast. Null for
+     * any other kind of failure.
+     */
+    val settingsRefusal: SettingsRefusal? = null,
     val profileSaveSuccess: Boolean = false,
     /**
      * #897: true once the users/{uid} read has answered (a missing document
@@ -212,7 +218,7 @@ class AdminSettingsViewModel(
             // otherwise. It moves on success only; on failure it still holds the
             // baseline values, so the edit stays in the panel's draft as unsaved
             // and Save stays live for the retry.
-            _uiState.value = _uiState.value.copy(saveSuccess = false, settingsSaving = true)
+            _uiState.value = _uiState.value.copy(saveSuccess = false, settingsSaving = true, settingsRefusal = null)
 
             repository.updateBusinessSettingsFields(changes, "admin").fold(
                 onSuccess = {
@@ -244,7 +250,10 @@ class AdminSettingsViewModel(
                     val shown = _uiState.value.businessSettings
                     _uiState.value = _uiState.value.copy(
                         businessSettings = revertBusinessSettingsFields(shown, baseline, changes.keys),
-                        error = "$failureLabel: ${error.message}",
+                        // A server refusal is the operator's sentence as it
+                        // stands (#1593); anything else keeps the lead-in.
+                        error = settingsSaveFailureText(failureLabel, error),
+                        settingsRefusal = settingsRefusalOf(error),
                         saveSuccess = false,
                         settingsSaving = false,
                     )

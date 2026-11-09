@@ -61,8 +61,10 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  *
  * Saves through [onSettingsChange], which is the ViewModel's diff-and-save:
  * only `serviceRates`, `serviceDurations` and `serviceStartTimeBooking`
- * reach Firestore, and they reach it as whole maps ([businessSettingsReplacesWholeFields]) so a removed type
- * stays removed. The mock's grip glyph is not drawn: nothing here drags.
+ * reach the server, which writes them as whole maps so a removed type stays
+ * removed. Each field carries the server's sentence under it while it would be
+ * refused ([kinCareRowProblems], #1593), and Save stays off until none is left.
+ * The mock's grip glyph is not drawn: nothing here drags.
  *
  * Every row is a two-line card on a phone, the mock's own narrow layout: name
  * and remove on the first line, duration and rate on the second, and the
@@ -95,6 +97,10 @@ internal fun KinCareTypesPanel(
         editedDurations != settings.serviceDurations ||
         editedStartTimes != settings.serviceStartTimeBooking.filterValues { it }
     val view = sortedKinCareView(rows, sortKey)
+    // #1593: what the server would refuse, under each field as it is typed.
+    // Save stays off while any of it is on screen.
+    val problems = kinCareRowProblems(rows)
+    val countProblem = kinCareCountProblem(rows)
 
     fun updateRow(index: Int, transform: (KinCareTypeRow) -> KinCareTypeRow) {
         rows = rows.mapIndexed { i, row -> if (i == index) transform(row) else row }
@@ -137,6 +143,7 @@ internal fun KinCareTypesPanel(
                         }
                     }
                     val removeLabel = row.type.trim().let { if (it.isEmpty()) "Remove" else "Remove $it" }
+                    val rowProblems = problems[index]
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -156,6 +163,7 @@ internal fun KinCareTypesPanel(
                                 label = "Type name",
                                 placeholder = "e.g. 30 min",
                                 enabled = !isLoading,
+                                isError = rowProblems?.name != null,
                                 modifier = Modifier.weight(1f),
                                 fieldModifier = Modifier.focusRequester(nameFocus),
                             )
@@ -168,25 +176,34 @@ internal fun KinCareTypesPanel(
                                 size = 34.dp,
                             )
                         }
+                        SettingsFieldProblem(rowProblems?.name)
                         Row(horizontalArrangement = Arrangement.spacedBy(dims.space2)) {
-                            AuntieField(
-                                value = row.duration,
-                                onValueChange = { next -> updateRow(index) { it.copy(duration = next) } },
-                                label = "Duration (min)",
-                                placeholder = kinCareDurationPlaceholder(row),
-                                enabled = !isLoading,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.weight(1f),
-                            )
-                            AuntieField(
-                                value = row.rate,
-                                onValueChange = { next -> updateRow(index) { it.copy(rate = next) } },
-                                label = "Rate",
-                                placeholder = "0.00",
-                                enabled = !isLoading,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f),
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                AuntieField(
+                                    value = row.duration,
+                                    onValueChange = { next -> updateRow(index) { it.copy(duration = next) } },
+                                    label = "Duration (min)",
+                                    placeholder = kinCareDurationPlaceholder(row),
+                                    enabled = !isLoading,
+                                    isError = rowProblems?.duration != null,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                SettingsFieldProblem(rowProblems?.duration)
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                AuntieField(
+                                    value = row.rate,
+                                    onValueChange = { next -> updateRow(index) { it.copy(rate = next) } },
+                                    label = "Rate",
+                                    placeholder = "0.00",
+                                    enabled = !isLoading,
+                                    isError = rowProblems?.rate != null,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                SettingsFieldProblem(rowProblems?.rate)
+                            }
                         }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -217,6 +234,7 @@ internal fun KinCareTypesPanel(
                     leadingIcon = Lucide.Plus,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                SettingsFieldProblem(countProblem)
             }
         }
 
@@ -255,7 +273,7 @@ internal fun KinCareTypesPanel(
         }
         AuntieSaveBar(
             dirty = dirty,
-            saveEnabled = dirty && !isLoading,
+            saveEnabled = dirty && !isLoading && problems.isEmpty() && countProblem == null,
             onCancel = {
                 rows = baseline
                 blocked = null

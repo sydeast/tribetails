@@ -85,10 +85,16 @@ import com.tribetails.auntieos.web.ui.components.AuntiePasswordField
 import com.tribetails.auntieos.web.data.VetClinic
 import com.tribetails.auntieos.web.data.AuthUser
 import com.tribetails.auntieos.web.data.BusinessSettings
+import com.tribetails.auntieos.web.data.SettingsChecks
+import com.tribetails.auntieos.web.screens.booking.NewBookingMath
+import kotlinx.datetime.todayIn
+import kotlin.time.Clock
 import com.tribetails.auntieos.web.data.MAX_PAYMENT_INSTRUCTIONS_LENGTH
 import com.tribetails.auntieos.web.data.PAYMENT_METHOD_CATALOGUE
 import com.tribetails.auntieos.web.data.PaymentMethodKind
 import com.tribetails.auntieos.web.data.PaymentOptionDraft
+import com.tribetails.auntieos.web.data.PaymentHandleField
+import com.tribetails.auntieos.web.data.problem
 import com.tribetails.auntieos.web.data.paymentBlankWarning
 import com.tribetails.auntieos.web.data.paymentDraftOf
 import com.tribetails.auntieos.web.data.paymentRowCaption
@@ -1116,6 +1122,9 @@ private fun BusinessProfilePanel(
     // stored blank says "Enter the business name." the moment the panel opens,
     // and Save stays off until one is typed; firestore.rules refuses it anyway.
     val nameError = businessNameError(businessName)
+    // #1593: both may be blank; anything typed has to read as an email / a US number.
+    val emailError = SettingsChecks.businessEmailProblem(businessEmail)
+    val phoneError = SettingsChecks.businessPhoneProblem(businessPhone)
     DenPanel(title = "Business Profile", subtitle = "The contact details kinfolk and invoices use.") {
         when (uiState.settingsResult) {
             is FirestoreResult.Loading -> EmptyHintLine("Loading settings", c.textDim)
@@ -1131,7 +1140,10 @@ private fun BusinessProfilePanel(
                     )
                     BottomBorderField(
                         value = businessEmail, onValueChange = onBusinessEmail,
-                        label = "Business Email", modifier = Modifier.fillMaxWidth(),
+                        label = "Business Email",
+                        isError = emailError != null, errorMessage = emailError,
+                        keyboardType = KeyboardType.Email,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     // #1564: every business email goes to this address.
                     businessEmailNotice(businessEmail)?.let { notice ->
@@ -1143,7 +1155,10 @@ private fun BusinessProfilePanel(
                     }
                     BottomBorderField(
                         value = businessPhone, onValueChange = onBusinessPhone,
-                        label = "Business Phone", modifier = Modifier.fillMaxWidth(),
+                        label = "Business Phone",
+                        isError = phoneError != null, errorMessage = phoneError,
+                        keyboardType = KeyboardType.Phone,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     BottomBorderField(
                         value = businessAddress, onValueChange = onBusinessAddress,
@@ -1159,7 +1174,8 @@ private fun BusinessProfilePanel(
                     Spacer(Modifier.height(dims.space1))
                     PrimaryButton(
                         label   = if (settingsLoaded) "Save" else "Loading settings…",
-                        enabled = settingsLoaded && privacyPolicyError == null && nameError == null,
+                        enabled = settingsLoaded && privacyPolicyError == null && nameError == null &&
+                            emailError == null && phoneError == null,
                         onClick = {
                             scope.launch {
                                 val updated = (settingsData ?: BusinessSettings()).copy(
@@ -1168,7 +1184,6 @@ private fun BusinessProfilePanel(
                                     businessPhone       = businessPhone,
                                     businessAddress     = businessAddress,
                                     privacyPolicyUrl    = privacyPolicyUrl.trim(),
-                                    businessHours       = businessHours,
                                 )
                                 vm.saveSettings(updated)
                                 AuditLog.fire(
@@ -1240,6 +1255,13 @@ private fun PaymentOptionsPanel(
                 // data, or this panel's own save landing), never mid-edit otherwise.
                 var draft by remember(saved) { mutableStateOf(saved) }
                 val dirty = draft.normalized() != saved
+                // #1593: every handle is checked, shown or not: a handle under a
+                // method switched off is still saved when it changed.
+                val handleProblems = PaymentHandleField.entries.associateWith { f -> f.problem(draft.handles[f].orEmpty()) }
+                // A stored handle nobody touched is not sent, so it never holds the save up.
+                val handleBlocking = PaymentHandleField.entries.any { f ->
+                    handleProblems[f] != null && draft.handles[f].orEmpty().trim() != saved.handles[f].orEmpty()
+                }
                 // The wait between the tap and the write landing: a spinner on the
                 // button and every control held still, as the web panel does.
                 var saving by remember { mutableStateOf(false) }
@@ -1264,13 +1286,20 @@ private fun PaymentOptionsPanel(
                             },
                         )
                         val field = method.handleField
-                        if (option.enabled && method.kind == PaymentMethodKind.LINK && field != null) {
+                        // A changed handle that would be refused stays on screen even with
+                        // its method switched off, so the reason Save is off is visible.
+                        val handleChangedAndRefused = field != null && handleProblems[field] != null &&
+                            handle.trim() != saved.handles[field].orEmpty()
+                        if ((option.enabled || handleChangedAndRefused) && method.kind == PaymentMethodKind.LINK && field != null) {
+                            val handleError = handleProblems[field]
                             BottomBorderField(
                                 value = handle,
                                 onValueChange = { draft = draft.copy(handles = draft.handles + (field to it)) },
                                 label = "${method.label} handle",
                                 placeholder = field.placeholder,
                                 enabled = editable,
+                                isError = handleError != null,
+                                errorMessage = handleError,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -1298,39 +1327,51 @@ private fun PaymentOptionsPanel(
                         }
                     }
                     Spacer(Modifier.height(dims.space1))
-                    PrimaryButton(
-                        // `loading` turns the button into a spinner for the write.
-                        label   = if (settingsLoaded) "Save payment options" else "Loading settings…",
-                        enabled = editable && dirty,
-                        loading = saving,
-                        onClick = {
-                            if (!saving && dirty) {
-                                saving = true
-                                scope.launch {
-                                    val updated = base.withPaymentDraft(draft)
-                                    try {
-                                        vm.saveSettings(updated)
-                                    } finally {
-                                        saving = false
-                                    }
-                                    // Logged only when the write landed; a failed save
-                                    // already shows its error and changed nothing.
-                                    if (vm.uiState.value.saveError == null) {
-                                        AuditLog.fire(
-                                            scope            = scope,
-                                            client           = client,
-                                            actorId          = authUser.uid,
-                                            actionType       = "UPDATE_SETTINGS",
-                                            description      = "Updated payment options",
-                                            targetId         = updated._id,
-                                            targetCollection = "business_settings",
-                                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(dims.space2),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        // #1593: puts every switch, handle and instruction back to what is saved.
+                        GhostButton(
+                            label = "Cancel",
+                            enabled = editable && dirty,
+                            onClick = { draft = saved },
+                        )
+                        PrimaryButton(
+                            // `loading` turns the button into a spinner for the write.
+                            label   = if (settingsLoaded) "Save payment options" else "Loading settings…",
+                            enabled = editable && dirty && !handleBlocking,
+                            loading = saving,
+                            onClick = {
+                                if (!saving && dirty) {
+                                    saving = true
+                                    scope.launch {
+                                        val updated = base.withPaymentDraft(draft)
+                                        try {
+                                            vm.saveSettings(updated)
+                                        } finally {
+                                            saving = false
+                                        }
+                                        // Logged only when the write landed; a failed save
+                                        // already shows its error and changed nothing.
+                                        if (vm.uiState.value.saveError == null) {
+                                            AuditLog.fire(
+                                                scope            = scope,
+                                                client           = client,
+                                                actorId          = authUser.uid,
+                                                actionType       = "UPDATE_SETTINGS",
+                                                description      = "Updated payment options",
+                                                targetId         = updated._id,
+                                                targetCollection = "business_settings",
+                                            )
+                                        }
                                     }
                                 }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
         }
@@ -1416,8 +1457,9 @@ private fun BusinessHoursPanel(
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
             daysOfWeek.forEach { day ->
                 val current = businessHours[day] ?: ""
-                // Light validation: flag a non-empty value that does not look like a HH:MM-HH:MM range.
-                val malformed = current.isNotBlank() && !HOURS_RANGE_REGEX.matches(current.trim())
+                // #1593: blank is Closed; anything else is HH:MM-HH:MM, closing after
+                // opening. The sentence sits under the day it is about.
+                val problem = SettingsChecks.weekdayHoursProblem(current)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1434,13 +1476,13 @@ private fun BusinessHoursPanel(
                         onValueChange = { onBusinessHours(businessHours + (day to it)) },
                         label         = "",
                         placeholder   = "09:00-17:00 or leave blank if closed",
+                        isError       = problem != null,
+                        errorMessage  = problem,
                         modifier      = Modifier.weight(1f),
                     )
-                    if (malformed) {
-                        AuntieStatusPill(label = "Check format", tone = AuntieStatusTone.Warning, mono = true)
-                    }
                 }
             }
+            val hoursOk = daysOfWeek.all { SettingsChecks.weekdayHoursProblem(businessHours[it] ?: "") == null }
             if (saveError != null) {
                 AuntieBanner(tone = AuntieBannerTone.Error, title = "Save failed") {
                     Text(saveError, style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -1448,7 +1490,7 @@ private fun BusinessHoursPanel(
             }
             AuntieSaveBar(
                 dirty = dirty,
-                saveEnabled = dirty,
+                saveEnabled = dirty && hoursOk,
                 onCancel = onCancel,
                 onSave = onSave,
                 dirtyLabel = "Unsaved hours",
@@ -1458,7 +1500,6 @@ private fun BusinessHoursPanel(
     }
 }
 
-private val HOURS_RANGE_REGEX = Regex("""^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$""")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Notifications
@@ -1899,6 +1940,11 @@ private fun KinCareTypesPanel(
     // The "needs a length" refusal. Set by Save, cleared by the next edit.
     var refusal by remember(settingsData) { mutableStateOf<String?>(null) }
     val dirty = settingsLoaded && settingsData != null && kinCareRowsDirty(settingsData, rows)
+    // #1593: checked on the rows as typed, before the fold drops a blank name.
+    val rowProblems = kinCareRowProblems(rows)
+    val rowsOk = rowProblems.all { it.none }
+    val newLengthProblem = SettingsChecks.durationProblem(newType.trim().ifEmpty { "New type" }, newLength)
+    val newRateProblem = SettingsChecks.priceProblem(newType.trim().ifEmpty { "New type" }, newRate)
     fun edit(next: List<KinCareTypeRow>) { rows = next; refusal = null }
     DenPanel(
         title = "KinCare types",
@@ -1912,9 +1958,10 @@ private fun KinCareTypesPanel(
                     Text("No KinCare types yet. Add one below.", style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 }
                 rows.forEachIndexed { i, row ->
+                    val problems = rowProblems[i]
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                         Row(
-                            verticalAlignment = Alignment.Bottom,
+                            verticalAlignment = Alignment.Top,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -1922,6 +1969,8 @@ private fun KinCareTypesPanel(
                                 value = row.type,
                                 onValueChange = { v -> edit(rows.toMutableList().also { it[i] = row.copy(type = v) }) },
                                 label = "Type",
+                                isError = problems.name != null,
+                                errorMessage = problems.name,
                                 modifier = Modifier.weight(2f),
                             )
                             BottomBorderField(
@@ -1930,13 +1979,17 @@ private fun KinCareTypesPanel(
                                 label = "Length (minutes)",
                                 placeholder = kinCareDurationPlaceholder(row),
                                 keyboardType = KeyboardType.Number,
+                                isError = problems.duration != null,
+                                errorMessage = problems.duration,
                                 modifier = Modifier.weight(1f),
                             )
                             BottomBorderField(
                                 value = row.rate,
                                 onValueChange = { v -> edit(rows.toMutableList().also { it[i] = row.copy(rate = v) }) },
                                 label = "Rate",
-                                placeholder = "0.00",
+                                placeholder = "No price set",
+                                isError = problems.rate != null,
+                                errorMessage = problems.rate,
                                 modifier = Modifier.weight(1f),
                             )
                             GhostButton(label = "Remove", onClick = { edit(rows.toMutableList().also { it.removeAt(i) }) })
@@ -1958,11 +2011,20 @@ private fun KinCareTypesPanel(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     BottomBorderField(value = newType, onValueChange = { newType = it }, label = "New type", placeholder = "e.g. Drop-in visit", modifier = Modifier.weight(2f))
-                    BottomBorderField(value = newLength, onValueChange = { newLength = it }, label = "Length (minutes)", placeholder = "Not set", keyboardType = KeyboardType.Number, modifier = Modifier.weight(1f))
-                    BottomBorderField(value = newRate, onValueChange = { newRate = it }, label = "Rate", placeholder = "0.00", modifier = Modifier.weight(1f))
+                    BottomBorderField(
+                        value = newLength, onValueChange = { newLength = it }, label = "Length (minutes)", placeholder = "Not set",
+                        keyboardType = KeyboardType.Number,
+                        isError = newLengthProblem != null, errorMessage = newLengthProblem,
+                        modifier = Modifier.weight(1f),
+                    )
+                    BottomBorderField(
+                        value = newRate, onValueChange = { newRate = it }, label = "Rate", placeholder = "No price set",
+                        isError = newRateProblem != null, errorMessage = newRateProblem,
+                        modifier = Modifier.weight(1f),
+                    )
                     PrimaryButton(
                         label = "Add",
-                        enabled = newType.isNotBlank(),
+                        enabled = newType.isNotBlank() && newLengthProblem == null && newRateProblem == null,
                         onClick = {
                             edit(rows + KinCareTypeRow(type = newType.trim(), duration = newLength.trim(), rate = newRate.trim()))
                             newType = ""; newLength = ""; newRate = ""
@@ -1981,7 +2043,7 @@ private fun KinCareTypesPanel(
                 }
                 AuntieSaveBar(
                     dirty = dirty,
-                    saveEnabled = dirty && !saving && settingsData != null,
+                    saveEnabled = dirty && !saving && settingsData != null && rowsOk,
                     onCancel = { rows = baseRows(); refusal = null },
                     onSave = {
                         settingsData?.let { b ->
@@ -3689,6 +3751,10 @@ private fun TimeOffPanel(
     }
     var newSpecialDate  by remember(settingsData) { mutableStateOf("") }
     var newSpecialHours by remember(settingsData) { mutableStateOf("") }
+    // #1593: "today" for the past-date check is the business's day, the one the
+    // server compares against, not this computer's.
+    val todayIso = businessTodayIso(settingsData?.timeZone)
+    val closureProblems = closureAddProblems(newHolidayDate, newHolidayName, todayIso)
     DenPanel(
         title = "Time Off",
         subtitle = "Holidays the Den observes and your own closures.",
@@ -3746,27 +3812,29 @@ private fun TimeOffPanel(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(dims.space2),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment = Alignment.Top,
             ) {
                 BottomBorderField(
                     value = newHolidayDate,
                     onValueChange = onNewHolidayDate,
                     label = "Date (YYYY-MM-DD)",
+                    isError = closureProblems.first != null,
+                    errorMessage = closureProblems.first,
                     modifier = Modifier.weight(1f),
                 )
                 BottomBorderField(
                     value = newHolidayName,
                     onValueChange = onNewHolidayName,
                     label = "Name",
+                    isError = closureProblems.second != null,
+                    errorMessage = closureProblems.second,
                     modifier = Modifier.weight(1f),
                 )
                 GhostButton(
                     label   = "Add",
-                    // Reject a pipe in the name so the "date|name" encoding stays parseable.
-                    enabled = HOLIDAY_DATE_REGEX.matches(newHolidayDate) &&
-                        newHolidayName.isNotBlank() && !newHolidayName.contains('|'),
+                    enabled = closureProblems.ready,
                     onClick = {
-                        onCompanyHolidays(companyHolidays + "$newHolidayDate|$newHolidayName")
+                        onCompanyHolidays(companyHolidays + "${newHolidayDate.trim()}|${newHolidayName.trim()}")
                         onNewHolidayDate(""); onNewHolidayName("")
                     },
                 )
@@ -3803,8 +3871,9 @@ private fun TimeOffPanel(
                 onDate = { newSpecialDate = it },
                 hours = newSpecialHours,
                 onHours = { newSpecialHours = it },
+                todayIso = todayIso,
                 onAdd = {
-                    specialHours = specialHours + "$newSpecialDate|$newSpecialHours"
+                    specialHours = specialHours + "${newSpecialDate.trim()}|${newSpecialHours.trim()}"
                     newSpecialDate = ""; newSpecialHours = ""
                 },
             )
@@ -3814,12 +3883,10 @@ private fun TimeOffPanel(
                 enabled = settingsLoaded,
                 onClick = {
                     scope.launch {
+                        // #1593: this panel's own fields only. The profile fields and
+                        // the weekly hours have their own Save and their own checks;
+                        // sending them from here would skip those checks.
                         val updated = (settingsData ?: BusinessSettings()).copy(
-                            businessName        = businessName,
-                            businessEmail       = businessEmail,
-                            businessPhone       = businessPhone,
-                            businessAddress     = businessAddress,
-                            businessHours       = businessHours,
                             observedUsHolidays  = observedHolidays.toList(),
                             companyHolidays     = companyHolidays,
                             specialHours        = specialHours,
@@ -3833,21 +3900,57 @@ private fun TimeOffPanel(
     }
 }
 
-private val HOLIDAY_DATE_REGEX = Regex("""^\d{4}-\d{2}-\d{2}$""")
+/**
+ * #1593: what is wrong with a half-typed Add row, the date's sentence first and
+ * the other field's second, and whether Add may run. A row with nothing typed
+ * has nothing to say and Add stays off; a row with something typed says what
+ * it still needs, so Add is never off with no reason on screen.
+ */
+internal data class AddRowProblems(val first: String?, val second: String?, val ready: Boolean)
 
 /**
- * A special-hours entry (15.5) is addable only with a valid YYYY-MM-DD date AND
- * non-blank hours that contain no pipe (the "date|hours" encoding must stay
- * parseable). Pure; unit-tested.
+ * A new one-off closure: a real date, today or later in the business's zone
+ * ([todayIso]), and a name. A pipe is left out of the name so the
+ * "date|name" encoding keeps one meaning.
  */
-internal fun specialHoursAddEnabled(date: String, hours: String): Boolean =
-    HOLIDAY_DATE_REGEX.matches(date) && hours.isNotBlank() && !hours.contains('|')
+internal fun closureAddProblems(date: String, name: String, todayIso: String): AddRowProblems {
+    if (date.isBlank() && name.isBlank()) return AddRowProblems(null, null, ready = false)
+    val dateProblem = SettingsChecks.newDateProblem(date, todayIso)
+    val nameProblem = when {
+        name.isBlank() -> SettingsChecks.CLOSURE_NAME_REQUIRED
+        name.contains('|') -> CLOSURE_NAME_PIPE
+        else -> null
+    }
+    return AddRowProblems(dateProblem, nameProblem, ready = dateProblem == null && nameProblem == null)
+}
+
+internal const val CLOSURE_NAME_PIPE = "A name cannot contain |."
+
+/**
+ * A new special-hours entry (15.5): a real date, today or later in the
+ * business's zone, and hours as HH:MM-HH:MM with the close after the open.
+ */
+internal fun specialHoursAddProblems(date: String, hours: String, todayIso: String): AddRowProblems {
+    if (date.isBlank() && hours.isBlank()) return AddRowProblems(null, null, ready = false)
+    val dateProblem = SettingsChecks.newDateProblem(date, todayIso)
+    val hoursProblem = SettingsChecks.hoursRangeProblem(hours)
+    return AddRowProblems(dateProblem, hoursProblem, ready = dateProblem == null && hoursProblem == null)
+}
+
+/** Whether a special-hours entry may be added. Pure; unit-tested. */
+internal fun specialHoursAddEnabled(date: String, hours: String, todayIso: String): Boolean =
+    specialHoursAddProblems(date, hours, todayIso).ready
+
+/** Today in the business's zone as `YYYY-MM-DD`, the day the server's past-date check uses. */
+@OptIn(kotlin.time.ExperimentalTime::class)
+internal fun businessTodayIso(storedZone: String?): String =
+    Clock.System.todayIn(NewBookingMath.businessTimeZone(storedZone)).toString()
 
 /**
  * The special-hours add row (15.5): two fields + an "Add" GhostButton gated by
- * [specialHoursAddEnabled]. Extracted to an internal composable so the real
- * widget + its enablement gate can be rendered directly by the desktop compose
- * UI test (behavior-neutral: same fields, same gate, same Add callback).
+ * [specialHoursAddProblems], each field carrying its own sentence. Extracted to
+ * an internal composable so the real widget + its gate can be rendered directly
+ * by the desktop compose UI test.
  */
 @Composable
 internal fun SpecialHoursEditorRow(
@@ -3855,29 +3958,35 @@ internal fun SpecialHoursEditorRow(
     onDate: (String) -> Unit,
     hours: String,
     onHours: (String) -> Unit,
+    todayIso: String,
     onAdd: () -> Unit,
 ) {
     val dims = AuntieTheme.dims
+    val problems = specialHoursAddProblems(date, hours, todayIso)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(dims.space2),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
         BottomBorderField(
             value = date,
             onValueChange = onDate,
             label = "Date (YYYY-MM-DD)",
+            isError = problems.first != null,
+            errorMessage = problems.first,
             modifier = Modifier.weight(1f),
         )
         BottomBorderField(
             value = hours,
             onValueChange = onHours,
             label = "Hours (e.g. 08:00-12:00)",
+            isError = problems.second != null,
+            errorMessage = problems.second,
             modifier = Modifier.weight(1f),
         )
         GhostButton(
             label   = "Add",
-            enabled = specialHoursAddEnabled(date, hours),
+            enabled = problems.ready,
             onClick = onAdd,
         )
     }

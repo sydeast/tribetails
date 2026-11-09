@@ -1966,6 +1966,32 @@ closure so the operator can act on them manually.
 - Mirrors: `auntieos-admin/src/api/settingsWrite.ts`, Android
   `AuntieRepository.removeBusinessTag`. Frozen in `test/callableContract.test.ts`.
 
+### saveBusinessSettings (owner-only: admin-gated, NOT in `AUNTIE_ALLOWED_CALLABLES`)
+- req `{ changes: Record<field, unknown> }` (at least one field)
+- res `{ updatedAt: string (ISO), updatedBy: string (token email, else uid) }`
+- Added 2026-11-09 (#1593). **The only write path to
+  `business_settings/business_settings`.** The rules deny that document's write
+  to every client; before this the three admin clients wrote it directly and
+  the rules' `validBusinessSettings()` was the only check.
+- Every field in `changes` is checked by `lib/businessSettingsChecks.ts`
+  (`BUSINESS_SETTINGS_CHECKS`). A field not named there, or a server-owned one
+  (`_id`, `updatedAt`, `updatedBy`, `calendarSyncLast*`), is refused. Checks
+  are format, not policy: a price is blank or dollars with two decimals at most,
+  a weekday is blank (Closed) or `HH:MM-HH:MM` closing after it opens, a new
+  closure or special-hours date is real and not in the past (stored entries
+  pass as they are), a portal theme is one the portal has, a send hour is 0-23
+  or null, and so on. The merged business name may not be blank (#1409).
+- Refusal: `invalid-argument`, `message` = the first refusal's sentence,
+  `details = { code: 'settings_refused', field, refusals: [{ field, message }] }`.
+  Nothing is written.
+- Write: `set(..., { mergeFields })`. Nested maps merge key by key; the rate card
+  (`serviceRates`, `serviceDurations`, `serviceStartTimeBooking`) replaces whole
+  so a removed type goes; arrays replace; `null` is stored as `null`.
+- Audited `BUSINESS_SETTINGS_UPDATED` with `{ fields: string[] }` (names only).
+- Mirrors: `auntieos-admin/src/api/settingsWrite.ts`, Android
+  `AuntieRepository.updateBusinessSettingsFields`, desktop
+  `platformSaveBusinessSettings`. Frozen in `test/callableContract.test.ts`.
+
 ## Blocked time windows (admin-gated)
 - req `{ date: 'YYYY-MM-DD', startTime: 'HH:mm', endTime: 'HH:mm', notes?: string
   (<=500), startTimeMs?: number, endTimeMs?: number, overrideVisitConflict?: boolean }`

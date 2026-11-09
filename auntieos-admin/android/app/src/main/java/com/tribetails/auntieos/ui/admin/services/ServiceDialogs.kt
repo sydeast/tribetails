@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin.services
 
+import com.tribetails.auntieos.ui.admin.businessHoursRowProblem
+import com.tribetails.auntieos.ui.admin.SettingsFieldProblem
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import androidx.compose.foundation.*
@@ -851,6 +853,9 @@ private fun EditBusinessHoursDialog(
     var breakStart by remember(initial.id) { mutableStateOf(initial.breakStart.orEmpty()) }
     var breakEnd by remember(initial.id) { mutableStateOf(initial.breakEnd.orEmpty()) }
     var notes by remember(initial.id) { mutableStateOf(initial.notes) }
+    // #1593: the same check the Settings hours panel runs, with the server's
+    // sentence under the two times. Save stays off while it shows.
+    val hoursProblem = if (isOpen) businessHoursRowProblem(openTime.trim(), closeTime.trim()) else null
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -895,15 +900,18 @@ private fun EditBusinessHoursDialog(
                                 value         = openTime,
                                 onValueChange = { openTime = it },
                                 label         = "Open (HH:mm)",
+                                isError       = hoursProblem != null,
                                 modifier      = Modifier.weight(1f),
                             )
                             AuntieField(
                                 value         = closeTime,
                                 onValueChange = { closeTime = it },
                                 label         = "Close (HH:mm)",
+                                isError       = hoursProblem != null,
                                 modifier      = Modifier.weight(1f),
                             )
                         }
+                        SettingsFieldProblem(hoursProblem)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AuntieField(
                                 value         = breakStart,
@@ -952,8 +960,8 @@ private fun EditBusinessHoursDialog(
                                 },
                             )
                         },
-                        // Validation: if marked open, both times must be filled.
-                        enabled  = !isOpen || (openTime.isNotBlank() && closeTime.isNotBlank()),
+                        // Off only while the sentence above says why.
+                        enabled  = hoursProblem == null,
                         modifier = Modifier.weight(1f),
                     )
                 }

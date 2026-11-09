@@ -426,31 +426,32 @@ class BusinessSettingsDiffTest {
     // ── The KinCare rate card (issue #755): written whole, so a removed type stays removed ──
 
     /**
-     * `SetOptions.merge()` merges a nested map key by key, which is how a
-     * `serviceRates` write that dropped "Walk" used to leave "Walk" in the
-     * document. A write naming either rate-card map goes out under
-     * `mergeFields` instead; everything else keeps the merge that protects
-     * `mytribePortal`.
+     * The server (`saveBusinessSettings`, #1593) replaces the stored rate card
+     * with the map it is sent, so the map has to be the WHOLE card: a removed
+     * type is absent from it, and every type kept is in it.
      */
     @Test
-    fun `a rate-card write replaces its fields, and the removed type is absent from it`() {
+    fun `a rate-card write carries the whole card, and the removed type is absent from it`() {
         val withTwo = loaded.copy(serviceRates = mapOf("Walk" to "10.00", "Overnight" to "80.00"))
         val edited = withTwo.copy(serviceRates = mapOf("Overnight" to "80.00"))
         val changes = businessSettingsFieldChanges(withTwo, edited)
         assertEquals(mapOf("serviceRates" to mapOf("Overnight" to "80.00")), changes)
-        assertTrue(businessSettingsReplacesWholeFields(changes))
     }
 
     @Test
-    fun `a duration-only edit is also a whole-map write`() {
-        val edited = loaded.copy(serviceDurations = mapOf("Walk" to "45"))
-        assertTrue(businessSettingsReplacesWholeFields(businessSettingsFieldChanges(loaded, edited)))
+    fun `a duration-only edit sends the whole duration map`() {
+        val withTwo = loaded.copy(serviceDurations = mapOf("Walk" to "30", "Overnight" to "720"))
+        val edited = withTwo.copy(serviceDurations = mapOf("Walk" to "45", "Overnight" to "720"))
+        assertEquals(
+            mapOf("serviceDurations" to mapOf("Walk" to "45", "Overnight" to "720")),
+            businessSettingsFieldChanges(withTwo, edited),
+        )
     }
 
     /**
      * ISSUE #1092. Clearing the flag on "Overnight" writes a map without it, and
      * under a key-by-key merge the stored `Overnight: true` would survive, so
-     * the start-time flags are a whole-map write too.
+     * the server replaces the start-time flags whole too.
      */
     @Test
     fun `clearing a start-time flag is a whole-map write that drops the key`() {
@@ -458,7 +459,6 @@ class BusinessSettingsDiffTest {
         val edited = flagged.copy(serviceStartTimeBooking = emptyMap())
         val changes = businessSettingsFieldChanges(flagged, edited)
         assertEquals(mapOf("serviceStartTimeBooking" to emptyMap<String, Boolean>()), changes)
-        assertTrue(businessSettingsReplacesWholeFields(changes))
     }
     /** The server honours exactly `true`; a decoded `false` is neither an edit nor ever written back. */
     @Test
@@ -474,13 +474,6 @@ class BusinessSettingsDiffTest {
             businessSettingsFieldChanges(withStrayFalse, edited),
         )
     }
-    @Test
-    fun `every other write keeps the key-by-key merge`() {
-        val edited = loaded.copy(venmoHandle = "@new-venmo")
-        assertFalse(businessSettingsReplacesWholeFields(businessSettingsFieldChanges(loaded, edited)))
-        assertFalse(businessSettingsReplacesWholeFields(emptyMap()))
-    }
-
     /** #1214: only the named fields go back to the baseline; the rest keep their on-screen values. */
     @Test
     fun `reverting named fields leaves the others alone`() {

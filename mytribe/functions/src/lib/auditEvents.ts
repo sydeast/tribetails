@@ -263,6 +263,9 @@ export const AUDIT_EVENTS = {
   // held the tag is gone the moment the batch commits. The payload carries the
   // record ids so the trail can answer that.
   BUSINESS_TAG_REMOVED: 'BUSINESS_TAG_REMOVED',
+  // #1593: Settings saved through saveBusinessSettings. Payload names the
+  // top-level fields the save changed, never their values.
+  BUSINESS_SETTINGS_UPDATED: 'BUSINESS_SETTINGS_UPDATED',
 
   // Care-ops session callables (1E §A.9): server-bound create + reschedule of
   // kin_care_sessions, replacing client-side patches so the audit is bound to

@@ -11,6 +11,7 @@ import {
   type PaymentMethodRow,
   type PaymentOptionSetting,
   type PortalHome,
+  type StringSettingKey,
 } from '../../api/settings';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
@@ -28,6 +29,17 @@ import {
 import { type ImageDecoder } from '../../lib/brandAssetFile';
 import { privacyPolicyUrlError } from '../../lib/privacyPolicyUrl';
 import { businessNameError } from '../../lib/businessName';
+import {
+  businessEmailError,
+  businessPhoneError,
+  cashappHandleError,
+  parsePortalLimit,
+  paypalHandleError,
+  PORTAL_THEMES,
+  splitSettingsRefusal,
+  themeError,
+  venmoHandleError,
+} from '../../lib/settingsChecks';
 import { LogoUploadField } from './LogoUploadField';
 // The `settingsEdit__*` class vocabulary these sections use lives here. It is
 // also depended on by the sibling editors (BusinessHoursEditor, TimeOffEditor,
@@ -44,10 +56,13 @@ import '../SettingsEdit.css';
  * about how a section saves changed, only where these components are mounted
  * (one at a time, behind a section nav, instead of all stacked in one scroll).
  *
- * There is no callable for any of this (`business_settings` is `allow write: if
- * isAuntie()` in `firestore.rules`, a direct client write), so every section
- * saves through the shared `persist` the shell hands down as `onSave`, a
- * `setDoc(..., {merge: true})` on the single doc (`api/settingsWrite.ts`).
+ * Every section saves through the shared `persist` the shell hands down as
+ * `onSave`, which calls the `saveBusinessSettings` callable
+ * (`api/settingsWrite.ts`, #1593). The server checks every field with the
+ * rules in `lib/settingsChecks.ts`; each section runs the same checks first
+ * and shows the sentence beside the field, and a refusal the server still
+ * sends is shown beside its field when the section draws it
+ * (`splitSettingsRefusal`), else in the section's banner.
  */
 
 // ── Field specs (Business profile / Weather area / Payments / Branding) ──────
@@ -139,14 +154,37 @@ export function FieldNotice({ spec, value }: { spec: TextFieldSpec; value: strin
     </span>
   );
 }
-/** The refusal line under a field, when `textFieldErrors` has one for it. */
-export function FieldErrorNote({ fieldKey, message }: { fieldKey: StringFieldKey; message: string | undefined }) {
-  if (message === undefined) return null;
+/**
+ * #1593: the ARIA a field carries for the refusal line under it. `id` is the
+ * field's base id: the line is `${id}-error`, and a hint, when the field has
+ * one, keeps its place first in the description.
+ */
+export function fieldErrorAttrs(
+  id: string,
+  message: string | null | undefined,
+  hintId?: string,
+): { 'aria-describedby'?: string; 'aria-invalid'?: true; 'aria-errormessage'?: string } {
+  const invalid = message !== null && message !== undefined;
+  const describedBy = [hintId, invalid ? `${id}-error` : undefined].filter((x) => x !== undefined).join(' ');
+  return {
+    ...(describedBy !== '' ? { 'aria-describedby': describedBy } : {}),
+    ...(invalid ? { 'aria-invalid': true as const, 'aria-errormessage': `${id}-error` } : {}),
+  };
+}
+
+/** #1593: the refusal line under any field, by the field's base id (see `fieldErrorAttrs`). */
+export function FieldError({ id, message }: { id: string; message: string | null | undefined }) {
+  if (message === null || message === undefined) return null;
   return (
-    <span id={`${fieldKey}-error`} className="settingsEdit__fieldError" role="alert">
+    <span id={`${id}-error`} className="settingsEdit__fieldError" role="alert">
       {message}
     </span>
   );
+}
+
+/** The refusal line under a field, when `textFieldErrors` has one for it. */
+export function FieldErrorNote({ fieldKey, message }: { fieldKey: StringFieldKey; message: string | undefined }) {
+  return <FieldError id={fieldKey} message={message} />;
 }
 
 /**
@@ -163,8 +201,10 @@ export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
   // stored value is blank; `firestore.rules` refuses the write regardless.
   { key: 'businessName', label: 'Business name', required: true, validate: businessNameError },
   // #1564: every business email goes here; blank means they go nowhere.
-  { key: 'businessEmail', label: 'Email', type: 'email', notice: businessEmailNotice },
-  { key: 'businessPhone', label: 'Phone', type: 'tel' },
+  // #1593: blank may be saved (the notice says what that costs); anything else
+  // has to read as an address, the server's own check.
+  { key: 'businessEmail', label: 'Email', type: 'email', validate: businessEmailError, notice: businessEmailNotice },
+  { key: 'businessPhone', label: 'Phone', type: 'tel', validate: businessPhoneError },
   { key: 'businessAddress', label: 'Address' },
   // #1410: blank until the operator publishes a policy; the email footer and
   // the portal About screen omit the link while it is blank. No hint, by the
@@ -194,7 +234,7 @@ export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
 // fields the PDF and the portal have always read.
 export const PAYMENT_FIELDS: readonly TextFieldSpec[] = [
   { key: 'venmoHandle', label: 'Venmo handle', placeholder: '@tribetails', hint: `Venmo charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.venmo)} per payment.` },
-  { key: 'paypalHandle', label: 'PayPal', placeholder: 'paypal.me/tribetails', hint: `PayPal charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.paypal)} per payment.` },
+  { key: 'paypalHandle', label: 'PayPal', placeholder: 'tribetails', hint: `PayPal charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.paypal)} per payment.` },
   { key: 'cashappHandle', label: 'Cash App', placeholder: '$tribetails', hint: `Cash App charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.cashapp)} per payment.` },
 ];
 
@@ -244,6 +284,9 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  // #1593: a server refusal for one of these fields, shown beside it until
+  // that field is edited again.
+  const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
 
   const dirty = fields.some((f) => (values[f.key] ?? '') !== data[f.key]);
   const fieldErrors = textFieldErrors(fields, values);
@@ -251,6 +294,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
 
   function update(key: StringFieldKey, next: string) {
     setValues((v) => ({ ...v, [key]: next }));
+    setServerErrors((e) => ({ ...e, [key]: undefined }));
     setJustSaved(false);
   }
 
@@ -258,16 +302,28 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
     if (!dirty || busy || invalid) return;
     setBusy(true);
     setError(null);
+    setServerErrors({});
     const patch: Partial<Pick<BusinessSettings, StringFieldKey>> = {};
     for (const f of fields) patch[f.key] = (values[f.key] ?? '').trim();
     try {
       await onSave(patch);
       setJustSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
+      const split = splitSettingsRefusal(err, fields.map((f) => f.key));
+      setServerErrors(split.byField);
+      setError(split.banner);
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleCancel() {
+    const seed: Record<string, string> = {};
+    for (const f of fields) seed[f.key] = data[f.key];
+    setValues(seed);
+    setServerErrors({});
+    setError(null);
+    setJustSaved(false);
   }
 
   return (
@@ -292,10 +348,11 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
                 disabled={busy}
                 onChange={(e) => update(f.key, e.target.value)}
                 {...(f.required ? { 'aria-required': true } : {})}
-                {...(f.hint ? { 'aria-describedby': `${f.key}-hint` } : {})}
-                {...(fieldErrors[f.key] !== undefined
-                  ? { 'aria-invalid': true, 'aria-errormessage': `${f.key}-error` }
-                  : {})}
+                {...fieldErrorAttrs(
+                  f.key,
+                  fieldErrors[f.key] ?? serverErrors[f.key],
+                  f.hint ? `${f.key}-hint` : undefined,
+                )}
               />
             </label>
             {f.hint ? (
@@ -308,12 +365,13 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
                 {f.hint}
               </span>
             ) : null}
-            <FieldErrorNote fieldKey={f.key} message={fieldErrors[f.key]} />
+            <FieldErrorNote fieldKey={f.key} message={fieldErrors[f.key] ?? serverErrors[f.key]} />
             <FieldNotice spec={f} value={values[f.key] ?? ''} />
           </div>
         ))}
       </div>
       <div className="settingsEdit__saveRow">
+        <GhostButton label="Cancel" onClick={handleCancel} disabled={!dirty || busy} />
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save'}
           onClick={() => void handleSave()}
@@ -453,6 +511,14 @@ interface PaymentOptionsSectionProps {
   onSave: (patch: Partial<BusinessSettings>) => Promise<void>;
 }
 
+/** #1593: each handle's check, the same one `saveBusinessSettings` runs. */
+const HANDLE_CHECKS: Record<StringSettingKey, (raw: string) => string | null> = {
+  venmoHandle: venmoHandleError,
+  paypalHandle: paypalHandleError,
+  cashappHandle: cashappHandleError,
+};
+const HANDLE_FIELDS: readonly string[] = Object.keys(HANDLE_CHECKS);
+
 /** The full draft this panel stages: one row per method, plus the three handles. */
 interface PaymentDraft {
   options: Record<string, PaymentOptionSetting>;
@@ -500,6 +566,7 @@ export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionPro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
 
   const saved = seedDraft(data);
   const dirty =
@@ -524,13 +591,26 @@ export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionPro
 
   function setHandle(field: string, next: string) {
     setDraft((d) => ({ ...d, handles: { ...d.handles, [field]: next } }));
+    setServerErrors((e) => ({ ...e, [field]: undefined }));
     setJustSaved(false);
   }
 
+  // #1593: each handle's own check, the server's. Run whether or not the
+  // method is on, because every handle is saved either way; the row shows the
+  // sentence even while its box is hidden (see `PaymentOptionRow`).
+  const handleErrors: Partial<Record<string, string>> = {};
+  for (const method of PAYMENT_METHOD_CATALOGUE) {
+    if (!method.handleField) continue;
+    const message = HANDLE_CHECKS[method.handleField](draft.handles[method.handleField] ?? '');
+    if (message !== null) handleErrors[method.handleField] = message;
+  }
+  const invalid = Object.keys(handleErrors).length > 0;
+
   async function handleSave() {
-    if (!dirty || busy) return;
+    if (!dirty || busy || invalid) return;
     setBusy(true);
     setError(null);
+    setServerErrors({});
     const options: Record<string, PaymentOptionSetting> = {};
     const patch: Partial<BusinessSettings> = {};
     for (const method of PAYMENT_METHOD_CATALOGUE) {
@@ -552,10 +632,19 @@ export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionPro
       await onSave(patch);
       setJustSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
+      const split = splitSettingsRefusal(err, HANDLE_FIELDS);
+      setServerErrors(split.byField);
+      setError(split.banner);
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleCancel() {
+    setDraft(seedDraft(data));
+    setServerErrors({});
+    setError(null);
+    setJustSaved(false);
   }
 
   return (
@@ -577,6 +666,11 @@ export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionPro
             handle={method.handleField ? draft.handles[method.handleField] ?? '' : ''}
             instructions={draft.options[method.id]?.instructions ?? ''}
             busy={busy}
+            handleError={method.handleField ? handleErrors[method.handleField] ?? serverErrors[method.handleField] : undefined}
+            handleChanged={
+              method.handleField !== undefined &&
+              (draft.handles[method.handleField] ?? '').trim() !== (saved.handles[method.handleField] ?? '').trim()
+            }
             onEnabledChange={(next) => setEnabled(method.id, next)}
             onHandleChange={(next) => method.handleField && setHandle(method.handleField, next)}
             onInstructionsChange={(next) => setInstructions(method.id, next)}
@@ -584,10 +678,11 @@ export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionPro
         ))}
       </ul>
       <div className="settingsEdit__saveRow">
+        <GhostButton label="Cancel" onClick={handleCancel} disabled={!dirty || busy} />
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save payment options'}
           onClick={() => void handleSave()}
-          disabled={!dirty || busy}
+          disabled={!dirty || busy || invalid}
           busy={busy}
         />
         {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}
@@ -602,6 +697,10 @@ interface PaymentOptionRowProps {
   handle: string;
   instructions: string;
   busy: boolean;
+  /** #1593: why the handle cannot be saved, or undefined. */
+  handleError?: string | undefined;
+  /** The handle differs from the saved one. */
+  handleChanged?: boolean;
   onEnabledChange: (next: boolean) => void;
   onHandleChange: (next: string) => void;
   onInstructionsChange: (next: string) => void;
@@ -625,11 +724,18 @@ function PaymentOptionRow({
   handle,
   instructions,
   busy,
+  handleError,
+  handleChanged = false,
   onEnabledChange,
   onHandleChange,
   onInstructionsChange,
 }: PaymentOptionRowProps) {
   const needsHandle = method.kind === 'link';
+  // A refused or edited handle keeps its box open even while the method is
+  // off: the handle is saved either way, and a refusal needs a box to fix it
+  // in (one that does not vanish mid-word the moment the value passes).
+  const showHandle =
+    needsHandle && method.handleField !== undefined && (enabled || handleError !== undefined || handleChanged);
   const needsInstructions = method.kind === 'instructions';
   const blank =
     enabled &&
@@ -653,18 +759,22 @@ function PaymentOptionRow({
           {method.label} charges about {formatFeeSchedule(method.fee)} per payment.
         </p>
       ) : null}
-      {enabled && needsHandle && method.handleField ? (
-        <label className="settingsEdit__field">
-          <span className="settingsEdit__fieldLabel">{method.label} handle</span>
-          <input
-            type="text"
-            className="settingsEdit__input"
-            value={handle}
-            placeholder={PAYMENT_FIELDS.find((f) => f.key === method.handleField)?.placeholder ?? ''}
-            disabled={busy}
-            onChange={(e) => onHandleChange(e.target.value)}
-          />
-        </label>
+      {showHandle && method.handleField ? (
+        <>
+          <label className="settingsEdit__field">
+            <span className="settingsEdit__fieldLabel">{method.label} handle</span>
+            <input
+              type="text"
+              className="settingsEdit__input"
+              value={handle}
+              placeholder={PAYMENT_FIELDS.find((f) => f.key === method.handleField)?.placeholder ?? ''}
+              disabled={busy}
+              onChange={(e) => onHandleChange(e.target.value)}
+              {...fieldErrorAttrs(method.handleField, handleError)}
+            />
+          </label>
+          <FieldError id={method.handleField} message={handleError} />
+        </>
       ) : null}
       {enabled && needsInstructions ? (
         <label className="settingsEdit__field">
@@ -721,11 +831,27 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  // #1593: each home section's Limit box exactly as typed, keyed by row. A
+  // value that parses goes into `portal`; one that does not stays here with
+  // its sentence beside the box, never coerced to a number nobody typed.
+  const [limitText, setLimitText] = useState<Record<string, string>>({});
 
   const dirty = JSON.stringify(portal) !== JSON.stringify(data.mytribePortal);
+  const limitErrors: Record<string, string> = {};
+  for (const [key, text] of Object.entries(limitText)) {
+    const parsed = parsePortalLimit(text);
+    if ('error' in parsed) limitErrors[key] = parsed.error;
+  }
+  const themeProblem = themeError(portal.themeId);
+  const invalid = Object.keys(limitErrors).length > 0 || themeProblem !== null;
 
   function edit(next: MyTribePortalConfig) {
     setPortal(next);
+    setJustSaved(false);
+  }
+
+  function editLimitText(key: string, text: string) {
+    setLimitText((t) => ({ ...t, [key]: text }));
     setJustSaved(false);
   }
 
@@ -745,11 +871,12 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
   }
 
   async function handleSave() {
-    if (!dirty || busy) return;
+    if (!dirty || busy || invalid) return;
     setBusy(true);
     setError(null);
     try {
       await onSave({ mytribePortal: portal });
+      setLimitText({});
       setJustSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed.');
@@ -760,9 +887,16 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
 
   function handleCancel() {
     setPortal(data.mytribePortal);
+    setLimitText({});
     setError(null);
     setJustSaved(false);
   }
+
+  // A stored theme the list does not know stays selectable under its raw id,
+  // so the box shows what is saved, with the refusal beside it.
+  const themeOptions = PORTAL_THEMES.some((t) => t.id === portal.themeId)
+    ? PORTAL_THEMES
+    : [...PORTAL_THEMES, { id: portal.themeId, label: portal.themeId === '' ? 'Not set' : portal.themeId }];
 
   return (
     <DenPanel
@@ -786,17 +920,25 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
         {...(decode ? { decode } : {})}
       />
 
-      <label className="settingsEdit__field">
-        <span className="settingsEdit__fieldLabel">Theme id</span>
-        <input
-          type="text"
-          className="settingsEdit__input"
-          value={portal.themeId}
-          placeholder="default"
-          disabled={busy}
-          onChange={(e) => edit({ ...portal, themeId: e.target.value })}
-        />
-      </label>
+      <div className="settingsEdit__fieldGroup">
+        <label className="settingsEdit__field">
+          <span className="settingsEdit__fieldLabel">Theme</span>
+          <select
+            className="settingsEdit__input"
+            value={portal.themeId}
+            disabled={busy}
+            onChange={(e) => edit({ ...portal, themeId: e.target.value })}
+            {...fieldErrorAttrs('portalTheme', themeProblem)}
+          >
+            {themeOptions.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <FieldError id="portalTheme" message={themeProblem} />
+      </div>
 
       <div className="settingsEdit__subsection">
         <span className="settingsEdit__groupHeading">Top banner</span>
@@ -852,7 +994,14 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
         <HomeLayoutEditor
           home={portal.home}
           busy={busy}
+          limitText={limitText}
+          limitErrors={limitErrors}
+          onLimitText={editLimitText}
           onChange={(home) => edit({ ...portal, home })}
+          onReset={() => {
+            setLimitText({});
+            edit({ ...portal, home: { sections: [...RESET_HOME_SECTIONS] } });
+          }}
         />
         <p className="settingsEdit__hint">
           Use the arrows to reorder. Turning a section off removes it from the kinfolk portal&rsquo;s
@@ -861,11 +1010,15 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
       </div>
 
       <div className="settingsEdit__saveRow">
-        <GhostButton label="Cancel" onClick={handleCancel} disabled={!dirty || busy} />
+        <GhostButton
+          label="Cancel"
+          onClick={handleCancel}
+          disabled={(!dirty && Object.keys(limitText).length === 0) || busy}
+        />
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save'}
           onClick={() => void handleSave()}
-          disabled={!dirty || busy}
+          disabled={!dirty || busy || invalid}
           busy={busy}
         />
         {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}
@@ -877,7 +1030,17 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
 interface HomeLayoutEditorProps {
   home: PortalHome;
   busy: boolean;
+  /** #1593: the Limit boxes as typed, by row key; a row not here shows its stored limit. */
+  limitText: Record<string, string>;
+  limitErrors: Record<string, string>;
+  onLimitText: (key: string, text: string) => void;
   onChange: (home: PortalHome) => void;
+  onReset: () => void;
+}
+
+/** A home row's key, the same one its list item uses. */
+function homeRowKey(row: HomeSectionCfg, index: number): string {
+  return row.id ?? `unnamed-${index}`;
 }
 
 /**
@@ -901,7 +1064,7 @@ interface HomeLayoutEditorProps {
  * array the portal reads as "no config at all", not a full canonical list that
  * merely looks the same today.
  */
-function HomeLayoutEditor({ home, busy, onChange }: HomeLayoutEditorProps) {
+function HomeLayoutEditor({ home, busy, limitText, limitErrors, onLimitText, onChange, onReset }: HomeLayoutEditorProps) {
   const rows = effectiveHomeSections(home.sections);
   const isDefault = home.sections.length === 0;
 
@@ -922,15 +1085,17 @@ function HomeLayoutEditor({ home, busy, onChange }: HomeLayoutEditorProps) {
         </span>
         <GhostButton
           label="Reset to default layout"
-          onClick={() => onChange({ sections: [...RESET_HOME_SECTIONS] })}
+          onClick={onReset}
           disabled={busy || isDefault}
         />
       </div>
       <ul className="settingsEdit__homeList">
         {rows.map((row, index) => {
           const label = homeSectionLabel(row.id);
+          const key = homeRowKey(row, index);
+          const limitId = `homeLimit-${key}`;
           return (
-            <li key={row.id ?? `unnamed-${index}`} className="settingsEdit__homeRow">
+            <li key={key} className="settingsEdit__homeRow">
               <div className="settingsEdit__homeMove">
                 <IconButton
                   icon={<UpGlyph />}
@@ -954,20 +1119,25 @@ function HomeLayoutEditor({ home, busy, onChange }: HomeLayoutEditorProps) {
                 disabled={busy}
                 onChange={(next) => updateRow(index, { enabled: next })}
               />
+              {/* #1593: text, not type="number", so "abc" or "-3" stays in the
+                  box with its sentence instead of being read as 0. */}
               <label className="settingsEdit__homeLimit">
                 <span className="settingsEdit__fieldLabel">Limit</span>
                 <input
-                  type="number"
-                  min={0}
+                  type="text"
+                  inputMode="numeric"
                   className="settingsEdit__input settingsEdit__input--narrow"
-                  value={row.limit}
+                  value={limitText[key] ?? String(row.limit)}
                   disabled={busy}
                   onChange={(e) => {
-                    const parsed = Number.parseInt(e.target.value, 10);
-                    updateRow(index, { limit: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0 });
+                    onLimitText(key, e.target.value);
+                    const parsed = parsePortalLimit(e.target.value);
+                    if ('value' in parsed) updateRow(index, { limit: parsed.value });
                   }}
+                  {...fieldErrorAttrs(limitId, limitErrors[key])}
                 />
               </label>
+              <FieldError id={limitId} message={limitErrors[key]} />
             </li>
           );
         })}

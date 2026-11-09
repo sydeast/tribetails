@@ -4,6 +4,7 @@ import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
+import { splitSettingsRefusal } from '../../lib/settingsChecks';
 import {
   NUMBER_FIELDS,
   TRACKING_ACCURACIES,
@@ -13,6 +14,7 @@ import {
   parseOptionList,
   parseWholeNumber,
 } from '../../lib/businessOperations';
+import { FieldError, fieldErrorAttrs } from './sections';
 import '../SettingsEdit.css';
 
 /**
@@ -133,6 +135,30 @@ export function visitsTrackingPatch(
   };
 }
 
+/** The four typed fields of this panel, by the setting each one writes. */
+type TypedField = 'saveRoutesForDays' | 'arrivalRadiusMeters' | 'etaMinuteOptions' | 'draftRetentionOptions';
+
+/**
+ * #1593: what is wrong with each typed field, keyed by the setting it writes,
+ * for the line under that field. The same parsers `visitsTrackingPatch` runs,
+ * without the field-name lead its single message needs: here the field's own
+ * label already says which one it is.
+ */
+export function visitsTrackingFieldErrors(draft: Draft): Partial<Record<TypedField, string>> {
+  const out: Partial<Record<TypedField, string>> = {};
+  const routeDays = parseWholeNumber(draft.saveRoutesForDays, NUMBER_FIELDS.saveRoutesForDays);
+  if ('error' in routeDays) out.saveRoutesForDays = routeDays.error;
+  const radius = parseWholeNumber(draft.arrivalRadiusMeters, NUMBER_FIELDS.arrivalRadiusMeters);
+  if ('error' in radius) out.arrivalRadiusMeters = radius.error;
+  const eta = parseOptionList(draft.etaMinuteOptions, 'minutes');
+  if ('error' in eta) out.etaMinuteOptions = eta.error;
+  const drafts = parseOptionList(draft.draftRetentionOptions, 'days');
+  if ('error' in drafts) out.draftRetentionOptions = drafts.error;
+  return out;
+}
+
+const TYPED_FIELDS: readonly string[] = ['saveRoutesForDays', 'arrivalRadiusMeters', 'etaMinuteOptions', 'draftRetentionOptions'];
+
 function sameNumbers(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((n, i) => n === b[i]);
 }
@@ -162,10 +188,15 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  // #1593: a server refusal for one of the typed fields, under that field
+  // until it is edited again.
+  const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
 
   const built = visitsTrackingPatch(draft);
   const problem = 'error' in built ? built.error : null;
   const dirty = isDirty(draft, data);
+  const typed = visitsTrackingFieldErrors(draft);
+  const fieldError = (key: TypedField): string | undefined => typed[key] ?? serverErrors[key];
   const tracking = draft.enableGPSTrackingForAllVisits;
 
   // The two dropdowns offer whatever the operator has typed into the list beside
@@ -176,6 +207,11 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
 
   function edit(next: Partial<Draft>) {
     setDraft((d) => ({ ...d, ...next }));
+    setServerErrors((e) => {
+      const kept = { ...e };
+      for (const key of Object.keys(next)) delete kept[key];
+      return kept;
+    });
     setJustSaved(false);
   }
 
@@ -183,11 +219,14 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
     if (!dirty || busy || 'error' in built) return;
     setBusy(true);
     setError(null);
+    setServerErrors({});
     try {
       await onSave(built.patch);
       setJustSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
+      const split = splitSettingsRefusal(err, TYPED_FIELDS);
+      setServerErrors(split.byField);
+      setError(split.banner);
     } finally {
       setBusy(false);
     }
@@ -203,12 +242,6 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
           {error}
         </Banner>
       ) : null}
-      {problem ? (
-        <Banner tone="warning" title="Not ready to save" className="settingsEdit__sectionBanner">
-          {problem}
-        </Banner>
-      ) : null}
-
       <ul className="settingsEdit__toggleList">
         <li className="settingsEdit__toggleRow">
           <span className="settingsEdit__toggleLabel">Track visits by GPS</span>
@@ -284,13 +317,14 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
                 value={draft.etaMinuteOptions}
                 placeholder="5, 10, 15, 20, 30"
                 disabled={busy}
-                aria-describedby="etaOptions-hint"
                 onChange={(e) => edit({ etaMinuteOptions: e.target.value })}
+                {...fieldErrorAttrs('etaOptions', fieldError('etaMinuteOptions'), 'etaOptions-hint')}
               />
             </label>
             <span id="etaOptions-hint" className="settingsEdit__hint">
               Separate with commas. These are the waits the On My Way sheet offers.
             </span>
+            <FieldError id="etaOptions" message={fieldError('etaMinuteOptions')} />
           </div>
         </div>
       </div>
@@ -324,13 +358,14 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
                 value={draft.draftRetentionOptions}
                 placeholder="30, 60, 90"
                 disabled={busy}
-                aria-describedby="draftOptions-hint"
                 onChange={(e) => edit({ draftRetentionOptions: e.target.value })}
+                {...fieldErrorAttrs('draftOptions', fieldError('draftRetentionOptions'), 'draftOptions-hint')}
               />
             </label>
             <span id="draftOptions-hint" className="settingsEdit__hint">
               Separate with commas.
             </span>
+            <FieldError id="draftOptions" message={fieldError('draftRetentionOptions')} />
           </div>
         </div>
         <p className="settingsEdit__hint">
@@ -380,10 +415,11 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
                 className="settingsEdit__input"
                 value={draft.arrivalRadiusMeters}
                 disabled={busy}
-                aria-describedby="arrivalRadius-hint"
                 onChange={(e) => edit({ arrivalRadiusMeters: e.target.value })}
+                {...fieldErrorAttrs('arrivalRadius', fieldError('arrivalRadiusMeters'), 'arrivalRadius-hint')}
               />
             </label>
+            <FieldError id="arrivalRadius" message={fieldError('arrivalRadiusMeters')} />
             <span id="arrivalRadius-hint" className="settingsEdit__hint">
               Only applies while Verify arrival and departure by location is on. An arrival
               recorded further than this from the household stops the visit being marked complete.
@@ -402,8 +438,10 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
                 value={draft.saveRoutesForDays}
                 disabled={busy}
                 onChange={(e) => edit({ saveRoutesForDays: e.target.value })}
+                {...fieldErrorAttrs('saveRoutes', fieldError('saveRoutesForDays'))}
               />
             </label>
+            <FieldError id="saveRoutes" message={fieldError('saveRoutesForDays')} />
           </div>
         </div>
         <p className="settingsEdit__hint">
@@ -418,6 +456,7 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
           label="Cancel"
           onClick={() => {
             setDraft(seed(data));
+            setServerErrors({});
             setError(null);
             setJustSaved(false);
           }}

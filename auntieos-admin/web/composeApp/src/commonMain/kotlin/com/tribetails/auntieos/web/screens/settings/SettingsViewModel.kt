@@ -27,6 +27,9 @@ data class SettingsUiState(
     val reloadingSettings: Boolean = false,
 )
 
+/** #1593: the `details.code` of a `saveBusinessSettings` field refusal. */
+const val SETTINGS_REFUSED_CODE: String = "settings_refused"
+
 class SettingsViewModel(private val dataSource: AuntieDataSource) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined + reportingExceptionHandler("vm:Settings"))
@@ -90,9 +93,17 @@ class SettingsViewModel(private val dataSource: AuntieDataSource) {
         }
         when (val r = dataSource.saveBusinessSettings(settings)) {
             is WriteResult.Ok  -> _uiState.update { it.copy(saveSuccess = true, saveError = null) }
-            is WriteResult.Err -> _uiState.update { it.copy(saveSuccess = false, saveError = "Save failed: ${r.message}") }
+            is WriteResult.Err -> _uiState.update { it.copy(saveSuccess = false, saveError = saveErrorText(r)) }
         }
     }
+
+    /**
+     * #1593: a refusal from `saveBusinessSettings` is already the sentence the
+     * operator reads (the same one the panel shows beside the field), so it is
+     * shown as it is. Anything else is a save that did not get through.
+     */
+    private fun saveErrorText(r: WriteResult.Err): String =
+        if (r.code == SETTINGS_REFUSED_CODE) r.message else "Save failed: ${r.message}"
 
     fun clearSaveSuccess() { _uiState.update { it.copy(saveSuccess = false) } }
     fun clearSaveError()   { _uiState.update { it.copy(saveError = null) } }

@@ -516,7 +516,7 @@ describe('Settings: MyTribe portal editor extras', () => {
     const panel = await openSection('MyTribe portal');
     expect(within(panel).getByText('Home layout')).toBeInTheDocument();
     expect(within(panel).getByText('Default layout (no custom sections configured)')).toBeInTheDocument();
-    expect(within(panel).getByLabelText('Theme id')).toBeEnabled();
+    expect(within(panel).getByLabelText('Theme')).toBeEnabled();
   });
 });
 
@@ -595,7 +595,7 @@ describe('Settings — Business profile editor', () => {
     expect(nameInput).toHaveAttribute('aria-required', 'true');
     expect(within(fields).getByRole('alert')).toHaveTextContent('Enter the business name.');
 
-    await userEvent.type(within(fields).getByLabelText('Phone'), '555-0199');
+    await userEvent.type(within(fields).getByLabelText('Phone'), '512-555-0199');
     expect(within(fields).getByRole('button', { name: /^save$/i })).toBeDisabled();
 
     await userEvent.type(nameInput, 'Sunny Paws');
@@ -603,7 +603,7 @@ describe('Settings — Business profile editor', () => {
     expect(within(fields).getByRole('button', { name: /^save$/i })).toBeEnabled();
     await userEvent.click(within(fields).getByRole('button', { name: /^save$/i }));
     expect(saveBusinessSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ businessName: 'Sunny Paws', businessPhone: '555-0199' }),
+      expect.objectContaining({ businessName: 'Sunny Paws', businessPhone: '512-555-0199' }),
     );
   });
 
@@ -867,9 +867,7 @@ describe('Settings — MyTribe portal editor', () => {
     render(<Settings />);
     await screen.findByLabelText('Business name');
     const panel = await openSection('MyTribe portal');
-    const themeInput = within(panel).getByLabelText('Theme id');
-    await userEvent.clear(themeInput);
-    await userEvent.type(themeInput, 'sunset');
+    await userEvent.selectOptions(within(panel).getByLabelText('Theme'), 'Sunset');
     await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
     expect(saveBusinessSettings).toHaveBeenCalledWith({
       mytribePortal: expect.objectContaining({ themeId: 'sunset' }),
@@ -882,11 +880,9 @@ describe('Settings — MyTribe portal editor', () => {
     render(<Settings />);
     await screen.findByLabelText('Business name');
     const panel = await openSection('MyTribe portal');
-    const themeInput = within(panel).getByLabelText('Theme id');
-    await userEvent.clear(themeInput);
-    await userEvent.type(themeInput, 'sunset');
+    await userEvent.selectOptions(within(panel).getByLabelText('Theme'), 'Sunset');
     await userEvent.click(within(panel).getByRole('button', { name: /cancel/i }));
-    expect(within(panel).getByLabelText('Theme id')).toHaveValue('default');
+    expect(within(panel).getByLabelText('Theme')).toHaveValue('default');
     expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
   });
 });
@@ -1194,5 +1190,179 @@ describe('Settings: Integrations is a report, and its Google row opens Calendar 
         name: 'Check again',
       }),
     ).toBeInTheDocument();
+  });
+});
+
+// #1593: every MyTribe portal field refuses a bad value beside itself, and a
+// server refusal's sentence is what the operator reads.
+describe('Settings #1593: MyTribe portal checks', () => {
+  it('offers the portal themes as a list, by name', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    const theme = within(panel).getByLabelText('Theme');
+    expect(theme.tagName).toBe('SELECT');
+    expect(within(theme).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Default', 'Midnight', 'Clear', 'Sunset', 'Duotone', 'Calm', 'Hearth', 'Jewel', 'Soft',
+    ]);
+    expect(theme).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('shows a stored theme the list does not know under its raw id, refused, with Save off until one is picked', async () => {
+    getBusinessSettings.mockResolvedValue(
+      withOverrides({ mytribePortal: { ...DEFAULT_BUSINESS_SETTINGS.mytribePortal, themeId: 'neon' } }),
+    );
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    const theme = within(panel).getByLabelText('Theme');
+    expect(theme).toHaveValue('neon');
+    expect(theme).toHaveAttribute('aria-invalid', 'true');
+    expect(theme).toHaveAccessibleErrorMessage('Pick a theme from the list.');
+    // Something else changes; Save stays off while the theme is refused.
+    await userEvent.click(within(panel).getByRole('switch', { name: /toggle the portal top banner/i }));
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+    await userEvent.selectOptions(theme, 'Calm');
+    expect(within(panel).queryByText('Pick a theme from the list.')).toBeNull();
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith({
+      mytribePortal: expect.objectContaining({ themeId: 'calm' }),
+    });
+  });
+
+  it.each(['-3', 'abc', '1.5'])(
+    'keeps a typed limit of %j in the box, says why beside it, and keeps Save off',
+    async (typed) => {
+      getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+      render(<Settings />);
+      await screen.findByLabelText('Business name');
+      const panel = await openSection('MyTribe portal');
+      const upNextRow = within(panel).getByText('Up next').closest('li') as HTMLElement;
+      const limit = within(upNextRow).getByLabelText('Limit');
+      await userEvent.clear(limit);
+      await userEvent.type(limit, typed);
+      expect(limit).toHaveValue(typed);
+      expect(limit).toHaveAttribute('aria-invalid', 'true');
+      expect(within(upNextRow).getByRole('alert')).toHaveTextContent(
+        'Enter a limit of 0 or more, as a whole number. 0 shows everything.',
+      );
+      expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+    },
+  );
+  it('a fixed limit clears the sentence and saves the number typed', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    const upNextRow = within(panel).getByText('Up next').closest('li') as HTMLElement;
+    const limit = within(upNextRow).getByLabelText('Limit');
+    await userEvent.clear(limit);
+    await userEvent.type(limit, '-3');
+    expect(within(upNextRow).getByRole('alert')).toBeInTheDocument();
+    await userEvent.clear(limit);
+    await userEvent.type(limit, '3');
+    expect(within(upNextRow).queryByRole('alert')).toBeNull();
+    expect(limit).not.toHaveAttribute('aria-invalid');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    const changes = saveBusinessSettings.mock.calls[0]?.[0] as {
+      mytribePortal: { home: { sections: Array<{ id: string; limit: number }> } };
+    };
+    expect(changes.mytribePortal.home.sections.find((s) => s.id === 'upNext')?.limit).toBe(3);
+  });
+
+  it('Cancel puts a refused limit back to the saved one', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    const upNextRow = within(panel).getByText('Up next').closest('li') as HTMLElement;
+    const limit = within(upNextRow).getByLabelText('Limit');
+    await userEvent.clear(limit);
+    await userEvent.type(limit, 'abc');
+    await userEvent.click(within(panel).getByRole('button', { name: /cancel/i }));
+    expect(within(upNextRow).getByLabelText('Limit')).toHaveValue('0');
+    expect(within(upNextRow).queryByRole('alert')).toBeNull();
+  });
+
+  it('shows the server refusal sentence when the save is refused', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockRejectedValue(
+      Object.assign(new Error('Pick a theme from the list.'), {
+        details: { code: 'settings_refused', field: 'mytribePortal', refusals: [{ field: 'mytribePortal', message: 'Pick a theme from the list.' }] },
+      }),
+    );
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    await userEvent.selectOptions(within(panel).getByLabelText('Theme'), 'Sunset');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(await within(panel).findByText('Pick a theme from the list.')).toBeInTheDocument();
+  });
+});
+
+describe('Settings #1593: Business profile email and phone', () => {
+  async function profileFields(): Promise<HTMLElement> {
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    const nameInput = await within(panel).findByLabelText('Business name');
+    return panelOwning(nameInput);
+  }
+
+  it('refuses an email that is not an address, beside the field, and Save stays off until it is fixed', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ businessName: 'Tribe Tails' }));
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    const fields = await profileFields();
+    const email = within(fields).getByLabelText('Email');
+    await userEvent.type(email, 'pawsome@');
+    expect(email).toHaveAttribute('aria-invalid', 'true');
+    expect(email).toHaveAccessibleErrorMessage('Enter an email like name@example.com, or leave it blank.');
+    expect(within(fields).getByRole('button', { name: /^save$/i })).toBeDisabled();
+    await userEvent.type(email, 'hanasamku.com');
+    expect(email).not.toHaveAttribute('aria-invalid');
+    await userEvent.click(within(fields).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith(expect.objectContaining({ businessEmail: 'pawsome@hanasamku.com' }));
+  });
+
+  it('refuses a phone number without ten digits; a blank one may be saved', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ businessName: 'Tribe Tails', businessPhone: '512-555-0199' }));
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    const fields = await profileFields();
+    const phone = within(fields).getByLabelText('Phone');
+    await userEvent.clear(phone);
+    await userEvent.type(phone, '555-0199');
+    expect(within(fields).getByText('Enter a 10-digit phone number, or leave it blank.')).toBeInTheDocument();
+    expect(within(fields).getByRole('button', { name: /^save$/i })).toBeDisabled();
+    await userEvent.clear(phone);
+    expect(within(fields).queryByText('Enter a 10-digit phone number, or leave it blank.')).toBeNull();
+    await userEvent.click(within(fields).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith(expect.objectContaining({ businessPhone: '' }));
+  });
+
+  it('puts a server refusal for one field beside that field, and editing the field clears it', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ businessName: 'Tribe Tails' }));
+    saveBusinessSettings.mockRejectedValue(
+      Object.assign(new Error('Enter a 10-digit phone number, or leave it blank.'), {
+        details: {
+          code: 'settings_refused',
+          field: 'businessPhone',
+          refusals: [{ field: 'businessPhone', message: 'Enter a 10-digit phone number, or leave it blank.' }],
+        },
+      }),
+    );
+    const fields = await profileFields();
+    const phone = within(fields).getByLabelText('Phone');
+    await userEvent.type(phone, '512-555-0199');
+    await userEvent.click(within(fields).getByRole('button', { name: /^save$/i }));
+    expect(await within(fields).findByText('Enter a 10-digit phone number, or leave it blank.')).toBeInTheDocument();
+    expect(phone).toHaveAccessibleErrorMessage('Enter a 10-digit phone number, or leave it blank.');
+    // Beside the field, not repeated in a banner.
+    expect(within(fields).queryByText('Save failed')).toBeNull();
+    await userEvent.clear(phone);
+    await userEvent.type(phone, '512-555-0198');
+    expect(phone).not.toHaveAttribute('aria-invalid');
+    expect(within(fields).queryByText('Enter a 10-digit phone number, or leave it blank.')).toBeNull();
   });
 });

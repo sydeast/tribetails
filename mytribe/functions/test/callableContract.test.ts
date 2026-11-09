@@ -43,6 +43,7 @@ import { Args as ArchiveVetClinicArgs } from '../src/admin/archiveVetClinic';
 // not fail loudly, it strips the WRONG collection, so the shape is frozen from
 // birth.
 import { Args as RemoveBusinessTagArgs } from '../src/admin/removeBusinessTag';
+import { Args as SaveBusinessSettingsArgs } from '../src/admin/saveBusinessSettings';
 // #886: the failed-login report, sent unauthenticated by every sign-in client.
 import { RecordFailedLoginArgs } from '../src/auth/loginSecurity';
 // 17.3 Home dashboard layout (added 2026-07-25). Three surfaces parse the SAME
@@ -340,6 +341,9 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // cascade rewrites `kinfolk` or `kin`. A client that stopped sending it would
   // otherwise fall to a default and clear the wrong half of the directory.
   removeBusinessTag: { schema: RemoveBusinessTagArgs, keys: ['name', 'scope'] },
+  // #1593: three clients build this envelope by hand. One key; the fields ride
+  // inside it and are checked one by one in lib/businessSettingsChecks.ts.
+  saveBusinessSettings: { schema: SaveBusinessSettingsArgs, keys: ['changes'] },
   // #886: unauthenticated, sent after a credential failure by both web apps, both
   // Android apps and both desktop clients. They send `email` only; `ip` and
   // `userAgent` stay optional and the server never uses a client `ip` for its

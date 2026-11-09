@@ -175,8 +175,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * `getMyKinTales` and `getMyKinPhotos` share (two entrypoints already in this
  * graph, so it is resident by construction). It holds no package import and
  * folding it into an unrelated helper to dodge the count would hide it.
+ *
+ * 437 since #1593 (on top of #1775's 436): `admin/saveBusinessSettings.ts` is a new FUNCTIONS entry,
+ * in this graph by construction (the one Settings save; the rules now deny
+ * the document to every client). Its field checks,
+ * `lib/businessSettingsChecks.ts`, load with `await import()` inside the
+ * handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 436;
+const MAX_OWN_EAGER_MODULES = 437;
 
 interface Edge {
   spec: string;
