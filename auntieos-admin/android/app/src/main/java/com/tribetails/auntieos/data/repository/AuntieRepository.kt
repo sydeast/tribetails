@@ -1872,21 +1872,6 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to save coverage package config", it) }
 
-    // Business Hours - single source of truth lives in ServiceRepository.
-    // AuntieRepository delegates so AdminSettings + ServiceManagement screens
-    // never diverge on the `business_hours` collection.
-    private val serviceRepo by lazy { ServiceRepository() }
-
-    suspend fun getBusinessHours(): Result<List<BusinessHours>> {
-        authGate.ensureAuthenticated()
-        return serviceRepo.getBusinessHours()
-    }
-
-    suspend fun saveBusinessHours(hours: List<BusinessHours>): Result<Unit> {
-        authGate.ensureAuthenticated()
-        return serviceRepo.updateBusinessHours(hours)
-    }
-
     private fun getCurrentTimestamp(): String {
         return java.time.Instant.now().toString()
     }

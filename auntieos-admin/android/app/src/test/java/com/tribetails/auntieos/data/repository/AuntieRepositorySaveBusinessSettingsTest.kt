@@ -268,4 +268,42 @@ class AuntieRepositorySaveBusinessSettingsTest {
         assertTrue(result.isFailure)
         verify(exactly = 0) { functions.getHttpsCallable(any()) }
     }
+
+    // ── #1764: the weekly hours ──────────────────────────────────────────────
+
+    @Test
+    fun `weekly hours go out as the changed days only, a closed day as a blank`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        val payload = stub(functions)
+        val loaded = BusinessSettings(
+            businessName = "Den",
+            businessHours = mapOf("Monday" to "09:00-17:00", "Tuesday" to "09:00-17:00", "Saturday" to ""),
+        )
+        val edited = loaded.copy(
+            businessHours = loaded.businessHours + mapOf("Tuesday" to "10:00-17:00", "Sunday" to ""),
+        )
+
+        val diff = businessSettingsFieldChanges(loaded, edited)
+        repoWith(functions).updateBusinessSettingsFields(diff).getOrThrow()
+
+        assertEquals(
+            mapOf("businessHours" to mapOf("Tuesday" to "10:00-17:00", "Sunday" to "")),
+            changesOf(payload.captured),
+        )
+    }
+
+    @Test
+    fun `untouched weekly hours are not sent at all`() {
+        val loaded = BusinessSettings(businessHours = mapOf("Monday" to "09:00-17:00"))
+        val diff = businessSettingsFieldChanges(loaded, loaded.copy(businessName = "Den"))
+        assertEquals(setOf("businessName"), diff.keys)
+    }
+
+    @Test
+    fun `a day only removed from the copy sends nothing, never an empty map over the week`() {
+        // The server merges this map day by day; `{}` would land as an empty week.
+        val loaded = BusinessSettings(businessHours = mapOf("Monday" to "09:00-17:00", "Tuesday" to ""))
+        val diff = businessSettingsFieldChanges(loaded, loaded.copy(businessHours = mapOf("Monday" to "09:00-17:00")))
+        assertFalse(diff.containsKey("businessHours"))
+    }
 }

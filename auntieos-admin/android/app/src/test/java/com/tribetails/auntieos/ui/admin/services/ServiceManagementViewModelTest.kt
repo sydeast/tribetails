@@ -1,7 +1,6 @@
 package com.tribetails.auntieos.ui.admin.services
 
 import com.tribetails.auntieos.data.model.BaseService
-import com.tribetails.auntieos.data.model.BusinessHours
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.SupplementalService
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -43,7 +42,6 @@ class ServiceManagementViewModelTest {
         coEvery { mockRepo.getSurcharges(any()) } returns Result.success(emptyList())
         coEvery { mockRepo.getDiscounts(any()) } returns Result.success(emptyList())
         coEvery { mockRepo.getPromoCodes(any()) } returns Result.success(emptyList())
-        coEvery { mockRepo.getBusinessHours() } returns Result.success(emptyList())
         // Unified settings: ServiceManagementViewModel now reads/writes the
         // BusinessSettings doc via AuntieRepository.
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings())

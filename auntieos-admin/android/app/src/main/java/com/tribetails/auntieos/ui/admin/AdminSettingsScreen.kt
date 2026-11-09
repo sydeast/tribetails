@@ -434,7 +434,6 @@ fun AdminSettingsScreen(
 
     LaunchedEffect(Unit) {
         viewModel.loadBusinessSettings()
-        viewModel.loadBusinessHours()
         viewModel.loadUserProfile()
         viewModel.loadIntegrations()
     }
@@ -604,10 +603,15 @@ fun AdminSettingsScreen(
                             onSettingsChange = { viewModel.updateBusinessSettings(it) },
                         )
 
+                        // #1764: business_settings.businessHours, through the
+                        // same Settings save as the panels around it.
                         SettingsSection.BusinessHours -> BusinessHoursPanel(
                             hours = uiState.businessHours,
+                            isLoading = uiState.isLoading,
+                            saving = uiState.settingsSaving,
+                            refusal = uiState.settingsRefusal,
                             onRowChange = viewModel::setBusinessHourRow,
-                            onSave = { viewModel.updateBusinessHours(uiState.businessHours) },
+                            onSave = viewModel::saveBusinessHours,
                         )
 
                         // Unreachable: onSelect above routes this section to the real
@@ -975,21 +979,31 @@ private val DAY_LABELS = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 @Composable
 private fun BusinessHoursPanel(
-    hours: List<com.tribetails.auntieos.data.model.BusinessHours>,
-    onRowChange: (com.tribetails.auntieos.data.model.BusinessHours) -> Unit,
+    hours: List<WeeklyHoursRow>,
+    isLoading: Boolean,
+    saving: Boolean,
+    refusal: SettingsRefusal?,
+    onRowChange: (WeeklyHoursRow) -> Unit,
     onSave: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
+    // The server names the day it refused ("Monday: ..."); that sentence goes beside the row.
+    val refused = weeklyHoursRefusal(refusal)
     DenPanel(
         title = "Business hours",
         subtitle = "When the Den is open for visits. Use 24h times like 09:00 to 17:00.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
+            if (hours.isNotEmpty() && noWeeklyHoursSet(hours)) {
+                Text("No hours are set yet.", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            }
             hours.forEach { row ->
                 val label = DAY_LABELS.getOrElse(row.dayOfWeek - 1) { row.dayOfWeek.toString() }
                 // #1593: the server's sentence, so the phone and the web say the same thing.
-                val rangeProblem = if (row.isOpen) businessHoursRowProblem(row.openTime, row.closeTime) else null
+                // A stored value this panel cannot read shows its sentence as soon as the panel opens.
+                val rangeProblem = row.problem
+                    ?: refused?.takeIf { it.first == row.dayOfWeek }?.second
                 val rangeError = rangeProblem != null
 
                 Row(
@@ -1005,25 +1019,39 @@ private fun BusinessHoursPanel(
                     )
                     AuntieToggle(
                         checked = row.isOpen,
-                        onCheckedChange = { onRowChange(row.copy(isOpen = it)) },
+                        onCheckedChange = { open ->
+                            onRowChange(row.copy(kind = if (open) DayHoursKind.OPEN else DayHoursKind.CLOSED))
+                        },
+                        enabled = !saving,
                     )
-                    AuntieField(
-                        value = row.openTime,
-                        onValueChange = { onRowChange(row.copy(openTime = it)) },
-                        placeholder = "09:00",
-                        enabled = row.isOpen,
-                        isError = rangeError,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text("to", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                    AuntieField(
-                        value = row.closeTime,
-                        onValueChange = { onRowChange(row.copy(closeTime = it)) },
-                        placeholder = "17:00",
-                        enabled = row.isOpen,
-                        isError = rangeError,
-                        modifier = Modifier.weight(1f),
-                    )
+                    if (row.isOpen) {
+                        AuntieField(
+                            value = row.openTime,
+                            onValueChange = { onRowChange(row.copy(openTime = it)) },
+                            placeholder = "09:00",
+                            enabled = !saving,
+                            isError = rangeError,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("to", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        AuntieField(
+                            value = row.closeTime,
+                            onValueChange = { onRowChange(row.copy(closeTime = it)) },
+                            placeholder = "17:00",
+                            enabled = !saving,
+                            isError = rangeError,
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        // Not set is its own answer: no key in the map, which the
+                        // phone line reads as "cannot tell", not as Closed.
+                        Text(
+                            row.display,
+                            style = AuntieTheme.typography.bodyMedium,
+                            color = c.textDim,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
                 SettingsFieldProblem(rangeProblem)
             }
@@ -1031,9 +1059,10 @@ private fun BusinessHoursPanel(
             Spacer(Modifier.height(dims.space1))
             PrimaryButton(
                 label = "Save Business Hours",
-                onClick = onSave,
+                onClick = { if (!saving) onSave() },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = hours.all { !it.isOpen || businessHoursRowProblem(it.openTime, it.closeTime) == null },
+                enabled = !isLoading && !saving && hours.isNotEmpty() && hours.all { it.problem == null },
+                loading = saving,
             )
         }
     }

@@ -89,7 +89,7 @@ private val HHMM = Regex("^([01]\\d|2[0-3]):([0-5]\\d)$")
 private val LOOSE_HHMM = Regex("""^(\d{1,2}):(\d{2})$""")
 
 /** `"9:00"` or `"09:00"` to `"09:00"`; null when it is not a time of day. */
-private fun hhmm(raw: String): String? {
+internal fun hhmm(raw: String): String? {
     val m = LOOSE_HHMM.matchEntire(raw.trim()) ?: return null
     val padded = "${m.groupValues[1].padStart(2, '0')}:${m.groupValues[2]}"
     return if (HHMM.matches(padded)) padded else null
@@ -110,16 +110,13 @@ fun hoursPairProblem(open: String, close: String): String? =
     if (open.contains('-') || close.contains('-')) HOURS_RANGE_INVALID else hoursRangeProblem("$open-$close")
 
 /**
- * A weekly-hours row on the separate `business_hours` collection (the Settings
- * Business hours panel and the Services hours dialog). Same sentences as
- * [hoursPairProblem], but each time must already be exact `HH:MM`: those
- * rows are saved as typed and read back by code that expects two-digit hours,
- * and no server check stands in front of that collection.
+ * One open day of `business_settings.businessHours` as the Settings Business
+ * hours panel and the Services hours dialog edit it (#1764): the server's
+ * `checkBusinessHours` rule and sentences, so "9:00" is accepted as it is
+ * there. The editors write the value with two-digit hours
+ * ([normalizedHoursRange]), which is what the booking warnings read.
  */
-fun businessHoursRowProblem(open: String, close: String): String? {
-    if (!HHMM.matches(open) || !HHMM.matches(close)) return HOURS_RANGE_INVALID
-    return hoursPairProblem(open, close)
-}
+fun businessHoursRowProblem(open: String, close: String): String? = hoursPairProblem(open, close)
 
 // ── KinCare types ────────────────────────────────────────────────────────────
 

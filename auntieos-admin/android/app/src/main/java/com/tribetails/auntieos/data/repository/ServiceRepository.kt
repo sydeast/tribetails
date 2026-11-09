@@ -334,43 +334,12 @@ class ServiceRepository(
 
     // === Business Hours & Settings ===
 
-    suspend fun getBusinessHours(): Result<List<BusinessHours>> = runCatchingCancellable {
-        AuntieLog.d("Fetching business hours")
-        val snapshot = firestore.collection("business_hours")
-            .orderBy("dayOfWeek")
-            .get().await()
-
-        val businessHours = snapshot.toObjects(BusinessHours::class.java)
-
-        if (businessHours.isEmpty()) {
-            AuntieLog.i("No business hours found, creating defaults")
-            val defaultHours = (1..7).map { dayOfWeek ->
-                BusinessHours(
-                    dayOfWeek = dayOfWeek,
-                    isOpen = dayOfWeek <= 5,
-                    openTime = "09:00",
-                    closeTime = "17:00"
-                )
-            }
-            defaultHours.forEach { firestore.collection("business_hours").add(it) }
-            defaultHours
-        } else {
-            businessHours
-        }
-    }.onFailure { AuntieLog.e("Error fetching business hours", it) }
-
-    suspend fun updateBusinessHours(businessHours: List<BusinessHours>): Result<Unit> = runCatchingCancellable {
-        AuntieLog.i("Updating business hours")
-        businessHours.forEach { hours ->
-            if (hours.id.isBlank()) {
-                firestore.collection("business_hours").add(hours).await()
-            } else {
-                firestore.collection("business_hours").document(hours.id)
-                    .set(hours).await()
-            }
-        }
-        Unit
-    }.onFailure { AuntieLog.e("Error updating business hours", it) }
+    // #1764: getBusinessHours / updateBusinessHours removed. They read and wrote
+    // a `business_hours` collection that nothing else read (and seeded it with
+    // Mon-Fri 09:00-17:00 on an empty read). The weekly hours are
+    // `business_settings.businessHours`, read via AuntieRepository.getBusinessSettings
+    // and saved via updateBusinessSettingsFields; see ui/admin/BusinessHoursHelpers.kt.
+    // The collection's data and its rules block are left as they are.
 
     // getAdminSettings / updateAdminSettings removed 2026-06-05 (settings
     // unification). The admin_settings doc collapsed into the unified

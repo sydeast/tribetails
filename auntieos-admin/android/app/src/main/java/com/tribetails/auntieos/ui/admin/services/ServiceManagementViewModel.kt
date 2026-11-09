@@ -1,6 +1,9 @@
 package com.tribetails.auntieos.ui.admin.services
 
 import com.tribetails.auntieos.ui.admin.settingsSaveFailureText
+import com.tribetails.auntieos.ui.admin.WeeklyHoursRow
+import com.tribetails.auntieos.ui.admin.weeklyHoursPatch
+import com.tribetails.auntieos.ui.admin.weeklyHoursRows
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.data.model.*
@@ -16,14 +19,20 @@ data class ServiceManagementState(
     val surcharges: List<Surcharge> = emptyList(),
     val discounts: List<Discount> = emptyList(),
     val promoCodes: List<PromoCode> = emptyList(),
-    val businessHours: List<BusinessHours> = emptyList(),
     // Unified settings (2026-06-05): the former AdminSettings is now part of
     // BusinessSettings on the single business_settings doc.
     val businessSettings: BusinessSettings = BusinessSettings(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val selectedTab: ServiceTab = ServiceTab.BASE_SERVICES
-)
+) {
+    /**
+     * #1764: the week, Monday first, as `business_settings.businessHours` holds
+     * it: the same map the Settings panel, the web and the phone line read.
+     * Derived, so it is always what was last loaded or saved.
+     */
+    val businessHours: List<WeeklyHoursRow> get() = weeklyHoursRows(businessSettings.businessHours)
+}
 
 enum class ServiceTab(val displayName: String) {
     BASE_SERVICES("Base Services"),
@@ -64,7 +73,6 @@ class ServiceManagementViewModel(
                 val surchargesResult = serviceRepository.getSurcharges(includeInactive = true)
                 val discountsResult = serviceRepository.getDiscounts(includeInactive = true)
                 val promoCodesResult = serviceRepository.getPromoCodes(includeInactive = true)
-                val businessHoursResult = serviceRepository.getBusinessHours()
                 val businessSettingsResult = auntieRepository.getBusinessSettings()
                 businessSettingsResult.onSuccess { settingsBaseline = it }
 
@@ -74,7 +82,6 @@ class ServiceManagementViewModel(
                     surcharges = surchargesResult.getOrNull() ?: emptyList(),
                     discounts = discountsResult.getOrNull() ?: emptyList(),
                     promoCodes = promoCodesResult.getOrNull() ?: emptyList(),
-                    businessHours = businessHoursResult.getOrNull() ?: emptyList(),
                     businessSettings = businessSettingsResult.getOrNull() ?: BusinessSettings(),
                     isLoading = false
                 )
@@ -377,34 +384,33 @@ class ServiceManagementViewModel(
 
     // === Settings ===
 
-    fun updateBusinessHours(businessHours: List<BusinessHours>) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true)
-
-            val result = serviceRepository.updateBusinessHours(businessHours)
-
-            if (result.isSuccess) {
-                _state.value = _state.value.copy(
-                    businessHours = businessHours,
-                    isLoading = false
-                )
-                // Audit each row update with day index so the activity log
-                // can be filtered to "which day changed when". Fire-and-forget;
-                // audit failure doesn't block the UI per AuditLog contract.
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = com.tribetails.auntieos.AuntieOSApp.instance.repository,
-                    actionType       = "BUSINESS_HOURS_UPDATED",
-                    description      = "Updated business hours (${businessHours.size} day rows)",
-                    targetCollection = "business_hours",
-                )
-            } else {
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    errorMessage = "Failed to update business hours: ${result.exceptionOrNull()?.message}"
-                )
-            }
+    /**
+     * #1764: save one day from the Edit hours dialog to
+     * `business_settings.businessHours`, through [updateBusinessSettings] and
+     * so through the `saveBusinessSettings` callable, which merges the map day
+     * by day. Only this day is sent, and only when it changed.
+     *
+     * Refused with the day's sentence when the row does not save; the dialog
+     * keeps Save off then, so this is the guard behind it.
+     */
+    fun updateBusinessHours(row: WeeklyHoursRow) {
+        val problem = row.problem
+        if (problem != null) {
+            _state.value = _state.value.copy(errorMessage = "${row.dayName}: $problem")
+            return
         }
+        val baseline = settingsBaseline
+        if (baseline == null) {
+            _state.value = _state.value.copy(
+                isLoading = false,
+                errorMessage = "Reopen Services before saving: the settings doc was never loaded.",
+            )
+            return
+        }
+        val patch = weeklyHoursPatch(baseline.businessHours, listOf(row))
+        if (patch.isEmpty()) return
+        val current = _state.value.businessSettings
+        updateBusinessSettings(current.copy(businessHours = current.businessHours + patch))
     }
 
     /**

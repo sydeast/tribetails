@@ -51,7 +51,6 @@ class EnhancedSchedulingViewModelExtTest {
 
         coEvery { serviceRepo.getBaseServices() } returns Result.success(emptyList())
         coEvery { serviceRepo.getSupplementalServices() } returns Result.success(emptyList())
-        coEvery { serviceRepo.getBusinessHours() } returns Result.success(emptyList())
         coEvery { auntieRepo.getKinfolk() } returns Result.success(emptyList())
         // Stage-0I: the VM's cross-tenant-banner observers resolve sandbox state on init.
         coEvery { auntieRepo.isTestAdminActive() } returns false
@@ -204,7 +203,6 @@ class EnhancedSchedulingViewModelExtTest {
 
                 coEvery { sRepo.getBaseServices() } returns Result.success(emptyList())
                 coEvery { sRepo.getSupplementalServices() } returns Result.success(emptyList())
-                coEvery { sRepo.getBusinessHours() } returns Result.success(emptyList())
                 coEvery { aRepo.getBusinessSettings() } returns Result.success(BusinessSettings())
                 coEvery { aRepo.getCalendarSyncRun() } returns Result.success(null)
                 coEvery { aRepo.isTestAdminActive() } returns false
