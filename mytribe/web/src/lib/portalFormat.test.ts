@@ -93,6 +93,10 @@ describe('relativeDay', () => {
   it('falls back to a short date past a week out', () => {
     expect(relativeDay(new Date(2026, 5, 1).getTime(), now)).toBe('Jun 1');
   });
+  it('adds the year to a date in an earlier year, so a migrated tale is not read as this month (#1775)', () => {
+    expect(relativeDay(new Date(2025, 8, 3).getTime(), now)).toBe('Sep 3, 2025');
+    expect(relativeDay(new Date(2025, 11, 31).getTime(), new Date(2026, 0, 20).getTime())).toBe("Dec 31, 2025");
+  });
 });
 
 describe('speciesEmoji', () => {

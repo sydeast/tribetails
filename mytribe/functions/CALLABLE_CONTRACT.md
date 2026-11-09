@@ -2898,7 +2898,9 @@ read pair takes `notificationId`, the archive family takes `id` / `ids`.
 - PAGINATION IS BY TALE. A tale can carry twenty photos or none, so a
   photo-count page would either split a visit across pages or need a second
   cursor inside one. `nextBefore` is the last tale's `sentAtMs`, the same
-  opaque cursor `getMyKinTales` uses.
+  cursor `getMyKinTales` uses: strictly older than that instant, and the order
+  is by PARSED send date across ISO and migrated free-text rows (see
+  getMyKinTales below, #1775).
 - `portraits` is populated on the FIRST page only (no `before`), and is empty
   after that: they have no timestamp to sort into the archive by, and repeating
   them under every scroll shows the same faces over and over.
@@ -2908,6 +2910,33 @@ read pair takes `notificationId`, the archive family takes `id` / `ids`.
   tile, and a file attached to two tales appears once, credited to the more
   recent.
 - kinfolk portal only. `mytribe/web/src/screens/Gallery.tsx` is the surface.
+## Portal KinTales list (kinfolk)
+`src/portal/getMyKinTales.ts`, read through `src/lib/sentKinTales.ts` (shared
+with `getMyKinPhotos`). Hand-typed on both clients (`mytribe/web/src/api/types.ts`,
+`KinTaleDtos.kt` and `PortalApi.kt`); not in the contracts registry.
+- req `{ kinfolkId?: string, before?: number, limit?: number }`. `before` is the
+  last tale's `sentAtMs` from the previous page; tales strictly older come
+  back. A non-finite or out-of-range `before` is `invalid-argument`. `limit`
+  defaults to 20, max 50.
+- res `{ tales: KinTale[], hasMore: boolean }`. Each tale has `sentAtMs:
+  number | null` and, only when `sentAtMs` is null, `sentAtText?: string`, the
+  stored `sentAt` text, so a client shows what was stored.
+- ORDER: newest first by parsed send instant. `kin_care_reports.sentAt` holds
+  ISO text for tales sent since May 2026 and the migration's free text
+  ("September 3, 2025 2:02pm") for the migrated rows. The free text is read as
+  America/Chicago wall time. Nothing is written; migrated rows keep their text.
+- WHY NOT ONE QUERY: Firestore orders strings by byte, so every letter sorts
+  above every digit and `orderBy('sentAt')` put all migrated rows first, by
+  month name, with an ISO cursor below all of them. The ISO pager is now
+  `sentAt < 'A'`; the free-text rows are a separate read (`sentAt >= 'A'`,
+  capped at 500, `portal.kintales.legacyCapReached` is logged if hit) merged in
+  by parsed instant.
+- PAGE EDGES: a page never ends inside a tie (equal instants), so it may hold a
+  row or two more than `limit`. Rows with no readable date sort last and all
+  arrive on the page that exhausts the dated rows, with `hasMore: false`;
+  clients stop paging when the last tale has no `sentAtMs`, so a tail split
+  across pages would be unreachable.
+- GATE and tenant scoping unchanged: `resolveKinfolkAccess`, `kinfolkId ==`.
 ## Card on file (kinfolk, billing access)
 The four callables behind the portal's Billing Details "Manage" button
 (`src/portal/billing.ts`, issue #399 item 3). Card state has no generated

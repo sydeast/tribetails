@@ -9,6 +9,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { mediaDocToThumb } from '../lib/kinTaleThumbs';
 import { isPortalHiddenKinStatus } from '../lib/kinStatus';
+import { readSentKinTales } from '../lib/sentKinTales';
 import { validateResponse } from '../lib/callableResponse';
 
 /**
@@ -118,32 +119,22 @@ export async function getMyKinPhotosHandler(
   const firestore = db();
   const limit = args.limit ?? DEFAULT_LIMIT;
 
-  // Same query `getMyKinTales` runs, including `sentAt > ''` to keep DRAFTs
-  // out: a photo attached to a tale the Auntie has not sent yet is not the
-  // household's to see.
-  let q = firestore
-    .collection('kin_care_reports')
-    .where('kinfolkId', '==', kinfolkId)
-    .where('sentAt', '>', '')
-    .orderBy('sentAt', 'desc')
-    .limit(limit + 1);
-  if (args.before !== undefined) {
-    q = q.startAfter(new Date(args.before).toISOString());
-  }
-  const snap = await q.get();
-  const hasMore = snap.docs.length > limit;
-  const pageDocs = snap.docs.slice(0, limit);
-
+  // Same read `getMyKinTales` runs (`readSentKinTales`): sent tales only, so a
+  // photo on a tale the Auntie has not sent stays out, newest first by parsed
+  // send date with migrated free-text rows placed among the ISO ones (#1775).
+  const page = await readSentKinTales(firestore, kinfolkId, {
+    limit,
+    before: args.before,
+    event: 'getMyKinPhotos',
+  });
+  const hasMore = page.hasMore;
+  const pageDocs = page.tales.map((t) => t.doc);
   // Every media id on the page, resolved in ONE batched read rather than one
   // per tale. `getAll` refuses an empty argument list, so the empty page
   // short-circuits.
-  const perTale = pageDocs.map((d) => {
+  const perTale = pageDocs.map((d, i) => {
     const data = d.data() as Record<string, unknown>;
-    const sentAtRaw = data['sentAt'];
-    const sentAtMs =
-      typeof sentAtRaw === 'string' && sentAtRaw.length > 0 && !isNaN(new Date(sentAtRaw).getTime())
-        ? new Date(sentAtRaw).getTime()
-        : null;
+    const sentAtMs = page.tales[i]!.sentAtMs;
     return {
       taleId: d.id,
       taleTitle: typeof data['title'] === 'string' ? (data['title'] as string) : '',

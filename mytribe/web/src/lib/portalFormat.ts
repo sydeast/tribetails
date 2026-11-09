@@ -125,7 +125,11 @@ export function bookingSubtitle(b: VisitWhen & Pick<GetMyBookingsResultLiveVisit
   if (isStartTimePending(b)) return visitWhenLine(b);
   return visitSubtitle(b.startTimeMs, b.auntieDisplayName, b);
 }
-/** "Today" / "Yesterday" / "3 days ago" / falls back to a short date past a week out. */
+/**
+ * "Today" / "Yesterday" / "3 days ago" / falls back to a short date past a week
+ * out, with the year when it is not the current one (#1775: migrated tales go
+ * back past a year, and "Sep 3" would read as this September).
+ */
 export function relativeDay(ms: number, now: number = Date.now()): string {
   const startOfDay = (t: number) => {
     const d = new Date(t);
@@ -137,7 +141,8 @@ export function relativeDay(ms: number, now: number = Date.now()): string {
   if (days === 1) return 'Yesterday';
   if (days < 7) return `${days} days ago`;
   const d = new Date(ms);
-  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  const monthDay = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return d.getFullYear() === new Date(now).getFullYear() ? monthDay : `${monthDay}, ${d.getFullYear()}`;
 }
 
 const SPECIES_EMOJI: Record<string, string> = {

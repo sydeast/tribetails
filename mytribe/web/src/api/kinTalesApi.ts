@@ -341,15 +341,23 @@ export function shortTimestamp(ms: number | null, now: number = Date.now()): str
   return `${relativeDay(ms, now).toUpperCase()}, ${time}`;
 }
 
+/**
+ * When a tale was sent, for its byline: the formatted time, or the stored text
+ * as written when the server could read no date from it (#1775), or "" when it
+ * carries neither. Never a guessed date.
+ */
+export function taleSentLabel(tale: KinTaleDto, now: number = Date.now()): string {
+  if (tale.sentAtMs !== null) return shortTimestamp(tale.sentAtMs, now);
+  return tale.sentAtText?.trim() ?? '';
+}
 /** "3 PHOTOS · TODAY, 9:14 AM" style meta line for a tale byline/talecard header. */
 export function taleMetaLabel(tale: KinTaleDto, now: number = Date.now()): string {
   const parts: string[] = [];
   if (tale.mediaIds.length > 0) {
     parts.push(`${tale.mediaIds.length} ${tale.mediaIds.length === 1 ? 'PHOTO' : 'PHOTOS'}`);
   }
-  if (tale.sentAtMs !== null) {
-    parts.push(shortTimestamp(tale.sentAtMs, now));
-  }
+  const sent = taleSentLabel(tale, now);
+  if (sent !== '') parts.push(sent);
   return parts.join(' · ');
 }
 // ── getMyKinPhotos (functions/src/portal/getMyKinPhotos.ts) ─────────────────

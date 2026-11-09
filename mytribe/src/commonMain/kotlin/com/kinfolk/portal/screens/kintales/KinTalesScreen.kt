@@ -76,6 +76,7 @@ import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.clockTime
+import com.kinfolk.portal.util.kinTaleSentLabel
 import com.kinfolk.portal.util.relativeTime
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
@@ -299,7 +300,7 @@ private fun KinTaleCard(
                         style = type.heritageTitle,
                     )
                     Text(
-                        text = relativeTime(tale.sentAtMs),
+                        text = kinTaleSentLabel(tale.sentAtMs, tale.sentAtText),
                         style = type.sansMeta,
                     )
                 }
