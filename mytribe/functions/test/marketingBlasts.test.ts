@@ -179,7 +179,7 @@ describe('scheduleMarketingBlast audience criteria', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
       scheduleMarketingBlastHandler(req(baseBlast({ criteria: { kind: 'all' }, fireAtMs: Date.now() - HOUR }))),
-    ).rejects.toThrow(/fireAtMs is in the past/);
+    ).rejects.toThrow('That send time has already passed.');
   });
 
   it('refuses an unknown campaign key', async () => {

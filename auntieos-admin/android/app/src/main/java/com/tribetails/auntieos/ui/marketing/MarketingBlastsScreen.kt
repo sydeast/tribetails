@@ -48,6 +48,7 @@ import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import androidx.compose.ui.platform.testTag
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -74,7 +75,10 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
     val state by viewModel.uiState.collectAsState()
     val dims = AuntieTheme.dims
     val c = AuntieTheme.colors
-    val blocker = state.blocker(System.currentTimeMillis())
+    val nowMs = System.currentTimeMillis()
+    val blocker = state.blocker(nowMs)
+    // #1593: shown under the fields themselves, ahead of anything else still missing.
+    val whenError = sendTimeError(state.fireAtMs, nowMs)
 
     var datePickerOpen by remember { mutableStateOf(false) }
 
@@ -279,6 +283,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                             label = "Date",
                             placeholder = "2026-06-03",
                             readOnly = true,
+                            isError = whenError != null,
                             modifier = Modifier.weight(1f),
                         )
                         GhostButton(label = "Pick a date", onClick = { datePickerOpen = true })
@@ -289,9 +294,17 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                         label = "Time",
                         placeholder = "09:00",
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = whenError != null,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    state.fireAtMs?.let { ms ->
+                    if (whenError != null) {
+                        Text(
+                            text = whenError,
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.error,
+                            modifier = Modifier.testTag("blastSendTimeError"),
+                        )
+                    } else state.fireAtMs?.let { ms ->
                         Text(
                             text = "Fires ${fireLabel(ms, state.zone)}, ${state.zone.id} time.",
                             style = AuntieTheme.typography.bodySmall,
@@ -311,7 +324,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                             enabled = blocker == null && !state.scheduling && !state.previewing,
                         )
                     }
-                    blocker?.let {
+                    blocker?.takeIf { it != whenError }?.let {
                         Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                 }

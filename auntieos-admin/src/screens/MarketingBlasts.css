@@ -121,6 +121,11 @@
   gap: var(--space-3);
 }
 
+.blasts__fieldError {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-error);
+  margin: 0;
+}
 .blasts__hint {
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);

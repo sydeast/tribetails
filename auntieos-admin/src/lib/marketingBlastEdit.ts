@@ -86,6 +86,19 @@ export function mergeFieldsToData(rows: readonly MergeFieldRow[]): Record<string
  * reaches nobody, sending it anyway is a round trip whose only outcome is an
  * error. `undefined` means "not previewed", which is not the same as zero.
  */
+/** #1593: the server's sentence too (`scheduleMarketingBlast`). */
+export const SEND_TIME_PASSED = 'That send time has already passed.';
+/**
+ * #1593: the send time's own refusal, shown at the Date and Time fields
+ * whatever else is still missing. The QA walk typed a 2020 date and saw no
+ * warning, because `blastBlocker` names only the FIRST thing missing and
+ * "Choose an audience first." came ahead of it. The server's window: anything
+ * more than a minute in the past is refused.
+ */
+export function sendTimeError(fireAtMs: number | null, nowMs: number): string | null {
+  if (fireAtMs === null) return null;
+  return fireAtMs < nowMs - 60_000 ? SEND_TIME_PASSED : null;
+}
 export function blastBlocker(
   audience: BlastAudience | null,
   fireAtMs: number | null,
@@ -96,7 +109,7 @@ export function blastBlocker(
   if (audience === null) return 'Choose an audience first.';
   if (fireAtMs === null) return 'Pick a date and a time to send.';
   // The server's own window: anything more than a minute in the past is refused.
-  if (fireAtMs < nowMs - 60_000) return 'That send time has already passed.';
+  if (sendTimeError(fireAtMs, nowMs) !== null) return SEND_TIME_PASSED;
   if (reachable === 0) return 'This audience reaches nobody. Widen it, or check who has opted in.';
   // #1587: a field the template names and nothing fills renders as a gap in an
   // email to real households. Naming the fields is what lets the operator fix it.
