@@ -859,7 +859,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### listUninvoicedSessions
 - req `{ from: string /* YYYY-MM-DD, inclusive */, to: string /* YYYY-MM-DD, inclusive */ }`
-- res `{ sessions: Array<{ sessionId: string, kinfolkId: string, serviceType: string, durationMinutes: number, startTime: string /* ISO */, unitCents: number | null }>, unpriceable: Array<{ sessionId: string, serviceType: string }>, unplaceable: Array<{ sessionId: string, kinfolkId: string }>, rateCardLoaded: boolean, scanned: number, truncated: boolean }`
+- res `{ sessions: Array<{ sessionId: string, kinfolkId: string, serviceType: string, durationMinutes: number, startTime: string /* ISO */, unitCents: number | null, pricedAs: string | null }>, unpriceable: Array<{ sessionId: string, serviceType: string }>, unplaceable: Array<{ sessionId: string, kinfolkId: string }>, rateCardLoaded: boolean, scanned: number, truncated: boolean }`
 - Read only. Completed visits in the window that no invoice has claimed, priced
   from `business_settings.serviceRates` where that is possible.
 - `unitCents` is NULL, never 0, when the visit cannot be priced, and the session
@@ -867,6 +867,13 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   real work and look deliberate on the invoice. `rateCardLoaded` separates "this
   service is not on the card" from "there is no card", which are different
   operator problems.
+- A stored `serviceType` the card does not hold as written is resolved by the
+  display-name rule (`lib/serviceDisplayName.ts` `matchServiceKey`: the key on
+  letters and digits, then the one KinCare of that length) and priced ONLY when
+  exactly one KinCare matches (#1750). `pricedAs` is then that KinCare's name,
+  and the composer row says "priced as <name>". Null when the stored key is on
+  the card as written, and whenever `unitCents` is null. Two matches or none
+  stay unpriced.
 - **The unclaimed test is done IN MEMORY and this is not an optimisation to
   undo.** `createKinCareSession` and `approveBookingSeriesCore` never write
   `invoiceId` at all, and Firestore equality SKIPS documents that lack the field,

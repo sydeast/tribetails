@@ -477,6 +477,7 @@ export interface ListUninvoicedSessionsResultSession {
   durationMinutes: number;
   startTime: string;
   unitCents: number | null;
+  pricedAs: string | null;
 }
 
 /**
