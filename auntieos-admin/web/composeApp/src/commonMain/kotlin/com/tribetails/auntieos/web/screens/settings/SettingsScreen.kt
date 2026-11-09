@@ -2860,9 +2860,29 @@ private fun IntegrationsPanel(settingsResult: FirestoreResult<BusinessSettings>)
 }
 
 /**
- * #8: a third-party add-on row, shown honestly as "Coming soon" (none are built; never
- * faked as connected). When the connect flow ships, this becomes connect + settings + link.
+ * #1759: an integration's name with what it is for in an info tip beside it, never a
+ * line under it (2026-09-11 ruling, subtitles are tooltips), as web's `TitleWithTip`
+ * and Android's `IntegrationCard` draw it. The name Text stays a node of its own, so a
+ * screen reader hears the name alone and the tip's content description carries the
+ * purpose. A blank purpose draws no tip.
  */
+@Composable
+private fun IntegrationNameWithTip(name: String, purpose: String, modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            name,
+            style = AuntieTheme.typography.titleSmall,
+            color = c.textPrimary,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (purpose.isNotBlank()) {
+            Spacer(Modifier.width(6.dp))
+            AuntieInfoTip(purpose)
+        }
+    }
+}
+
 /**
  * #8: an integration that is a NAMED external-secret defer (Stripe Connect). It is
  * honestly shown as "Needs your keys" with the exact secret named, never faked as
@@ -2871,14 +2891,11 @@ private fun IntegrationsPanel(settingsResult: FirestoreResult<BusinessSettings>)
  * secret, and it must be named).
  */
 @Composable
-private fun IntegrationNeedsKeysRow(name: String, detail: String, hint: String) {
+internal fun IntegrationNeedsKeysRow(name: String, detail: String, hint: String) {
     val c = AuntieTheme.colors
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            }
+            IntegrationNameWithTip(name, detail, Modifier.weight(1f))
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
@@ -2892,17 +2909,18 @@ private fun IntegrationNeedsKeysRow(name: String, detail: String, hint: String) 
     }
 }
 
+/**
+ * #8: a third-party add-on row, shown honestly as "Coming soon" (none are built; never
+ * faked as connected). When the connect flow ships, this becomes connect + settings + link.
+ */
 @Composable
-private fun AddOnComingSoon(name: String, detail: String) {
+internal fun AddOnComingSoon(name: String, detail: String) {
     val c = AuntieTheme.colors
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-            Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
+        IntegrationNameWithTip(name, detail, Modifier.weight(1f))
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(999.dp))
