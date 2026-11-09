@@ -154,7 +154,7 @@ internal enum class MessageType(val label: String, val type: CommunicationType, 
 /**
  * The draft callout's detail line: who it is for and what kind of message it
  * is, in the words of this console's chips. #1592: it also printed the model
- * name and the draft id ("for Dana · visit_report · claude-sonnet-4-5 · draft
+ * name and the draft id ("for Dana · visit_report · claude-sonnet-5-5 · draft
  * #d7"). A type this console has no chip for reads as words, never its key.
  * Pure; tested.
  */

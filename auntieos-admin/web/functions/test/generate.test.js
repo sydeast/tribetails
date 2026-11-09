@@ -718,7 +718,7 @@ describe('runGenerate', needsVoice, () => {
   it('generates a recipient-less blog post end to end (was a hard 400)', async () => {
     const db = fullDb();
     const out = await gen.runGenerate(
-      { db, anthropic: fakeAnthropic('August slowed everybody down.'), model: 'claude-sonnet-4-5' },
+      { db, anthropic: fakeAnthropic('August slowed everybody down.'), model: 'claude-sonnet-5-5' },
       { communication_type: 'blog_post', recipient: '', raw_notes: 'slow hot month, everybody napping' },
     );
     assert.ok(out.generated_copy.includes('August slowed everybody down.'));
@@ -786,14 +786,14 @@ describe('runGenerate', needsVoice, () => {
   it('happy path returns a byte-compatible GenerateResponse + writes a draft', async () => {
     const db = fullDb();
     const out = await gen.runGenerate(
-      { db, anthropic: fakeAnthropic('The cats were already at the door.'), model: 'claude-sonnet-4-5' },
+      { db, anthropic: fakeAnthropic('The cats were already at the door.'), model: 'claude-sonnet-5-5' },
       VALID,
     );
     assert.ok(out.generated_copy.includes('The cats were already'));
     assert.strictEqual(out.communication_type, 'visit_report');
     assert.strictEqual(out.kinfolk_name, 'Dana Delgado');
     assert.strictEqual(out.kinfolk_id, '9');
-    assert.strictEqual(out.model, 'claude-sonnet-4-5');
+    assert.strictEqual(out.model, 'claude-sonnet-5-5');
     assert.ok(out.draft_id);
     assert.strictEqual(out.draftWriteFailed, false);
     assert.deepStrictEqual(out.warnings, []);

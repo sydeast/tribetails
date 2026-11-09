@@ -1001,14 +1001,14 @@ exports.retrieveMapbox = onRequest(
 //                       the draft-write failure detail). Empty on the happy path.
 //   - error:            present ONLY on the error response shape (5xx/4xx), where
 //                       generated_copy is '' and the call failed outright.
-const ANTHROPIC_MODEL_DEFAULT = 'claude-sonnet-4-5';
+const ANTHROPIC_MODEL_DEFAULT = 'claude-sonnet-5-5';
 
 // NOTE-48: pin the model to a server-side allowlist. The runtime can override the
 // default via the ANTHROPIC_MODEL env var, but only to a value we explicitly
 // allow, so a bad/leaked env can't silently route generations to an unintended
 // (e.g. far more expensive) model. Anything not in the list falls back to the
 // default rather than being passed through to the API.
-const ALLOWED_ANTHROPIC_MODELS = new Set(['claude-sonnet-4-5']);
+const ALLOWED_ANTHROPIC_MODELS = new Set(['claude-sonnet-5-5']);
 
 function resolveAnthropicModel() {
   const requested = process.env.ANTHROPIC_MODEL;
