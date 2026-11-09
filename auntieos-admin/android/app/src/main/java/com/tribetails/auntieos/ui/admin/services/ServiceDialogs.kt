@@ -4,6 +4,7 @@ import com.tribetails.auntieos.ui.admin.DayHoursKind
 import com.tribetails.auntieos.ui.admin.WeeklyHoursRow
 import com.tribetails.auntieos.ui.admin.businessHoursRowProblem
 import com.tribetails.auntieos.ui.admin.SettingsFieldProblem
+import com.tribetails.auntieos.ui.admin.editedText
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import androidx.compose.foundation.*
@@ -860,6 +861,9 @@ private fun EditBusinessHoursDialog(
     // #1593: the same check the Settings hours panel runs, with the server's
     // sentence under the two times. Save stays off while it shows.
     val hoursProblem = if (isOpen) businessHoursRowProblem(openTime.trim(), closeTime.trim()) else null
+    // #1783: a stored bad time shows its sentence on open and holds Save back
+    // only once the open switch or either time is changed.
+    val hoursChanged = isOpen != initial.isOpen || openTime != initial.openTime || closeTime != initial.closeTime
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -941,7 +945,7 @@ private fun EditBusinessHoursDialog(
                             )
                         },
                         // Off only while the sentence above says why.
-                        enabled  = hoursProblem == null,
+                        enabled  = !(hoursChanged && hoursProblem != null),
                         modifier = Modifier.weight(1f),
                     )
                 }

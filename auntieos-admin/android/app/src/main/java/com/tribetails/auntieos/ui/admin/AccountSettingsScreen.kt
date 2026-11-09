@@ -470,6 +470,13 @@ internal fun BusinessProfilePanel(
     // #1593: both may be blank; anything typed has to be an email / a US number.
     val emailError = businessEmailProblem(email)
     val phoneError = businessPhoneProblem(phone)
+    // #1783: every sentence shows on open, but only a field that was edited
+    // holds Save back. The name is the exception: the server refuses any save
+    // while the business would be left with no name.
+    val blocked = nameError != null ||
+        fieldBlocksSave(privacyPolicyUrl, settings.privacyPolicyUrl, privacyPolicyError) ||
+        fieldBlocksSave(email, settings.businessEmail, emailError) ||
+        fieldBlocksSave(phone, settings.businessPhone, phoneError)
 
     DenPanel(title = "Business profile", subtitle = "Identity used on invoices, emails, and KinTales.") {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
@@ -530,17 +537,16 @@ internal fun BusinessProfilePanel(
             Spacer(Modifier.height(dims.space1))
             PrimaryButton(
                 label = "Save",
-                enabled = dirty && privacyPolicyError == null && nameError == null &&
-                    emailError == null && phoneError == null,
+                enabled = dirty && !blocked,
                 onClick = {
                     onSave(
                         settings.copy(
-                            businessName = name.trim(),
-                            businessEmail = email.trim(),
-                            businessPhone = phone.trim(),
-                            businessAddress = address.trim(),
-                            privacyPolicyUrl = privacyPolicyUrl.trim(),
-                            weatherLocation = weather.trim(),
+                            businessName = editedText(name, settings.businessName),
+                            businessEmail = editedText(email, settings.businessEmail),
+                            businessPhone = editedText(phone, settings.businessPhone),
+                            businessAddress = editedText(address, settings.businessAddress),
+                            privacyPolicyUrl = editedText(privacyPolicyUrl, settings.privacyPolicyUrl),
+                            weatherLocation = editedText(weather, settings.weatherLocation),
                         ),
                     )
                 },

@@ -196,12 +196,23 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     // decoded Home layout means only an actual reorder/toggle/limit edit
     // writes, and the value it writes is the raw map [withHomeSections]
     // produced, which carries every sibling key forward untouched.
+    //
+    // #1783: only the `home` slice goes out. `saveBusinessSettings` merges the
+    // portal key by key and checks the keys it is sent, so echoing the sibling
+    // keys back (theme, banner, chat, logo) would hold a Home layout save to
+    // their stored values for no gain: the server keeps them where they are.
     "mytribePortal" to SettingsDiffField(
-        write = { it.mytribePortal },
+        write = { portalHomeSlice(it.mytribePortal) },
         compare = { it.homeSections() },
     ),
 )
 
+/** The `home` key of a raw `mytribePortal` map, alone (#1783). Anything else, or no home, is sent as it is. */
+internal fun portalHomeSlice(raw: Any?): Any? {
+    val portal = raw as? Map<*, *> ?: return raw
+    val home = portal["home"] ?: return raw
+    return mapOf("home" to home)
+}
 /**
  * `business_settings` fields this client must never write, and who owns each.
  *

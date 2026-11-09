@@ -154,3 +154,20 @@ fun kinCareRowProblems(rows: List<KinCareTypeRow>): List<KinCareRowProblems> {
         )
     }
 }
+
+/**
+ * #1783: true when a row problem is in the save. The rate card goes whole, but
+ * only the maps that changed are sent, and the server checks the maps it gets:
+ * the name and the price belong to `serviceRates`, the length to
+ * `serviceDurations`, and the name is checked in both. A stored bad row shows
+ * its sentence either way and holds up only an edit to the map it belongs to.
+ */
+fun kinCareProblemsBlockSave(settings: BusinessSettings, rows: List<KinCareTypeRow>): Boolean {
+    val ratesChanged = foldKinCareRates(rows) != settings.serviceRates
+    val durationsChanged = foldKinCareDurations(rows) != settings.serviceDurations
+    return kinCareRowProblems(rows).any { p ->
+        (p.name != null && (ratesChanged || durationsChanged)) ||
+            (p.duration != null && durationsChanged) ||
+            (p.rate != null && ratesChanged)
+    }
+}

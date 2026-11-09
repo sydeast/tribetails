@@ -43,6 +43,18 @@ fun checklistProblems(items: List<ChecklistItem>): ChecklistProblems = Checklist
     overLimit = items.size > MAX_CHECKLIST_ITEMS,
 )
 
+/**
+ * #1783: whether the save carries the checklist, which is when the Firestore
+ * rule `ktChecklistWriteOk` looks at it (a create, or an update whose diff names
+ * `checklistItems`). [baseline] is the checklist as loaded, null for a new
+ * template. Compared as typed, untrimmed: a stored "  " item the operator never
+ * touched is equal to itself, where trimming it to "" would read as an edit.
+ * Only when the checklist is in the save do blank items and the 60-item cap
+ * hold Save back; otherwise they still show beside the item but a different
+ * edit (the title, say) saves.
+ */
+fun checklistInSave(baseline: List<ChecklistItem>?, edited: List<ChecklistItem>): Boolean =
+    baseline == null || baseline != edited
 /** Add item (and Add from bank) is offered only while the checklist has room for one more. */
 fun canAddChecklistItem(items: List<ChecklistItem>): Boolean = items.size < MAX_CHECKLIST_ITEMS
 

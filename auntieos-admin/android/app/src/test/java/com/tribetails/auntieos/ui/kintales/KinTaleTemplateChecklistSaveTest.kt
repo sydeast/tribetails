@@ -212,6 +212,9 @@ class KinTaleTemplateChecklistSaveTest {
         coEvery { repo.getKinTaleTemplates() } returns Result.success(listOf(stored(over)))
         val vm = editor()
         advanceUntilIdle()
+        // #1783: the checklist is untouched, so it is not what holds Save.
+        assertNull(vm.uiState.value.saveBlockedReason)
+        vm.updateChecklistItem(over[0].copy(text = "Renamed"))
         assertEquals(CHECKLIST_LIMIT_REACHED, vm.uiState.value.saveBlockedReason)
 
         vm.updateChecklistItem(over[0].copy(text = "Renamed"))
@@ -236,5 +239,70 @@ class KinTaleTemplateChecklistSaveTest {
         advanceUntilIdle()
 
         assertEquals(TEMPLATE_SAVE_REFUSED, vm.uiState.value.error)
+    }
+
+    // ── A stored blank item (#1783) ─────────────────────────────────────────
+    private val withBlank = listOf(
+        ChecklistItem(key = "fed", text = "Fed", order = 0),
+        ChecklistItem(key = "old", text = "   ", order = 1),
+    )
+    @Test
+    fun `a stored blank item shows its message on open without holding Save`() = runTest(testDispatcher) {
+        coEvery { repo.getKinTaleTemplates() } returns Result.success(listOf(stored(withBlank)))
+        val vm = editor()
+        advanceUntilIdle()
+        // The message is on screen beside the item...
+        assertEquals(setOf("PER_PET:old"), vm.uiState.value.flaggedChecklistIds)
+        // ...and Save Changes is on: the checklist is not part of the save.
+        assertFalse(vm.uiState.value.checklistInSave)
+        assertNull(vm.uiState.value.saveBlockedReason)
+    }
+    @Test
+    fun `a title-only save with an untouched blank item goes through and leaves the checklist out`() = runTest(testDispatcher) {
+        coEvery { repo.getKinTaleTemplates() } returns Result.success(listOf(stored(withBlank)))
+        val vm = editor()
+        advanceUntilIdle()
+        vm.updateName("Evening Walk Recap")
+        assertTrue(vm.persist(reveal = true))
+        advanceUntilIdle()
+        val changes = capturedChanges()
+        assertEquals(setOf("name"), changes.keys)
+        // The spaces item was not trimmed into a change.
+        assertEquals(withBlank, vm.uiState.value.template.checklistItems)
+    }
+    @Test
+    fun `an item stored with trailing spaces is not rewritten by an unrelated save`() = runTest(testDispatcher) {
+        val padded = listOf(ChecklistItem(key = "fed", text = "Fed ", order = 0))
+        coEvery { repo.getKinTaleTemplates() } returns Result.success(listOf(stored(padded)))
+        val vm = editor()
+        advanceUntilIdle()
+        vm.updateName("Renamed")
+        assertTrue(vm.persist())
+        advanceUntilIdle()
+        assertEquals(setOf("name"), capturedChanges().keys)
+    }
+    @Test
+    fun `changing the checklist while a blank item is in it is refused`() = runTest(testDispatcher) {
+        coEvery { repo.getKinTaleTemplates() } returns Result.success(listOf(stored(withBlank)))
+        val vm = editor()
+        advanceUntilIdle()
+        vm.updateChecklistItem(withBlank[0].copy(text = "Fed twice"))
+        assertTrue(vm.uiState.value.checklistInSave)
+        assertEquals(CHECKLIST_ITEM_BLANK, vm.uiState.value.saveBlockedReason)
+        assertFalse(vm.persist(reveal = true))
+        advanceUntilIdle()
+        coVerify(exactly = 0) { repo.updateKinTaleTemplateFields(any(), any()) }
+    }
+    @Test
+    fun `filling the stored blank item in lets the checklist save, trimmed`() = runTest(testDispatcher) {
+        coEvery { repo.getKinTaleTemplates() } returns Result.success(listOf(stored(withBlank)))
+        val vm = editor()
+        advanceUntilIdle()
+        vm.updateChecklistItem(withBlank[1].copy(text = " Watered "))
+        assertTrue(vm.persist(reveal = true))
+        advanceUntilIdle()
+        @Suppress("UNCHECKED_CAST")
+        val items = capturedChanges()["checklistItems"] as List<ChecklistItem>
+        assertEquals(listOf("Fed", "Watered"), items.map { it.text })
     }
 }

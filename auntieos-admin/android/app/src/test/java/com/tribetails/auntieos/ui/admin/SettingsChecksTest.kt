@@ -407,4 +407,52 @@ class SettingsChecksTest {
         val e = refusal(mapOf("code" to "settings_refused", "field" to "serviceRates"), message = KINCARE_NAME_REQUIRED)
         assertEquals(SettingsRefusal("serviceRates", KINCARE_NAME_REQUIRED), settingsRefusalOf(e))
     }
+
+    // ── A stored bad value (#1783) ─────────────────────────────────────────
+    @Test
+    fun `a stored bad value holds Save back only once its field is edited`() {
+        // Untouched: the sentence shows (the check still returns it), Save is not held.
+        assertFalse(fieldBlocksSave("not an email", "not an email", businessEmailProblem("not an email")))
+        // Edited to another bad value: held.
+        assertTrue(fieldBlocksSave("not an email!", "not an email", businessEmailProblem("not an email!")))
+        // Edited to a good value: free.
+        assertFalse(fieldBlocksSave("hello@tribetails.com", "not an email", businessEmailProblem("hello@tribetails.com")))
+    }
+    @Test
+    fun `an untouched text box sends the stored value as it is, an edited one is trimmed`() {
+        assertEquals("not an email ", editedText("not an email ", "not an email "))
+        assertEquals("hello@tribetails.com", editedText(" hello@tribetails.com ", "not an email "))
+    }
+    private fun kinCareProblems(vararg rows: KinCareTypeRow) = kinCareRowProblems(rows.toList())
+    @Test
+    fun `a bad KinCare price holds Save back only when the rates changed`() {
+        val bad = kinCareProblems(KinCareTypeRow("Walk", "", "abc", existing = true))
+        assertTrue(bad.isNotEmpty())
+        // Only the lengths changed: the rates map is not in the save.
+        assertFalse(kinCareBlocksSave(bad, null, ratesChanged = false, durationsChanged = true))
+        // The rates changed (any row): the whole map is checked.
+        assertTrue(kinCareBlocksSave(bad, null, ratesChanged = true, durationsChanged = false))
+    }
+    @Test
+    fun `a bad KinCare length holds Save back only when the lengths changed`() {
+        val bad = kinCareProblems(KinCareTypeRow("Walk", "9999", "10", existing = true))
+        assertFalse(kinCareBlocksSave(bad, null, ratesChanged = true, durationsChanged = false))
+        assertTrue(kinCareBlocksSave(bad, null, ratesChanged = false, durationsChanged = true))
+    }
+    @Test
+    fun `a KinCare name is checked in either map`() {
+        val bad = kinCareProblems(KinCareTypeRow("", "30", "10", existing = true))
+        assertTrue(kinCareBlocksSave(bad, null, ratesChanged = true, durationsChanged = false))
+        assertTrue(kinCareBlocksSave(bad, null, ratesChanged = false, durationsChanged = true))
+        assertFalse(kinCareBlocksSave(bad, null, ratesChanged = false, durationsChanged = false))
+    }
+    @Test
+    fun `a stored Home limit below zero reads as bad unless its box holds typed text`() {
+        val rows = listOf(
+            com.tribetails.auntieos.data.model.PortalHomeSection("upNext", true, -2),
+            com.tribetails.auntieos.data.model.PortalHomeSection("tales", true, 5),
+        )
+        assertEquals(mapOf("upNext" to HOME_LIMIT_INVALID), storedHomeLimitProblems(rows, emptySet()))
+        assertEquals(emptyMap<String, String>(), storedHomeLimitProblems(rows, setOf("upNext")))
+    }
 }

@@ -493,4 +493,81 @@ class BusinessRulesPanelsTest {
         assertTrue(ARRIVAL_RADIUS_NOTE.startsWith("Only applies while Verify arrival and departure by location is on."))
         assertFalse(ARRIVAL_RADIUS_NOTE.contains("switch above"))
     }
+
+    // ── A stored bad value (#1783) ─────────────────────────────────────────
+    private fun bookingEdits(
+        settings: BusinessSettings,
+        mode: String = settings.defaultBookingMode,
+        specific: Boolean = settings.allowSpecificTimeBooking,
+        block: Boolean = settings.allowTimeBlockBooking,
+        hours: String = settings.defaultTimeBlockDurationHours.toString(),
+        buffer: String = settings.travelBufferMinutes.toString(),
+        blocks: List<TimeBlockRow> = settings.timeBlocks.map { it.toRow() },
+        zone: String = settings.timeZone,
+    ) = bookingRulesEdits(settings, mode, specific, block, hours, buffer, blocks, zone)
+    private fun bookingHeld(settings: BusinessSettings, buffer: String = settings.travelBufferMinutes.toString(), mode: String = settings.defaultBookingMode): String? {
+        val edits = bookingEdits(settings, buffer = buffer, mode = mode)
+        return bookingRulesError(
+            mode, settings.allowSpecificTimeBooking, settings.allowTimeBlockBooking,
+            settings.defaultTimeBlockDurationHours.toString(), buffer,
+            settings.timeBlocks.map { it.toRow() }, settings.timeZone, edits,
+        )
+    }
+    @Test
+    fun `a stored bad travel buffer is shown on open but does not hold Save`() {
+        val stored = loaded.copy(travelBufferMinutes = 9999)
+        // Shown: the full check names it.
+        assertEquals(
+            "Travel buffer: enter 0 to 480 minutes.",
+            bookingRulesError(stored.defaultBookingMode, true, true, "4", "9999", emptyList(), stored.timeZone),
+        )
+        // Not held: nothing about the buffer is in the save.
+        assertNull(bookingHeld(stored))
+    }
+    @Test
+    fun `editing the stored bad buffer to another bad value is held, to a good one is free`() {
+        val stored = loaded.copy(travelBufferMinutes = 9999)
+        assertEquals("Travel buffer: enter 0 to 480 minutes.", bookingHeld(stored, buffer = "9000"))
+        assertNull(bookingHeld(stored, buffer = "45"))
+    }
+    @Test
+    fun `stored modes both off do not hold a different edit, and do once a mode is touched`() {
+        val stored = loaded.copy(allowSpecificTimeBooking = false, allowTimeBlockBooking = false)
+        assertNull(
+            bookingRulesError("SPECIFIC_TIME", false, false, "4", "45", emptyList(), stored.timeZone,
+                bookingEdits(stored, buffer = "45")),
+        )
+        assertNotNull(
+            bookingRulesError("SPECIFIC_TIME", false, false, "4", "30", emptyList(), stored.timeZone,
+                bookingEdits(stored, mode = "TIME_BLOCK")),
+        )
+    }
+    @Test
+    fun `an unusable stored zone holds Save only once the zone is changed`() {
+        val stored = loaded.copy(timeZone = "Mars/Olympus")
+        val untouched = bookingEdits(stored)
+        assertFalse(untouched.zone)
+        assertNull(bookingRulesError(stored.defaultBookingMode, true, true, "4", "30", emptyList(), "Mars/Olympus", untouched))
+        val changed = bookingEdits(stored, zone = "Mars/Phobos")
+        assertNotNull(bookingRulesError(stored.defaultBookingMode, true, true, "4", "30", emptyList(), "Mars/Phobos", changed))
+    }
+    private fun visitEdits(settings: BusinessSettings, radius: String = settings.arrivalRadiusMeters.toString()) =
+        visitRecordsEdits(
+            settings,
+            settings.saveRoutesForDays.toString(),
+            formatOptionList(settings.etaMinuteOptions),
+            formatOptionList(settings.draftRetentionOptions),
+            radius,
+        )
+    @Test
+    fun `a stored bad arrival radius is shown, holds nothing, and is held again once edited badly`() {
+        val stored = loaded.copy(arrivalRadiusMeters = 3)
+        val days = stored.saveRoutesForDays.toString()
+        val eta = formatOptionList(stored.etaMinuteOptions)
+        val drafts = formatOptionList(stored.draftRetentionOptions)
+        assertTrue(visitRecordsError(days, eta, drafts, "3")!!.startsWith("Arrival must be within"))
+        assertNull(visitRecordsError(days, eta, drafts, "3", visitEdits(stored)))
+        assertTrue(visitRecordsError(days, eta, drafts, "9", visitEdits(stored, "9"))!!.startsWith("Arrival must be within"))
+        assertNull(visitRecordsError(days, eta, drafts, "300", visitEdits(stored, "300")))
+    }
 }
