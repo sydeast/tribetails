@@ -24,15 +24,25 @@ describe('resolveAnthropicModel (NOTE-48 allowlist)', () => {
     else process.env.ANTHROPIC_MODEL = original;
   });
 
-  it('defaults to claude-sonnet-4-5 when the env var is unset', () => {
+  it('defaults to claude-sonnet-5-5 when the env var is unset', () => {
     delete process.env.ANTHROPIC_MODEL;
     assert.strictEqual(idx.resolveAnthropicModel(), idx.ANTHROPIC_MODEL_DEFAULT);
-    assert.strictEqual(idx.ANTHROPIC_MODEL_DEFAULT, 'claude-sonnet-4-5');
+    assert.strictEqual(idx.ANTHROPIC_MODEL_DEFAULT, 'claude-sonnet-5-5');
+  });
+
+  it('allowlist holds exactly claude-sonnet-5-5 and not the retiring claude-sonnet-4-5', () => {
+    assert.deepStrictEqual([...idx.ALLOWED_ANTHROPIC_MODELS], ['claude-sonnet-5-5']);
+    assert.ok(!idx.ALLOWED_ANTHROPIC_MODELS.has('claude-sonnet-4-5'));
   });
 
   it('honors an allowlisted override', () => {
+    process.env.ANTHROPIC_MODEL = 'claude-sonnet-5-5';
+    assert.strictEqual(idx.resolveAnthropicModel(), 'claude-sonnet-5-5');
+  });
+
+  it('refuses the retired claude-sonnet-4-5 override and uses the default', () => {
     process.env.ANTHROPIC_MODEL = 'claude-sonnet-4-5';
-    assert.strictEqual(idx.resolveAnthropicModel(), 'claude-sonnet-4-5');
+    assert.strictEqual(idx.resolveAnthropicModel(), 'claude-sonnet-5-5');
   });
 
   it('falls back to the default for a non-allowlisted (e.g. costly) model', () => {
@@ -43,7 +53,7 @@ describe('resolveAnthropicModel (NOTE-48 allowlist)', () => {
   it('falls back to the default for an empty or junk override', () => {
     process.env.ANTHROPIC_MODEL = '';
     assert.strictEqual(idx.resolveAnthropicModel(), idx.ANTHROPIC_MODEL_DEFAULT);
-    process.env.ANTHROPIC_MODEL = 'not-a-real-model; rm -rf /';
+    process.env.ANTHROPIC_MODEL = 'not-a-real-model; drop everything';
     assert.strictEqual(idx.resolveAnthropicModel(), idx.ANTHROPIC_MODEL_DEFAULT);
   });
 
@@ -53,6 +63,62 @@ describe('resolveAnthropicModel (NOTE-48 allowlist)', () => {
       else process.env.ANTHROPIC_MODEL = candidate;
       assert.ok(idx.ALLOWED_ANTHROPIC_MODELS.has(idx.resolveAnthropicModel()));
     }
+  });
+});
+
+describe('Anthropic SDK deprecation check for the Auntie copy model', () => {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const { generateTitle } = require('../generate.js');
+
+  function stubbedClient(onBody) {
+    const stubFetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      onBody(body);
+      return new Response(
+        JSON.stringify({
+          id: 'msg_1', type: 'message', role: 'assistant', model: body.model,
+          content: [{ type: 'text', text: 'Cats At The Door' }],
+          stop_reason: 'end_turn', stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    return new Anthropic({ apiKey: 'test-key', fetch: stubFetch, maxRetries: 0 });
+  }
+
+  async function captureWarnings(fn) {
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (...a) => warnings.push(a.join(' '));
+    try {
+      await fn();
+    } finally {
+      console.warn = origWarn;
+    }
+    return warnings;
+  }
+
+  it('the real SDK raises no deprecation warning for the default model and sends thinking off', async () => {
+    let sent;
+    const anthropic = stubbedClient((b) => { sent = b; });
+    const warnings = await captureWarnings(async () => {
+      const title = await generateTitle(anthropic, 'The cats waited at the door all day.', idx.ANTHROPIC_MODEL_DEFAULT);
+      assert.strictEqual(title, 'Cats At The Door');
+    });
+    assert.strictEqual(sent.model, 'claude-sonnet-5-5');
+    assert.deepStrictEqual(sent.thinking, { type: 'between_tools' });
+    assert.deepStrictEqual(warnings.filter((w) => /deprecat/i.test(w)), []);
+  });
+
+  it('the SDK still flags claude-sonnet-4-5 as deprecated (proves the check above can fail)', async () => {
+    const anthropic = stubbedClient(() => {});
+    const warnings = await captureWarnings(async () => {
+      await anthropic.messages.create({
+        model: 'claude-sonnet-4-5', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }],
+      });
+    });
+    assert.ok(warnings.some((w) => /deprecated/i.test(w) && /claude-sonnet-4-5/.test(w)), warnings.join('|'));
   });
 });
 

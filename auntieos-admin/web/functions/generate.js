@@ -39,7 +39,7 @@ const ALLOWED_TYPES = new Set(['sms', 'email', 'push', 'visit_report', 'social_p
  *
  * KNOWN DIVERGENCE: the backfill runs this on claude-opus-4-8 (AI_MODEL in
  * MyTribe lib/aiCopy.ts). This function's ALLOWED_ANTHROPIC_MODELS allowlist has
- * exactly one member, claude-sonnet-4-5, so live titles come from a different
+ * exactly one member, claude-sonnet-5-5, so live titles come from a different
  * model than backfilled ones. The instruction is identical; the voice is not
  * guaranteed to be. Widening the allowlist is a cost and deploy decision, not a
  * silent one.
@@ -390,12 +390,17 @@ async function resolveContext(db, v) {
   return { kinfolk, kinfolkId, kinfolkName, dossier, kins, four11ByKinId, recentLog, trainingDocs };
 }
 
+// Claude Sonnet 5.5 thinks by default and rejects `{ type: 'disabled' }` with a
+// 400. `between_tools` is its off switch. Without it, thinking tokens would eat
+// the 64-token title budget and leave no text block.
+const NO_THINKING = { type: 'between_tools' };
 async function callClaude(anthropic, system, userMessage, model) {
   let resp;
   try {
     resp = await anthropic.messages.create({
       model,
       max_tokens: 2048,
+      thinking: NO_THINKING,
       system,
       messages: [{ role: 'user', content: userMessage }],
     });
@@ -456,6 +461,7 @@ async function generateTitle(anthropic, bodyText, model) {
     const resp = await anthropic.messages.create({
       model,
       max_tokens: 64,
+      thinking: NO_THINKING,
       messages: [{ role: 'user', content: `${TITLE_INSTRUCTION}\n\n${preview}` }],
     });
     const text = (resp.content || [])
