@@ -42,6 +42,30 @@ fun secondaryKinfolkDraftError(draft: SecondaryPersonDraft): String? = when {
     draft.email.isNotBlank() && !com.tribetails.auntieos.web.util.isValidEmail(draft.email) -> SECONDARY_EMAIL_INVALID
     else -> null
 }
+/**
+ * #1593: each field's own refusal, so the dialog puts every sentence under the
+ * field it is about. The server (`portal/secondaryKinfolk.ts`) refuses with the
+ * same sentences.
+ */
+data class SecondaryKinfolkFieldErrors(
+    val name: String? = null,
+    val phone: String? = null,
+    val email: String? = null,
+) {
+    val any: Boolean get() = name != null || phone != null || email != null
+}
+fun secondaryKinfolkFieldErrors(draft: SecondaryPersonDraft): SecondaryKinfolkFieldErrors = SecondaryKinfolkFieldErrors(
+    name = if (draft.name.isBlank()) SECONDARY_KINFOLK_NAME_REQUIRED else null,
+    phone = if (draft.phone.isNotBlank() && !com.tribetails.auntieos.web.util.isValidPhone(draft.phone)) SECONDARY_PHONE_INVALID else null,
+    email = if (draft.email.isNotBlank() && !com.tribetails.auntieos.web.util.isValidEmail(draft.email)) SECONDARY_EMAIL_INVALID else null,
+)
+/** A server refusal that names one of the three fields, placed on that field; null otherwise. */
+fun secondaryKinfolkServerFieldErrors(message: String?): SecondaryKinfolkFieldErrors? = when (message) {
+    SECONDARY_KINFOLK_NAME_REQUIRED -> SecondaryKinfolkFieldErrors(name = message)
+    SECONDARY_PHONE_INVALID -> SecondaryKinfolkFieldErrors(phone = message)
+    SECONDARY_EMAIL_INVALID -> SecondaryKinfolkFieldErrors(email = message)
+    else -> null
+}
 /** The state label on a person row. */
 fun personAccessLabel(access: PersonAccess): String = when (access) {
     PersonAccess.NONE -> "No portal access"

@@ -25,7 +25,9 @@ import com.tribetails.auntieos.web.data.SecondaryPerson
 import com.tribetails.auntieos.web.data.SecondaryPersonDraft
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.personAccessLabel
-import com.tribetails.auntieos.web.data.secondaryKinfolkDraftError
+import com.tribetails.auntieos.web.data.SecondaryKinfolkFieldErrors
+import com.tribetails.auntieos.web.data.secondaryKinfolkFieldErrors
+import com.tribetails.auntieos.web.data.secondaryKinfolkServerFieldErrors
 import com.tribetails.auntieos.web.data.toDraft
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
@@ -53,6 +55,7 @@ fun SecondaryKinfolkSection(client: FirestoreClient, kinfolkId: String, househol
     var draft by remember(kinfolkId) { mutableStateOf<SecondaryPersonDraft?>(null) }
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
+    var fieldErrors by remember { mutableStateOf(SecondaryKinfolkFieldErrors()) }
     var removeTarget by remember { mutableStateOf<SecondaryPerson?>(null) }
     var removing by remember { mutableStateOf(false) }
     var removeError by remember { mutableStateOf<String?>(null) }
@@ -68,8 +71,8 @@ fun SecondaryKinfolkSection(client: FirestoreClient, kinfolkId: String, househol
         people = people,
         loadError = loadError,
         onRetry = { generation++ },
-        onAdd = { draft = SecondaryPersonDraft(); saveError = null },
-        onEdit = { draft = it.toDraft(); saveError = null },
+        onAdd = { draft = SecondaryPersonDraft(); saveError = null; fieldErrors = SecondaryKinfolkFieldErrors() },
+        onEdit = { draft = it.toDraft(); saveError = null; fieldErrors = SecondaryKinfolkFieldErrors() },
         onRemove = { removeTarget = it; removeError = null },
     )
 
@@ -78,21 +81,38 @@ fun SecondaryKinfolkSection(client: FirestoreClient, kinfolkId: String, househol
             draft = d,
             saving = saving,
             error = saveError,
-            onChange = { if (!saving) { draft = it; saveError = null } },
+            fieldErrors = fieldErrors,
+            onChange = { next ->
+                if (!saving) {
+                    // Editing a field clears that field's message, and only that one.
+                    fieldErrors = fieldErrors.copy(
+                        name = fieldErrors.name.takeIf { next.name == d.name },
+                        phone = fieldErrors.phone.takeIf { next.phone == d.phone },
+                        email = fieldErrors.email.takeIf { next.email == d.email },
+                    )
+                    draft = next
+                    saveError = null
+                }
+            },
             onCancel = { if (!saving) draft = null },
             onSave = {
                 // #1593: refused here first, not after the server's round trip.
-                val refusal = secondaryKinfolkDraftError(d)
-                if (refusal != null) {
-                    saveError = refusal
+                val errs = secondaryKinfolkFieldErrors(d)
+                if (errs.any) {
+                    fieldErrors = errs
+                    saveError = null
                     return@SecondaryKinfolkDialog
                 }
                 saving = true
                 saveError = null
+                fieldErrors = SecondaryKinfolkFieldErrors()
                 scope.launch {
                     when (val r = client.saveSecondaryKinfolk(kinfolkId, d)) {
                         is WriteResult.Ok -> { draft = null; generation++ }
-                        is WriteResult.Err -> saveError = r.message
+                        is WriteResult.Err -> {
+                            val onField = secondaryKinfolkServerFieldErrors(r.message)
+                            if (onField != null) fieldErrors = onField else saveError = r.message
+                        }
                     }
                     saving = false
                 }
@@ -188,6 +208,7 @@ fun SecondaryKinfolkDialog(
     draft: SecondaryPersonDraft,
     saving: Boolean,
     error: String?,
+    fieldErrors: SecondaryKinfolkFieldErrors = SecondaryKinfolkFieldErrors(),
     onChange: (SecondaryPersonDraft) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
@@ -214,18 +235,24 @@ fun SecondaryKinfolkDialog(
             label = "Name",
             enabled = !saving,
             required = true,
+            isError = fieldErrors.name != null,
+            errorMessage = fieldErrors.name,
             modifier = Modifier.fillMaxWidth(),
         )
         BottomBorderField(
             draft.phone, { onChange(draft.copy(phone = it.take(32))) },
             label = "Phone (optional)",
             enabled = !saving,
+            isError = fieldErrors.phone != null,
+            errorMessage = fieldErrors.phone,
             modifier = Modifier.fillMaxWidth(),
         )
         BottomBorderField(
             draft.email, { onChange(draft.copy(email = it.take(254))) },
             label = "Email (optional)",
             enabled = !saving,
+            isError = fieldErrors.email != null,
+            errorMessage = fieldErrors.email,
             modifier = Modifier.fillMaxWidth(),
         )
         error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }

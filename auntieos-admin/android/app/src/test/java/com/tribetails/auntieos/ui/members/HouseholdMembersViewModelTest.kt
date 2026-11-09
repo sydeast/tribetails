@@ -568,8 +568,34 @@ class HouseholdMembersViewModelTest {
         val vm = vm()
         vm.startPersonEdit(null)
         vm.savePerson(); advanceUntilIdle()
-        assertEquals("A secondary kinfolk needs a name.", vm.uiState.value.personError)
+        assertEquals("A secondary kinfolk needs a name.", vm.uiState.value.personFieldErrors.name)
+        assertNull(vm.uiState.value.personError)
         coVerify(exactly = 0) { repo.saveSecondaryKinfolk(any(), any()) }
+    }
+    @Test fun `#1593 a bad phone and email are refused on their own fields, and editing one clears only it`() = runTest(testDispatcher) {
+        stubLoads()
+        val vm = vm()
+        vm.startPersonEdit(null)
+        vm.updatePersonDraft(MembersRepository.SecondaryPersonDraft(name = "Sam Lee", phone = "12345", email = "sam@"))
+        vm.savePerson(); advanceUntilIdle()
+        val errs = vm.uiState.value.personFieldErrors
+        assertEquals("Enter a 10-digit phone number, or leave it blank.", errs.phone)
+        assertEquals("Enter an email like name@example.com, or leave it blank.", errs.email)
+        assertNull(errs.name)
+        coVerify(exactly = 0) { repo.saveSecondaryKinfolk(any(), any()) }
+        vm.updatePersonDraft(MembersRepository.SecondaryPersonDraft(name = "Sam Lee", phone = "512-555-0142", email = "sam@"))
+        assertNull(vm.uiState.value.personFieldErrors.phone)
+        assertEquals("Enter an email like name@example.com, or leave it blank.", vm.uiState.value.personFieldErrors.email)
+    }
+    @Test fun `#1593 a server refusal that names the phone lands on the phone field`() = runTest(testDispatcher) {
+        stubLoads()
+        coEvery { repo.saveSecondaryKinfolk(any(), any()) } returns Result.failure(Exception("Enter a 10-digit phone number, or leave it blank."))
+        val vm = vm()
+        vm.startPersonEdit(null)
+        vm.updatePersonDraft(MembersRepository.SecondaryPersonDraft(name = "Sam Lee", phone = "512-555-0142"))
+        vm.savePerson(); advanceUntilIdle()
+        assertEquals("Enter a 10-digit phone number, or leave it blank.", vm.uiState.value.personFieldErrors.phone)
+        assertNull(vm.uiState.value.personError)
     }
     /**
      * DIFF VS REBUILD. The edit dialog is seeded from the stored person and

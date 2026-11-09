@@ -79,6 +79,8 @@ data class HouseholdMembersUiState(
     val personSaving: Boolean = false,
     /** The server's refusal on the dialog, verbatim. */
     val personError: String? = null,
+    /** #1593: each field's own refusal, shown under that field. */
+    val personFieldErrors: SecondaryKinfolkFieldErrors = SecondaryKinfolkFieldErrors(),
     val removingPersonId: String? = null,
     val personRemoveError: String? = null,
 )
@@ -138,15 +140,28 @@ class HouseholdMembersViewModel(
                 MembersRepository.SecondaryPersonDraft(person.personId, person.name, person.phone.orEmpty(), person.email.orEmpty())
             },
             personError = null,
+            personFieldErrors = SecondaryKinfolkFieldErrors(),
         )
     }
     fun updatePersonDraft(draft: MembersRepository.SecondaryPersonDraft) {
         if (_uiState.value.personSaving) return
-        _uiState.value = _uiState.value.copy(personDraft = draft, personError = null)
+        val before = _uiState.value.personDraft
+        val errs = _uiState.value.personFieldErrors
+        // Editing a field clears that field's message, and only that one.
+        val cleared = errs.copy(
+            name = errs.name.takeIf { before?.name == draft.name },
+            phone = errs.phone.takeIf { before?.phone == draft.phone },
+            email = errs.email.takeIf { before?.email == draft.email },
+        )
+        _uiState.value = _uiState.value.copy(personDraft = draft, personError = null, personFieldErrors = cleared)
     }
     fun cancelPersonEdit() {
         if (_uiState.value.personSaving) return
-        _uiState.value = _uiState.value.copy(personDraft = null, personError = null)
+        _uiState.value = _uiState.value.copy(
+            personDraft = null,
+            personError = null,
+            personFieldErrors = SecondaryKinfolkFieldErrors(),
+        )
     }
     /**
      * Adds or edits a secondary kinfolk: no invite, no portal access (the admin
@@ -158,11 +173,16 @@ class HouseholdMembersViewModel(
         val draft = _uiState.value.personDraft ?: return
         if (_uiState.value.personSaving) return
         // #1593: name, phone and email are checked here first, not 4 s later by the server.
-        secondaryKinfolkDraftError(draft.name, draft.phone, draft.email)?.let { refusal ->
-            _uiState.value = _uiState.value.copy(personError = refusal)
+        val fieldErrors = secondaryKinfolkFieldErrors(draft.name, draft.phone, draft.email)
+        if (fieldErrors.any) {
+            _uiState.value = _uiState.value.copy(personError = null, personFieldErrors = fieldErrors)
             return
         }
-        _uiState.value = _uiState.value.copy(personSaving = true, personError = null)
+        _uiState.value = _uiState.value.copy(
+            personSaving = true,
+            personError = null,
+            personFieldErrors = SecondaryKinfolkFieldErrors(),
+        )
         viewModelScope.launch {
             repository.saveSecondaryKinfolk(kinfolkId, draft).fold(
                 onSuccess = { saved ->
@@ -174,9 +194,15 @@ class HouseholdMembersViewModel(
                     loadPeople()
                 },
                 onFailure = { err ->
+                    val onField = secondaryKinfolkServerFieldErrors(err.message)
                     _uiState.value = _uiState.value.copy(
                         personSaving = false,
-                        personError = err.message?.ifBlank { null } ?: "The secondary kinfolk was not saved. Try again.",
+                        personError = if (onField != null) {
+                            null
+                        } else {
+                            err.message?.ifBlank { null } ?: "The secondary kinfolk was not saved. Try again."
+                        },
+                        personFieldErrors = onField ?: SecondaryKinfolkFieldErrors(),
                     )
                 },
             )
