@@ -44,6 +44,7 @@ function Harness(props: {
   dirty?: boolean;
   onClose?: () => void;
   onFinish?: () => void;
+  onRevealErrors?: () => void;
   initial?: string;
 }) {
   const [step, setStep] = useState(props.initial ?? 'schema');
@@ -55,6 +56,7 @@ function Harness(props: {
       onStepChange={setStep}
       onClose={props.onClose ?? (() => {})}
       onFinish={props.onFinish ?? (() => {})}
+      {...(props.onRevealErrors ? { onRevealErrors: props.onRevealErrors } : {})}
       finishLabel="Save schema"
       dirty={props.dirty ?? false}
     />
@@ -199,6 +201,26 @@ describe('WizardModal: a pristine step is not accused of being empty', () => {
     expect(screen.getByText('Schema id is required.')).toBeTruthy();
     expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields 1 thing to fix');
     expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('3 things left to fix');
+  });
+
+  it('tells the caller when a finish press revealed problems, so its fields can show them too (#1593)', async () => {
+    const onFinish = vi.fn();
+    const onRevealErrors = vi.fn();
+    render(
+      <Harness steps={pristineSteps()} initial="review" onFinish={onFinish} onRevealErrors={onRevealErrors} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Save schema' }));
+    expect(onRevealErrors).toHaveBeenCalledOnce();
+    expect(onFinish).not.toHaveBeenCalled();
+  });
+
+  it('does not report a reveal when the press commits', async () => {
+    const onFinish = vi.fn();
+    const onRevealErrors = vi.fn();
+    render(<Harness initial="review" onFinish={onFinish} onRevealErrors={onRevealErrors} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Save schema' }));
+    expect(onFinish).toHaveBeenCalledOnce();
+    expect(onRevealErrors).not.toHaveBeenCalled();
   });
 
   it('blocks finish the old way once the problems are on screen', async () => {

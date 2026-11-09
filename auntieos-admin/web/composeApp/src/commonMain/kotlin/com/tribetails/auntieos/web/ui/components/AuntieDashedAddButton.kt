@@ -48,13 +48,16 @@ fun AuntieDashedAddButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     leadingIcon: ImageVector? = null,
+    // Off draws the slot faint and ignores clicks. A caller that turns it off
+    // puts the reason beside it (KinTale checklist at 60 items, #1593).
+    enabled: Boolean = true,
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val shape = RoundedCornerShape(12.dp)
 
     val interaction = remember { MutableInteractionSource() }
-    val hovered = interaction.collectIsHoveredAsState().value
+    val hovered = enabled && interaction.collectIsHoveredAsState().value
 
     val strokeColor = animateColorAsState(
         targetValue   = if (hovered) c.primary else c.border,
@@ -67,7 +70,11 @@ fun AuntieDashedAddButton(
         label         = "dashedFill",
     ).value
     val contentColor = animateColorAsState(
-        targetValue   = if (hovered) c.primary else c.textDim,
+        targetValue   = when {
+            !enabled -> c.textFaint
+            hovered  -> c.primary
+            else     -> c.textDim
+        },
         animationSpec = spring(stiffness = Spring.StiffnessLow),
         label         = "dashedContent",
     ).value
@@ -99,6 +106,7 @@ fun AuntieDashedAddButton(
             .clickable(
                 interactionSource = interaction,
                 indication        = null,
+                enabled           = enabled,
                 onClick           = onClick,
             )
             .padding(horizontal = dims.space4, vertical = dims.space3),

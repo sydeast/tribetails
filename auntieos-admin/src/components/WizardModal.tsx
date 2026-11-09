@@ -131,6 +131,13 @@ export interface WizardModalProps {
   /** A reason to refuse the commit that is not a step's own validation (e.g. still loading). */
   finishDisabled?: boolean;
   /**
+   * Called when a finish press reveals problems instead of committing (the
+   * first press while something is still `pristine`). A caller that draws its
+   * own per-field messages reads this to show them at the same moment the step
+   * banners appear, so the field and the banner never disagree.
+   */
+  onRevealErrors?: () => void;
+  /**
    * Banners that belong to the WHOLE flow rather than to one step — a save that
    * the server refused, a warning about how the record was loaded. Drawn above
    * the rail and therefore present on every step, because a refusal an operator
@@ -163,6 +170,7 @@ export function WizardModal({
   finishLabel,
   finishBusy = false,
   finishDisabled = false,
+  onRevealErrors,
   notice,
   aside,
 }: WizardModalProps) {
@@ -260,6 +268,7 @@ export function WizardModal({
   function handleFinish() {
     if (unspoken > 0) {
       setFinishAttempted(true);
+      onRevealErrors?.();
       const target = firstStepWithErrors(states);
       if (target !== null) onStepChange(target);
       return;

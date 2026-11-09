@@ -1505,11 +1505,93 @@ service cloud.firestore {
       allow read: if isOwner() || (isTestAdmin() && householdId == testScope());
       allow write: if isOwner();
     }
+ // #1593: a checklist item has to say something. The QA walk saved a template
+ // with an empty item, which renders as a blank checkbox on the household's
+ // KinTale. The three admin editors refuse it beside the item; this is the
+ // server half.
+ //
+ // Rules have no loops, so the list is checked slot by slot, written out, up to
+ // 60 items; every client shows "A checklist holds up to 60 items." The limit is
+ // the rules engine's, not a choice about templates: a helper function per slot
+ // runs out of the 1,000-expression budget near 35 items, and 100 written-out
+ // slots no longer compile ("Expression is too complex"). A missing `text`, or
+ // one that is not a string, makes `.trim()` an error, and an error is a
+ // denial. Checked on create, and on an update only when `checklistItems`
+ // itself changes, so a stored template with an old blank item can still be
+ // archived or renamed.
+    function ktChecklistWriteOk() {
+      let items = request.resource.data.get('checklistItems', []);
+      let n = items.size();
+      return n <= 60
+             && (n <= 0 || items[0].text.trim().size() > 0)
+             && (n <= 1 || items[1].text.trim().size() > 0)
+             && (n <= 2 || items[2].text.trim().size() > 0)
+             && (n <= 3 || items[3].text.trim().size() > 0)
+             && (n <= 4 || items[4].text.trim().size() > 0)
+             && (n <= 5 || items[5].text.trim().size() > 0)
+             && (n <= 6 || items[6].text.trim().size() > 0)
+             && (n <= 7 || items[7].text.trim().size() > 0)
+             && (n <= 8 || items[8].text.trim().size() > 0)
+             && (n <= 9 || items[9].text.trim().size() > 0)
+             && (n <= 10 || items[10].text.trim().size() > 0)
+             && (n <= 11 || items[11].text.trim().size() > 0)
+             && (n <= 12 || items[12].text.trim().size() > 0)
+             && (n <= 13 || items[13].text.trim().size() > 0)
+             && (n <= 14 || items[14].text.trim().size() > 0)
+             && (n <= 15 || items[15].text.trim().size() > 0)
+             && (n <= 16 || items[16].text.trim().size() > 0)
+             && (n <= 17 || items[17].text.trim().size() > 0)
+             && (n <= 18 || items[18].text.trim().size() > 0)
+             && (n <= 19 || items[19].text.trim().size() > 0)
+             && (n <= 20 || items[20].text.trim().size() > 0)
+             && (n <= 21 || items[21].text.trim().size() > 0)
+             && (n <= 22 || items[22].text.trim().size() > 0)
+             && (n <= 23 || items[23].text.trim().size() > 0)
+             && (n <= 24 || items[24].text.trim().size() > 0)
+             && (n <= 25 || items[25].text.trim().size() > 0)
+             && (n <= 26 || items[26].text.trim().size() > 0)
+             && (n <= 27 || items[27].text.trim().size() > 0)
+             && (n <= 28 || items[28].text.trim().size() > 0)
+             && (n <= 29 || items[29].text.trim().size() > 0)
+             && (n <= 30 || items[30].text.trim().size() > 0)
+             && (n <= 31 || items[31].text.trim().size() > 0)
+             && (n <= 32 || items[32].text.trim().size() > 0)
+             && (n <= 33 || items[33].text.trim().size() > 0)
+             && (n <= 34 || items[34].text.trim().size() > 0)
+             && (n <= 35 || items[35].text.trim().size() > 0)
+             && (n <= 36 || items[36].text.trim().size() > 0)
+             && (n <= 37 || items[37].text.trim().size() > 0)
+             && (n <= 38 || items[38].text.trim().size() > 0)
+             && (n <= 39 || items[39].text.trim().size() > 0)
+             && (n <= 40 || items[40].text.trim().size() > 0)
+             && (n <= 41 || items[41].text.trim().size() > 0)
+             && (n <= 42 || items[42].text.trim().size() > 0)
+             && (n <= 43 || items[43].text.trim().size() > 0)
+             && (n <= 44 || items[44].text.trim().size() > 0)
+             && (n <= 45 || items[45].text.trim().size() > 0)
+             && (n <= 46 || items[46].text.trim().size() > 0)
+             && (n <= 47 || items[47].text.trim().size() > 0)
+             && (n <= 48 || items[48].text.trim().size() > 0)
+             && (n <= 49 || items[49].text.trim().size() > 0)
+             && (n <= 50 || items[50].text.trim().size() > 0)
+             && (n <= 51 || items[51].text.trim().size() > 0)
+             && (n <= 52 || items[52].text.trim().size() > 0)
+             && (n <= 53 || items[53].text.trim().size() > 0)
+             && (n <= 54 || items[54].text.trim().size() > 0)
+             && (n <= 55 || items[55].text.trim().size() > 0)
+             && (n <= 56 || items[56].text.trim().size() > 0)
+             && (n <= 57 || items[57].text.trim().size() > 0)
+             && (n <= 58 || items[58].text.trim().size() > 0)
+             && (n <= 59 || items[59].text.trim().size() > 0);
+    }
  // Global KinTale template catalog: test admin may READ (so the KinTale
  // composer renders), never write. Writes stay admin-only.
     match /kintale_templates/{id} {
       allow read: if isStaff() || isTestAdmin();
-      allow create, update: if isOwner();
+      allow create: if isOwner() && ktChecklistWriteOk();
+      allow update: if isOwner()
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['checklistItems'])
+                        || ktChecklistWriteOk());
       // #1591 (operator ruling 2026-11-05): a template is deleted for good only
       // from the archive. Remove sets `archived: true` (an update); a delete of
       // a template that was never archived is refused for every client.
