@@ -103,13 +103,18 @@ describe('KinCareRatesEditor', () => {
     expect(onSave).toHaveBeenCalledWith({ serviceRates: { Overnight: '80.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
   });
 
-  it('drops a blank-type row on save (unsaveable, matches the wasm editor)', async () => {
+  // #1593: a cleared name used to drop the row on Save without a word. It is
+  // refused beside the name now; the trash button is how a type goes.
+  it('refuses a saved row whose name is cleared, beside the name, instead of dropping it', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<KinCareRatesEditor data={{ serviceRates: { Walk: '10.00' }, serviceDurations: {} }} onSave={onSave} />);
     const typeInput = screen.getByDisplayValue('Walk');
     await userEvent.clear(typeInput);
+    expect(typeInput).toHaveAttribute('aria-invalid', 'true');
+    expect(typeInput).toHaveAccessibleErrorMessage('Every KinCare type needs a name.');
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: {}, serviceDurations: {}, serviceStartTimeBooking: {} });
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it('Cancel reverts unsaved row edits', async () => {
@@ -381,19 +386,23 @@ describe('KinCareRatesEditor', () => {
       await userEvent.click(screen.getByRole('button', SAVE));
       expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({});
     });
-    it('on a duplicate name the last row wins, as it does for the rate', async () => {
-      // A flagged "Overnight" followed by an unflagged row renamed to the
-      // same name: the rate comes from the second row, so the flag must too.
+    // #1593: a duplicate used to fold silently, last row winning, which lost
+    // the first row's rate and flag. Both rows are refused by name now.
+    it('refuses a duplicate name on both rows instead of letting the last one win', async () => {
       const onSave = vi.fn().mockResolvedValue(undefined);
       render(
         <KinCareRatesEditor data={{ ...overnight, serviceStartTimeBooking: { Overnight: true } }} onSave={onSave} />,
       );
       const walk = screen.getByDisplayValue('Walk');
       await userEvent.clear(walk);
-      await userEvent.type(walk, 'Overnight');
+      await userEvent.type(walk, 'overnight');
+      const names = nameInputs();
+      for (const name of names) {
+        expect(name).toHaveAccessibleErrorMessage('Two KinCare types are both called "' + name.value + '".');
+      }
+      expect(screen.getByRole('button', SAVE)).toBeDisabled();
       await userEvent.click(screen.getByRole('button', SAVE));
-      expect(savedPatch(onSave).serviceRates).toEqual({ Overnight: '15.00' });
-      expect(savedPatch(onSave).serviceStartTimeBooking).toEqual({});
+      expect(onSave).not.toHaveBeenCalled();
     });
     it('refuses to save a flagged type with no length, and names it', async () => {
       // "Overnight" states no length in its name; with nothing typed either,
@@ -441,5 +450,112 @@ describe('KinCareRatesEditor', () => {
     await userEvent.click(screen.getByRole('button', SAVE));
     expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
     expect(screen.getByRole('button', SAVE)).toBeEnabled();
+  });
+});
+
+/**
+ * #1593, from the 2026-11-05 QA walk: a price of "abc" saved, and the preview
+ * drew "$abc". Every column is held to the server's rule now, beside the
+ * field, and Save waits on all of them.
+ */
+describe('KinCareRatesEditor checks (#1593)', () => {
+  function renderWalk(onSave = vi.fn().mockResolvedValue(undefined)) {
+    render(<KinCareRatesEditor data={{ serviceRates: { Walk: '10.00' }, serviceDurations: {} }} onSave={onSave} />);
+    return onSave;
+  }
+
+  it.each([
+    ['abc', 'Enter the price for "Walk" in dollars, like 25 or 25.50.'],
+    ['1.234', 'Enter the price for "Walk" in dollars, like 25 or 25.50.'],
+    ['-5', 'The price for "Walk" cannot be negative.'],
+  ])('refuses a price of %j beside the rate, and Save stays off', async (typed, sentence) => {
+    const onSave = renderWalk();
+    const rate = screen.getByLabelText('Rate');
+    await userEvent.clear(rate);
+    await userEvent.type(rate, typed);
+    expect(rate).toHaveAttribute('aria-invalid', 'true');
+    expect(rate).toHaveAccessibleErrorMessage(sentence);
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('never draws a refused price on the preview chip', async () => {
+    renderWalk();
+    const rate = screen.getByLabelText('Rate');
+    await userEvent.clear(rate);
+    await userEvent.type(rate, 'abc');
+    const preview = screen.getByRole('list', { name: 'KinCare type preview' });
+    expect(within(preview).getByRole('listitem')).toHaveTextContent('WalkNo price set');
+    expect(within(preview).queryByText(/\$abc/)).toBeNull();
+    await userEvent.clear(rate);
+    await userEvent.type(rate, '-5');
+    expect(within(preview).queryByText(/\$-5/)).toBeNull();
+  });
+
+  it('a blank price is still legal and reads "No price set"', async () => {
+    const onSave = renderWalk();
+    await userEvent.clear(screen.getByLabelText('Rate'));
+    expect(screen.getByLabelText('Rate')).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByRole('list', { name: 'KinCare type preview' })).toHaveTextContent('WalkNo price set');
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+  });
+
+  it.each(['0', '1441', '30.5', 'half'])('refuses a length of %j beside the duration', async (typed) => {
+    renderWalk();
+    const duration = screen.getByLabelText('Duration (min)');
+    await userEvent.type(duration, typed);
+    expect(duration).toHaveAccessibleErrorMessage('Enter the length of "Walk" in whole minutes, from 1 to 1440.');
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+  });
+
+  it('fixing the value clears the sentence and saves it', async () => {
+    const onSave = renderWalk();
+    const rate = screen.getByLabelText('Rate');
+    await userEvent.clear(rate);
+    await userEvent.type(rate, 'abc');
+    await userEvent.clear(rate);
+    await userEvent.type(rate, '25.50');
+    expect(rate).not.toHaveAttribute('aria-invalid');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '25.50' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+  });
+
+  it('an added row with a price but no name is refused by name', async () => {
+    renderWalk();
+    await userEvent.click(screen.getByRole('button', ADD));
+    const rates = screen.getAllByLabelText('Rate');
+    await userEvent.type(rates[1]!, '20');
+    expect(nameInputs()[1]).toHaveAccessibleErrorMessage('Every KinCare type needs a name.');
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+  });
+
+  it('an added row nobody typed into is left out, not refused', async () => {
+    const onSave = renderWalk();
+    await userEvent.click(screen.getByRole('button', ADD));
+    expect(screen.queryByRole('alert')).toBeNull();
+    const rate = screen.getAllByLabelText('Rate')[0]!;
+    await userEvent.clear(rate);
+    await userEvent.type(rate, '12');
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '12' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+  });
+
+  it('shows the server refusal sentence when the save is refused', async () => {
+    const sentence = 'Enter the price for "Walk" in dollars, like 25 or 25.50.';
+    renderWalk(
+      vi.fn().mockRejectedValue(
+        Object.assign(new Error(sentence), {
+          details: { code: 'settings_refused', field: 'serviceRates', refusals: [{ field: 'serviceRates', message: sentence }] },
+        }),
+      ),
+    );
+    const rate = screen.getByLabelText('Rate');
+    await userEvent.clear(rate);
+    await userEvent.type(rate, '12');
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(await screen.findByText(sentence)).toBeInTheDocument();
   });
 });

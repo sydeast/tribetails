@@ -1760,41 +1760,39 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to read calendar sync receipt", it) }
 
     /**
-     * Writes ONLY the settings fields that actually changed, plus the stamp.
+     * Saves ONLY the settings fields that actually changed, through the
+     * `saveBusinessSettings` callable (#1593).
      *
-     * THIS REPLACES a whole-model `.set(settings, merge())`, whose own comment
-     * admitted the defect and left the fix for its own change:
+     * THE CALLABLE IS THE ONLY WAY IN. `firestore.rules` denies
+     * `business_settings/business_settings` to every client, and the server
+     * checks every field (`mytribe/functions/src/lib/businessSettingsChecks.ts`)
+     * before it writes anything. A refusal comes back as a
+     * [com.google.firebase.functions.FirebaseFunctionsException] whose message
+     * is the operator's sentence and whose `details` carry
+     * `{ code: "settings_refused", field, refusals }`; it reaches the caller
+     * intact ([com.tribetails.auntieos.ui.admin.settingsRefusalOf] reads it).
      *
-     *   "KNOWN GAP ... 'Never clobbers the rest of the union' is only true of
-     *   DELETION. Every field of [BusinessSettings] is INSIDE this written map,
-     *   so a screen that loaded the doc an hour ago writes all ~50 of them back
-     *   at the values it read, reverting whatever changed since."
+     * WHY A DIFF AND NOT THE MODEL is unchanged since this replaced a whole-model
+     * `.set(settings, merge())`: a screen that loaded
+     * the doc an hour ago would write every field back at the value it read,
+     * reverting whatever changed since. [businessSettingsFieldChanges] builds the
+     * map; each caller diffs against the copy it loaded and advances that
+     * baseline only after a save the server accepted.
      *
-     * `SetOptions.merge()` protects fields OUTSIDE the written map and does
-     * nothing about stale fields inside it. This is the one document every
-     * settings editor shares, so that gap was the widest on the app: the React
-     * admin patches it PER SECTION (`auntieos-admin/src/api/settingsWrite.ts`,
-     * which sends only the touched fields for exactly this reason), and the
-     * union holds `calendarSyncId`, the venmo/paypal/cashapp handles and both
-     * tag vocabularies. [businessSettingsFieldChanges] builds the map; each
-     * caller diffs against the copy it loaded and advances that baseline only
-     * after a save the server accepted.
+     * The SERVER stamps `updatedAt` / `updatedBy` and owns the write shape
+     * (nested maps merge key by key, the KinCare rate card replaces whole); this
+     * client sends neither stamp. [updatedBy] only labels the log line.
      *
-     * `updatedAt` / `updatedBy` are STAMPED here, never round-tripped from what
-     * was read, so they cannot freeze and lie about when the doc last changed
-     * (the rule [updateKinfolkFields] and [updateHouseholdFields] follow). ISO
-     * String rather than `serverTimestamp()`, because `BusinessSettings.updatedAt`
-     * is a `String` and the React Settings screen parses it as one.
+     * [businessSettingsWireChanges] turns each value into what the callable
+     * serializer can carry, under the field names Firestore used.
      *
-     * An empty [changes] is a caller bug, not a no-op to absorb: such a write
-     * could only move the stamp, claiming a change that never happened. Every
-     * caller skips the call outright when the diff is empty.
+     * An empty [changes] is a caller bug, not a no-op to absorb: the server
+     * refuses it, and every caller skips the call outright when the diff is
+     * empty.
      *
-     * The calendar-sync receipt fields stay unreachable from here, which is what
-     * `CalendarSyncId.kt` relies on when it keeps `CalendarSyncRun` off
-     * [BusinessSettings]. They were merely absent from the model before; now a
-     * write can only name a field `BUSINESS_SETTINGS_DIFF_FIELDS` names, so
-     * [getCalendarSyncRun]'s raw-snapshot read has nothing that can overwrite it.
+     * The calendar-sync receipt fields stay unreachable from here: a write can
+     * only name a field `BUSINESS_SETTINGS_DIFF_FIELDS` names, and the server
+     * refuses them by name besides.
      */
     suspend fun updateBusinessSettingsFields(
         changes: Map<String, Any?>,
@@ -1803,22 +1801,10 @@ class AuntieRepository(
         require(changes.isNotEmpty()) { "updateBusinessSettingsFields called with no changed fields" }
         AuntieLog.i("Updating business settings by $updatedBy: ${changes.keys.joinToString()}")
         authGate.ensureAuthenticated()
-        val payload: Map<String, Any?> = changes + mapOf(
-            "updatedAt" to getCurrentTimestamp(),
-            "updatedBy" to updatedBy,
-        )
-        // A whole-map field (the KinCare rate card) must REPLACE what is stored,
-        // or a removed key survives the key-by-key merge. See
-        // BUSINESS_SETTINGS_WHOLE_MAP_FIELDS.
-        val options = if (businessSettingsReplacesWholeFields(changes)) {
-            com.google.firebase.firestore.SetOptions.mergeFields(payload.keys.toList())
-        } else {
-            com.google.firebase.firestore.SetOptions.merge()
-        }
-        firestore.collection("business_settings")
-            .document("business_settings")
-            .set(payload, options)
-            .await()
+        val wire = businessSettingsWireChanges(changes)
+        functions.getHttpsCallable("saveBusinessSettings")
+            .call(mapOf("changes" to wire))
+            .awaitCallable()
         AuntieLog.d("Business settings saved successfully")
         Unit
     }.onFailure { AuntieLog.e("Failed to save business settings", it) }

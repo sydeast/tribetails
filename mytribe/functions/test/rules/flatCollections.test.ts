@@ -190,16 +190,11 @@ describe('rules: flat top-level collections', () => {
     );
   });
 
-  it('business_settings: the operator can still read AND write', async () => {
+  it('business_settings: the operator can still read it', async () => {
     const env = await getEnv();
     await seedBusinessSettings();
     await assertSucceeds(asAuntie(env).firestore().doc('business_settings/business_settings').get());
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ travelBufferMinutes: 20 }, { merge: true }),
-    );
   });
-
   it('business_settings: the test-admin sandbox can still read it (Android Home)', async () => {
     const env = await getEnv();
     await seedBusinessSettings();
@@ -207,121 +202,27 @@ describe('rules: flat top-level collections', () => {
       asTestAdmin(env).firestore().doc('business_settings/business_settings').get(),
     );
   });
-  // ── business_settings: the write is shape-checked now (#519) ──────────────
-  // Nothing sits in front of this document — the three admin clients write it
-  // directly — so these rules are the only server-side check its operator-facing
-  // configuration gets. Five Cloud Functions read those fields.
-  it('business_settings: a per-section partial patch still writes, naming only its own keys', async () => {
+  // ── business_settings: no client writes it any more (#1593) ──────────────
+  // All three admin clients save through the owner-only `saveBusinessSettings`
+  // callable, which checks every field (test/saveBusinessSettings.test.ts holds
+  // the per-field cases these rules used to). A direct write is denied even
+  // when it is well formed, so the callable's checks cannot be stepped round.
+  it('business_settings: the operator cannot write it directly, however well formed', async () => {
     const env = await getEnv();
     await seedBusinessSettings();
-    // The React admin's shape: one section's fields plus the stamp.
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings').set(
-        { travelBufferMinutes: 45, defaultBookingMode: 'TIME_BLOCK', updatedAt: '2026-08-24T00:00:00Z' },
-        { merge: true },
-      ),
-    );
-    // The desktop console's shape: an arbitrary changed-field subset.
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings').set(
-        { enableAutoReminder24h: false }, { merge: true },
-      ),
-    );
+    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
+    await assertFails(doc().set({ travelBufferMinutes: 20 }, { merge: true }));
+    await assertFails(doc().set({ businessName: 'Tribe Tails', timeZone: 'America/Chicago' }));
+    await assertFails(doc().update({ enableAutoReminder24h: false }));
+    await assertFails(doc().set({ householdNotificationHour: null }, { merge: true }));
+    await assertFails(doc().delete());
   });
-  it('business_settings: a whole-model write of every checked field still passes', async () => {
+  it('business_settings: the operator cannot create it either, when it does not exist yet', async () => {
     const env = await getEnv();
-    await seedBusinessSettings();
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings').set({
-        timeZone: 'America/Chicago',
-        defaultBookingMode: 'SPECIFIC_TIME',
-        defaultCalendarView: 'MONTH',
-        trackingAccuracy: 'HIGH',
-        allowTimeBlockBooking: true,
-        allowSpecificTimeBooking: true,
-        enableConflictDetection: true,
-        enableAutoReminder24h: true,
-        enableGPSTrackingForAllVisits: true,
-        enablePhotoLocationTagging: true,
-        requireArrivalDepartureVerification: true,
-        autoStartTrackingOnVisitStart: true,
-        allowClientLocationSharing: true,
-        defaultTimeBlockDurationHours: 4,
-        travelBufferMinutes: 30,
-        saveRoutesForDays: 90,
-        defaultEtaMinutes: 15,
-        draftRetentionDays: 30,
-        arrivalRadiusMeters: 150,
-        privacyPolicyUrl: 'https://example.com/privacy',
-        timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
-        etaMinuteOptions: [5, 10, 15],
-        draftRetentionOptions: [30, 60, 90],
-      }, { merge: true }),
-    );
-  });
-  /**
-   * THE NOTIFICATION SCHEDULE FIELDS, and above all the null.
-   *
-   * All three admin clients write a changed-field patch under merge, so "Not
-   * scheduled" travels as `householdNotificationHour: null`. Leaving the key out
-   * instead would merge to "unchanged" and the operator's choice would silently
-   * not take, so null has to be legal here. A plain `bsInt` refuses it, because
-   * the key IS present and `null is int` is false, and that refusal would have
-   * denied the whole save on every client the first time anybody unscheduled a
-   * job. This test was watched fail against `bsInt`.
-   */
-  it('business_settings: a send hour may be set, changed, and cleared to null', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ householdNotificationHour: 9, scheduleDigestHour: 7 }, { merge: true }),
-    );
-    // Midnight and the last hour of the day are both legal.
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ householdNotificationHour: 0, scheduleDigestHour: 23 }, { merge: true }),
-    );
-    // And unscheduling, which is the write the first draft of these rules denied.
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ householdNotificationHour: null, scheduleDigestHour: null }, { merge: true }),
-    );
-  });
-
-  it('business_settings: a send hour that is not an hour is refused', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    for (const bad of [-1, 24, 9.5, '9', true]) {
-      await assertFails(
-        asAuntie(env).firestore().doc('business_settings/business_settings')
-          .set({ householdNotificationHour: bad }, { merge: true }),
-      );
-      await assertFails(
-        asAuntie(env).firestore().doc('business_settings/business_settings')
-          .set({ scheduleDigestHour: bad }, { merge: true }),
-      );
-    }
-  });
-
-  /**
-   * The server reads this as `=== true`, so a wrong type cannot make it send.
-   * The rule exists so a client cannot leave behind a value that shows one state
-   * on an admin screen and means another to the dispatcher.
-   */
-  it('business_settings: the household send gate must be a real boolean', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ householdNotificationsLive: true }, { merge: true }),
-    );
     await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ householdNotificationsLive: 'true' }, { merge: true }),
+      asAuntie(env).firestore().doc('business_settings/business_settings').set({ businessName: 'Tribe Tails' }),
     );
   });
-
   /**
    * The run marker is what stops an hour-driven job sending twice in one day, so
    * a client that could write it could suppress a day's notices or replay them.
@@ -335,157 +236,18 @@ describe('rules: flat top-level collections', () => {
         .set({ lastRunDayIso: '2026-09-22' }),
     );
   });
-
-  it('business_settings: a wrong-typed field is refused, not stored for a Function to trip over', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    // `timeZone` as a number: `resolveBusinessOpen` would log timezone-unusable
-    // and the phone line would answer as open around the clock.
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ timeZone: 5 }, { merge: true }),
-    );
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ enableAutoReminder24h: 'yes' }, { merge: true }),
-    );
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ etaMinuteOptions: '5,10,15' }, { merge: true }),
-    );
-  });
-  it('business_settings: an out-of-range number is refused', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ travelBufferMinutes: -1 }, { merge: true }),
-    );
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ saveRoutesForDays: 0 }, { merge: true }),
-    );
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ defaultTimeBlockDurationHours: 25 }, { merge: true }),
-    );
-    // #582: a radius tighter than a GPS fix's own error bar would refuse every
-    // arrival, and one larger than 5 km is not a check. Both bounds match
-    // ARRIVAL_RADIUS_MIN/MAX_METERS and the three admin editors.
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ arrivalRadiusMeters: 9 }, { merge: true }),
-    );
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ arrivalRadiusMeters: 5001 }, { merge: true }),
-    );
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ arrivalRadiusMeters: '150' }, { merge: true }),
-    );
-    await assertSucceeds(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ arrivalRadiusMeters: 300 }, { merge: true }),
-    );
-  });
-  it('business_settings: an absurdly long option list or block list is refused', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    await assertFails(
-      asAuntie(env).firestore().doc('business_settings/business_settings')
-        .set({ etaMinuteOptions: Array.from({ length: 13 }, (_, i) => i + 1) }, { merge: true }),
-    );
-  });
-
-  /**
-   * #1410: the privacy policy link goes straight into an href on the email
-   * footer and the portal About screen, and these rules are its only write gate.
-   * Blank is the "none yet" state and has to pass; everything else must be a
-   * plain https URL within the cap. Mirrors `isValidPrivacyPolicyUrl` in
-   * `functions/src/lib/privacyPolicyUrl.ts`.
-   */
-  it('business_settings: the privacy policy link may be blank or a plain https URL', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
-    await assertSucceeds(doc().set({ privacyPolicyUrl: 'https://example.com/privacy' }, { merge: true }));
-    await assertSucceeds(doc().set({ privacyPolicyUrl: 'https://www.example.com/legal/privacy?lang=en#top' }, { merge: true }));
-    // Clearing it is a real edit, written as blank (the three clients never drop the key).
-    await assertSucceeds(doc().set({ privacyPolicyUrl: '' }, { merge: true }));
-    // Exactly at the cap still passes.
-    const prefix = 'https://example.com/';
-    await assertSucceeds(doc().set({ privacyPolicyUrl: prefix + 'a'.repeat(2048 - prefix.length) }, { merge: true }));
-  });
-
-  it('business_settings: a privacy policy link that is not a plain https URL is refused', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
-    const prefix = 'https://example.com/';
-    for (const bad of [
-      'http://example.com/privacy',
-      'javascript:alert(1)',
-      'example.com/privacy',
-      'https://',
-      'https:///privacy',
-      'https://example.com/privacy policy',
-      'https://example.com/"onmouseover="x',
-      prefix + 'a'.repeat(2049 - prefix.length),
-      42,
-      null,
-      ['https://example.com/privacy'],
-    ]) {
-      await assertFails(doc().set({ privacyPolicyUrl: bad }, { merge: true }));
-    }
-  });
-
-  /**
-   * #1409: the business name is required (ruling 2026-11-01 on #1369). These
-   * rules are the only server-side gate on the document, since every admin
-   * client writes it directly; the three editors refuse Save with "Enter the
-   * business name." before this is reached.
-   */
-  it('business_settings: a non-blank business name saves, trimmed or not', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
-    await assertSucceeds(doc().set({ businessName: 'Sunny Paws' }, { merge: true }));
-    await assertSucceeds(doc().set({ businessName: '  Sunny Paws  ' }, { merge: true }));
-    await assertSucceeds(doc().set({ businessName: 'S' }, { merge: true }));
-  });
-
-  it('business_settings: a blank, whitespace or non-string business name is refused', async () => {
-    const env = await getEnv();
-    await seedBusinessSettings();
-    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
-    for (const bad of ['', ' ', '   ', '\t\n', 42, null, true, ['Sunny Paws'], { name: 'Sunny Paws' }]) {
-      await assertFails(doc().set({ businessName: bad }, { merge: true }));
-    }
-  });
-
-  /**
-   * `request.resource.data` is the merged document, so a stored blank refuses
-   * any patch to the document until the patch that sets the name. That is the
-   * one-line docket note on #1409: the first admin save after this ships is
-   * refused until the operator fills the name in.
-   */
-  it('business_settings: a stored blank name refuses every patch until one sets the name', async () => {
-    const env = await getEnv();
-    await env.withSecurityRulesDisabled(async (ctx) => {
-      await ctx.firestore().doc('business_settings/business_settings').set({ businessName: '', businessPhone: '555-0100' });
-    });
-    const doc = () => asAuntie(env).firestore().doc('business_settings/business_settings');
-    await assertFails(doc().set({ businessPhone: '555-0199' }, { merge: true }));
-    await assertSucceeds(doc().set({ businessName: 'Sunny Paws', businessPhone: '555-0199' }, { merge: true }));
-    // With the name in place, the same phone-only patch goes through.
-    await assertSucceeds(doc().set({ businessPhone: '555-0100' }, { merge: true }));
-  });
-
-  it('business_settings: sibling documents without a business name are untouched by the rule', async () => {
+  // The sibling documents under the same wildcard keep the owner write and the
+  // if-present shape checks.
+  it('business_settings: sibling documents still take an owner write', async () => {
     const env = await getEnv();
     const doc = () => asAuntie(env).firestore().doc('business_settings/security');
     await assertSucceeds(doc().set({ appCheckEnforced: false }, { merge: true }));
+  });
+  it('business_settings: a sibling document still refuses a wrong-typed checked key', async () => {
+    const env = await getEnv();
+    const doc = () => asAuntie(env).firestore().doc('business_settings/security');
+    await assertFails(doc().set({ travelBufferMinutes: -1 }, { merge: true }));
+    await assertFails(doc().set({ businessName: '  ' }, { merge: true }));
   });
 
   // ── operators: collection + isOperator() helper both removed ──────────────

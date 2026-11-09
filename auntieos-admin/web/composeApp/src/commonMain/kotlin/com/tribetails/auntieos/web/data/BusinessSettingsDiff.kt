@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.data
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -32,16 +33,39 @@ import kotlinx.serialization.json.jsonObject
  *
  * SERVER-OWNED KEYS ARE NEVER DIFFED. `_id` is the document id alias, and
  * `updatedAt`/`updatedBy` are stamped at write time; round-tripping a stale
- * stamp is how "last saved by" starts lying. The caller adds its own stamp
- * alongside the changes.
+ * stamp is how "last saved by" starts lying. Since #1593 the
+ * `saveBusinessSettings` callable stamps both itself and refuses a client that
+ * sends either.
  *
  * A FIELD CLEARED TO BLANK IS A CHANGE and is written as `""`. Skipping blanks
  * would make "take my Venmo handle off the invoice" the one edit no screen can
  * perform.
  */
 
-/** Keys the client must never round-trip. See the file header. */
-internal val BUSINESS_SETTINGS_SERVER_OWNED: Set<String> = setOf("_id", "updatedAt", "updatedBy")
+/**
+ * Keys the client must never send. See the file header. #1593: the
+ * `saveBusinessSettings` callable refuses every one of these by name
+ * (`SERVER_OWNED_SETTINGS_FIELDS` in `businessSettingsChecks.ts`); the four
+ * calendar-sync receipts are not on this model, and are listed so a field
+ * added for them later still never goes out.
+ */
+internal val BUSINESS_SETTINGS_SERVER_OWNED: Set<String> = setOf(
+    "_id",
+    "updatedAt",
+    "updatedBy",
+    "calendarSyncLastRunAt",
+    "calendarSyncLastStatus",
+    "calendarSyncLastImported",
+    "calendarSyncLastError",
+)
+
+/**
+ * #1593: the map fields the server REPLACES whole (`WHOLE_MAP_SETTINGS_FIELDS`
+ * in `businessSettingsChecks.ts`), so a removed KinCare type is removed. Every
+ * other map field is merged key by key on the server.
+ */
+internal val BUSINESS_SETTINGS_WHOLE_MAP_FIELDS: Set<String> =
+    setOf("serviceRates", "serviceDurations", "serviceStartTimeBooking")
 
 /**
  * The fields [edited] changes relative to [loaded], as the JSON the write path
@@ -66,4 +90,55 @@ internal fun businessSettingsChangedFields(
         if (before[key] != value) changes[key] = value
     }
     return changes
+}
+
+/**
+ * #1593: the `changes` map the `saveBusinessSettings` callable receives: the
+ * fields [businessSettingsChangedFields] names, with every key-by-key-merged
+ * map cut down to the keys that changed.
+ *
+ * WHY CUT. The server merges a nested map (`paymentOptions`, `businessHours`,
+ * `mytribePortal`) key by key and checks every key it is sent. Sending the
+ * whole map would echo back keys this console never touched, and one the
+ * server does not accept (a payment id it does not list, a day name another
+ * client spelled differently, a portal theme no longer offered) would refuse
+ * the whole save over a value the operator never edited. Under a key-by-key
+ * merge, an unchanged key written back is a no-op anyway, so leaving it out
+ * changes nothing that is stored.
+ *
+ * The three [BUSINESS_SETTINGS_WHOLE_MAP_FIELDS] go whole: the server replaces
+ * them, so a key left out is a key removed. Lists go whole too (the server
+ * replaces arrays). A nested map that became empty goes as `{}`, which the
+ * server stores as an empty map.
+ *
+ * A key removed from a merged map is not removed on the server: a key-by-key
+ * merge has no way to say "delete". No panel here removes one (the weekly hours
+ * always carry all seven days, the payment editor writes all eleven methods).
+ */
+internal fun businessSettingsSaveChanges(
+    loaded: BusinessSettings,
+    edited: BusinessSettings,
+    codec: Json,
+): Map<String, JsonElement> {
+    val before = codec.encodeToJsonElement(BusinessSettings.serializer(), loaded).jsonObject
+    val changes = businessSettingsChangedFields(loaded, edited, codec)
+    val out = LinkedHashMap<String, JsonElement>()
+    for ((key, value) in changes) {
+        out[key] = if (key in BUSINESS_SETTINGS_WHOLE_MAP_FIELDS) value else changedLeaves(before[key], value) ?: value
+    }
+    return out
+}
+
+/**
+ * [after] cut down to what differs from [before], walking into maps the way
+ * the server's merge does. Null when nothing differs.
+ */
+private fun changedLeaves(before: JsonElement?, after: JsonElement): JsonElement? {
+    if (before == after) return null
+    if (after !is JsonObject || before !is JsonObject || after.isEmpty()) return after
+    val out = LinkedHashMap<String, JsonElement>()
+    for ((key, value) in after) {
+        changedLeaves(before[key], value)?.let { out[key] = it }
+    }
+    return if (out.isEmpty()) null else JsonObject(out)
 }

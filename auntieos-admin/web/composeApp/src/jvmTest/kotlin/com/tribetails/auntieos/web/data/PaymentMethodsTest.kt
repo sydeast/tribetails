@@ -17,10 +17,13 @@ import kotlin.test.assertTrue
  * Compose.
  *
  * The save path under test is the real one: [withPaymentDraft] builds the
- * edited model and [businessSettingsChangedFields] turns it into the map
- * `platformSaveBusinessSettings` PATCHes under an update mask. A masked
- * top-level field REPLACES the stored value, so the written `paymentOptions`
- * has to carry everything the doc held.
+ * edited model and [businessSettingsChangedFields] names the fields that
+ * changed. #1593: `platformSaveBusinessSettings` sends them to the
+ * `saveBusinessSettings` callable, which merges `paymentOptions` key by key,
+ * and [businessSettingsSaveChanges] cuts the map to the methods that changed
+ * (pinned in `SaveBusinessSettingsCallableTest`). These tests pin the edited
+ * model: it still carries every entry the doc held, so nothing is lost
+ * whichever way the map is written.
  */
 class PaymentMethodsTest {
 
@@ -171,9 +174,9 @@ class PaymentMethodsTest {
     }
 
     /**
-     * The no-baseline fallback merges every ENCODED key under an update mask.
-     * An unloaded `paymentOptions` must not be among them, or the fallback
-     * would write null over the web's switches.
+     * An unloaded `paymentOptions` is never encoded, so it can never be named
+     * as a change and sent as an explicit null over the web's switches. (The
+     * no-baseline whole-model write this once guarded is gone since #1593.)
      */
     @Test
     fun anUnloadedPaymentOptionsIsNeverEncoded() {

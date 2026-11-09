@@ -303,54 +303,51 @@ class ClosureRecurrenceTest {
         }
     }
 
-    // ── companyHolidayAddEnabled: the TimeOffPanel Add gate ──────────────────
+    // ── companyHolidayPicksMade: the TimeOffPanel Add gate's picker half ─────
+    // The typed half (name, a ONCE date) is closureAddProblems, in SettingsChecksTest.
 
     @Test
-    fun `once- enabled only with a 10-char date and a clean name`() {
-        assertTrue(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.ONCE, "Office closed", "2026-09-14", null, null, null, null),
-        )
-        assertFalse(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.ONCE, "Office closed", "9/14/26", null, null, null, null),
-        )
-        assertFalse(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.ONCE, "", "2026-09-14", null, null, null, null),
-        )
-        assertFalse(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.ONCE, "Bad|Name", "2026-09-14", null, null, null, null),
-        )
+    fun `once- nothing to pick, the date is typed`() {
+        assertTrue(companyHolidayPicksMade(ClosureRecurrenceKind.ONCE, null, null, null, null))
+    }
+
+    @Test
+    fun `a pipe in the name survives the round trip, so it is allowed`() {
+        val wire = formatClosureEntry(ClosureEntry(ClosureRecurrenceKind.ONCE, name = "Closed | inventory", date = "2026-12-01"))
+        assertEquals("Closed | inventory", parseClosureEntry(wire).name)
+        assertEquals("2026-12-01", parseClosureEntry(wire).date)
     }
 
     @Test
     fun `yearly-fixed- needs month AND day picked, never a date string`() {
         assertFalse(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.YEARLY_FIXED, "Independence Day", "", null, null, null, null),
+            companyHolidayPicksMade(ClosureRecurrenceKind.YEARLY_FIXED, null, null, null, null),
         )
         assertFalse(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.YEARLY_FIXED, "Independence Day", "", month = 7, day = null, weekday = null, nth = null),
+            companyHolidayPicksMade(ClosureRecurrenceKind.YEARLY_FIXED, month = 7, day = null, weekday = null, nth = null),
         )
         assertTrue(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.YEARLY_FIXED, "Independence Day", "", month = 7, day = 4, weekday = null, nth = null),
+            companyHolidayPicksMade(ClosureRecurrenceKind.YEARLY_FIXED, month = 7, day = 4, weekday = null, nth = null),
         )
     }
 
     @Test
     fun `yearly-nth-weekday- needs month, weekday, AND nth all picked`() {
         assertFalse(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.YEARLY_NTH_WEEKDAY, "Thanksgiving", "", month = 11, day = null, weekday = 4, nth = null),
+            companyHolidayPicksMade(ClosureRecurrenceKind.YEARLY_NTH_WEEKDAY, month = 11, day = null, weekday = 4, nth = null),
         )
         assertTrue(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.YEARLY_NTH_WEEKDAY, "Thanksgiving", "", month = 11, day = null, weekday = 4, nth = 4),
+            companyHolidayPicksMade(ClosureRecurrenceKind.YEARLY_NTH_WEEKDAY, month = 11, day = null, weekday = 4, nth = 4),
         )
     }
 
     @Test
     fun `yearly-last-weekday- needs only month and weekday, no nth required`() {
         assertFalse(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.YEARLY_LAST_WEEKDAY, "Memorial Day", "", month = 5, day = null, weekday = null, nth = null),
+            companyHolidayPicksMade(ClosureRecurrenceKind.YEARLY_LAST_WEEKDAY, month = 5, day = null, weekday = null, nth = null),
         )
         assertTrue(
-            companyHolidayAddEnabled(ClosureRecurrenceKind.YEARLY_LAST_WEEKDAY, "Memorial Day", "", month = 5, day = null, weekday = 1, nth = null),
+            companyHolidayPicksMade(ClosureRecurrenceKind.YEARLY_LAST_WEEKDAY, month = 5, day = null, weekday = 1, nth = null),
         )
     }
 }

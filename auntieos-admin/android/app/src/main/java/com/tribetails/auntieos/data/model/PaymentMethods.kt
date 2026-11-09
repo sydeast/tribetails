@@ -30,7 +30,7 @@ enum class PaymentMethodKind { CHECKOUT, LINK, INSTRUCTIONS }
 /** The `BusinessSettings` top-level field a LINK method keeps its handle in. */
 enum class PaymentHandleField(val wireName: String, val placeholder: String) {
     VENMO("venmoHandle", "@tribetails"),
-    PAYPAL("paypalHandle", "paypal.me/tribetails"),
+    PAYPAL("paypalHandle", "tribetails"),
     CASHAPP("cashappHandle", "\$tribetails"),
 }
 

@@ -200,6 +200,10 @@ fun AccountSettingsScreen(
                 )
                 Spacer(Modifier.height(dims.space5))
 
+                uiState.settingsRefusal?.let { refusal ->
+                    SettingsRefusalBanner(refusal)
+                    Spacer(Modifier.height(dims.space3))
+                }
                 BusinessProfilePanel(
                     settings = uiState.businessSettings,
                     onSave = { viewModel.updateBusinessSettings(it) },
@@ -463,6 +467,9 @@ internal fun BusinessProfilePanel(
         weather != settings.weatherLocation
     val privacyPolicyError = privacyPolicyUrlError(privacyPolicyUrl)
     val nameError = businessNameError(name)
+    // #1593: both may be blank; anything typed has to be an email / a US number.
+    val emailError = businessEmailProblem(email)
+    val phoneError = businessPhoneProblem(phone)
 
     DenPanel(title = "Business profile", subtitle = "Identity used on invoices, emails, and KinTales.") {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
@@ -475,7 +482,15 @@ internal fun BusinessProfilePanel(
                 errorMessage = nameError,
                 modifier = Modifier.fillMaxWidth(),
             )
-            BottomBorderField(value = email, onValueChange = { email = it }, label = "Email", modifier = Modifier.fillMaxWidth())
+            BottomBorderField(
+                value = email,
+                onValueChange = { email = it },
+                label = "Email",
+                isError = emailError != null,
+                errorMessage = emailError,
+                keyboardType = KeyboardType.Email,
+                modifier = Modifier.fillMaxWidth(),
+            )
             // #1564: every business email goes to this address; blank means nowhere.
             businessEmailNotice(email)?.let { notice ->
                 Text(
@@ -485,7 +500,15 @@ internal fun BusinessProfilePanel(
                     modifier = Modifier.testTag("business-email-notice"),
                 )
             }
-            BottomBorderField(value = phone, onValueChange = { phone = it }, label = "Phone", modifier = Modifier.fillMaxWidth())
+            BottomBorderField(
+                value = phone,
+                onValueChange = { phone = it },
+                label = "Phone",
+                isError = phoneError != null,
+                errorMessage = phoneError,
+                keyboardType = KeyboardType.Phone,
+                modifier = Modifier.fillMaxWidth(),
+            )
             BottomBorderField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.fillMaxWidth())
             BottomBorderField(
                 value = privacyPolicyUrl,
@@ -507,7 +530,8 @@ internal fun BusinessProfilePanel(
             Spacer(Modifier.height(dims.space1))
             PrimaryButton(
                 label = "Save",
-                enabled = dirty && privacyPolicyError == null && nameError == null,
+                enabled = dirty && privacyPolicyError == null && nameError == null &&
+                    emailError == null && phoneError == null,
                 onClick = {
                     onSave(
                         settings.copy(

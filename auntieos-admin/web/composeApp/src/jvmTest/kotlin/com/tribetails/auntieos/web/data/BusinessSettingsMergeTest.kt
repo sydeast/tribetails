@@ -8,11 +8,12 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * Desktop (jvm) settings-unification guards (2026-06-05). The save path always
- * targets doc id [BUSINESS_SETTINGS_DOC_ID] and MERGES via
- * JvmFirestoreRest.mergeDoc, whose updateMask is built by the pure
- * [JvmFirestoreRest.mergeFieldPaths]. A merge mask that names exactly the body
- * keys is what stops a desktop write from deleting fields another platform owns.
+ * Desktop (jvm) settings-unification guards (2026-06-05). Reads target doc id
+ * [BUSINESS_SETTINGS_DOC_ID]. Since #1593 the settings save is the
+ * `saveBusinessSettings` callable (`SaveBusinessSettingsCallableTest`); the
+ * mask tests below pin [JvmFirestoreRest.mergeFieldPaths], the general merge
+ * helper other direct writes still use. A merge mask that names exactly the
+ * body keys is what stops a write from deleting fields another platform owns.
  */
 class BusinessSettingsMergeTest {
 

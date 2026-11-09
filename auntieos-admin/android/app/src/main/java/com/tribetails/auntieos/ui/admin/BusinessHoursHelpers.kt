@@ -14,14 +14,6 @@ internal fun parseTimeOrNull(s: String): Pair<Int, Int>? {
     return m.groupValues[1].toInt() to m.groupValues[2].toInt()
 }
 
-internal fun isValidTimeRange(openTime: String, closeTime: String): Boolean {
-    val o = parseTimeOrNull(openTime) ?: return false
-    val c = parseTimeOrNull(closeTime) ?: return false
-    val openMin  = o.first * 60 + o.second
-    val closeMin = c.first * 60 + c.second
-    return openMin < closeMin
-}
-
 internal fun formatHoursDisplay(h: BusinessHours): String =
     if (h.isOpen) "${h.openTime}-${h.closeTime}" else "Closed"
 

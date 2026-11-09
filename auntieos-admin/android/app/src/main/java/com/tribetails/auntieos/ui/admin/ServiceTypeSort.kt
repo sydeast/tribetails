@@ -87,6 +87,10 @@ fun serviceOptionsFromRates(
 fun sortServiceTypesByDuration(types: List<String>, durations: Map<String, String>): List<String> =
     types.sortedBy { storedDurationMinutes(durations[it]) ?: serviceDurationMinutes(it) ?: Int.MAX_VALUE }
 
-/** Picker text: "30Minute · $25", or just the name when no rate is set. */
+/**
+ * Picker text: "30Minute · $25", or just the name when no rate is set. A stored
+ * rate that is not a price ("abc", "-5", saved before #1593 checked them) shows
+ * the name alone, never "$abc".
+ */
 fun serviceChipLabel(option: ServiceOption): String =
-    if (option.rate.isEmpty()) option.name else "${option.name} · $${option.rate}"
+    if (!isShowablePrice(option.rate)) option.name else "${option.name} · $${option.rate}"

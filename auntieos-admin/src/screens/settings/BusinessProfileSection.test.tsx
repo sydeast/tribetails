@@ -109,7 +109,7 @@ describe('BusinessProfileSection', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('Enter the business name.');
       expect(screen.getByLabelText('Business name')).toHaveAttribute('aria-invalid', 'true');
 
-      await user.type(screen.getByLabelText('Phone'), '555-0199');
+      await user.type(screen.getByLabelText('Phone'), '512-555-0199');
       expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
       await user.click(screen.getByRole('button', { name: 'Save' }));
       expect(onSave).not.toHaveBeenCalled();
@@ -119,7 +119,7 @@ describe('BusinessProfileSection', () => {
       expect(screen.queryByRole('alert')).toBeNull();
       expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
       await user.click(screen.getByRole('button', { name: 'Save' }));
-      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ businessName: 'Sunny Paws', businessPhone: '555-0199' }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ businessName: 'Sunny Paws', businessPhone: '512-555-0199' }));
     });
 
     it('clearing a saved name, or replacing it with spaces, blocks Save and says why', async () => {

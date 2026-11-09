@@ -20,9 +20,9 @@ class KinCareTypesEditorTest {
     fun `rows come out in stored order with their stored duration beside them`() {
         assertEquals(
             listOf(
-                KinCareTypeRow("Overnight", "720", "80.00"),
-                KinCareTypeRow("30Minute", "", "15.00"),
-                KinCareTypeRow("Consultation", "", ""),
+                KinCareTypeRow("Overnight", "720", "80.00", existing = true),
+                KinCareTypeRow("30Minute", "", "15.00", existing = true),
+                KinCareTypeRow("Consultation", "", "", existing = true),
             ),
             threeTypes,
         )
@@ -158,8 +158,18 @@ class KinCareTypesEditorTest {
     @Test
     fun `the preview label is the booking wizard's own, with a blank name shown as Untitled`() {
         assertEquals("Walk · \$10.00", kinCarePreviewLabel(KinCareTypeRow("Walk", "", "10.00")))
-        assertEquals("Overnight", kinCarePreviewLabel(KinCareTypeRow("Overnight", "", "")))
-        assertEquals("Untitled", kinCarePreviewLabel(KinCareTypeRow.BLANK))
+        assertEquals("Overnight · No price set", kinCarePreviewLabel(KinCareTypeRow("Overnight", "", "")))
+        assertEquals("Untitled · No price set", kinCarePreviewLabel(KinCareTypeRow.BLANK))
+    }
+
+    /** #1593: the preview never shows a price the server would refuse. */
+    @Test
+    fun `the preview shows no price at all for a rate that does not pass`() {
+        assertEquals("Walk", kinCarePreviewLabel(KinCareTypeRow("Walk", "", "abc")))
+        assertEquals("Walk", kinCarePreviewLabel(KinCareTypeRow("Walk", "", "-5")))
+        assertEquals("Walk", kinCarePreviewLabel(KinCareTypeRow("Walk", "", "1.234")))
+        assertEquals("Walk · No price set", kinCarePreviewLabel(KinCareTypeRow("Walk", "", "   ")))
+        assertEquals("Walk · \$0", kinCarePreviewLabel(KinCareTypeRow("Walk", "", "0")))
     }
 
     @Test

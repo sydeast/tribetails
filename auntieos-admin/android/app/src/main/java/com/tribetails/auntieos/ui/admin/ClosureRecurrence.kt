@@ -365,31 +365,29 @@ fun closureEntryFromPreset(preset: ClosurePreset): ClosureEntry = ClosureEntry(
 )
 
 /**
- * The Add-company-holiday gate in [AdminSettingsScreen.kt]'s `TimeOffPanel`,
- * branched on recurrence. `ONCE` is the exact pre-existing rule (a 10-char
- * date string plus a clean name). Every `YEARLY_*` kind needs its
+ * The picker half of the Add-company-holiday gate in [AdminSettingsScreen.kt]'s
+ * `TimeOffPanel`, branched on recurrence. Every `YEARLY_*` kind needs its
  * date-defining fields ACTUALLY picked (not left `null`) instead of a date
  * string, because there is no date to type -- that is what "no year input"
- * means. Mirrors the web `holidayAddEnabled` in `TimeOffEditor.tsx`; the
- * `null`s below are that side's `0` "Pick a ..." sentinel, expressed as
- * Kotlin's native "not yet picked".
+ * means. The `null`s below are the web's `0` "Pick a ..." sentinel, expressed
+ * as Kotlin's native "not yet picked"; each unpicked list shows its
+ * "Pick a ..." placeholder on screen.
  *
- * Pure and exposed at file scope (not `private`) so it is directly
- * unit-testable, the same convention `specialHoursAddEnabled` already uses
- * for the sibling special-hours gate.
+ * The typed half (the name, and a `ONCE` date that exists and has not passed)
+ * is [closureAddProblems] in `SettingsChecks.kt` (#1593), which puts the
+ * server's sentence under the field instead of turning Add off without a word.
+ * A `|` in the name is allowed: the entry splits at its FIRST pipe, here and
+ * on the server, so the name keeps it.
  */
-fun companyHolidayAddEnabled(
+fun companyHolidayPicksMade(
     recurrence: ClosureRecurrenceKind,
-    name: String,
-    date: String,
     month: Int?,
     day: Int?,
     weekday: Int?,
     nth: Int?,
 ): Boolean {
-    if (name.isBlank() || name.contains('|')) return false
     return when (recurrence) {
-        ClosureRecurrenceKind.ONCE -> date.length == 10
+        ClosureRecurrenceKind.ONCE -> true
         ClosureRecurrenceKind.YEARLY_FIXED -> month != null && day != null
         ClosureRecurrenceKind.YEARLY_NTH_WEEKDAY -> month != null && weekday != null && nth != null
         ClosureRecurrenceKind.YEARLY_LAST_WEEKDAY -> month != null && weekday != null

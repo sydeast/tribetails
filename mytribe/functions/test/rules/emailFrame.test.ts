@@ -61,9 +61,9 @@ describe('rules: business_settings/email_frame', () => {
     );
   });
 
-  it('the owner still reads and writes the main settings document', async () => {
+  it('the owner still reads the main settings document (#1593: it is written only by saveBusinessSettings)', async () => {
     const env = await getEnv();
-    await assertSucceeds(
+    await assertFails(
       asOwner(env).firestore().doc('business_settings/business_settings').set({ timeZone: 'America/Los_Angeles' }),
     );
     await assertSucceeds(asOwner(env).firestore().doc('business_settings/business_settings').get());

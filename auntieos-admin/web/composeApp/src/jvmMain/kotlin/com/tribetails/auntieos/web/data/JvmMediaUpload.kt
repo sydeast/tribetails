@@ -61,6 +61,20 @@ internal object JvmMediaUpload {
     /** Parity with Android's `CloudinaryConfig.MAX_FILE_SIZE`. */
     const val MAX_FILE_SIZE_BYTES: Long = 50L * 1024 * 1024
 
+    /**
+     * The Cloudinary folder an upload is signed for.
+     *
+     * #1593: a logo (entityType BUSINESS) goes to `tribetails/business/<id>`,
+     * the folder the admin web and Android sign it into and the one
+     * `saveBusinessSettings` accepts a logo URL from (`BRAND_ASSET_FOLDER` in
+     * `mytribe/functions/src/lib/brandAsset.ts`). Anywhere else, a desktop logo
+     * would be refused on save. Every other upload keeps the folder this console
+     * has always used.
+     */
+    internal fun uploadFolder(entityType: String, entityId: String): String =
+        if (entityType.equals("BUSINESS", ignoreCase = true)) "tribetails/business/$entityId"
+        else "tribetails/entity/$entityId"
+
     suspend fun upload(
         entityId: String,
         entityType: String,
@@ -89,7 +103,7 @@ internal object JvmMediaUpload {
         return try {
             // 2. Fetch a signed-upload grant from the same backend the web/Android apps use.
             val token = jvmFirebaseIdToken() ?: return WriteResult.Err("Admin sign-in required before media upload")
-            val folder = "tribetails/entity/$entityId"
+            val folder = uploadFolder(entityType, entityId)
             // #583: the file's own MIME type picks the resource kind, so a photo
             // is always signed with the metadata strip and a video is never
             // signed with an image-only transformation Cloudinary would reject.
