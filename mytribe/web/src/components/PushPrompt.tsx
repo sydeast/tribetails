@@ -78,7 +78,7 @@ export function PushPrompt() {
     console.error('[push] enable failed', { code, stage, message, ...outcome.diagnostics });
     reportTaggedError(new Error(message), { code, stage });
     setError(
-      "Could not enable notifications: the app's background worker is not ready on this device. Reload the page and try again; on an iPhone, add MyTribe to the home screen first.",
+      "Could not enable notifications: the app's background worker could not be installed on this device. Reload the page and try again; on an iPhone, add MyTribe to the home screen first.",
     );
   }
 

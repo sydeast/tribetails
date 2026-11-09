@@ -25,6 +25,9 @@ actual suspend fun obtainPushToken(): String? = try {
 } catch (c: CancellationException) {
     throw c
 } catch (t: Throwable) {
-    Log.w("KinfolkPush", "FCM getToken failed", t)
+    // The FCM failure code rides in the cause's message (SERVICE_NOT_AVAILABLE,
+    // TOO_MANY_REGISTRATIONS, ...), so the class and message go in the line itself.
+    val cause = t.cause ?: t
+    Log.w("KinfolkPush", "FCM getToken failed: ${t::class.simpleName}: ${t.message} (cause ${cause::class.simpleName}: ${cause.message})", t)
     null
 }

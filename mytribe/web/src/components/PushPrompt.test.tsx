@@ -141,7 +141,7 @@ describe('PushPrompt', () => {
     await waitFor(() =>
       expect(
         screen.getByText(
-          "Could not enable notifications: the app's background worker is not ready on this device. Reload the page and try again; on an iPhone, add MyTribe to the home screen first.",
+          "Could not enable notifications: the app's background worker could not be installed on this device. Reload the page and try again; on an iPhone, add MyTribe to the home screen first.",
         ),
       ).toBeInTheDocument(),
     );
