@@ -38,6 +38,8 @@ import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.portal.ConversationMessage
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.WarmOnOpen
+import com.kinfolk.portal.portal.WarmableSave
 import com.kinfolk.portal.text.richTextToAnnotatedString
 import com.kinfolk.portal.portal.PortalChat
 import com.kinfolk.portal.portal.SenderRole
@@ -81,6 +83,12 @@ fun MessageAuntieScreen(
     // text, so any edit (or a send, which clears the draft) retires it.
     var undoDraft by remember { mutableStateOf<String?>(null) }
     var assistedDraft by remember { mutableStateOf<String?>(null) }
+    // #1504: the composer's two writes are woken when the screen opens with
+    // chat on: Polish (`generate`, measured at 15 s cold on the 2026-11-01
+    // walk) and Send. A warm call reaches neither handler, so it spends none
+    // of the writing helper's hourly allowance and makes no model call.
+    WarmOnOpen(portalApi, WarmableSave.Generate, enabled = chat.enabled)
+    WarmOnOpen(portalApi, WarmableSave.SendKinfolkMessage, enabled = chat.enabled)
 
     // Chat off entirely: show the disabled state with the operator's away
     // message and never load the thread / mount the composer. (The server also

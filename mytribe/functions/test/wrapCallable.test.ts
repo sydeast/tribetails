@@ -504,4 +504,92 @@ describe('wrapCallable', () => {
       );
     });
   });
+  /**
+   * #1504, warm on intent. The portal sends `{ __warm: true }` to a save
+   * callable when its form opens, so the save lands on a running instance.
+   */
+  describe('warm short circuit (#1504)', () => {
+    it('answers a signed-in warm call without running the handler', async () => {
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const handler = vi.fn().mockResolvedValue({ ok: true, saved: 1 });
+      const wrapped = wrapCallable('saveMyAccount', handler);
+      await expect(wrapped({ auth: { uid: 'u1' }, data: { __warm: true } } as any)).resolves.toEqual({
+        ok: true,
+        warm: true,
+      });
+      expect(handler).not.toHaveBeenCalled();
+      expect(writeAuditEntryMock).not.toHaveBeenCalled();
+      expect(captureMock).not.toHaveBeenCalled();
+      expect(logEventMock).toHaveBeenCalledTimes(1);
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'saveMyAccount.warm', severity: 'info', uid: 'u1', authCheck: 'miss' }),
+      );
+      expect(logEventMock).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'saveMyAccount.success' }));
+    });
+    it('still runs the session revocation gate before answering', async () => {
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable('saveMyAccount', vi.fn());
+      await wrapped({ auth: { uid: 'u1' }, data: { __warm: true } } as any);
+      expect(assertSessionNotRevokedMock).toHaveBeenCalledTimes(1);
+    });
+    it('refuses an unauthenticated warm call with unauthenticated, and the handler never runs', async () => {
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const handler = vi.fn().mockResolvedValue({ ok: true });
+      const wrapped = wrapCallable('saveMyAccount', handler);
+      await expect(wrapped({ data: { __warm: true } } as any)).rejects.toMatchObject({ code: 'unauthenticated' });
+      expect(handler).not.toHaveBeenCalled();
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'saveMyAccount.failure', errorCode: 'unauthenticated', severity: 'warn' }),
+      );
+      expect(logEventMock).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'saveMyAccount.warm' }));
+    });
+    it('refuses a warm call from a revoked session exactly as a real one', async () => {
+      const { HttpsError } = await import('firebase-functions/v2/https');
+      assertSessionNotRevokedMock.mockRejectedValue(
+        new HttpsError('unauthenticated', 'ended (session-revoked)', { reason: 'session-revoked' }),
+      );
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const handler = vi.fn();
+      const wrapped = wrapCallable('saveMyAccount', handler);
+      await expect(wrapped({ auth: { uid: 'u1' }, data: { __warm: true } } as any)).rejects.toMatchObject({
+        details: { reason: 'session-revoked' },
+      });
+      expect(handler).not.toHaveBeenCalled();
+    });
+    it('sends a payload that carries the marker AND another key to the handler, not the short circuit', async () => {
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const handler = vi.fn().mockResolvedValue({ ok: true, saved: 1 });
+      const wrapped = wrapCallable('saveMyAccount', handler);
+      const req = { auth: { uid: 'u1' }, data: { __warm: true, displayName: 'Ana' } } as any;
+      await expect(wrapped(req)).resolves.toEqual({ ok: true, saved: 1 });
+      expect(handler).toHaveBeenCalledWith(req);
+      expect(logEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: 'saveMyAccount.success' }));
+    });
+    it('treats a marker that is not literally true as a real call', async () => {
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      for (const data of [{ __warm: 'true' }, { __warm: 1 }, { __warm: false }, [true], null, 'warm']) {
+        const handler = vi.fn().mockResolvedValue({ ok: true });
+        await wrapCallable('saveMyAccount', handler)({ auth: { uid: 'u1' }, data } as any);
+        expect(handler, JSON.stringify(data)).toHaveBeenCalledTimes(1);
+      }
+    });
+    it('leaves a normal call unchanged: the handler runs and its answer is returned', async () => {
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const handler = vi.fn().mockResolvedValue({ ok: true, saved: 1 });
+      const wrapped = wrapCallable('saveMyAccount', handler);
+      await expect(wrapped({ auth: { uid: 'u1' }, data: { displayName: 'Ana' } } as any)).resolves.toEqual({
+        ok: true,
+        saved: 1,
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(logEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: 'saveMyAccount.success' }));
+    });
+    it('isWarmRequest accepts only the exact marker', async () => {
+      const { isWarmRequest } = await import('../src/lib/wrapCallable');
+      expect(isWarmRequest({ __warm: true })).toBe(true);
+      expect(isWarmRequest({ __warm: true, x: 1 })).toBe(false);
+      expect(isWarmRequest({})).toBe(false);
+      expect(isWarmRequest(undefined)).toBe(false);
+    });
+  });
 });

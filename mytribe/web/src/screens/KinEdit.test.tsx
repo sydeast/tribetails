@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { KinEdit } from './KinEdit';
 import type { DeleteKinResult, GetMyKinResult, KinDto, KinRemovalRequestDto, RequestKinRemovalResult } from '../api/types';
+import { warmSave } from '../lib/warmSave';
 
 const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn<() => Promise<GetMyKinResult>>(),
@@ -684,5 +685,19 @@ describe('KinEdit', () => {
       // The field still works: breed is free text either way.
       expect(await screen.findByLabelText('Breed')).toBeEnabled();
     });
+  });
+});
+
+describe('KinEdit: warm on open (#1504)', () => {
+  it('wakes updateKin once the editor is seeded from the Kin', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ species: 'cat' })] });
+    renderScreen();
+    await screen.findByLabelText(/^Species/i);
+    await waitFor(() => expect(vi.mocked(warmSave).mock.calls).toEqual([['updateKin']]));
+  });
+  it('wakes nothing before the Kin has loaded', () => {
+    mocks.getMyKin.mockReturnValue(new Promise(() => {}));
+    renderScreen();
+    expect(warmSave).not.toHaveBeenCalled();
   });
 });

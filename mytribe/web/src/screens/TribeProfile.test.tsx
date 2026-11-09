@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TribeProfile } from './TribeProfile';
 import type { FormFieldDto, FormSchemaDto, GetMyTribeProfileResult, ListEmergencyContactsResult, MemberDto, SecondaryKinfolkDto } from '../api/tribeApi';
+import { warmSave } from '../lib/warmSave';
 
 /**
  * Regression cover for the schema-mode save path.
@@ -1039,5 +1040,17 @@ describe('TribeProfile: Remove clinic (#1387)', () => {
     const { saveTribeProfile } = await import('../api/tribeApi');
     await userEvent.click(await view.findByRole('button', { name: /Remove clinic/ }));
     await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledWith({ kinfolkId: 'kin-fam-1', removeCustomFieldKeys: ['vetClinicId'] }));
+  });
+});
+
+describe('TribeProfile: warm on open (#1504)', () => {
+  it('wakes both halves of the page save once the profile loads, once each', async () => {
+    const user = userEvent.setup();
+    const view = await renderTribeProfile({});
+    await waitFor(() => expect(vi.mocked(warmSave).mock.calls).toEqual([['saveTribeProfile'], ['saveHomeAccess']]));
+    await user.type(view.getAllByRole('textbox')[0]!, 'x');
+    expect(vi.mocked(warmSave).mock.calls).toEqual([['saveTribeProfile'], ['saveHomeAccess']]);
+    const tribeApi = await import('../api/tribeApi');
+    expect(tribeApi.saveTribeProfile).not.toHaveBeenCalled();
   });
 });

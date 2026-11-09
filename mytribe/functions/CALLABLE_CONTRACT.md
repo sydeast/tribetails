@@ -207,6 +207,24 @@ catch an added / removed / renamed field; neither checks a value-TYPE change
 `auntieos-admin/docs/2026-07-18-AO5-AO8-shared-contract-design.md` for the
 shared-package vs. guarded-mirror options.
 
+## Warm calls (#1504, every callable behind `wrapCallable`)
+- REQUEST: exactly `{ "__warm": true }`, no other key. Any other payload,
+  including the marker plus one more field, is a real call and goes to the
+  handler and its own schema.
+- RESPONSE: `{ ok: true, warm: true }`. Clients drop it.
+- GATE: the same pre-handler steps as any call (App Check observation, session
+  revocation), then sign-in: an unauthenticated warm call is refused
+  `unauthenticated`. The handler never runs, so its own checks (staff gate,
+  rate limits, access) do not either: nothing is read past the session check,
+  nothing is written, no notification goes out. A signed-in household that sent
+  the marker to an admin callable gets the warm reply; that reveals nothing and
+  changes nothing.
+- LOG: `<name>.warm` at info, never `<name>.success`. No audit entry.
+- CALLERS: the kinfolk portal (web `lib/useWarmOnOpen.ts`, Android
+  `portal/WarmOnOpen.kt`), when a form opens, for that form's save:
+  `saveMyAccount`, `saveTribeProfile` and `saveHomeAccess`,
+  `saveMyNotificationPrefs`, `addBookingNote`, `requestBooking`, `addKin`,
+  `updateKin`, `createShareLink`, `generate` and `sendKinfolkMessage`.
 ## Widget callables (admin-gated)
 
 ### optimizeRoute (AO-35)

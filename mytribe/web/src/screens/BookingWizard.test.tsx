@@ -22,6 +22,7 @@ import type {
 } from '../contracts/bookingContracts.generated';
 import type { GetMyKinResult, KinDto } from '../api/types';
 import { dateKey, MAX_RECURRING_VISITS, startOfDay } from '../lib/bookingWizardLogic';
+import { warmSave } from '../lib/warmSave';
 
 /**
  * #544: the picker's lower bound is today, so a date fixture may never be
@@ -1451,5 +1452,14 @@ describe('BookingWizard: #1281 after a successful Create Booking', () => {
     answer({ ...EMPTY, upcoming: [visitDto()], envelopes: [envelopeDto()] });
     await vi.waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
     expect(queryClient.getQueryData<GetMyBookingsResult>(['myBookings', 'fam1'])?.upcoming.map((v) => v.id)).toEqual(['v-new']);
+  });
+});
+
+describe('BookingWizard: warm on open (#1504)', () => {
+  it('wakes requestBooking once its Kin and KinCares load, and stepping through never fires it again', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    expect(vi.mocked(warmSave).mock.calls).toEqual([['requestBooking']]);
   });
 });

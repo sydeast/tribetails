@@ -14,6 +14,7 @@ import type {
   RequestBookingCancellationResult,
   RequestBookingRescheduleResult,
 } from '../contracts/bookingContracts.generated';
+import { warmSave } from '../lib/warmSave';
 
 const mocks = vi.hoisted(() => ({
   getMyBookings: vi.fn<() => Promise<GetMyBookingsResult>>(),
@@ -930,5 +931,20 @@ describe('BookingDetail: back to the tab the visit lives in (#1304)', () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
     renderScreen();
     expect(await screen.findByRole('link', { name: /Back to Schedule/ })).toHaveAttribute('data-search', JSON.stringify({}));
+  });
+});
+
+describe('BookingDetail: warm on open (#1504)', () => {
+  it('wakes addBookingNote once for a visit that can still take a note', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Drop-in Visit' });
+    await waitFor(() => expect(vi.mocked(warmSave).mock.calls).toEqual([['addBookingNote']]));
+  });
+  it('wakes nothing for a finished visit, which has no note box', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'cancelled' })] }));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Drop-in Visit' });
+    expect(warmSave).not.toHaveBeenCalled();
   });
 });

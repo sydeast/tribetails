@@ -33,6 +33,8 @@ class PortalApi(
     private val fns: FunctionsClient,
     private val firestore: FirestoreClient? = null,
 ) {
+    /** #1504: the client the warm-on-open call goes through (see WarmOnOpen.kt). */
+    internal val functionsClient: FunctionsClient get() = fns
 
     // -- Access (operator-aware kinfolkIds list) --
     suspend fun getMyAccess(): MyAccessResult {

@@ -26,6 +26,7 @@ import {
   type UserNotificationPrefs,
 } from '../api/notificationsApi';
 import { useSignOut } from '../lib/auth';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
@@ -301,6 +302,9 @@ export function NotificationSettings() {
     if (edited !== null || !prefs.data) return;
     setEdited(seedEdited(prefs.data.prefs));
   }, [edited, prefs.data]);
+  // #1504: the toggles are live once seeded, and the first tap saves at once,
+  // so the save's instance is woken now. After the screen's reads (#1561).
+  useWarmOnOpen('saveMyNotificationPrefs', edited !== null);
   // #1292: every toggle saves on its own, pessimistically. Nothing on screen
   // changes until the server confirms, every control is disabled and a
   // "Saving…" cue shows while the write is out, and a failure leaves the

@@ -15,6 +15,7 @@ import {
   validateAvatarFile,
 } from '../api/accountApi';
 import { useSignOut } from '../lib/auth';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { formSchemaKey, myAccountKey, myHomeKey, myPaymentMethodKey } from '../lib/portalQueryKeys';
 import { PortalNav } from '../components/PortalNav';
@@ -141,6 +142,11 @@ export function Account() {
     setBackupPhone(formatPhone(a.backupPhone));
     setHydrated(true);
   }, [account.data, hydrated]);
+
+  // #1504: the form is open once it is seeded; wake the save's instance now so
+  // the household's Save lands on a running one. After the screen's own reads,
+  // never ahead of them (#1561).
+  useWarmOnOpen('saveMyAccount', hydrated);
 
   // HOLD. `saveMyAccount` set/merges clients/{uid} and calls
   // `authAdmin().updateUser`, both idempotent. Nothing is appended.

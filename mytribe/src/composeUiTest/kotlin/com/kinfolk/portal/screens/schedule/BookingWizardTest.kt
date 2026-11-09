@@ -437,4 +437,33 @@ class BookingWizardTest {
         waitForIdle()
         kotlin.test.assertTrue(closed, "onClose should fire from Cancel button")
     }
+
+    /** #1504: the wizard wakes requestBooking once its Kin and KinCares load, and stepping through it never fires again. */
+    @Test
+    fun opening_warmsRequestBookingOnce_andAdvancingDoesNotFireItAgain() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = {})
+        }
+        waitForIdle()
+        kotlin.test.assertEquals(listOf("requestBooking"), fake.warmCalls)
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        kotlin.test.assertEquals(listOf("requestBooking"), fake.warmCalls)
+        kotlin.test.assertTrue(fake.calls.none { it.first == "requestBooking" }, "a warm call is not a booking")
+    }
+    @Test
+    fun aFailedWarmCall_staysOffTheScreen() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        fake.stubError("requestBooking", IllegalStateException("UNAVAILABLE: cold start"))
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = {})
+        }
+        waitForIdle()
+        kotlin.test.assertEquals(listOf("requestBooking"), fake.warmCalls)
+        onNodeWithText("All Kin in this home").assertIsDisplayed()
+        onNodeWithText("UNAVAILABLE", substring = true).assertDoesNotExist()
+    }
 }
