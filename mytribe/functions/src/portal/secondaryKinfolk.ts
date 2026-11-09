@@ -9,7 +9,8 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
-import { isValidPhone, normalizeE164 } from '../lib/phoneNormalize';
+import { normalizeE164 } from '../lib/phoneNormalize';
+import { isEmailShape, isUsPhoneShape } from '../lib/contactShape';
 import { comparablePhone, normaliseName, readStoredEmergencyContacts } from '../lib/emergencyContacts';
 
 /**
@@ -51,8 +52,28 @@ import { comparablePhone, normaliseName, readStoredEmergencyContacts } from '../
 
 export const SECONDARY_KINFOLK_NAME_MAX = 80;
 export const SECONDARY_KINFOLK_NAME_REQUIRED_MESSAGE = 'A secondary kinfolk needs a name.';
-export const SECONDARY_KINFOLK_PHONE_INVALID_MESSAGE = 'That phone number is not a valid number.';
-export const SECONDARY_KINFOLK_EMAIL_INVALID_MESSAGE = 'That email address is not valid.';
+// #1593: the admin clients' own sentences and the admin clients' own rules
+// (`lib/contactShape.ts`), so a number or address a client lets through is never
+// refused here four seconds later, and the server never takes one a client refuses.
+export const SECONDARY_KINFOLK_PHONE_INVALID_MESSAGE = 'Enter a 10-digit phone number, or leave it blank.';
+export const SECONDARY_KINFOLK_EMAIL_INVALID_MESSAGE = 'Enter an email like name@example.com, or leave it blank.';
+/**
+ * A number in the shape the clients accept, stored as E.164. libphonenumber's
+ * answer when it has one; otherwise the +1 number the ten digits spell. A
+ * structurally fine number libphonenumber does not recognise (an unassigned
+ * area code, a 555 number) is kept as typed rather than refused, because the
+ * admin clients cannot see libphonenumber's table and would let it through.
+ */
+export function secondaryPhoneE164(raw: string): string {
+  try {
+    const e164 = normalizeE164(raw);
+    if (e164) return e164;
+  } catch {
+    // Fall through to the digits.
+  }
+  const digits = raw.replace(/\D/g, '');
+  return `+1${digits.length === 11 ? digits.slice(1) : digits}`;
+}
 export const SECONDARY_KINFOLK_IS_PRIMARY_MESSAGE = 'That is the primary kinfolk. A secondary kinfolk is someone else in the household.';
 export const SECONDARY_KINFOLK_IS_EMERGENCY_CONTACT_MESSAGE =
   "That is the household's Emergency Contact. An Emergency Contact is someone outside the household.";
@@ -68,11 +89,11 @@ const optionalPhone = z
   .transform((v, ctx) => {
     const t = (v ?? '').trim();
     if (t === '') return null;
-    if (!isValidPhone(t)) {
+    if (!isUsPhoneShape(t)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: SECONDARY_KINFOLK_PHONE_INVALID_MESSAGE });
       return z.NEVER;
     }
-    return normalizeE164(t) as string;
+    return secondaryPhoneE164(t);
   });
 
 const optionalEmail = z
@@ -81,7 +102,7 @@ const optionalEmail = z
   .transform((v, ctx) => {
     const t = (v ?? '').trim().toLowerCase();
     if (t === '') return null;
-    if (!z.string().email().safeParse(t).success) {
+    if (!isEmailShape(t)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: SECONDARY_KINFOLK_EMAIL_INVALID_MESSAGE });
       return z.NEVER;
     }

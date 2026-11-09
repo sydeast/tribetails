@@ -43,7 +43,8 @@ export function isValidEmail(raw: string): boolean {
   const trimmed = raw.trim();
   if (trimmed === '') return false;
   if (trimmed.length > EMAIL_MAX) return false;
-  return EMAIL_RE.test(trimmed);
+  // #1593: no doubled dot, which the servers' email checks refuse too.
+  return EMAIL_RE.test(trimmed) && !trimmed.includes('..');
 }
 
 /**

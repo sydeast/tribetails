@@ -77,4 +77,23 @@ class SecondaryKinfolkRenderTest {
         onNodeWithText("No invite is sent. Only their primary can give them portal access.").assertIsDisplayed()
         onNodeWithText("That is the household's Emergency Contact. An Emergency Contact is someone outside the household.").assertIsDisplayed()
     }
+    @Test
+    fun eachFieldShowsItsOwnRefusalUnderIt() = runDesktopComposeUiTest {
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                SecondaryKinfolkDialog(
+                    draft = SecondaryPersonDraft(name = "Rae Park", phone = "12345", email = "rae@"),
+                    saving = false,
+                    error = null,
+                    fieldErrors = com.tribetails.auntieos.web.data.SecondaryKinfolkFieldErrors(
+                        phone = com.tribetails.auntieos.web.data.SECONDARY_PHONE_INVALID,
+                        email = com.tribetails.auntieos.web.data.SECONDARY_EMAIL_INVALID,
+                    ),
+                    onChange = {}, onSave = {}, onCancel = {},
+                )
+            }
+        }
+        onNodeWithText("Enter a 10-digit phone number, or leave it blank.").assertIsDisplayed()
+        onNodeWithText("Enter an email like name@example.com, or leave it blank.").assertIsDisplayed()
+    }
 }

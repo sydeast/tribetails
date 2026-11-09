@@ -104,6 +104,34 @@ describe('saveSecondaryKinfolkHandler', () => {
     expect(ctx.adds).toHaveLength(0);
   });
 
+  it('#1593 agrees with the admin clients exactly: what they let through is taken, what they refuse is refused', async () => {
+    const m = await load();
+    expect(m.SECONDARY_KINFOLK_PHONE_INVALID_MESSAGE).toBe('Enter a 10-digit phone number, or leave it blank.');
+    expect(m.SECONDARY_KINFOLK_EMAIL_INVALID_MESSAGE).toBe('Enter an email like name@example.com, or leave it blank.');
+    // Numbers every client accepts but libphonenumber does not recognise.
+    for (const phone of ['123-456-7890', '555-555-5555', '(512) 555-0142']) {
+      const ctx = household();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(m.saveSecondaryKinfolkHandler(call({ kinfolkId: 'fam1', name: 'Sam', phone }))).resolves.toBeTruthy();
+    }
+    expect(m.secondaryPhoneE164('555-555-5555')).toBe('+15555555555');
+    expect(m.secondaryPhoneE164('1 (512) 555-0142')).toBe('+15125550142');
+    // What the clients refuse, the server refuses too.
+    for (const phone of ['555-0142', '+44 20 7946 0958', 'call me']) {
+      const ctx = household();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(m.saveSecondaryKinfolkHandler(call({ kinfolkId: 'fam1', name: 'Sam', phone }))).rejects.toMatchObject({
+        message: m.SECONDARY_KINFOLK_PHONE_INVALID_MESSAGE,
+      });
+    }
+    for (const email of ['a..b@example.com', 'rae@', 'rae@x']) {
+      const ctx = household();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(m.saveSecondaryKinfolkHandler(call({ kinfolkId: 'fam1', name: 'Sam', email }))).rejects.toMatchObject({
+        message: m.SECONDARY_KINFOLK_EMAIL_INVALID_MESSAGE,
+      });
+    }
+  });
   it('refuses the primary themselves, and the Emergency Contact', async () => {
     const ctx = household();
     mocks.dbFn.mockReturnValue(ctx.db);

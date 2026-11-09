@@ -29,7 +29,8 @@ fun isValidEmail(raw: String): Boolean {
     val trimmed = raw.trim()
     if (trimmed.isEmpty()) return false
     if (trimmed.length > 254) return false
-    return EMAIL_REGEX.matches(trimmed)
+    // #1593: no doubled dot, which the servers' email checks refuse too.
+    return EMAIL_REGEX.matches(trimmed) && !trimmed.contains("..")
 }
 
 /**

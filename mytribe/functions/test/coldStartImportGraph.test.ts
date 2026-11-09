@@ -181,8 +181,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * the document to every client). Its field checks,
  * `lib/businessSettingsChecks.ts`, load with `await import()` inside the
  * handler, so the entry is the only module it adds.
+ *
+ * 438 since the #1593 secondary-kinfolk alignment: `lib/contactShape.ts`, the
+ * email and phone shapes the admin clients check, which `portal/secondaryKinfolk.ts`
+ * (an entry already in this graph) now refuses by, so the client and the server
+ * agree exactly. A dozen lines with no import of its own.
  */
-const MAX_OWN_EAGER_MODULES = 437;
+const MAX_OWN_EAGER_MODULES = 438;
 
 interface Edge {
   spec: string;

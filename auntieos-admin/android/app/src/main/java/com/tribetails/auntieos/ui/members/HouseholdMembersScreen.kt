@@ -476,6 +476,7 @@ fun HouseholdMembersBody(
             draft = draft,
             saving = state.personSaving,
             error = state.personError,
+            fieldErrors = state.personFieldErrors,
             onChange = viewModel::updatePersonDraft,
             onSave = viewModel::savePerson,
             onCancel = viewModel::cancelPersonEdit,
@@ -1047,11 +1048,18 @@ private fun SecondaryPersonDialog(
     draft: MembersRepository.SecondaryPersonDraft,
     saving: Boolean,
     error: String?,
+    fieldErrors: SecondaryKinfolkFieldErrors,
     onChange: (MembersRepository.SecondaryPersonDraft) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
 ) {
     val c = AuntieTheme.colors
+    @Composable
+    fun FieldError(message: String?, tag: String) {
+        message?.let {
+            Text(it, style = AuntieTheme.typography.bodySmall, color = c.error, modifier = Modifier.testTag(tag))
+        }
+    }
     AuntieDialog(
         visible = true,
         title = if (draft.personId == null) "Add secondary kinfolk" else "Edit secondary kinfolk",
@@ -1075,22 +1083,28 @@ private fun SecondaryPersonDialog(
                 onValueChange = { onChange(draft.copy(name = it.take(MembersRepository.SECONDARY_KINFOLK_NAME_MAX))) },
                 label = "Name",
                 enabled = !saving,
+                isError = fieldErrors.name != null,
                 modifier = Modifier.fillMaxWidth(),
             )
+            FieldError(fieldErrors.name, "secondaryNameError")
             AuntieField(
                 value = draft.phone,
                 onValueChange = { onChange(draft.copy(phone = it.take(32))) },
                 label = "Phone (optional)",
                 enabled = !saving,
+                isError = fieldErrors.phone != null,
                 modifier = Modifier.fillMaxWidth(),
             )
+            FieldError(fieldErrors.phone, "secondaryPhoneError")
             AuntieField(
                 value = draft.email,
                 onValueChange = { onChange(draft.copy(email = it.take(254))) },
                 label = "Email (optional)",
                 enabled = !saving,
+                isError = fieldErrors.email != null,
                 modifier = Modifier.fillMaxWidth(),
             )
+            FieldError(fieldErrors.email, "secondaryEmailError")
             error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.error) }
         }
     }

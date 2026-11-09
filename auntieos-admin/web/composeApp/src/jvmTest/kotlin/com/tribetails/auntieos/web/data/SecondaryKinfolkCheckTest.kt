@@ -29,4 +29,23 @@ class SecondaryKinfolkCheckTest {
     fun aRealPhoneAndEmailPass() {
         assertNull(secondaryKinfolkDraftError(d(phone = "(512) 555-0142", email = "catch@hanasamku.com")))
     }
+
+    @Test
+    fun eachFieldCarriesItsOwnRefusal() {
+        val errs = secondaryKinfolkFieldErrors(d(name = " ", phone = "12345", email = "rae@"))
+        assertEquals(SECONDARY_KINFOLK_NAME_REQUIRED, errs.name)
+        assertEquals(SECONDARY_PHONE_INVALID, errs.phone)
+        assertEquals(SECONDARY_EMAIL_INVALID, errs.email)
+        assertEquals(SecondaryKinfolkFieldErrors(), secondaryKinfolkFieldErrors(d()))
+    }
+    @Test
+    fun aDoubledDotIsRefusedAsTheServerRefusesIt() {
+        assertEquals(SECONDARY_EMAIL_INVALID, secondaryKinfolkFieldErrors(d(email = "rae..park@example.com")).email)
+    }
+    @Test
+    fun aServerSentenceMapsToItsField() {
+        assertEquals(SECONDARY_PHONE_INVALID, secondaryKinfolkServerFieldErrors(SECONDARY_PHONE_INVALID)?.phone)
+        assertEquals(SECONDARY_EMAIL_INVALID, secondaryKinfolkServerFieldErrors(SECONDARY_EMAIL_INVALID)?.email)
+        assertNull(secondaryKinfolkServerFieldErrors("That is the primary kinfolk."))
+    }
 }

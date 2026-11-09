@@ -28,3 +28,13 @@ export function secondaryKinfolkFieldErrors(draft: {
   if (!emailOkOrBlank(draft.email)) out.email = SECONDARY_EMAIL_INVALID;
   return out;
 }
+/**
+ * A server refusal that names one of the three fields, placed on that field.
+ * The server (`portal/secondaryKinfolk.ts`) refuses with these same sentences.
+ */
+export function secondaryKinfolkServerFieldErrors(message: string): SecondaryKinfolkFieldErrors | null {
+  if (message === SECONDARY_NAME_REQUIRED) return { name: message };
+  if (message === SECONDARY_PHONE_INVALID) return { phone: message };
+  if (message === SECONDARY_EMAIL_INVALID) return { email: message };
+  return null;
+}

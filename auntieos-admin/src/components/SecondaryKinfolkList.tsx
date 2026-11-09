@@ -13,7 +13,11 @@ import { Banner } from './Banner';
 import { GhostButton, PrimaryButton } from './Buttons';
 import { ErrorHint, StatusPill } from './DenScreenKit';
 import { Dialog } from './Dialog';
-import { secondaryKinfolkFieldErrors, type SecondaryKinfolkFieldErrors } from '../lib/secondaryKinfolkCheck';
+import {
+  secondaryKinfolkFieldErrors,
+  secondaryKinfolkServerFieldErrors,
+  type SecondaryKinfolkFieldErrors,
+} from '../lib/secondaryKinfolkCheck';
 import './SecondaryKinfolkList.css';
 
 const EMPTY: SecondaryKinfolkDraft = { name: '', phone: '', email: '' };
@@ -103,7 +107,11 @@ export function SecondaryKinfolkList({
       setEditing(null);
       load();
     } catch (err) {
-      setSaveError(errText(err, 'The secondary kinfolk was not saved. Try again.'));
+      const text = errText(err, 'The secondary kinfolk was not saved. Try again.');
+      // A refusal that names one field lands on that field, as the client's own does.
+      const onField = secondaryKinfolkServerFieldErrors(text);
+      if (onField !== null) setFieldErrors(onField);
+      else setSaveError(text);
     } finally {
       setSaving(false);
     }
