@@ -15,6 +15,7 @@ import type {
   SaveMyNotificationPrefsResult,
   UserNotificationPrefs,
 } from '../api/notificationsApi';
+import { warmSave } from '../lib/warmSave';
 
 /**
  * P7: per-key notification toggles. Covers the expand-to-key-level behavior
@@ -524,7 +525,9 @@ describe('mixed master state (#1317)', () => {
     renderScreen();
     await waitFor(() => expect(screen.getByText('New invoice')).toBeTruthy());
     const master = box('All in category: Invoices & Payments');
-    expect(master.indeterminate).toBe(true);
+    // #1769: `indeterminate` is a DOM property set from a passive effect, so it
+    // can trail the commit the text above waited for. Wait for it too.
+    await waitFor(() => expect(master.indeterminate).toBe(true));
     expect(master.getAttribute('aria-checked')).toBe('mixed');
     expect(master.checked).toBe(false);
   });
@@ -702,5 +705,19 @@ describe('category description', () => {
     expect(within(holder).queryByRole('tooltip')).toBeNull();
     await userEvent.click(tip);
     expect(within(holder).getByRole('tooltip')).toHaveTextContent(desc);
+  });
+});
+
+describe('NotificationSettings: warm on open (#1504)', () => {
+  it('wakes saveMyNotificationPrefs once the toggles are seeded', async () => {
+    await renderLoaded();
+    await waitFor(() => expect(vi.mocked(warmSave).mock.calls).toEqual([['saveMyNotificationPrefs']]));
+  });
+  it('wakes nothing while the prefs have not loaded', async () => {
+    mocks.getNotificationCatalog.mockResolvedValue(CATALOG);
+    mocks.getMyNotificationPrefs.mockReturnValue(new Promise(() => {}));
+    renderScreen();
+    await screen.findByText(/Loading/i);
+    expect(warmSave).not.toHaveBeenCalled();
   });
 });

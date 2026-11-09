@@ -9,7 +9,6 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
-import io.mockk.verify
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.tribetails.auntieos.util.AuntieLog
 import java.net.UnknownHostException
@@ -738,15 +737,72 @@ class VoiceTokenManagerTest {
         ),
     )
 
+    /**
+     * Records what the manager logs, from the TEST thread only.
+     *
+     * [AuntieLog] is a process-wide `object`, so `mockkObject` + `verify(exactly = 0)`
+     * counts a call from ANY thread while the mock is installed. The unit-test
+     * suite is one JVM, and other classes leave background work behind
+     * (Robolectric application scopes on Dispatchers.Default, DefaultExecutor
+     * timers), so a stray `AuntieLog.e`/`w` from a thread this test never started
+     * could land inside the window and fail a `verify(exactly = 0)` on a run where
+     * nothing in this class had logged anything (#1664). Every call here is still
+     * passed through to the real object; only the COUNT is scoped to the thread
+     * whose logging the test is asserting on. Foreign-thread calls are kept in
+     * [foreign] so they are visible rather than silently dropped.
+     *
+     * The manager under test runs on the test thread: `runBlocking` drives it, the
+     * scope is `Dispatchers.Unconfined`, and the injected mint/backoff do not
+     * suspend, so no legitimate call from it is missed.
+     */
+    private class LogSpy(private val owner: Thread) {
+        val errors = java.util.concurrent.CopyOnWriteArrayList<Pair<String, Throwable?>>()
+        val warnings = java.util.concurrent.CopyOnWriteArrayList<Pair<String, Throwable?>>()
+        val breadcrumbs = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val foreign = java.util.concurrent.CopyOnWriteArrayList<String>()
+        fun <T> record(into: MutableList<T>, entry: T, label: String) {
+            if (Thread.currentThread() === owner) into += entry
+            else foreign += "$label on ${Thread.currentThread().name}: $entry"
+        }
+    }
+    private var spy = LogSpy(Thread.currentThread())
     private fun <T> withLogSpy(block: () -> T): T {
         mockkObject(AuntieLog)
+        val current = LogSpy(Thread.currentThread())
+        spy = current
+        every { AuntieLog.e(any(), any()) } answers {
+            current.record(current.errors, firstArg<String>() to secondArg<Throwable?>(), "e")
+            callOriginal()
+        }
+        every { AuntieLog.w(any(), any()) } answers {
+            current.record(current.warnings, firstArg<String>() to secondArg<Throwable?>(), "w")
+            callOriginal()
+        }
+        every { AuntieLog.breadcrumb(any()) } answers {
+            current.record(current.breadcrumbs, firstArg<String>(), "breadcrumb")
+            callOriginal()
+        }
         try {
             return block()
         } finally {
             unmockkObject(AuntieLog)
         }
     }
-
+    private fun assertNoSentryReports() {
+        assertTrue("unexpected AuntieLog.e: ${spy.errors}", spy.errors.isEmpty())
+        assertTrue("unexpected AuntieLog.w: ${spy.warnings}", spy.warnings.isEmpty())
+    }
+    @Test
+    fun `a log call from another thread during a spied test is not counted against it`() = withLogSpy {
+        val t = Thread { AuntieLog.e("stray error from elsewhere"); AuntieLog.w("stray warning") }
+        t.start()
+        t.join()
+        assertNoSentryReports()
+        assertEquals(2, spy.foreign.size)
+        // And a call on the test thread still is counted.
+        AuntieLog.e("ours")
+        assertEquals(listOf("ours"), spy.errors.map { it.first })
+    }
     @Test
     fun `a mint while signed out never calls the callable, never retries, and reports nothing`() =
         withLogSpy {
@@ -761,8 +817,7 @@ class VoiceTokenManagerTest {
                 assertTrue("expected no backoff, got $backoffs", backoffs.isEmpty())
                 // Waiting for auth is Idle: nothing attempted, nothing failed.
                 assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
-                verify(exactly = 0) { AuntieLog.e(any(), any()) }
-                verify(exactly = 0) { AuntieLog.w(any(), any()) }
+                assertNoSentryReports()
             }
         }
 
@@ -777,8 +832,7 @@ class VoiceTokenManagerTest {
             VoiceTokenManager.mintAndRegister()
             assertEquals(1, mints)
             assertTrue(backoffs.isEmpty())
-            verify(exactly = 0) { AuntieLog.e(any(), any()) }
-            verify(exactly = 0) { AuntieLog.w(any(), any()) }
+            assertNoSentryReports()
         }
     }
 
@@ -793,8 +847,7 @@ class VoiceTokenManagerTest {
                 assertTrue("expected no backoff, got $backoffs", backoffs.isEmpty())
                 val state = VoiceTokenManager.state.value
                 assertTrue("expected NotAuthorized, got $state", state is VoiceTokenState.NotAuthorized)
-                verify(exactly = 0) { AuntieLog.e(any(), any()) }
-                verify(exactly = 0) { AuntieLog.w(any(), any()) }
+                assertNoSentryReports()
             }
         }
 
@@ -849,9 +902,8 @@ class VoiceTokenManagerTest {
             VoiceTokenManager.mintAndRegister()
             assertEquals(3, mints)
             assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Registered)
-            verify(exactly = 0) { AuntieLog.e(any(), any()) }
-            verify(exactly = 0) { AuntieLog.w(any(), any()) }
-            verify(exactly = 2) { AuntieLog.breadcrumb(match { it.contains("retrying in") }) }
+            assertNoSentryReports()
+            assertEquals(2, spy.breadcrumbs.count { it.contains("retrying in") })
         }
     }
     @Test
@@ -862,14 +914,14 @@ class VoiceTokenManagerTest {
                 configure(mint = { mints++; Result.failure(dnsFailure()) })
                 VoiceTokenManager.mintAndRegister()
                 assertEquals(4, mints)
-                verify(exactly = 0) { AuntieLog.w(any(), any()) }
-                verify(exactly = 1) { AuntieLog.e(any(), any()) }
-                verify(exactly = 1) {
-                    AuntieLog.e(
-                        match { it.contains("4 of 4") && it.contains("Failed") && it.contains("INTERNAL") },
-                        null,
-                    )
-                }
+                assertTrue("unexpected AuntieLog.w: ${spy.warnings}", spy.warnings.isEmpty())
+                assertEquals("errors: ${spy.errors}", 1, spy.errors.size)
+                assertEquals(
+                    1,
+                    spy.errors.count { (m, t) ->
+                        m.contains("4 of 4") && m.contains("Failed") && m.contains("INTERNAL") && t == null
+                    },
+                )
             }
         }
     @Test
@@ -887,11 +939,12 @@ class VoiceTokenManagerTest {
             VoiceTokenManager.mintAndRegister()
             assertEquals(1, mints)
             assertTrue(backoffs.isEmpty())
-            verify(exactly = 0) { AuntieLog.w(any(), any()) }
-            verify(exactly = 1) { AuntieLog.e(any(), any()) }
-            verify(exactly = 1) {
-                AuntieLog.e(match { it.contains("1 of 4") && it.contains("Misconfigured") }, null)
-            }
+            assertTrue("unexpected AuntieLog.w: ${spy.warnings}", spy.warnings.isEmpty())
+            assertEquals("errors: ${spy.errors}", 1, spy.errors.size)
+            assertEquals(
+                1,
+                spy.errors.count { (m, t) -> m.contains("1 of 4") && m.contains("Misconfigured") && t == null },
+            )
         }
     }
 }

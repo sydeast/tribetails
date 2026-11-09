@@ -1330,4 +1330,27 @@ class TribeScreenTest {
         onNodeWithText("Invites can't be sent right now. It's been reported to Auntie.").performScrollTo().assertIsDisplayed()
         assertTrue(onAllNodesWithText("CLAIM_LINK_BASE_URL", substring = true).fetchSemanticsNodes().isEmpty())
     }
+
+    /** #1504: the page Save writes two halves, so opening the page wakes both, once each. */
+    @Test
+    fun opening_warmsBothSaveHalvesOnce() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithSavedField()
+        fake.stubEmergencyContacts()
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        assertEquals(listOf("saveTribeProfile", "saveHomeAccess"), fake.warmCalls)
+        assertTrue(fake.calls.none { it.first == "saveTribeProfile" || it.first == "saveHomeAccess" })
+    }
+    @Test
+    fun aFailedWarmCall_staysOffTheScreen() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithSavedField()
+        fake.stubEmergencyContacts()
+        fake.stubError("saveTribeProfile", IllegalStateException("UNAVAILABLE: cold start"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("Tribe Profile").assertIsDisplayed()
+        assertTrue(onAllNodesWithText("UNAVAILABLE", substring = true).fetchSemanticsNodes().isEmpty())
+    }
 }

@@ -17,6 +17,7 @@ import {
 } from '../api/messagesApi';
 import { useConversationMessages } from '../lib/messagesListener';
 import { useSignOut } from '../lib/auth';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
@@ -240,6 +241,14 @@ export function Messages() {
       attributes: { 'aria-label': 'Message', class: 'msgs-editorbody-inner' },
     },
   });
+
+  // #1504: the composer is open once its editor is up. Its two writes are
+  // woken then: Polish (`generate`, measured at 15 s cold on the 2026-11-01
+  // walk) and Send. A warm call reaches neither handler, so it spends none of
+  // the writing helper's hourly allowance and makes no model call.
+  const composerOpen = editor !== null;
+  useWarmOnOpen('generate', composerOpen);
+  useWarmOnOpen('sendKinfolkMessage', composerOpen);
 
   const editorState = useEditorState({
     editor,

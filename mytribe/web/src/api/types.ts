@@ -329,7 +329,7 @@ export interface AddKinResult {
 
 export interface GetMyKinTalesRequest {
   kinfolkId?: string;
-  /** Pagination cursor, `sentAtMs` of the last item from the previous page. */
+  /** Pagination cursor, `sentAtMs` of the last item from the previous page; strictly older tales come back. */
   before?: number;
   /** Page size; default 20, max 50. */
   limit?: number;
@@ -355,6 +355,12 @@ export interface KinTaleDto {
   authorDisplayName: string;
   mediaIds: string[];
   sentAtMs: number | null;
+  /**
+   * The stored `sentAt` text, present only when `sentAtMs` is null (a migrated
+   * row whose free text holds no readable date), so the card shows what was
+   * stored instead of nothing (#1775).
+   */
+  sentAtText?: string;
   shared: boolean;
   gpsRoute?: RoutePointDto[];
   gpsSummary?: GpsSummaryDto;

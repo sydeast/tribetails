@@ -1,16 +1,24 @@
 package com.kinfolk.portal.push
 
 import com.kinfolk.portal.firebase.FakeFunctionsClient
+import com.kinfolk.portal.firebase.FunctionsClient
+import kotlinx.serialization.json.JsonObject
 import com.kinfolk.portal.portal.PortalApi
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/** A Functions client whose every call waits forever, to prove the register step is bounded. */
+private class HangingFunctionsClient : FunctionsClient {
+    override suspend fun call(name: String, payload: JsonObject?): JsonObject = awaitCancellation()
+}
 class PushRegistrationCoordinatorTest {
 
     private fun fakeWithStubs(): FakeFunctionsClient = FakeFunctionsClient().apply {
@@ -187,5 +195,58 @@ class PushRegistrationCoordinatorTest {
         c.onSignOut()
         assertEquals(listOf("unregister failed: IllegalStateException: auth already torn down"), lines)
         assertTrue(lines.none { it.contains("tok-secret") })
+    }
+
+    // #1547 (b): a step that never answers ends in a named log line, not a hang.
+    @Test
+    fun `token provider that never answers logs a token timeout and registers nothing`() = runTest {
+        val fake = fakeWithStubs()
+        val lines = mutableListOf<String>()
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake),
+            platform = "test-mytribe",
+            tokenProvider = { awaitCancellation() },
+            logger = { lines += it },
+            stepTimeoutMs = 1_000,
+        )
+        c.onSignedIn()
+        assertEquals(1, lines.size)
+        assertTrue(lines[0].startsWith("token failed: TimeoutCancellationException"), lines[0])
+        assertEquals(0, fake.calls.size)
+        assertNull(c.registeredToken)
+    }
+    @Test
+    fun `register call that never answers logs a register timeout and caches nothing`() = runTest {
+        val lines = mutableListOf<String>()
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(HangingFunctionsClient()),
+            platform = "test-mytribe",
+            tokenProvider = { "tok-1" },
+            logger = { lines += it },
+            stepTimeoutMs = 1_000,
+        )
+        c.onSignedIn()
+        assertEquals(1, lines.size)
+        assertTrue(lines[0].startsWith("register failed: TimeoutCancellationException"), lines[0])
+        assertNull(c.registeredToken)
+    }
+    @Test
+    fun `a cancelled scope still propagates and is not logged as a failure`() = runTest {
+        val fake = fakeWithStubs()
+        val lines = mutableListOf<String>()
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake),
+            platform = "test-mytribe",
+            tokenProvider = { throw CancellationException("scope closed") },
+            logger = { lines += it },
+        )
+        var propagated = false
+        try {
+            c.onSignedIn()
+        } catch (e: CancellationException) {
+            propagated = true
+        }
+        assertTrue(propagated)
+        assertTrue(lines.isEmpty())
     }
 }

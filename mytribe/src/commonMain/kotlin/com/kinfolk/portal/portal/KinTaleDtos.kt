@@ -21,6 +21,12 @@ data class KinTale(
     val authorDisplayName: String?,
     val mediaIds: List<String>,
     val sentAtMs: Long?,
+    /**
+     * The stored `sentAt` text, sent only when [sentAtMs] is null (a migrated
+     * row whose free text holds no readable date), so the card shows what was
+     * stored instead of nothing (#1775).
+     */
+    val sentAtText: String? = null,
     val shared: Boolean,
     /** Optional GPS visit route forwarded by AuntieOS on DEPARTED. Empty list = no route. */
     val gpsRoute: List<RoutePoint> = emptyList(),

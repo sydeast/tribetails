@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ShareKinTaleDialog } from './ShareKinTaleDialog';
 import type { CreateShareLinkResult, RevokeShareLinkResult, ShareLinkOptions } from '../api/kinTalesApi';
+import { warmSave } from '../lib/warmSave';
 
 const mocks = vi.hoisted(() => ({
   createShareLink: vi.fn<(kinTaleId: string, familyId: string, options?: ShareLinkOptions) => Promise<CreateShareLinkResult>>(),
@@ -251,5 +252,16 @@ describe('ShareKinTaleDialog: placement and closing (#1327)', () => {
     expect(field).toHaveAttribute('type', 'text');
     await user.click(screen.getByRole('button', { name: 'Hide passcode' }));
     expect(field).toHaveAttribute('type', 'password');
+  });
+});
+
+describe('ShareKinTaleDialog: warm on open (#1504)', () => {
+  it('wakes createShareLink once when the dialog opens, and creates no link doing it', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    expect(vi.mocked(warmSave).mock.calls).toEqual([['createShareLink']]);
+    expect(mocks.createShareLink).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText(/optional.*4 to 8 characters/i), 'abcd');
+    expect(vi.mocked(warmSave).mock.calls).toEqual([['createShareLink']]);
   });
 });

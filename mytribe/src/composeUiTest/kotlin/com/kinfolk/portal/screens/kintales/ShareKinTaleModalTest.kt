@@ -143,4 +143,18 @@ class ShareKinTaleModalTest {
         waitForIdle()
         onNodeWithText("Hide passcode").assertIsDisplayed()
     }
+
+    /** #1504: the dialog opens on the Share tap; that open wakes createShareLink once. */
+    @Test
+    fun opening_warmsCreateShareLinkOnce_andAFailureStaysOffTheScreen() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubError("createShareLink", IllegalStateException("UNAVAILABLE: cold start"))
+        setThemedContent {
+            ShareKinTaleModal(familyId = "fam1", kinTaleId = "t1", portalApi = PortalApi(fake), onDismiss = {})
+        }
+        waitForIdle()
+        assertEquals(listOf("createShareLink"), fake.warmCalls)
+        assertTrue(fake.calls.none { it.first == "createShareLink" }, "a warm call creates no link")
+        onNodeWithText("UNAVAILABLE", substring = true).assertDoesNotExist()
+    }
 }

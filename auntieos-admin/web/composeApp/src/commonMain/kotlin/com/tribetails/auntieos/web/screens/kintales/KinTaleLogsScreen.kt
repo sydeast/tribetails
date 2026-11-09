@@ -596,7 +596,7 @@ private fun MarkDuplicateDialog(
     val candidates = remember(allReports, report._id) {
         allReports
             .filter { it._id != report._id && !it.isUntriagedOrphan() }
-            .sortedByDescending { sortKey(it) }
+            .sortedWith(kinTaleDateComparator(true, ::sortMillis))
     }
 
     val q = query.lowercase().trim()
@@ -960,9 +960,14 @@ private fun bucketFor(r: KinCareReport): Bucket = when (r.status.uppercase()) {
     else     -> Bucket.Drafts
 }
 
-private fun sortKey(r: KinCareReport): String = sequenceOf(
-    r.sentAt, r.updatedAt, r.visitDate, r.createdAt,
-).firstOrNull { it.isNotBlank() } ?: ""
+/**
+ * The date a row sorts on: the first non-blank of its date fields, PARSED
+ * (#1599). Raw strings put the migrated free text ("September 3, 2025 2:02pm")
+ * above every ISO row, so this is epoch milliseconds, null when unreadable.
+ */
+internal fun sortMillis(r: KinCareReport): Long? = kinTaleSortMillis(
+    sequenceOf(r.sentAt, r.updatedAt, r.visitDate, r.createdAt).firstOrNull { it.isNotBlank() },
+)
 
 // KT1: operator-chosen ordering for the KinTales list (organizes the Sent bucket).
 // Public since #1594, because App holds the list's chosen sort in KinTaleListFilter.
@@ -988,13 +993,13 @@ class KinTaleListFilter(search: String = "", sort: ReportSort = ReportSort.Newes
 }
 
 internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<KinCareReport> = when (mode) {
-    ReportSort.Newest  -> reports.sortedByDescending { sortKey(it) }
-    ReportSort.Oldest  -> reports.sortedBy { sortKey(it) }
+    ReportSort.Newest  -> reports.sortedWith(kinTaleDateComparator(true, ::sortMillis))
+    ReportSort.Oldest  -> reports.sortedWith(kinTaleDateComparator(false, ::sortMillis))
     ReportSort.Kinfolk -> reports.sortedWith(
-        compareBy<KinCareReport> { it.kinfolkName.lowercase() }.thenByDescending { sortKey(it) },
+        compareBy<KinCareReport> { it.kinfolkName.lowercase() }.then(kinTaleDateComparator(true, ::sortMillis)),
     )
     ReportSort.Service -> reports.sortedWith(
-        compareBy<KinCareReport> { it.serviceType.lowercase() }.thenByDescending { sortKey(it) },
+        compareBy<KinCareReport> { it.serviceType.lowercase() }.then(kinTaleDateComparator(true, ::sortMillis)),
     )
 }
 
@@ -1037,6 +1042,11 @@ internal fun duplicateCandidateLabel(r: KinCareReport, currentYear: Int): String
  */
 internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
     runCatchingCancellable {
+        parseLegacyKinTaleStamp(iso)?.let { s ->
+            val time = "${s.hour.toString().padStart(2, '0')}:${s.minute.toString().padStart(2, '0')}"
+            val month = MONTHS[s.month - 1]
+            return@runCatchingCancellable if (s.year == currentYear) "$month ${s.day} · $time" else "$month ${s.day}, ${s.year} · $time"
+        }
         if (iso.length < 16) return@runCatchingCancellable iso
         val year  = iso.substring(0, 4).toInt()
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]

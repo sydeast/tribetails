@@ -359,6 +359,17 @@ export function UninvoicedVisitsPicker({
                             {humanizeDate(s.startTime.slice(0, 10), localDateIso(new Date()))}
                             {s.durationMinutes > 0 ? ` · ${String(s.durationMinutes)} min` : ''}
                           </span>
+                          {/* #1750: the visit's stored key is not on the card as
+                              written, so the server priced it from the one
+                              KinCare it resolves to. Said here so the rate it
+                              used is seen before the invoice goes out. A server
+                              that predates the field sends none, and the row
+                              says nothing. */}
+                          {!unpriced && s.pricedAs ? (
+                            <span className="visit-picker__row-meta visit-picker__priced-as">
+                              priced as {s.pricedAs}
+                            </span>
+                          ) : null}
                         </span>
                         {/* NEVER "$0.00" for an unpriced visit. A zero here is
                             indistinguishable from a service genuinely given

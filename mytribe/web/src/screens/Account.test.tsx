@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Account } from './Account';
 import type { AccountDto, PaymentMethodDto } from '../api/accountApi';
 import type { GetMyHomeResult } from '../api/types';
+import { warmSave } from '../lib/warmSave';
 
 /**
  * Covers the one thing this session changed: Account.tsx's avatar upload,
@@ -695,5 +696,17 @@ describe('Account, reads start together (#1282)', () => {
     expect(portalApi.getMyKin).not.toHaveBeenCalled();
     // The card row still waits for the account answer: it needs `impersonated`.
     expect(accountApi.getMyPaymentMethod).not.toHaveBeenCalled();
+  });
+});
+
+describe('Account: warm on open (#1504)', () => {
+  it('wakes saveMyAccount once the form is seeded, and typing never fires it again', async () => {
+    const user = userEvent.setup();
+    const { getByLabelText } = await renderAccount();
+    await waitFor(() => expect(warmSave).toHaveBeenCalledWith('saveMyAccount'));
+    await user.type(getByLabelText('Backup Email'), 'sam@example.com');
+    expect(vi.mocked(warmSave).mock.calls).toEqual([['saveMyAccount']]);
+    const accountApi = await import('../api/accountApi');
+    expect(accountApi.saveMyAccount).not.toHaveBeenCalled();
   });
 });

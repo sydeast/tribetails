@@ -80,6 +80,44 @@ export function looksLikeServiceCode(label: string): boolean {
   return /^[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+$/.test(label.trim());
 }
 
+/**
+ * Which catalog key a stored `serviceType` names, by steps 1 and 2 above.
+ * Shared by [serviceDisplayName] and by `admin/listUninvoicedSessions`, which
+ * prices a visit from the rate card under the key this returns (#1750), so a
+ * visit's invoice row and its price can never resolve to different KinCares.
+ *
+ * `key` is the catalog key AS STORED (untrimmed), so a caller can index
+ * `serviceRates` with it. `ambiguous` lists every key that matched when more
+ * than one did: two keys that are the same on letters and digits
+ * (`30Minute` and `30 Minute`), or two KinCares of the stated length.
+ */
+export type ServiceKeyMatch =
+  | { kind: 'key'; key: string; via: 'letters' | 'length' }
+  | { kind: 'ambiguous'; via: 'letters' | 'length'; keys: string[] }
+  | { kind: 'none' };
+
+export function matchServiceKey(rawServiceType: unknown, catalog: ServiceNameCatalog): ServiceKeyMatch {
+  const label = typeof rawServiceType === 'string' ? rawServiceType.trim() : '';
+  if (label === '') return { kind: 'none' };
+  const keys = Object.keys(catalog.serviceRates).filter((key) => key.trim() !== '');
+  const wanted = normaliseServiceKey(label);
+  const byLetters = keys.filter((key) => normaliseServiceKey(key.trim()) === wanted);
+  if (byLetters.length === 1) return { kind: 'key', key: byLetters[0], via: 'letters' };
+  if (byLetters.length > 1) return { kind: 'ambiguous', via: 'letters', keys: byLetters };
+  const minutes = labelMinutes(label);
+  if (minutes !== null) {
+    const sameLength = keys.filter((key) => kinCareLengthMinutes(key.trim(), catalog.serviceDurations) === minutes);
+    if (sameLength.length === 1) return { kind: 'key', key: sameLength[0], via: 'length' };
+    if (sameLength.length > 1) return { kind: 'ambiguous', via: 'length', keys: sameLength };
+  }
+  return { kind: 'none' };
+}
+
+/** The catalog name for a catalog key: what the booking wizard calls it. */
+export function catalogServiceName(key: string): string {
+  return prettifyRateKey(key.trim());
+}
+
 export function serviceDisplayName(
   rawServiceType: unknown,
   catalog: ServiceNameCatalog,
@@ -87,19 +125,13 @@ export function serviceDisplayName(
 ): string | null {
   const label = typeof rawServiceType === 'string' ? rawServiceType.trim() : '';
   const stored = typeof storedServiceName === 'string' ? storedServiceName.trim() : '';
-  if (label !== '') {
-    const keys = Object.keys(catalog.serviceRates)
-      .map((key) => key.trim())
-      .filter((key) => key !== '');
-    const wanted = normaliseServiceKey(label);
-    const exact = keys.find((key) => normaliseServiceKey(key) === wanted);
-    if (exact !== undefined) return prettifyRateKey(exact);
-    const minutes = labelMinutes(label);
-    if (minutes !== null) {
-      const sameLength = keys.filter((key) => kinCareLengthMinutes(key, catalog.serviceDurations) === minutes);
-      if (sameLength.length === 1) return prettifyRateKey(sameLength[0]);
-    }
-  }
+  const match = matchServiceKey(label, catalog);
+  if (match.kind === 'key') return catalogServiceName(match.key);
+  // Two keys equal on letters and digits differ only in spacing or case, so
+  // they print as the same service: the name takes the first, as it always
+  // has. Pricing does not (#1750): the two can carry different rates. Two
+  // KinCares of one LENGTH are different services and name nothing.
+  if (match.kind === 'ambiguous' && match.via === 'letters') return catalogServiceName(match.keys[0]);
   if (stored !== '' && !looksLikeServiceCode(stored)) return stored;
   if (label !== '' && !looksLikeServiceCode(label)) return label;
   return null;

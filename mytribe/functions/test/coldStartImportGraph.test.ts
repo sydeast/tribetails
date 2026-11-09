@@ -170,8 +170,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * imports are already resident. 430 is not reachable without moving modules
  * out of the graph, so the bound sits at the measured count with no slack:
  * the next eager module has to be looked at.
+ *
+ * 436 since #1775: `lib/sentKinTales.ts`, the one sent-tale reader that
+ * `getMyKinTales` and `getMyKinPhotos` share (two entrypoints already in this
+ * graph, so it is resident by construction). It holds no package import and
+ * folding it into an unrelated helper to dodge the count would hide it.
  */
-const MAX_OWN_EAGER_MODULES = 435;
+const MAX_OWN_EAGER_MODULES = 436;
 
 interface Edge {
   spec: string;

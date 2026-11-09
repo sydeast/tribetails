@@ -329,6 +329,19 @@ internal fun UninvoicedVisitsPicker(
                                     style = AuntieTheme.typography.bodySmall,
                                     color = c.textDim,
                                 )
+                                // #1750: the stored key is not on the card as
+                                // written, so the server priced the visit from
+                                // the one KinCare it resolves to. Said here so
+                                // the rate it used is seen before the invoice
+                                // goes out.
+                                val pricedAs = s.pricedAs
+                                if (unitCents != null && !pricedAs.isNullOrBlank()) {
+                                    Text(
+                                        "priced as $pricedAs",
+                                        style = AuntieTheme.typography.bodySmall,
+                                        color = c.textDim,
+                                    )
+                                }
                             }
                             // Never "$0.00" for an unpriced visit.
                             Text(

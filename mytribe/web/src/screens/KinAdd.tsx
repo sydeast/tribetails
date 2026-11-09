@@ -9,6 +9,7 @@ import { FixedField, SexField } from '../components/KinFactsFields';
 import { buildNewKinPayload, emptyKinForm, hasErrors, validateKinForm, type KinEditForm, type KinFormErrors, type KinTextKey } from '../lib/kinEditForm';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { usePortalMutation } from '../lib/mutationState';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { SignedImageUpload } from '../components/SignedImageUpload';
 import { uploadKinPhotoSigned, validateKinPhotoFile } from '../api/kinPhotoApi';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
@@ -39,6 +40,9 @@ export function KinAdd() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  // #1504: the form is open the moment this screen is (it reads nothing first),
+  // so the save's instance is woken now and Add lands on a running one.
+  useWarmOnOpen('addKin');
   useEffect(() => {
     if (!photoFile) {
       setPhotoPreview('');

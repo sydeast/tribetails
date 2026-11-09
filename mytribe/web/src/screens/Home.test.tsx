@@ -297,6 +297,25 @@ describe('Home, Recent KinTales cards open the tale (#1329)', () => {
     expect(screen.getByText('Nap day').closest('a')).toHaveAttribute('data-search', JSON.stringify({ tale: 't-b' }));
   });
 });
+describe('Home, Recent KinTales date line for a migrated row (#1775)', () => {
+  it('shows the stored text when the server read no date from it', async () => {
+    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home: [] } });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        { id: 't-a', title: 'Park day', body: 'Ran.', authorDisplayName: 'Maya', mediaIds: [], sentAtMs: null, sentAtText: 'sometime in the spring' },
+      ],
+    });
+    mocks.getMyKin.mockResolvedValue({ kin: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/FROM AUNTIE MAYA · sometime in the spring/)).toBeInTheDocument();
+  });
+});
 describe('Home, rows open the booking and headings open the lists (#1461)', () => {
   const visitA = {
     ...pendingOvernight(),

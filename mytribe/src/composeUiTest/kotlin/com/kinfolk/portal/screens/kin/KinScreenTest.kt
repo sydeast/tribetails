@@ -185,4 +185,36 @@ class KinScreenTest {
         onNodeWithText("Buddy").assertIsDisplayed()
         onNodeWithText("Pepper").assertIsDisplayed()
     }
+
+    /** #1504: Add New opens the add form, and that tap wakes addKin. Each open is its own. */
+    @Test
+    fun addNew_warmsAddKin_onEachOpen() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKin", buildJsonObject { put("kin", buildJsonArray {}) })
+        stubKinSchema(fake)
+        setThemedContent { KinScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        kotlin.test.assertEquals(emptyList<String>(), fake.warmCalls, "the list itself warms nothing")
+        onNodeWithText("Add New").performClick()
+        waitForIdle()
+        kotlin.test.assertEquals(listOf("addKin"), fake.warmCalls)
+    }
+    /** The edit route wakes updateKin once its Kin has resolved. */
+    @Test
+    fun editRoute_warmsUpdateKinOnce() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKin", buildJsonObject {
+            put("kin", buildJsonArray {
+                add(buildJsonObject { put("id", "k1"); put("name", "Buddy"); put("status", "active") })
+            })
+        })
+        stubKinSchema(fake)
+        setThemedContent {
+            val controller = rememberKinController("3", PortalApi(fake))
+            androidx.compose.runtime.LaunchedEffect(Unit) { controller.reload() }
+            KinAddEditScreen(kinId = "k1", controller = controller, onClose = {})
+        }
+        waitForIdle()
+        kotlin.test.assertEquals(listOf("updateKin"), fake.warmCalls)
+    }
 }

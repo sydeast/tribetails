@@ -45,6 +45,8 @@ import com.kinfolk.portal.nav.avatarInitial
 import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.KinStatus
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.WarmOnOpen
+import com.kinfolk.portal.portal.WarmableSave
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
@@ -176,6 +178,8 @@ fun KinScreen(
     }
 
     if (addNew) {
+        // #1504: the add form opens on this tap; wake the save's instance now.
+        WarmOnOpen(controller.api, WarmableSave.AddKin)
         AddEditKinDialog(
             initial = null,
             schema = controller.schema,
@@ -210,6 +214,13 @@ fun KinAddEditScreen(
     var pinned by remember(kinId) { mutableStateOf(found) }
     if (found != null) pinned = found
     val editing = pinned
+    // #1504: wake the matching save as the dialog opens. Add is open at once;
+    // edit once the Kin it edits has resolved.
+    WarmOnOpen(
+        controller.api,
+        if (kinId != null) WarmableSave.UpdateKin else WarmableSave.AddKin,
+        enabled = kinId == null || editing != null,
+    )
     AddEditKinDialog(
         initial = editing,
         schema = controller.schema,

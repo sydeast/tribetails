@@ -83,6 +83,7 @@ function session(over: Partial<ListUninvoicedSessionsResultSession> = {}): ListU
     durationMinutes: 60,
     startTime: '2026-07-10T14:00:00.000Z',
     unitCents: 2500,
+    pricedAs: null,
     ...over,
   };
 }

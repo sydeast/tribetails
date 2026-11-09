@@ -170,7 +170,7 @@ fun KinCareDetailScreen(
                             repo.get411ByKinIds(ids).onSuccess { fourOnes = it }
                         }
                         kinCareRepo.getReportsForSession(kinCareId).onSuccess { list ->
-                            reports = list.sortedByDescending { it.sentAt.orEmpty().ifBlank { it.createdAt } }
+                            reports = list.sortedWith(kinTaleDateComparator(true) { r -> kinTaleSortMillis(r.sentAt.orEmpty().ifBlank { r.createdAt }) }) // #1599: by parsed date
                         }
                         // #760. A failed breadcrumb read leaves the list empty,
                         // which falls through to the saved summary below rather
@@ -1030,13 +1030,15 @@ private fun window(s: KinCareSession): String {
     }
 }
 
-private fun shortIso(iso: String): String =
+/** "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599). */
+internal fun shortIso(iso: String, currentYear: Int = java.time.LocalDate.now().year): String =
     runCatching {
         if (iso.length < 16) return@runCatching iso
+        val year  = iso.substring(0, 4).toInt()
         val month = MONTHS[iso.substring(5, 7).toInt() - 1]
         val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
         val time  = iso.substring(11, 16)
-        "$month $day · $time"
+        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
     }.getOrDefault(iso)
 
 private fun shortIsoTimeOnly(iso: String): String =
@@ -1259,8 +1261,10 @@ internal fun internalNoteLabel(note: ListVisitInternalNotesResultNote, zone: Zon
         else -> "Staff"
     }
     val whenText = note.createdAtMs?.let {
-        java.time.format.DateTimeFormatter.ofPattern("MMM d, h:mm a", java.util.Locale.US)
-            .format(java.time.Instant.ofEpochMilli(it.toLong()).atZone(zone))
+        val at = java.time.Instant.ofEpochMilli(it.toLong()).atZone(zone)
+        // #1599: the year when the note is from another one.
+        val pattern = if (at.year == java.time.ZonedDateTime.now(zone).year) "MMM d, h:mm a" else "MMM d, yyyy, h:mm a"
+        java.time.format.DateTimeFormatter.ofPattern(pattern, java.util.Locale.US).format(at)
     }
     return listOfNotNull(if (note.visibility == "adminOnly") "Admin only" else null, who, whenText).joinToString(" · ")
 }

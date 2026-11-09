@@ -30,14 +30,25 @@ function setNotificationPermission(permission: NotificationPermission | undefine
   });
 }
 
-function setServiceWorkerRegistration(reg: unknown) {
-  Object.defineProperty(globalThis.navigator, 'serviceWorker', {
-    configurable: true,
-    value: { getRegistration: vi.fn().mockResolvedValue(reg) },
-  });
+function setServiceWorkerRegistration(
+  reg: unknown,
+  extra: { register?: unknown; ready?: unknown } = {},
+) {
+  const container = {
+    getRegistration: vi.fn().mockResolvedValue(reg),
+    // Default: registering the app-shell worker is impossible in this browser.
+    register: vi.fn().mockRejectedValue(new Error('register blocked')),
+    ready: Promise.resolve(reg),
+    ...extra,
+  };
+  Object.defineProperty(globalThis.navigator, 'serviceWorker', { configurable: true, value: container });
+  return container;
 }
 
 describe('push', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     setNotificationPermission('default');
@@ -198,6 +209,105 @@ describe('push', () => {
     await expect(registerForPush()).resolves.toMatchObject({ diagnostics: { serviceWorker: 'installing' } });
   });
 
+  // #1547 (a): click-time lookup waits for an active worker and registers one when absent.
+  it('registerForPush registers the app-shell worker when none is registered, then uses it (#1547)', async () => {
+    setNotificationPermission('granted');
+    const registered = { active: {}, showNotification: vi.fn() };
+    const container = setServiceWorkerRegistration(undefined, { register: vi.fn().mockResolvedValue(registered) });
+    vi.mocked(getToken).mockResolvedValue('a-device-token');
+    const { registerForPush } = await import('./push');
+    await expect(registerForPush()).resolves.toEqual({ status: 'registered' });
+    expect(container.register).toHaveBeenCalledWith('/sw.js', { scope: '/' });
+    expect(getToken).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ serviceWorkerRegistration: registered }),
+    );
+  });
+  it('registerForPush waits on serviceWorker.ready when the worker is still installing (#1547)', async () => {
+    setNotificationPermission('granted');
+    const installing = { installing: {}, showNotification: vi.fn() };
+    const active = { active: {}, showNotification: vi.fn() };
+    setServiceWorkerRegistration(installing, { ready: Promise.resolve(active) });
+    vi.mocked(getToken).mockResolvedValue('a-device-token');
+    const { registerForPush } = await import('./push');
+    await expect(registerForPush()).resolves.toEqual({ status: 'registered' });
+    expect(getToken).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ serviceWorkerRegistration: active }),
+    );
+  });
+  it('registerForPush does not touch ready or register when a worker is already active (#1547)', async () => {
+    setNotificationPermission('granted');
+    const reg = { active: {}, showNotification: vi.fn() };
+    const container = setServiceWorkerRegistration(reg);
+    vi.mocked(getToken).mockResolvedValue('a-device-token');
+    const { registerForPush } = await import('./push');
+    await registerForPush();
+    expect(container.register).not.toHaveBeenCalled();
+  });
+  // #1547 (b): every stage ends in a coded, named error instead of a hang.
+  it('registerForPush ends a worker that never becomes ready in push/service-worker-timeout (#1547)', async () => {
+    vi.useFakeTimers();
+    setNotificationPermission('granted');
+    setServiceWorkerRegistration({ installing: {}, showNotification: vi.fn() }, { ready: new Promise(() => undefined) });
+    const { registerForPush, PUSH_TIMEOUTS_MS } = await import('./push');
+    const pending = registerForPush();
+    await vi.advanceTimersByTimeAsync(PUSH_TIMEOUTS_MS.serviceWorker);
+    await expect(pending).resolves.toMatchObject({
+      status: 'error',
+      code: 'push/service-worker-timeout',
+      stage: 'service-worker',
+    });
+    expect(getToken).not.toHaveBeenCalled();
+  });
+  it('registerForPush ends a getToken that never settles in push/token-timeout (#1547)', async () => {
+    vi.useFakeTimers();
+    setNotificationPermission('granted');
+    setServiceWorkerRegistration({ active: {}, showNotification: vi.fn() });
+    vi.mocked(getToken).mockReturnValue(new Promise(() => undefined));
+    const { registerForPush, PUSH_TIMEOUTS_MS } = await import('./push');
+    const pending = registerForPush();
+    await vi.advanceTimersByTimeAsync(PUSH_TIMEOUTS_MS.token);
+    const outcome = await pending;
+    expect(outcome).toMatchObject({
+      status: 'error',
+      code: 'push/token-timeout',
+      stage: 'token',
+      diagnostics: { serviceWorker: 'active' },
+    });
+    expect((outcome as { message: string }).message).toContain('token step');
+    expect(registerFcmToken).not.toHaveBeenCalled();
+  });
+  it('registerForPush ends a callable that never answers in push/register-timeout (#1547)', async () => {
+    vi.useFakeTimers();
+    setNotificationPermission('granted');
+    setServiceWorkerRegistration({ active: {}, showNotification: vi.fn() });
+    vi.mocked(getToken).mockResolvedValue('a-device-token');
+    vi.mocked(registerFcmToken).mockReturnValueOnce(new Promise(() => undefined));
+    const { registerForPush, PUSH_TIMEOUTS_MS } = await import('./push');
+    const pending = registerForPush();
+    await vi.advanceTimersByTimeAsync(PUSH_TIMEOUTS_MS.register);
+    await expect(pending).resolves.toMatchObject({ status: 'error', code: 'push/register-timeout', stage: 'register' });
+  });
+  it('registerForPush ends a permission prompt that never resolves in push/permission-timeout (#1547)', async () => {
+    vi.useFakeTimers();
+    setNotificationPermission('default');
+    globalThis.Notification.requestPermission = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const { registerForPush, PUSH_TIMEOUTS_MS } = await import('./push');
+    const pending = registerForPush();
+    await vi.advanceTimersByTimeAsync(PUSH_TIMEOUTS_MS.permission);
+    await expect(pending).resolves.toMatchObject({ status: 'error', code: 'push/permission-timeout', stage: 'permission' });
+  });
+  it('registerForPush does not report a timeout when a step finishes in time (#1547)', async () => {
+    vi.useFakeTimers();
+    setNotificationPermission('granted');
+    setServiceWorkerRegistration({ active: {}, showNotification: vi.fn() });
+    vi.mocked(getToken).mockResolvedValue('a-device-token');
+    const { registerForPush, PUSH_TIMEOUTS_MS } = await import('./push');
+    await expect(registerForPush()).resolves.toEqual({ status: 'registered' });
+    await vi.advanceTimersByTimeAsync(PUSH_TIMEOUTS_MS.permission);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('unregisterForPush unregisters the current token and never throws', async () => {
     vi.mocked(getToken).mockResolvedValue('a-device-token');
     const { unregisterForPush } = await import('./push');

@@ -768,4 +768,25 @@ class NotificationSettingsScreenTest {
         onNodeWithText("A visit on your schedule changed").assertExists()
         onNodeWithText("KinCare updated or change requested").assertDoesNotExist()
     }
+
+    /** #1504: the toggles go live once prefs load, and the first tap saves at once, so the save is woken on open. */
+    @Test
+    fun opening_warmsSaveMyNotificationPrefsOnce() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyNotificationPrefs", buildJsonObject {
+            put("prefs", buildJsonObject {})
+            put("updatedAtMs", JsonNull)
+        })
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
+        waitForIdle()
+        assertEquals(listOf("saveMyNotificationPrefs"), fake.warmCalls)
+    }
+    @Test
+    fun aFailedPrefsLoad_warmsNothing() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubError("getMyNotificationPrefs", IllegalStateException("internal"))
+        setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
+        waitForIdle()
+        assertEquals(emptyList<String>(), fake.warmCalls)
+    }
 }

@@ -98,7 +98,9 @@ import { queryClient as appQueryClient } from './queryClient';
  * lazy chunk they load once, when the first tribe resolves, alongside the
  * screen chunk the household is already waiting for.
  *
- * NOT HERE: saves (#1504) are a separate issue. `getVetClinics` is not warmed:
+ * NOT HERE: saves. A read shares no instance with its save, so each form
+ * wakes its own save when it opens (#1504, `lib/useWarmOnOpen.ts`).
+ * `getVetClinics` is not warmed:
  * it is a direct Firestore read (#1503), so there is no instance to wake.
  */
 

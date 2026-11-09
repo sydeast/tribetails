@@ -254,18 +254,79 @@ function createdMs(row: Pick<KinTaleEntry, 'createdAt'>): number | null {
   return d === null ? null : d.getTime();
 }
 
+// ── the reports: ISO pages plus the free-text rows, by parsed date ─────────
+/**
+ * Orders rows newest-first by their PARSED `createdAt` (#1599).
+ *
+ * The server cannot do this for the whole collection: `createdAt` is an ISO
+ * string on every row written since the migration learned to parse, but the 83
+ * rows the May 2026 run wrote hold the legacy free text "September 3, 2025
+ * 2:02pm". Firestore orders strings by byte, so those rows sort above every
+ * ISO row and, among themselves, alphabetically by month name. A stable sort on
+ * the parsed instant is the only order that means anything.
+ *
+ * `kinTaleTimeOf` is the parser (ISO first, then the legacy free text, the same
+ * reading the row's date label uses), so the order and the label never
+ * disagree. A row whose date does not parse sorts LAST, in the order it
+ * arrived, and is shown as stored; it is never dropped and never given a
+ * date. Migrated rows keep their original dates; nothing here reads the
+ * migration time.
+ */
+export function reportsNewestFirst<T extends Pick<KinTaleEntry, 'createdAt'>>(rows: readonly T[]): T[] {
+  return rows
+    .map((row, index) => ({ row, index, at: createdMs(row) }))
+    .sort((a, b) => {
+      if (a.at === null && b.at === null) return a.index - b.index;
+      if (a.at === null) return 1;
+      if (b.at === null) return -1;
+      return b.at - a.at || a.index - b.index;
+    })
+    .map((entry) => entry.row);
+}
+export interface LegacyJoinOptions extends DraftWindowOptions {
+  /** True while the ISO pager has older pages left to load. */
+  hasMore: boolean;
+}
+/**
+ * The free-text rows that belong in the list as loaded NOW.
+ *
+ *  - Inside the toolbar's window, by parsed date (the server's `>=` cannot do
+ *    it: every letter is above every digit, so these rows used to pass
+ *    "last 7 days").
+ *  - While the pager still has older pages, no further back than the oldest ISO
+ *    row loaded. Otherwise a September 2025 row would sit above an unloaded
+ *    October 2025 row and the next "Load more" would insert rows above it.
+ *  - A row with no readable date is kept, and sorts last.
+ *
+ * `legacy` is the household-scoped read, so no facet is applied here.
+ */
+export function legacyReportsInList(
+  legacy: readonly KinTaleEntry[],
+  isoPage: readonly KinTaleEntry[],
+  { startIso, hasMore }: LegacyJoinOptions,
+): KinTaleEntry[] {
+  const windowStart = startIso === null ? null : Date.parse(startIso);
+  const pagedFloor = hasMore
+    ? isoPage.reduce<number | null>((oldest, r) => {
+        const at = createdMs(r);
+        return at === null ? oldest : oldest === null ? at : Math.min(oldest, at);
+      }, null)
+    : null;
+  return legacy.filter((r) => {
+    const at = createdMs(r);
+    if (at === null) return true;
+    if (windowStart !== null && !Number.isNaN(windowStart) && at < windowStart) return false;
+    return pagedFloor === null || at >= pagedFloor;
+  });
+}
 /**
  * Interleave two ALREADY-ORDERED lists into one newest-first list.
  *
- * ── WHY A MERGE AND NOT A SORT, WHICH MATTERS MORE THAN IT LOOKS ────────────
- * The reports list arrives in the order Firestore returned it: `createdAt`
- * descending, compared as STRINGS by the server. Re-sorting the combined array
- * would re-sort the reports among themselves using a parsed-date comparison the
- * server never used, and those two orders disagree on exactly the rows whose
- * `createdAt` is the "September 3, 2025 2:02pm" free text rather than ISO. That
- * would silently reshuffle a paged list against its own cursor. So this is a
- * merge step, not a sort: each input keeps its own internal order EXACTLY, and
- * the only decision made here is which list to take the next row from.
+ * ── A MERGE, NOT A SORT ─────────────────────────────────────────────────────
+ * Both inputs are already newest-first by PARSED date: the reports through
+ * `reportsNewestFirst` (#1599, which also places the free-text rows the pager
+ * cannot order), the drafts by their own listener. This step only decides which
+ * list to take the next row from, so each input keeps its internal order.
  *
  * An undated row never wins a comparison, so it lands after everything dated in
  * the other list while holding its place within its own. It is never dropped.
@@ -299,14 +360,20 @@ export function mergeByCreatedDesc(
  * plus every loaded `generated_drafts` doc that falls in the same window and
  * household, newest first. A draft already sent as a report is left out; the
  * report is its row (#1563).
+ *
+ * `legacy.rows` are the free-text-dated reports from `kinTalesLegacyQuery`;
+ * `legacy.hasMore` is the ISO pager's `hasMore`. They are placed among the ISO
+ * rows by parsed date (#1599).
  */
 export function kinTaleListRows(
   reports: readonly KinTaleEntry[],
   drafts: readonly GeneratedDraftRow[],
   options: DraftWindowOptions,
+  legacy: { rows: readonly KinTaleEntry[]; hasMore: boolean } = { rows: [], hasMore: false },
 ): KinTaleListRow[] {
+  const placedLegacy = legacyReportsInList(legacy.rows, reports, { ...options, hasMore: legacy.hasMore });
   return mergeByCreatedDesc(
-    reports.map(rowFromReport),
+    reportsNewestFirst([...reports, ...placedLegacy]).map(rowFromReport),
     draftsInWindow(drafts, options)
       .filter((d) => !isPublishedDraft(d))
       .map(rowFromDraft),
