@@ -1174,6 +1174,18 @@ describe('Settings: Integrations is a report, and its Google row opens Calendar 
     expect(within(stripe).getByRole('tooltip', { hidden: true })).toHaveTextContent('Card payments on invoices.');
     expect(stripe.querySelector('.integrations__purpose')).toBeNull();
 
+    // #1758: the name reads as the name alone. With the tip INSIDE the h4, its
+    // text was "Stripe iCard payments on invoices." (what the nightly's
+    // real-services spec read off `.integrations__name`) and its accessible
+    // name "Stripe About this section". The tip sits beside it, and the
+    // heading is described by it, so the purpose is still reachable.
+    const stripeName = stripe.querySelector('.integrations__name');
+    expect(stripeName?.textContent).toBe('Stripe');
+    const stripeHeading = within(stripe).getByRole('heading', { name: 'Stripe' });
+    expect(stripeHeading).toHaveAccessibleDescription('Card payments on invoices.');
+    expect(within(stripeHeading).queryByRole('button', { hidden: true })).toBeNull();
+    expect(within(stripe).getByRole('button', { name: 'About this section' })).toBeInTheDocument();
+
     // The panel header owns the report's stamp and the re-check.
     const integrationsPanel = panelOwning(google);
     expect(integrationsPanel.querySelector('.den-panel-detail')).toHaveTextContent(/^Checked .*\.$/);

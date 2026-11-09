@@ -281,10 +281,50 @@ function KitTooltip({
  * The same info button, for a title that is not a DenPanel or a page heading
  * (a section inside a dialog). #829 review: every Emergency Contacts title
  * carries its sentence this way, beside the title, where a tap opens it.
+ *
+ * BESIDE, never inside (#1758). Placed inside an `<h3>` or a `<caption>`, the
+ * button's label joins the element's accessible name ("Stripe About this
+ * section") and the tip body joins its text ("Stripe iCard payments on..."),
+ * which is what the nightly real-services run read off the Integrations cards.
+ * A heading takes `TitleWithTip` below. `id` is for the rare element that must
+ * hold the tip (a table caption) and points `aria-describedby` at it by hand.
  */
-export function InfoTip({ text }: { text: string }) {
-  const id = useId();
-  return <KitTooltip id={id} text={text} bodyClassName="kit-tip-inline" />;
+export function InfoTip({ text, id }: { text: string; id?: string }) {
+  const ownId = useId();
+  return <KitTooltip id={id ?? ownId} text={text} bodyClassName="kit-tip-inline" />;
+}
+
+/**
+ * A title and its info tip side by side, the way DenPanel and DenScreenHeading
+ * draw theirs (#1758): the title element holds the title alone, so its text
+ * and its accessible name are the title, and the tip is its sibling, linked by
+ * `aria-describedby` so a screen reader still hears the sentence. A blank
+ * `tip` draws the title with no button.
+ */
+export function TitleWithTip({
+  as: Tag,
+  className,
+  rowClassName,
+  tip,
+  children,
+}: {
+  as: 'h2' | 'h3' | 'h4';
+  className: string;
+  /** The row's own class, beside `kit-titlerow`, for a screen that spaces it. */
+  rowClassName?: string;
+  tip: string;
+  children: ReactNode;
+}) {
+  const tipId = useId();
+  const hasTip = tip.trim() !== '';
+  return (
+    <div className={rowClassName === undefined ? 'kit-titlerow' : `kit-titlerow ${rowClassName}`}>
+      <Tag className={className} aria-describedby={hasTip ? tipId : undefined}>
+        {children}
+      </Tag>
+      {hasTip ? <InfoTip id={tipId} text={tip} /> : null}
+    </div>
+  );
 }
 
 // ── page heading ────────────────────────────────────────────────────────────

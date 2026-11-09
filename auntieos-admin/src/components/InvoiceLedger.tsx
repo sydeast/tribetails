@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.generated';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
@@ -120,6 +121,8 @@ function PaymentsPanel({
   const { payments, ledgerPayments } = ledger;
   const recorded = paymentsTotalCents(payments);
   const stripeGap = ledgerCoversBalance(ledger);
+  const historyNameId = useId();
+  const historyTipId = useId();
 
   return (
     <section className="invoice-ledger" aria-labelledby="invoice-ledger-payments">
@@ -204,12 +207,23 @@ function PaymentsPanel({
           carries the rest of that history. */}
       {ledgerPayments.length > 0 && (
         <div className="invoice-ledger__scroll">
-          <table className="invoice-ledger__table">
-            {/* #1609: the caption names the table. #1595: what the table covers
-                is the caption's info tip, not a paragraph standing above it. */}
+          {/* #1609: the caption names the table. #1595: what the table covers
+              is the caption's info tip, not a paragraph standing above it.
+              #1758: a caption is the one title that must HOLD its tip (nothing
+              else may sit first in a table), so the table takes its name from
+              the words alone and its description from the tip, by id. Named
+              by the whole caption it was "Payment history About this section". */}
+          <table
+            className="invoice-ledger__table"
+            aria-labelledby={historyNameId}
+            aria-describedby={historyTipId}
+          >
             <caption className="invoice-ledger__caption">
-              Payment history{' '}
-              <InfoTip text="What the client actually paid, recorded for the books, and NOT counted in the figures above. A row reads across as amount = applied + tip + balance; the fee is the processor's cut, taken off what reaches the business rather than off the bill." />
+              <span id={historyNameId}>Payment history</span>{' '}
+              <InfoTip
+                id={historyTipId}
+                text="What the client actually paid, recorded for the books, and NOT counted in the figures above. A row reads across as amount = applied + tip + balance; the fee is the processor's cut, taken off what reaches the business rather than off the bill."
+              />
             </caption>
             <thead>
               <tr>

@@ -1319,6 +1319,10 @@ describe('the payments panel', () => {
     expect(explain.closest('[role="tooltip"]')).not.toBeNull();
     expect(explain.closest('caption')).toHaveTextContent(/^Payment history/);
     expect(document.querySelector('.invoice-ledger__explain')).toBeNull();
+    // #1758: the table is named by the caption's words alone, never "Payment
+    // history About this section", and described by the tip.
+    const history = screen.getByRole('table', { name: 'Payment history' });
+    expect(history).toHaveAccessibleDescription(/NOT counted in the figures above/i);
     // The tip is its OWN column now, and the fee beside it. Neither goes
     // anywhere near the balance.
     expect(screen.getByText('Payment history', { exact: false })).toBeInTheDocument();
