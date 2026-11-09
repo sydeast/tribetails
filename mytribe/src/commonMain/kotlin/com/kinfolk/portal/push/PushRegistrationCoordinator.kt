@@ -2,6 +2,8 @@ package com.kinfolk.portal.push
 
 import com.kinfolk.portal.portal.PortalApi
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 
 /**
  * Cross-platform FCM token registration lifecycle.
@@ -35,6 +37,7 @@ class PushRegistrationCoordinator(
     private val appVersion: String? = null,
     private val tokenProvider: suspend () -> String? = { obtainPushToken() },
     private val logger: (String) -> Unit = { println("[Push] $it") },
+    private val stepTimeoutMs: Long = STEP_TIMEOUT_MS,
 ) {
     var registeredToken: String? = null
         private set
@@ -42,7 +45,12 @@ class PushRegistrationCoordinator(
     /** Call when auth state resolves to SignedIn. Safe to call repeatedly. */
     suspend fun onSignedIn() {
         val token = try {
-            tokenProvider()
+            withTimeout(stepTimeoutMs) { tokenProvider() }
+        } catch (t: TimeoutCancellationException) {
+            // A timer that ran out is a failure with a name; the parent scope
+            // being cancelled is not, and is rethrown below.
+            logFailure("token", t)
+            null
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
@@ -73,8 +81,10 @@ class PushRegistrationCoordinator(
     private suspend fun register(token: String) {
         if (token == registeredToken) return
         try {
-            portalApi.registerFcmToken(token, platform, appVersion)
+            withTimeout(stepTimeoutMs) { portalApi.registerFcmToken(token, platform, appVersion) }
             registeredToken = token
+        } catch (t: TimeoutCancellationException) {
+            logFailure("register", t)
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
@@ -90,4 +100,9 @@ class PushRegistrationCoordinator(
      */
     private fun logFailure(stage: String, t: Throwable) =
         logger("$stage failed: ${t::class.simpleName}: ${t.message}")
+
+    private companion object {
+        /** Longest the token fetch or the register call may take before it is logged as a timeout. */
+        const val STEP_TIMEOUT_MS = 30_000L
+    }
 }
