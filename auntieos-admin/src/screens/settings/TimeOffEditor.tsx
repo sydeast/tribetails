@@ -17,6 +17,9 @@ import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
+import { DEFAULT_BUSINESS_TIME_ZONE } from '../../lib/businessOperations';
+import { closureNameError, hoursRangeError, todayInZone, upcomingDateError } from '../../lib/settingsChecks';
+import { FieldError, fieldErrorAttrs } from './sections';
 import '../SettingsEdit.css';
 import './TimeOffEditor.css';
 
@@ -44,11 +47,14 @@ import './TimeOffEditor.css';
  *     recurrence, but nothing has asked for that yet, and inventing it here
  *     would be answering a question nobody raised).
  *
- * Add-row validation mirrors the wasm gates exactly for the unchanged paths: a
- * special-hours entry needs a `YYYY-MM-DD` date and non-blank hours with no `|`
- * (`specialHoursAddEnabled`). A company holiday's gate now branches on
- * recurrence (see `holidayAddEnabled` below), but a `once` entry needs exactly
- * what it always did: a `YYYY-MM-DD` date and a non-blank name with no `|`.
+ * Add-row validation (#1593) is the server's (`saveBusinessSettings`): a
+ * special-hours entry needs a real date, today or later in the business zone,
+ * and hours that read as `HH:MM-HH:MM` closing after opening
+ * (`specialAddEnabled`). A company holiday's gate branches on recurrence (see
+ * `holidayAddEnabled` below); a `once` entry needs the same real, upcoming
+ * date and a non-blank name with no `|`. Each refusal shows under the add row
+ * with the field it names marked invalid. Entries already in the lists are not
+ * re-checked: the server passes a stored entry through unchanged too.
  * Both lists are append/remove-by-index locally, same as the wasm panel's
  * local `companyHolidays`/`specialHours` state, and only reach Firestore on
  * this panel's own Save.
@@ -79,8 +85,6 @@ import './TimeOffEditor.css';
  * on it so the operator can act deliberately (cancel, reschedule, or leave
  * it) rather than the closure and the booking silently coexisting.
  */
-
-const HOLIDAY_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 const RECURRENCE_OPTIONS: ReadonlyArray<readonly [ClosureRecurrenceKind, string]> = [
   ['once', 'One time (pick a date)'],
@@ -124,8 +128,60 @@ const NTH_OPTIONS: ReadonlyArray<readonly [number, string]> = [
 const DAY_OPTIONS: readonly number[] = Array.from({ length: 31 }, (_, i) => i + 1);
 
 interface TimeOffEditorProps {
-  data: Pick<BusinessSettings, 'observedUsHolidays' | 'companyHolidays' | 'specialHours'>;
+  // `timeZone` optional: it is only read to know what "today" is for the
+  // business, and a blank or absent zone reads as the server's default.
+  data: Pick<BusinessSettings, 'observedUsHolidays' | 'companyHolidays' | 'specialHours'> &
+    Partial<Pick<BusinessSettings, 'timeZone'>>;
   onSave: (patch: Partial<BusinessSettings>) => Promise<void>;
+}
+
+/**
+ * #1593: what is wrong with each field of the closure add row, by field, or
+ * an empty object when Add may run. The date and the special hours are the
+ * server's checks and sentences; the month/day/weekday pickers only say which
+ * one still needs a pick.
+ */
+interface HolidayAddFields {
+  recurrence: ClosureRecurrenceKind;
+  date: string;
+  name: string;
+  month: number;
+  day: number;
+  weekday: number;
+  nth: number;
+}
+type HolidayAddErrors = Partial<Record<'date' | 'name' | 'month' | 'day' | 'weekday' | 'nth', string>>;
+
+function holidayAddErrors(f: HolidayAddFields, todayIso: string): HolidayAddErrors {
+  const out: HolidayAddErrors = {};
+  const name = closureNameError(f.name);
+  if (name !== null) out.name = name;
+  if (f.recurrence === 'once') {
+    const date = upcomingDateError(f.date, todayIso);
+    if (date !== null) out.date = date;
+    return out;
+  }
+  if (f.month < 1 || f.month > 12) out.month = 'Pick a month.';
+  if (f.recurrence === 'yearly-fixed') {
+    if (f.day < 1 || f.day > 31) out.day = 'Pick a day.';
+    return out;
+  }
+  if (f.weekday < 1 || f.weekday > 7) out.weekday = 'Pick a weekday.';
+  if (f.recurrence === 'yearly-nth-weekday' && (f.nth < 1 || f.nth > 4)) out.nth = 'Pick which week.';
+  return out;
+}
+
+/** The add row as it opens: nothing typed or picked yet, so nothing to refuse. */
+function holidayAddPristine(f: HolidayAddFields): boolean {
+  return (
+    f.recurrence === 'once' &&
+    f.date === '' &&
+    f.name === '' &&
+    f.month === 0 &&
+    f.day === 0 &&
+    f.weekday === 0 &&
+    f.nth === 0
+  );
 }
 
 /** "3 visits" / "1 visit", summed across every closure-impact hit. */
@@ -162,6 +218,9 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
 
   const [newSpecialDate, setNewSpecialDate] = useState('');
   const [newSpecialHours, setNewSpecialHours] = useState('');
+  // #1593: today in the BUSINESS zone, the day the server holds a new date to.
+  // Not `todayIso` below, which is this computer's day for the visit lookahead.
+  const businessToday = todayInZone(data.timeZone?.trim() ? data.timeZone : DEFAULT_BUSINESS_TIME_ZONE);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -203,38 +262,39 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
     JSON.stringify(companyHolidays) !== JSON.stringify(data.companyHolidays) ||
     JSON.stringify(specialHours) !== JSON.stringify(data.specialHours);
 
-  const holidayNameValid = newHolidayName.trim() !== '' && !newHolidayName.includes('|');
-
   /**
    * The Add-company-holiday gate, branched on the selected recurrence. `once`
-   * is the exact pre-existing rule (a valid `YYYY-MM-DD` plus a clean name).
-   * Every `yearly-*` kind needs its date-defining fields ACTUALLY picked (not
-   * left at the `0` "Pick a ..." placeholder) instead of a date string,
-   * because there is no date to type: that is what "no year input" means.
+   * needs a real date, today or later in the business zone (#1593: the shape
+   * alone used to pass 2026-13-45), plus a clean name. Every `yearly-*` kind
+   * needs its date-defining fields ACTUALLY picked (not left at the `0` "Pick
+   * a ..." placeholder) instead of a date string, because there is no date to
+   * type: that is what "no year input" means.
+   *
+   * #1593: Add is never off without a reason on screen. Each field that stops
+   * it says why beside itself as soon as anything in the row is touched; only
+   * the untouched row, with nothing to refuse, keeps Add off quietly.
    */
-  const holidayAddEnabled = (() => {
-    if (!holidayNameValid) return false;
-    switch (newHolidayRecurrence) {
-      case 'once':
-        return HOLIDAY_DATE_REGEX.test(newHolidayDate);
-      case 'yearly-fixed':
-        return newHolidayMonth >= 1 && newHolidayMonth <= 12 && newHolidayDay >= 1 && newHolidayDay <= 31;
-      case 'yearly-nth-weekday':
-        return (
-          newHolidayMonth >= 1 &&
-          newHolidayMonth <= 12 &&
-          newHolidayWeekday >= 1 &&
-          newHolidayWeekday <= 7 &&
-          newHolidayNth >= 1 &&
-          newHolidayNth <= 4
-        );
-      case 'yearly-last-weekday':
-        return newHolidayMonth >= 1 && newHolidayMonth <= 12 && newHolidayWeekday >= 1 && newHolidayWeekday <= 7;
-    }
-  })();
+  const holidayFields: HolidayAddFields = {
+    recurrence: newHolidayRecurrence,
+    date: newHolidayDate,
+    name: newHolidayName,
+    month: newHolidayMonth,
+    day: newHolidayDay,
+    weekday: newHolidayWeekday,
+    nth: newHolidayNth,
+  };
+  const holidayErrors = holidayAddErrors(holidayFields, businessToday);
+  const holidayAddEnabled = Object.keys(holidayErrors).length === 0;
+  const shownHolidayErrors: HolidayAddErrors = holidayAddPristine(holidayFields) ? {} : holidayErrors;
 
-  const specialAddEnabled =
-    HOLIDAY_DATE_REGEX.test(newSpecialDate) && newSpecialHours.trim() !== '' && !newSpecialHours.includes('|');
+  // The special-hours add row, on the same terms: a real upcoming date, and
+  // hours that read as HH:MM-HH:MM with the close after the open.
+  const specialDateError = upcomingDateError(newSpecialDate, businessToday);
+  const specialHoursError = hoursRangeError(newSpecialHours);
+  const specialAddEnabled = specialDateError === null && specialHoursError === null;
+  const specialTouched = newSpecialDate !== '' || newSpecialHours !== '';
+  const shownSpecialDateError = specialTouched ? specialDateError : null;
+  const shownSpecialHoursError = specialTouched ? specialHoursError : null;
 
   // Every preset's wire string, computed once per render so the "already
   // added" check below and the click handler encode the identical value --
@@ -273,7 +333,7 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
     const wire = formatClosureEntry({
       recurrence: newHolidayRecurrence,
       name: newHolidayName,
-      date: newHolidayDate,
+      date: newHolidayDate.trim(),
       month: newHolidayMonth,
       day: newHolidayDay,
       weekday: newHolidayWeekday,
@@ -297,7 +357,7 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
 
   function addSpecialHours() {
     if (!specialAddEnabled) return;
-    setSpecialHours((prev) => [...prev, `${newSpecialDate}|${newSpecialHours}`]);
+    setSpecialHours((prev) => [...prev, `${newSpecialDate.trim()}|${newSpecialHours.trim()}`]);
     setNewSpecialDate('');
     setNewSpecialHours('');
     markDirtyEdit();
@@ -443,6 +503,7 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
                   setNewHolidayDate(e.target.value);
                   markDirtyEdit();
                 }}
+                {...fieldErrorAttrs('closureDate', shownHolidayErrors.date)}
               />
             </label>
           ) : (
@@ -457,6 +518,7 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
                     setNewHolidayMonth(Number(e.target.value));
                     markDirtyEdit();
                   }}
+                  {...fieldErrorAttrs('closureMonth', shownHolidayErrors.month)}
                 >
                   <option value={0}>Pick a month</option>
                   {MONTH_OPTIONS.map(([value, label]) => (
@@ -478,6 +540,7 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
                       setNewHolidayDay(Number(e.target.value));
                       markDirtyEdit();
                     }}
+                    {...fieldErrorAttrs('closureDay', shownHolidayErrors.day)}
                   >
                     <option value={0}>Pick a day</option>
                     {DAY_OPTIONS.map((d) => (
@@ -499,6 +562,7 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
                         setNewHolidayWeekday(Number(e.target.value));
                         markDirtyEdit();
                       }}
+                      {...fieldErrorAttrs('closureWeekday', shownHolidayErrors.weekday)}
                     >
                       <option value={0}>Pick a weekday</option>
                       {WEEKDAY_OPTIONS.map(([value, label]) => (
@@ -520,6 +584,7 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
                           setNewHolidayNth(Number(e.target.value));
                           markDirtyEdit();
                         }}
+                        {...fieldErrorAttrs('closureNth', shownHolidayErrors.nth)}
                       >
                         <option value={0}>Pick</option>
                         {NTH_OPTIONS.map(([value, label]) => (
@@ -547,9 +612,20 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
                 setNewHolidayName(e.target.value);
                 markDirtyEdit();
               }}
+              {...fieldErrorAttrs('closureName', shownHolidayErrors.name)}
             />
           </label>
           <GhostButton label="Add" onClick={addCompanyHoliday} disabled={busy || !holidayAddEnabled} />
+          {/* #1593: why Add is off, on its own line under the row. Each line
+              is the error message of the field it names. */}
+          <div className="timeOff__addErrors">
+            <FieldError id="closureDate" message={shownHolidayErrors.date} />
+            <FieldError id="closureMonth" message={shownHolidayErrors.month} />
+            <FieldError id="closureDay" message={shownHolidayErrors.day} />
+            <FieldError id="closureWeekday" message={shownHolidayErrors.weekday} />
+            <FieldError id="closureNth" message={shownHolidayErrors.nth} />
+            <FieldError id="closureName" message={shownHolidayErrors.name} />
+          </div>
         </div>
       </div>
 
@@ -589,6 +665,7 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
                 setNewSpecialDate(e.target.value);
                 markDirtyEdit();
               }}
+              {...fieldErrorAttrs('specialDate', shownSpecialDateError)}
             />
           </label>
           <label className="settingsEdit__field">
@@ -603,9 +680,14 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
                 setNewSpecialHours(e.target.value);
                 markDirtyEdit();
               }}
+              {...fieldErrorAttrs('specialHours', shownSpecialHoursError)}
             />
           </label>
           <GhostButton label="Add" onClick={addSpecialHours} disabled={busy || !specialAddEnabled} />
+          <div className="timeOff__addErrors">
+            <FieldError id="specialDate" message={shownSpecialDateError} />
+            <FieldError id="specialHours" message={shownSpecialHoursError} />
+          </div>
         </div>
       </div>
 

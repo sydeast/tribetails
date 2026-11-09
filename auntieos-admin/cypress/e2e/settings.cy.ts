@@ -164,6 +164,79 @@ describe('settings', () => {
     });
   });
 
+  // #1593: the business profile refuses a bad phone and email beside the
+  // field, and Save goes through the `saveBusinessSettings` callable (the
+  // rules deny the document to every client). The callable is intercepted, per
+  // the 2026-09-01 ruling: this suite proves the screen, not the server.
+  describe('business profile checks (#1593)', () => {
+    const panel = '#settings-panel-businessProfile';
+    const field = (label: string) =>
+      cy.contains('.settingsEdit__fieldLabel', new RegExp(`^${label}$`)).parent().find('input');
+    function fillValidProfile() {
+      field('Business name').clear().type('Tribe Tails E2E');
+      field('Email').clear();
+      field('Phone').clear();
+    }
+    it('a 7-digit phone and a half email are refused beside the field, and Save is off', () => {
+      openSection('Business profile');
+      cy.get(panel).within(() => {
+        fillValidProfile();
+        field('Phone').type('555-01');
+        field('Email').type('owner@');
+        field('Phone').should('have.attr', 'aria-invalid', 'true');
+        field('Email').should('have.attr', 'aria-invalid', 'true');
+        cy.get('#businessPhone-error').should('have.text', 'Enter a 10-digit phone number, or leave it blank.');
+        cy.get('#businessEmail-error').should('have.text', 'Enter an email like name@example.com, or leave it blank.');
+        cy.contains('button', /^Save$/).should('be.disabled');
+        field('Phone').clear().type('512-555-0100');
+        field('Email').clear().type('owner@tribetails.com');
+        cy.get('#businessPhone-error').should('not.exist');
+        cy.get('#businessEmail-error').should('not.exist');
+        cy.contains('button', /^Save$/).should('be.enabled');
+      });
+    });
+    it('Save sends the changed fields to saveBusinessSettings', () => {
+      cy.intercept('POST', CALLABLE('saveBusinessSettings'), {
+        statusCode: 200,
+        body: { result: { updatedAt: '2026-11-09T18:00:00.000Z', updatedBy: 'e2e-admin@tribetails.com' } },
+      }).as('save');
+      openSection('Business profile');
+      cy.get(panel).within(() => {
+        fillValidProfile();
+        field('Phone').type('512-555-0100');
+        cy.contains('button', /^Save$/).click();
+      });
+      cy.wait('@save').its('request.body.data.changes').should((changes: Record<string, unknown>) => {
+        expect(changes['businessPhone']).to.eq('512-555-0100');
+        expect(changes).not.to.have.property('updatedAt');
+        expect(changes).not.to.have.property('updatedBy');
+      });
+    });
+    it('a server refusal shows its sentence beside the field it names', () => {
+      cy.intercept('POST', CALLABLE('saveBusinessSettings'), {
+        statusCode: 400,
+        body: {
+          error: {
+            status: 'INVALID_ARGUMENT',
+            message: 'Enter a 10-digit phone number, or leave it blank.',
+            details: {
+              code: 'settings_refused',
+              field: 'businessPhone',
+              refusals: [{ field: 'businessPhone', message: 'Enter a 10-digit phone number, or leave it blank.' }],
+            },
+          },
+        },
+      }).as('refuse');
+      openSection('Business profile');
+      cy.get(panel).within(() => {
+        fillValidProfile();
+        field('Phone').type('512-555-0100');
+        cy.contains('button', /^Save$/).click();
+      });
+      cy.wait('@refuse');
+      cy.get(panel).contains('Enter a 10-digit phone number, or leave it blank.').should('exist');
+    });
+  });
   describe('booking rules', () => {
     it('#710 turning off Offer specific times moves the default to time blocks and leaves Save enabled', () => {
       openSection('Booking rules');

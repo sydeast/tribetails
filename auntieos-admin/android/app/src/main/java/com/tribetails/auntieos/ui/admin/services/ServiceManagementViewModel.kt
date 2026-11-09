@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.services
 
+import com.tribetails.auntieos.ui.admin.settingsSaveFailureText
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.data.model.*
@@ -449,7 +450,8 @@ class ServiceManagementViewModel(
             } else {
                 _state.value = _state.value.copy(
                     isLoading = false,
-                    errorMessage = "Failed to update settings: ${result.exceptionOrNull()?.message}"
+                    errorMessage = result.exceptionOrNull()?.let { settingsSaveFailureText("Failed to update settings", it) }
+                        ?: "Failed to update settings"
                 )
             }
         }

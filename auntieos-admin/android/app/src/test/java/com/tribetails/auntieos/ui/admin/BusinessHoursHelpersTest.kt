@@ -34,24 +34,26 @@ class BusinessHoursHelpersTest {
         assertNull(parseTimeOrNull("12-30"))
     }
 
-    // ─── isValidTimeRange (open < close, when day is open) ─────────────────────
+    // ─── businessHoursRowProblem (#1593: open < close, exact HH:MM) ────────────
 
     @Test
-    fun `isValidTimeRange true when open before close`() {
-        assertTrue(isValidTimeRange("09:00", "17:00"))
-        assertTrue(isValidTimeRange("00:00", "23:59"))
+    fun `a row whose close is after its open saves`() {
+        assertNull(businessHoursRowProblem("09:00", "17:00"))
+        assertNull(businessHoursRowProblem("00:00", "23:59"))
     }
 
     @Test
-    fun `isValidTimeRange false when open equals or after close`() {
-        assertFalse(isValidTimeRange("17:00", "17:00"))
-        assertFalse(isValidTimeRange("18:00", "09:00"))
+    fun `a close at or before the open says so`() {
+        assertEquals(HOURS_CLOSE_BEFORE_OPEN, businessHoursRowProblem("17:00", "17:00"))
+        assertEquals(HOURS_CLOSE_BEFORE_OPEN, businessHoursRowProblem("18:00", "09:00"))
     }
 
     @Test
-    fun `isValidTimeRange false when either time malformed`() {
-        assertFalse(isValidTimeRange("bad",   "17:00"))
-        assertFalse(isValidTimeRange("09:00", "bad"))
+    fun `a time that is not exact HH-MM is refused, a one-digit hour included`() {
+        assertEquals(HOURS_RANGE_INVALID, businessHoursRowProblem("bad", "17:00"))
+        assertEquals(HOURS_RANGE_INVALID, businessHoursRowProblem("09:00", "bad"))
+        assertEquals(HOURS_RANGE_INVALID, businessHoursRowProblem("9:00", "17:00"))
+        assertEquals(HOURS_RANGE_INVALID, businessHoursRowProblem("", "17:00"))
     }
 
     // ─── formatHoursDisplay (mirror web "09:00-17:00" / "Closed") ──────────────

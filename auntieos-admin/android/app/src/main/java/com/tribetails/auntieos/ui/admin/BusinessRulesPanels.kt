@@ -620,23 +620,33 @@ internal fun BookingRulesPanel(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            // #1593: each number carries the server's sentence under itself; the
+            // banner above still names the first thing blocking the save.
+            val blockHoursProblem = wholeNumberProblem(blockHours, 1, 24, "hours")
+            val travelBufferProblem = wholeNumberProblem(travelBuffer, 0, 480, "minutes")
             Row(horizontalArrangement = Arrangement.spacedBy(dims.space3), modifier = Modifier.fillMaxWidth()) {
-                AuntieField(
-                    value = blockHours,
-                    onValueChange = { blockHours = it },
-                    label = "Default block length (hours)",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = parseWholeNumber(blockHours, 1, 24) == null,
-                    modifier = Modifier.weight(1f),
-                )
-                AuntieField(
-                    value = travelBuffer,
-                    onValueChange = { travelBuffer = it },
-                    label = "Travel buffer (minutes)",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = parseWholeNumber(travelBuffer, 0, 480) == null,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    AuntieField(
+                        value = blockHours,
+                        onValueChange = { blockHours = it },
+                        label = "Default block length (hours)",
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = blockHoursProblem != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SettingsFieldProblem(blockHoursProblem)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    AuntieField(
+                        value = travelBuffer,
+                        onValueChange = { travelBuffer = it },
+                        label = "Travel buffer (minutes)",
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = travelBufferProblem != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SettingsFieldProblem(travelBufferProblem)
+                }
             }
             Text(
                 "The buffer is room kept between two visits in one block, so a full block still leaves you time to drive.",
@@ -775,6 +785,12 @@ internal fun VisitRecordsPanel(
     var draftOptions by remember(settings) { mutableStateOf(formatOptionList(settings.draftRetentionOptions)) }
 
     val problem = visitRecordsError(routeDays, etaOptions, draftOptions, arrivalRadius)
+    // #1593: the server's sentence under each field that would be refused. The
+    // banner stays and names the first.
+    val etaProblem = optionListProblem(etaOptions, "minutes")
+    val draftProblem = optionListProblem(draftOptions, "days")
+    val radiusProblem = wholeNumberProblem(arrivalRadius, 10, 5000, "metres")
+    val routeDaysProblem = wholeNumberProblem(routeDays, 1, 3650, "days")
 
     DenPanel(
         title = "Visit records",
@@ -792,17 +808,19 @@ internal fun VisitRecordsPanel(
                 onValueChange = { etaOptions = it },
                 label = "On My Way choices (minutes)",
                 placeholder = "5, 10, 15, 20, 30",
-                isError = parseOptionList(etaOptions) == null,
+                isError = etaProblem != null,
                 modifier = Modifier.fillMaxWidth(),
             )
+            SettingsFieldProblem(etaProblem)
             AuntieField(
                 value = draftOptions,
                 onValueChange = { draftOptions = it },
                 label = "Draft retention choices (days)",
                 placeholder = "30, 60, 90",
-                isError = parseOptionList(draftOptions) == null,
+                isError = draftProblem != null,
                 modifier = Modifier.fillMaxWidth(),
             )
+            SettingsFieldProblem(draftProblem)
             Text(
                 "Separate with commas. Deleting the entry a picker is currently set to moves it to the nearest one left.",
                 style = AuntieTheme.typography.bodySmall,
@@ -830,9 +848,10 @@ internal fun VisitRecordsPanel(
                 onValueChange = { arrivalRadius = it },
                 label = "Arrival must be within (metres)",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = parseWholeNumber(arrivalRadius, 10, 5000) == null,
+                isError = radiusProblem != null,
                 modifier = Modifier.fillMaxWidth(),
             )
+            SettingsFieldProblem(radiusProblem)
             Text(
                 ARRIVAL_RADIUS_NOTE,
                 style = AuntieTheme.typography.bodySmall,
@@ -852,9 +871,10 @@ internal fun VisitRecordsPanel(
                 onValueChange = { routeDays = it },
                 label = "Keep visit routes for (days)",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = parseWholeNumber(routeDays, 1, 3650) == null,
+                isError = routeDaysProblem != null,
                 modifier = Modifier.fillMaxWidth(),
             )
+            SettingsFieldProblem(routeDaysProblem)
             Text(
                 "Route pings older than this are deleted nightly. The visit and its summary map stay.",
                 style = AuntieTheme.typography.bodySmall,

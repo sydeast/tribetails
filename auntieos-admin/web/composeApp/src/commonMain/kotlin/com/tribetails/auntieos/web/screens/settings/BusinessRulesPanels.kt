@@ -21,6 +21,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPin
 import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.DEFAULT_BUSINESS_TIME_ZONE
+import com.tribetails.auntieos.web.data.SettingsChecks
 import com.tribetails.auntieos.web.data.TimeBlockDefinition
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -485,6 +486,9 @@ internal fun BookingRulesPanel(
         zoneUsable = true, // the zone is edited on its own panel; not this panel's gate
     )
     val overlaps = blockOverlaps(blocks)
+    // #1593: each number field carries the server's sentence under itself.
+    val blockHoursProblem = SettingsChecks.wholeNumberProblem(blockHours, 1, 24, "hours")
+    val travelBufferProblem = SettingsChecks.wholeNumberProblem(travelBuffer, 0, 480, "minutes")
 
     DenPanel(
         title = "Booking rules",
@@ -565,6 +569,8 @@ internal fun BookingRulesPanel(
                     onValueChange = { blockHours = it },
                     label = "Default block length (hours)",
                     placeholder = "4",
+                    isError = blockHoursProblem != null,
+                    errorMessage = blockHoursProblem,
                     modifier = Modifier.weight(1f),
                 )
                 BottomBorderField(
@@ -572,6 +578,8 @@ internal fun BookingRulesPanel(
                     onValueChange = { travelBuffer = it },
                     label = "Travel buffer (minutes)",
                     placeholder = "30",
+                    isError = travelBufferProblem != null,
+                    errorMessage = travelBufferProblem,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -712,6 +720,12 @@ internal fun VisitsTrackingPanel(
     var draftOptions by remember(s) { mutableStateOf(formatOptionList(s?.draftRetentionOptions.orEmpty())) }
 
     val problem = visitRecordsError(routeDays, etaOptions, draftOptions, arrivalRadius)
+    // #1593: the banner names the first problem; each field also carries the
+    // server's sentence for itself, so every failing field is marked.
+    val etaProblem = SettingsChecks.optionListProblem(etaOptions, "minutes")
+    val draftProblem = SettingsChecks.optionListProblem(draftOptions, "days")
+    val radiusProblem = SettingsChecks.wholeNumberProblem(arrivalRadius, 10, 5000, "metres")
+    val routeDaysProblem = SettingsChecks.wholeNumberProblem(routeDays, 1, 3650, "days")
 
     DenPanel(
         title = "Visits and tracking",
@@ -767,6 +781,8 @@ internal fun VisitsTrackingPanel(
                 onValueChange = { etaOptions = it },
                 label = "On My Way choices (minutes)",
                 placeholder = "5, 10, 15, 20, 30",
+                isError = etaProblem != null,
+                errorMessage = etaProblem,
                 modifier = Modifier.fillMaxWidth(),
             )
             BottomBorderField(
@@ -774,6 +790,8 @@ internal fun VisitsTrackingPanel(
                 onValueChange = { draftOptions = it },
                 label = "Draft retention choices (days)",
                 placeholder = "30, 60, 90",
+                isError = draftProblem != null,
+                errorMessage = draftProblem,
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
@@ -809,6 +827,8 @@ internal fun VisitsTrackingPanel(
                 onValueChange = { arrivalRadius = it },
                 label = "Arrival must be within (metres)",
                 placeholder = "150",
+                isError = radiusProblem != null,
+                errorMessage = radiusProblem,
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
@@ -831,6 +851,8 @@ internal fun VisitsTrackingPanel(
                 onValueChange = { routeDays = it },
                 label = "Keep visit routes for (days)",
                 placeholder = "90",
+                isError = routeDaysProblem != null,
+                errorMessage = routeDaysProblem,
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(

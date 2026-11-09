@@ -332,6 +332,11 @@
   gap: var(--space-3);
   padding: var(--space-2) 0;
   border-top: var(--border-hairline) solid var(--color-border-soft);
+  /* #1593: a refused Limit's sentence wraps onto its own line under the row. */
+  flex-wrap: wrap;
+}
+.settingsEdit__homeRow > .settingsEdit__fieldError {
+  flex-basis: 100%;
 }
 .settingsEdit__homeRow:first-child {
   border-top: none;

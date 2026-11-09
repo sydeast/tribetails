@@ -521,7 +521,13 @@ fun AdminSettingsScreen(
                         onClick = onNavigateToNotificationPrefs,
                     )
                 },
-                detail = { section ->
+                detail = { section -> Column {
+                    // #1593: a save the server refused stays named here until
+                    // the next save, above whichever section is open.
+                    uiState.settingsRefusal?.let { refusal ->
+                        SettingsRefusalBanner(refusal)
+                        Spacer(Modifier.height(dims.space4))
+                    }
                     when (section) {
                         SettingsSection.Branding -> BrandingPanel(
                             settings = uiState.businessSettings,
@@ -688,7 +694,7 @@ fun AdminSettingsScreen(
 
                         SettingsSection.VetClinics -> VetClinicsPanel()
                     }
-                },
+                } },
             )
         }
 
@@ -982,7 +988,9 @@ private fun BusinessHoursPanel(
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
             hours.forEach { row ->
                 val label = DAY_LABELS.getOrElse(row.dayOfWeek - 1) { row.dayOfWeek.toString() }
-                val rangeError = row.isOpen && !isValidTimeRange(row.openTime, row.closeTime)
+                // #1593: the server's sentence, so the phone and the web say the same thing.
+                val rangeProblem = if (row.isOpen) businessHoursRowProblem(row.openTime, row.closeTime) else null
+                val rangeError = rangeProblem != null
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1017,13 +1025,7 @@ private fun BusinessHoursPanel(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                if (rangeError) {
-                    Text(
-                        "Open time must be before close time (HH:mm)",
-                        style = AuntieTheme.typography.labelSmall,
-                        color = c.error,
-                    )
-                }
+                SettingsFieldProblem(rangeProblem)
             }
 
             Spacer(Modifier.height(dims.space1))
@@ -1031,7 +1033,7 @@ private fun BusinessHoursPanel(
                 label = "Save Business Hours",
                 onClick = onSave,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = hours.all { !it.isOpen || isValidTimeRange(it.openTime, it.closeTime) },
+                enabled = hours.all { !it.isOpen || businessHoursRowProblem(it.openTime, it.closeTime) == null },
             )
         }
     }
@@ -1068,6 +1070,10 @@ internal fun PaymentOptionsPanel(
     // save landing), never by an unrelated recomposition mid-edit.
     var draft by remember(saved) { mutableStateOf(saved) }
     val dirty = draft.normalized() != saved
+    // #1593: the server's handle checks. A handle counts while its box is on
+    // screen, or when it was changed (the save sends a changed handle even with
+    // its switch off), so its sentence shows wherever it would be refused.
+    val handleProblems = paymentHandleProblems(draft, saved)
     DenPanel(
         title = "Payment options",
         subtitle = "Turn on the ways kinfolk can pay you. What is on here shows up on new invoices and prints on the PDF. Invoices already sent keep the options they were sent with.",
@@ -1093,15 +1099,18 @@ internal fun PaymentOptionsPanel(
                         },
                     )
                     val field = method.handleField
-                    if (option.enabled && method.kind == PaymentMethodKind.LINK && field != null) {
+                    val handleShown = option.enabled && method.kind == PaymentMethodKind.LINK && field != null
+                    if (handleShown && field != null) {
                         AuntieField(
                             value = handle,
                             onValueChange = { draft = draft.copy(handles = draft.handles + (field to it)) },
                             label = "${method.label} handle",
                             placeholder = field.placeholder,
                             enabled = !saving,
+                            isError = handleProblems[field] != null,
                         )
                     }
+                    if (field != null) SettingsFieldProblem(handleProblems[field])
                     if (option.enabled && method.kind == PaymentMethodKind.INSTRUCTIONS) {
                         AuntieField(
                             value = option.instructions,
@@ -1127,14 +1136,24 @@ internal fun PaymentOptionsPanel(
                     Box(Modifier.fillMaxWidth().height(1.dp).background(c.border))
                 }
             }
-            PrimaryButton(
-                label = "Save payment options",
-                // The button turns into a spinner for the wait (PrimaryButton `loading`).
-                onClick = { if (dirty && !saving) onSettingsChange(settings.withPaymentDraft(draft)) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = dirty && !saving,
-                loading = saving,
-            )
+            val blocked = paymentHandlesBlockSave(draft, saved)
+            Row(horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {
+                // #1593: back to what is saved, every switch, handle and note.
+                GhostButton(
+                    label = "Cancel",
+                    onClick = { draft = saved },
+                    enabled = dirty && !saving,
+                    modifier = Modifier.weight(1f),
+                )
+                PrimaryButton(
+                    label = "Save payment options",
+                    // The button turns into a spinner for the wait (PrimaryButton `loading`).
+                    onClick = { if (dirty && !saving && !blocked) onSettingsChange(settings.withPaymentDraft(draft)) },
+                    modifier = Modifier.weight(1f),
+                    enabled = dirty && !saving && !blocked,
+                    loading = saving,
+                )
+            }
         }
     }
 }
@@ -1962,8 +1981,13 @@ private fun HomeLayoutPanel(
     val dims = AuntieTheme.dims
     val baseline = remember(settings) { settings.homeSections() }
     var rows by remember(settings) { mutableStateOf(baseline) }
+    // #1593: the Limit box as typed, by section id. A value that is not a
+    // whole number of 0 or more stays on screen with the server's sentence
+    // under it, rather than being quietly turned into 0.
+    var limitTexts by remember(settings) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var saving by remember { mutableStateOf(false) }
-    val dirty = rows != baseline
+    val limitProblems = limitTexts.mapValues { (_, text) -> homeLimitProblem(text) }.filterValues { it != null }
+    val dirty = rows != baseline || limitProblems.isNotEmpty()
     val displayRows = effectiveHomeSections(rows)
     val isDefault = rows.isEmpty()
 
@@ -1983,8 +2007,11 @@ private fun HomeLayoutPanel(
                 )
                 GhostButton(
                     label = "Reset to default layout",
-                    onClick = { rows = RESET_HOME_SECTIONS },
-                    enabled = !isDefault,
+                    onClick = {
+                        rows = RESET_HOME_SECTIONS
+                        limitTexts = emptyMap()
+                    },
+                    enabled = !isDefault || limitTexts.isNotEmpty(),
                 )
             }
             Spacer(Modifier.height(dims.space3))
@@ -2011,13 +2038,17 @@ private fun HomeLayoutPanel(
                         size = 32.dp,
                     )
                     Text(label, modifier = Modifier.weight(1f), style = AuntieTheme.typography.bodyMedium)
+                    val limitText = limitTexts[row.id] ?: row.limit.toString()
                     AuntieField(
-                        value = row.limit.toString(),
+                        value = limitText,
                         onValueChange = { text ->
-                            val n = parseWholeNumber(text, 0, 999) ?: 0
-                            rows = displayRows.replacedAt(index, row.copy(limit = n))
+                            limitTexts = limitTexts + (row.id to text)
+                            if (homeLimitProblem(text) == null) {
+                                rows = displayRows.replacedAt(index, row.copy(limit = text.trim().toInt()))
+                            }
                         },
                         label = "Limit",
+                        isError = limitProblems[row.id] != null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.width(84.dp),
                     )
@@ -2026,13 +2057,17 @@ private fun HomeLayoutPanel(
                         onCheckedChange = { next -> rows = displayRows.replacedAt(index, row.copy(enabled = next)) },
                     )
                 }
+                SettingsFieldProblem(limitProblems[row.id])
             }
 
             Spacer(Modifier.height(dims.space4))
             AuntieSaveBar(
                 dirty = dirty,
-                saveEnabled = dirty && !saving,
-                onCancel = { rows = baseline },
+                saveEnabled = dirty && !saving && limitProblems.isEmpty(),
+                onCancel = {
+                    rows = baseline
+                    limitTexts = emptyMap()
+                },
                 onSave = {
                     saving = true
                     onSettingsChange(settings.withHomeSections(rows))
@@ -2518,15 +2553,23 @@ private fun TimeOffPanel(
     var newSpecialDate by remember { mutableStateOf("") }
     var newSpecialHours by remember { mutableStateOf("") }
 
-    val holidayAddEnabled = companyHolidayAddEnabled(
+    // #1593: a new dated entry must be a real date, not before today in the
+    // business's own zone, which is the day the server checks it against.
+    val todayIso = businessTodayIso(settings.timeZone)
+    val holidayPicksMade = companyHolidayPicksMade(
         recurrence = newHolidayRecurrence,
-        name = newHolidayName,
-        date = newHolidayDate,
         month = newHolidayMonth,
         day = newHolidayDay,
         weekday = newHolidayWeekday,
         nth = newHolidayNth,
     )
+    val holidayProblems = closureAddProblems(newHolidayRecurrence, newHolidayName, newHolidayDate, todayIso)
+    // The sentence shows once there is something typed to be wrong about, or
+    // once Add was pressed with a field still empty. Add is off only while a
+    // sentence on screen says why.
+    var holidayAddTried by remember { mutableStateOf(false) }
+    val holidayDateShown = holidayProblems.date?.takeIf { holidayAddTried || newHolidayDate.isNotBlank() }
+    val holidayNameShown = holidayProblems.name?.takeIf { holidayAddTried }
 
     DenPanel(
         title = "Time Off",
@@ -2621,8 +2664,10 @@ private fun TimeOffPanel(
                     value = newHolidayDate,
                     onValueChange = { newHolidayDate = it },
                     label = "Date (YYYY-MM-DD)",
+                    isError = holidayDateShown != null,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                SettingsFieldProblem(holidayDateShown)
             } else {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2676,17 +2721,21 @@ private fun TimeOffPanel(
                 value = newHolidayName,
                 onValueChange = { newHolidayName = it },
                 label = "Name",
+                isError = holidayNameShown != null,
                 modifier = Modifier.fillMaxWidth(),
             )
+            SettingsFieldProblem(holidayNameShown)
             PrimaryButton(
                 label = "Add Company Holiday",
                 onClick = {
-                    if (holidayAddEnabled && !saving) {
+                    if (holidayProblems.any) {
+                        holidayAddTried = true
+                    } else if (holidayPicksMade && !saving) {
                         val wire = formatClosureEntry(
                             ClosureEntry(
                                 recurrence = newHolidayRecurrence,
-                                name = newHolidayName,
-                                date = newHolidayDate,
+                                name = newHolidayName.trim(),
+                                date = newHolidayDate.trim(),
                                 month = newHolidayMonth ?: 0,
                                 day = newHolidayDay ?: 0,
                                 weekday = newHolidayWeekday ?: 0,
@@ -2701,9 +2750,10 @@ private fun TimeOffPanel(
                         newHolidayDay = null
                         newHolidayWeekday = null
                         newHolidayNth = null
+                        holidayAddTried = false
                     }
                 },
-                enabled = holidayAddEnabled && !saving,
+                enabled = holidayPicksMade && holidayDateShown == null && holidayNameShown == null && !saving,
                 loading = saving,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -2742,10 +2792,13 @@ private fun TimeOffPanel(
                 onDate = { newSpecialDate = it },
                 hours = newSpecialHours,
                 onHours = { newSpecialHours = it },
+                todayIso = todayIso,
                 onAdd = {
                     if (!saving) {
                         onSettingsChange(
-                            settings.copy(specialHours = settings.specialHours + "$newSpecialDate|$newSpecialHours")
+                            settings.copy(
+                                specialHours = settings.specialHours + "${newSpecialDate.trim()}|${newSpecialHours.trim()}",
+                            )
                         )
                         newSpecialDate = ""
                         newSpecialHours = ""
@@ -2757,11 +2810,15 @@ private fun TimeOffPanel(
 }
 
 /**
- * The special-hours add editor (15.5): two fields + an "Add Special Hours" button
- * gated by [specialHoursAddEnabled]. Extracted to an internal composable so the real
- * widget + its enablement gate can be rendered directly by the Robolectric compose
- * UI test (behavior-neutral: same fields, same gate, same Add callback that fires
- * only when enabled).
+ * The special-hours add editor (15.5): two fields and an "Add Special Hours"
+ * button. Extracted to an internal composable so the real widget can be
+ * rendered directly by the Robolectric compose UI test.
+ *
+ * #1593: each field carries the server's sentence under it
+ * ([specialHoursAddProblems]): a real date not before [todayIso], and hours as
+ * `HH:MM-HH:MM` closing after opening. A sentence shows once its field has
+ * text, or once Add is pressed with a field still empty; Add is off only while
+ * a sentence on screen says why, and fires only when nothing is wrong.
  */
 @Composable
 internal fun SpecialHoursEditor(
@@ -2769,42 +2826,54 @@ internal fun SpecialHoursEditor(
     onDate: (String) -> Unit,
     hours: String,
     onHours: (String) -> Unit,
+    todayIso: String,
     onAdd: () -> Unit,
 ) {
     val dims = AuntieTheme.dims
+    var tried by remember { mutableStateOf(false) }
+    val problems = specialHoursAddProblems(date, hours, todayIso)
+    val dateShown = problems.date?.takeIf { tried || date.isNotBlank() }
+    val hoursShown = problems.hours?.takeIf { tried || hours.isNotBlank() }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(dims.space2),
-        verticalAlignment = Alignment.Bottom,
+        verticalAlignment = Alignment.Top,
     ) {
-        AuntieField(
-            value = date,
-            onValueChange = onDate,
-            label = "Date (YYYY-MM-DD)",
-            modifier = Modifier.weight(1f),
-        )
-        AuntieField(
-            value = hours,
-            onValueChange = onHours,
-            label = "Hours (e.g. 08:00-12:00)",
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            AuntieField(
+                value = date,
+                onValueChange = onDate,
+                label = "Date (YYYY-MM-DD)",
+                isError = dateShown != null,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            SettingsFieldProblem(dateShown)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            AuntieField(
+                value = hours,
+                onValueChange = onHours,
+                label = "Hours (e.g. 08:00-12:00)",
+                isError = hoursShown != null,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            SettingsFieldProblem(hoursShown)
+        }
     }
     PrimaryButton(
         label = "Add Special Hours",
-        onClick = { if (specialHoursAddEnabled(date, hours)) onAdd() },
-        enabled = specialHoursAddEnabled(date, hours),
+        onClick = {
+            if (problems.any) {
+                tried = true
+            } else {
+                tried = false
+                onAdd()
+            }
+        },
+        enabled = dateShown == null && hoursShown == null,
         modifier = Modifier.fillMaxWidth(),
     )
 }
-
-/**
- * A special-hours entry (15.5) is addable only with a valid YYYY-MM-DD date AND
- * non-blank hours containing no pipe (the "date|hours" encoding must stay
- * parseable). Mirrors the web specialHoursAddEnabled. Pure; unit-tested.
- */
-internal fun specialHoursAddEnabled(date: String, hours: String): Boolean =
-    Regex("""^\d{4}-\d{2}-\d{2}$""").matches(date) && hours.isNotBlank() && !hours.contains('|')
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Developer tools

@@ -375,26 +375,18 @@ service cloud.firestore {
  // AuntieOS Android HomeViewModel.load() fans out getBusinessSettings on Home,
  // and dropping that branch would put a false permission banner on the sandbox
  // Home screen (pinned by testAdminSandbox.test.ts).
- // ISSUE #519: `business_settings` is written directly by the clients — there is
- // no callable in front of it — so these rules are the ONLY server-side check
- // anything gets. Until now the write was a bare role gate, which meant an
- // operator-facing configuration document that five Cloud Functions read
- // (`resolveBusinessOpen` for the phone line, quote expiry, visit-date
- // formatting, notification tokens, the booking busy-conflict guard) could take
- // any shape at all from a buggy client.
+ // #1593: `business_settings/business_settings` is no longer written by any
+ // client. All three admin clients save it through the owner-only
+ // `saveBusinessSettings` callable, which checks every field
+ // (`functions/src/lib/businessSettingsChecks.ts`) and writes with the Admin SDK,
+ // so the write rule below denies that one document outright. Before #1593 the
+ // clients wrote it directly and the functions below (#519, #1409, #1410) were
+ // the only server check it got; the callable carries each of them over.
  //
- // CHECKED ONLY WHEN PRESENT. Three surfaces write this document three
- // different ways: the React admin sends a per-section partial patch, Android
- // sends an arbitrary changed-field subset, and the desktop console sends a
- // changed-field subset too. Requiring a key would break all three; each rule
- // below therefore reads "if this key is in the write, it has to be sane", and
- // says nothing about a key the write does not name.
- //
- // TYPE AND RANGE, NOT POLICY. The bounds bracket a real answer generously.
- // The point is to refuse a shape no reader can act on — a `timeZone` written as
- // a number, a negative retention period, a `travelBufferMinutes` of 10^9 — not
- // to encode what a business may choose. The clients validate the same values
- // where the operator can see it happening; this is the floor under them.
+ // The functions stay for the OTHER documents this wildcard covers
+ // (`feature_flags`, `security`), where an owner write is still allowed and none
+ // of these keys appear, so each check reads "if this key is in the write, it
+ // has to be sane" and passes a write that does not name it.
     function bsHas(field) {
       return request.resource.data.keys().hasAny([field]);
     }
@@ -512,12 +504,16 @@ service cloud.firestore {
     // email frame, and its colors and text go straight into every email's
     // markup, so it is read and written only through the owner-only
     // getEmailFrame / saveEmailFrame callables, which validate every field.
-    // The exclusion has to be HERE, not in a block of its own: in rules any
+    // #1593: the `business_settings` document itself is excluded from WRITE the
+    // same way: `saveBusinessSettings` is its only writer. Read is unchanged,
+    // because every admin client still loads Settings with a direct read.
+    // The exclusions have to be HERE, not in a block of their own: in rules any
     // matching `allow` grants access, so a separate deny block would not
     // override this one.
     match /business_settings/{docId} {
       allow read: if docId != 'email_frame' && (isOwner() || isTestAdmin());
-      allow write: if docId != 'email_frame' && isOwner() && validBusinessSettings();
+      allow write: if docId != 'email_frame' && docId != 'business_settings'
+                      && isOwner() && validBusinessSettings();
     }
 
  // Which business day each hour-driven cron last completed its scan on. DENIED

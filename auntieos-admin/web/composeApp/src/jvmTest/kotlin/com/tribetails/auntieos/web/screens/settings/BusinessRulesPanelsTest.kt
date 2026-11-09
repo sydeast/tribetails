@@ -84,7 +84,14 @@ class BusinessRulesPanelsTest {
             codec,
         )
         assertEquals(emptyMap(), changes)
-        assertEquals(setOf("_id", "updatedAt", "updatedBy"), BUSINESS_SETTINGS_SERVER_OWNED)
+        // #1593: the server's SERVER_OWNED_SETTINGS_FIELDS, every one refused by name.
+        assertEquals(
+            setOf(
+                "_id", "updatedAt", "updatedBy",
+                "calendarSyncLastRunAt", "calendarSyncLastStatus", "calendarSyncLastImported", "calendarSyncLastError",
+            ),
+            BUSINESS_SETTINGS_SERVER_OWNED,
+        )
     }
 
     /**

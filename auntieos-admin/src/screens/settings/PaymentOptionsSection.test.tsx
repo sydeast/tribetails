@@ -227,3 +227,113 @@ describe('PaymentOptionsSection saving', () => {
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * #1593: each handle refuses what its app cannot open, beside the handle, with
+ * the server's sentence; and Cancel puts the panel back to what is saved.
+ */
+describe('PaymentOptionsSection handle checks and Cancel', () => {
+  const SAVE = { name: /save payment options/i };
+  const VENMO = 'Enter the Venmo username: 5 to 30 letters, numbers, - or _.';
+  const PAYPAL = 'Enter the PayPal.Me name: up to 20 letters and numbers.';
+  const CASHAPP = 'Enter the $Cashtag: up to 20 letters, numbers or _, with at least one letter.';
+
+  it.each([
+    ['Venmo handle', 'abc', VENMO],
+    ['PayPal handle', 'paypal.me/tribetails', PAYPAL],
+    ['Cash App handle', '$12345', CASHAPP],
+  ])('%s: %j is refused beside the box and Save stays off', async (label, typed, sentence) => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<PaymentOptionsSection data={settings()} onSave={onSave} />);
+    const box = screen.getByLabelText(label);
+    await userEvent.type(box, typed);
+    expect(box).toHaveAttribute('aria-invalid', 'true');
+    expect(box).toHaveAccessibleErrorMessage(sentence);
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('a fixed handle clears the sentence and saves', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<PaymentOptionsSection data={settings()} onSave={onSave} />);
+    const box = screen.getByLabelText('Venmo handle');
+    await userEvent.type(box, '@abc');
+    expect(screen.getByText(VENMO)).toBeInTheDocument();
+    await userEvent.type(box, 'de');
+    expect(screen.queryByText(VENMO)).toBeNull();
+    expect(box).not.toHaveAttribute('aria-invalid');
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(savedPatch(onSave).venmoHandle).toBe('@abcde');
+  });
+
+  it('a blank handle passes the check (the on-but-blank warning still says so)', async () => {
+    render(<PaymentOptionsSection data={settings()} onSave={vi.fn()} />);
+    expect(screen.getByLabelText('Venmo handle')).not.toHaveAttribute('aria-invalid');
+    expect(screen.queryByText(VENMO)).toBeNull();
+  });
+
+  it('keeps a refused handle on screen while its method is off, because the handle is saved either way', async () => {
+    render(
+      <PaymentOptionsSection
+        data={settings({ venmoHandle: 'abc', paymentOptions: { venmo: { enabled: false } } })}
+        onSave={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('switch', { name: 'Offer Venmo' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByLabelText('Venmo handle')).toHaveAccessibleErrorMessage(VENMO);
+    await userEvent.click(screen.getByRole('switch', { name: 'Offer Klarna' }));
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+  });
+
+  it('Cancel is off until something changes, then puts every field back', async () => {
+    render(
+      <PaymentOptionsSection data={settings({ venmoHandle: '@tribetails' })} onSave={vi.fn()} />,
+    );
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(cancel).toBeDisabled();
+    const box = screen.getByLabelText('Venmo handle');
+    await userEvent.clear(box);
+    await userEvent.type(box, 'x');
+    await userEvent.click(screen.getByRole('switch', { name: 'Offer Klarna' }));
+    expect(cancel).toBeEnabled();
+    await userEvent.click(cancel);
+    expect(screen.getByLabelText('Venmo handle')).toHaveValue('@tribetails');
+    expect(screen.queryByText(VENMO)).toBeNull();
+    expect(screen.getByRole('switch', { name: 'Offer Klarna' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+    expect(cancel).toBeDisabled();
+  });
+
+  it('puts a server refusal for a handle beside that handle', async () => {
+    const onSave = vi.fn().mockRejectedValue(
+      Object.assign(new Error(PAYPAL), {
+        details: { code: 'settings_refused', field: 'paypalHandle', refusals: [{ field: 'paypalHandle', message: PAYPAL }] },
+      }),
+    );
+    render(<PaymentOptionsSection data={settings()} onSave={onSave} />);
+    const box = screen.getByLabelText('PayPal handle');
+    await userEvent.type(box, 'tribetails');
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(await screen.findByText(PAYPAL)).toBeInTheDocument();
+    expect(box).toHaveAccessibleErrorMessage(PAYPAL);
+    expect(screen.queryByText('Save failed')).toBeNull();
+  });
+
+  it('shows a refusal for a field it does not draw in the banner', async () => {
+    const onSave = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Each payment method has to be on or off.'), {
+        details: {
+          code: 'settings_refused',
+          field: 'paymentOptions',
+          refusals: [{ field: 'paymentOptions', message: 'Each payment method has to be on or off.' }],
+        },
+      }),
+    );
+    render(<PaymentOptionsSection data={settings()} onSave={onSave} />);
+    await userEvent.click(screen.getByRole('switch', { name: 'Offer Klarna' }));
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(await screen.findByText('Each payment method has to be on or off.')).toBeInTheDocument();
+    expect(screen.getByText('Save failed')).toBeInTheDocument();
+  });
+});

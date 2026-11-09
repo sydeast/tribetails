@@ -378,7 +378,9 @@ describe('VisitsTrackingSection', () => {
     await user.clear(radius);
     await user.type(radius, '2');
 
-    expect(await screen.findByText('Arrival must be within: Enter 10 to 5000 metres.')).toBeTruthy();
+    // #1593: the sentence sits under the field it is about.
+    expect(radius).toHaveAccessibleErrorMessage('Enter 10 to 5000 metres.');
+    expect(radius).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(onSave).not.toHaveBeenCalled();
   });
@@ -434,7 +436,7 @@ describe('VisitsTrackingSection', () => {
     const list = screen.getByLabelText('Choices offered (minutes)');
     await user.clear(list);
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(screen.getByText(/On-my-way choices/)).toBeInTheDocument();
+    expect(list).toHaveAccessibleErrorMessage('List at least one option, in minutes.');
     expect(onSave).not.toHaveBeenCalled();
   });
 });
@@ -499,5 +501,139 @@ describe('VisitsTrackingSection, the arrival radius note (#1612)', () => {
       screen.getByText(/Only applies while Verify arrival and departure by location is on\./),
     ).toBeInTheDocument();
     expect(screen.queryByText(/the switch above/)).not.toBeInTheDocument();
+  });
+});
+
+// ── ISSUE #1593 ─────────────────────────────────────────────────────────────
+function refusal(field: string, message: string): Error {
+  return Object.assign(new Error(message), {
+    details: { code: 'settings_refused', field, refusals: [{ field, message }] },
+  });
+}
+
+describe('VisitsTrackingSection, each field carries its own refusal (#1593)', () => {
+  it('shows every failing field its own sentence at once, with no panel banner', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+    const days = screen.getByLabelText('Keep visit routes for (days)');
+    const radius = screen.getByLabelText('Arrival must be within (metres)');
+    const eta = screen.getByLabelText('Choices offered (minutes)');
+    const drafts = screen.getByLabelText('Choices offered (days)');
+    await user.clear(days);
+    await user.type(days, 'abc');
+    await user.clear(radius);
+    await user.type(radius, '-5');
+    await user.clear(eta);
+    await user.type(eta, '5, 5');
+    await user.clear(drafts);
+    await user.type(drafts, '0');
+
+    expect(days).toHaveAccessibleErrorMessage('Whole numbers only.');
+    expect(radius).toHaveAccessibleErrorMessage('Whole numbers only.');
+    expect(eta).toHaveAccessibleErrorMessage('5 is listed twice.');
+    expect(drafts).toHaveAccessibleErrorMessage('Every option has to be more than zero.');
+    for (const box of [days, radius, eta, drafts]) expect(box).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.queryByText('Not ready to save')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('the hint stays in the description beside the refusal', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+    const eta = screen.getByLabelText('Choices offered (minutes)');
+    await user.clear(eta);
+    expect(eta.getAttribute('aria-describedby')).toBe('etaOptions-hint etaOptions-error');
+  });
+
+  it('fixing a field clears its sentence and lets Save through', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+    const days = screen.getByLabelText('Keep visit routes for (days)');
+    await user.clear(days);
+    expect(days).toHaveAccessibleErrorMessage('Enter a number.');
+    await user.type(days, '120');
+    expect(days).not.toHaveAttribute('aria-invalid');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({ saveRoutesForDays: 120 });
+  });
+
+  it('puts a server refusal for a field under that field', async () => {
+    const user = userEvent.setup();
+    onSave.mockRejectedValue(refusal('arrivalRadiusMeters', 'Enter 10 to 5000 metres.'));
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+    const radius = screen.getByLabelText('Arrival must be within (metres)');
+    await user.clear(radius);
+    await user.type(radius, '300');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Enter 10 to 5000 metres.')).toBeInTheDocument();
+    expect(radius).toHaveAccessibleErrorMessage('Enter 10 to 5000 metres.');
+    expect(screen.queryByText('Save failed')).toBeNull();
+  });
+
+  it('shows a server refusal for a field with no box of its own in the banner', async () => {
+    const user = userEvent.setup();
+    onSave.mockRejectedValue(refusal('trackingAccuracy', 'Pick a tracking accuracy from the list.'));
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+    await user.click(screen.getByRole('switch', { name: 'Toggle photo location tagging' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Pick a tracking accuracy from the list.')).toBeInTheDocument();
+    expect(screen.getByText('Save failed')).toBeInTheDocument();
+  });
+});
+
+describe('BookingRulesSection, the number fields carry their own refusal (#1593)', () => {
+  it('shows a bad block length under the field, not in the banner', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    const length = screen.getByLabelText('Default block length (hours)');
+    await user.clear(length);
+    await user.type(length, '30');
+    expect(length).toHaveAccessibleErrorMessage('Enter 1 to 24 hours.');
+    expect(length.getAttribute('aria-describedby')).toBe('blockLength-hint blockLength-error');
+    expect(screen.queryByText('Not ready to save')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('shows a bad travel buffer under the field, and fixing it clears it', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    const buffer = screen.getByLabelText('Travel buffer (minutes)');
+    await user.clear(buffer);
+    await user.type(buffer, '1.5');
+    expect(buffer).toHaveAccessibleErrorMessage('Whole numbers only.');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.clear(buffer);
+    await user.type(buffer, '20');
+    expect(buffer).not.toHaveAttribute('aria-invalid');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({ travelBufferMinutes: 20 });
+  });
+
+  it('a panel-wide problem still shows in the banner beside a field refusal', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    const buffer = screen.getByLabelText('Travel buffer (minutes)');
+    await user.clear(buffer);
+    await user.click(screen.getByRole('switch', { name: 'Toggle booking at a specific time' }));
+    await user.click(screen.getByRole('switch', { name: 'Toggle booking into a time block' }));
+    expect(buffer).toHaveAccessibleErrorMessage('Enter a number.');
+    expect(screen.getByText('Not ready to save')).toBeInTheDocument();
+    expect(
+      screen.getByText('Leave at least one booking mode on, or nothing can be booked at all.'),
+    ).toBeInTheDocument();
+  });
+
+  it('puts a server refusal for a number field under that field', async () => {
+    const user = userEvent.setup();
+    onSave.mockRejectedValue(refusal('travelBufferMinutes', 'Enter 0 to 480 minutes.'));
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    const buffer = screen.getByLabelText('Travel buffer (minutes)');
+    await user.clear(buffer);
+    await user.type(buffer, '45');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Enter 0 to 480 minutes.')).toBeInTheDocument();
+    expect(buffer).toHaveAccessibleErrorMessage('Enter 0 to 480 minutes.');
+    expect(screen.queryByText('Save failed')).toBeNull();
   });
 });

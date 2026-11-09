@@ -21,6 +21,8 @@ import {
   validateTimeBlocks,
   type TimeBlockDraft,
 } from '../../lib/businessOperations';
+import { splitSettingsRefusal } from '../../lib/settingsChecks';
+import { FieldError, fieldErrorAttrs } from './sections';
 import '../SettingsEdit.css';
 import './BookingRulesSection.css';
 
@@ -134,6 +136,39 @@ export function bookingRulesPatch(
   };
 }
 
+/** The two number fields of this panel, by the setting each one writes. */
+type NumberField = 'defaultTimeBlockDurationHours' | 'travelBufferMinutes';
+const NUMBER_FIELD_KEYS: readonly NumberField[] = ['defaultTimeBlockDurationHours', 'travelBufferMinutes'];
+
+/**
+ * #1593: what is wrong with each number field, for the line under it. The same
+ * parser `bookingRulesPatch` runs, without the field-name lead: the field's
+ * own label already says which one it is.
+ */
+export function bookingRulesFieldErrors(draft: Draft): Partial<Record<NumberField, string>> {
+  const out: Partial<Record<NumberField, string>> = {};
+  for (const key of NUMBER_FIELD_KEYS) {
+    const parsed = parseWholeNumber(draft[key], NUMBER_FIELDS[key]);
+    if ('error' in parsed) out[key] = parsed.error;
+  }
+  return out;
+}
+
+/**
+ * The panel-wide problem, the one the banner shows: the booking modes and the
+ * time blocks, which have no single field to sit under. The number fields are
+ * stood in with legal values so a refusal of theirs, already under its own
+ * field, is not said twice and does not hide one of these.
+ */
+function bookingRulesPanelProblem(draft: Draft): string | null {
+  const built = bookingRulesPatch({
+    ...draft,
+    defaultTimeBlockDurationHours: String(NUMBER_FIELDS.defaultTimeBlockDurationHours.min),
+    travelBufferMinutes: String(NUMBER_FIELDS.travelBufferMinutes.min),
+  });
+  return 'error' in built ? built.error : null;
+}
+
 /** Does this draft differ from what is loaded? Compared on the SAVED shape, so retyping "04" over "4" is not a change. */
 function isDirty(draft: Draft, data: BusinessSettings): boolean {
   const built = bookingRulesPatch(draft);
@@ -172,8 +207,15 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
 
+  // #1593: a server refusal for a number field, under that field until it is
+  // edited again.
+  const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
+
   const built = bookingRulesPatch(draft);
   const problem = 'error' in built ? built.error : null;
+  const panelProblem = bookingRulesPanelProblem(draft);
+  const numberErrors = bookingRulesFieldErrors(draft);
+  const fieldError = (key: NumberField): string | undefined => numberErrors[key] ?? serverErrors[key];
   const dirty = isDirty(draft, data);
   const overlaps = blockOverlaps(draft.blocks);
 
@@ -192,6 +234,11 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
 
   function edit(next: Partial<Draft>) {
     setDraft((d) => ({ ...d, ...next }));
+    setServerErrors((e) => {
+      const kept = { ...e };
+      for (const key of Object.keys(next)) delete kept[key];
+      return kept;
+    });
     setJustSaved(false);
   }
 
@@ -281,11 +328,14 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
     if (!dirty || busy || 'error' in built) return;
     setBusy(true);
     setError(null);
+    setServerErrors({});
     try {
       await onSave(built.patch);
       setJustSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
+      const split = splitSettingsRefusal(err, NUMBER_FIELD_KEYS);
+      setServerErrors(split.byField);
+      setError(split.banner);
     } finally {
       setBusy(false);
     }
@@ -301,9 +351,9 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
           {error}
         </Banner>
       ) : null}
-      {problem ? (
+      {panelProblem ? (
         <Banner tone="warning" title="Not ready to save" className="settingsEdit__sectionBanner">
-          {problem}
+          {panelProblem}
         </Banner>
       ) : null}
 
@@ -396,13 +446,14 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
                 className="settingsEdit__input"
                 value={draft.defaultTimeBlockDurationHours}
                 disabled={busy}
-                aria-describedby="blockLength-hint"
                 onChange={(e) => edit({ defaultTimeBlockDurationHours: e.target.value })}
+                {...fieldErrorAttrs('blockLength', fieldError('defaultTimeBlockDurationHours'), 'blockLength-hint')}
               />
             </label>
             <span id="blockLength-hint" className="settingsEdit__hint">
               How long a new block runs from the start time you give it.
             </span>
+            <FieldError id="blockLength" message={fieldError('defaultTimeBlockDurationHours')} />
           </div>
 
           <div className="settingsEdit__fieldGroup">
@@ -414,14 +465,15 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
                 className="settingsEdit__input"
                 value={draft.travelBufferMinutes}
                 disabled={busy}
-                aria-describedby="travelBuffer-hint"
                 onChange={(e) => edit({ travelBufferMinutes: e.target.value })}
+                {...fieldErrorAttrs('travelBuffer', fieldError('travelBufferMinutes'), 'travelBuffer-hint')}
               />
             </label>
             <span id="travelBuffer-hint" className="settingsEdit__hint">
               Room kept between two visits in the same block, so a full block still leaves you time
               to drive.
             </span>
+            <FieldError id="travelBuffer" message={fieldError('travelBufferMinutes')} />
           </div>
         </div>
       </div>
@@ -500,6 +552,7 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
           label="Cancel"
           onClick={() => {
             setDraft(seed(data));
+            setServerErrors({});
             setError(null);
             setJustSaved(false);
           }}

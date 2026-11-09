@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.settings
 import com.tribetails.auntieos.web.data.BusinessSettings
+import com.tribetails.auntieos.web.data.SettingsChecks
 import kotlin.math.roundToInt
 /**
  * The pure half of the KinCare types panel: rows in, maps out. Mirrors admin
@@ -13,9 +14,10 @@ import kotlin.math.roundToInt
  * rows only. All three fold from the same rows in one save, so a rename carries
  * the length and the flag and can never leave the maps disagreeing.
  *
- * WRITTEN WHOLE. The console's settings save diffs top-level fields and masks
- * each one, so a changed map replaces the stored map: a cleared flag or a
- * renamed KinCare removes its old key instead of leaving it behind.
+ * WRITTEN WHOLE. The console's settings save sends each changed map whole and
+ * the `saveBusinessSettings` callable replaces the stored map (#1593), so a
+ * cleared flag or a renamed KinCare removes its old key instead of leaving it
+ * behind.
  */
 data class KinCareTypeRow(
     val type: String,
@@ -131,3 +133,24 @@ fun kinCareRowsApplied(settings: BusinessSettings, rows: List<KinCareTypeRow>): 
         serviceDurations = foldKinCareDurations(rows),
         serviceStartTimeBooking = foldKinCareStartTime(rows),
     )
+/** #1593: what is wrong with one row, field by field. Each is the server's sentence, or null. */
+data class KinCareRowProblems(val name: String? = null, val duration: String? = null, val rate: String? = null) {
+    val none: Boolean get() = name == null && duration == null && rate == null
+}
+/**
+ * #1593: the server's `serviceRates` / `serviceDurations` checks, per row and
+ * per field, on the rows as typed. A blank name is refused here rather than
+ * dropped by [foldKinCareRates], which is how a row with its name cleared used
+ * to vanish on Save with nothing said.
+ */
+fun kinCareRowProblems(rows: List<KinCareTypeRow>): List<KinCareRowProblems> {
+    val names = SettingsChecks.kinCareNameProblems(rows.map { it.type })
+    return rows.mapIndexed { i, row ->
+        val label = row.type.trim()
+        KinCareRowProblems(
+            name = names[i],
+            duration = SettingsChecks.durationProblem(label, row.duration),
+            rate = SettingsChecks.priceProblem(label, row.rate),
+        )
+    }
+}

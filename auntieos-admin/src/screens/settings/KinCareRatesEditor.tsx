@@ -5,6 +5,8 @@ import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton, IconButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
 import { serviceDurationMinutes, storedDurationMinutes } from '../../lib/newBooking';
+import { displayablePrice, durationError, kinCareNameError, priceError } from '../../lib/settingsChecks';
+import { FieldError, fieldErrorAttrs } from './sections';
 import '../SettingsEdit.css';
 // The preview panel draws the booking wizard's own service chip, so it loads
 // the stylesheet that chip is defined in rather than copying the rules.
@@ -78,6 +80,12 @@ interface RateRow {
    * instead of booking a time block (#1092, #1098).
    */
   startTime: boolean;
+  /**
+   * #1593: the row came from the saved list (or has been saved since). A
+   * saved row whose name is cleared is refused by name; a row "Add KinCare
+   * type" appended and nobody typed into is not a type yet and is ignored.
+   */
+  stored: boolean;
 }
 /** The toggle's tooltip. A tooltip, not a subtitle: the 2026-09-11 ruling. */
 const START_TIME_TIP =
@@ -103,7 +111,34 @@ function toRows(
     duration: typeof durations[type] === 'string' ? durations[type] : '',
     rate,
     startTime: startTimes[type] === true,
+    stored: true,
   }));
+}
+
+/** An appended row nobody has typed into: not a type yet, so neither saved nor checked. */
+function isPristine(row: RateRow): boolean {
+  return (
+    !row.stored && row.type.trim() === '' && row.duration.trim() === '' && row.rate.trim() === '' && !row.startTime
+  );
+}
+
+/** #1593: why each part of a row cannot be saved, the server's rules and sentences. */
+interface RowErrors {
+  name: string | null;
+  duration: string | null;
+  rate: string | null;
+}
+
+function rowErrors(row: RateRow, allNames: readonly string[]): RowErrors {
+  if (isPristine(row)) return { name: null, duration: null, rate: null };
+  // The length and price sentences name the type; a row with no name yet
+  // already carries the name refusal, and reads as the preview's "Untitled".
+  const label = row.type.trim() === '' ? 'Untitled' : row.type.trim();
+  return {
+    name: kinCareNameError(row.type, allNames),
+    duration: durationError(label, row.duration),
+    rate: priceError(label, row.rate),
+  };
 }
 
 /** Folds rows to the rate map: blank-name rows dropped, last row wins on a duplicate, matching the wasm `associate`. */
@@ -209,10 +244,14 @@ function sortedView(rows: RateRow[], key: SortKey): Array<{ row: RateRow; index:
   });
 }
 
-/** The booking wizard's price line for a chip, byte for byte (`ServiceStep`). */
+/**
+ * The booking wizard's price line for a chip, byte for byte (`ServiceStep`).
+ * #1593: only a price that passes is drawn, so a typed "abc" or "-5" never
+ * shows as "$abc"; anything else reads as the wizard's "No price set".
+ */
 function chipPrice(rate: string): string {
-  const trimmed = rate.trim();
-  return trimmed === '' ? 'No price set' : `$${trimmed}`;
+  const price = displayablePrice(rate);
+  return price === null ? 'No price set' : `$${price}`;
 }
 
 export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
@@ -239,6 +278,9 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
   const editedRates = foldRates(rows);
   const editedDurations = foldDurations(rows);
   const editedStartTimes = foldStartTimeBooking(rows);
+  const liveNames = rows.filter((r) => !isPristine(r)).map((r) => r.type);
+  const errors = rows.map((r) => rowErrors(r, liveNames));
+  const invalid = errors.some((e) => e.name !== null || e.duration !== null || e.rate !== null);
   const dirty =
     !sameMap(editedRates, data.serviceRates) ||
     !sameMap(editedDurations, data.serviceDurations) ||
@@ -261,16 +303,17 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
   /**
    * The mock's add: a blank row appears at the end of the table and its name
    * takes focus. A row left blank is dropped by `foldRates`, so an abandoned
-   * add never reaches the document and never makes the bar read dirty.
+   * add never reaches the document and never makes the bar read dirty. Once
+   * anything is typed into it, it is a type, and its name is required.
    */
   function addRow() {
     setFocusIndex(rows.length);
-    setRows((r) => [...r, { type: '', duration: '', rate: '', startTime: false }]);
+    setRows((r) => [...r, { type: '', duration: '', rate: '', startTime: false, stored: false }]);
     markDirtyEdit();
   }
 
   async function handleSave() {
-    if (!dirty || busy) return;
+    if (!dirty || busy || invalid) return;
     // Refused before anything is written: the server ends a start-time visit
     // by the type's length, and with none it would book a visit with no end.
     const missing = startTimeRowMissingLength(rows);
@@ -286,6 +329,9 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
         serviceDurations: editedDurations,
         serviceStartTimeBooking: editedStartTimes,
       });
+      // What was just written is the saved list now: an untouched appended
+      // row was not part of it, and every other row is a saved one.
+      setRows((r) => r.filter((row) => !isPristine(row)).map((row) => ({ ...row, stored: true })));
       setJustSaved(true);
     } catch (err) {
       setError({ title: 'Save failed', message: err instanceof Error ? err.message : 'Save failed.' });
@@ -351,6 +397,10 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
                 // What the name implies, shown as a placeholder when nothing is
                 // stored. Visible, and not written unless the operator types it.
                 const impliedMinutes = row.duration.trim() === '' ? serviceDurationMinutes(row.type) : null;
+                const rowError = errors[index]!;
+                const nameId = `kinCare-${index}-name`;
+                const durationId = `kinCare-${index}-duration`;
+                const rateId = `kinCare-${index}-rate`;
                 return (
                   <li key={index} className="kinCareRates__row">
                     <input
@@ -365,6 +415,7 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
                         else nameInputs.current.delete(index);
                       }}
                       onChange={(e) => updateRow(index, { type: e.target.value })}
+                      {...fieldErrorAttrs(nameId, rowError.name)}
                     />
                     <input
                       type="text"
@@ -375,6 +426,7 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
                       value={row.duration}
                       disabled={busy}
                       onChange={(e) => updateRow(index, { duration: e.target.value })}
+                      {...fieldErrorAttrs(durationId, rowError.duration)}
                     />
                     <input
                       type="text"
@@ -384,6 +436,7 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
                       value={row.rate}
                       disabled={busy}
                       onChange={(e) => updateRow(index, { rate: e.target.value })}
+                      {...fieldErrorAttrs(rateId, rowError.rate)}
                     />
                     <IconButton
                       icon={<TrashGlyph />}
@@ -412,6 +465,12 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
                         You set the start time
                       </span>
                       <InfoTip text={START_TIME_TIP} />
+                    </span>
+                    {/* #1593: each refusal on its own full-width line under the row. */}
+                    <span className="kinCareRates__errors">
+                      <FieldError id={nameId} message={rowError.name} />
+                      <FieldError id={durationId} message={rowError.duration} />
+                      <FieldError id={rateId} message={rowError.rate} />
                     </span>
                   </li>
                 );
@@ -467,7 +526,7 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save KinCare types'}
           onClick={() => void handleSave()}
-          disabled={!dirty || busy}
+          disabled={!dirty || busy || invalid}
           busy={busy}
         />
       </div>

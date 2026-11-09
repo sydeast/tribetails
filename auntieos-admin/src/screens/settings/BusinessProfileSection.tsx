@@ -9,7 +9,16 @@ import {
   isUsableTimeZone,
   timeZoneOptions,
 } from '../../lib/businessOperations';
-import { BUSINESS_PROFILE_FIELDS, FieldErrorNote, FieldNotice, textFieldErrors, type StringFieldKey } from './sections';
+import { splitSettingsRefusal } from '../../lib/settingsChecks';
+import {
+  BUSINESS_PROFILE_FIELDS,
+  FieldError,
+  FieldErrorNote,
+  FieldNotice,
+  fieldErrorAttrs,
+  textFieldErrors,
+  type StringFieldKey,
+} from './sections';
 import '../SettingsEdit.css';
 
 /**
@@ -52,6 +61,9 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  // #1593: a server refusal for a field of this panel, beside that field
+  // until it is edited again.
+  const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
 
   const zoneOptions = timeZoneOptions(data.timeZone);
   const device = deviceTimeZone();
@@ -73,11 +85,13 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
 
   function updateField(key: StringFieldKey, next: string) {
     setDraft((d) => ({ ...d, values: { ...d.values, [key]: next } }));
+    setServerErrors((e) => ({ ...e, [key]: undefined }));
     setJustSaved(false);
   }
 
   function updateZone(next: string) {
     setDraft((d) => ({ ...d, timeZone: next }));
+    setServerErrors((e) => ({ ...e, timeZone: undefined }));
     setJustSaved(false);
   }
 
@@ -85,6 +99,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
     if (!dirty || busy || !usable || !fieldsValid) return;
     setBusy(true);
     setError(null);
+    setServerErrors({});
     const textPatch: Partial<Pick<BusinessSettings, StringFieldKey>> = {};
     for (const f of BUSINESS_PROFILE_FIELDS) textPatch[f.key] = (draft.values[f.key] ?? '').trim();
     const patch: Partial<BusinessSettings> = unset ? textPatch : { ...textPatch, timeZone: draft.timeZone };
@@ -92,7 +107,9 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
       await onSave(patch);
       setJustSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
+      const split = splitSettingsRefusal(err, [...BUSINESS_PROFILE_FIELDS.map((f) => f.key), 'timeZone']);
+      setServerErrors(split.byField);
+      setError(split.banner);
     } finally {
       setBusy(false);
     }
@@ -100,6 +117,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
 
   function handleCancel() {
     setDraft(seed(data));
+    setServerErrors({});
     setError(null);
     setJustSaved(false);
   }
@@ -130,10 +148,11 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
                 disabled={busy}
                 onChange={(e) => updateField(f.key, e.target.value)}
                 {...(f.required ? { 'aria-required': true } : {})}
-                {...(f.hint ? { 'aria-describedby': `${f.key}-hint` } : {})}
-                {...(fieldErrors[f.key] !== undefined
-                  ? { 'aria-invalid': true, 'aria-errormessage': `${f.key}-error` }
-                  : {})}
+                {...fieldErrorAttrs(
+                  f.key,
+                  fieldErrors[f.key] ?? serverErrors[f.key],
+                  f.hint ? `${f.key}-hint` : undefined,
+                )}
               />
             </label>
             {f.hint ? (
@@ -141,7 +160,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
                 {f.hint}
               </span>
             ) : null}
-            <FieldErrorNote fieldKey={f.key} message={fieldErrors[f.key]} />
+            <FieldErrorNote fieldKey={f.key} message={fieldErrors[f.key] ?? serverErrors[f.key]} />
             <FieldNotice spec={f} value={draft.values[f.key] ?? ''} />
           </div>
         ))}
@@ -155,8 +174,8 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
             className="settingsEdit__input"
             value={draft.timeZone}
             disabled={busy}
-            aria-describedby="timeZone-hint"
             onChange={(e) => updateZone(e.target.value)}
+            {...fieldErrorAttrs('timeZone', serverErrors['timeZone'], 'timeZone-hint')}
           >
             {unset ? <option value="">Choose a time zone</option> : null}
             {zoneOptions.map((option) => (
@@ -171,6 +190,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
             ? `This computer is on ${device}. Times you type into the booking dialog stay on this computer's clock; the zone above is what the phone line and outgoing messages read.`
             : 'Times you type into the booking dialog use this computer’s clock. The zone above is what the phone line and outgoing messages read.'}
         </span>
+        <FieldError id="timeZone" message={serverErrors['timeZone']} />
         {unset ? (
           <Banner tone="warning" title="Set your business time zone" className="settingsEdit__sectionBanner">
             No zone is saved, so the phone line, quote expiry and visit dates are read in {DEFAULT_BUSINESS_TIME_ZONE}{' '}

@@ -1,88 +1,40 @@
-import { doc } from 'firebase/firestore';
-import { setDoc } from '../lib/firestoreWrite';
-import { auth, db } from '../lib/firebase';
 import { call } from '../lib/fns';
-import { BUSINESS_SETTINGS_DOC_ID, type BusinessSettings } from './settings';
+import { type BusinessSettings } from './settings';
 import { type TagScope } from '../lib/tags/model';
-
 /**
  * The Settings editor's write path, paired with `getBusinessSettings` in
  * `./settings.ts`.
  *
- * Verified against the wasm source directly (there is no callable to reach for,
- * same as the read side): `FirestoreInterop.wasmJs.kt#platformSaveBusinessSettings`
- * stamps `_id` + `updatedAt` onto the caller's settings object and writes it with
- * `jsSetDoc(..., merge: true)` (see `setDocOnce` in that file). `firestore.rules`
- * line 140-143 gates the doc `allow write: if isAuntie()`, so this is a direct
- * client SDK write, not a Cloud Function, exactly mirroring `getBusinessSettings`'s
- * direct `getDoc`.
+ * #1593: a callable, `saveBusinessSettings`. This used to be a direct
+ * `setDoc(..., { merge: true })` on `business_settings/business_settings`, with
+ * the Firestore rules as the only server check, and the 2026-11-05 QA walk
+ * saved a price of "abc" and a close before the open through it. The server now
+ * checks every field (`mytribe/functions/src/lib/businessSettingsChecks.ts`,
+ * mirrored for the screens in `lib/settingsChecks.ts`) and the rules deny the
+ * document to every client, so this is the only way in.
  *
- * ONE DELIBERATE DEPARTURE from the wasm save function, and it is additive only:
- * the wasm stamps `updatedAt` but never `updatedBy`, despite `BusinessSettings`
- * carrying that field (`FirestoreClient.kt` line 2559) and the Settings overview
- * already rendering it (`lastSavedLabel`, `settingsFormat.ts`). Leaving it
- * unstamped here would mean "Last saved 07-17 14:02" forever loses the "by
- * Auntie" half after every admin edit. This stamps it from the signed-in user
- * (email, falling back to uid so a save is never left blank), which only adds
- * information the doc already has a field for; it changes no read path and no
- * existing behavior.
+ * A PARTIAL patch, as before: only the touched fields travel. The server keeps
+ * the write shape the direct write had: nested maps such as `mytribePortal`
+ * merge key by key, so one section's save never clobbers another's, and the
+ * KinCare rate card (`serviceRates`, `serviceDurations`,
+ * `serviceStartTimeBooking`) replaces what is stored, so a removed type goes.
  *
- * A PARTIAL patch, not the whole document (the wasm side reconstructs and sends
- * the full object; this sends only the touched fields): `merge: true` deep-merges
- * a nested map field like `mytribePortal` rather than replacing it, so a caller
- * that touches one section's fields can never clobber a sibling section's data,
- * which is the same non-clobbering guarantee the wasm comment claims, achieved
- * with less data on the wire.
+ * The server stamps `updatedAt` and `updatedBy` (the signed-in email, else the
+ * uid) and answers with both, which `Settings.tsx` folds onto its baseline.
  *
- * Fail-loud: never swallows a write failure. A permission-denied, offline, or
- * network write error propagates to the caller (each section's Save handler in
- * `screens/settings/sections.tsx` and its sibling editors), which is the only
- * place that can show it beside the field the operator was actually editing.
+ * Fail-loud: a refusal rejects with the server's sentence as `message`, and
+ * `details.refusals` lists each `{ field, message }` (`settingsRefusalsOf` in
+ * `lib/settingsChecks.ts`). Each section's Save handler shows it.
  */
 export interface SaveStamp {
   updatedAt: string;
   updatedBy: string;
 }
-
-/**
- * Map fields the editor always sends WHOLE, where a key it left out is a key
- * the operator removed.
- *
- * `merge: true` merges a nested map key by key, so a `serviceRates` patch that
- * no longer carries "Walk" leaves the stored "Walk" exactly where it was: the
- * KinCare types editor's Remove button dropped the row on screen and the next
- * load brought it back (the one case it worked was removing the LAST type,
- * because an empty map does overwrite). The rate card is a flat name-to-value
- * map that one editor owns outright, so a patch naming it is written with
- * `mergeFields`, which replaces each named top-level field wholesale and still
- * leaves every field the patch does not name untouched.
- *
- * Not the default for every patch: `mytribePortal` is a nested map that more
- * than one section writes a slice of, and the key-by-key merge is what keeps
- * one section's save from clobbering another's.
- */
-export const WHOLE_MAP_FIELDS: ReadonlySet<keyof BusinessSettings> = new Set<keyof BusinessSettings>([
-  'serviceRates',
-  'serviceDurations',
-  'serviceStartTimeBooking',
-]);
-
-function writesWholeMap(patch: Partial<BusinessSettings>): boolean {
-  return Object.keys(patch).some((key) => WHOLE_MAP_FIELDS.has(key as keyof BusinessSettings));
-}
-
 export async function saveBusinessSettings(patch: Partial<BusinessSettings>): Promise<SaveStamp> {
-  const updatedAt = new Date().toISOString();
-  const updatedBy = auth.currentUser?.email ?? auth.currentUser?.uid ?? '';
-  const body = { ...patch, updatedAt, updatedBy };
-  await setDoc(
-    doc(db, 'business_settings', BUSINESS_SETTINGS_DOC_ID),
-    body,
-    writesWholeMap(patch) ? { mergeFields: Object.keys(body) } : { merge: true },
-  );
-  return { updatedAt, updatedBy };
+  // A key with no value is not a change; the server refuses one by name.
+  const changes = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+  return call<{ changes: Record<string, unknown> }, SaveStamp>('saveBusinessSettings', { changes });
 }
-
 /**
  * Deleting one tag, which is a CASCADE and therefore not a settings write.
  *

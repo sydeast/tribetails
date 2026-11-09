@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -38,6 +39,7 @@ import com.tribetails.auntieos.web.data.MyTribePortalConfig
 import com.tribetails.auntieos.web.data.PortalBanner
 import com.tribetails.auntieos.web.data.PortalChat
 import com.tribetails.auntieos.web.data.PortalHome
+import com.tribetails.auntieos.web.data.SettingsChecks
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.theme.AuntieThemePreset
@@ -94,8 +96,13 @@ internal fun MyTribePanel(
     var uploading by remember { mutableStateOf(false) }
     var uploadError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    // #1593: a home-section limit as typed, by section id, kept as the operator
+    // typed it. "-3", "abc" or "1.5" stays on screen with the sentence under it
+    // instead of quietly becoming 0; only a limit that reads reaches [portal].
+    var limitText by remember(settingsData) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val limitsOk = limitText.values.all { SettingsChecks.homeLimitProblem(it) == null }
 
-    val dirty = portal != loaded
+    val dirty = portal != loaded || !limitsOk
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // ── Portal logo ──
@@ -143,6 +150,8 @@ internal fun MyTribePanel(
         // ── Home layout ──
         PortalHomeCard(
             home = portal.home,
+            limitText = limitText,
+            onLimitText = { id, text -> limitText = limitText + (id to text) },
             onChange = { portal = portal.copy(home = it) },
         )
 
@@ -160,9 +169,10 @@ internal fun MyTribePanel(
         }
         AuntieSaveBar(
             dirty = dirty,
-            saveEnabled = dirty && !saving && settingsLoaded,
+            saveEnabled = dirty && !saving && settingsLoaded && limitsOk,
             onCancel = {
                 portal = loaded
+                limitText = emptyMap()
                 uploadError = null
             },
             onSave = {
@@ -410,6 +420,8 @@ private fun effectiveSections(home: PortalHome): List<HomeSectionCfg> {
 @Composable
 private fun PortalHomeCard(
     home: PortalHome,
+    limitText: Map<String, String>,
+    onLimitText: (sectionId: String, text: String) -> Unit,
     onChange: (PortalHome) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -439,10 +451,14 @@ private fun PortalHomeCard(
                         next[index] = cfg.copy(enabled = enabled)
                         onChange(home.copy(sections = next))
                     },
-                    onLimit = { limit ->
-                        val next = sections.toMutableList()
-                        next[index] = cfg.copy(limit = limit)
-                        onChange(home.copy(sections = next))
+                    limitText = limitText[cfg.id] ?: if (cfg.limit > 0) cfg.limit.toString() else "",
+                    onLimitText = { text ->
+                        onLimitText(cfg.id, text)
+                        SettingsChecks.homeLimitValue(text)?.let { limit ->
+                            val next = sections.toMutableList()
+                            next[index] = cfg.copy(limit = limit)
+                            onChange(home.copy(sections = next))
+                        }
                     },
                 )
             }
@@ -458,7 +474,8 @@ private fun HomeSectionRow(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onToggle: (Boolean) -> Unit,
-    onLimit: (Int) -> Unit,
+    limitText: String,
+    onLimitText: (String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     Row(
@@ -486,13 +503,17 @@ private fun HomeSectionRow(
             }
         }
         if (cfg.id in LIMITED_SECTIONS) {
+            val limitProblem = SettingsChecks.homeLimitProblem(limitText)
             BottomBorderField(
-                value = if (cfg.limit > 0) cfg.limit.toString() else "",
-                onValueChange = { onLimit(it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0) },
+                value = limitText,
+                onValueChange = onLimitText,
                 label = "",
                 placeholder = "Limit",
                 keyboardType = KeyboardType.Number,
-                modifier = Modifier.size(width = 72.dp, height = 44.dp),
+                isError = limitProblem != null,
+                errorMessage = limitProblem,
+                // Wide enough for the sentence under it when the limit does not read.
+                modifier = Modifier.width(if (limitProblem != null) 220.dp else 72.dp),
             )
         }
         AuntieToggle(checked = cfg.enabled, onCheckedChange = onToggle, compact = true)

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { CollectionSpec } from '../../lib/firestore';
@@ -10,6 +10,21 @@ vi.mock('../../lib/firestore', () => ({ useCollection }));
 import { TimeOffEditor } from './TimeOffEditor';
 
 const EMPTY = { observedUsHolidays: [], companyHolidays: [], specialHours: [] };
+
+/**
+ * #1593: a new date has to be today or later in the business zone, so the
+ * dates these tests type ("2026-12-25") are only upcoming against a pinned
+ * clock. 18:00 UTC on 2026-11-09 is midday in Chicago, the default zone. The
+ * closure-impact block below pins its own later day over this one.
+ */
+const PINNED_NOW = new Date('2026-11-09T18:00:00Z');
+beforeAll(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(PINNED_NOW);
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   // Default: no existing sessions, so no editor test outside the dedicated
@@ -306,6 +321,161 @@ describe('TimeOffEditor: one-click US holiday presets', () => {
       />,
     );
     expect(screen.getByRole('button', { name: 'Independence Day' })).toBeDisabled();
+  });
+});
+
+/**
+ * #1593: the add rows refuse what the server would, under the row, and the
+ * Add button is never off without a sentence saying why once anything is in
+ * the row.
+ */
+describe('TimeOffEditor: add-row checks (#1593)', () => {
+  const DATE_INVALID = 'Enter a real date as YYYY-MM-DD.';
+  const DATE_PAST = 'That date has passed. Pick today or a later date.';
+  const addButtons = () => screen.getAllByRole('button', { name: /^add$/i });
+  const closureDate = () => screen.getByPlaceholderText('2026-12-25');
+  const closureName = () => screen.getByPlaceholderText('Christmas closure');
+  const specialDate = () => screen.getByPlaceholderText('2026-12-24');
+  const specialHours = () => screen.getByPlaceholderText('08:00-12:00');
+
+  afterEach(() => {
+    vi.setSystemTime(PINNED_NOW);
+  });
+
+  it('an untouched add row refuses nothing', () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(addButtons()[0]).toBeDisabled();
+  });
+
+  it.each(['2026-13-45', '2026-02-30', '12/25/2026'])(
+    'refuses a closure date of %j that is not a real date, and Add stays off',
+    async (typed) => {
+      render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+      await userEvent.type(closureDate(), typed);
+      await userEvent.type(closureName(), 'Office closed');
+      expect(closureDate()).toHaveAttribute('aria-invalid', 'true');
+      expect(closureDate()).toHaveAccessibleErrorMessage(DATE_INVALID);
+      expect(addButtons()[0]).toBeDisabled();
+    },
+  );
+
+  it('refuses a closure date that has passed, and takes today', async () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    await userEvent.type(closureName(), 'Office closed');
+    await userEvent.type(closureDate(), '2026-11-08');
+    expect(closureDate()).toHaveAccessibleErrorMessage(DATE_PAST);
+    expect(addButtons()[0]).toBeDisabled();
+    await userEvent.clear(closureDate());
+    await userEvent.type(closureDate(), '2026-11-09');
+    expect(closureDate()).not.toHaveAttribute('aria-invalid');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(addButtons()[0]).toBeEnabled();
+  });
+
+  it('reads "today" in the business time zone, not this computer’s', async () => {
+    // 03:30 UTC on the 10th: still the 9th in Chicago, already the 10th in UTC.
+    vi.setSystemTime(new Date('2026-11-10T03:30:00Z'));
+    const { unmount } = render(<TimeOffEditor data={{ ...EMPTY, timeZone: 'America/Chicago' }} onSave={vi.fn()} />);
+    await userEvent.type(closureDate(), '2026-11-09');
+    expect(closureDate()).not.toHaveAttribute('aria-invalid');
+    unmount();
+    render(<TimeOffEditor data={{ ...EMPTY, timeZone: 'UTC' }} onSave={vi.fn()} />);
+    await userEvent.type(closureDate(), '2026-11-09');
+    expect(closureDate()).toHaveAccessibleErrorMessage(DATE_PAST);
+  });
+
+  it('asks for a name once a date is in, and refuses a | in it', async () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    await userEvent.type(closureDate(), '2026-12-25');
+    expect(closureName()).toHaveAccessibleErrorMessage('Give the closure a name.');
+    expect(addButtons()[0]).toBeDisabled();
+    await userEvent.type(closureName(), 'Closed | back Monday');
+    expect(closureName()).toHaveAccessibleErrorMessage('A name cannot contain |.');
+    expect(addButtons()[0]).toBeDisabled();
+  });
+
+  it('says which yearly pick is still missing', async () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Recurrence'), 'yearly-nth-weekday');
+    expect(screen.getByLabelText('Month')).toHaveAccessibleErrorMessage('Pick a month.');
+    expect(screen.getByLabelText('Weekday')).toHaveAccessibleErrorMessage('Pick a weekday.');
+    expect(screen.getByLabelText('Occurrence')).toHaveAccessibleErrorMessage('Pick which week.');
+    await userEvent.selectOptions(screen.getByLabelText('Month'), '11');
+    await userEvent.selectOptions(screen.getByLabelText('Weekday'), '4');
+    await userEvent.selectOptions(screen.getByLabelText('Occurrence'), '4');
+    await userEvent.type(closureName(), 'Thanksgiving');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(addButtons()[0]).toBeEnabled();
+  });
+
+  it.each([
+    ['zz-99', 'Enter both an opening and a closing time.'],
+    ['08:00', 'Enter both an opening and a closing time.'],
+    ['17:00-09:00', 'The closing time has to be after the opening time.'],
+  ])('refuses special hours of %j under the add row', async (typed, sentence) => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    await userEvent.type(specialDate(), '2026-12-24');
+    await userEvent.type(specialHours(), typed);
+    expect(specialHours()).toHaveAttribute('aria-invalid', 'true');
+    expect(specialHours()).toHaveAccessibleErrorMessage(sentence);
+    expect(addButtons()[1]).toBeDisabled();
+  });
+
+  it('refuses a special-hours date that is not real or has passed', async () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    await userEvent.type(specialHours(), '08:00-12:00');
+    await userEvent.type(specialDate(), '2026-13-45');
+    expect(specialDate()).toHaveAccessibleErrorMessage(DATE_INVALID);
+    await userEvent.clear(specialDate());
+    await userEvent.type(specialDate(), '2026-01-02');
+    expect(specialDate()).toHaveAccessibleErrorMessage(DATE_PAST);
+    expect(addButtons()[1]).toBeDisabled();
+  });
+
+  it('fixing the special hours clears the sentence, and Add saves the entry', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={EMPTY} onSave={onSave} />);
+    await userEvent.type(specialDate(), '2026-12-24');
+    await userEvent.type(specialHours(), 'zz-99');
+    await userEvent.clear(specialHours());
+    await userEvent.type(specialHours(), '08:00-12:00');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await userEvent.click(addButtons()[1]!);
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ specialHours: ['2026-12-24|08:00-12:00'] }));
+  });
+
+  it('never re-checks an entry already stored, even one whose date has passed', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TimeOffEditor
+        data={{ ...EMPTY, companyHolidays: ['2020-01-01|Old closure'], specialHours: ['2020-01-02|bad'] }}
+        onSave={onSave}
+      />,
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+    await userEvent.click(screen.getByRole('switch', { name: 'Toggle Juneteenth observed' }));
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith({
+      observedUsHolidays: ['juneteenth'],
+      companyHolidays: ['2020-01-01|Old closure'],
+      specialHours: ['2020-01-02|bad'],
+    });
+  });
+
+  it('shows the server refusal sentence when the save is refused', async () => {
+    const onSave = vi.fn().mockRejectedValue(
+      Object.assign(new Error(DATE_PAST), {
+        details: { code: 'settings_refused', field: 'companyHolidays', refusals: [{ field: 'companyHolidays', message: DATE_PAST }] },
+      }),
+    );
+    render(<TimeOffEditor data={EMPTY} onSave={onSave} />);
+    await userEvent.type(closureDate(), '2026-12-25');
+    await userEvent.type(closureName(), 'Office closed');
+    await userEvent.click(addButtons()[0]!);
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(await screen.findByText(DATE_PAST)).toBeInTheDocument();
   });
 });
 

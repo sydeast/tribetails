@@ -600,6 +600,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   setMediaProfilePhoto: () => require('./admin/setMediaProfilePhoto'),
   saveMediaTags: () => require('./admin/saveMediaTags'),
   removeBusinessTag: () => require('./admin/removeBusinessTag'),
+  // #1593: the one Settings save. The rules deny business_settings/business_settings
+  // to every client, so this is the only way the three admin clients write it.
+  saveBusinessSettings: () => require('./admin/saveBusinessSettings'),
   deleteMediaFile: () => require('./admin/deleteMediaFile'),
   manageBookingSeries: () => require('./admin/manageBookingSeries'),
   batchUpdateBookings: () => require('./admin/batchUpdateBookings'),
