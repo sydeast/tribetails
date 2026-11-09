@@ -100,18 +100,14 @@ class PaymentMethodsTest {
     }
 
     @Test
-    fun `flipping one switch keeps every other web-written entry and unknown key verbatim`() {
+    fun `flipping one switch sends only that method`() {
         val edited = loaded.withPaymentDraft(draftWith(loaded, "klarna") { it.copy(enabled = true) })
         val changes = businessSettingsFieldChanges(loaded, edited)
         assertEquals(setOf("paymentOptions"), changes.keys)
 
+        // #1785: only the changed method travels; the others stay stored as they are.
         val written = writtenOptions(changes)
-        val original = webWrittenOptions()
-        assertEquals(original.keys, written.keys)
-        for ((id, entry) in original) {
-            if (id == "klarna") continue
-            assertEquals("entry $id must round-trip unchanged", entry, written[id])
-        }
+        assertEquals(setOf("klarna"), written.keys)
         assertEquals(mapOf("enabled" to true, "instructions" to ""), written["klarna"])
     }
 
@@ -138,17 +134,15 @@ class PaymentMethodsTest {
      * never had switches sends the same shape.
      */
     @Test
-    fun `a switch flipped on a doc with no switches writes every method explicitly, the web's shape`() {
+    fun `a switch flipped on a doc with no switches writes that method explicitly`() {
         val bare = BusinessSettings(venmoHandle = "@tribetails")
         val draft = draftWith(bare, "klarna") { it.copy(enabled = true) }
         val changes = businessSettingsFieldChanges(bare, bare.withPaymentDraft(draft))
         assertEquals(setOf("paymentOptions"), changes.keys)
         val written = writtenOptions(changes)
-        assertEquals(PAYMENT_METHOD_CATALOGUE.map { it.id }, written.keys.toList())
-        for (method in PAYMENT_METHOD_CATALOGUE) {
-            val on = if (method.id == "klarna") true else method.defaultEnabled
-            assertEquals(mapOf("enabled" to on, "instructions" to ""), written[method.id])
-        }
+        // #1785: only the method that changed is sent.
+        assertEquals(listOf("klarna"), written.keys.toList())
+        assertEquals(mapOf("enabled" to true, "instructions" to ""), written["klarna"])
     }
     @Test
     fun `a handle edit on a doc with no switches writes the handle alone`() {

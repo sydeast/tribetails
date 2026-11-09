@@ -84,7 +84,7 @@ class AdminSettingsPaymentOptionsSaveTest {
         (changes["paymentOptions"] as Map<String, Any?>)[id] as Map<String, Any?>
 
     @Test
-    fun `turning a method on writes paymentOptions only and keeps every web entry`() = runTest(testDispatcher) {
+    fun `turning a method on writes paymentOptions only and sends only that method`() = runTest(testDispatcher) {
         val changes = captureChanges()
         val vm = loadedViewModel()
         val settings = vm.uiState.value.businessSettings
@@ -97,10 +97,9 @@ class AdminSettingsPaymentOptionsSaveTest {
 
         assertEquals(setOf("paymentOptions"), changes.captured.keys)
         assertEquals(mapOf("enabled" to true, "instructions" to "Payable to Tribe Tails."), entry(changes.captured, "check"))
-        assertEquals(mapOf("enabled" to true, "instructions" to "Zelle to the business line."), entry(changes.captured, "zelle"))
-        assertEquals(false, entry(changes.captured, "cashapp")["enabled"])
-        // A key this build does not model rides along untouched.
-        assertEquals(mapOf("enabled" to true), entry(changes.captured, "applepay"))
+        // #1785: only the changed method is sent. The other web entries and the
+        // key this build does not model (applepay) stay stored and are left out.
+        assertEquals(setOf("check"), (changes.captured["paymentOptions"] as Map<*, *>).keys)
         assertTrue(vm.uiState.value.saveSuccess)
     }
 

@@ -166,7 +166,13 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     // key by `saveBusinessSettings`, the same as the web's save.
     "paymentOptions" to SettingsDiffField(
         write = { it.paymentOptions },
-        compare = { decodePaymentOptions(it.paymentOptions) },
+        // #1785: an unknown id's own entry is compared too, so editing one is a
+        // change the save guard can refuse, and an untouched one is not.
+        compare = { decodePaymentOptions(it.paymentOptions) to unknownPaymentEntries(it.paymentOptions) },
+        // #1785: ONLY THE METHODS THAT CHANGED, like the web and desktop. The
+        // server checks every key it receives, so a stored id it does not list
+        // must not ride along on a save that did not touch it.
+        writeChange = { loaded, edited -> changedPaymentOptions(loaded, edited) },
     ),
     // --- Weather area ---
     "weatherLocation" to SettingsDiffField({ it.weatherLocation }),

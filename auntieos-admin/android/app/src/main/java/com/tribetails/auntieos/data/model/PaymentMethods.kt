@@ -146,6 +146,57 @@ fun decodePaymentOptions(raw: Any?): Map<String, PaymentOptionSetting> {
     return out
 }
 
+/** Stored `paymentOptions` ids this app does not list, in stored order (#1785). */
+fun unknownPaymentMethodIds(raw: Any?): List<String> {
+    val rows = raw as? Map<*, *> ?: return emptyList()
+    val known = PAYMENT_METHOD_CATALOGUE.map { it.id }.toSet()
+    return rows.keys.filterIsInstance<String>().filter { it !in known }
+}
+/** The stored entries of the ids this app does not list. */
+fun unknownPaymentEntries(raw: Any?): Map<String, Any?> {
+    val rows = raw as? Map<*, *> ?: return emptyMap()
+    return unknownPaymentMethodIds(raw).associateWith { rows[it] }
+}
+
+/** The sentence the server gives an id it does not list, word for word (#1785). */
+fun unknownPaymentMethodSentence(id: String): String = "\"$id\" is not a payment method."
+/**
+ * Unknown ids whose stored entry differs between [loaded] and [edited], that is,
+ * the ones a save would send. An untouched unknown id is never one of them.
+ */
+fun touchedUnknownPaymentMethodIds(loaded: Any?, edited: Any?): List<String> {
+    val before = loaded as? Map<*, *>
+    val after = edited as? Map<*, *>
+    return (unknownPaymentMethodIds(loaded) + unknownPaymentMethodIds(edited)).distinct()
+        .filter { before?.get(it) != after?.get(it) }
+}
+/** The first refusal a save of [edited] against [loaded] would meet over an unknown payment id, or null. */
+fun paymentOptionsSaveProblem(loaded: BusinessSettings, edited: BusinessSettings): String? =
+    touchedUnknownPaymentMethodIds(loaded.paymentOptions, edited.paymentOptions)
+        .firstOrNull()?.let(::unknownPaymentMethodSentence)
+/**
+ * The `paymentOptions` entries a save sends (#1785): each catalogue method whose
+ * switch or instructions differ between [loaded] and [edited], plus any unknown
+ * id the edit touched. The server merges the map key by key and checks every
+ * key it receives, so a method left out keeps what is stored and an untouched
+ * unknown id cannot hold the save back. Null when nothing is to be sent.
+ */
+fun changedPaymentOptions(loaded: BusinessSettings, edited: BusinessSettings): Map<String, Any?>? {
+    val before = decodePaymentOptions(loaded.paymentOptions)
+    val after = decodePaymentOptions(edited.paymentOptions)
+    val raw = edited.paymentOptions as? Map<*, *> ?: return null
+    val out = LinkedHashMap<String, Any?>()
+    for (method in PAYMENT_METHOD_CATALOGUE) {
+        fun view(m: Map<String, PaymentOptionSetting>) =
+            isPaymentMethodEnabled(m, method) to m[method.id]?.instructions.orEmpty().trim()
+        if (view(before) == view(after)) continue
+        raw[method.id]?.let { out[method.id] = it }
+    }
+    for (id in touchedUnknownPaymentMethodIds(loaded.paymentOptions, edited.paymentOptions)) {
+        if (raw.containsKey(id)) out[id] = raw[id]
+    }
+    return out.ifEmpty { null }
+}
 fun BusinessSettings.paymentHandle(field: PaymentHandleField): String = when (field) {
     PaymentHandleField.VENMO -> venmoHandle
     PaymentHandleField.PAYPAL -> paypalHandle
