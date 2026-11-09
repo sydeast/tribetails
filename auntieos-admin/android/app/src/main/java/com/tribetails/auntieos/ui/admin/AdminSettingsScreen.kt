@@ -133,6 +133,7 @@ import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.AuntieTextBtn
 import com.tribetails.auntieos.ui.components.AuntieToggle
+import com.tribetails.auntieos.ui.components.DenInfoTip
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
@@ -2215,13 +2216,14 @@ private fun IntegrationsPanel(
 /**
  * The settings mock's `.int` card (issue #755 pass), the Android twin of the
  * web `.integrations__card`: a 40dp brand-gradient tile carrying the
- * service's monogram, the name, what it is for, the caller's [report], and
+ * service's monogram, the name with what it is for in an info tip beside it
+ * (#1759), the caller's [report], and
  * last the mock's `.foot`: the state as an LED with its words, beside the
  * one [control] a row can have. On the raised surface, a hairline at 15dp,
  * 15dp inside.
  */
 @Composable
-private fun IntegrationCard(
+internal fun IntegrationCard(
     name: String,
     purpose: String,
     stateLabel: String,
@@ -2245,13 +2247,24 @@ private fun IntegrationCard(
     ) {
         IntegrationMonogramTile(name)
         Column(Modifier.weight(1f)) {
-            Text(
-                name,
-                style = AuntieTheme.typography.bodyMedium.copy(fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold),
-                color = c.textPrimary,
-            )
-            Spacer(Modifier.height(3.dp))
-            Text(purpose, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            // #1759: the purpose is the info tip BESIDE the name, never a line
+            // under it (2026-09-11 ruling, subtitles are tooltips), as web's
+            // `TitleWithTip` draws it since #1758. The name Text stays a node
+            // of its own, so TalkBack reads the name alone and the tip's own
+            // content description carries the purpose. A blank purpose draws
+            // no tip, as on web.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    name,
+                    style = AuntieTheme.typography.bodyMedium.copy(fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold),
+                    color = c.textPrimary,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (purpose.isNotBlank()) {
+                    Spacer(Modifier.width(6.dp))
+                    DenInfoTip(purpose)
+                }
+            }
             if (report != null) {
                 Spacer(Modifier.height(dims.space2))
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) { report() }
