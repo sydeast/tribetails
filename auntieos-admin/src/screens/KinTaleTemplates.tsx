@@ -31,12 +31,21 @@ import {
   conditionUsesValueInput,
 } from '../lib/kinTale/engine';
 import {
+  CHECKLIST_ITEM_BLANK,
+  CHECKLIST_LIMIT_REACHED,
+  TEMPLATE_SAVE_REFUSED,
   addChecklistItem,
   addCondition,
   addMood,
   attributeCatalogForSource,
+  canAddChecklistItem,
   changeConditionSource,
+  checklistIsSaveable,
+  checklistItemId,
+  checklistProblems,
   freshChecklistKey,
+  isBlankChecklistItem,
+  isPermissionDenied,
   newTemplateDraft,
   nextOrderForScope,
   opLabel,
@@ -673,9 +682,19 @@ function TemplateWizard({
   const serviceTypeNames = serviceCatalog.status === 'ready' ? serviceCatalog.data.map((o) => o.name) : [];
   const [step, setStep] = useState('basic');
 
-  // The editor's one validation rule, owned by the step that owns the field, so
+  // The editor's validation rules, each owned by the step that owns the field, so
   // the rail can flag it from anywhere instead of the operator finding out at save.
   const nameErrors = draft.name.trim() === '' ? ['Give the template a name before saving.'] : [];
+
+  // #1593: blank checklist items and the 60-item cap, the rule the Firestore
+  // rules enforce on every write that carries the checklist. An item added in
+  // this session starts blank, so it is `fresh` until the operator leaves its
+  // field, and its message waits until then. A Save press reveals every one
+  // (`onRevealErrors`), and an item that was already blank when the template
+  // loaded is a problem with the record, so it shows straight away.
+  const [freshIds, setFreshIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [saveRevealed, setSaveRevealed] = useState(false);
+  const checklist = checklistStepErrors(draft.checklistItems, freshIds, saveRevealed);
   const displacesDefault = draft.isDefault && siblings.some((t) => t.isDefault && t._id !== draft._id);
 
   function patch(p: Partial<KinTaleTemplate>) {
@@ -705,8 +724,20 @@ function TemplateWizard({
     }
   }
 
+  function markFresh(id: string) {
+    setFreshIds((prev) => new Set(prev).add(id));
+  }
+  function markLeft(id: string) {
+    setFreshIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
   async function handleSave() {
-    if (saving || nameErrors.length > 0) return;
+    if (saving || nameErrors.length > 0 || !checklistIsSaveable(draft.checklistItems)) return;
     setSaving(true);
     setNotice(null);
     try {
@@ -725,7 +756,10 @@ function TemplateWizard({
       setSaving(false);
       setNotice({
         tone: 'error',
-        text: `Couldn't save the template: ${err instanceof Error ? err.message : 'unknown error'}`,
+        // #1593: a rules refusal gets a sentence, never "Missing or insufficient permissions."
+        text: isPermissionDenied(err)
+          ? TEMPLATE_SAVE_REFUSED
+          : `Couldn't save the template: ${err instanceof Error ? err.message : 'unknown error'}`,
       });
     }
   }
@@ -749,6 +783,9 @@ function TemplateWizard({
       key: 'sections',
       label: 'Display sections',
       blurb: 'Which blocks appear in the recap.',
+      // With the checklist switched off its steps are gone, but its items are
+      // still written, so their problems land here, beside the Checklist toggle.
+      ...(draft.checklistEnabled ? {} : { errors: checklist.hidden.errors, pristine: checklist.hidden.pristine }),
       body: <DisplaySectionsStep draft={draft} patch={patch} />,
     },
     ...(draft.checklistEnabled
@@ -757,6 +794,8 @@ function TemplateWizard({
             key: 'per-kin',
             label: 'Per-Kin items',
             blurb: 'These appear once for each Kin in the visit.',
+            errors: checklist.perPet.errors,
+            pristine: checklist.perPet.pristine,
             body: (
               <ChecklistSection
                 scope="PER_PET"
@@ -766,6 +805,9 @@ function TemplateWizard({
                 bank={bank}
                 serviceTypeNames={serviceTypeNames}
                 onSaveToBank={(text, scope) => void saveToBank(text, scope)}
+                flagBlank={checklist.perPet.flagged}
+                onItemAdded={markFresh}
+                onItemLeft={markLeft}
               />
             ),
           },
@@ -773,6 +815,8 @@ function TemplateWizard({
             key: 'per-visit',
             label: 'Per-visit items',
             blurb: 'These appear once for the whole visit.',
+            errors: checklist.perVisit.errors,
+            pristine: checklist.perVisit.pristine,
             body: (
               <ChecklistSection
                 scope="PER_VISIT"
@@ -782,6 +826,9 @@ function TemplateWizard({
                 bank={bank}
                 serviceTypeNames={serviceTypeNames}
                 onSaveToBank={(text, scope) => void saveToBank(text, scope)}
+                flagBlank={checklist.perVisit.flagged}
+                onItemAdded={markFresh}
+                onItemLeft={markLeft}
               />
             ),
           },
@@ -810,6 +857,7 @@ function TemplateWizard({
       onClose={onClose}
       dirty={dirty}
       onFinish={() => void handleSave()}
+      onRevealErrors={() => setSaveRevealed(true)}
       finishLabel={saving ? 'Saving…' : 'Save template'}
       finishBusy={saving}
       notice={
@@ -821,6 +869,58 @@ function TemplateWizard({
       }
     />
   );
+}
+
+// ── checklist step errors (#1593) ────────────────────────────────────────────
+
+interface ChecklistStepErrors {
+  errors: string[];
+  /** True while every problem on the step is a freshly added item nobody has left yet. */
+  pristine: boolean;
+  /** Whether this step's blank items show their message beside the field. */
+  flagged: boolean;
+}
+
+/**
+ * The checklist's problems, split the way the wizard shows them: one list per
+ * checklist step, plus `hidden` for when the checklist is switched off and its
+ * steps are gone. A step's messages appear together: once one blank item on a
+ * step is flagged, every blank item on it is, so the banner and the fields
+ * always agree.
+ */
+function checklistStepErrors(
+  items: readonly ChecklistItem[],
+  freshIds: ReadonlySet<string>,
+  saveRevealed: boolean,
+): { perPet: ChecklistStepErrors; perVisit: ChecklistStepErrors; hidden: ChecklistStepErrors } {
+  const { overLimit } = checklistProblems(items);
+
+  function forRows(rows: ChecklistItem[], prefix: string, withLimit: boolean): ChecklistStepErrors {
+    const blank = rows
+      .map((item, idx) => ({ item, n: idx + 1 }))
+      .filter(({ item }) => isBlankChecklistItem(item));
+    const revealed = saveRevealed || blank.some(({ item }) => !freshIds.has(checklistItemId(item)));
+    const limit = withLimit && overLimit ? [CHECKLIST_LIMIT_REACHED] : [];
+    return {
+      errors: [...blank.map(({ n }) => `${prefix} ${n}: ${CHECKLIST_ITEM_BLANK}`), ...limit],
+      pristine: !revealed && limit.length === 0,
+      flagged: revealed,
+    };
+  }
+
+  // The over-limit line is counted once, on the per-Kin step, so one problem
+  // never reads as two beside Save.
+  const hiddenPet = forRows(perPetItems(items), 'Per-Kin item', true);
+  const hiddenVisit = forRows(perVisitItems(items), 'Per-visit item', false);
+  return {
+    perPet: forRows(perPetItems(items), 'Item', true),
+    perVisit: forRows(perVisitItems(items), 'Item', false),
+    hidden: {
+      errors: [...hiddenPet.errors, ...hiddenVisit.errors],
+      pristine: hiddenPet.pristine && hiddenVisit.pristine,
+      flagged: hiddenPet.flagged || hiddenVisit.flagged,
+    },
+  };
 }
 
 // ── step bodies ──────────────────────────────────────────────────────────────
@@ -1017,6 +1117,12 @@ interface ChecklistSectionProps {
   /** The real KinCare type names, for the SERVICE_TYPE condition's value suggestions. */
   serviceTypeNames: readonly string[];
   onSaveToBank: (text: string, scope: string) => void;
+  /** #1593: blank items on this step show their message beside the field. */
+  flagBlank: boolean;
+  /** An item was just added. It starts blank, so its message waits. */
+  onItemAdded: (id: string) => void;
+  /** The operator left an item's text field. */
+  onItemLeft: (id: string) => void;
 }
 
 /**
@@ -1032,12 +1138,24 @@ function ChecklistSection({
   bank,
   serviceTypeNames,
   onSaveToBank,
+  flagBlank,
+  onItemAdded,
+  onItemLeft,
 }: ChecklistSectionProps) {
   const rows = scope === 'PER_PET' ? perPetItems(items) : perVisitItems(items);
+  const full = !canAddChecklistItem(items);
+  function add() {
+    const next = addChecklistItem(items, scope);
+    const added = next[next.length - 1];
+    if (next.length === items.length || added === undefined) return;
+    onItemAdded(checklistItemId(added));
+    onItems(next);
+  }
   return (
     <>
       <div className="ktt__step-actions">
-        <GhostButton label={addLabel} onClick={() => onItems(addChecklistItem(items, scope))} />
+        {full && <p className="ktt__note">{CHECKLIST_LIMIT_REACHED}</p>}
+        <GhostButton label={addLabel} onClick={add} disabled={full} />
       </div>
       {rows.length === 0 ? (
         <EmptyHint>No items yet.</EmptyHint>
@@ -1053,11 +1171,13 @@ function ChecklistSection({
               onItems={onItems}
               serviceTypeNames={serviceTypeNames}
               onSaveToBank={onSaveToBank}
+              showBlankError={flagBlank && isBlankChecklistItem(item)}
+              onLeave={() => onItemLeft(checklistItemId(item))}
             />
           ))}
         </ul>
       )}
-      <BankAddRow bank={bank} items={items} scope={scope} onItems={onItems} />
+      <BankAddRow bank={bank} items={items} scope={scope} onItems={onItems} disabled={full} />
     </>
   );
 }
@@ -1067,6 +1187,8 @@ interface BankAddRowProps {
   items: ChecklistItem[];
   scope: string;
   onItems: (items: ChecklistItem[]) => void;
+  /** A full checklist (#1593). The sentence beside Add item says why. */
+  disabled: boolean;
 }
 
 /**
@@ -1075,7 +1197,7 @@ interface BankAddRowProps {
  * including its rule that the row hides entirely when nothing is left to offer,
  * rather than sitting there as an empty heading.
  */
-function BankAddRow({ bank, items, scope, onItems }: BankAddRowProps) {
+function BankAddRow({ bank, items, scope, onItems, disabled }: BankAddRowProps) {
   const available = bankItemsForScope(bank, items, scope);
   if (available.length === 0) return null;
   return (
@@ -1087,6 +1209,7 @@ function BankAddRow({ bank, items, scope, onItems }: BankAddRowProps) {
             <button
               type="button"
               className="ktt__bank-item"
+              disabled={disabled}
               onClick={() =>
                 onItems([
                   ...items,
@@ -1115,6 +1238,10 @@ interface ChecklistItemCardProps {
   onItems: (items: ChecklistItem[]) => void;
   serviceTypeNames: readonly string[];
   onSaveToBank: (text: string, scope: string) => void;
+  /** #1593: the item's text is blank and its message is due. */
+  showBlankError: boolean;
+  /** The operator left the text field. */
+  onLeave: () => void;
 }
 
 function ChecklistItemCard({
@@ -1125,8 +1252,11 @@ function ChecklistItemCard({
   onItems,
   serviceTypeNames,
   onSaveToBank,
+  showBlankError,
+  onLeave,
 }: ChecklistItemCardProps) {
   const label = item.text.trim() || 'this item';
+  const errorId = useId();
 
   function update(patch: Partial<ChecklistItem>) {
     onItems(updateChecklistItem(items, item.key, item.scope, patch));
@@ -1145,7 +1275,10 @@ function ChecklistItemCard({
             className="ktt__input"
             value={item.text}
             onChange={(e) => update({ text: e.target.value })}
+            onBlur={onLeave}
             placeholder="e.g. Peed"
+            aria-invalid={showBlankError || undefined}
+            aria-describedby={showBlankError ? errorId : undefined}
           />
         </label>
         <div className="ktt__item-actions">
@@ -1181,6 +1314,11 @@ function ChecklistItemCard({
           />
         </div>
       </div>
+      {showBlankError && (
+        <p id={errorId} className="ktt__note ktt__note--error ktt__field-error">
+          {CHECKLIST_ITEM_BLANK}
+        </p>
+      )}
 
       <div className="ktt__item-toggles">
         <ToggleRow

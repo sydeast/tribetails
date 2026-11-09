@@ -27,6 +27,13 @@
 .ktt__step-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+/* #1593: the reason Add item is off, beside it. */
+.ktt__step-actions .ktt__note {
+  margin: 0;
 }
 
 /* ── fields ──────────────────────────────────────────────────────────────── */
@@ -79,6 +86,15 @@
 
 .ktt__note--error {
   color: var(--color-error);
+}
+
+/* #1593: a checklist item whose text is blank. The sentence under it says why. */
+.ktt__input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+.ktt__field-error {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
 }
 
 /* ── service-type checkboxes ─────────────────────────────────────────────── */

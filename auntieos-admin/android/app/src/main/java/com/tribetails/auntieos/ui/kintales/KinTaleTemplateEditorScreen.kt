@@ -95,6 +95,17 @@ fun KinTaleTemplateEditorScreen(
                         detail = autosaveLine(state.saveStatus, state.isSaving),
                     )
 
+                    // #1593: a refused or failed save says why, in words, not just
+                    // "Save failed" in the corner.
+                    state.error?.let { message ->
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Error,
+                            onDismiss = viewModel::clearError,
+                        ) {
+                            Text(message, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                        }
+                    }
+
                     BasicSettingsSection(state, viewModel)
 
                     DenPanel(title = "Display sections", subtitle = "Which blocks appear in the recap.") {

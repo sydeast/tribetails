@@ -37,8 +37,27 @@ data class TemplateEditorUiState(
     val saveStatus: SaveStatus = SaveStatus.IDLE,
     val isSaving: Boolean = false,
     val isOnlyDefault: Boolean = false,        // true when this template is the only default
-    val error: String? = null
-)
+    val error: String? = null,
+    /**
+     * #1593: [checklistItemId]s of items added on this screen that the operator
+     * has not left yet. A new item starts blank, and its message waits until
+     * then, so adding an item never greets the operator with an error.
+     */
+    val freshChecklistIds: Set<String> = emptySet(),
+    /** #1593: a Save or Back press found a blank item, so every blank item shows its message. */
+    val checklistRevealed: Boolean = false,
+) {
+    /** #1593: the blank items whose message is on screen. */
+    val flaggedChecklistIds: Set<String>
+        get() = flaggedBlankIds(template.checklistItems, freshChecklistIds, checklistRevealed)
+
+    /** #1593: why Save Changes is off, or null while it is on. */
+    val saveBlockedReason: String?
+        get() = checklistSaveBlockedReason(checklistProblems(template.checklistItems), flaggedChecklistIds)
+
+    /** #1593: Add item and Add from bank stop at 60. */
+    val checklistHasRoom: Boolean get() = canAddChecklistItem(template.checklistItems)
+}
 
 class KinTaleTemplateEditorViewModel(
     private val repository: AuntieRepository = AuntieOSApp.instance.repository
@@ -119,6 +138,7 @@ class KinTaleTemplateEditorViewModel(
 
     fun addChecklistItem(scope: ChecklistScope) {
         val current = _uiState.value.template.checklistItems
+        if (!canAddChecklistItem(current)) return // #1593: the checklist is full
         val newItem = ChecklistItem(
             key = "ck_${UUID.randomUUID().toString().take(8)}",
             text = "",
@@ -127,6 +147,19 @@ class KinTaleTemplateEditorViewModel(
             order = current.maxOfOrNull { it.order }?.plus(1) ?: 0
         )
         mutate { it.copy(checklistItems = current + newItem) }
+        _uiState.value = _uiState.value.copy(
+            freshChecklistIds = _uiState.value.freshChecklistIds + checklistItemId(newItem),
+        )
+    }
+
+    /**
+     * #1593: the operator left this item's text field (focus went in and came
+     * out), so a blank one now says why it cannot be saved.
+     */
+    fun leaveChecklistItem(item: ChecklistItem) {
+        val id = checklistItemId(item)
+        if (id !in _uiState.value.freshChecklistIds) return
+        _uiState.value = _uiState.value.copy(freshChecklistIds = _uiState.value.freshChecklistIds - id)
     }
 
     fun updateChecklistItem(updated: ChecklistItem) {
@@ -154,6 +187,7 @@ class KinTaleTemplateEditorViewModel(
     /** Append a bank item to the checklist (no duplicate; the picker already filters). */
     fun addFromBank(item: ChecklistBankItem) {
         val current = _uiState.value.template.checklistItems
+        if (!canAddChecklistItem(current)) return // #1593: the checklist is full
         val newItem = checklistItemFromBank(
             item,
             key = "ck_${UUID.randomUUID().toString().take(8)}",
@@ -221,15 +255,40 @@ class KinTaleTemplateEditorViewModel(
      * bare `.set()` cost. A save that changed nothing writes nothing and reports
      * success: blurring a field you did not edit is something an operator really
      * does, and the template does hold what they asked for.
+     *
+     * #1593: a write that carries the checklist (a create, or an edit whose diff
+     * names `checklistItems`) must hold no blank item and no more than 60, the
+     * rule the Firestore rules enforce. Such a write is refused HERE, before
+     * anything is sent, and this answers false so the caller keeps the operator
+     * on the screen with their typing intact. [reveal] is true for an explicit
+     * Save or Back, which shows every blank item's message; a blur autosave
+     * refuses quietly, because the operator may still be filling the item in.
+     * Item text is written trimmed. An edit that does not touch the checklist
+     * is not checked, the same as the server, so an old template with a blank
+     * item can still be renamed from the main editor.
+     *
+     * @return false when the checklist stopped the write, true otherwise (the
+     *   write itself is asynchronous and reports through [uiState]).
      */
-    fun persist() {
+    fun persist(reveal: Boolean = false): Boolean {
         val state = _uiState.value
-        val template = state.template
+        val template = state.template.copy(checklistItems = trimChecklistItems(state.template.checklistItems))
+        val isCreate = state.isNew && state.template.id.isBlank()
+        val writesChecklist = isCreate ||
+            (state.loaded != null && "checklistItems" in kinTaleTemplateFieldChanges(state.loaded, template))
+        if (writesChecklist && !checklistProblems(template.checklistItems).isEmpty) {
+            _uiState.value = state.copy(
+                checklistRevealed = state.checklistRevealed || reveal,
+                // Not "Saved": the last change did not go anywhere.
+                saveStatus = SaveStatus.IDLE,
+            )
+            return false
+        }
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true)
             try {
-                if (state.isNew && template.id.isBlank()) {
+                if (isCreate) {
                     repository.createKinTaleTemplate(template).fold(
                         onSuccess = { newId ->
                             val created = template.copy(id = newId)
@@ -238,7 +297,8 @@ class KinTaleTemplateEditorViewModel(
                                 loaded = created,
                                 isNew = false,
                                 isSaving = false,
-                                saveStatus = SaveStatus.SAVED
+                                saveStatus = SaveStatus.SAVED,
+                                error = null,
                             )
                         },
                         onFailure = { e ->
@@ -246,7 +306,7 @@ class KinTaleTemplateEditorViewModel(
                             _uiState.value = _uiState.value.copy(
                                 isSaving = false,
                                 saveStatus = SaveStatus.ERROR,
-                                error = e.message
+                                error = templateSaveErrorText(e)
                             )
                         }
                     )
@@ -263,6 +323,8 @@ class KinTaleTemplateEditorViewModel(
                         )
                         return@launch
                     }
+                    // `template` is the trimmed copy, so `loaded` below becomes
+                    // exactly what was written and the next diff starts from it.
                     val changes = kinTaleTemplateFieldChanges(loaded, template)
                     if (changes.isEmpty()) {
                         _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.SAVED)
@@ -275,7 +337,8 @@ class KinTaleTemplateEditorViewModel(
                             _uiState.value = _uiState.value.copy(
                                 loaded = template,
                                 isSaving = false,
-                                saveStatus = SaveStatus.SAVED
+                                saveStatus = SaveStatus.SAVED,
+                                error = null,
                             )
                         },
                         onFailure = { e ->
@@ -283,7 +346,7 @@ class KinTaleTemplateEditorViewModel(
                             _uiState.value = _uiState.value.copy(
                                 isSaving = false,
                                 saveStatus = SaveStatus.ERROR,
-                                error = e.message
+                                error = templateSaveErrorText(e)
                             )
                         }
                     )
@@ -294,6 +357,7 @@ class KinTaleTemplateEditorViewModel(
                 _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.ERROR)
             }
         }
+        return true
     }
 
     /**

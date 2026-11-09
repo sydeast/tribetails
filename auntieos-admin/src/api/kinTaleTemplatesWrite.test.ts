@@ -98,6 +98,15 @@ describe('saveKinTaleTemplate: create (blank _id)', () => {
     expect(payload.createdAt).toBe(payload.updatedAt);
   });
 
+  it('#1593: a new template writes its checklist text trimmed', async () => {
+    addDoc.mockResolvedValue({ id: 'newTpl1' });
+    await saveKinTaleTemplate(
+      template({ checklistItems: [makeChecklistItem({ key: 'fed', text: ' Fed ', scope: 'PER_PET', order: 0 })] }),
+    );
+    const payload = addDoc.mock.calls[0]?.[1] as { checklistItems: { text: string }[] };
+    expect(payload.checklistItems[0]!.text).toBe('Fed');
+  });
+
   it('writes every model field EXCEPT _id (the doc id is authoritative)', async () => {
     addDoc.mockResolvedValue({ id: 't' });
     await saveKinTaleTemplate(template());
@@ -194,6 +203,28 @@ describe('saveKinTaleTemplate: update (real _id)', () => {
     expect(result).toBe('tpl9');
     expect(setDoc).not.toHaveBeenCalled();
     expect(writeBatch).not.toHaveBeenCalled();
+  });
+
+  it('#1593: writes each checklist item trimmed', async () => {
+    setDoc.mockResolvedValue(undefined);
+    const loaded = template({ _id: 'tpl9' });
+    const edited = {
+      ...loaded,
+      checklistItems: [...loaded.checklistItems, makeChecklistItem({ key: 'water', text: '  Water bowl filled \n', order: 1 })],
+    };
+    await saveKinTaleTemplate(edited, [], loaded);
+    const payload = setDoc.mock.calls[0]?.[1] as { checklistItems: { text: string }[] };
+    expect(payload.checklistItems.map((i) => i.text)).toEqual(['Medications given', 'Water bowl filled']);
+  });
+
+  it('#1593: spaces added around an item are not a checklist change', async () => {
+    const loaded = template({ _id: 'tpl9' });
+    const edited = {
+      ...loaded,
+      checklistItems: loaded.checklistItems.map((i) => ({ ...i, text: ` ${i.text}  ` })),
+    };
+    await saveKinTaleTemplate(edited, [], loaded);
+    expect(setDoc).not.toHaveBeenCalled();
   });
 
   it('#994: refuses an update with no loaded template to diff against', async () => {

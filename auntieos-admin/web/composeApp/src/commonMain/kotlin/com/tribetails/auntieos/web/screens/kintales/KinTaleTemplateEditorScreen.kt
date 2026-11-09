@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -134,6 +135,14 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
     var loaded by remember { mutableStateOf<KinTaleTemplate?>(null) }
     var dirty by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    // #1593: items added this session start blank, so each waits here until the
+    // operator leaves its field; a Save press shows every blank item at once.
+    var freshIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var saveRevealed by remember { mutableStateOf(false) }
+    fun resetChecklistReveal() {
+        freshIds = emptySet()
+        saveRevealed = false
+    }
     // #1591: archive / restore / delete-for-good.
     var removing by remember { mutableStateOf<KinTaleTemplate?>(null) }
     var deleting by remember { mutableStateOf<KinTaleTemplate?>(null) }
@@ -190,8 +199,15 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                 loaded = null
             }
             dirty = false
+            resetChecklistReveal()
         }
     }
+
+    // #1593: what is wrong with the checklist, and how much of it is on screen.
+    val checklistNow = draft?.checklistItems.orEmpty()
+    val problems = checklistProblems(checklistNow)
+    val flagged = flaggedBlankIds(checklistNow, freshIds, saveRevealed)
+    val saveBlockedReason = checklistSaveBlockedReason(problems, flagged)
 
     ScreenScaffold {
         AuntieBreadcrumbs(
@@ -208,12 +224,21 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
             isDirty  = dirty,
             isSaving = saving,
             onClose  = onClose,
+            saveBlockedReason = saveBlockedReason,
             onSave   = save@{
-                val d = draft ?: return@save
-                if (d.name.isBlank()) {
+                val typed = draft ?: return@save
+                if (typed.name.isBlank()) {
                     showToast("Give the template a name first.", ToastKind.Error)
                     return@save
                 }
+                // #1593: a blank item or an over-full checklist is never written.
+                // The press shows every blank item's message, and Save stays off
+                // until they are fixed.
+                if (!checklistProblems(typed.checklistItems).isEmpty) {
+                    saveRevealed = true
+                    return@save
+                }
+                val d = typed.copy(checklistItems = trimChecklistItems(typed.checklistItems))
                 val baseline = loaded
                 if (d._id.isNotBlank() && baseline?._id != d._id) {
                     showToast("This template hasn't loaded yet. Try again in a moment.", ToastKind.Error)
@@ -226,7 +251,7 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                     } else {
                         when (val r = client.updateKinTaleTemplate(baseline, d)) {
                             is WriteResult.Ok  -> WriteResult.Ok(d._id)
-                            is WriteResult.Err -> WriteResult.Err(r.message)
+                            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
                         }
                     }
                     saving = false
@@ -236,11 +261,16 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                                 selectedId = res.value
                                 draft = d.copy(_id = res.value)
                             }
+                            // Trimmed: what was written is what the next diff starts from.
                             loaded = d.copy(_id = res.value)
                             dirty = false
                             showToast("Template saved.", ToastKind.Success)
                         }
-                        is WriteResult.Err -> showToast("Couldn't save: ${res.message}", ToastKind.Error)
+                        is WriteResult.Err -> showToast(
+                            if (isPermissionDeniedMessage(res.message, res.code)) TEMPLATE_SAVE_REFUSED
+                            else "Couldn't save: ${res.message}",
+                            ToastKind.Error,
+                        )
                     }
                 }
             },
@@ -300,6 +330,7 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                 draft      = tpl
                 loaded     = tpl
                 dirty      = false
+                resetChecklistReveal()
             },
             onAddNew = {
                 selectedId = ""
@@ -311,6 +342,7 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                 )
                 loaded = null
                 dirty = true
+                resetChecklistReveal()
             },
         )
 
@@ -469,9 +501,12 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                 items = current.checklistItems,
                 bank = bank,
                 householdTags = householdTags,
+                flagged = flagged,
                 onUpdate = { newItems ->
                     draft = current.copy(checklistItems = newItems); dirty = true
                 },
+                onItemAdded = { id -> freshIds = freshIds + id },
+                onItemLeft = { id -> freshIds = freshIds - id },
                 onSaveToBank = { text, itemScope -> saveToBank(text, itemScope) },
             )
             Spacer(Modifier.height(18.dp))
@@ -503,6 +538,8 @@ private fun EditorHeader(
     isSaving: Boolean,
     onClose: () -> Unit,
     onSave: () -> Unit,
+    /** #1593: why Save is off, shown under it. Null means Save is on. */
+    saveBlockedReason: String? = null,
 ) {
     val c = AuntieTheme.colors
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -544,12 +581,23 @@ private fun EditorHeader(
                 )
             }
         }
-        PrimaryButton(
-            label   = if (isSaving) "Saving…" else "Save",
-            onClick = onSave,
-            loading = isSaving,
-            leading = { Icon(Lucide.Save, contentDescription = null, modifier = Modifier.size(13.dp)) },
-        )
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            PrimaryButton(
+                label   = if (isSaving) "Saving…" else "Save",
+                onClick = onSave,
+                enabled = saveBlockedReason == null,
+                loading = isSaving,
+                leading = { Icon(Lucide.Save, contentDescription = null, modifier = Modifier.size(13.dp)) },
+            )
+            if (saveBlockedReason != null) {
+                Text(
+                    text = saveBlockedReason,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.error,
+                    modifier = Modifier.widthIn(max = 260.dp),
+                )
+            }
+        }
         AuntieIconButton(
             icon = Lucide.X,
             contentDescription = "Close",
@@ -630,11 +678,28 @@ private fun ChecklistEditor(
     items: List<ChecklistItem>,
     bank: List<ChecklistBankItem>,
     householdTags: List<TagDef>,
+    /** #1593: [checklistItemId]s of the blank items whose message is due. */
+    flagged: Set<String>,
     onUpdate: (List<ChecklistItem>) -> Unit,
+    onItemAdded: (String) -> Unit,
+    onItemLeft: (String) -> Unit,
     onSaveToBank: (String, String) -> Unit,
 ) {
     val perPet   = items.filter { it.scope.equals("PER_PET", ignoreCase = true) }.sortedBy { it.order }
     val perVisit = items.filter { it.scope.equals("PER_VISIT", ignoreCase = true) }.sortedBy { it.order }
+    // #1593: the cap is on the whole checklist, so both sections fill together.
+    val canAdd = canAddChecklistItem(items)
+    fun addBlank(scope: String, sameScope: List<ChecklistItem>) {
+        if (!canAdd) return
+        val item = ChecklistItem(
+            key   = freshKey(items),
+            text  = "",
+            scope = scope,
+            order = (sameScope.maxOfOrNull { it.order } ?: -1) + 1,
+        )
+        onItemAdded(checklistItemId(item))
+        onUpdate(items + item)
+    }
 
     EditorSection(
         title = "Per-pet items",
@@ -647,24 +712,20 @@ private fun ChecklistEditor(
                 item = item,
                 allItems = items,
                 householdTags = householdTags,
+                showBlankError = checklistItemId(item) in flagged,
                 onUpdate = onUpdate,
+                onLeave = { onItemLeft(checklistItemId(item)) },
                 onSaveToBank = onSaveToBank,
             )
         }
         AuntieDashedAddButton(
             text = "Add per-pet item",
             leadingIcon = Lucide.Plus,
-            onClick = {
-                val nextOrder = (perPet.maxOfOrNull { it.order } ?: -1) + 1
-                onUpdate(items + ChecklistItem(
-                    key   = freshKey(items),
-                    text  = "",
-                    scope = "PER_PET",
-                    order = nextOrder,
-                ))
-            },
+            enabled = canAdd,
+            onClick = { addBlank("PER_PET", perPet) },
         )
-        BankAddRow(bank = bank, items = items, scope = "PER_PET", onAdd = { picked ->
+        ChecklistLimitNote(visible = !canAdd)
+        BankAddRow(bank = bank, items = items, scope = "PER_PET", enabled = canAdd, onAdd = { picked ->
             val nextOrder = (perPet.maxOfOrNull { it.order } ?: -1) + 1
             onUpdate(items + checklistItemFromBank(picked, key = freshKey(items), order = nextOrder))
         })
@@ -681,24 +742,20 @@ private fun ChecklistEditor(
                 item = item,
                 allItems = items,
                 householdTags = householdTags,
+                showBlankError = checklistItemId(item) in flagged,
                 onUpdate = onUpdate,
+                onLeave = { onItemLeft(checklistItemId(item)) },
                 onSaveToBank = onSaveToBank,
             )
         }
         AuntieDashedAddButton(
             text = "Add per-visit item",
             leadingIcon = Lucide.Plus,
-            onClick = {
-                val nextOrder = (perVisit.maxOfOrNull { it.order } ?: -1) + 1
-                onUpdate(items + ChecklistItem(
-                    key   = freshKey(items),
-                    text  = "",
-                    scope = "PER_VISIT",
-                    order = nextOrder,
-                ))
-            },
+            enabled = canAdd,
+            onClick = { addBlank("PER_VISIT", perVisit) },
         )
-        BankAddRow(bank = bank, items = items, scope = "PER_VISIT", onAdd = { picked ->
+        ChecklistLimitNote(visible = !canAdd)
+        BankAddRow(bank = bank, items = items, scope = "PER_VISIT", enabled = canAdd, onAdd = { picked ->
             val nextOrder = (perVisit.maxOfOrNull { it.order } ?: -1) + 1
             onUpdate(items + checklistItemFromBank(picked, key = freshKey(items), order = nextOrder))
         })
@@ -710,11 +767,25 @@ private fun ChecklistEditor(
  * that are not already in the checklist (so it never offers a duplicate). Hidden when
  * nothing is available. Tapping a row appends that item.
  */
+/** #1593: under a disabled Add item, the reason it is off. */
+@Composable
+private fun ChecklistLimitNote(visible: Boolean) {
+    if (!visible) return
+    Spacer(Modifier.height(6.dp))
+    Text(
+        CHECKLIST_LIMIT_REACHED,
+        style = AuntieTheme.typography.bodySmall,
+        color = AuntieTheme.colors.textDim,
+    )
+}
+
 @Composable
 private fun BankAddRow(
     bank: List<ChecklistBankItem>,
     items: List<ChecklistItem>,
     scope: String,
+    /** False on a full checklist (#1593); the note beside Add item says why. */
+    enabled: Boolean,
     onAdd: (ChecklistBankItem) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -733,13 +804,13 @@ private fun BankAddRow(
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable { onAdd(bi) }
+                    .clickable(enabled = enabled) { onAdd(bi) }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(Lucide.Plus, contentDescription = null, tint = c.primary, modifier = Modifier.size(12.dp))
-                Text(bi.text, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                Icon(Lucide.Plus, contentDescription = null, tint = if (enabled) c.primary else c.textFaint, modifier = Modifier.size(12.dp))
+                Text(bi.text, style = AuntieTheme.typography.bodySmall, color = if (enabled) c.textPrimary else c.textFaint)
             }
         }
     }
@@ -750,7 +821,11 @@ private fun ChecklistItemRow(
     item: ChecklistItem,
     allItems: List<ChecklistItem>,
     householdTags: List<TagDef>,
+    /** #1593: the text is blank and its message is due. */
+    showBlankError: Boolean,
     onUpdate: (List<ChecklistItem>) -> Unit,
+    /** The operator left the text field. */
+    onLeave: () -> Unit,
     onSaveToBank: (String, String) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -772,6 +847,8 @@ private fun ChecklistItemRow(
                         onUpdate(allItems.map { if (it.key == item.key && it.scope == item.scope) it.copy(text = v) else it })
                     },
                     placeholder = "e.g. Peed",
+                    errorMessage = if (showBlankError) CHECKLIST_ITEM_BLANK else null,
+                    onFocusLost = onLeave,
                 )
             }
             // Reorder up

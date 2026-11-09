@@ -60,12 +60,86 @@ export function nextOrderForScope(items: readonly ChecklistItem[], scope: string
   return inScope.reduce((max, i) => Math.max(max, i.order), -1) + 1;
 }
 
-/** Append a blank item to the given scope. Scope is fixed at creation (the two sections each own their add). */
+/**
+ * Append a blank item to the given scope. Scope is fixed at creation (the two
+ * sections each own their add). A full checklist (#1593) comes back unchanged.
+ */
 export function addChecklistItem(items: readonly ChecklistItem[], scope: string): ChecklistItem[] {
+  if (!canAddChecklistItem(items)) return [...items];
   return [
     ...items,
     makeChecklistItem({ key: freshChecklistKey(items), scope, order: nextOrderForScope(items, scope) }),
   ];
+}
+
+// ── checklist rules (#1593) ──────────────────────────────────────────────────
+//
+// The same rule the Firestore rule `ktChecklistWriteOk` enforces on every write
+// that carries `checklistItems`: every item's text is non-blank, and there are at
+// most 60 items across both scopes. Mirrored on Android and the desktop console
+// (`KinTaleChecklistRules.kt`), with the same sentences.
+
+/** The most items one template's checklist holds, both scopes together. */
+export const MAX_CHECKLIST_ITEMS = 60;
+
+/** Beside an item whose text is blank or only spaces. */
+export const CHECKLIST_ITEM_BLANK = 'Give this checklist item some text, or remove it.';
+
+/** Beside Add item once the checklist is full, and on a stored checklist that is over the limit. */
+export const CHECKLIST_LIMIT_REACHED = 'A checklist holds up to 60 items.';
+
+/**
+ * A save the Firestore rules refused. The client checks the same rule before it
+ * writes, so the sentence names what the rule checks instead of the raw code.
+ */
+export const TEMPLATE_SAVE_REFUSED =
+  'The template was not saved. Every checklist item needs text, and a checklist holds up to 60 items.';
+
+/** True when the item has no text once spaces are taken off. */
+export function isBlankChecklistItem(item: Pick<ChecklistItem, 'text'>): boolean {
+  return item.text.trim() === '';
+}
+
+/** The identity the editor uses for one item: keys are unique per scope. */
+export function checklistItemId(item: Pick<ChecklistItem, 'key' | 'scope'>): string {
+  return `${item.scope}:${item.key}`;
+}
+
+/** What is wrong with a checklist: which items are blank, and whether it is over the limit. */
+export interface ChecklistProblems {
+  /** `checklistItemId` of every blank item, in list order. */
+  blankIds: string[];
+  overLimit: boolean;
+}
+
+export function checklistProblems(items: readonly ChecklistItem[]): ChecklistProblems {
+  return {
+    blankIds: items.filter(isBlankChecklistItem).map(checklistItemId),
+    overLimit: items.length > MAX_CHECKLIST_ITEMS,
+  };
+}
+
+/** True when the checklist would pass the server rule as it stands. */
+export function checklistIsSaveable(items: readonly ChecklistItem[]): boolean {
+  const p = checklistProblems(items);
+  return p.blankIds.length === 0 && !p.overLimit;
+}
+
+/** Add item (and Add from bank) is offered only while the checklist has room for one more. */
+export function canAddChecklistItem(items: readonly ChecklistItem[]): boolean {
+  return items.length < MAX_CHECKLIST_ITEMS;
+}
+
+/** Every item's text with the spaces taken off both ends, as it is written. */
+export function trimChecklistItems(items: readonly ChecklistItem[]): ChecklistItem[] {
+  return items.map((i) => (i.text === i.text.trim() ? i : { ...i, text: i.text.trim() }));
+}
+
+/** A Firestore rules refusal: the web SDK's `permission-denied`, bare or prefixed. */
+export function isPermissionDenied(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === 'string' && (code === 'permission-denied' || code.endsWith('/permission-denied'));
 }
 
 /** Patch the one item matching (key, scope). */

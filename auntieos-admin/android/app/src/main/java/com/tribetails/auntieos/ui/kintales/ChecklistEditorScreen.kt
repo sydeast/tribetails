@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.kintales
 
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -67,12 +68,18 @@ fun ChecklistEditorScreen(
         .filter { it.scope == ChecklistScope.PER_VISIT.name }
         .sortedBy { it.order }
 
+    // #1593: Back and Save Changes both save, and a checklist with a blank item
+    // is never written. Rather than drop the item or the typing, the operator
+    // stays here and every blank item says why. The system back gesture takes
+    // the same road as the arrow; it used to pop without saving at all.
+    val saveAndLeave: () -> Unit = { if (viewModel.persist(reveal = true)) onBack() }
+    BackHandler(onBack = saveAndLeave)
+    val flagged = state.flaggedChecklistIds
+    val canAdd = state.checklistHasRoom
+
     AuntieScreenScaffold(
         title = "Configure Checklist",
-        onBack = {
-            viewModel.persist()
-            onBack()
-        },
+        onBack = saveAndLeave,
         actions = { SaveStatusBadge(state.saveStatus, state.isSaving) },
         imePaddingEnabled = true,
     ) {
@@ -99,8 +106,19 @@ fun ChecklistEditorScreen(
                         PrimaryButton(
                             label = "Add Item",
                             onClick = { viewModel.addChecklistItem(ChecklistScope.PER_PET) },
+                            enabled = canAdd,
                             leading = { Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(18.dp)) }
                         )
+                    }
+                    if (!canAdd) ChecklistLimitNote()
+
+                    state.error?.let { message ->
+                        AuntieBanner(
+                            tone = AuntieBannerTone.Error,
+                            onDismiss = viewModel::clearError,
+                        ) {
+                            Text(message, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                        }
                     }
 
                     tagVocabError?.let { message ->
@@ -124,9 +142,12 @@ fun ChecklistEditorScreen(
                         items = perPet,
                         bankAvailable = bankItemsNotInChecklist(bank, state.template.checklistItems)
                             .filter { it.scope == ChecklistScope.PER_PET.name },
+                        flagged = flagged,
+                        canAdd = canAdd,
                         onUpdate = viewModel::updateChecklistItem,
                         onDelete = { viewModel.removeChecklistItem(it); viewModel.persist() },
-                        onPersist = viewModel::persist,
+                        onPersist = { viewModel.persist() },
+                        onLeave = viewModel::leaveChecklistItem,
                         onAdd = { viewModel.addChecklistItem(ChecklistScope.PER_PET) },
                         onAddFromBank = { viewModel.addFromBank(it); viewModel.persist() },
                         onSaveToBank = { viewModel.saveItemToBank(it.text, it.scope) },
@@ -141,9 +162,12 @@ fun ChecklistEditorScreen(
                         items = perVisit,
                         bankAvailable = bankItemsNotInChecklist(bank, state.template.checklistItems)
                             .filter { it.scope == ChecklistScope.PER_VISIT.name },
+                        flagged = flagged,
+                        canAdd = canAdd,
                         onUpdate = viewModel::updateChecklistItem,
                         onDelete = { viewModel.removeChecklistItem(it); viewModel.persist() },
-                        onPersist = viewModel::persist,
+                        onPersist = { viewModel.persist() },
+                        onLeave = viewModel::leaveChecklistItem,
                         onAdd = { viewModel.addChecklistItem(ChecklistScope.PER_VISIT) },
                         onAddFromBank = { viewModel.addFromBank(it); viewModel.persist() },
                         onSaveToBank = { viewModel.saveItemToBank(it.text, it.scope) },
@@ -153,12 +177,23 @@ fun ChecklistEditorScreen(
             }
         }
 
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(AuntieTheme.colors.background)
-                .padding(16.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // #1593: Save Changes is off only while its reason is on screen,
+            // and the reason sits right here beside it.
+            val blockedReason = state.saveBlockedReason
+            if (blockedReason != null) {
+                Text(
+                    blockedReason,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.error,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -170,10 +205,8 @@ fun ChecklistEditorScreen(
                 )
                 PrimaryButton(
                     label = "Save Changes",
-                    onClick = {
-                        viewModel.persist()
-                        onBack()
-                    },
+                    onClick = saveAndLeave,
+                    enabled = blockedReason == null,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -189,9 +222,12 @@ private fun ChecklistGroup(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     items: List<ChecklistItem>,
     bankAvailable: List<com.tribetails.auntieos.data.model.ChecklistBankItem>,
+    flagged: Set<String>,
+    canAdd: Boolean,
     onUpdate: (ChecklistItem) -> Unit,
     onDelete: (key: String) -> Unit,
     onPersist: () -> Unit,
+    onLeave: (ChecklistItem) -> Unit,
     onAdd: () -> Unit,
     onAddFromBank: (com.tribetails.auntieos.data.model.ChecklistBankItem) -> Unit,
     onSaveToBank: (ChecklistItem) -> Unit,
@@ -231,18 +267,23 @@ private fun ChecklistGroup(
                     onPersist = onPersist,
                     onSaveToBank = onSaveToBank,
                     householdTags = householdTags,
+                    showBlankError = checklistItemId(item) in flagged,
+                    onLeave = { onLeave(item) },
                 )
             }
         }
 
-        AuntieTextBtn(onClick = onAdd) {
-            Icon(Lucide.Plus, contentDescription = null, tint = AuntieTheme.colors.kinfolkOrange)
+        val addTint = if (canAdd) AuntieTheme.colors.kinfolkOrange else AuntieTheme.colors.textDim
+        AuntieTextBtn(onClick = onAdd, enabled = canAdd) {
+            Icon(Lucide.Plus, contentDescription = null, tint = addTint)
             Spacer(Modifier.width(6.dp))
-            Text("Add ${heading.lowercase().removeSuffix(" items")}", color = AuntieTheme.colors.kinfolkOrange)
+            Text("Add ${heading.lowercase().removeSuffix(" items")}", color = addTint)
         }
+        if (!canAdd) ChecklistLimitNote()
 
         // Run-4 #7b: "Add from bank" of common items not already in this group.
-        if (bankAvailable.isNotEmpty()) {
+        // A full checklist (#1593) offers none; the note above says why.
+        if (bankAvailable.isNotEmpty() && canAdd) {
             Text(
                 "ADD FROM BANK",
                 style = AuntieTheme.typography.labelSmall,
@@ -275,7 +316,15 @@ internal fun ChecklistItemEditor(
     onPersist: () -> Unit,
     onSaveToBank: (ChecklistItem) -> Unit,
     householdTags: List<TagDef>,
+    /** #1593: the text is blank and its message is due. */
+    showBlankError: Boolean = false,
+    /** #1593: focus went into the text field and came back out. */
+    onLeave: () -> Unit = {},
 ) {
+    // The field reports "unfocused" once when it first composes, so only a
+    // focused-then-unfocused change counts as leaving it. Without this a new
+    // item would be told off the instant it was added.
+    var hadFocus by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -295,14 +344,31 @@ internal fun ChecklistItemEditor(
 
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AuntieField(
-                        value = item.text,
-                        onValueChange = { onUpdate(item.copy(text = it)) },
-                        label = "Item Text",
-                        modifier = Modifier
-                            .weight(1f)
-                            .onFocusChanged { if (!it.isFocused) onPersist() },
-                    )
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        AuntieField(
+                            value = item.text,
+                            onValueChange = { onUpdate(item.copy(text = it)) },
+                            label = "Item Text",
+                            isError = showBlankError,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged {
+                                    if (it.isFocused) {
+                                        hadFocus = true
+                                    } else {
+                                        if (hadFocus) onLeave()
+                                        onPersist()
+                                    }
+                                },
+                        )
+                        if (showBlankError) {
+                            Text(
+                                CHECKLIST_ITEM_BLANK,
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.error,
+                            )
+                        }
+                    }
                     AuntieDropdownField(
                         value = ChecklistScope.values().firstOrNull { it.name == item.scope },
                         options = ChecklistScope.values().toList(),
@@ -380,6 +446,16 @@ internal fun ChecklistItemEditor(
             }
         }
     }
+}
+
+/** #1593: under a disabled Add item, the reason it is off. */
+@Composable
+private fun ChecklistLimitNote() {
+    Text(
+        CHECKLIST_LIMIT_REACHED,
+        style = AuntieTheme.typography.bodySmall,
+        color = AuntieTheme.colors.textDim,
+    )
 }
 
 private fun scopeLabel(scope: String): String = when (scope) {

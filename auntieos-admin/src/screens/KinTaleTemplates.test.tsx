@@ -10,6 +10,11 @@ import {
   type FieldCondition,
   type KinTaleTemplate,
 } from '../lib/kinTale/model';
+import {
+  CHECKLIST_ITEM_BLANK,
+  CHECKLIST_LIMIT_REACHED,
+  TEMPLATE_SAVE_REFUSED,
+} from '../lib/kinTaleTemplateEdit';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
@@ -612,11 +617,13 @@ describe('KinTaleTemplates: editing the sections + items round-trips into the sa
     // "Add per-visit item" cannot collide with the per-Kin section's action.
     await goToStep('Per-visit items');
     await user.click(screen.getByRole('button', { name: /add per-visit item/i }));
+    // #1593: a new item starts blank, and a blank item is never saved.
+    await user.type(screen.getByLabelText('Item text'), 'Bins out');
 
     await saveTemplate();
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
     const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
-    expect(arg.checklistItems.filter((i) => i.scope === 'PER_VISIT')).toHaveLength(1);
+    expect(arg.checklistItems.filter((i) => i.scope === 'PER_VISIT')).toMatchObject([{ text: 'Bins out' }]);
   });
 
   it('mood editor (pet mood on) adds a mood that survives the save', async () => {
@@ -776,6 +783,172 @@ describe('KinTaleTemplates: default exclusivity', () => {
     expect(screen.getByDisplayValue('Sit recap')).toBeInTheDocument();
     await user.click(screen.getByRole('switch', { name: 'Make default template' }));
     expect(screen.getByText(/only one template can be the default/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1593 (QA walk 2026-11-05): "an empty checklist item saves." The field now
+ * refuses with a sentence beside it, Save never greys out without one on screen,
+ * and the Firestore rules refuse the same thing for any client that skips this.
+ */
+describe('KinTaleTemplates: checklist items need text, and there are at most 60 (#1593)', () => {
+  function sixty() {
+    return Array.from({ length: 60 }, (_, i) =>
+      makeChecklistItem({ key: `item_${i + 1}`, text: `Item ${i + 1}`, scope: 'PER_PET', order: i }),
+    );
+  }
+
+  async function lastStep(): Promise<void> {
+    const pills = within(rail()).getAllByRole('button');
+    await user.click(pills[pills.length - 1]!);
+  }
+
+  it('says nothing about a new item until the operator leaves it, then says why beside it', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await goToStep('Per-Kin items');
+    await user.click(screen.getByRole('button', { name: /add per-kin item/i }));
+
+    const fresh = screen.getAllByLabelText('Item text')[1]!;
+    expect(screen.queryByText(CHECKLIST_ITEM_BLANK)).toBeNull();
+    expect(fresh).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByRole('button', { name: /^3 Per-Kin items/ })).toHaveAccessibleName('3 Per-Kin items');
+
+    await user.click(fresh);
+    await user.tab();
+
+    expect(screen.getByText(CHECKLIST_ITEM_BLANK)).toBeInTheDocument();
+    expect(fresh).toHaveAttribute('aria-invalid', 'true');
+    expect(fresh).toHaveAccessibleDescription(CHECKLIST_ITEM_BLANK);
+    expect(screen.getByRole('button', { name: /^3 Per-Kin items/ })).toHaveAccessibleName(
+      '3 Per-Kin items 1 thing to fix',
+    );
+
+    // Save is off now, and the reason is on screen beside it.
+    await lastStep();
+    expect(screen.getByRole('button', { name: /^save template$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '1 thing left to fix' })).toBeInTheDocument();
+  });
+
+  it('a Save press with an untouched blank item saves nothing and lands on the item, saying why', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await goToStep('Per-Kin items');
+    await user.click(screen.getByRole('button', { name: /add per-kin item/i }));
+
+    await saveTemplate();
+
+    expect(saveKinTaleTemplate).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Per-Kin items', level: 3 })).toBeInTheDocument();
+    expect(screen.getByText(CHECKLIST_ITEM_BLANK)).toBeInTheDocument();
+    expect(screen.getByText(`Item 2: ${CHECKLIST_ITEM_BLANK}`)).toBeInTheDocument();
+    expect(screen.getAllByLabelText('Item text')[1]).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('spaces alone are blank; typing text clears the message and the save goes through', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await goToStep('Per-Kin items');
+    await user.click(screen.getByRole('button', { name: /add per-kin item/i }));
+    const fresh = screen.getAllByLabelText('Item text')[1]!;
+    await user.type(fresh, '   ');
+    await user.tab();
+    expect(screen.getByText(CHECKLIST_ITEM_BLANK)).toBeInTheDocument();
+
+    await user.type(fresh, 'Fed');
+    expect(screen.queryByText(CHECKLIST_ITEM_BLANK)).toBeNull();
+
+    await saveTemplate();
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+    const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
+    expect(arg.checklistItems.map((i) => i.text.trim())).toEqual(['Meds', 'Fed']);
+  });
+
+  it('a template that arrives with a blank item flags it at once and will not save', async () => {
+    mockStream({
+      status: 'ready',
+      data: [
+        tpl({
+          checklistItems: [
+            makeChecklistItem({ key: 'meds', text: 'Meds', scope: 'PER_PET', order: 0 }),
+            makeChecklistItem({ key: 'old', text: ' ', scope: 'PER_PET', order: 1 }),
+          ],
+        }),
+      ],
+    });
+    render(<KinTaleTemplates />);
+    await openEditor();
+    expect(screen.getByRole('button', { name: /^3 Per-Kin items/ })).toHaveAccessibleName(
+      '3 Per-Kin items 1 thing to fix',
+    );
+    await lastStep();
+    const finish = screen.getByRole('button', { name: /^save template$/i });
+    expect(finish).toBeDisabled();
+    await user.click(finish);
+    expect(saveKinTaleTemplate).not.toHaveBeenCalled();
+  });
+
+  it('with the checklist switched off, a blank item is still caught, on Display sections', async () => {
+    mockStream({
+      status: 'ready',
+      data: [
+        tpl({
+          checklistEnabled: false,
+          checklistItems: [makeChecklistItem({ key: 'old', text: '', scope: 'PER_VISIT', order: 0 })],
+        }),
+      ],
+    });
+    render(<KinTaleTemplates />);
+    await openEditor();
+    expect(screen.getByRole('button', { name: /^2 Display sections/ })).toHaveAccessibleName(
+      '2 Display sections 1 thing to fix',
+    );
+    await goToStep('Display sections');
+    expect(screen.getByText(`Per-visit item 1: ${CHECKLIST_ITEM_BLANK}`)).toBeInTheDocument();
+  });
+
+  it('at 60 items Add is off, Add from bank is off, and the sentence beside Add says why', async () => {
+    mockStream({ status: 'ready', data: [tpl({ checklistItems: sixty() })] });
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await goToStep('Per-Kin items');
+    expect(screen.getByRole('button', { name: /add per-kin item/i })).toBeDisabled();
+    expect(screen.getByText(CHECKLIST_LIMIT_REACHED)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /fresh water provided/i })).toBeDisabled();
+
+    // The cap is on the whole checklist, so the other scope is full too.
+    await goToStep('Per-visit items');
+    expect(screen.getByRole('button', { name: /add per-visit item/i })).toBeDisabled();
+    expect(screen.getByText(CHECKLIST_LIMIT_REACHED)).toBeInTheDocument();
+
+    // 60 is allowed: the template still saves.
+    await saveTemplate();
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+  });
+
+  it('a stored checklist over 60 will not save, and says why', async () => {
+    const over = [
+      ...sixty(),
+      makeChecklistItem({ key: 'item_61', text: 'Item 61', scope: 'PER_PET', order: 60 }),
+    ];
+    mockStream({ status: 'ready', data: [tpl({ checklistItems: over })] });
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await goToStep('Per-Kin items');
+    expect(screen.getAllByText(CHECKLIST_LIMIT_REACHED).length).toBeGreaterThan(0);
+    await lastStep();
+    expect(screen.getByRole('button', { name: /^save template$/i })).toBeDisabled();
+  });
+
+  it('a rules refusal says what the rule checks, never the raw code', async () => {
+    saveKinTaleTemplate.mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),
+    );
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await saveTemplate();
+    expect(await screen.findByText(TEMPLATE_SAVE_REFUSED)).toBeInTheDocument();
+    expect(screen.queryByText(/insufficient permissions/i)).toBeNull();
   });
 });
 

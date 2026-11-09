@@ -62,3 +62,63 @@ describe('rules: /kintale_templates/{id} (#1591)', () => {
     await assertFails(asUser(await getEnv(), 'u-kinfolk').firestore().doc('kintale_templates/t1').delete());
   });
 });
+
+/**
+ * #1593: a checklist item has to carry text. Checked on create, and on an
+ * update only when the checklist itself changes, so an old template with a
+ * blank item can still be archived. At most 60 items: the rules check the list
+ * slot by slot.
+ */
+describe('rules: kintale_templates checklist items (#1593)', () => {
+  afterEach(async () => cleanup());
+  const owner = async () => (await getEnv()).authenticatedContext('u-owner', { admin: true }).firestore();
+  const item = (text: unknown, key = 'k') => ({ key, text, scope: 'visit', required: false, order: 0, conditions: [] });
+  const items = (n: number) => Array.from({ length: n }, (_, i) => item(`Item ${i + 1}`, `k${i}`));
+  it('a template whose items all say something saves', async () => {
+    await assertSucceeds(
+      (await owner()).doc('kintale_templates/new1').set({ name: 'Walk', checklistItems: [item('Fresh water')] }),
+    );
+  });
+  it('an empty, blank or non-text item is refused on create', async () => {
+    for (const bad of ['', '   ', 42, null]) {
+      await assertFails(
+        (await owner())
+          .doc('kintale_templates/new2')
+          .set({ name: 'Walk', checklistItems: [item('Fresh water'), item(bad, 'b')] }),
+      );
+    }
+    await assertFails((await owner()).doc('kintale_templates/new3').set({ name: 'Walk', checklistItems: [{ key: 'x' }] }));
+  });
+  it('an empty item is refused when an update changes the checklist', async () => {
+    await seed({ checklistItems: [item('Fresh water')] });
+    await assertFails(
+      (await owner()).doc('kintale_templates/t1').set({ checklistItems: [item('Fresh water'), item('')] }, { merge: true }),
+    );
+    await assertSucceeds(
+      (await owner())
+        .doc('kintale_templates/t1')
+        .set({ checklistItems: [item('Fresh water'), item('Meds given', 'm')] }, { merge: true }),
+    );
+  });
+  it('a stored blank item does not block an update that leaves the checklist alone', async () => {
+    await seed({ checklistItems: [item('')] });
+    await assertSucceeds((await owner()).doc('kintale_templates/t1').update({ archived: true, archivedAt: 'x' }));
+    await assertSucceeds((await owner()).doc('kintale_templates/t1').update({ name: 'Renamed' }));
+  });
+  it('every slot up to the 60th is checked, and 61 items are refused', async () => {
+    await assertSucceeds((await owner()).doc('kintale_templates/n60').set({ name: 'Long', checklistItems: items(60) }));
+    const blankLast = [...items(59), item(' ', 'last')];
+    await assertFails((await owner()).doc('kintale_templates/n60b').set({ name: 'Long', checklistItems: blankLast }));
+    await assertFails((await owner()).doc('kintale_templates/n61').set({ name: 'Long', checklistItems: items(61) }));
+    await seed({ checklistItems: items(3) });
+    await assertSucceeds((await owner()).doc('kintale_templates/t1').update({ checklistItems: items(60) }));
+  });
+  it('a template with no checklist, or an empty one, is not refused for it', async () => {
+    await assertSucceeds((await owner()).doc('kintale_templates/n0').set({ name: 'No checklist' }));
+    await assertSucceeds((await owner()).doc('kintale_templates/n00').set({ name: 'Empty', checklistItems: [] }));
+  });
+  it('an Auntie still may not write one, however good the checklist', async () => {
+    const auntie = (await getEnv()).authenticatedContext('u-auntie', { staffRole: 'auntie' }).firestore();
+    await assertFails(auntie.doc('kintale_templates/a1').set({ name: 'Walk', checklistItems: [item('Fresh water')] }));
+  });
+});

@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CHECKLIST_ITEM_BLANK,
+  CHECKLIST_LIMIT_REACHED,
+  MAX_CHECKLIST_ITEMS,
   addChecklistItem,
+  canAddChecklistItem,
+  checklistIsSaveable,
+  checklistProblems,
+  isBlankChecklistItem,
+  isPermissionDenied,
+  trimChecklistItems,
   addCondition,
   addMood,
   attributeCatalogForSource,
@@ -264,5 +273,78 @@ describe('new-template drafts', () => {
     const fresh = newTemplateDraft();
     expect(fresh.checklistItems[0]!.text).not.toBe('MUTATED');
     expect(fresh.moodOptions[0]!.label).not.toBe('MUTATED');
+  });
+});
+
+// #1593: the rule the Firestore rules enforce on a written checklist.
+describe('checklist rules: blank items and the 60 cap', () => {
+  const n = (count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      makeChecklistItem({ key: `item_${i + 1}`, scope: 'PER_PET', order: i, text: `Item ${i + 1}` }),
+    );
+
+  it('says the sentences the operator reads, word for word', () => {
+    expect(CHECKLIST_ITEM_BLANK).toBe('Give this checklist item some text, or remove it.');
+    expect(CHECKLIST_LIMIT_REACHED).toBe('A checklist holds up to 60 items.');
+    expect(MAX_CHECKLIST_ITEMS).toBe(60);
+  });
+
+  it('an empty item is blank', () => {
+    expect(isBlankChecklistItem({ text: '' })).toBe(true);
+  });
+
+  it('an item of only spaces, tabs or newlines is blank', () => {
+    expect(isBlankChecklistItem({ text: '   ' })).toBe(true);
+    expect(isBlankChecklistItem({ text: '\t\n ' })).toBe(true);
+    expect(isBlankChecklistItem({ text: ' Fed ' })).toBe(false);
+  });
+
+  it('names every blank item by scope and key, in list order', () => {
+    const list = [
+      makeChecklistItem({ key: 'a', scope: 'PER_PET', order: 0, text: 'Fed' }),
+      makeChecklistItem({ key: 'b', scope: 'PER_PET', order: 1, text: '  ' }),
+      makeChecklistItem({ key: 'a', scope: 'PER_VISIT', order: 0, text: '' }),
+    ];
+    expect(checklistProblems(list)).toEqual({ blankIds: ['PER_PET:b', 'PER_VISIT:a'], overLimit: false });
+    expect(checklistIsSaveable(list)).toBe(false);
+  });
+
+  it('60 items is allowed, and full: Add is off', () => {
+    expect(checklistProblems(n(60)).overLimit).toBe(false);
+    expect(checklistIsSaveable(n(60))).toBe(true);
+    expect(canAddChecklistItem(n(59))).toBe(true);
+    expect(canAddChecklistItem(n(60))).toBe(false);
+  });
+
+  it('61 items is over the limit and cannot be saved', () => {
+    expect(checklistProblems(n(61)).overLimit).toBe(true);
+    expect(checklistIsSaveable(n(61))).toBe(false);
+  });
+
+  it('counts both scopes together, as the server does', () => {
+    const mixed = [...n(30), ...n(31).map((i) => ({ ...i, scope: 'PER_VISIT' }))];
+    expect(checklistProblems(mixed).overLimit).toBe(true);
+  });
+
+  it('adding to a full checklist changes nothing', () => {
+    const full = n(60);
+    expect(addChecklistItem(full, 'PER_VISIT')).toHaveLength(60);
+    expect(addChecklistItem(n(59), 'PER_VISIT')).toHaveLength(60);
+  });
+
+  it('trims each item text, and leaves an already-clean item as it was', () => {
+    const clean = makeChecklistItem({ key: 'a', scope: 'PER_PET', order: 0, text: 'Fed' });
+    const padded = makeChecklistItem({ key: 'b', scope: 'PER_PET', order: 1, text: '  Walked \n' });
+    const out = trimChecklistItems([clean, padded]);
+    expect(out.map((i) => i.text)).toEqual(['Fed', 'Walked']);
+    expect(out[0]).toBe(clean);
+  });
+
+  it('knows a rules refusal by its code, bare or prefixed, and nothing else', () => {
+    expect(isPermissionDenied({ code: 'permission-denied', message: 'Missing or insufficient permissions.' })).toBe(true);
+    expect(isPermissionDenied({ code: 'firestore/permission-denied' })).toBe(true);
+    expect(isPermissionDenied({ code: 'unavailable' })).toBe(false);
+    expect(isPermissionDenied(new Error('permission-denied'))).toBe(false);
+    expect(isPermissionDenied(null)).toBe(false);
   });
 });

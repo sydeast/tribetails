@@ -2,6 +2,7 @@ import { collection, doc, writeBatch } from 'firebase/firestore';
 import { addDoc, commitBatch, setDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { type KinTaleTemplate } from '../lib/kinTale/model';
+import { trimChecklistItems } from '../lib/kinTaleTemplateEdit';
 
 /**
  * WRITE half of the `kintale_templates` admin surface (read side +
@@ -56,7 +57,10 @@ function templateFields(t: KinTaleTemplate) {
 
     // Nested arrays of plain objects: Firestore stores them as arrays of maps,
     // and they decode back through `decodeKinTaleTemplate` byte-for-byte.
-    checklistItems: t.checklistItems.map((i) => ({
+    // #1593: item text is written trimmed. Trimming HERE, in the one builder the
+    // diff also runs on, keeps an edit that only added a trailing space from
+    // counting as a checklist change.
+    checklistItems: trimChecklistItems(t.checklistItems).map((i) => ({
       key: i.key,
       text: i.text,
       scope: i.scope,
