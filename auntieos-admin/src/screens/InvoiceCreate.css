@@ -74,3 +74,10 @@
   font-family: var(--type-body-sm-family);
   font-size: var(--type-body-sm-size);
 }
+/* #1593: a refusal stated beside the field it is about. */
+.invoice-create__field-error {
+  margin: 0;
+  color: var(--color-error);
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+}

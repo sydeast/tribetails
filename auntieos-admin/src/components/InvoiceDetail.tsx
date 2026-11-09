@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   invoiceCheckoutClosure,
   invoiceDispute,
@@ -59,6 +59,7 @@ import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
 import { invoiceTermsDefs, parseInvoiceTermsCode, type InvoiceTermsCode } from '../lib/invoiceTerms';
+import { dueDateOrderProblem } from '../lib/invoiceDueOrder';
 import { noticePreviewSentence } from '../lib/invoiceNoticePreview';
 import { failedToLead } from '../lib/callableErrorText';
 import { phaseOfError } from '../lib/offlineWrite';
@@ -592,6 +593,23 @@ function termsSetDueDate(editing: { termsChoice: string }, invoice: { termsCode?
   const initial = parseInvoiceTermsCode(invoice.termsCode) ?? KEPT_TERMS;
   return editing.termsChoice !== initial && editing.termsChoice !== KEPT_TERMS && editing.termsChoice !== 'custom';
 }
+/**
+ * #1593: a typed due date before the invoice date, as the edit would leave it.
+ * Same scope as `updateInvoice`: only an edit that moves a date or the terms is
+ * judged, so an old invoice already in that state can still take a new address;
+ * and only a typed due date (no code, or custom), never one the terms set.
+ */
+export function editDueOrderProblem(
+  editing: { date: string; dueDate: string; termsChoice: string },
+  invoice: { date: string; dueDate: string; termsCode?: string },
+): string | null {
+  if (termsSetDueDate(editing, invoice)) return null;
+  const initialChoice = parseInvoiceTermsCode(invoice.termsCode) ?? KEPT_TERMS;
+  const termsChanged = editing.termsChoice !== initialChoice && editing.termsChoice !== KEPT_TERMS;
+  const touched = termsChanged || editing.date !== invoice.date || editing.dueDate !== invoice.dueDate;
+  if (!touched) return null;
+  return dueDateOrderProblem(editing.date, editing.dueDate, termsChanged ? editing.termsChoice : invoice.termsCode);
+}
 /** The metadata and money fields, mid-edit. Text, because a half-typed field is not a number. */
 interface EditDraft {
   invoiceNumber: string;
@@ -773,6 +791,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
    */
   const [linking, setLinking] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  /** #1593: the due date field's refusal, beside the field, and the Save it holds back. */
+  const dueOrderErrorId = useId();
+  const editDueProblem = editing === null ? null : editDueOrderProblem(editing, invoice);
   // Archive/restore confirm. Separate from `pending` because the ACTIONS array
   // is the state-driven action matrix and archiving is orthogonal to state: an
   // invoice in any state can be archived.
@@ -1045,6 +1066,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     if (termsChanged) patch.termsCode = editing.termsChoice as InvoiceTermsCode;
     const dueDateFromTerms = termsChanged && editing.termsChoice !== 'custom';
     if (!dueDateFromTerms && editing.dueDate !== invoice.dueDate) patch.dueDate = editing.dueDate.trim();
+    // #1593: the Enter path. Save is disabled while this holds, beside the field.
+    const dueProblem = editDueOrderProblem(editing, invoice);
+    if (dueProblem !== null) {
+      setEditError(dueProblem);
+      return;
+    }
     // #1198: the four descriptive fields, compared against the SAME `?? ''`
     // baseline the form was seeded from, so a field the doc never had does not
     // read as changed when the operator left it empty. Sent as typed, like
@@ -1795,7 +1822,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   disabled={busy || termsSetDueDate(editing, invoice)}
                   aria-label="Invoice due date"
                   title={termsSetDueDate(editing, invoice) ? 'Worked out from the terms when you save' : undefined}
+                  aria-invalid={editDueProblem !== null}
+                  aria-describedby={editDueProblem !== null ? dueOrderErrorId : undefined}
                 />
+                {editDueProblem !== null && (
+                  <span id={dueOrderErrorId} className="invoice-detail__field-error">
+                    {editDueProblem}
+                  </span>
+                )}
               </label>
               <label className="invoice-detail__field">
                 <span className="invoice-detail__field-label">Terms</span>
@@ -1895,7 +1929,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               <PrimaryButton
                 label={busy ? 'Saving…' : 'Save changes'}
                 onClick={() => void saveEdit()}
-                disabled={busy}
+                disabled={busy || editDueProblem !== null}
                 busy={busy}
               />
             </div>

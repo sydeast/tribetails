@@ -1,7 +1,13 @@
-import { useMemo } from 'react';
+import { useId, useMemo } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { InvoiceLineItem } from '../api/invoices';
-import { computeInvoiceTotals, lineAmountCents, validateInvoiceMoney } from '../lib/invoiceMath';
+import {
+  computeInvoiceTotals,
+  lineAmountCents,
+  validateInvoiceMoney,
+  type InvoiceLineItemInput,
+  type InvoiceTotals,
+} from '../lib/invoiceMath';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import {
   parseDollarsToCents,
@@ -291,7 +297,88 @@ interface InvoiceLineItemsEditorProps {
    * visits.
    */
   emptyHint?: string;
+  /**
+   * #1593: lines this invoice carries that are NOT edited here, counted into
+   * the totals. The composer passes the ticked visits, which it lists above the
+   * editor; without them the subtotal here left the visits out and a discount
+   * read as larger than it.
+   */
+  fixedLines?: readonly InvoiceLineItemInput[];
 }
+
+/** #1593: what the live totals can say, and the refusal beside the field that broke them. */
+export interface EditorPreview {
+  totals: InvoiceTotals;
+  unreadable: number;
+  /** Per draft row, the refusal for its discount, or null. */
+  lineProblems: (string | null)[];
+  /** The refusal for the whole-invoice discount, or null. */
+  invoiceDiscountProblem: string | null;
+}
+
+/**
+ * The live totals under the editor, from whatever currently PARSES.
+ *
+ * #1593: WHEN THE MONEY IS INVALID THERE IS NO TOTAL. A discount larger than
+ * the subtotal is refused on save, and the preview used to print the negative
+ * figure it would have made (-$52.00). The refusal sentence now goes beside the
+ * field that caused it, and the caller shows the total as not available.
+ */
+export function editorPreviewOf(
+  drafts: readonly DraftLine[],
+  invoiceDiscountText: string,
+  fixedLines: readonly InvoiceLineItemInput[] = [],
+): EditorPreview {
+  const readable: InvoiceLineItemInput[] = [...fixedLines];
+  const lineProblems: (string | null)[] = [];
+  let unreadable = 0;
+  for (let i = 0; i < drafts.length; i++) {
+    const d = drafts[i]!;
+    const label = d.description.trim() === '' ? `Line ${String(i + 1)}` : d.description.trim();
+    const qty = parseQty(d.qtyText);
+    const unitCents = parseDollarsToCents(d.unitText);
+    let discountCents = 0;
+    let problem: string | null = null;
+    if (d.discountText.trim() !== '') {
+      const parsed = parseDollarsToCents(d.discountText);
+      if (parsed === null) problem = `Discount for "${label}" needs a dollar amount, or leave it empty.`;
+      else discountCents = parsed;
+    }
+    if (qty === null || unitCents === null) {
+      unreadable += 1;
+      lineProblems.push(problem);
+      continue;
+    }
+    const line = { description: label, qty, unitCents, discountCents };
+    // The line's own check, from the same validator the server runs.
+    problem ??= validateInvoiceMoney([line], 0);
+    lineProblems.push(problem);
+    readable.push(line);
+  }
+
+  let invoiceDiscountCents = 0;
+  let invoiceDiscountProblem: string | null = null;
+  if (invoiceDiscountText.trim() !== '') {
+    const parsed = parseDollarsToCents(invoiceDiscountText);
+    if (parsed === null) invoiceDiscountProblem = 'Invoice discount needs a dollar amount, or leave it empty.';
+    else invoiceDiscountCents = parsed;
+  }
+  if (invoiceDiscountProblem === null && lineProblems.every((p) => p === null)) {
+    invoiceDiscountProblem = validateInvoiceMoney(readable, invoiceDiscountCents);
+  }
+  return {
+    totals: computeInvoiceTotals(readable, invoiceDiscountCents, 0),
+    unreadable,
+    lineProblems,
+    invoiceDiscountProblem,
+  };
+}
+
+/**
+ * What a figure shows while the money it would be worked out from is refused:
+ * a hyphen, not a zero, the same unknown-figure mark as DenScreenKit's StatCard.
+ */
+const NO_FIGURE = '-';
 
 /**
  * The editable itemization: add, edit, remove, reorder, with a live derived
@@ -310,23 +397,16 @@ export function InvoiceLineItemsEditor({
   onInvoiceDiscountChange,
   disabled = false,
   emptyHint = 'No line items yet. Add one to itemize this invoice, or leave it empty to bill nothing.',
+  fixedLines,
 }: InvoiceLineItemsEditorProps) {
-  const preview = useMemo(() => {
-    const readable: InvoiceLineItem[] = [];
-    let unreadable = 0;
-    for (const d of drafts) {
-      const qty = parseQty(d.qtyText);
-      const unitCents = parseDollarsToCents(d.unitText);
-      if (qty === null || unitCents === null) {
-        unreadable += 1;
-        continue;
-      }
-      const discountCents = d.discountText.trim() === '' ? 0 : (parseDollarsToCents(d.discountText) ?? 0);
-      readable.push({ description: d.description, qty, unitCents, discountCents });
-    }
-    const discount = invoiceDiscountText.trim() === '' ? 0 : (parseDollarsToCents(invoiceDiscountText) ?? 0);
-    return { totals: computeInvoiceTotals(readable, discount, 0), unreadable };
-  }, [drafts, invoiceDiscountText]);
+  const preview = useMemo(
+    () => editorPreviewOf(drafts, invoiceDiscountText, fixedLines),
+    [drafts, invoiceDiscountText, fixedLines],
+  );
+  const lineProblem = preview.lineProblems.some((p) => p !== null);
+  const moneyRefused = lineProblem || preview.invoiceDiscountProblem !== null;
+  const idBase = useId();
+  const invoiceDiscountErrorId = `${idBase}-invoice-discount-error`;
 
   function patch(index: number, field: keyof DraftLine, value: string) {
     onChange(drafts.map((d, i) => (i === index ? { ...d, [field]: value } : d)));
@@ -358,7 +438,9 @@ export function InvoiceLineItemsEditor({
             const discountCents = d.discountText.trim() === '' ? 0 : parseDollarsToCents(d.discountText);
             const amount =
               qty !== null && unitCents !== null
-                ? formatCentsUsd(lineAmountCents({ description: d.description, qty, unitCents, discountCents: discountCents ?? 0 }))
+                ? preview.lineProblems[index] != null
+                  ? NO_FIGURE
+                  : formatCentsUsd(lineAmountCents({ description: d.description, qty, unitCents, discountCents: discountCents ?? 0 }))
                 : null;
 
             // A LINE DRAWN FROM A VISIT IS BOUND TO IT (#408). Its money is
@@ -453,7 +535,19 @@ export function InvoiceLineItemsEditor({
                       onChange={(e) => patch(index, 'discountText', e.target.value)}
                       disabled={disabled}
                       aria-label={`Line ${String(index + 1)} discount in dollars`}
+                      aria-invalid={preview.lineProblems[index] != null}
+                      aria-describedby={
+                        preview.lineProblems[index] != null ? `${idBase}-line-${String(index)}-discount-error` : undefined
+                      }
                     />
+                    {preview.lineProblems[index] != null && (
+                      <span
+                        id={`${idBase}-line-${String(index)}-discount-error`}
+                        className="invoice-lines-editor__field-error"
+                      >
+                        {preview.lineProblems[index]}
+                      </span>
+                    )}
                   </label>
                 </div>
                 <div className="invoice-lines-editor__row-foot">
@@ -514,18 +608,28 @@ export function InvoiceLineItemsEditor({
             onChange={(e) => onInvoiceDiscountChange(e.target.value)}
             disabled={disabled}
             aria-label="Whole invoice discount in dollars"
+            aria-invalid={preview.invoiceDiscountProblem !== null}
+            aria-describedby={preview.invoiceDiscountProblem !== null ? invoiceDiscountErrorId : undefined}
           />
+          {preview.invoiceDiscountProblem !== null && (
+            <span id={invoiceDiscountErrorId} className="invoice-lines-editor__field-error">
+              {preview.invoiceDiscountProblem}
+            </span>
+          )}
         </label>
       </div>
 
+      {/* #1593: no figure while the money is refused. A negative total is a
+          number nothing will ever bill, and the sentence beside the field
+          says what to change. */}
       <dl className="invoice-lines-editor__totals">
         <div>
           <dt>Subtotal</dt>
-          <dd>{formatCentsUsd(preview.totals.subtotalCents)}</dd>
+          <dd>{lineProblem ? NO_FIGURE : formatCentsUsd(preview.totals.subtotalCents)}</dd>
         </div>
         <div className="invoice-lines-editor__totals-total">
           <dt>Total</dt>
-          <dd>{formatCentsUsd(preview.totals.totalCents)}</dd>
+          <dd>{moneyRefused ? NO_FIGURE : formatCentsUsd(preview.totals.totalCents)}</dd>
         </div>
       </dl>
 

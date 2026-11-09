@@ -1,5 +1,5 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { kinfolkDisplayName } from '../api/directory';
 import { createInvoice, createQuote } from '../api/invoicesWrite';
 import {
@@ -10,13 +10,19 @@ import type {
   CreateInvoiceArgs,
   ListUninvoicedSessionsResultSession,
 } from '../contracts/invoiceContracts.generated';
-import { computeInvoiceTotals, centsToDollars, type InvoiceLineItemInput } from '../lib/invoiceMath';
+import {
+  computeInvoiceTotals,
+  centsToDollars,
+  validateInvoiceMoney,
+  type InvoiceLineItemInput,
+} from '../lib/invoiceMath';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import { EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { localDateIso } from '../lib/invoiceFormat';
 import { parseDollarsToCents, normalizeMoneyText, MAX_UNIT_CENTS } from '../lib/invoiceMoneyInput';
 import { invoiceTermsDefs, resolveDueDate, type InvoiceTermsCode } from '../lib/invoiceTerms';
+import { dueDateOrderProblem } from '../lib/invoiceDueOrder';
 import { Dialog } from '../components/Dialog';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
@@ -111,6 +117,16 @@ export interface BlankInvoiceFormValues {
   dueDate: string;
 }
 
+/** #1593: the blank path's total refusal, word for word what Android and the desktop console say. */
+export const BLANK_TOTAL_PROBLEM = 'Enter the total as dollars, zero or more, like 120.00.';
+
+/** #1593: the typed total's refusal on its own, so it can sit beside the Total field. */
+export function blankTotalProblem(totalText: string): string | null {
+  const normalized = normalizeMoneyText(totalText);
+  const total = normalized === null || normalized === '' ? NaN : Number(normalized);
+  return totalText.trim() === '' || Number.isNaN(total) || total < 0 ? BLANK_TOTAL_PROBLEM : null;
+}
+
 /**
  * Pure, unit-tested validation for the BLANK path, the only one where a total
  * is typed.
@@ -121,10 +137,9 @@ export interface BlankInvoiceFormValues {
  * its total, a computed output that was being asked for as an input.
  */
 export function validateBlankInvoice(v: BlankInvoiceFormValues): string | null {
-  const normalized = normalizeMoneyText(v.totalText);
-  const total = normalized === null || normalized === '' ? NaN : Number(normalized);
   if (v.kinfolkId.trim() === '') return 'Pick a household for this invoice';
-  if (v.totalText.trim() === '' || Number.isNaN(total) || total < 0) return 'Total must be zero or greater';
+  const totalProblem = blankTotalProblem(v.totalText);
+  if (totalProblem !== null) return totalProblem;
   if (v.date.trim() !== '' && !isValidInvoiceDate(v.date)) return 'Date must be a real YYYY-MM-DD date';
   if (v.dueDate.trim() !== '' && !isValidInvoiceDate(v.dueDate)) return 'Due date must be a real YYYY-MM-DD date';
   return null;
@@ -328,16 +343,43 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     if (!onWork) return null;
     const bound = buildBoundLines(sessions, selected, prices, catalog);
     if (bound.error !== null) return { lines: null, error: bound.error, totals: null, invoiceDiscountCents: 0 };
-    const typed = parseDraftLines(extraLines, invoiceDiscountText);
+    // #1593: the typed rows are parsed WITHOUT the discount, and the discount
+    // is judged against every line, visits included. Parsing them together
+    // measured it against the extra charges alone, so a $10 discount on two
+    // visits read as "larger than the subtotal ($0.00)".
+    const typed = parseDraftLines(extraLines, '');
     if (typed.error !== null) return { lines: null, error: typed.error, totals: null, invoiceDiscountCents: 0 };
+    const invoiceDiscountCents =
+      invoiceDiscountText.trim() === '' ? 0 : parseDollarsToCents(invoiceDiscountText);
+    if (invoiceDiscountCents === null) {
+      return {
+        lines: null,
+        error: 'Invoice discount needs a dollar amount, or leave it empty.',
+        totals: null,
+        invoiceDiscountCents: 0,
+      };
+    }
     const lines = [...bound.lines, ...typed.lines!];
+    const moneyError = validateInvoiceMoney(lines, invoiceDiscountCents);
+    if (moneyError !== null) return { lines: null, error: moneyError, totals: null, invoiceDiscountCents: 0 };
     return {
       lines,
       error: null,
-      totals: computeInvoiceTotals(lines, typed.invoiceDiscountCents!, 0),
-      invoiceDiscountCents: typed.invoiceDiscountCents!,
+      totals: computeInvoiceTotals(lines, invoiceDiscountCents, 0),
+      invoiceDiscountCents,
     };
   }, [onWork, sessions, selected, prices, extraLines, invoiceDiscountText, catalog]);
+
+  /** #1593: the ticked visits, so the editor's subtotal counts them as well. */
+  const visitLines = useMemo(
+    () => (onWork ? buildBoundLines(sessions, selected, prices, catalog).lines : []),
+    [onWork, sessions, selected, prices, catalog],
+  );
+
+  /** #1593: a typed due date before the invoice date. Structured terms are not judged. */
+  const dueOrderProblem = termsCode === 'custom' ? dueDateOrderProblem(date, customDueDate, 'custom') : null;
+  /** #1593: the blank path's typed total, refused while it is invalid. */
+  const totalProblem = onWork ? null : blankTotalProblem(totalText);
 
   /**
    * Why the create button cannot run yet, or null when it can.
@@ -349,13 +391,17 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   const blocked: string | null = (() => {
     if (kinfolkId.trim() === '') return 'Pick a household first.';
     if (termsCode !== 'custom' && due.dueDate === null) return due.problem;
+    if (dueOrderProblem !== null) return dueOrderProblem;
     if (onWork) {
       if (selected.size === 0 && extraLines.length === 0) {
         return 'Tick the work this invoice covers, or add a line of your own.';
       }
       if (money?.error != null) return money.error;
+      return null;
     }
-    return null;
+    // #1593: the blank path is held to its rules BEFORE the click, so the
+    // button is disabled with the reason on screen instead of refusing after.
+    return validateBlankInvoice({ kinfolkId, totalText, date, dueDate: dueDateForSubmit });
   })();
 
   async function submit() {
@@ -401,6 +447,10 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
     if (termsCode !== 'custom' && due.dueDate === null) {
       setValidationError(due.problem);
+      return;
+    }
+    if (dueOrderProblem !== null) {
+      setValidationError(dueOrderProblem);
       return;
     }
 
@@ -482,6 +532,14 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
           ? `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed, so this invoice is overdue the moment it goes out.`
           : `Worked out from the terms, counting from ${due.basisDay ?? date}. Choose "A date I pick myself" to set it by hand.`;
   const createLabel = isQuote ? 'Create quote' : 'Create invoice';
+  const idBase = useId();
+  const totalErrorId = `${idBase}-total-error`;
+  const dueErrorId = `${idBase}-due-error`;
+  // An empty Total is refused too, but by the line beside the button rather
+  // than flagged in red before anything has been typed.
+  const totalFieldProblem = totalProblem !== null && totalText.trim() !== '' ? totalProblem : null;
+  /** Sentences already on screen beside a field. The button's reason is not printed twice. */
+  const saidBesideAField = [termsNote, totalFieldProblem, dueOrderProblem];
   const visitCount = onWork ? selected.size : 0;
 
   return (
@@ -600,7 +658,14 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
                 onChange={(e) => setTotalText(e.target.value)}
                 disabled={submitting}
                 aria-label="Total"
+                aria-invalid={totalFieldProblem !== null}
+                aria-describedby={totalFieldProblem !== null ? totalErrorId : undefined}
               />
+              {totalFieldProblem !== null && (
+                <span id={totalErrorId} className="invoice-create__field-error">
+                  {totalFieldProblem}
+                </span>
+              )}
             </label>
             <GhostButton
               label="Bill this household's logged work instead"
@@ -621,6 +686,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               onInvoiceDiscountChange={setInvoiceDiscountText}
               disabled={submitting}
               emptyHint="No extra charges. Anything the visits above do not cover goes here."
+              fixedLines={visitLines}
             />
             {/* NO FIGURE IS PROMISED UNTIL THERE IS ONE. With nothing on the
                 invoice the arithmetic is a perfectly valid $0.00, and printing
@@ -680,7 +746,14 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               // decide this date, and the way to change it is to change them.
               disabled={submitting || termsCode !== 'custom'}
               aria-label="Invoice due date"
+              aria-invalid={dueOrderProblem !== null}
+              aria-describedby={dueOrderProblem !== null ? dueErrorId : undefined}
             />
+            {dueOrderProblem !== null && (
+              <span id={dueErrorId} className="invoice-create__field-error">
+                {dueOrderProblem}
+              </span>
+            )}
           </label>
         </div>
 
@@ -704,7 +777,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
             left for the operator to work out by clicking it. Not repeated when
             the terms line above is already saying the same sentence: a reason
             printed twice reads as two problems. */}
-        {blocked !== null && blocked !== termsNote && !submitting && (
+        {blocked !== null && !saidBesideAField.includes(blocked) && !submitting && (
           <p className="invoice-create__derived invoice-create__blocked" role="status">
             {blocked}
           </p>

@@ -189,8 +189,33 @@ data class InvoiceEditDraft(
     val address: String,
     /** The LEGACY free-text discount ("10% loyalty"): display-only, never money. */
     val discount: String,
+    /**
+     * #1593: the dates the invoice carried when the form opened. The due-date
+     * order is judged only once an edit moves a date or the terms, as the
+     * server judges it. Null when not seeded, which judges every edit.
+     */
+    val storedDate: String? = null,
+    val storedDueDate: String? = null,
 ) {
     val moneyEditable: Boolean get() = scope == InvoiceEditScope.ALL
+}
+
+/**
+ * #1593: a typed due date before the invoice date, as this edit would leave the
+ * invoice, or null. Same scope as `updateInvoice`: only an edit that moves a
+ * date or the terms is judged, so an old invoice already in that state can
+ * still take a new address; and only a typed due date (no code, or custom),
+ * never one that newly picked terms set.
+ */
+fun invoiceEditDueOrderProblem(draft: InvoiceEditDraft): String? {
+    val picked = draft.termsCode?.takeIf { it != draft.storedTermsCode }
+    if (picked != null && picked != InvoiceTermsCode.CUSTOM) return null
+    val touched = picked != null ||
+        draft.storedDate == null ||
+        draft.date != draft.storedDate ||
+        draft.dueDate != draft.storedDueDate
+    if (!touched) return null
+    return dueDateOrderProblem(draft.date, draft.dueDate, (picked ?: draft.storedTermsCode)?.wire)
 }
 
 fun invoiceEditLineOf(line: InvoiceEditLineItem): InvoiceEditLine = InvoiceEditLine(
@@ -222,6 +247,8 @@ fun invoiceEditDraftOf(invoice: Invoice): InvoiceEditDraft? {
         client = invoice.client,
         address = invoice.address,
         discount = invoice.discount,
+        storedDate = invoice.date,
+        storedDueDate = invoice.dueDate,
     )
 }
 /**
@@ -324,6 +351,14 @@ fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPa
         if (!isIsoDay(trimmed)) return InvoiceEditPatchOutcome(null, "The due date needs to be a date like 2026-10-23.")
         fields["dueDate"] = JsonPrimitive(trimmed)
     }
+    // #1593: judged against the invoice this patch is written for.
+    invoiceEditDueOrderProblem(
+        draft.copy(
+            storedTermsCode = invoiceTermsCodeOrNull(invoice.termsCode),
+            storedDate = invoice.date,
+            storedDueDate = invoice.dueDate,
+        ),
+    )?.let { return InvoiceEditPatchOutcome(null, it) }
     if (pickedTerms != null) {
         fields["termsCode"] = JsonPrimitive(pickedTerms.wire)
     } else if (draft.terms != invoice.terms) {
@@ -366,24 +401,65 @@ fun InvoiceEditLineItem.toPatchJson(): JsonObject = buildJsonObject {
     if (sessionId.isNotBlank()) put("sessionId", JsonPrimitive(sessionId))
 }
 
-data class InvoiceEditPreview(val totalCents: Long, val unreadable: Int)
+/**
+ * The live total, and #1593's refusals for the field that causes each:
+ * [lineProblems] (one per row) and [discountProblem]. While any is set the money
+ * has no total and [hasTotal] is false; the preview used to print the negative
+ * figure a too-large discount made (-$52.00).
+ */
+data class InvoiceEditPreview(
+    val totalCents: Long,
+    val unreadable: Int,
+    val lineProblems: List<String?> = emptyList(),
+    val discountProblem: String? = null,
+) {
+    val hasLineProblem: Boolean get() = lineProblems.any { it != null }
+    val hasTotal: Boolean get() = !hasLineProblem && discountProblem == null
+}
 
 /** The live total; a row mid-typing counts as unreadable rather than as zero. */
 fun invoiceEditPreviewOf(rows: List<InvoiceEditLine>, invoiceDiscountText: String): InvoiceEditPreview {
-    var total = 0L
+    val readable = mutableListOf<InvoiceEditLineItem>()
+    val lineProblems = mutableListOf<String?>()
     var unreadable = 0
-    for (d in rows) {
+    rows.forEachIndexed { i, d ->
+        val label = d.description.trim().ifEmpty { "Line ${i + 1}" }
         val qty = parseQty(d.qtyText)
         val unit = parseDollarsToCents(d.unitText)
+        var discount = 0L
+        var problem: String? = null
+        if (d.discountText.isNotBlank()) {
+            val parsed = parseDollarsToCents(d.discountText)
+            if (parsed == null) {
+                problem = "Discount for \"$label\" needs a dollar amount, or leave it empty."
+            } else {
+                discount = parsed
+            }
+        }
         if (qty == null || unit == null) {
             unreadable += 1
-            continue
+            lineProblems.add(problem)
+            return@forEachIndexed
         }
-        val discount = if (d.discountText.isBlank()) 0L else parseDollarsToCents(d.discountText) ?: 0L
-        total += lineAmountCents(InvoiceEditLineItem(d.description, qty, unit, discount))
+        val line = InvoiceEditLineItem(label, qty, unit, discount)
+        lineProblems.add(problem ?: validateInvoiceEditMoney(listOf(line), 0L))
+        readable.add(line)
     }
-    val invoiceDiscount = if (invoiceDiscountText.isBlank()) 0L else parseDollarsToCents(invoiceDiscountText) ?: 0L
-    return InvoiceEditPreview(total - invoiceDiscount, unreadable)
+    var invoiceDiscount = 0L
+    var discountProblem: String? = null
+    if (invoiceDiscountText.isNotBlank()) {
+        val parsed = parseDollarsToCents(invoiceDiscountText)
+        if (parsed == null) {
+            discountProblem = "Invoice discount needs a dollar amount, or leave it empty."
+        } else {
+            invoiceDiscount = parsed
+        }
+    }
+    if (discountProblem == null && lineProblems.all { it == null }) {
+        discountProblem = validateInvoiceEditMoney(readable, invoiceDiscount)
+    }
+    val total = readable.sumOf { lineAmountCents(it) } - invoiceDiscount
+    return InvoiceEditPreview(total, unreadable, lineProblems, discountProblem)
 }
 
 /** What the running total leaves out, or null when every row is readable. */

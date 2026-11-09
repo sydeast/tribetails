@@ -356,6 +356,56 @@ fun composerMoney(
     )
 }
 
+/** #1593: the blank path's total refusal, word for word what admin web and the desktop console say. */
+const val BLANK_TOTAL_PROBLEM = "Enter the total as dollars, zero or more, like 120.00."
+
+/** #1593: the typed total's refusal on its own, so it can sit under the Total field. */
+fun blankTotalProblem(totalText: String): String? {
+    val total = normalizeMoneyText(totalText)?.toDoubleOrNull()
+    return if (totalText.isBlank() || total == null || total < 0.0) BLANK_TOTAL_PROBLEM else null
+}
+
+/** #1593: the server's refusal for a typed due date before the invoice date, word for word. */
+const val DUE_BEFORE_INVOICE_DATE = "The due date has to be on or after the invoice date."
+
+/**
+ * #1593: a TYPED due date that falls before the invoice date, or null.
+ *
+ * The server's `dueDateOrderProblem` (`mytribe/functions/src/lib/invoiceDay.ts`),
+ * checked on the device so the operator reads it under the due date field while
+ * typing. Only a typed date is judged: no terms code, or `custom`. Structured
+ * terms work their own date out. Both sides must read as YYYY-MM-DD days; a
+ * blank, or an old free-text date, is not this check's to judge.
+ */
+fun dueDateOrderProblem(date: String, dueDate: String, termsCode: String?): String? {
+    if (!termsCode.isNullOrEmpty() && termsCode != InvoiceTermsCode.CUSTOM.wire) return null
+    val day = isoDayPrefix(date) ?: return null
+    val due = isoDayPrefix(dueDate) ?: return null
+    return if (due < day) DUE_BEFORE_INVOICE_DATE else null
+}
+
+private fun isoDayPrefix(raw: String): String? {
+    val s = raw.trim()
+    return if (Regex("""^\d{4}-\d{2}-\d{2}""").containsMatchIn(s)) s.take(10) else null
+}
+
+/**
+ * #1593: the money refusal that belongs under the whole-invoice discount field,
+ * or null. Every such sentence [composerMoney] can return starts the same way.
+ */
+fun invoiceDiscountProblemOf(moneyError: String?): String? =
+    moneyError?.takeIf { it.startsWith("Invoice discount") }
+
+/**
+ * #1593: the money refusal that belongs under one typed row's discount field,
+ * or null. Matched on the row's description, which is how the sentence names it.
+ */
+fun lineDiscountProblemOf(moneyError: String?, description: String): String? {
+    val label = description.trim()
+    if (label.isEmpty()) return null
+    return moneyError?.takeIf { it.startsWith("Discount for \"$label\"") }
+}
+
 /**
  * Pure validation for the BLANK path, the only one where a total is typed.
  *
@@ -370,10 +420,10 @@ fun validateBlankInvoice(
     date: String,
     dueDate: String,
 ): String? {
-    val total = normalizeMoneyText(totalText)?.toDoubleOrNull()
+    val totalProblem = blankTotalProblem(totalText)
     return when {
         kinfolkId.isBlank() -> "Pick a household for this invoice"
-        totalText.isBlank() || total == null || total < 0.0 -> "Total must be zero or greater"
+        totalProblem != null -> totalProblem
         date.isNotBlank() && !isValidNewInvoiceIsoDate(date) -> "Date must be a real YYYY-MM-DD date"
         dueDate.isNotBlank() && !isValidNewInvoiceIsoDate(dueDate) -> "Due date must be a real YYYY-MM-DD date"
         else -> null
@@ -407,6 +457,8 @@ fun composerBlockedReason(
         if (customDueDate.isNotBlank() && !isValidNewInvoiceIsoDate(customDueDate)) {
             return "Due date must be a real YYYY-MM-DD date"
         }
+        // #1593: a typed due date before the invoice date, on both paths.
+        dueDateOrderProblem(date, customDueDate, InvoiceTermsCode.CUSTOM.wire)?.let { return it }
     } else if (due.dueDate == null) {
         return due.problem
     }

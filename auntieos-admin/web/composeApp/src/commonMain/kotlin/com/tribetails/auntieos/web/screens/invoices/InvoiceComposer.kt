@@ -274,14 +274,64 @@ fun composerMoney(
     )
 }
 
+/** #1593: the blank path's total refusal, word for word what admin web and Android say. */
+const val BLANK_TOTAL_PROBLEM = "Enter the total as dollars, zero or more, like 120.00."
+
+/**
+ * #1593: the typed total's refusal on its own, so it can sit under the Total
+ * field. The same money parser as every other figure here, so "NaN", "1e5" and
+ * a third decimal are refused rather than sent.
+ */
+fun blankTotalProblem(totalText: String): String? =
+    if (parseDollarsToCents(totalText) == null) BLANK_TOTAL_PROBLEM else null
+
+/** #1593: the server's refusal for a typed due date before the invoice date, word for word. */
+const val DUE_BEFORE_INVOICE_DATE = "The due date has to be on or after the invoice date."
+
+/**
+ * #1593: a TYPED due date that falls before the invoice date, or null.
+ *
+ * The server's `dueDateOrderProblem` (`mytribe/functions/src/lib/invoiceDay.ts`),
+ * checked here so the operator reads it under the due date field while typing.
+ * Only a typed date is judged: no terms code, or `custom`. Structured terms work
+ * their own date out. Both sides must read as YYYY-MM-DD days; a blank, or an
+ * old free-text date, is not this check's to judge.
+ */
+fun dueDateOrderProblem(date: String, dueDate: String, termsCode: String?): String? {
+    if (!termsCode.isNullOrEmpty() && termsCode != InvoiceTermsCode.CUSTOM.wire) return null
+    val day = isoDayPrefix(date) ?: return null
+    val due = isoDayPrefix(dueDate) ?: return null
+    return if (due < day) DUE_BEFORE_INVOICE_DATE else null
+}
+
+private fun isoDayPrefix(raw: String): String? {
+    val s = raw.trim()
+    return if (Regex("""^\d{4}-\d{2}-\d{2}""").containsMatchIn(s)) s.take(10) else null
+}
+
+/**
+ * #1593: the money refusal that belongs under the whole-invoice discount field,
+ * or null. Every such sentence [composerMoney] can return starts the same way.
+ */
+fun invoiceDiscountProblemOf(moneyError: String?): String? =
+    moneyError?.takeIf { it.startsWith("Invoice discount") }
+
+/** #1593: the money refusal that belongs under one typed row's discount field, or null. */
+fun lineDiscountProblemOf(moneyError: String?, description: String): String? {
+    val label = description.trim()
+    if (label.isEmpty()) return null
+    return moneyError?.takeIf { it.startsWith("Discount for \"$label\"") }
+}
+
+/** #1593: what a figure shows while the money it would be worked out from is refused. */
+const val NO_FIGURE = "-"
+
 /** Validation for the BLANK path, the only one where a total is typed. No invoice number, no amount due. */
 fun validateBlankInvoice(kinfolkId: String, totalText: String, date: String, dueDate: String): String? {
-    // The same money parser as every other figure here, so "NaN", "1e5" and a
-    // third decimal are refused rather than sent.
-    val totalCents = parseDollarsToCents(totalText)
+    val totalProblem = blankTotalProblem(totalText)
     return when {
         kinfolkId.isBlank() -> "Pick a household for this invoice"
-        totalCents == null -> "Total must be a dollar amount of zero or more, for example 120.00"
+        totalProblem != null -> totalProblem
         date.isNotBlank() && !isValidNewInvoiceIsoDate(date) -> "Date must be a real YYYY-MM-DD date"
         dueDate.isNotBlank() && !isValidNewInvoiceIsoDate(dueDate) -> "Due date must be a real YYYY-MM-DD date"
         else -> null
@@ -307,6 +357,8 @@ fun composerBlockedReason(
         if (customDueDate.isNotBlank() && !isValidNewInvoiceIsoDate(customDueDate)) {
             return "Due date must be a real YYYY-MM-DD date"
         }
+        // #1593: a typed due date before the invoice date, on both paths.
+        dueDateOrderProblem(date, customDueDate, InvoiceTermsCode.CUSTOM.wire)?.let { return it }
     } else if (due.dueDate == null) {
         return due.problem
     }
@@ -453,7 +505,7 @@ fun buildNewInvoiceRequest(
         }
         InvoiceCreatePath.BLANK -> {
             val typedCents = parseDollarsToCents(totalText)
-                ?: return NewInvoiceBuild(null, "Total must be a dollar amount of zero or more, for example 120.00")
+                ?: return NewInvoiceBuild(null, BLANK_TOTAL_PROBLEM)
             val typed = centsToDollars(typedCents)
             NewInvoiceBuild(
                 NewInvoiceRequest(

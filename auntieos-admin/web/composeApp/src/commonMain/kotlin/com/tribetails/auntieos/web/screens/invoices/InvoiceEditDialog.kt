@@ -36,6 +36,8 @@ internal fun InvoiceEditDialog(
 ) {
     val c = AuntieTheme.colors
     val enabled = !saving
+    // #1593: under the due date field, and Save held back while it stands.
+    val dueOrderProblem = draft?.let(::invoiceEditDueOrderProblem)
     AuntieDialog(
         visible = draft != null,
         title = "Edit invoice",
@@ -46,7 +48,7 @@ internal fun InvoiceEditDialog(
                 label = if (saving) "Saving..." else "Save changes",
                 onClick = onSave,
                 loading = saving,
-                enabled = enabled,
+                enabled = enabled && dueOrderProblem == null,
             )
         },
     ) {
@@ -88,6 +90,8 @@ internal fun InvoiceEditDialog(
                     // #1609: picked terms other than custom set the due date on save.
                     placeholder = if (termsSetDueDate) "set by the terms" else "YYYY-MM-DD",
                     enabled = enabled && !termsSetDueDate,
+                    isError = dueOrderProblem != null,
+                    errorMessage = dueOrderProblem,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -186,6 +190,7 @@ private fun EditableLines(draft: InvoiceEditDraft, enabled: Boolean, onChange: (
     val c = AuntieTheme.colors
     val lines = draft.lines
     fun setLines(next: List<InvoiceEditLine>) = onChange(draft.copy(lines = next))
+    val preview = invoiceEditPreviewOf(lines, draft.invoiceDiscountText)
 
     if (lines.isEmpty()) {
         Text(
@@ -218,6 +223,7 @@ private fun EditableLines(draft: InvoiceEditDraft, enabled: Boolean, onChange: (
                     enabled = enabled,
                 )
             } else {
+                val lineProblem = preview.lineProblems.getOrNull(index)
                 BottomBorderField(
                     value = line.description,
                     onValueChange = { setLines(lines.replacedAt(index, line.copy(description = it))) },
@@ -247,6 +253,8 @@ private fun EditableLines(draft: InvoiceEditDraft, enabled: Boolean, onChange: (
                         onValueChange = { setLines(lines.replacedAt(index, line.copy(discountText = it))) },
                         label = "Off ($)",
                         enabled = enabled,
+                        isError = lineProblem != null,
+                        errorMessage = lineProblem,
                         keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f),
                     )
@@ -254,7 +262,9 @@ private fun EditableLines(draft: InvoiceEditDraft, enabled: Boolean, onChange: (
                 val qty = parseQty(line.qtyText)
                 val unit = parseDollarsToCents(line.unitText)
                 Text(
-                    if (qty != null && unit != null) {
+                    if (lineProblem != null) {
+                        NO_FIGURE
+                    } else if (qty != null && unit != null) {
                         val discount = if (line.discountText.isBlank()) 0L else parseDollarsToCents(line.discountText) ?: 0L
                         formatEditCents(lineAmountCents(InvoiceEditLineItem(line.description, qty, unit, discount)))
                     } else {
@@ -285,11 +295,17 @@ private fun EditableLines(draft: InvoiceEditDraft, enabled: Boolean, onChange: (
         onValueChange = { onChange(draft.copy(invoiceDiscountText = it)) },
         label = "Invoice discount ($), optional",
         enabled = enabled,
+        isError = preview.discountProblem != null,
+        errorMessage = preview.discountProblem,
         keyboardType = KeyboardType.Decimal,
         modifier = Modifier.fillMaxWidth(),
     )
-    val preview = invoiceEditPreviewOf(lines, draft.invoiceDiscountText)
-    Text("Total ${formatEditCents(preview.totalCents)}", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+    // #1593: refused money has no total. The sentence above says what to change.
+    Text(
+        if (preview.hasTotal) "Total ${formatEditCents(preview.totalCents)}" else "Total $NO_FIGURE",
+        style = AuntieTheme.typography.bodyMedium,
+        color = c.textPrimary,
+    )
     invoiceEditPendingCopy(preview.unreadable)?.let {
         Text(it, style = AuntieTheme.typography.labelSmall, color = c.textDim)
     }

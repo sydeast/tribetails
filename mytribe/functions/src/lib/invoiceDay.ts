@@ -113,3 +113,20 @@ export function invoiceDayOf(raw: unknown): string | null {
   if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month || d.getUTCDate() !== day) return null;
   return d.toISOString().slice(0, 10);
 }
+/** #1593: the refusal, word for word what the admin web, Android and desktop show beside the due date. */
+export const DUE_BEFORE_INVOICE_DATE = 'The due date has to be on or after the invoice date.';
+export const DUE_BEFORE_INVOICE_DATE_CODE = 'invoice_due_before_date';
+/**
+ * #1593: a due date the operator TYPED that falls before the invoice date. The
+ * QA walk saved one. Only a typed date is checked (no `termsCode`, or
+ * `custom`): structured terms work their own date out, and the server is the
+ * authority on it. Both sides must read as days; a blank, or a stored free-text
+ * date from the old system, is not this check's to judge.
+ */
+export function dueDateOrderProblem(date: unknown, dueDate: unknown, termsCode: unknown): string | null {
+  if (typeof termsCode === 'string' && termsCode !== '' && termsCode !== 'custom') return null;
+  const day = invoiceDayOf(date);
+  const due = invoiceDayOf(dueDate);
+  if (day === null || due === null) return null;
+  return due < day ? DUE_BEFORE_INVOICE_DATE : null;
+}

@@ -248,15 +248,15 @@ class InvoiceComposerTest {
             validateBlankInvoice(kinfolkId = "", totalText = "100", date = "", dueDate = ""),
         )
         assertEquals(
-            "Total must be zero or greater",
+            "Enter the total as dollars, zero or more, like 120.00.",
             validateBlankInvoice(kinfolkId = "kf1", totalText = "", date = "", dueDate = ""),
         )
         assertEquals(
-            "Total must be zero or greater",
+            "Enter the total as dollars, zero or more, like 120.00.",
             validateBlankInvoice(kinfolkId = "kf1", totalText = "-5", date = "", dueDate = ""),
         )
         assertEquals(
-            "Total must be zero or greater",
+            "Enter the total as dollars, zero or more, like 120.00.",
             validateBlankInvoice(kinfolkId = "kf1", totalText = "abc", date = "", dueDate = ""),
         )
         assertNull(validateBlankInvoice(kinfolkId = "kf1", totalText = "0", date = "", dueDate = ""))
@@ -368,7 +368,7 @@ class InvoiceComposerTest {
     @Test
     fun `the blank path is blocked by its own total`() {
         assertEquals(
-            "Total must be zero or greater",
+            "Enter the total as dollars, zero or more, like 120.00.",
             blocked(path = InvoiceCreatePath.BLANK, money = null, totalText = ""),
         )
         assertNull(blocked(path = InvoiceCreatePath.BLANK, money = null, totalText = "40"))

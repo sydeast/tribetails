@@ -17,6 +17,7 @@ import com.tribetails.auntieos.domain.invoiceEditScopeOf
 import com.tribetails.auntieos.domain.invoiceLineItems
 import com.tribetails.auntieos.domain.parseDollarsToCents
 import com.tribetails.auntieos.domain.parseQty
+import com.tribetails.auntieos.ui.admin.dueDateOrderProblem
 import com.tribetails.auntieos.ui.admin.isValidNewInvoiceIsoDate
 import com.tribetails.auntieos.ui.admin.validateComposerMoney
 
@@ -93,6 +94,13 @@ data class InvoiceEditDraft(
     val address: String,
     /** The LEGACY free-text discount ("10% loyalty"): display-only, never money. */
     val discount: String,
+    /**
+     * #1593: the dates the invoice carried when the form opened. The due-date
+     * order is judged only once an edit moves a date or the terms, as the
+     * server judges it. Null when not seeded, which judges every edit.
+     */
+    val storedDate: String? = null,
+    val storedDueDate: String? = null,
 ) {
     /** Lines and discounts are editable only under `all`; `metadataOnly` shows them read-only. */
     val moneyEditable: Boolean get() = scope == InvoiceEditScope.ALL
@@ -135,7 +143,27 @@ fun invoiceEditDraftOf(invoice: Invoice): InvoiceEditDraft? {
         client = invoice.client,
         address = invoice.address,
         discount = invoice.discount,
+        storedDate = invoice.date,
+        storedDueDate = invoice.dueDate,
     )
+}
+
+/**
+ * #1593: a typed due date before the invoice date, as this edit would leave the
+ * invoice, or null. Same scope as `updateInvoice`: only an edit that moves a
+ * date or the terms is judged, so an old invoice already in that state can
+ * still take a new address; and only a typed due date (no code, or custom),
+ * never one that newly picked terms set.
+ */
+fun invoiceEditDueOrderProblem(draft: InvoiceEditDraft): String? {
+    val picked = draft.termsCode?.takeIf { it != draft.storedTermsCode }
+    if (picked != null && picked != InvoiceTermsCode.CUSTOM) return null
+    val touched = picked != null ||
+        draft.storedDate == null ||
+        draft.date != draft.storedDate ||
+        draft.dueDate != draft.storedDueDate
+    if (!touched) return null
+    return dueDateOrderProblem(draft.date, draft.dueDate, (picked ?: draft.storedTermsCode)?.wire)
 }
 /**
  * `updateInvoice`'s zod `.max()` for the four descriptive fields (#1198), with
@@ -253,6 +281,14 @@ fun invoiceEditPatchOf(invoice: Invoice, draft: InvoiceEditDraft): InvoiceEditPa
         }
         dueDate = trimmed
     }
+    // #1593: judged against the invoice this patch is written for.
+    invoiceEditDueOrderProblem(
+        draft.copy(
+            storedTermsCode = parseInvoiceTermsCode(invoice.termsCode),
+            storedDate = invoice.date,
+            storedDueDate = invoice.dueDate,
+        ),
+    )?.let { return InvoiceEditPatchOutcome(null, it) }
     if (pickedTerms == null && draft.terms != invoice.terms) terms = draft.terms
     // #1198: sent as typed, like `terms`, and only when changed. An emptied
     // field is a real edit (a wrong address cleared) and goes as "".
@@ -309,8 +345,23 @@ fun InvoiceLineItem.toUpdateInvoiceLine(): UpdateInvoiceArgsPatchLineItem = Upda
     sessionId = sessionId.takeIf { it.isNotBlank() },
 )
 
-/** What the editable rows add up to so far, and how many rows cannot be read yet. */
-data class InvoiceEditPreview(val totalCents: Long, val unreadable: Int)
+/**
+ * What the editable rows add up to so far, and how many rows cannot be read yet.
+ *
+ * #1593: [lineProblems] (one per row) and [discountProblem] are the refusals
+ * the save would make, for the field that causes each. While any is set the
+ * money has no total, and [hasTotal] is false: the preview used to print the
+ * negative figure a too-large discount made (-$52.00).
+ */
+data class InvoiceEditPreview(
+    val totalCents: Long,
+    val unreadable: Int,
+    val lineProblems: List<String?> = emptyList(),
+    val discountProblem: String? = null,
+) {
+    val hasLineProblem: Boolean get() = lineProblems.any { it != null }
+    val hasTotal: Boolean get() = !hasLineProblem && discountProblem == null
+}
 
 /**
  * The live total under the editor. A row mid-typing contributes nothing and is
@@ -318,19 +369,45 @@ data class InvoiceEditPreview(val totalCents: Long, val unreadable: Int)
  */
 fun invoiceEditPreviewOf(rows: List<InvoiceEditLine>, invoiceDiscountText: String): InvoiceEditPreview {
     val readable = mutableListOf<InvoiceLineItem>()
+    val lineProblems = mutableListOf<String?>()
     var unreadable = 0
-    for (d in rows) {
+    rows.forEachIndexed { i, d ->
+        val label = d.description.trim().ifEmpty { "Line ${i + 1}" }
         val qty = parseQty(d.qtyText)
         val unit = parseDollarsToCents(d.unitText)
+        var discount = 0L
+        var problem: String? = null
+        if (d.discountText.isNotBlank()) {
+            val parsed = parseDollarsToCents(d.discountText)
+            if (parsed == null) {
+                problem = "Discount for \"$label\" needs a dollar amount, or leave it empty."
+            } else {
+                discount = parsed
+            }
+        }
         if (qty == null || unit == null) {
             unreadable += 1
-            continue
+            lineProblems.add(problem)
+            return@forEachIndexed
         }
-        val discount = if (d.discountText.isBlank()) 0L else parseDollarsToCents(d.discountText) ?: 0L
-        readable.add(InvoiceLineItem(description = d.description, qty = qty, unitCents = unit, discountCents = discount))
+        val line = InvoiceLineItem(description = label, qty = qty, unitCents = unit, discountCents = discount)
+        lineProblems.add(problem ?: validateComposerMoney(listOf(line), 0L))
+        readable.add(line)
     }
-    val invoiceDiscount = if (invoiceDiscountText.isBlank()) 0L else parseDollarsToCents(invoiceDiscountText) ?: 0L
-    return InvoiceEditPreview(invoiceDerivedTotalCents(readable, invoiceDiscount), unreadable)
+    var invoiceDiscount = 0L
+    var discountProblem: String? = null
+    if (invoiceDiscountText.isNotBlank()) {
+        val parsed = parseDollarsToCents(invoiceDiscountText)
+        if (parsed == null) {
+            discountProblem = "Invoice discount needs a dollar amount, or leave it empty."
+        } else {
+            invoiceDiscount = parsed
+        }
+    }
+    if (discountProblem == null && lineProblems.all { it == null }) {
+        discountProblem = validateComposerMoney(readable, invoiceDiscount)
+    }
+    return InvoiceEditPreview(invoiceDerivedTotalCents(readable, invoiceDiscount), unreadable, lineProblems, discountProblem)
 }
 
 /** The rows with [index] swapped one step by [delta]; unchanged when that would leave the list. */

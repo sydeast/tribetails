@@ -430,6 +430,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - Invalid money (a line discount larger than its line, an invoice discount
   larger than the subtotal) is `failed-precondition` with
   `details.code: 'invoice_money_invalid'`.
+- #1593: a typed due date (no `termsCode`, or `custom`) before the invoice
+  `date` is `invalid-argument`, "The due date has to be on or after the invoice
+  date.", `details: { code: 'invoice_due_before_date', field: 'dueDate' }`.
+  Structured terms work their own date out and are not judged by it.
 - `lineItems: []` is an ITEMIZED invoice worth zero, deliberately distinct from
   an ABSENT `lineItems`. It writes the cents fields, which is what lets a blank
   invoice later receive its first line through `updateInvoice`.
@@ -600,6 +604,11 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   `invoice_money_locked` (a payment exists, so lines and discounts are frozen),
   `invoice_money_invalid` (a discount larger than what it discounts; the message
   names both figures). Plus `not-found` for an unknown id.
+- #1593: an edit that touches `date`, `dueDate` or `termsCode` and leaves a
+  typed due date before the invoice date is `invalid-argument`
+  (`details.code: 'invoice_due_before_date'`, `field: 'dueDate'`). An edit
+  that touches neither is not judged, so an old invoice already in that state
+  still takes other edits.
 - W2-1 (ADR-0002) added the four descriptive fields android's whole-model
   merge-set writes that the patch could not previously express: `kinfolkName`,
   `client`, `address`, `discount`. `discount` here is the LEGACY FREE-TEXT

@@ -33,3 +33,16 @@ describe('invoiceDayOf (#1570)', () => {
     expect(invoiceDayOf(20260714)).toBeNull();
   });
 });
+describe('#1593 dueDateOrderProblem', () => {
+  it('refuses a typed due date before the invoice date', async () => {
+    const { dueDateOrderProblem } = await import('../src/lib/invoiceDay');
+    expect(dueDateOrderProblem('2026-06-10', '2026-06-01', undefined)).toBe('The due date has to be on or after the invoice date.');
+    expect(dueDateOrderProblem('2026-06-10', '2026-06-01', '')).not.toBeNull();
+    expect(dueDateOrderProblem('2026-06-10', '2026-06-01', 'custom')).not.toBeNull();
+    expect(dueDateOrderProblem('2026-06-10', '2026-06-10', undefined)).toBeNull();
+    expect(dueDateOrderProblem('2026-06-10', '2026-06-01', 'net_14')).toBeNull();
+    expect(dueDateOrderProblem('', '2026-06-01', undefined)).toBeNull();
+    expect(dueDateOrderProblem('2026-06-10', 'upon receipt', undefined)).toBeNull();
+    expect(dueDateOrderProblem('June 10, 2026', 'June 1, 2026', undefined)).not.toBeNull();
+  });
+});

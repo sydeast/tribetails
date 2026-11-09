@@ -218,6 +218,41 @@ describe('createInvoice zod validation', () => {
   });
 });
 
+describe('#1593 a typed due date is on or after the invoice date', () => {
+  it('refuses a due date before the invoice date, and writes nothing', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(req({ ...validPayload, date: '2026-06-10', dueDate: '2026-06-01' })),
+    ).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'The due date has to be on or after the invoice date.',
+      details: { code: 'invoice_due_before_date', field: 'dueDate' },
+    });
+    expect(ctx.writes.filter((w) => w.path.startsWith('invoices/'))).toHaveLength(0);
+  });
+  it('takes a due date on the invoice date, and one after it', async () => {
+    for (const dueDate of ['2026-06-10', '2026-06-11']) {
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(createInvoiceHandler(req({ ...validPayload, date: '2026-06-10', dueDate }))).resolves.toMatchObject({ ok: true });
+    }
+  });
+  it('a blank on either side is not judged', async () => {
+    for (const pair of [{ date: '', dueDate: '2026-06-01' }, { date: '2026-06-10', dueDate: '' }]) {
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(createInvoiceHandler(req({ ...validPayload, ...pair }))).resolves.toMatchObject({ ok: true });
+    }
+  });
+  it('custom terms are a typed date too', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(req({ ...validPayload, termsCode: 'custom', date: '2026-06-10', dueDate: '2026-06-01' })),
+    ).rejects.toMatchObject({ details: { code: 'invoice_due_before_date' } });
+  });
+});
 describe('createInvoice handler effects', () => {
   it('stamps kinfolkId + server id + serverTimestamps on the new doc', async () => {
     const ctx = buildDbMock({});
