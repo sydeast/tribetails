@@ -524,7 +524,9 @@ describe('mixed master state (#1317)', () => {
     renderScreen();
     await waitFor(() => expect(screen.getByText('New invoice')).toBeTruthy());
     const master = box('All in category: Invoices & Payments');
-    expect(master.indeterminate).toBe(true);
+    // #1769: `indeterminate` is a DOM property set from a passive effect, so it
+    // can trail the commit the text above waited for. Wait for it too.
+    await waitFor(() => expect(master.indeterminate).toBe(true));
     expect(master.getAttribute('aria-checked')).toBe('mixed');
     expect(master.checked).toBe(false);
   });
