@@ -1,6 +1,11 @@
 package com.tribetails.auntieos.ui.marketing
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -157,6 +162,27 @@ class MarketingBlastsScreenTest {
         rule.setContent { AuntieOSTheme { MarketingBlastsScreen(viewModel = vm) } }
     }
 
+    @Test
+    fun `#1593 a send time in 2020 is refused under the fields, once`() {
+        val vm = MarketingBlastsViewModel(repo)
+        rule.setContent { AuntieOSTheme { MarketingBlastsScreen(viewModel = vm) } }
+        vm.setSendDate("2020-06-01")
+        vm.setSendTime("09:00")
+        rule.waitForIdle()
+        rule.onNodeWithTag("blastSendTimeError").performScrollTo().assertTextEquals("That send time has already passed.")
+        // Said once: the hint under the buttons does not repeat it.
+        rule.onAllNodesWithText("That send time has already passed.").assertCountEquals(1)
+        rule.onNodeWithText("Schedule blast").performScrollTo().assertIsNotEnabled()
+    }
+    @Test
+    fun `#1593 a future send time shows no field refusal`() {
+        val vm = MarketingBlastsViewModel(repo)
+        rule.setContent { AuntieOSTheme { MarketingBlastsScreen(viewModel = vm) } }
+        vm.setSendDate("2099-06-01")
+        vm.setSendTime("09:00")
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("blastSendTimeError").assertCountEquals(0)
+    }
     @Test
     fun `the blocker is shown as text and the schedule button is disabled with it`() {
         render()

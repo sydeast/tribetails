@@ -347,7 +347,7 @@ export async function scheduleMarketingBlastHandler(
    * retry re-runs the create-time guards, and a guard can legitimately change
    * its mind between attempts. An operator who schedules a blast for "now",
    * sees a timeout and presses Schedule again ninety seconds later would be
-   * refused `fireAtMs is in the past`, for a blast that is already stored and
+   * refused "That send time has already passed.", for a blast that is already stored and
    * already queued. Answering from the row first makes the retry deterministic.
    *
    * This is not the safety mechanism. The `create()` claim below is, and it is
@@ -360,8 +360,11 @@ export async function scheduleMarketingBlastHandler(
     }
   }
 
+  // #1593: the operator reads this sentence (it was "fireAtMs is in the past").
+  // The admin web and Android show the same one beside the Date and Time
+  // fields before the request is sent.
   if (args.fireAtMs < Date.now() - 60_000) {
-    throw new HttpsError('invalid-argument', 'fireAtMs is in the past');
+    throw new HttpsError('invalid-argument', 'That send time has already passed.', { field: 'fireAtMs' });
   }
 
   const audience = await resolveMarketingAudience(args);

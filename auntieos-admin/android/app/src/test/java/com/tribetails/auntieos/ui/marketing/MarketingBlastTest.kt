@@ -176,6 +176,13 @@ class MarketingBlastTest {
     }
 
     @Test
+    fun `#1593 the send time refusal does not wait for an audience`() {
+        assertEquals("That send time has already passed.", sendTimeError(now - 120_000L, now))
+        assertNull(sendTimeError(now - 30_000L, now))
+        assertNull(sendTimeError(now + 60_000L, now))
+        assertNull(sendTimeError(null, now))
+    }
+    @Test
     fun `blocker allows a time inside the server's own 60 second grace window`() {
         assertNull(blastBlocker(anyAudience, now - 30_000L, now, null))
     }

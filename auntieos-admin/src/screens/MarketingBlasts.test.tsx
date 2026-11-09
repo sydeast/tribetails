@@ -165,6 +165,35 @@ describe('MarketingBlasts', () => {
     expect(screen.getByRole('button', { name: 'Schedule blast' })).toBeDisabled();
   });
 
+  it('#1593: a send time in 2020 is refused at the Date and Time fields, not only under the buttons', async () => {
+    render(<MarketingBlasts />);
+    await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+    await userEvent.type(screen.getByLabelText('Date'), '2020-06-01');
+    await userEvent.type(screen.getByLabelText('Time'), '09:00');
+    const date = screen.getByLabelText('Date');
+    const time = screen.getByLabelText('Time');
+    expect(date).toHaveAttribute('aria-invalid', 'true');
+    expect(time).toHaveAttribute('aria-invalid', 'true');
+    const note = document.getElementById(date.getAttribute('aria-describedby') ?? '');
+    expect(note).toHaveTextContent('That send time has already passed.');
+    expect(note).toHaveAttribute('role', 'alert');
+    // Said once, at the field: the hint under the buttons does not repeat it.
+    expect(screen.getAllByText('That send time has already passed.')).toHaveLength(1);
+    expect(screen.queryByText(/^Fires /)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Schedule blast' })).toBeDisabled();
+  });
+  it('#1593: a future send time clears the field refusal', async () => {
+    const when = futureDateTime();
+    render(<MarketingBlasts />);
+    await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+    await userEvent.type(screen.getByLabelText('Date'), '2020-06-01');
+    await userEvent.type(screen.getByLabelText('Time'), when.time);
+    expect(screen.getByLabelText('Date')).toHaveAttribute('aria-invalid', 'true');
+    await userEvent.clear(screen.getByLabelText('Date'));
+    await userEvent.type(screen.getByLabelText('Date'), when.date);
+    expect(screen.getByLabelText('Date')).toHaveAttribute('aria-invalid', 'false');
+    expect(screen.queryByText('That send time has already passed.')).not.toBeInTheDocument();
+  });
   it('blocks the schedule when a preview proved the audience reaches nobody', async () => {
     previewBlastAudience.mockResolvedValue({
       description: 'All active kinfolk',
