@@ -5,6 +5,7 @@ import { createShareLink, revokeShareLink, type CreateShareLinkResult } from '..
 import '../styles/shareKinTaleDialog.css';
 import { MutationLabel, OfflineMutationNotice } from './OfflineMutationNotice';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 
 const MIN_EXPIRES_DAYS = 1;
 const MAX_EXPIRES_DAYS = 90;
@@ -46,6 +47,9 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
   const [confirmingRevoke, setConfirmingRevoke] = useState(false);
   const [revoked, setRevoked] = useState(false);
   const [showPasscode, setShowPasscode] = useState(false);
+  // #1504: the dialog mounts when the household taps Share, which is the
+  // intent; wake the link writer now so Create lands on a running instance.
+  useWarmOnOpen('createShareLink');
   const cardRef = useRef<HTMLDivElement>(null);
 
   // ABANDON. `createShareLink` `.add()`s a new sharedKinTales document every

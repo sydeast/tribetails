@@ -202,4 +202,26 @@ class MessageAuntieScreenTest {
         waitForIdle()
         onNodeWithText("January 6, 2020").assertIsDisplayed()
     }
+
+    /** #1504: the composer wakes Polish and Send once each when it opens. */
+    @Test
+    fun opening_warmsPolishAndSendOnce() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyConversation", buildJsonObject {
+            put("kinfolkId", "3"); put("messages", buildJsonArray {})
+        })
+        setThemedContent { MessageAuntieScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        kotlin.test.assertEquals(listOf("generate", "sendKinfolkMessage"), fake.warmCalls)
+    }
+    /** With chat off there is no composer, so nothing is woken. */
+    @Test
+    fun chatOff_warmsNothing() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        setThemedContent {
+            MessageAuntieScreen("The Foster", "3", PortalApi(fake), chat = com.kinfolk.portal.portal.PortalChat(enabled = false))
+        }
+        waitForIdle()
+        kotlin.test.assertEquals(emptyList<String>(), fake.warmCalls)
+    }
 }

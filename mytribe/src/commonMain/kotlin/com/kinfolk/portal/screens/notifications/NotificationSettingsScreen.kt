@@ -61,6 +61,8 @@ import com.kinfolk.portal.notifications.NotificationChannel
 import com.kinfolk.portal.notifications.NotificationKey
 import com.kinfolk.portal.portal.NotificationPrefsPatch
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.WarmOnOpen
+import com.kinfolk.portal.portal.WarmableSave
 import com.kinfolk.portal.portal.applyNotificationPrefsPatch
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -132,6 +134,9 @@ fun NotificationSettingsScreen(
     var status by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
+    // #1504: the editor is live once the prefs have loaded; wake the save's
+    // instance so Save lands on a running one. After the screen's reads (#1561).
+    WarmOnOpen(portalApi, WarmableSave.SaveMyNotificationPrefs, enabled = prefsLoaded)
 
     val byCategory: SnapshotStateMap<String, MutableMap<String, Boolean>> = remember { mutableStateMapOf() }
     // Task 27a model: byKey is an override, absence means inherit — a key

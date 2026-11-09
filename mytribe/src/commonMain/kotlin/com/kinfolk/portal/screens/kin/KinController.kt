@@ -26,6 +26,8 @@ class KinController internal constructor(
     private val portalApi: PortalApi,
     private val scope: kotlinx.coroutines.CoroutineScope,
 ) {
+    /** #1504: the API the add/edit dialog's warm-on-open call goes through. */
+    internal val api: PortalApi get() = portalApi
     var data by mutableStateOf<KinResult?>(null)
         private set
     var error by mutableStateOf<String?>(null)

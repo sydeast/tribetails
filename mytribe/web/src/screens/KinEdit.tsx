@@ -5,6 +5,7 @@ import { archiveKin, canDeleteKin, deleteKin, getMyKin, requestKinRemoval, updat
 import { BREEDS_QUERY, EMPTY_BREED_BANKS } from '../api/breeds';
 import type { DeleteKinResult, KinPayloadPartial } from '../api/types';
 import { useSignOut } from '../lib/auth';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearch';
 import { BreedField } from '../components/BreedField';
@@ -89,6 +90,10 @@ export function KinEdit() {
       seededId.current = found.id;
     }
   }, [found]);
+
+  // #1504: the editor is open once it is seeded from the Kin; wake the save's
+  // instance so Save lands on a running one. After the screen's read (#1561).
+  useWarmOnOpen('updateKin', form !== null);
 
   // HOLD. `updateKin` is a set/merge on families/{id}/kin/{kinId}, a
   // deterministic document id, so a replay only re-stamps `updatedAt`.

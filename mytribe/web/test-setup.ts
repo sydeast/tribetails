@@ -3,7 +3,18 @@
 // `setupFiles` — harmless for the plain-logic *.test.ts files that never
 // touch the DOM, since it only adds matchers rather than requiring one.
 import '@testing-library/jest-dom/vitest';
-import { afterEach } from 'vitest';
+import { afterEach, vi } from 'vitest';
+// #1504: forms warm their own save as they open (`src/lib/useWarmOnOpen.ts`),
+// and that call goes straight to `lib/fns`, under every screen spec's api-module
+// mocks. Unmocked it would reach the network and trip the #1138 guard below in
+// every form spec. So `warmSave` is a no-op spy for the whole suite: the hook
+// itself stays real, and a spec asserts what it fired by reading this spy
+// (`vi.mocked(warmSave)`). `src/lib/warmSave.test.ts` unmocks it to test the
+// call itself.
+// No `importOriginal`: the real module pulls in `lib/fns` and Firebase, which
+// the plain-logic specs never load. Nothing but its own spec reads the
+// module's constants at runtime.
+vi.mock('./src/lib/warmSave', () => ({ warmSave: vi.fn(async () => undefined) }));
 // #1138: any request that would leave the machine fails the test that made it.
 import './test-network-guard';
 import { cleanup, configure, getConfig } from '@testing-library/react';

@@ -44,7 +44,8 @@ import kotlinx.datetime.LocalDate
  * [ForegroundCalls]) until the screens' own callables have settled, with a
  * ceiling so a hung screen read still lets the rest of the portal warm.
  *
- * NOT HERE: saves (#1504) are a separate issue. `getMyKin` (#1282) and
+ * NOT HERE: saves. A read shares no instance with its save, so each form
+ * wakes its own save when it opens (#1504, [WarmOnOpen]). `getMyKin` (#1282) and
  * `getVetClinics` (#1503) are not warmed: both are direct Firestore reads on
  * this platform, so there is no instance to wake.
  */

@@ -57,6 +57,8 @@ import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.WarmOnOpen
+import com.kinfolk.portal.portal.WarmableSave
 import com.kinfolk.portal.portal.ShareLinkCreated
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkGradients
@@ -99,6 +101,9 @@ fun ShareKinTaleModal(
     var revoking by remember { mutableStateOf(false) }
     var revokeError by remember { mutableStateOf<String?>(null) }
     var revoked by remember { mutableStateOf(false) }
+    // #1504: the dialog opens when the household taps Share, which is the
+    // intent; wake the link writer now so Create lands on a running instance.
+    WarmOnOpen(portalApi, WarmableSave.CreateShareLink)
 
     Dialog(
         onDismissRequest = { if (!submitting && !revoking) onDismiss() },

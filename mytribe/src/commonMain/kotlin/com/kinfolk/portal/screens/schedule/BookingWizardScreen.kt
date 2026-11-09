@@ -58,6 +58,8 @@ import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.mintBookingIdempotencyKey
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.WarmOnOpen
+import com.kinfolk.portal.portal.WarmableSave
 import com.kinfolk.portal.portal.Service
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -103,6 +105,11 @@ fun BookingWizardScreen(
     var kin by remember { mutableStateOf<List<Kin>?>(null) }
     var services by remember { mutableStateOf<List<Service>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
+    // #1504: the wizard is open once its Kin and KinCares have loaded (step 1
+    // can be filled in from then), so the submit's instance is woken now. A
+    // booking takes minutes to set up; the submit then lands on a running
+    // instance. After the wizard's own reads (#1561).
+    WarmOnOpen(portalApi, WarmableSave.RequestBooking, enabled = kin != null && services != null)
 
     /**
      * C1 / #544: date key -> closure name for the whole booking horizon, so

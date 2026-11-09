@@ -38,6 +38,7 @@ import {
   type SecondaryKinfolkDto,
 } from '../api/tribeApi';
 import { useSignOut } from '../lib/auth';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
@@ -199,6 +200,14 @@ export function TribeProfile() {
     for (const f of homeAccess.customFields) seeded[f.key] = f.value;
     setHomeValues(seeded);
   }, [homeSchemaQ.data, profile.data]);
+
+  // #1504: the page form is open once its profile has loaded. Its Save calls
+  // both halves (saveTribeProfile, then saveHomeAccess), so both instances are
+  // woken; one cold half would still hold the whole save. After the screen's
+  // reads, never ahead of them (#1561).
+  const profileOpen = profile.data !== undefined;
+  useWarmOnOpen('saveTribeProfile', profileOpen);
+  useWarmOnOpen('saveHomeAccess', profileOpen);
 
   const { signOut, signingOut } = useSignOut();
 

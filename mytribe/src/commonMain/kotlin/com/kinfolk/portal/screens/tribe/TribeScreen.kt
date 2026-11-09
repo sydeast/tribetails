@@ -62,6 +62,8 @@ import com.kinfolk.portal.portal.inviteEmailProblem
 import com.kinfolk.portal.portal.isInvitableEmail
 import com.kinfolk.portal.portal.inviteFailureLine
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.WarmOnOpen
+import com.kinfolk.portal.portal.WarmableSave
 import com.kinfolk.portal.portal.TribeProfileResult
 import com.kinfolk.portal.portal.VetClinic
 import com.kinfolk.portal.screens.gallery.isPermissionDenied
@@ -112,6 +114,12 @@ fun TribeScreen(
     var wifi by remember { mutableStateOf("") }
     var accessFields by remember { mutableStateOf<List<CustomField>>(emptyList()) }
     var saving by remember { mutableStateOf(false) }
+    // #1504: the page form is open once its profile has loaded. Its Save calls
+    // both halves (saveTribeProfile, then saveHomeAccess), so both instances are
+    // woken; one cold half would still hold the whole save. After the screen's
+    // reads (#1561).
+    WarmOnOpen(portalApi, WarmableSave.SaveTribeProfile, enabled = loaded != null)
+    WarmOnOpen(portalApi, WarmableSave.SaveHomeAccess, enabled = loaded != null)
 
     /** Optional admin-driven schemas. When present, schema-rendered values replace static fields. */
     var profileSchema by remember { mutableStateOf<FormSchema?>(null) }

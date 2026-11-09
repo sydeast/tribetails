@@ -11,6 +11,7 @@ import { getMyKin } from '../api/portal';
 import { bookingPolicyKey, businessClosuresKey, serviceCatalogKey } from '../lib/portalQueryKeys';
 import type { KinDto } from '../api/types';
 import { useSignOut } from '../lib/auth';
+import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
@@ -274,6 +275,11 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
    */
   const policyQuery = useQuery({ queryKey: bookingPolicyKey(), queryFn: () => getBookingPolicy() });
   const policy = policyQuery.data ?? CLOCK_ONLY_POLICY;
+  // #1504: the wizard is open once its Kin and KinCares have loaded (step 1
+  // can be filled in from then), so the submit's instance is woken now. A
+  // booking takes the household minutes to set up; the submit then lands on a
+  // running instance. After the wizard's own reads (#1561).
+  useWarmOnOpen('requestBooking', kinQuery.data !== undefined && servicesQuery.data !== undefined);
 
   /**
    * The mode in force. Derived rather than stored, so it can never be a mode

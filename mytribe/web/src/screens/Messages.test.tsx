@@ -10,6 +10,7 @@ import { Messages, TOOLBAR_ACTIONS, normalizeLinkHref } from './Messages';
 import { mapGenerateError } from '../api/messagesApi';
 import type { GetMyConversationResult, ThreadMessageDto } from '../api/messagesApi';
 import { CallableTimeoutError } from '../lib/fns';
+import { warmSave } from '../lib/warmSave';
 
 // ── mocks ────────────────────────────────────────────────────────────────
 
@@ -527,5 +528,15 @@ describe('normalizeLinkHref', () => {
 
   it('returns null for blank input', () => {
     expect(normalizeLinkHref('   ')).toBeNull();
+  });
+});
+
+describe('Messages: warm on open (#1504)', () => {
+  it('wakes Polish and Send once each when the composer opens', async () => {
+    mocks.getMyConversation.mockResolvedValue(conversationResult([]));
+    renderScreen();
+    await waitFor(() => expect(vi.mocked(warmSave).mock.calls).toEqual([['generate'], ['sendKinfolkMessage']]));
+    expect(mocks.generateAssist).not.toHaveBeenCalled();
+    expect(mocks.sendKinfolkMessage).not.toHaveBeenCalled();
   });
 });
