@@ -1,6 +1,7 @@
 import { describe, beforeAll, afterAll, it, expect } from 'vitest';
 import {
   blastBlocker,
+  sendTimeError,
   cancelNotice,
   fieldLabel,
   fieldValuesToData,
@@ -99,6 +100,13 @@ describe('blastBlocker', () => {
     expect(blastBlocker(audience, now - 120_000, now, undefined)).toBe('That send time has already passed.');
   });
 
+  it('#1593: the send time\'s own refusal does not wait for an audience', () => {
+    expect(sendTimeError(now - 120_000, now)).toBe('That send time has already passed.');
+    expect(sendTimeError(Date.UTC(2020, 0, 1), now)).toBe('That send time has already passed.');
+    expect(sendTimeError(now - 30_000, now)).toBeNull();
+    expect(sendTimeError(now + 60_000, now)).toBeNull();
+    expect(sendTimeError(null, now)).toBeNull();
+  });
   it('allows a time inside the server\'s own 60 second grace window', () => {
     expect(blastBlocker(audience, now - 30_000, now, undefined)).toBeNull();
   });

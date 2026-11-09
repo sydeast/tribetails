@@ -63,6 +63,10 @@ import com.tribetails.auntieos.domain.CoverageRules
 import com.tribetails.auntieos.domain.DEFAULT_COVERAGE_RULES
 import com.tribetails.auntieos.domain.uniqueCopyName
 import com.tribetails.auntieos.domain.MaxGapParse
+import com.tribetails.auntieos.domain.PackageFieldParse
+import com.tribetails.auntieos.domain.dateRangeRefusal
+import com.tribetails.auntieos.domain.parseBufferHours
+import com.tribetails.auntieos.domain.parseDiscountPct
 import com.tribetails.auntieos.domain.parseMaxGapHours
 import com.tribetails.auntieos.domain.DayPattern
 import com.tribetails.auntieos.domain.Duration
@@ -126,6 +130,11 @@ import kotlin.math.floor
 private enum class DateTarget { START, END }
 /** What the last destructive action can give back (#1605). */
 private class UndoEntry(val label: String, val restore: () -> Unit)
+/** A package's Discount % or Buffer (hrs) field (#1593). */
+private enum class PackageField { DISCOUNT, BUFFER }
+private fun fieldKey(pkgId: String, field: PackageField): String = "$pkgId:${field.name}"
+private fun parseField(field: PackageField, text: String): PackageFieldParse =
+    if (field == PackageField.DISCOUNT) parseDiscountPct(text) else parseBufferHours(text)
 private class QuoteSnapshot(
     val packages: List<Package>, val detailId: String?, val clientName: String, val startDate: String,
     val endDate: String, val rules: CoverageRules, val overnightDurationId: String,
@@ -155,6 +164,11 @@ fun CoveragePackageScreen(
     // keeps the last good value until the text reads as a valid gap.
     var gapText by remember { mutableStateOf(numText(DEFAULT_COVERAGE_RULES.maxGapHours)) }
     var gapError by remember { mutableStateOf<String?>(null) }
+    // What is typed in each package's Discount % and Buffer (hrs), kept apart from the value
+    // pricing uses (#1593, the Max gap pattern). Once a field is touched its text stays as
+    // typed; a refused entry shows its message under the field and the package keeps its
+    // last good value.
+    var fieldText by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var clientName by remember { mutableStateOf("") }
     // A fresh quote opens on today rather than blank (issue #693).
     var startDate by remember { mutableStateOf(todayIso()) }
@@ -176,6 +190,8 @@ fun CoveragePackageScreen(
 
     val days = daysBetween(startDate, endDate)
     val nights = (days - 1).coerceAtLeast(0)
+    // End before Start is refused under End and prices nothing (#1593).
+    val dateError = dateRangeRefusal(startDate, endDate)
 
     // Keep overnight selection pointing at a real overnight-kind duration.
     LaunchedEffect(durations) {
@@ -185,7 +201,10 @@ fun CoveragePackageScreen(
         }
     }
     // Date range shrank: drop overnight toggles / day overrides for days that no longer exist.
-    LaunchedEffect(nights, days) {
+    // A refused (reversed) range is not a shrink: picking the wrong End must not wipe the
+    // operator's overnight nights and day edits (#1593).
+    LaunchedEffect(nights, days, dateError) {
+        if (dateError != null) return@LaunchedEffect
         packages = packages.map { p ->
             val keptNights = p.overnightNights.filterKeys { it < nights }
             val keptDays = p.dayOverrides.filterKeys { it < days }
@@ -248,12 +267,15 @@ fun CoveragePackageScreen(
         val before = QuoteSnapshot(packages, detailId, clientName, startDate, endDate, rules, overnightDurationId)
         val beforeGapText = gapText
         val beforeGapError = gapError
+        val beforeFieldText = fieldText
         undo = UndoEntry("Started a new quote.") {
             packages = before.packages; detailId = before.detailId; clientName = before.clientName
             startDate = before.startDate; endDate = before.endDate; rules = before.rules
             overnightDurationId = before.overnightDurationId
             // The Max gap text and its message come back with the rule they feed (#1582).
             gapText = beforeGapText; gapError = beforeGapError
+            // So do each package's typed Discount and Buffer (#1593).
+            fieldText = beforeFieldText
         }
         detailId = null; clientName = ""; startDate = todayIso(); endDate = ""
         // Rules are per-client, so reset them for the next one, repointed at the menu
@@ -261,6 +283,7 @@ fun CoveragePackageScreen(
         val freshRules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations)
         rules = freshRules
         gapText = numText(freshRules.maxGapHours); gapError = null
+        fieldText = emptyMap()
         // The next quote opens the way this one did: the three tiers already built.
         packages = packagesFromPatterns(
             buildDayPatterns(
@@ -405,7 +428,7 @@ fun CoveragePackageScreen(
                     AuntieField(value = clientName, onValueChange = { clientName = it }, label = "Client (optional)", placeholder = "Kinfolk name", modifier = Modifier.fillMaxWidth())
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         DateField(label = "Start", value = startDate, onClick = { datePickerFor = DateTarget.START }, modifier = Modifier.weight(1f))
-                        DateField(label = "End", value = endDate, onClick = { datePickerFor = DateTarget.END }, modifier = Modifier.weight(1f))
+                        DateField(label = "End", value = endDate, onClick = { datePickerFor = DateTarget.END }, error = dateError, modifier = Modifier.weight(1f))
                     }
                     if (days > 0) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -449,6 +472,18 @@ fun CoveragePackageScreen(
                                 nights = nights,
                                 startDate = startDate,
                                 maxGapHours = rules.maxGapHours,
+                                datesRefused = dateError != null,
+                                discountText = fieldText[fieldKey(pkg.id, PackageField.DISCOUNT)],
+                                bufferText = fieldText[fieldKey(pkg.id, PackageField.BUFFER)],
+                                onFieldText = { field, typed ->
+                                    fieldText = fieldText + (fieldKey(pkg.id, field) to typed)
+                                    when (val parsed = parseField(field, typed)) {
+                                        is PackageFieldParse.Ok -> patchPackage(pkg.id) {
+                                            if (field == PackageField.DISCOUNT) it.copy(discountPct = parsed.value) else it.copy(overnightBufferHours = parsed.value)
+                                        }
+                                        is PackageFieldParse.Refused -> Unit
+                                    }
+                                },
                                 warnings = gapWarnings(pkg.visits, rules.wakeStart, rules.wakeEnd, rules.maxGapHours, com.tribetails.auntieos.domain.Coverage(null, null, false)),
                                 isDetail = detailId == pkg.id,
                                 onPatch = { block -> patchPackage(pkg.id, block) },
@@ -504,7 +539,7 @@ fun CoveragePackageScreen(
                     Row(modifier = Modifier.fillMaxWidth().background(c.surface, RoundedCornerShape(12.dp)).padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Column(Modifier.weight(1f)) {
                             Text(if (clientName.isNotBlank()) "$clientName's package" else "Package total", style = AuntieTheme.typography.titleLarge, color = c.textPrimary)
-                            Text("${detailPkg.name} · $days day${if (days != 1) "s" else ""}${if (detailPriced.discountPct > 0) " · ${detailPkg.discountLabel.ifBlank { "Discount" }} ${detailPriced.discountPct.toInt()}% off $${money(detailPriced.subtotal)}" else ""}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            Text("${detailPkg.name} · $days day${if (days != 1) "s" else ""}${if (detailPriced.discountPct > 0) " · ${detailPkg.discountLabel.ifBlank { "Discount" }} ${numText(detailPriced.discountPct)}% off $${money(detailPriced.subtotal)}" else ""}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
                         }
                         Text("$${money(detailPriced.total)}", style = AuntieTheme.typography.displayMedium, color = c.primary, fontWeight = FontWeight.SemiBold)
                     }
@@ -544,6 +579,10 @@ private fun PackageCard(
     nights: Int,
     startDate: String,
     maxGapHours: Double,
+    datesRefused: Boolean,
+    discountText: String?,
+    bufferText: String?,
+    onFieldText: (PackageField, String) -> Unit,
     warnings: List<String>,
     isDetail: Boolean,
     wakeStart: String,
@@ -554,6 +593,9 @@ private fun PackageCard(
     onToggleDetail: () -> Unit,
 ) {
     val c = AuntieTheme.colors
+    // Derived from the typed text, so the message lives exactly as long as the bad entry (#1593).
+    val discountError = discountText?.let { (parseDiscountPct(it) as? PackageFieldParse.Refused)?.message }
+    val bufferError = bufferText?.let { (parseBufferHours(it) as? PackageFieldParse.Refused)?.message }
     Column(
         modifier = Modifier.fillMaxWidth()
             .border(width = if (isDetail) 1.5.dp else 1.dp, color = if (isDetail) c.primary else c.border, shape = RoundedCornerShape(12.dp))
@@ -599,7 +641,17 @@ private fun PackageCard(
         SectionLabel("Overnights")
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TimeField(label = "Starts", value = pkg.overnightStart, onChange = { v -> onPatch { it.copy(overnightStart = v) } }, modifier = Modifier.weight(1f))
-            AuntieField(value = numText(pkg.overnightBufferHours), onValueChange = { v -> onPatch { it.copy(overnightBufferHours = v.toDoubleOrNull() ?: 0.0) } }, label = "Buffer (hrs)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            AuntieField(
+                value = bufferText ?: numText(pkg.overnightBufferHours),
+                onValueChange = { v -> onFieldText(PackageField.BUFFER, v) },
+                label = "Buffer (hrs)",
+                isError = bufferError != null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        bufferError?.let {
+            Text("$it Prices still use ${numText(pkg.overnightBufferHours)}h.", style = AuntieTheme.typography.bodySmall, color = c.error)
         }
         if (overnightDuration != null) {
             val endMin = timeToMinutes(pkg.overnightStart)?.let { it + overnightDuration.minutes }
@@ -609,7 +661,7 @@ private fun PackageCard(
             }
         }
         if (nights == 0) {
-            Text(if (days > 0) "Single day — no nights." else "Set a date range above.", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
+            Text(if (days > 0) "Single day — no nights." else if (datesRefused) "Fix the end date above." else "Set a date range above.", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
         } else if (overnightDuration == null) {
             Text("No overnight duration defined (add one to the menu).", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
         } else {
@@ -623,15 +675,25 @@ private fun PackageCard(
         SectionLabel("Discount")
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AuntieField(value = pkg.discountLabel, onValueChange = { v -> onPatch { it.copy(discountLabel = v) } }, placeholder = "e.g. Military", modifier = Modifier.weight(2f))
-            AuntieField(value = if (pkg.discountPct == 0.0) "" else numText(pkg.discountPct), onValueChange = { v -> onPatch { it.copy(discountPct = v.toDoubleOrNull() ?: 0.0) } }, placeholder = "0", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+            AuntieField(
+                value = discountText ?: if (pkg.discountPct == 0.0) "" else numText(pkg.discountPct),
+                onValueChange = { v -> onFieldText(PackageField.DISCOUNT, v) },
+                placeholder = "0",
+                isError = discountError != null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        discountError?.let {
+            Text("$it Prices still use ${numText(pkg.discountPct)}%.", style = AuntieTheme.typography.bodySmall, color = c.error)
         }
 
         if (days == 0) {
-            Text("Set a date range to price this.", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
+            Text(if (datesRefused) "Fix the end date above to price this." else "Set a date range to price this.", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(top = 8.dp)) {
                 TotalLine("Subtotal", "$${money(priced.subtotal)}", c.textDim)
-                if (priced.discountPct > 0) TotalLine("${pkg.discountLabel.ifBlank { "Discount" }} (${priced.discountPct.toInt()}%)", "−$${money(priced.discount)}", c.primary)
+                if (priced.discountPct > 0) TotalLine("${pkg.discountLabel.ifBlank { "Discount" }} (${numText(priced.discountPct)}%)", "−$${money(priced.discount)}", c.primary)
                 TotalLine("Total", "$${money(priced.total)}", c.textPrimary, bold = true)
                 GhostButton(label = if (isDetail) "Hide day-by-day" else "View day-by-day", onClick = onToggleDetail)
             }
@@ -760,13 +822,14 @@ private fun TimeField(label: String?, value: String, onChange: (String) -> Unit,
 }
 
 @Composable
-private fun DateField(label: String, value: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun DateField(label: String, value: String, onClick: () -> Unit, modifier: Modifier = Modifier, error: String? = null) {
     val c = AuntieTheme.colors
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label.uppercase(Locale.US), style = AuntieTheme.typography.labelSmall, color = c.textDim)
-        Box(modifier = Modifier.fillMaxWidth().border(1.dp, c.border, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 12.dp)) {
+        Box(modifier = Modifier.fillMaxWidth().border(1.dp, if (error != null) c.error else c.border, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 12.dp)) {
             Text(value.ifBlank { "Pick a date" }, style = AuntieTheme.typography.bodyMedium, color = if (value.isBlank()) c.textFaint else c.textPrimary)
         }
+        error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.error) }
     }
 }
 

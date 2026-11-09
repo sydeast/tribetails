@@ -2,7 +2,8 @@
  * Coverage Package Builder (`/packages`): the Start date opens on today and
  * the second "Visit menu" rate card is gone (#693, PR #728), and a fresh
  * quote auto-builds the Lean, Balance and Premium tiers again beside a
- * hand-built package (#694, PR #733).
+ * hand-built package (#694, PR #733). A bad Discount is refused beside the
+ * field rather than read as 0 (#1593).
  *
  * A SERVICE RATE IS SEEDED THROUGH A DIRECT FIRESTORE WRITE, not through
  * Settings. `e2e/seed.ts` carries no `business_settings` doc at all
@@ -135,5 +136,20 @@ describe('packages', () => {
       const names = [...$inputs].map((el) => (el as HTMLInputElement).value);
       expect(names, 'seeded tier names').to.include.members(['Lean', 'Balance', 'Premium']);
     });
+  });
+  it('#1593 refuses a negative discount beside the field instead of reading it as 0', () => {
+    cy.signIn();
+    cy.visit('/packages');
+    cy.get('.cpb__pkg')
+      .first()
+      .within(() => {
+        cy.get('input[aria-label="Discount percent"]').type('-20');
+        cy.get('input[aria-label="Discount percent"]')
+          .should('have.value', '-20')
+          .and('have.attr', 'aria-invalid', 'true');
+        cy.get('[role="alert"]').should('have.text', 'Enter a discount from 0 to 100 percent. Prices still use 0%.');
+        cy.get('input[aria-label="Discount percent"]').clear().type('10');
+        cy.get('[role="alert"]').should('not.exist');
+      });
   });
 });

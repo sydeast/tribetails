@@ -27,6 +27,7 @@ import {
   pickableAccounts,
   scheduleNotice,
   sendingLabel,
+  sendTimeError,
 } from '../lib/marketingBlastEdit';
 import { mintBlastIdempotencyKey } from '../lib/sendIdempotency';
 import { sendTimeOf } from '../lib/communicateFormat';
@@ -284,7 +285,10 @@ export function MarketingBlasts() {
   const missingFields = (copy?.fields ?? []).filter((f) => f.source === 'missing').map((f) => f.name);
   const audience = blastAudienceArgs(selectedSegmentId, adhocCriteria, explicitUids, mode);
   const fireAtMs = fireAtMsFrom(sendDate, sendTime, businessZone);
-  const blocker = blastBlocker(audience, fireAtMs, Date.now(), reach?.reachable, missingFields);
+  const nowMs = Date.now();
+  const blocker = blastBlocker(audience, fireAtMs, nowMs, reach?.reachable, missingFields);
+  // #1593: shown at the fields themselves, ahead of anything else still missing.
+  const whenError = sendTimeError(fireAtMs, nowMs);
   const busy = scheduling || previewing;
 
   const loadSegments = useCallback(() => {
@@ -759,6 +763,8 @@ export function MarketingBlasts() {
                       className="blasts__text-input"
                       value={sendDate}
                       disabled={busy}
+                      aria-invalid={whenError !== null}
+                      aria-describedby={whenError !== null ? `${legendId}-when-error` : undefined}
                       onChange={(e) => setSendDate(e.target.value)}
                     />
                   </label>
@@ -769,11 +775,19 @@ export function MarketingBlasts() {
                       className="blasts__text-input"
                       value={sendTime}
                       disabled={busy}
+                      aria-invalid={whenError !== null}
+                      aria-describedby={whenError !== null ? `${legendId}-when-error` : undefined}
                       onChange={(e) => setSendTime(e.target.value)}
                     />
                   </label>
                 </div>
-                {fireAtMs !== null && <p className="blasts__hint">Fires {fireLabel(fireAtMs)}, {businessZone} time.</p>}
+                {whenError !== null ? (
+                  <p id={`${legendId}-when-error`} className="blasts__fieldError" role="alert">
+                    {whenError}
+                  </p>
+                ) : (
+                  fireAtMs !== null && <p className="blasts__hint">Fires {fireLabel(fireAtMs)}, {businessZone} time.</p>
+                )}
               </fieldset>
 
               <div className="blasts__actions">
@@ -792,7 +806,7 @@ export function MarketingBlasts() {
                   }}
                 />
               </div>
-              {blocker !== null && <p className="blasts__hint">{blocker}</p>}
+              {blocker !== null && blocker !== whenError && <p className="blasts__hint">{blocker}</p>}
             </div>
           </DenPanel>
         </div>

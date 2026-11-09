@@ -327,15 +327,69 @@ export const PACKAGE_DEFAULTS: Omit<Package, 'id' | 'name'> = {
   note: '',
 };
 
-/** Fill a partial (persisted) package up to a full one. */
+/** What a package's Discount % or Buffer (hrs) field made of its typed text (#1593). */
+export type PackageFieldParse = { ok: true; value: number } | { ok: false; message: string };
+export const DISCOUNT_REFUSAL = 'Enter a discount from 0 to 100 percent.';
+export const BUFFER_REFUSAL = 'Enter the buffer in hours, 0 or more, like 1 or 1.5.';
+const PLAIN_NUMBER = /^\d+(\.\d+)?$/;
+/**
+ * Reads what was typed into a package's Discount %.
+ *
+ * REFUSES instead of coercing (#1593). The field used to read "150" as 100,
+ * "-20" and "abc" as 0, with no message. Blank still means no discount. Anything
+ * else must be a plain number from 0 to 100; the caller keeps the last good
+ * value and shows the message beside the field.
+ */
+export function parseDiscountPct(text: string): PackageFieldParse {
+  const t = text.trim();
+  if (t === '') return { ok: true, value: 0 };
+  const value = Number(t);
+  if (!PLAIN_NUMBER.test(t) || !Number.isFinite(value) || value > 100) return { ok: false, message: DISCOUNT_REFUSAL };
+  return { ok: true, value };
+}
+/**
+ * Reads what was typed into a package's overnight Buffer (hrs).
+ *
+ * REFUSES instead of coercing (#1593). "abc" and blank used to become 0 and
+ * "-1" was stored but priced as 0. There is no upper bound: how early the
+ * sitter arrives is the operator's call.
+ */
+export function parseBufferHours(text: string): PackageFieldParse {
+  const t = text.trim();
+  const value = Number(t);
+  if (!PLAIN_NUMBER.test(t) || !Number.isFinite(value)) return { ok: false, message: BUFFER_REFUSAL };
+  return { ok: true, value };
+}
+/**
+ * A stored package's Discount % and Buffer (hrs) the fields would refuse, as the
+ * text each field shows, or null when the stored value is usable or absent. A
+ * quote saved while the fields still coerced can hold `150` or `-1`; the screen
+ * shows it as stored, with its message, and prices at the default until retyped.
+ */
+export function storedPackageRefusals(p: Partial<Package>): { discount: string | null; buffer: string | null } {
+  const refused = (v: unknown, parse: (t: string) => PackageFieldParse): string | null =>
+    v === undefined || v === null || parse(String(v)).ok ? null : String(v);
+  return { discount: refused(p.discountPct, parseDiscountPct), buffer: refused(p.overnightBufferHours, parseBufferHours) };
+}
+
+/**
+ * Fill a partial (persisted) package up to a full one. A stored discount or
+ * buffer the field would refuse prices at the default; `storedPackageRefusals`
+ * names it so the screen can say so.
+ */
 export function normalizePackage(p: Partial<Package>): Package {
+  const refusals = storedPackageRefusals(p);
+  const readable = (v: unknown, fallback: number): number => (v === undefined || v === null ? fallback : Number(v));
   return {
     ...PACKAGE_DEFAULTS,
     ...p,
     id: p.id ?? uid(),
     name: p.name ?? 'Package',
-    discountPct: Number(p.discountPct) || 0,
-    overnightBufferHours: Number(p.overnightBufferHours ?? PACKAGE_DEFAULTS.overnightBufferHours) || 0,
+    discountPct: refusals.discount === null ? readable(p.discountPct, PACKAGE_DEFAULTS.discountPct) : PACKAGE_DEFAULTS.discountPct,
+    overnightBufferHours:
+      refusals.buffer === null
+        ? readable(p.overnightBufferHours, PACKAGE_DEFAULTS.overnightBufferHours)
+        : PACKAGE_DEFAULTS.overnightBufferHours,
   };
 }
 
@@ -360,6 +414,18 @@ export function todayIso(now: Date = new Date()): string {
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
   return `${now.getFullYear()}-${month}-${day}`;
+}
+
+export const DATE_ORDER_REFUSAL = 'The end date has to be on or after the start date.';
+/**
+ * The message beside End when it falls before Start, or null (#1593). A reversed
+ * range used to price nothing with no reason given: the day count just vanished.
+ */
+export function dateRangeRefusal(start: string, end: string): string | null {
+  if (!start || !end) return null;
+  const s = new Date(`${start}T00:00:00`).getTime();
+  const e = new Date(`${end}T00:00:00`).getTime();
+  return Number.isFinite(s) && Number.isFinite(e) && e < s ? DATE_ORDER_REFUSAL : null;
 }
 
 /** Inclusive day count between two "YYYY-MM-DD" dates; 0 if unset or reversed. */
@@ -758,6 +824,8 @@ export function pricePackage(pkg: Package, ctx: PriceContext): PricedPackage {
     });
   }
   const subtotal = rows.reduce((s, r) => s + r.dayCost, 0);
+  // The Discount field and `normalizePackage` refuse anything outside 0..100
+  // (#1593); this clamp is a guard, never the thing that reads a typed value.
   const pct = Math.min(100, Math.max(0, Number(pkg.discountPct) || 0));
   const discount = subtotal * (pct / 100);
   return { rows, subtotal, discountPct: pct, discount, total: subtotal - discount };
