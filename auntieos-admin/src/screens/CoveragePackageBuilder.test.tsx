@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_COVERAGE_RULES, todayIso } from '../lib/coveragePackage';
 
@@ -390,5 +390,164 @@ describe('CoveragePackageBuilder Max gap (issue #1582)', () => {
     expect(alert.textContent).toMatch(/minus sign is not allowed/i);
     expect(alert.textContent).toMatch(/Prices still use 6h/);
     await waitFor(() => expect(storedGap()).toBe(6));
+  });
+});
+
+describe('CoveragePackageBuilder Discount, Buffer and dates (issue #1593)', () => {
+  const DISCOUNT = 'Enter a discount from 0 to 100 percent.';
+  const BUFFER = 'Enter the buffer in hours, 0 or more, like 1 or 1.5.';
+  const DATES = 'The end date has to be on or after the start date.';
+  const storedPkg = (): Record<string, unknown> =>
+    JSON.parse(window.localStorage.getItem('tt-coverage-quote-v1')!).packages[0];
+  const quote = (pkgOver: Record<string, unknown> = {}, over: Record<string, unknown> = {}) =>
+    storeQuote({
+      clientName: 'Rex',
+      startDate: '2026-12-01',
+      endDate: '2026-12-03',
+      overnightDurationId: '',
+      rules: DEFAULT_COVERAGE_RULES,
+      packages: [{ id: 'a', name: 'Alpha', visits: [{ id: 'va', time: 540, durationId: '30Minute', label: 'Morning' }], ...pkgOver }],
+      tiersSeeded: true,
+      ...over,
+    });
+  const discount = () => screen.getByLabelText('Discount percent') as HTMLInputElement;
+  const buffer = () => screen.getByLabelText('Buffer (hrs)') as HTMLInputElement;
+  /** The message the field points at with aria-describedby: beside it, not a banner. */
+  const messageFor = (field: HTMLElement): string | null => {
+    const id = field.getAttribute('aria-describedby');
+    return id ? (document.getElementById(id)?.textContent ?? null) : null;
+  };
+  it('refuses 150, -20 and abc in Discount beside the field and never caps them', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    // Typed a key at a time, "150" passes through "15", a real discount, so that is
+    // the last good value; "-20" and "abc" are refused from the first key.
+    for (const [bad, kept] of [['-20', 0], ['abc', 0], ['150', 15]] as const) {
+      await user.clear(discount());
+      await user.type(discount(), bad);
+      // What was typed stays typed: refused, not rewritten into 100 or 0.
+      expect(discount().value).toBe(bad);
+      expect(discount().getAttribute('aria-invalid')).toBe('true');
+      expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use ${kept}%.`);
+      expect(screen.getByRole('alert').textContent).toBe(`${DISCOUNT} Prices still use ${kept}%.`);
+    }
+    // Never capped at 100: the price carries the last good 15%.
+    expect(screen.getByText('Discount (15%)')).toBeTruthy();
+    expect(screen.queryByText('Discount (100%)')).toBeNull();
+    await waitFor(() => expect(storedPkg().discountPct).toBe(15));
+  });
+  it('keeps pricing at the last good discount while a typed one is refused, and fixing it clears', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    await user.type(discount(), '12.5');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Discount (12.5%)')).toBeTruthy();
+    await waitFor(() => expect(storedPkg().discountPct).toBe(12.5));
+    await user.type(discount(), 'x');
+    expect(discount().value).toBe('12.5x');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 12.5%.`);
+    expect(screen.getByText('Discount (12.5%)')).toBeTruthy();
+    await user.type(discount(), '{Backspace}');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(discount().getAttribute('aria-invalid')).toBeNull();
+    // Blank means no discount.
+    await user.clear(discount());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/Discount \(/)).toBeNull();
+    await waitFor(() => expect(storedPkg().discountPct).toBe(0));
+  });
+  it('refuses abc, -1 and blank in Buffer beside the field and keeps the last good buffer', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    expect(buffer().value).toBe('2');
+    for (const bad of ['abc', '-1', '']) {
+      await user.clear(buffer());
+      if (bad) await user.type(buffer(), bad);
+      expect(buffer().value).toBe(bad);
+      expect(buffer().getAttribute('aria-invalid')).toBe('true');
+      expect(messageFor(buffer())).toBe(`${BUFFER} Prices still use 2h.`);
+    }
+    await waitFor(() => expect(storedPkg().overnightBufferHours).toBe(2));
+    await user.type(buffer(), '1.5');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(buffer().getAttribute('aria-invalid')).toBeNull();
+    await waitFor(() => expect(storedPkg().overnightBufferHours).toBe(1.5));
+    // 0 is a real buffer.
+    await user.clear(buffer());
+    await user.type(buffer(), '0');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(storedPkg().overnightBufferHours).toBe(0));
+  });
+  it('opens a stored discount and buffer the fields would refuse as stored, with their messages', async () => {
+    quote({ discountPct: 150, overnightBufferHours: -1 });
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    expect(discount().value).toBe('150');
+    expect(discount().getAttribute('aria-invalid')).toBe('true');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 0%.`);
+    expect(buffer().value).toBe('-1');
+    expect(messageFor(buffer())).toBe(`${BUFFER} Prices still use 2h.`);
+    expect(screen.queryByText(/Discount \(/)).toBeNull();
+    await waitFor(() => expect(storedPkg()).toMatchObject({ discountPct: 0, overnightBufferHours: 2 }));
+  });
+  it('brings typed Discount and Buffer back with Undo after Start new quote', async () => {
+    const user = userEvent.setup();
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    await user.type(discount(), '-20');
+    await user.clear(buffer());
+    await user.type(buffer(), 'abc');
+    await user.click(screen.getByRole('button', { name: 'Start new quote' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(discount().value).toBe('-20');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 0%.`);
+    expect(buffer().value).toBe('abc');
+    expect(messageFor(buffer())).toBe(`${BUFFER} Prices still use 2h.`);
+  });
+  it('says beside End that it falls before Start, prices nothing, and clears once fixed', async () => {
+    quote();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const end = screen.getByLabelText('End') as HTMLInputElement;
+    expect(screen.getByText(/3 days of coverage/)).toBeTruthy();
+    fireEvent.change(end, { target: { value: '2026-11-25' } });
+    expect(end.getAttribute('aria-invalid')).toBe('true');
+    expect(messageFor(end)).toBe(DATES);
+    expect(screen.getByRole('alert').textContent).toBe(DATES);
+    expect(screen.queryByText(/days? of coverage/)).toBeNull();
+    expect(screen.queryByText('Total')).toBeNull();
+    expect(screen.getByText('Fix the end date above to price this.')).toBeTruthy();
+    expect(screen.queryByText('Set a date range to price this.')).toBeNull();
+    fireEvent.change(end, { target: { value: '2026-12-01' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(end.getAttribute('aria-invalid')).toBeNull();
+    expect(screen.getByText(/1 day of coverage/)).toBeTruthy();
+    expect(screen.getByText('Total')).toBeTruthy();
+  });
+  it('keeps the overnight nights when End is briefly set before Start', async () => {
+    quote({ overnightNights: { 0: true, 1: true } });
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const end = screen.getByLabelText('End') as HTMLInputElement;
+    fireEvent.change(end, { target: { value: '2026-11-25' } });
+    expect(messageFor(end)).toBe(DATES);
+    fireEvent.change(end, { target: { value: '2026-12-03' } });
+    await waitFor(() => expect(storedPkg().overnightNights).toEqual({ 0: true, 1: true }));
+  });
+  it('opens a stored quote whose End falls before Start with the message showing', async () => {
+    quote({}, { startDate: '2026-12-05', endDate: '2026-12-01' });
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const end = screen.getByLabelText('End') as HTMLInputElement;
+    expect(end.getAttribute('aria-invalid')).toBe('true');
+    expect(messageFor(end)).toBe(DATES);
   });
 });
