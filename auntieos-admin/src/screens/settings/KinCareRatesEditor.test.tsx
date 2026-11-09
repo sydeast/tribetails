@@ -78,7 +78,7 @@ describe('KinCareRatesEditor', () => {
 
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '15.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '15.00' } });
     expect(await screen.findByText('Saved')).toBeInTheDocument();
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
   });
@@ -90,7 +90,7 @@ describe('KinCareRatesEditor', () => {
     await userEvent.clear(rateInput);
     await userEvent.type(rateInput, '20.00');
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '20.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '20.00' } });
   });
 
   it('removes a row from its trash button and Save drops it from the map', async () => {
@@ -100,7 +100,7 @@ describe('KinCareRatesEditor', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: 'Remove Walk' }));
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Overnight: '80.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Overnight: '80.00' } });
   });
 
   // #1593: a cleared name used to drop the row on Save without a word. It is
@@ -213,11 +213,8 @@ describe('KinCareRatesEditor', () => {
       );
       await userEvent.type(screen.getByLabelText('Duration (min)'), '45');
       await userEvent.click(screen.getByRole('button', SAVE));
-      expect(onSave).toHaveBeenCalledWith({
-        serviceRates: { Walk: '15.00' },
-        serviceDurations: { Walk: '45' },
-        serviceStartTimeBooking: {},
-      });
+      // #1783: only the lengths changed, so only the lengths travel.
+      expect(onSave).toHaveBeenCalledWith({ serviceDurations: { Walk: '45' } });
     });
     it('renders a stored duration in its own field, not folded into the name', () => {
       render(
@@ -243,8 +240,9 @@ describe('KinCareRatesEditor', () => {
       expect(screen.getByPlaceholderText('30 (from the name)')).toBeInTheDocument();
       await userEvent.type(screen.getByDisplayValue('0'), '5');
       await userEvent.click(screen.getByRole('button', SAVE));
-      const [patch] = onSave.mock.calls[0] as [{ serviceDurations: Record<string, string> }];
-      expect(patch.serviceDurations).toEqual({});
+      // The rate changed ('0' to '05' reads as an edit of the rate), the lengths did not.
+      const [patch] = onSave.mock.calls[0] as [Partial<BusinessSettings>];
+      expect(patch).not.toHaveProperty('serviceDurations');
     });
     it('keeps serviceDurations SPARSE: a cleared duration drops its key entirely', async () => {
       // An empty string here would read as "the operator stated a length" and
@@ -258,7 +256,7 @@ describe('KinCareRatesEditor', () => {
       );
       await userEvent.clear(screen.getByDisplayValue('45'));
       await userEvent.click(screen.getByRole('button', SAVE));
-      expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '15.00' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+      expect(onSave).toHaveBeenCalledWith({ serviceDurations: {} });
     });
     it('a duration-only edit is dirty, so the Save button is reachable', async () => {
       render(
@@ -320,8 +318,6 @@ describe('KinCareRatesEditor', () => {
       await userEvent.click(screen.getByRole('button', SAVE));
       expect(onSave).toHaveBeenCalledWith({
         serviceRates: { Overnight: '90.00', '30Minute': '15.00', Consultation: '' },
-        serviceDurations: { Overnight: '720' },
-        serviceStartTimeBooking: {},
       });
     });
   });
@@ -347,11 +343,7 @@ describe('KinCareRatesEditor', () => {
       await userEvent.click(toggle);
       expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', SAVE));
-      expect(onSave).toHaveBeenCalledWith({
-        serviceRates: { Overnight: '80.00', Walk: '15.00' },
-        serviceDurations: { Overnight: '720' },
-        serviceStartTimeBooking: { Overnight: true },
-      });
+      expect(onSave).toHaveBeenCalledWith({ serviceStartTimeBooking: { Overnight: true } });
     });
     it('shows a stored flag as on, and clearing it saves the map without the key', async () => {
       const onSave = vi.fn().mockResolvedValue(undefined);
@@ -499,7 +491,7 @@ describe('KinCareRatesEditor checks (#1593)', () => {
     expect(screen.getByLabelText('Rate')).not.toHaveAttribute('aria-invalid');
     expect(screen.getByRole('list', { name: 'KinCare type preview' })).toHaveTextContent('WalkNo price set');
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '' } });
   });
 
   it.each(['0', '1441', '30.5', 'half'])('refuses a length of %j beside the duration', async (typed) => {
@@ -520,7 +512,7 @@ describe('KinCareRatesEditor checks (#1593)', () => {
     expect(rate).not.toHaveAttribute('aria-invalid');
     expect(screen.queryByRole('alert')).toBeNull();
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '25.50' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '25.50' } });
   });
 
   it('an added row with a price but no name is refused by name', async () => {
@@ -540,7 +532,7 @@ describe('KinCareRatesEditor checks (#1593)', () => {
     await userEvent.clear(rate);
     await userEvent.type(rate, '12');
     await userEvent.click(screen.getByRole('button', SAVE));
-    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '12' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '12' } });
   });
 
   it('shows the server refusal sentence when the save is refused', async () => {
@@ -557,5 +549,35 @@ describe('KinCareRatesEditor checks (#1593)', () => {
     await userEvent.type(rate, '12');
     await userEvent.click(screen.getByRole('button', SAVE));
     expect(await screen.findByText(sentence)).toBeInTheDocument();
+  });
+});
+describe('KinCareRatesEditor, a stored bad price (#1783)', () => {
+  const PRICE = 'Enter the price for "Walk" in dollars, like 25 or 25.50.';
+  const stored = { serviceRates: { Walk: 'abc', Overnight: '80.00' }, serviceDurations: {} };
+  it('shows its sentence beside the price as the editor opens, with Save off', () => {
+    render(<KinCareRatesEditor data={stored} onSave={vi.fn()} />);
+    expect(screen.getAllByLabelText('Rate')[0]).toHaveAccessibleErrorMessage(PRICE);
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+  });
+  it('saves a length edit, sending only the lengths', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<KinCareRatesEditor data={stored} onSave={onSave} />);
+    await userEvent.type(screen.getAllByLabelText('Duration (min)')[1]!, '720');
+    expect(screen.getByRole('button', SAVE)).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).toHaveBeenCalledWith({ serviceDurations: { Overnight: '720' } });
+  });
+  it('refuses the price once it is edited to another bad value, and saves a good one', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<KinCareRatesEditor data={stored} onSave={onSave} />);
+    const price = screen.getAllByLabelText('Rate')[0]!;
+    await userEvent.type(price, 'd');
+    expect(price).toHaveAccessibleErrorMessage(PRICE);
+    expect(screen.getByRole('button', SAVE)).toBeDisabled();
+    await userEvent.clear(price);
+    await userEvent.type(price, '25');
+    expect(screen.getByRole('button', SAVE)).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(onSave).toHaveBeenCalledWith({ serviceRates: { Walk: '25', Overnight: '80.00' } });
   });
 });

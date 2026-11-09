@@ -33,6 +33,7 @@ import {
   businessEmailError,
   businessPhoneError,
   cashappHandleError,
+  PORTAL_LIMIT_INVALID,
   parsePortalLimit,
   paypalHandleError,
   PORTAL_THEMES,
@@ -131,6 +132,30 @@ export function textFieldErrors(
     if (message !== null) errors[f.key] = message;
   }
   return errors;
+}
+
+/**
+ * Fields the server checks on every save, edited or not. `saveBusinessSettings`
+ * refuses any save that would leave the business with no name, so a stored blank
+ * name blocks a save from any panel until it is filled in.
+ */
+const CHECKED_ON_EVERY_SAVE: readonly string[] = ['businessName'];
+/**
+ * #1783: the refusals that stop a Save. A stored bad value shows its sentence
+ * beside its field as soon as the screen opens (that is `errors`, over every
+ * field), but it blocks Save only when its field is part of the save, which is
+ * what `saveBusinessSettings` does: it checks only the fields in `changes`,
+ * plus the business name (above).
+ */
+export function blockingErrors<K extends string>(
+  errors: Partial<Record<K, string>>,
+  edited: readonly string[],
+): Partial<Record<K, string>> {
+  const out: Partial<Record<K, string>> = {};
+  for (const key of Object.keys(errors) as K[]) {
+    if (edited.includes(key) || CHECKED_ON_EVERY_SAVE.includes(key)) out[key] = errors[key] as string;
+  }
+  return out;
 }
 
 /**
@@ -288,9 +313,11 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
   // that field is edited again.
   const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
 
-  const dirty = fields.some((f) => (values[f.key] ?? '') !== data[f.key]);
+  const editedKeys = fields.filter((f) => (values[f.key] ?? '') !== data[f.key]).map((f) => f.key);
+  const dirty = editedKeys.length > 0;
   const fieldErrors = textFieldErrors(fields, values);
-  const invalid = Object.keys(fieldErrors).length > 0;
+  // #1783: only an edited field blocks Save; a stored bad one just shows.
+  const invalid = Object.keys(blockingErrors(fieldErrors, editedKeys)).length > 0;
 
   function update(key: StringFieldKey, next: string) {
     setValues((v) => ({ ...v, [key]: next }));
@@ -304,7 +331,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
     setError(null);
     setServerErrors({});
     const patch: Partial<Pick<BusinessSettings, StringFieldKey>> = {};
-    for (const f of fields) patch[f.key] = (values[f.key] ?? '').trim();
+    for (const key of editedKeys) patch[key] = (values[key] ?? '').trim();
     try {
       await onSave(patch);
       setJustSaved(true);
@@ -569,15 +596,15 @@ export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionPro
   const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
 
   const saved = seedDraft(data);
-  const dirty =
-    PAYMENT_METHOD_CATALOGUE.some(
-      (m) =>
-        draft.options[m.id]?.enabled !== saved.options[m.id]?.enabled ||
-        (draft.options[m.id]?.instructions ?? '').trim() !== (saved.options[m.id]?.instructions ?? '').trim(),
-    ) ||
-    Object.keys(saved.handles).some(
-      (field) => (draft.handles[field] ?? '').trim() !== (saved.handles[field] ?? '').trim(),
-    );
+  const optionsDirty = PAYMENT_METHOD_CATALOGUE.some(
+    (m) =>
+      draft.options[m.id]?.enabled !== saved.options[m.id]?.enabled ||
+      (draft.options[m.id]?.instructions ?? '').trim() !== (saved.options[m.id]?.instructions ?? '').trim(),
+  );
+  const editedHandles = Object.keys(saved.handles).filter(
+    (field) => (draft.handles[field] ?? '').trim() !== (saved.handles[field] ?? '').trim(),
+  );
+  const dirty = optionsDirty || editedHandles.length > 0;
 
   function setEnabled(id: string, next: boolean) {
     setDraft((d) => ({ ...d, options: { ...d.options, [id]: { ...d.options[id], enabled: next } } }));
@@ -604,7 +631,9 @@ export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionPro
     const message = HANDLE_CHECKS[method.handleField](draft.handles[method.handleField] ?? '');
     if (message !== null) handleErrors[method.handleField] = message;
   }
-  const invalid = Object.keys(handleErrors).length > 0;
+  // #1783: a stored bad handle shows its sentence but blocks Save only once it
+  // is edited: the server checks only the handles in the save.
+  const invalid = Object.keys(blockingErrors(handleErrors, editedHandles)).length > 0;
 
   async function handleSave() {
     if (!dirty || busy || invalid) return;
@@ -622,12 +651,13 @@ export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionPro
         instructions: (draft.options[method.id]?.instructions ?? '').trim(),
       };
       // The handle keeps its own top-level field, untouched by the map. The
-      // invoice PDF and the portal both still read it from there.
-      if (method.handleField) {
+      // invoice PDF and the portal both still read it from there. #1783: only a
+      // handle the operator edited travels.
+      if (method.handleField && editedHandles.includes(method.handleField)) {
         patch[method.handleField] = (draft.handles[method.handleField] ?? '').trim();
       }
     }
-    patch.paymentOptions = options;
+    if (optionsDirty) patch.paymentOptions = options;
     try {
       await onSave(patch);
       setJustSaved(true);
@@ -837,14 +867,33 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
   const [limitText, setLimitText] = useState<Record<string, string>>({});
 
   const dirty = JSON.stringify(portal) !== JSON.stringify(data.mytribePortal);
-  const limitErrors: Record<string, string> = {};
+  // #1783: the parts of the portal config the operator changed. Only those
+  // travel, and only those can block Save: the server merges the portal key by
+  // key and checks the keys it is sent. `home` is an array, so it is checked and
+  // written whole when any row changes.
+  const changedParts = (Object.keys(portal) as Array<keyof MyTribePortalConfig>).filter(
+    (k) => JSON.stringify(portal[k]) !== JSON.stringify(data.mytribePortal[k]),
+  );
+  const typedLimitErrors: Record<string, string> = {};
   for (const [key, text] of Object.entries(limitText)) {
     const parsed = parsePortalLimit(text);
-    if ('error' in parsed) limitErrors[key] = parsed.error;
+    if ('error' in parsed) typedLimitErrors[key] = parsed.error;
   }
+  // A stored limit the portal cannot use shows its sentence on open, in the
+  // box that holds it.
+  const storedLimitErrors: Record<string, string> = {};
+  effectiveHomeSections(portal.home.sections).forEach((row, index) => {
+    const key = homeRowKey(row, index);
+    if (limitText[key] === undefined && !(Number.isInteger(row.limit) && row.limit >= 0)) {
+      storedLimitErrors[key] = PORTAL_LIMIT_INVALID;
+    }
+  });
+  const limitErrors: Record<string, string> = { ...storedLimitErrors, ...typedLimitErrors };
   const themeProblem = themeError(portal.themeId);
-  const invalid = Object.keys(limitErrors).length > 0 || themeProblem !== null;
-
+  const invalid =
+    Object.keys(typedLimitErrors).length > 0 ||
+    (changedParts.includes('home') && Object.keys(storedLimitErrors).length > 0) ||
+    (changedParts.includes('themeId') && themeProblem !== null);
   function edit(next: MyTribePortalConfig) {
     setPortal(next);
     setJustSaved(false);
@@ -875,7 +924,9 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
     setBusy(true);
     setError(null);
     try {
-      await onSave({ mytribePortal: portal });
+      const sent: Partial<MyTribePortalConfig> = {};
+      for (const k of changedParts) (sent as Record<string, unknown>)[k] = portal[k];
+      await onSave({ mytribePortal: sent as MyTribePortalConfig });
       setLimitText({});
       setJustSaved(true);
     } catch (err) {

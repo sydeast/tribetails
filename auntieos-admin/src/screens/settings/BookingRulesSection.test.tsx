@@ -354,7 +354,8 @@ describe('VisitsTrackingSection', () => {
     // Saving another field never turns the rule on behind the operator's back.
     await user.click(screen.getByRole('switch', { name: 'Toggle kinfolk location sharing' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(onSave.mock.calls[0]?.[0]).toMatchObject({ requireArrivalDepartureVerification: false });
+    // #1783: the switch the operator did not touch is not in the save at all.
+    expect(onSave.mock.calls[0]?.[0]).toEqual({ allowClientLocationSharing: false });
   });
 
   /** #582: the threshold under the arrival switch, editable on this surface too. */
@@ -635,5 +636,81 @@ describe('BookingRulesSection, the number fields carry their own refusal (#1593)
     expect(await screen.findByText('Enter 0 to 480 minutes.')).toBeInTheDocument();
     expect(buffer).toHaveAccessibleErrorMessage('Enter 0 to 480 minutes.');
     expect(screen.queryByText('Save failed')).toBeNull();
+  });
+});
+describe('BookingRulesSection, a stored bad value (#1783)', () => {
+  const stored = () => settings({ travelBufferMinutes: 9999 });
+  it('shows its sentence beside the field as the panel opens', () => {
+    render(<BookingRulesSection data={stored()} onSave={onSave} />);
+    expect(screen.getByLabelText('Travel buffer (minutes)')).toHaveAccessibleErrorMessage('Enter 0 to 480 minutes.');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+  it('saves a different field, and the stored buffer stays out of the save', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={stored()} onSave={onSave} />);
+    await user.click(screen.getByRole('switch', { name: 'Toggle the visit reminder' }));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith({ enableAutoReminder24h: false });
+  });
+  it('refuses the stored field once it is edited to another bad value, and saves a good one', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={stored()} onSave={onSave} />);
+    const buffer = screen.getByLabelText('Travel buffer (minutes)');
+    await user.clear(buffer);
+    await user.type(buffer, '9000');
+    expect(buffer).toHaveAccessibleErrorMessage('Enter 0 to 480 minutes.');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.clear(buffer);
+    await user.type(buffer, '45');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith({ travelBufferMinutes: 45 });
+  });
+  it('shows two stored booking modes both off, and saves an unrelated edit anyway', async () => {
+    const user = userEvent.setup();
+    render(
+      <BookingRulesSection
+        data={settings({ allowSpecificTimeBooking: false, allowTimeBlockBooking: false })}
+        onSave={onSave}
+      />,
+    );
+    expect(
+      screen.getByText('Leave at least one booking mode on, or nothing can be booked at all.'),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('switch', { name: 'Toggle the visit reminder' }));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith({ enableAutoReminder24h: false });
+  });
+});
+describe('VisitsTrackingSection, a stored bad value (#1783)', () => {
+  const stored = () => settings({ arrivalRadiusMeters: 3 });
+  it('shows its sentence beside the field as the panel opens', () => {
+    render(<VisitsTrackingSection data={stored()} onSave={onSave} />);
+    expect(screen.getByLabelText('Arrival must be within (metres)')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+  it('saves a different field, and the stored radius stays out of the save', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={stored()} onSave={onSave} />);
+    await user.click(screen.getByRole('switch', { name: 'Toggle kinfolk location sharing' }));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith({ allowClientLocationSharing: false });
+  });
+  it('refuses the stored field once it is edited to another bad value, and saves a good one', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={stored()} onSave={onSave} />);
+    const radius = screen.getByLabelText('Arrival must be within (metres)');
+    await user.clear(radius);
+    await user.type(radius, '9');
+    expect(radius).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.clear(radius);
+    await user.type(radius, '300');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith({ arrivalRadiusMeters: 300 });
   });
 });

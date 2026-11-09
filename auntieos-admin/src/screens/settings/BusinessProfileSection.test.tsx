@@ -30,7 +30,7 @@ describe('BusinessProfileSection', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 
-  it('saves an edited text field alongside the unchanged time zone', async () => {
+  it('saves an edited text field without the unchanged time zone', async () => {
     const user = userEvent.setup();
     render(<BusinessProfileSection data={settings({ businessName: 'Old' })} onSave={onSave} />);
 
@@ -39,9 +39,8 @@ describe('BusinessProfileSection', () => {
     await user.type(name, 'New Name');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ businessName: 'New Name', timeZone: 'America/New_York' }),
-    );
+    // #1783: only the edited field travels.
+    expect(onSave).toHaveBeenCalledWith({ businessName: 'New Name' });
   });
 
   it('saves the picked zone alongside the unedited text fields', async () => {
@@ -60,16 +59,17 @@ describe('BusinessProfileSection', () => {
     expect(screen.getByText(/the phone line answers as open around the clock/)).toBeInTheDocument();
   });
 
-  it('blocks the whole panel Save while the loaded zone is unusable, even once another field changes', async () => {
+  it('#1783: a stored zone the runtime does not know does not block a different edit, and is not sent', async () => {
     const user = userEvent.setup();
     render(<BusinessProfileSection data={settings({ timeZone: 'Mars/Olympus' })} onSave={onSave} />);
-
+    // The warning is on screen as the panel opens.
+    expect(screen.getByText(/the phone line answers as open around the clock/)).toBeInTheDocument();
     await user.type(screen.getByLabelText('Business name'), 'X');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(onSave).not.toHaveBeenCalled();
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0]?.[0]).not.toHaveProperty('timeZone');
   });
-
   it('Cancel reverts both the text fields and the time zone together', async () => {
     const user = userEvent.setup();
     render(<BusinessProfileSection data={settings({ businessName: 'Original' })} onSave={onSave} />);
@@ -221,5 +221,36 @@ describe('BusinessProfileSection', () => {
       await user.click(screen.getByRole('button', { name: 'Save' }));
       expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ timeZone: 'America/Chicago' }));
     });
+  });
+});
+describe('a stored bad value (#1783)', () => {
+  const EMAIL = 'Enter an email like name@example.com, or leave it blank.';
+  const stored = () => settings({ businessEmail: 'not an email' });
+  it('shows its sentence beside the field as the panel opens, with Save off', () => {
+    render(<BusinessProfileSection data={stored()} onSave={onSave} />);
+    expect(screen.getByLabelText('Email')).toHaveAccessibleErrorMessage(EMAIL);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+  it('saves a different field, and the stored email stays out of the save', async () => {
+    const user = userEvent.setup();
+    render(<BusinessProfileSection data={stored()} onSave={onSave} />);
+    await user.type(screen.getByLabelText('Phone'), '512-555-0199');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith({ businessPhone: '512-555-0199' });
+    expect(screen.getByLabelText('Email')).toHaveAccessibleErrorMessage(EMAIL);
+  });
+  it('refuses the stored field once it is edited to another bad value, and saves a good one', async () => {
+    const user = userEvent.setup();
+    render(<BusinessProfileSection data={stored()} onSave={onSave} />);
+    const email = screen.getByLabelText('Email');
+    await user.type(email, 'x');
+    expect(email).toHaveAccessibleErrorMessage(EMAIL);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.clear(email);
+    await user.type(email, 'hello@tribetails.com');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith({ businessEmail: 'hello@tribetails.com' });
   });
 });

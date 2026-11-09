@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { getBusinessSettings, type BusinessSettings } from '../api/settings';
 import { saveBusinessSettings } from '../api/settingsWrite';
+import { foldSettingsPatch } from '../lib/foldSettingsPatch';
 import { type Async } from '../lib/async';
 import { DenScreenHeading } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
@@ -212,7 +213,7 @@ export function Settings({ initialSection, onSectionChange }: SettingsProps = {}
   const persist = useCallback(async (patch: Partial<BusinessSettings>) => {
     const stamp = await saveBusinessSettings(patch);
     setSettings((prev) =>
-      prev.status === 'ready' ? { status: 'ready', data: { ...prev.data, ...patch, ...stamp } } : prev,
+      prev.status === 'ready' ? { status: 'ready', data: { ...foldSettingsPatch(prev.data, patch), ...stamp } } : prev,
     );
   }, []);
 

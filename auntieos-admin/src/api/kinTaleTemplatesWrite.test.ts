@@ -197,6 +197,17 @@ describe('saveKinTaleTemplate: update (real _id)', () => {
     expect(Object.keys(payload).sort()).toEqual(['checklistItems', 'updatedAt']);
   });
 
+  it('#1783: a stored blank item stays out of a rename, so the rules never look at the checklist', async () => {
+    setDoc.mockResolvedValue(undefined);
+    const blank = [
+      makeChecklistItem({ key: 'meds', text: 'Medications given', order: 0 }),
+      makeChecklistItem({ key: 'old', text: '   ', order: 1 }),
+    ];
+    const loaded = template({ _id: 'tpl9', checklistItems: blank });
+    await saveKinTaleTemplate({ ...loaded, name: 'Renamed' }, [], loaded);
+    const payload = setDoc.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(['name', 'updatedAt']);
+  });
   it('#994: writes nothing when nothing changed', async () => {
     const loaded = template({ _id: 'tpl9', isDefault: true });
     const result = await saveKinTaleTemplate({ ...loaded }, [{ _id: 'tpl1', isDefault: true }], loaded);

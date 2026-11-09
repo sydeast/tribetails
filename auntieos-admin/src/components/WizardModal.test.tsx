@@ -240,6 +240,20 @@ describe('WizardModal: a pristine step is not accused of being empty', () => {
   });
 });
 
+describe('WizardModal: notes are flagged but never stop a finish (#1783)', () => {
+  it('flags the step and lists the note, and Finish stays on', async () => {
+    const onFinish = vi.fn();
+    const steps = threeSteps();
+    steps[0]!.notes = ['That item is blank.'];
+    render(<Harness steps={steps} initial="review" onFinish={onFinish} />);
+    expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema 1 thing to check');
+    expect(screen.queryByText(/things? left to fix/)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Save schema' }));
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: /^1 Schema/ }));
+    expect(screen.getByText('That item is blank.')).toBeInTheDocument();
+  });
+});
 describe('WizardModal: flow-level notices', () => {
   it('shows a notice above the rail, on every step, because it belongs to the flow not a step', async () => {
     function WithNotice() {

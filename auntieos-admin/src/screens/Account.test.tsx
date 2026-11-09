@@ -680,9 +680,8 @@ describe('Account business profile #1593', () => {
     await user.type(phone, '(512) 555-0199');
     expect(g.queryByRole('alert')).toBeNull();
     await user.click(g.getByRole('button', { name: 'Save' }));
-    expect(saveBusinessSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ businessEmail: 'hello@tribetails.com', businessPhone: '(512) 555-0199' }),
-    );
+    // The email is back at its stored value, so only the phone travels (#1783).
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ businessPhone: '(512) 555-0199' });
   });
 
   it('Cancel puts the saved values back, and is off until something changes', async () => {
