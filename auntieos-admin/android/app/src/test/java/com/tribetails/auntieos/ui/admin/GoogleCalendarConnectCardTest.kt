@@ -2,12 +2,16 @@ package com.tribetails.auntieos.ui.admin
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarConnection
 import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarUiState
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import com.tribetails.auntieos.ui.theme.ThemeMode
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -222,5 +226,48 @@ class GoogleCalendarConnectCardTest {
             }
         }
         rule.onNodeWithText("myaccount.google.com/permissions", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun loadCalendars_idle_showsEnabledLoadButton() {
+        var taps = 0
+        rule.setContent {
+            AuntieOSTheme(themeMode = ThemeMode.DARK) {
+                GoogleCalendarConnectCard(
+                    state = GoogleCalendarUiState(connection = connection()),
+                    onConnect = {},
+                    onConsumeAuthUrl = {},
+                    onRefreshCalendars = { taps++ },
+                    onSaveTargets = { _, _ -> },
+                    onPush = {},
+                    onDisconnect = {},
+                    onDismissError = {},
+                )
+            }
+        }
+        rule.onNodeWithText("Load calendars").assertIsEnabled().performClick()
+        assertEquals(1, taps)
+        rule.onNodeWithText("Loading calendars…").assertDoesNotExist()
+    }
+    @Test
+    fun loadCalendars_inFlight_readsLoadingAndIsDisabled() {
+        var taps = 0
+        rule.setContent {
+            AuntieOSTheme(themeMode = ThemeMode.DARK) {
+                GoogleCalendarConnectCard(
+                    state = GoogleCalendarUiState(connection = connection(), loadingCalendars = true),
+                    onConnect = {},
+                    onConsumeAuthUrl = {},
+                    onRefreshCalendars = { taps++ },
+                    onSaveTargets = { _, _ -> },
+                    onPush = {},
+                    onDisconnect = {},
+                    onDismissError = {},
+                )
+            }
+        }
+        rule.onNodeWithText("Loading calendars…").assertIsDisplayed().assertIsNotEnabled().performClick()
+        assertEquals("a disabled button must not fire", 0, taps)
+        rule.onNodeWithText("Load calendars").assertDoesNotExist()
     }
 }

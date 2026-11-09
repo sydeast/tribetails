@@ -215,6 +215,10 @@ data class GoogleCalendarUiState(
     // a recomposition (rotation, a later state update) can never re-open the
     // same consent URL a second time.
     val pendingAuthUrl: String? = null,
+    // True while listGoogleCalendars is in flight (issue #1661). Drives the
+    // "Loading calendars…" label and disables Load calendars so a second tap
+    // cannot start a second request.
+    val loadingCalendars: Boolean = false,
     val savingTargets: Boolean = false,
     val pushing: Boolean = false,
     // Sessions the last push could not push, and why (no end time, etc).
@@ -2498,11 +2502,14 @@ class EnhancedSchedulingViewModel(
 
     /** Calendars on the connected account, for the picker. */
     fun refreshGoogleCalendars() {
+        if (_state.value.googleCalendar.loadingCalendars) return
+        gcalUpdate { it.copy(loadingCalendars = true, error = null) }
         viewModelScope.launch {
             bookingRepository.listGoogleCalendars()
                 .onSuccess { result ->
                     gcalUpdate {
                         it.copy(
+                            loadingCalendars = false,
                             calendars = result.calendars,
                             connection = result.connection,
                             freeBusyCalendarId = result.freeBusyCalendarId,
@@ -2511,11 +2518,15 @@ class EnhancedSchedulingViewModel(
                     }
                 }
                 .onFailure { e ->
-                    gcalUpdate { it.copy(error = e.message ?: "Couldn't list the calendars on this account.") }
+                    gcalUpdate {
+                        it.copy(
+                            loadingCalendars = false,
+                            error = e.message ?: "Couldn't list the calendars on this account.",
+                        )
+                    }
                 }
         }
     }
-
     /**
      * Saves the write target. [writeCalendarProblem] (GoogleCalendarTargets.kt)
      * is checked here first so an echo-loop pick is refused before the round
