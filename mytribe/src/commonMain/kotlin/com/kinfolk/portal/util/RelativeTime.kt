@@ -32,7 +32,23 @@ fun relativeTime(epochMillis: Long?, nowMillis: Long = Clock.System.now().toEpoc
     if (days < 7) return if (isPast) "${days}d ago" else "in ${days}d"
     val ldt: LocalDateTime = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(TimeZone.currentSystemDefault())
     val month = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[ldt.month.ordinal]
-    return "$month ${ldt.day}"
+    // #1775: migrated tales reach back past a year, and "Sep 3" would read as
+    // this September. The year is added whenever it is not the current one.
+    val nowYear = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(TimeZone.currentSystemDefault()).year
+    return if (ldt.year == nowYear) "$month ${ldt.day}" else "$month ${ldt.day}, ${ldt.year}"
+}
+/**
+ * When a KinTale was sent, for its byline (#1775): the relative time when the
+ * server read a date, the stored text exactly as written when it could not,
+ * and "" when it has neither. Never a guessed date.
+ */
+fun kinTaleSentLabel(
+    sentAtMs: Long?,
+    sentAtText: String?,
+    nowMillis: Long = Clock.System.now().toEpochMilliseconds(),
+): String {
+    if (sentAtMs != null) return relativeTime(sentAtMs, nowMillis)
+    return sentAtText?.trim().orEmpty()
 }
 
 /**

@@ -842,6 +842,7 @@ class PortalApi(
                 authorDisplayName = o["authorDisplayName"]?.jsonPrimitive?.contentOrNull,
                 mediaIds = (o["mediaIds"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
                 sentAtMs = o["sentAtMs"]?.jsonPrimitive?.longOrNull,
+                sentAtText = o["sentAtText"]?.jsonPrimitive?.contentOrNull,
                 shared = o["shared"]?.jsonPrimitive?.booleanOrNull ?: false,
                 gpsRoute = route,
                 gpsDistanceMeters  = summary?.get("distanceMeters")?.jsonPrimitive?.doubleOrNull,

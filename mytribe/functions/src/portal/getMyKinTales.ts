@@ -9,10 +9,11 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { TaleThumb, MAX_THUMBS_PER_TALE, mediaDocToThumb } from '../lib/kinTaleThumbs';
 import { isClientLocationSharingEnabled } from '../lib/locationSharing';
+import { readSentKinTales } from '../lib/sentKinTales';
 
 interface GetMyKinTalesRequest {
   kinfolkId?: string;
-  /** Pagination cursor, `sentAtMs` of the last item from the previous page. */
+  /** Pagination cursor: `sentAtMs` of the last item from the previous page. Strictly older tales come back. */
   before?: number;
   /** Page size; default 20, max 50. */
   limit?: number;
@@ -43,7 +44,10 @@ interface KinTaleDto {
   body: string;
   authorDisplayName: string;
   mediaIds: string[];
+  /** Parsed send instant (ISO or the migration's free text, read as America/Chicago). Null when no date can be read. */
   sentAtMs: number | null;
+  /** The stored `sentAt` text, only when `sentAtMs` is null, so a client shows what was stored. Omitted otherwise. */
+  sentAtText?: string;
   shared: boolean;
   gpsRoute?: RoutePointDto[];
   gpsSummary?: GpsSummaryDto;
@@ -96,7 +100,9 @@ interface GetMyKinTalesResult {
  *
  * Source: `kin_care_reports` flat collection (AuntieOS writes directly).
  * Filter: kinfolkId == kinfolkId AND sentAt > '' (excludes DRAFTs).
- * Pagination: opaque `before` cursor = last sentAtMs epoch millis.
+ * Order: newest first by PARSED send date, ISO and migrated free-text rows
+ * together (`lib/sentKinTales.ts`, #1775).
+ * Pagination: `before` cursor = last sentAtMs epoch millis, strictly older.
  *
  * READ-ONLY. AuntieOS owns the writes.
  */
@@ -117,21 +123,14 @@ export async function getMyKinTalesHandler(
   // Absent reads as ON; see `lib/locationSharing.ts`.
   const shareLocations = await isClientLocationSharingEnabled(firestore);
   const limit = clamp(Math.trunc(Number(req.data?.limit ?? 20)) || 20, 1, 50);
-  let q = firestore
-    .collection('kin_care_reports')
-    .where('kinfolkId', '==', kinfolkId)
-    .where('sentAt', '>', '')
-    .orderBy('sentAt', 'desc')
-    .limit(limit + 1);
-
-  if (typeof req.data?.before === 'number') {
-    q = q.startAfter(new Date(req.data.before).toISOString());
+  const before = req.data?.before;
+  if (before !== undefined && (typeof before !== 'number' || !Number.isFinite(before) || Number.isNaN(new Date(before).getTime()))) {
+    throw new HttpsError('invalid-argument', 'before must be a millisecond timestamp.');
   }
-
-  const snap = await q.get();
-  const docs = snap.docs.slice(0, limit);
-  const hasMore = snap.docs.length > limit;
-
+  const page = await readSentKinTales(firestore, kinfolkId, { limit, before, event: 'getMyKinTales' });
+  const docs = page.tales.map((t) => t.doc);
+  const sentAtMsByIndex = page.tales.map((t) => t.sentAtMs);
+  const hasMore = page.hasMore;
   // Tales that predate task-24a's `thumbs` write-back have no stored field
   // yet; those (and only those) still need the old per-read media
   // resolution below. `Array.isArray` (not truthiness) is the "resolved"
@@ -176,12 +175,8 @@ export async function getMyKinTalesHandler(
     }
     checkedKeysByIndex.push(checkedKeys);
 
+    const sentAtMs = sentAtMsByIndex[taleIndex] ?? null;
     const sentAtRaw = data['sentAt'];
-    let sentAtMs: number | null = null;
-    if (typeof sentAtRaw === 'string' && sentAtRaw.length > 0) {
-      const ms = new Date(sentAtRaw).getTime();
-      if (!isNaN(ms)) sentAtMs = ms;
-    }
 
     const sharedIds = (data['sharedAsIds'] ?? []) as string[];
     const rawAuthor = data['authorDisplayName'];
@@ -195,6 +190,9 @@ export async function getMyKinTalesHandler(
       authorDisplayName,
       mediaIds: Array.isArray(data['mediaFileIds']) ? (data['mediaFileIds'] as string[]) : [],
       sentAtMs,
+      ...(sentAtMs === null && typeof sentAtRaw === 'string' && sentAtRaw.trim().length > 0
+        ? { sentAtText: sentAtRaw.trim() }
+        : {}),
       shared: Array.isArray(sharedIds) && sharedIds.length > 0,
       // Resolved fallback tales get [] here, filled in below.
       thumbs: Array.isArray(storedThumbs) ? (storedThumbs as TaleThumb[]) : [],

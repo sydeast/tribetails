@@ -9,6 +9,8 @@ beforeEach(() => mocks.dbFn.mockReset());
 
 const SENT_AT_ISO = '2023-11-14T22:13:20.000Z';
 const SENT_AT_MS = new Date(SENT_AT_ISO).getTime(); // 1700000000000
+// Distinct instants: equal ones are a tie, which the page takes whole (#1775).
+const OLDER_ISO = '2023-11-14T22:13:19.000Z';
 
 describe('getMyKinTalesHandler', () => {
   it('rejects unauthenticated request', async () => {
@@ -40,7 +42,7 @@ describe('getMyKinTalesHandler', () => {
               kinfolkId: 'fam3',
               bodyCopy: 'another tale',
               mediaFileIds: [],
-              sentAt: SENT_AT_ISO,
+              sentAt: OLDER_ISO,
               sharedAsIds: [],
               authorDisplayName: 'Auntie J',
             },
@@ -68,7 +70,7 @@ describe('getMyKinTalesHandler', () => {
     const t2 = res.tales[1];
     expect(t2.shared).toBe(false);
     expect(t2.mediaIds).toEqual([]);
-    expect(t2.sentAtMs).toBe(SENT_AT_MS);
+    expect(t2.sentAtMs).toBe(new Date(OLDER_ISO).getTime());
 
     expect(res.hasMore).toBe(false);
   });
@@ -114,18 +116,18 @@ describe('getMyKinTalesHandler', () => {
   });
 
   it('hasMore is true when exactly limit+1 docs returned', async () => {
-    const makeDoc = (id: string) => ({
+    const makeDoc = (id: string, i: number) => ({
       id,
       data: {
         kinfolkId: 'fam3',
         bodyCopy: 'x',
         mediaFileIds: [],
-        sentAt: SENT_AT_ISO,
+        sentAt: new Date(SENT_AT_MS - i * 1000).toISOString(),
         sharedAsIds: [],
       },
     });
     // limit defaults to 20; return 21 docs
-    const docs = Array.from({ length: 21 }, (_, i) => makeDoc(`r${i}`));
+    const docs = Array.from({ length: 21 }, (_, i) => makeDoc(`r${i}`, i));
     const ctx = buildDbMock({
       docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
       queryDocs: { 'kin_care_reports': docs },
@@ -204,7 +206,7 @@ describe('getMyKinTalesHandler', () => {
               kinfolkId: 'fam3',
               bodyCopy: 'plain',
               mediaFileIds: [],
-              sentAt: SENT_AT_ISO,
+              sentAt: OLDER_ISO,
               sharedAsIds: [],
             },
           },
@@ -215,7 +217,7 @@ describe('getMyKinTalesHandler', () => {
               title: 42, // wrong type -> empty string
               bodyCopy: 'oops',
               mediaFileIds: [],
-              sentAt: SENT_AT_ISO,
+              sentAt: '2023-11-14T22:13:18.000Z',
               sharedAsIds: [],
               petMoodSelections: ['not', 'a', 'map'], // array -> omitted
             },
