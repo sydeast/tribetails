@@ -93,9 +93,13 @@ internal fun KinCareTypesPanel(
     val editedRates = foldKinCareRates(rows)
     val editedDurations = foldKinCareDurations(rows)
     val editedStartTimes = foldKinCareStartTime(rows)
-    val dirty = editedRates != settings.serviceRates ||
-        editedDurations != settings.serviceDurations ||
-        editedStartTimes != settings.serviceStartTimeBooking.filterValues { it }
+    // #1783: the maps go out whole and only the ones that changed are sent
+    // (the diff compares them), so a row's sentence holds Save back only when
+    // the map it belongs to changed.
+    val ratesChanged = editedRates != settings.serviceRates
+    val durationsChanged = editedDurations != settings.serviceDurations
+    val startTimesChanged = editedStartTimes != settings.serviceStartTimeBooking.filterValues { it }
+    val dirty = ratesChanged || durationsChanged || startTimesChanged
     val view = sortedKinCareView(rows, sortKey)
     // #1593: what the server would refuse, under each field as it is typed.
     // Save stays off while any of it is on screen.
@@ -273,7 +277,7 @@ internal fun KinCareTypesPanel(
         }
         AuntieSaveBar(
             dirty = dirty,
-            saveEnabled = dirty && !isLoading && problems.isEmpty() && countProblem == null,
+            saveEnabled = dirty && !isLoading && !kinCareBlocksSave(problems, countProblem, ratesChanged, durationsChanged),
             onCancel = {
                 rows = baseline
                 blocked = null
@@ -281,7 +285,7 @@ internal fun KinCareTypesPanel(
             onSave = {
                 // Refused before anything is written: the server ends a
                 // start-time visit by the type's length (#1092).
-                val missing = kinCareStartTimeMissingLength(rows)
+                val missing = if (durationsChanged || startTimesChanged) kinCareStartTimeMissingLength(rows) else null
                 if (missing != null) {
                     blocked = kinCareNeedsLengthMessage(missing)
                 } else {

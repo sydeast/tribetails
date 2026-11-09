@@ -255,6 +255,51 @@ fun paymentHandlesBlockSave(draft: PaymentDraft, saved: PaymentDraft): Boolean =
         handle.trim() != saved.handles[field].orEmpty().trim() && paymentHandleProblem(field, handle) != null
     }
 
+// ── Stored bad values (#1783) ────────────────────────────────────────────────
+/**
+ * A stored bad value shows its sentence beside its field as soon as the panel
+ * opens, but it holds Save back only when the field is part of the save, which
+ * is what `saveBusinessSettings` does: it checks the fields in `changes`. A
+ * field is part of the save when its text differs from what is stored.
+ */
+fun fieldBlocksSave(current: String, stored: String, problem: String?): Boolean =
+    problem != null && current != stored
+/**
+ * What a text box contributes to the saved settings: the stored value while the
+ * box is untouched (so an untouched stored value, spaces and all, is never
+ * re-sent), the trimmed text once it was edited.
+ */
+fun editedText(current: String, stored: String): String =
+    if (current == stored) stored else current.trim()
+/**
+ * Whether a KinCare rate card with [problems] may be saved. The rate card is
+ * checked whole (the server replaces `serviceRates` and `serviceDurations` as
+ * whole maps), so a bad row anywhere blocks a save that carries its map: a name
+ * or a price blocks when the rates changed, a length when the lengths changed,
+ * a name in either.
+ */
+fun kinCareBlocksSave(
+    problems: Map<Int, KinCareRowProblems>,
+    countProblem: String?,
+    ratesChanged: Boolean,
+    durationsChanged: Boolean,
+): Boolean =
+    (countProblem != null && ratesChanged) ||
+        problems.values.any {
+            (it.name != null && (ratesChanged || durationsChanged)) ||
+                (it.duration != null && durationsChanged) ||
+                (it.rate != null && ratesChanged)
+        }
+/**
+ * The Home layout limits that read as bad though nobody typed them: a stored
+ * limit below zero. [typedIds] are the rows whose box holds typed text, which
+ * [homeLimitProblem] already judges.
+ */
+fun storedHomeLimitProblems(
+    rows: List<com.tribetails.auntieos.data.model.PortalHomeSection>,
+    typedIds: Set<String>,
+): Map<String, String> =
+    rows.filter { it.id !in typedIds && it.limit < 0 }.associate { it.id to HOME_LIMIT_INVALID }
 // ── Numbers ──────────────────────────────────────────────────────────────────
 
 /** A whole number from [lo] to [hi], typed: the server's `wholeNumber` sentence otherwise. */

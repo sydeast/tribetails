@@ -247,25 +247,26 @@ class BusinessSettingsDiffTest {
     }
 
     @Test
-    fun `a real Home layout edit writes the raw mytribePortal object`() {
+    fun `a real Home layout edit writes the home slice of mytribePortal`() {
         val edited = loaded.withHomeSections(listOf(PortalHomeSection("upNext", true, 5)))
         val changes = businessSettingsFieldChanges(loaded, edited)
         assertEquals(setOf("mytribePortal"), changes.keys)
-        assertEquals(edited.mytribePortal, changes["mytribePortal"])
+        assertEquals(mapOf("home" to (edited.mytribePortal as Map<*, *>)["home"]), changes["mytribePortal"])
     }
 
     /**
-     * THE DIFF-NOT-REBUILD CASE, pinned at the differ level: android's write
-     * must carry every sibling `mytribePortal` key forward untouched, so a
-     * layout edit here can never be the write that quietly drops the React
-     * admin's logo, theme, banner, or chat configuration.
+     * THE DIFF-NOT-REBUILD CASE, pinned at the differ level. #1783: the write is
+     * the `home` slice alone. `saveBusinessSettings` merges the portal key by key,
+     * so the sibling keys the React admin owns (logo, theme, banner, chat) stay
+     * where they are without being sent, and a stored bad sibling cannot hold a
+     * layout edit.
      */
     @Test
-    fun `a Home layout edit preserves sibling mytribePortal keys the React admin owns`() {
+    fun `a Home layout edit sends only the home slice and leaves the sibling keys out`() {
         val stored = loaded.copy(
             mytribePortal = mapOf(
                 "logoUrl" to "https://example.com/logo.png",
-                "themeId" to "sunset",
+                "themeId" to "neon",
                 "banner" to mapOf("enabled" to true, "message" to "Closed for the holiday"),
                 "home" to mapOf("sections" to emptyList<Any>()),
             )
@@ -273,11 +274,10 @@ class BusinessSettingsDiffTest {
         val edited = stored.withHomeSections(listOf(PortalHomeSection("upNext", true, 0)))
         val changes = businessSettingsFieldChanges(stored, edited)
         val written = changes["mytribePortal"] as Map<*, *>
-        assertEquals("https://example.com/logo.png", written["logoUrl"])
-        assertEquals("sunset", written["themeId"])
-        assertEquals(mapOf("enabled" to true, "message" to "Closed for the holiday"), written["banner"])
+        assertEquals(setOf("home"), written.keys)
+        // The in-memory model still carries every sibling forward.
+        assertEquals("neon", (edited.mytribePortal as Map<*, *>)["themeId"])
     }
-
     @Test
     fun `reordering two already-configured sections is a real, writable change`() {
         val stored = loaded.withHomeSections(

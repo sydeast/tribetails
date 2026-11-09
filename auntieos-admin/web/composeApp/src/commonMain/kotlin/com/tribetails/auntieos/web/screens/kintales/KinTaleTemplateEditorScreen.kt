@@ -207,7 +207,9 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
     val checklistNow = draft?.checklistItems.orEmpty()
     val problems = checklistProblems(checklistNow)
     val flagged = flaggedBlankIds(checklistNow, freshIds, saveRevealed)
-    val saveBlockedReason = checklistSaveBlockedReason(problems, flagged)
+    // #1783: the checklist holds Save back only when this save carries it.
+    val checklistGates = draft != null && checklistInSave(loaded?.checklistItems, checklistNow)
+    val saveBlockedReason = if (checklistGates) checklistSaveBlockedReason(problems, flagged) else null
 
     ScreenScaffold {
         AuntieBreadcrumbs(
@@ -234,12 +236,15 @@ fun KinTaleTemplateEditorScreen(onClose: () -> Unit) {
                 // #1593: a blank item or an over-full checklist is never written.
                 // The press shows every blank item's message, and Save stays off
                 // until they are fixed.
-                if (!checklistProblems(typed.checklistItems).isEmpty) {
+                val baseline = loaded
+                val carriesChecklist = checklistInSave(baseline?.checklistItems, typed.checklistItems)
+                if (carriesChecklist && !checklistProblems(typed.checklistItems).isEmpty) {
                     saveRevealed = true
                     return@save
                 }
-                val d = typed.copy(checklistItems = trimChecklistItems(typed.checklistItems))
-                val baseline = loaded
+                // Items are written trimmed only when the checklist is in the save;
+                // an untouched one goes back exactly as stored, so the diff leaves it out.
+                val d = if (carriesChecklist) typed.copy(checklistItems = trimChecklistItems(typed.checklistItems)) else typed
                 if (d._id.isNotBlank() && baseline?._id != d._id) {
                     showToast("This template hasn't loaded yet. Try again in a moment.", ToastKind.Error)
                     return@save

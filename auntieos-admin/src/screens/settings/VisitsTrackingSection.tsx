@@ -94,8 +94,54 @@ function seed(data: BusinessSettings): Draft {
   };
 }
 
+/** The settings this panel writes, by the name each one has on the document. */
+type VisitsField = keyof Draft;
 /**
- * The patch this draft would write, or the first thing to fix.
+ * #1783: which fields the operator changed from what is stored. Only these are
+ * written and only these can stop a Save: `saveBusinessSettings` checks the
+ * fields in the save, so a stored value this panel would refuse (an option list
+ * with a repeat, a radius out of range) shows its sentence and leaves a
+ * different edit alone.
+ */
+export function editedVisitsFields(draft: Draft, data: BusinessSettings): ReadonlySet<VisitsField> {
+  const out = new Set<VisitsField>();
+  const base = seed(data);
+  for (const key of [
+    'enableGPSTrackingForAllVisits',
+    'autoStartTrackingOnVisitStart',
+    'trackingAccuracy',
+    'enablePhotoLocationTagging',
+    'requireArrivalDepartureVerification',
+    'allowClientLocationSharing',
+    'defaultEtaMinutes',
+    'draftRetentionDays',
+  ] as const) {
+    if (draft[key] !== base[key]) out.add(key);
+  }
+  for (const key of ['saveRoutesForDays', 'arrivalRadiusMeters'] as const) {
+    const parsed = parseWholeNumber(draft[key], NUMBER_FIELDS[key]);
+    if ('value' in parsed ? parsed.value !== data[key] : draft[key].trim() !== base[key]) out.add(key);
+  }
+  const eta = parseOptionList(draft.etaMinuteOptions, 'minutes');
+  if ('value' in eta ? !sameNumbers(eta.value, data.etaMinuteOptions) : draft.etaMinuteOptions.trim() !== base.etaMinuteOptions) {
+    out.add('etaMinuteOptions');
+    // Editing the list can move the selected default onto a remaining option.
+    if ('value' in eta && clampToOptions(draft.defaultEtaMinutes, eta.value) !== data.defaultEtaMinutes) {
+      out.add('defaultEtaMinutes');
+    }
+  }
+  const drafts = parseOptionList(draft.draftRetentionOptions, 'days');
+  if ('value' in drafts ? !sameNumbers(drafts.value, data.draftRetentionOptions) : draft.draftRetentionOptions.trim() !== base.draftRetentionOptions) {
+    out.add('draftRetentionOptions');
+    if ('value' in drafts && clampToOptions(draft.draftRetentionDays, drafts.value) !== data.draftRetentionDays) {
+      out.add('draftRetentionDays');
+    }
+  }
+  return out;
+}
+/**
+ * The patch this draft would write, or the first thing to fix. With [only]
+ * (#1783) it checks and writes just those fields; without it, all of them.
  *
  * The two defaults are CLAMPED to their own option lists rather than refused:
  * deleting the entry that happens to be selected is a normal edit, and stopping
@@ -105,36 +151,47 @@ function seed(data: BusinessSettings): Draft {
  */
 export function visitsTrackingPatch(
   draft: Draft,
+  only?: ReadonlySet<VisitsField>,
 ): { patch: Partial<BusinessSettings> } | { error: string } {
-  const routeDays = parseWholeNumber(draft.saveRoutesForDays, NUMBER_FIELDS.saveRoutesForDays);
-  if ('error' in routeDays) return { error: `Keep routes for: ${routeDays.error}` };
+  const has = (field: VisitsField) => only === undefined || only.has(field);
+  const patch: Partial<BusinessSettings> = {};
+  if (has('saveRoutesForDays')) {
+    const routeDays = parseWholeNumber(draft.saveRoutesForDays, NUMBER_FIELDS.saveRoutesForDays);
+    if ('error' in routeDays) return { error: `Keep routes for: ${routeDays.error}` };
+    patch.saveRoutesForDays = routeDays.value;
+  }
   // #582. Validated even while the switch above is off, because the value is
   // still saved and would otherwise become an unfixable problem the first time
   // somebody turns verification on.
-  const radius = parseWholeNumber(draft.arrivalRadiusMeters, NUMBER_FIELDS.arrivalRadiusMeters);
-  if ('error' in radius) return { error: `Arrival must be within: ${radius.error}` };
+  if (has('arrivalRadiusMeters')) {
+    const radius = parseWholeNumber(draft.arrivalRadiusMeters, NUMBER_FIELDS.arrivalRadiusMeters);
+    if ('error' in radius) return { error: `Arrival must be within: ${radius.error}` };
+    patch.arrivalRadiusMeters = radius.value;
+  }
+  // The default is clamped against the list, so a list edit needs the list parsed
+  // whether or not the list itself is in the save.
   const eta = parseOptionList(draft.etaMinuteOptions, 'minutes');
-  if ('error' in eta) return { error: `On-my-way choices: ${eta.error}` };
+  if (has('etaMinuteOptions') || has('defaultEtaMinutes')) {
+    if ('error' in eta) return { error: `On-my-way choices: ${eta.error}` };
+    if (has('etaMinuteOptions')) patch.etaMinuteOptions = eta.value;
+    if (has('defaultEtaMinutes')) patch.defaultEtaMinutes = clampToOptions(draft.defaultEtaMinutes, eta.value);
+  }
   const drafts = parseOptionList(draft.draftRetentionOptions, 'days');
-  if ('error' in drafts) return { error: `Draft-retention choices: ${drafts.error}` };
-  return {
-    patch: {
-      enableGPSTrackingForAllVisits: draft.enableGPSTrackingForAllVisits,
-      autoStartTrackingOnVisitStart: draft.autoStartTrackingOnVisitStart,
-      trackingAccuracy: draft.trackingAccuracy,
-      enablePhotoLocationTagging: draft.enablePhotoLocationTagging,
-      requireArrivalDepartureVerification: draft.requireArrivalDepartureVerification,
-      arrivalRadiusMeters: radius.value,
-      allowClientLocationSharing: draft.allowClientLocationSharing,
-      saveRoutesForDays: routeDays.value,
-      defaultEtaMinutes: clampToOptions(draft.defaultEtaMinutes, eta.value),
-      etaMinuteOptions: eta.value,
-      draftRetentionDays: clampToOptions(draft.draftRetentionDays, drafts.value),
-      draftRetentionOptions: drafts.value,
-    },
-  };
+  if (has('draftRetentionOptions') || has('draftRetentionDays')) {
+    if ('error' in drafts) return { error: `Draft-retention choices: ${drafts.error}` };
+    if (has('draftRetentionOptions')) patch.draftRetentionOptions = drafts.value;
+    if (has('draftRetentionDays')) patch.draftRetentionDays = clampToOptions(draft.draftRetentionDays, drafts.value);
+  }
+  if (has('enableGPSTrackingForAllVisits')) patch.enableGPSTrackingForAllVisits = draft.enableGPSTrackingForAllVisits;
+  if (has('autoStartTrackingOnVisitStart')) patch.autoStartTrackingOnVisitStart = draft.autoStartTrackingOnVisitStart;
+  if (has('trackingAccuracy')) patch.trackingAccuracy = draft.trackingAccuracy;
+  if (has('enablePhotoLocationTagging')) patch.enablePhotoLocationTagging = draft.enablePhotoLocationTagging;
+  if (has('requireArrivalDepartureVerification')) {
+    patch.requireArrivalDepartureVerification = draft.requireArrivalDepartureVerification;
+  }
+  if (has('allowClientLocationSharing')) patch.allowClientLocationSharing = draft.allowClientLocationSharing;
+  return { patch };
 }
-
 /** The four typed fields of this panel, by the setting each one writes. */
 type TypedField = 'saveRoutesForDays' | 'arrivalRadiusMeters' | 'etaMinuteOptions' | 'draftRetentionOptions';
 
@@ -163,26 +220,6 @@ function sameNumbers(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((n, i) => n === b[i]);
 }
 
-function isDirty(draft: Draft, data: BusinessSettings): boolean {
-  const built = visitsTrackingPatch(draft);
-  if ('error' in built) return true;
-  const p = built.patch;
-  return (
-    p.enableGPSTrackingForAllVisits !== data.enableGPSTrackingForAllVisits ||
-    p.autoStartTrackingOnVisitStart !== data.autoStartTrackingOnVisitStart ||
-    p.trackingAccuracy !== data.trackingAccuracy ||
-    p.enablePhotoLocationTagging !== data.enablePhotoLocationTagging ||
-    p.requireArrivalDepartureVerification !== data.requireArrivalDepartureVerification ||
-    p.arrivalRadiusMeters !== data.arrivalRadiusMeters ||
-    p.allowClientLocationSharing !== data.allowClientLocationSharing ||
-    p.saveRoutesForDays !== data.saveRoutesForDays ||
-    p.defaultEtaMinutes !== data.defaultEtaMinutes ||
-    !sameNumbers(p.etaMinuteOptions ?? [], data.etaMinuteOptions) ||
-    p.draftRetentionDays !== data.draftRetentionDays ||
-    !sameNumbers(p.draftRetentionOptions ?? [], data.draftRetentionOptions)
-  );
-}
-
 export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionProps) {
   const [draft, setDraft] = useState<Draft>(() => seed(data));
   const [busy, setBusy] = useState(false);
@@ -192,9 +229,10 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
   // until it is edited again.
   const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
 
-  const built = visitsTrackingPatch(draft);
+  const edited = editedVisitsFields(draft, data);
+  const built = visitsTrackingPatch(draft, edited);
   const problem = 'error' in built ? built.error : null;
-  const dirty = isDirty(draft, data);
+  const dirty = edited.size > 0;
   const typed = visitsTrackingFieldErrors(draft);
   const fieldError = (key: TypedField): string | undefined => typed[key] ?? serverErrors[key];
   const tracking = draft.enableGPSTrackingForAllVisits;

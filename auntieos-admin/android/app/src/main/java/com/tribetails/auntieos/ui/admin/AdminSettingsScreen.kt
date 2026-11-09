@@ -2015,8 +2015,14 @@ private fun HomeLayoutPanel(
     // under it, rather than being quietly turned into 0.
     var limitTexts by remember(settings) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var saving by remember { mutableStateOf(false) }
-    val limitProblems = limitTexts.mapValues { (_, text) -> homeLimitProblem(text) }.filterValues { it != null }
-    val dirty = rows != baseline || limitProblems.isNotEmpty()
+    val typedLimitProblems = limitTexts.mapValues { (_, text) -> homeLimitProblem(text) }.filterValues { it != null }
+    // #1783: a stored limit below zero shows its sentence on open. The layout is
+    // saved whole (the server checks every row of the array), so a stored bad
+    // row holds Save back once the layout is changed, not before.
+    val storedLimitProblems = storedHomeLimitProblems(rows, limitTexts.keys)
+    val limitProblems: Map<String, String?> = storedLimitProblems + typedLimitProblems
+    val dirty = rows != baseline || typedLimitProblems.isNotEmpty()
+    val blockedByLimit = typedLimitProblems.isNotEmpty() || (rows != baseline && storedLimitProblems.isNotEmpty())
     val displayRows = effectiveHomeSections(rows)
     val isDefault = rows.isEmpty()
 
@@ -2092,7 +2098,7 @@ private fun HomeLayoutPanel(
             Spacer(Modifier.height(dims.space4))
             AuntieSaveBar(
                 dirty = dirty,
-                saveEnabled = dirty && !saving && limitProblems.isEmpty(),
+                saveEnabled = dirty && !saving && !blockedByLimit,
                 onCancel = {
                     rows = baseline
                     limitTexts = emptyMap()

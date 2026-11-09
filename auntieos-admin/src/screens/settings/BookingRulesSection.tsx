@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { BusinessSettings, TimeBlockDefinition } from '../../api/settings';
+import type { BusinessSettings } from '../../api/settings';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
@@ -97,45 +97,87 @@ function seed(data: BusinessSettings): Draft {
   };
 }
 
-/** The patch this draft would write, or the first thing the operator has to fix. */
+/** The settings this panel writes, by the name each one has on the document. */
+type BookingField =
+  | 'defaultBookingMode'
+  | 'defaultCalendarView'
+  | 'allowTimeBlockBooking'
+  | 'allowSpecificTimeBooking'
+  | 'defaultTimeBlockDurationHours'
+  | 'travelBufferMinutes'
+  | 'enableAutoReminder24h'
+  | 'timeBlocks';
+/**
+ * #1783: which fields the operator has changed from what is stored. Only these
+ * are written, and only these can stop a Save: `saveBusinessSettings` checks the
+ * fields in the save, so a stored value this panel would refuse (two modes both
+ * off, a block with no end) shows its sentence and leaves a different edit alone.
+ */
+export function editedBookingFields(draft: Draft, data: BusinessSettings): ReadonlySet<BookingField> {
+  const out = new Set<BookingField>();
+  const base = seed(data);
+  if (draft.defaultBookingMode !== base.defaultBookingMode) out.add('defaultBookingMode');
+  if (draft.defaultCalendarView !== base.defaultCalendarView) out.add('defaultCalendarView');
+  if (draft.allowTimeBlockBooking !== base.allowTimeBlockBooking) out.add('allowTimeBlockBooking');
+  if (draft.allowSpecificTimeBooking !== base.allowSpecificTimeBooking) out.add('allowSpecificTimeBooking');
+  if (draft.enableAutoReminder24h !== base.enableAutoReminder24h) out.add('enableAutoReminder24h');
+  for (const key of NUMBER_FIELD_KEYS) {
+    const parsed = parseWholeNumber(draft[key], NUMBER_FIELDS[key]);
+    const changed = 'value' in parsed ? parsed.value !== data[key] : draft[key].trim() !== base[key];
+    if (changed) out.add(key);
+  }
+  if (JSON.stringify(draft.blocks) !== JSON.stringify(base.blocks)) out.add('timeBlocks');
+  return out;
+}
+/**
+ * The patch this draft would write, or the first thing the operator has to fix.
+ * With [only] (#1783) it checks and writes just those fields; without it, all.
+ */
 export function bookingRulesPatch(
   draft: Draft,
+  only?: ReadonlySet<BookingField>,
 ): { patch: Partial<BusinessSettings> } | { error: string } {
-  if (!draft.allowTimeBlockBooking && !draft.allowSpecificTimeBooking) {
-    return { error: 'Leave at least one booking mode on, or nothing can be booked at all.' };
+  const has = (...fields: BookingField[]) => only === undefined || fields.some((f) => only.has(f));
+  const patch: Partial<BusinessSettings> = {};
+  if (has('allowTimeBlockBooking', 'allowSpecificTimeBooking', 'defaultBookingMode')) {
+    if (!draft.allowTimeBlockBooking && !draft.allowSpecificTimeBooking) {
+      return { error: 'Leave at least one booking mode on, or nothing can be booked at all.' };
+    }
+    if (draft.defaultBookingMode === 'TIME_BLOCK' && !draft.allowTimeBlockBooking) {
+      return { error: 'Time blocks are turned off, so they cannot be the default. Pick the other mode.' };
+    }
+    if (draft.defaultBookingMode === 'SPECIFIC_TIME' && !draft.allowSpecificTimeBooking) {
+      return { error: 'Specific times are turned off, so they cannot be the default. Pick the other mode.' };
+    }
   }
-  if (draft.defaultBookingMode === 'TIME_BLOCK' && !draft.allowTimeBlockBooking) {
-    return { error: 'Time blocks are turned off, so they cannot be the default. Pick the other mode.' };
+  if (has('defaultTimeBlockDurationHours')) {
+    const duration = parseWholeNumber(
+      draft.defaultTimeBlockDurationHours,
+      NUMBER_FIELDS.defaultTimeBlockDurationHours,
+    );
+    if ('error' in duration) return { error: `Default block length: ${duration.error}` };
+    patch.defaultTimeBlockDurationHours = duration.value;
   }
-  if (draft.defaultBookingMode === 'SPECIFIC_TIME' && !draft.allowSpecificTimeBooking) {
-    return { error: 'Specific times are turned off, so they cannot be the default. Pick the other mode.' };
+  if (has('travelBufferMinutes')) {
+    const buffer = parseWholeNumber(draft.travelBufferMinutes, NUMBER_FIELDS.travelBufferMinutes);
+    if ('error' in buffer) return { error: `Travel buffer: ${buffer.error}` };
+    patch.travelBufferMinutes = buffer.value;
   }
-  const duration = parseWholeNumber(
-    draft.defaultTimeBlockDurationHours,
-    NUMBER_FIELDS.defaultTimeBlockDurationHours,
-  );
-  if ('error' in duration) return { error: `Default block length: ${duration.error}` };
-  const buffer = parseWholeNumber(draft.travelBufferMinutes, NUMBER_FIELDS.travelBufferMinutes);
-  if ('error' in buffer) return { error: `Travel buffer: ${buffer.error}` };
-  const blocks = validateTimeBlocks(draft.blocks);
-  if ('error' in blocks) return { error: blocks.error };
-  if (draft.allowTimeBlockBooking && blocks.value.every((b) => !b.active)) {
-    return { error: 'Time-block booking is on but no block is active, so there is nothing to book into.' };
+  if (has('timeBlocks', 'allowTimeBlockBooking')) {
+    const blocks = validateTimeBlocks(draft.blocks);
+    if ('error' in blocks) return { error: blocks.error };
+    if (draft.allowTimeBlockBooking && blocks.value.every((b) => !b.active)) {
+      return { error: 'Time-block booking is on but no block is active, so there is nothing to book into.' };
+    }
+    if (has('timeBlocks')) patch.timeBlocks = blocks.value;
   }
-  return {
-    patch: {
-      defaultBookingMode: draft.defaultBookingMode,
-      defaultCalendarView: draft.defaultCalendarView,
-      allowTimeBlockBooking: draft.allowTimeBlockBooking,
-      allowSpecificTimeBooking: draft.allowSpecificTimeBooking,
-      defaultTimeBlockDurationHours: duration.value,
-      travelBufferMinutes: buffer.value,
-      enableAutoReminder24h: draft.enableAutoReminder24h,
-      timeBlocks: blocks.value,
-    },
-  };
+  if (has('defaultBookingMode')) patch.defaultBookingMode = draft.defaultBookingMode;
+  if (has('defaultCalendarView')) patch.defaultCalendarView = draft.defaultCalendarView;
+  if (has('allowTimeBlockBooking')) patch.allowTimeBlockBooking = draft.allowTimeBlockBooking;
+  if (has('allowSpecificTimeBooking')) patch.allowSpecificTimeBooking = draft.allowSpecificTimeBooking;
+  if (has('enableAutoReminder24h')) patch.enableAutoReminder24h = draft.enableAutoReminder24h;
+  return { patch };
 }
-
 /** The two number fields of this panel, by the setting each one writes. */
 type NumberField = 'defaultTimeBlockDurationHours' | 'travelBufferMinutes';
 const NUMBER_FIELD_KEYS: readonly NumberField[] = ['defaultTimeBlockDurationHours', 'travelBufferMinutes'];
@@ -160,45 +202,16 @@ export function bookingRulesFieldErrors(draft: Draft): Partial<Record<NumberFiel
  * stood in with legal values so a refusal of theirs, already under its own
  * field, is not said twice and does not hide one of these.
  */
-function bookingRulesPanelProblem(draft: Draft): string | null {
-  const built = bookingRulesPatch({
-    ...draft,
-    defaultTimeBlockDurationHours: String(NUMBER_FIELDS.defaultTimeBlockDurationHours.min),
-    travelBufferMinutes: String(NUMBER_FIELDS.travelBufferMinutes.min),
-  });
-  return 'error' in built ? built.error : null;
-}
-
-/** Does this draft differ from what is loaded? Compared on the SAVED shape, so retyping "04" over "4" is not a change. */
-function isDirty(draft: Draft, data: BusinessSettings): boolean {
-  const built = bookingRulesPatch(draft);
-  if ('error' in built) return true;
-  const p = built.patch;
-  return (
-    p.defaultBookingMode !== data.defaultBookingMode ||
-    p.defaultCalendarView !== data.defaultCalendarView ||
-    p.allowTimeBlockBooking !== data.allowTimeBlockBooking ||
-    p.allowSpecificTimeBooking !== data.allowSpecificTimeBooking ||
-    p.defaultTimeBlockDurationHours !== data.defaultTimeBlockDurationHours ||
-    p.travelBufferMinutes !== data.travelBufferMinutes ||
-    p.enableAutoReminder24h !== (data.enableAutoReminder24h !== false) ||
-    !sameBlocks(p.timeBlocks ?? [], data.timeBlocks)
+function bookingRulesPanelProblem(draft: Draft, only?: ReadonlySet<BookingField>): string | null {
+  const built = bookingRulesPatch(
+    {
+      ...draft,
+      defaultTimeBlockDurationHours: String(NUMBER_FIELDS.defaultTimeBlockDurationHours.min),
+      travelBufferMinutes: String(NUMBER_FIELDS.travelBufferMinutes.min),
+    },
+    only,
   );
-}
-
-function sameBlocks(a: readonly TimeBlockDefinition[], b: readonly TimeBlockDefinition[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((row, i) => {
-    const other = b[i];
-    return (
-      other !== undefined &&
-      row.id === other.id &&
-      row.label === other.label &&
-      row.startTime === other.startTime &&
-      row.endTime === other.endTime &&
-      row.active === other.active
-    );
-  });
+  return 'error' in built ? built.error : null;
 }
 
 export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) {
@@ -211,12 +224,16 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
   // edited again.
   const [serverErrors, setServerErrors] = useState<Partial<Record<string, string>>>({});
 
-  const built = bookingRulesPatch(draft);
+  const edited = editedBookingFields(draft, data);
+  const built = bookingRulesPatch(draft, edited);
   const problem = 'error' in built ? built.error : null;
   const panelProblem = bookingRulesPanelProblem(draft);
+  // #1783: a problem in a field nobody changed still shows, but it is not what
+  // holds Save back; `problem` is.
+  const gatingPanelProblem = bookingRulesPanelProblem(draft, edited);
   const numberErrors = bookingRulesFieldErrors(draft);
   const fieldError = (key: NumberField): string | undefined => numberErrors[key] ?? serverErrors[key];
-  const dirty = isDirty(draft, data);
+  const dirty = edited.size > 0;
   const overlaps = blockOverlaps(draft.blocks);
 
   // ISSUE #710: the default-mode picker only offers modes that are on, so
@@ -352,7 +369,11 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
         </Banner>
       ) : null}
       {panelProblem ? (
-        <Banner tone="warning" title="Not ready to save" className="settingsEdit__sectionBanner">
+        <Banner
+          tone="warning"
+          title={gatingPanelProblem ? 'Not ready to save' : 'Check this setting'}
+          className="settingsEdit__sectionBanner"
+        >
           {panelProblem}
         </Banner>
       ) : null}

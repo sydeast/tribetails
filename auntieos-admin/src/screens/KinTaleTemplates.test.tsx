@@ -864,31 +864,78 @@ describe('KinTaleTemplates: checklist items need text, and there are at most 60 
     expect(arg.checklistItems.map((i) => i.text.trim())).toEqual(['Meds', 'Fed']);
   });
 
-  it('a template that arrives with a blank item flags it at once and will not save', async () => {
-    mockStream({
-      status: 'ready',
-      data: [
-        tpl({
-          checklistItems: [
-            makeChecklistItem({ key: 'meds', text: 'Meds', scope: 'PER_PET', order: 0 }),
-            makeChecklistItem({ key: 'old', text: ' ', scope: 'PER_PET', order: 1 }),
-          ],
-        }),
-      ],
+  describe('a template that arrives with a blank item (#1783)', () => {
+    const blankStored = () =>
+      tpl({
+        checklistItems: [
+          makeChecklistItem({ key: 'meds', text: 'Meds', scope: 'PER_PET', order: 0 }),
+          makeChecklistItem({ key: 'old', text: ' ', scope: 'PER_PET', order: 1 }),
+        ],
+      });
+    it('flags it at once, beside the field, and still saves a change to the title', async () => {
+      mockStream({ status: 'ready', data: [blankStored()] });
+      render(<KinTaleTemplates />);
+      await openEditor();
+      expect(screen.getByRole('button', { name: /^3 Per-Kin items/ })).toHaveAccessibleName(
+        '3 Per-Kin items 1 thing to check',
+      );
+      await goToStep('Per-Kin items');
+      expect(screen.getAllByLabelText('Item text')[1]).toHaveAttribute('aria-invalid', 'true');
+      expect(screen.getByText(CHECKLIST_ITEM_BLANK)).toBeInTheDocument();
+      await goToStep('Basic settings');
+      await user.clear(screen.getByLabelText('Template name'));
+      await user.type(screen.getByLabelText('Template name'), 'Evening walk');
+      await lastStep();
+      const finish = screen.getByRole('button', { name: /^save template$/i });
+      expect(finish).toBeEnabled();
+      await user.click(finish);
+      await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+      const [saved, , loaded] = saveKinTaleTemplate.mock.calls[0] as [KinTaleTemplate, unknown, KinTaleTemplate];
+      expect(saved.name).toBe('Evening walk');
+      // Handed over unchanged, so the write's diff leaves `checklistItems` out.
+      expect(saved.checklistItems).toEqual(loaded.checklistItems);
     });
-    render(<KinTaleTemplates />);
-    await openEditor();
-    expect(screen.getByRole('button', { name: /^3 Per-Kin items/ })).toHaveAccessibleName(
-      '3 Per-Kin items 1 thing to fix',
-    );
-    await lastStep();
-    const finish = screen.getByRole('button', { name: /^save template$/i });
-    expect(finish).toBeDisabled();
-    await user.click(finish);
-    expect(saveKinTaleTemplate).not.toHaveBeenCalled();
+    it('refuses once the checklist is changed with the blank item still in it', async () => {
+      mockStream({ status: 'ready', data: [blankStored()] });
+      render(<KinTaleTemplates />);
+      await openEditor();
+      await goToStep('Per-Kin items');
+      await user.type(screen.getAllByLabelText('Item text')[0]!, ' and water');
+      await lastStep();
+      expect(screen.getByRole('button', { name: /^save template$/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '1 thing left to fix' })).toBeInTheDocument();
+      expect(saveKinTaleTemplate).not.toHaveBeenCalled();
+    });
+    it('saves once the blank item is filled in', async () => {
+      mockStream({ status: 'ready', data: [blankStored()] });
+      render(<KinTaleTemplates />);
+      await openEditor();
+      await goToStep('Per-Kin items');
+      await user.type(screen.getAllByLabelText('Item text')[1]!, 'Fed');
+      await saveTemplate();
+      await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+      const [saved] = saveKinTaleTemplate.mock.calls[0] as [KinTaleTemplate];
+      expect(saved.checklistItems.map((i) => i.text.trim())).toEqual(['Meds', 'Fed']);
+    });
+    it('refuses a blank item added to a template whose checklist was fine', async () => {
+      render(<KinTaleTemplates />);
+      await openEditor();
+      await goToStep('Per-Kin items');
+      await user.click(screen.getByRole('button', { name: /add per-kin item/i }));
+      await saveTemplate();
+      expect(saveKinTaleTemplate).not.toHaveBeenCalled();
+    });
+    it('a new template always checks its checklist', async () => {
+      render(<KinTaleTemplates />);
+      await openNewTemplate();
+      await user.type(screen.getByLabelText('Template name'), 'Fresh');
+      await goToStep('Per-Kin items');
+      await user.click(screen.getByRole('button', { name: /add per-kin item/i }));
+      await saveTemplate();
+      expect(saveKinTaleTemplate).not.toHaveBeenCalled();
+    });
   });
-
-  it('with the checklist switched off, a blank item is still caught, on Display sections', async () => {
+  it('with the checklist switched off, a stored blank item is noted on Display sections and does not stop a save', async () => {
     mockStream({
       status: 'ready',
       data: [
@@ -901,12 +948,15 @@ describe('KinTaleTemplates: checklist items need text, and there are at most 60 
     render(<KinTaleTemplates />);
     await openEditor();
     expect(screen.getByRole('button', { name: /^2 Display sections/ })).toHaveAccessibleName(
-      '2 Display sections 1 thing to fix',
+      '2 Display sections 1 thing to check',
     );
     await goToStep('Display sections');
     expect(screen.getByText(`Per-visit item 1: ${CHECKLIST_ITEM_BLANK}`)).toBeInTheDocument();
+    await goToStep('Basic settings');
+    await user.type(screen.getByLabelText('Template name'), ' 2');
+    await saveTemplate();
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
   });
-
   it('at 60 items Add is off, Add from bank is off, and the sentence beside Add says why', async () => {
     mockStream({ status: 'ready', data: [tpl({ checklistItems: sixty() })] });
     render(<KinTaleTemplates />);
@@ -926,7 +976,7 @@ describe('KinTaleTemplates: checklist items need text, and there are at most 60 
     await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
   });
 
-  it('a stored checklist over 60 will not save, and says why', async () => {
+  it('a stored checklist over 60 says why, and saves a title change until the checklist changes', async () => {
     const over = [
       ...sixty(),
       makeChecklistItem({ key: 'item_61', text: 'Item 61', scope: 'PER_PET', order: 60 }),
@@ -937,9 +987,14 @@ describe('KinTaleTemplates: checklist items need text, and there are at most 60 
     await goToStep('Per-Kin items');
     expect(screen.getAllByText(CHECKLIST_LIMIT_REACHED).length).toBeGreaterThan(0);
     await lastStep();
+    // Untouched checklist: the rule does not look at it.
+    expect(screen.getByRole('button', { name: /^save template$/i })).toBeEnabled();
+    // Edit an item and it is part of the save.
+    await goToStep('Per-Kin items');
+    await user.type(screen.getAllByLabelText('Item text')[0]!, '!');
+    await lastStep();
     expect(screen.getByRole('button', { name: /^save template$/i })).toBeDisabled();
   });
-
   it('a rules refusal says what the rule checks, never the raw code', async () => {
     saveKinTaleTemplate.mockRejectedValue(
       Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),

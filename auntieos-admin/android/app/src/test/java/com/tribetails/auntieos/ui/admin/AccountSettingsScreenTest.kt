@@ -229,4 +229,52 @@ class AccountSettingsScreenTest {
         composeRule.waitForIdle()
         assertNull(saved)
     }
+
+    // ── A stored bad value (#1783) ────────────────────────────────────────────
+    private fun openWithStoredBadEmail(onSave: (BusinessSettings) -> Unit) {
+        val settings = BusinessSettings(
+            businessName = "Tribe Tails Pet Care",
+            businessEmail = "not an email",
+            businessPhone = "512-555-0199",
+        )
+        composeRule.setContent { AuntieOSTheme { BusinessProfilePanel(settings = settings, onSave = onSave) } }
+        composeRule.waitForIdle()
+    }
+    @Test
+    fun businessProfileShowsAStoredBadEmailOnOpen() {
+        openWithStoredBadEmail {}
+        composeRule.onNodeWithText(EMAIL_INVALID).assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+    }
+    @Test
+    fun businessProfileSavesADifferentFieldAndLeavesTheStoredEmailOutOfTheSave() {
+        var saved: BusinessSettings? = null
+        openWithStoredBadEmail { saved = it }
+        composeRule.onNodeWithContentDescription("Address").performTextInput("1 Elsewhere Rd")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(EMAIL_INVALID).assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsEnabled()
+        composeRule.onNodeWithText("Save").performClick()
+        composeRule.waitForIdle()
+        assertEquals("1 Elsewhere Rd", saved?.businessAddress)
+        // Untouched, so it goes out exactly as stored and the diff sees no change.
+        assertEquals("not an email", saved?.businessEmail)
+    }
+    @Test
+    fun businessProfileRefusesTheStoredEmailEditedToAnotherBadValueAndSavesAGoodOne() {
+        var saved: BusinessSettings? = null
+        openWithStoredBadEmail { saved = it }
+        composeRule.onNodeWithContentDescription("Email").performTextInput("!")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(EMAIL_INVALID).assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+        composeRule.onNodeWithContentDescription("Email").performTextClearance()
+        composeRule.onNodeWithContentDescription("Email").performTextInput(" hello@tribetails.com ")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(EMAIL_INVALID).assertDoesNotExist()
+        composeRule.onNodeWithText("Save").assertIsEnabled()
+        composeRule.onNodeWithText("Save").performClick()
+        composeRule.waitForIdle()
+        assertEquals("hello@tribetails.com", saved?.businessEmail)
+    }
 }

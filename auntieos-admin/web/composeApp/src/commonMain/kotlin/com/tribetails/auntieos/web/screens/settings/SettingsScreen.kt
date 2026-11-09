@@ -694,6 +694,7 @@ private fun SectionPanel(
                 businessHours = businessHours, onBusinessHours = onBusinessHours,
                 dirty = hoursDirty, onSave = onSaveHours, onCancel = onCancelHours,
                 saveError = hoursSaveError,
+                storedHours = settingsData?.businessHours ?: emptyMap(),
             )
             // #7: Google Calendar sync + busy-block now live under Business Hours.
             GcalSyncPanel(
@@ -1125,6 +1126,13 @@ private fun BusinessProfilePanel(
     // #1593: both may be blank; anything typed has to read as an email / a US number.
     val emailError = SettingsChecks.businessEmailProblem(businessEmail)
     val phoneError = SettingsChecks.businessPhoneProblem(businessPhone)
+    // #1783: every sentence shows, but only a field that is part of the save holds
+    // Save back. The name is checked on every save, so a stored blank keeps it off.
+    val stored = settingsData ?: BusinessSettings()
+    val profileBlocked = SettingsChecks.blocksSave(nameError, businessName, stored.businessName, alwaysChecked = true) ||
+        SettingsChecks.blocksSave(emailError, businessEmail, stored.businessEmail) ||
+        SettingsChecks.blocksSave(phoneError, businessPhone, stored.businessPhone) ||
+        SettingsChecks.blocksSave(privacyPolicyError, privacyPolicyUrl, stored.privacyPolicyUrl)
     DenPanel(title = "Business Profile", subtitle = "The contact details kinfolk and invoices use.") {
         when (uiState.settingsResult) {
             is FirestoreResult.Loading -> EmptyHintLine("Loading settings", c.textDim)
@@ -1174,16 +1182,17 @@ private fun BusinessProfilePanel(
                     Spacer(Modifier.height(dims.space1))
                     PrimaryButton(
                         label   = if (settingsLoaded) "Save" else "Loading settings…",
-                        enabled = settingsLoaded && privacyPolicyError == null && nameError == null &&
-                            emailError == null && phoneError == null,
+                        enabled = settingsLoaded && !profileBlocked,
                         onClick = {
                             scope.launch {
                                 val updated = (settingsData ?: BusinessSettings()).copy(
-                                    businessName        = businessName.trim(),
+                                    // An unedited field is handed back as stored, so a
+                                    // stored bad value is never part of this save.
+                                    businessName        = if (businessName != stored.businessName) businessName.trim() else stored.businessName,
                                     businessEmail       = businessEmail,
                                     businessPhone       = businessPhone,
                                     businessAddress     = businessAddress,
-                                    privacyPolicyUrl    = privacyPolicyUrl.trim(),
+                                    privacyPolicyUrl    = if (privacyPolicyUrl != stored.privacyPolicyUrl) privacyPolicyUrl.trim() else stored.privacyPolicyUrl,
                                 )
                                 vm.saveSettings(updated)
                                 AuditLog.fire(
@@ -1450,6 +1459,7 @@ private fun BusinessHoursPanel(
     onSave: () -> Unit,
     onCancel: () -> Unit,
     saveError: String?,
+    storedHours: Map<String, String> = emptyMap(),
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -1482,7 +1492,8 @@ private fun BusinessHoursPanel(
                     )
                 }
             }
-            val hoursOk = daysOfWeek.all { SettingsChecks.weekdayHoursProblem(businessHours[it] ?: "") == null }
+            // #1783: a stored bad day shows its sentence; only a changed day holds Save back.
+            val hoursOk = !SettingsChecks.hoursBlockSave(storedHours, businessHours, daysOfWeek)
             if (saveError != null) {
                 AuntieBanner(tone = AuntieBannerTone.Error, title = "Save failed") {
                     Text(saveError, style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -1942,7 +1953,6 @@ private fun KinCareTypesPanel(
     val dirty = settingsLoaded && settingsData != null && kinCareRowsDirty(settingsData, rows)
     // #1593: checked on the rows as typed, before the fold drops a blank name.
     val rowProblems = kinCareRowProblems(rows)
-    val rowsOk = rowProblems.all { it.none }
     val newLengthProblem = SettingsChecks.durationProblem(newType.trim().ifEmpty { "New type" }, newLength)
     val newRateProblem = SettingsChecks.priceProblem(newType.trim().ifEmpty { "New type" }, newRate)
     fun edit(next: List<KinCareTypeRow>) { rows = next; refusal = null }
@@ -2043,7 +2053,7 @@ private fun KinCareTypesPanel(
                 }
                 AuntieSaveBar(
                     dirty = dirty,
-                    saveEnabled = dirty && !saving && settingsData != null && rowsOk,
+                    saveEnabled = dirty && !saving && settingsData != null && !kinCareProblemsBlockSave(settingsData, rows),
                     onCancel = { rows = baseRows(); refusal = null },
                     onSave = {
                         settingsData?.let { b ->

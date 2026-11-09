@@ -15,6 +15,7 @@ import {
   FieldError,
   FieldErrorNote,
   FieldNotice,
+  blockingErrors,
   fieldErrorAttrs,
   textFieldErrors,
   type StringFieldKey,
@@ -73,7 +74,10 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
   const unset = draft.timeZone.trim() === '';
   const usable = unset || isUsableTimeZone(draft.timeZone);
 
-  const fieldsDirty = BUSINESS_PROFILE_FIELDS.some((f) => (draft.values[f.key] ?? '') !== data[f.key]);
+  const editedKeys = BUSINESS_PROFILE_FIELDS.filter((f) => (draft.values[f.key] ?? '') !== data[f.key]).map(
+    (f) => f.key,
+  );
+  const fieldsDirty = editedKeys.length > 0;
   const zoneDirty = draft.timeZone !== data.timeZone;
   const dirty = fieldsDirty || zoneDirty;
   // #1410: a field whose value the rules would refuse (the privacy policy link)
@@ -81,7 +85,8 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
   // reason beside the field. #1409: the same gate carries the required business
   // name, so a stored blank shows its message the moment the panel opens.
   const fieldErrors = textFieldErrors(BUSINESS_PROFILE_FIELDS, draft.values);
-  const fieldsValid = Object.keys(fieldErrors).length === 0;
+  // #1783: only an edited field blocks Save; a stored bad one just shows.
+  const fieldsValid = Object.keys(blockingErrors(fieldErrors, editedKeys)).length === 0;
 
   function updateField(key: StringFieldKey, next: string) {
     setDraft((d) => ({ ...d, values: { ...d.values, [key]: next } }));
@@ -96,13 +101,15 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
   }
 
   async function handleSave() {
-    if (!dirty || busy || !usable || !fieldsValid) return;
+    if (!dirty || busy || (zoneDirty && !usable) || !fieldsValid) return;
     setBusy(true);
     setError(null);
     setServerErrors({});
     const textPatch: Partial<Pick<BusinessSettings, StringFieldKey>> = {};
-    for (const f of BUSINESS_PROFILE_FIELDS) textPatch[f.key] = (draft.values[f.key] ?? '').trim();
-    const patch: Partial<BusinessSettings> = unset ? textPatch : { ...textPatch, timeZone: draft.timeZone };
+    for (const key of editedKeys) textPatch[key] = (draft.values[key] ?? '').trim();
+    // #1783: the zone travels only when it was changed, so a stored zone this
+    // computer cannot read never blocks, or rides along with, a different edit.
+    const patch: Partial<BusinessSettings> = unset || !zoneDirty ? textPatch : { ...textPatch, timeZone: draft.timeZone };
     try {
       await onSave(patch);
       setJustSaved(true);
@@ -210,7 +217,7 @@ export function BusinessProfileSection({ data, onSave }: BusinessProfileSectionP
         <PrimaryButton
           label={busy ? 'Saving…' : 'Save'}
           onClick={() => void handleSave()}
-          disabled={!dirty || busy || !usable || !fieldsValid}
+          disabled={!dirty || busy || (zoneDirty && !usable) || !fieldsValid}
           busy={busy}
         />
         {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}

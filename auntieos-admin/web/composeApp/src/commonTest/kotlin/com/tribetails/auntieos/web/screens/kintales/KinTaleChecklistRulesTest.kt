@@ -112,4 +112,43 @@ class KinTaleChecklistRulesTest {
         assertFalse(isPermissionDeniedMessage("Firestore write 503: unavailable"))
         assertFalse(isPermissionDeniedMessage("offline"))
     }
+
+    // ── #1783: the checklist gates Save only when the save carries it ────────
+    @Test
+    fun `a new template always carries its checklist`() {
+        assertTrue(checklistInSave(null, listOf(item("a", "Meds"))))
+    }
+    @Test
+    fun `an untouched checklist with a stored blank item is not in the save`() {
+        val stored = listOf(item("a", "Meds"), item("b", "  ", order = 1))
+        // Still reported as a problem, so its sentence shows beside the item...
+        assertEquals(listOf("PER_PET:b"), checklistProblems(stored).blankIds)
+        // ...but a title-only edit leaves the checklist alone, so it does not gate Save.
+        assertFalse(checklistInSave(stored, stored.toList()))
+        assertNull(checklistSaveBlockedReason(checklistProblems(stored), emptySet()).takeIf { checklistInSave(stored, stored) })
+    }
+    @Test
+    fun `changing the checklist with a blank item still in it is in the save and is refused`() {
+        val stored = listOf(item("a", "Meds"), item("b", "  ", order = 1))
+        val edited = listOf(item("a", "Meds and water"), item("b", "  ", order = 1))
+        assertTrue(checklistInSave(stored, edited))
+        assertFalse(checklistProblems(edited).isEmpty)
+        assertEquals(
+            CHECKLIST_ITEM_BLANK,
+            checklistSaveBlockedReason(checklistProblems(edited), flaggedBlankIds(edited, emptySet(), false)),
+        )
+    }
+    @Test
+    fun `filling the blank item in is a checklist change that passes`() {
+        val stored = listOf(item("a", "Meds"), item("b", "", order = 1))
+        val edited = listOf(item("a", "Meds"), item("b", "Fed", order = 1))
+        assertTrue(checklistInSave(stored, edited))
+        assertTrue(checklistProblems(edited).isEmpty)
+    }
+    @Test
+    fun `a checklist over the cap that was not touched is not in the save`() {
+        val stored = n(61)
+        assertTrue(checklistProblems(stored).overLimit)
+        assertFalse(checklistInSave(stored, stored))
+    }
 }

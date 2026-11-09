@@ -108,6 +108,14 @@ export interface WizardStep {
    * that record was already broken when it arrived.
    */
   pristine?: boolean;
+  /**
+   * #1783: problems with the record as it is stored that THIS save does not
+   * touch, so they do not hold the finish button back. Listed on the step and
+   * flagged on its rail button, the same as `errors`, and never counted against
+   * finishing. A caller moves a problem here from `errors` while the field it
+   * belongs to is not part of what the save writes.
+   */
+  notes?: readonly string[];
   /** The step's fields, drawn in full. Never fold any of them away. */
   body: ReactNode;
 }
@@ -197,6 +205,7 @@ export function WizardModal({
     label: s.label,
     errors: shownErrors(s),
   }));
+  const notesOf = (key: string): readonly string[] => steps.find((s) => s.key === key)?.notes ?? [];
 
   // The index the operator was standing on last commit, so a step that
   // disappears hands over to whatever now occupies its place rather than
@@ -333,12 +342,13 @@ export function WizardModal({
           {shown.map((s, i) => {
             const isCurrent = s.key === activeKey;
             const count = s.errors.length;
+            const noteCount = notesOf(s.key).length;
             return (
               <li key={s.key} className="wiz__rail-item">
                 <button
                   type="button"
                   className={`wiz__rail-step${isCurrent ? ' wiz__rail-step--current' : ''}${
-                    count > 0 ? ' wiz__rail-step--flagged' : ''
+                    count > 0 || noteCount > 0 ? ' wiz__rail-step--flagged' : ''
                   }`}
                   aria-current={isCurrent ? 'step' : undefined}
                   onClick={() => onStepChange(s.key)}
@@ -359,6 +369,16 @@ export function WizardModal({
                       </span>{' '}
                       <span className="wiz__sr">
                         {count === 1 ? '1 thing to fix' : `${count} things to fix`}
+                      </span>
+                    </>
+                  )}
+                  {count === 0 && noteCount > 0 && (
+                    <>
+                      <span className="wiz__rail-flag" aria-hidden="true">
+                        !
+                      </span>{' '}
+                      <span className="wiz__sr">
+                        {noteCount === 1 ? '1 thing to check' : `${noteCount} things to check`}
                       </span>
                     </>
                   )}
@@ -387,6 +407,15 @@ export function WizardModal({
               </Banner>
             )}
 
+            {active.notes && active.notes.length > 0 && (
+              <Banner tone="warning" title="Saved this way">
+                <ul className="wiz__step-errors">
+                  {active.notes.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              </Banner>
+            )}
             {active.body}
           </section>
         )}

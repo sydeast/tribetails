@@ -280,11 +280,21 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
   const editedStartTimes = foldStartTimeBooking(rows);
   const liveNames = rows.filter((r) => !isPristine(r)).map((r) => r.type);
   const errors = rows.map((r) => rowErrors(r, liveNames));
-  const invalid = errors.some((e) => e.name !== null || e.duration !== null || e.rate !== null);
-  const dirty =
-    !sameMap(editedRates, data.serviceRates) ||
-    !sameMap(editedDurations, data.serviceDurations) ||
-    !sameMap(editedStartTimes, storedStartTimes);
+  // #1783: the three maps are saved whole, and only the ones that changed are
+  // sent, because the server checks the maps it is sent. Every row's sentence
+  // shows on open; a sentence blocks Save only when the map it belongs to is in
+  // the save. The price and the name belong to the rates map, the length to the
+  // lengths map, and a name is checked in both.
+  const ratesChanged = !sameMap(editedRates, data.serviceRates);
+  const durationsChanged = !sameMap(editedDurations, data.serviceDurations);
+  const startTimesChanged = !sameMap(editedStartTimes, storedStartTimes);
+  const invalid = errors.some(
+    (e) =>
+      (e.name !== null && (ratesChanged || durationsChanged)) ||
+      (e.duration !== null && durationsChanged) ||
+      (e.rate !== null && ratesChanged),
+  );
+  const dirty = ratesChanged || durationsChanged || startTimesChanged;
 
   function markDirtyEdit() {
     setJustSaved(false);
@@ -316,7 +326,7 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
     if (!dirty || busy || invalid) return;
     // Refused before anything is written: the server ends a start-time visit
     // by the type's length, and with none it would book a visit with no end.
-    const missing = startTimeRowMissingLength(rows);
+    const missing = durationsChanged || startTimesChanged ? startTimeRowMissingLength(rows) : null;
     if (missing !== null) {
       setError({ title: 'Not saved', message: `"${missing}" needs a length so its end time can be worked out.` });
       return;
@@ -325,9 +335,9 @@ export function KinCareRatesEditor({ data, onSave }: KinCareRatesEditorProps) {
     setError(null);
     try {
       await onSave({
-        serviceRates: editedRates,
-        serviceDurations: editedDurations,
-        serviceStartTimeBooking: editedStartTimes,
+        ...(ratesChanged ? { serviceRates: editedRates } : {}),
+        ...(durationsChanged ? { serviceDurations: editedDurations } : {}),
+        ...(startTimesChanged ? { serviceStartTimeBooking: editedStartTimes } : {}),
       });
       // What was just written is the saved list now: an untouched appended
       // row was not part of it, and every other row is a saved one.

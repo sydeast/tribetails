@@ -155,30 +155,43 @@ class AuntieRepositorySaveBusinessSettingsTest {
     }
 
     @Test
-    fun `the portal map keeps its sibling keys, and a stored Long goes out as a plain number`() {
-        // Firestore hands integers back as Long; the stored chat limit is one.
+    fun `only the portal home slice goes out, and a stored Long in it goes out as a plain number`() {
+        // Firestore hands integers back as Long; the stored limits are Longs.
+        // #1783: the sibling keys (theme, chat) are not sent; the server merges the portal key by key.
         val loaded = BusinessSettings(
             mytribePortal = mapOf(
                 "themeId" to "midnight",
                 "chat" to mapOf("enabled" to true, "maxMessageLength" to 500L),
-                "home" to mapOf("sections" to listOf(mapOf("id" to "visits", "enabled" to true, "limit" to 3L))),
+                "home" to mapOf(
+                    "sections" to listOf(
+                        mapOf("id" to "visits", "enabled" to true, "limit" to 3L),
+                        mapOf("id" to "tales", "enabled" to true, "limit" to 4L),
+                    ),
+                ),
             ),
         )
-        val edited = loaded.withHomeSections(listOf(PortalHomeSection(id = "visits", enabled = false, limit = 5)))
+        val edited = loaded.withHomeSections(
+            listOf(
+                PortalHomeSection(id = "visits", enabled = false, limit = 5),
+                PortalHomeSection(id = "tales", enabled = true, limit = 4),
+            ),
+        )
         val wire = businessSettingsWireChanges(businessSettingsFieldChanges(loaded, edited))
         assertEquals(
             mapOf(
-                "themeId" to "midnight",
-                "chat" to mapOf("enabled" to true, "maxMessageLength" to 500),
-                "home" to mapOf("sections" to listOf(mapOf("id" to "visits", "enabled" to false, "limit" to 5))),
+                "home" to mapOf(
+                    "sections" to listOf(
+                        mapOf("id" to "visits", "enabled" to false, "limit" to 5),
+                        mapOf("id" to "tales", "enabled" to true, "limit" to 4),
+                    ),
+                ),
             ),
             wire["mytribePortal"],
         )
         @Suppress("UNCHECKED_CAST")
-        val chat = (wire["mytribePortal"] as Map<String, Any?>)["chat"] as Map<String, Any?>
-        assertTrue(chat["maxMessageLength"] is Int)
+        val sections = ((wire["mytribePortal"] as Map<String, Any?>)["home"] as Map<String, Any?>)["sections"] as List<Map<String, Any?>>
+        assertTrue(sections[1]["limit"] is Int)
     }
-
     @Test
     fun `payment options are a map of method id to enabled and instructions`() {
         val loaded = BusinessSettings()

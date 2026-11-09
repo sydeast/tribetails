@@ -51,9 +51,20 @@ data class TemplateEditorUiState(
     val flaggedChecklistIds: Set<String>
         get() = flaggedBlankIds(template.checklistItems, freshChecklistIds, checklistRevealed)
 
+    /**
+     * #1783: whether a save would carry the checklist. The rules look at it on a
+     * create and on an update that changes it, so a stored blank item on an
+     * untouched checklist shows its message beside the item without holding Save.
+     */
+    val checklistInSave: Boolean
+        get() = loaded == null || template.checklistItems != loaded.checklistItems
     /** #1593: why Save Changes is off, or null while it is on. */
     val saveBlockedReason: String?
-        get() = checklistSaveBlockedReason(checklistProblems(template.checklistItems), flaggedChecklistIds)
+        get() = if (checklistInSave) {
+            checklistSaveBlockedReason(checklistProblems(template.checklistItems), flaggedChecklistIds)
+        } else {
+            null
+        }
 
     /** #1593: Add item and Add from bank stop at 60. */
     val checklistHasRoom: Boolean get() = canAddChecklistItem(template.checklistItems)
@@ -272,7 +283,15 @@ class KinTaleTemplateEditorViewModel(
      */
     fun persist(reveal: Boolean = false): Boolean {
         val state = _uiState.value
-        val template = state.template.copy(checklistItems = trimChecklistItems(state.template.checklistItems))
+        // #1783: the checklist is trimmed only when the operator changed it. An
+        // untouched one goes through byte for byte, so a stored item of spaces
+        // (or "Meds ") is not turned into a change that the rule then judges.
+        val checklistEdited = state.loaded == null || state.template.checklistItems != state.loaded.checklistItems
+        val template = if (checklistEdited) {
+            state.template.copy(checklistItems = trimChecklistItems(state.template.checklistItems))
+        } else {
+            state.template
+        }
         val isCreate = state.isNew && state.template.id.isBlank()
         val writesChecklist = isCreate ||
             (state.loaded != null && "checklistItems" in kinTaleTemplateFieldChanges(state.loaded, template))

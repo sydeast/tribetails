@@ -185,7 +185,8 @@ describe('PaymentOptionsSection saving', () => {
     // The handle is NOT moved into the map. Every other reader of `venmoHandle`
     // (the invoice PDF's "How to pay" line, the portal's link resolver) keeps
     // reading the field it always read.
-    expect(patch.venmoHandle).toBe('@auntie');
+    // #1783: an unedited handle does not travel.
+    expect(patch).not.toHaveProperty('venmoHandle');
     expect(patch.paymentOptions?.venmo).toEqual({ enabled: false, instructions: '' });
     // Written for all eleven, including the untouched ones, so a later change
     // to a shipped default cannot silently rewrite a decision already made.
@@ -273,7 +274,7 @@ describe('PaymentOptionsSection handle checks and Cancel', () => {
     expect(screen.queryByText(VENMO)).toBeNull();
   });
 
-  it('keeps a refused handle on screen while its method is off, because the handle is saved either way', async () => {
+  it('keeps a stored refused handle on screen while its method is off, and a different edit still saves (#1783)', async () => {
     render(
       <PaymentOptionsSection
         data={settings({ venmoHandle: 'abc', paymentOptions: { venmo: { enabled: false } } })}
@@ -283,7 +284,21 @@ describe('PaymentOptionsSection handle checks and Cancel', () => {
     expect(screen.getByRole('switch', { name: 'Offer Venmo' })).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByLabelText('Venmo handle')).toHaveAccessibleErrorMessage(VENMO);
     await userEvent.click(screen.getByRole('switch', { name: 'Offer Klarna' }));
+    expect(screen.getByRole('button', SAVE)).toBeEnabled();
+    expect(screen.getByLabelText('Venmo handle')).toHaveAccessibleErrorMessage(VENMO);
+  });
+  it('refuses the stored handle once it is the one being changed to another bad value, and saves a good one (#1783)', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<PaymentOptionsSection data={settings({ venmoHandle: 'abc' })} onSave={onSave} />);
+    const handle = screen.getByLabelText('Venmo handle');
+    await userEvent.type(handle, 'd');
+    expect(handle).toHaveAccessibleErrorMessage(VENMO);
     expect(screen.getByRole('button', SAVE)).toBeDisabled();
+    await userEvent.clear(handle);
+    await userEvent.type(handle, '@auntie');
+    expect(screen.getByRole('button', SAVE)).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', SAVE));
+    expect(savedPatch(onSave).venmoHandle).toBe('@auntie');
   });
 
   it('Cancel is off until something changes, then puts every field back', async () => {

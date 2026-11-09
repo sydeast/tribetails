@@ -25,6 +25,7 @@ object SettingsChecks {
     const val HOURS_CLOSE_BEFORE_OPEN = "The closing time has to be after the opening time."
     const val KINCARE_NAME_REQUIRED = "Every KinCare type needs a name."
     const val CLOSURE_NAME_REQUIRED = "Give the closure a name."
+    const val THEME_INVALID = "Pick a theme from the list."
     const val HOME_LIMIT_INVALID = "Enter a limit of 0 or more, as a whole number. 0 shows everything."
     const val MAX_OPTION_LIST_LENGTH = 12
     const val MAX_KINCARE_NAME_LENGTH = 80
@@ -230,4 +231,26 @@ object SettingsChecks {
 
     /** A home-section limit: blank or a whole number from 0 (everything) up. */
     fun homeLimitProblem(raw: String): String? = if (homeLimitValue(raw) == null) HOME_LIMIT_INVALID else null
+
+    // ── What blocks a Save (#1783) ───────────────────────────────────────────
+    /**
+     * The sentence for a field shows whenever it is wrong, stored or typed. It
+     * holds Save back only when the field is part of the save, because
+     * `saveBusinessSettings` checks the fields in `changes`: a stored bad value
+     * the operator did not touch is not sent, so it must not block a different
+     * edit. [alwaysChecked] is the business name, which the server checks on
+     * every save.
+     */
+    fun blocksSave(problem: String?, current: String, stored: String, alwaysChecked: Boolean = false): Boolean =
+        problem != null && (alwaysChecked || current != stored)
+    /** The weekly-hours days the operator changed from [stored]. */
+    fun changedDays(stored: Map<String, String>, edited: Map<String, String>, days: List<String>): List<String> =
+        days.filter { (edited[it] ?: "") != (stored[it] ?: "") }
+    /**
+     * True when a changed day has a problem. The server merges `businessHours`
+     * day by day and checks the days it is sent, so an untouched bad day is not
+     * in the save.
+     */
+    fun hoursBlockSave(stored: Map<String, String>, edited: Map<String, String>, days: List<String>): Boolean =
+        changedDays(stored, edited, days).any { weekdayHoursProblem(edited[it] ?: "") != null }
 }

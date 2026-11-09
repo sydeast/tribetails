@@ -100,9 +100,9 @@ internal fun MyTribePanel(
     // typed it. "-3", "abc" or "1.5" stays on screen with the sentence under it
     // instead of quietly becoming 0; only a limit that reads reaches [portal].
     var limitText by remember(settingsData) { mutableStateOf<Map<String, String>>(emptyMap()) }
-    val limitsOk = limitText.values.all { SettingsChecks.homeLimitProblem(it) == null }
+    val limitsOk = portalLimitsAllowSave(loaded, portal, limitText)
 
-    val dirty = portal != loaded || !limitsOk
+    val dirty = portal != loaded || limitText.values.any { SettingsChecks.homeLimitProblem(it) != null }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // ── Portal logo ──
@@ -283,6 +283,16 @@ private fun PortalThemeCard(
                 )
             }
         }
+        // #1783: a stored theme the portal does not have says so, beside the
+        // swatches. It holds Save back only if it is part of the save, and
+        // picking a swatch always replaces it with a real one.
+        if (themeId.isNotEmpty() && AuntieThemePreset.entries.none { it.key == themeId }) {
+            Text(
+                SettingsChecks.THEME_INVALID,
+                style = AuntieTheme.typography.labelSmall,
+                color = AuntieTheme.colors.error,
+            )
+        }
     }
 }
 
@@ -451,7 +461,7 @@ private fun PortalHomeCard(
                         next[index] = cfg.copy(enabled = enabled)
                         onChange(home.copy(sections = next))
                     },
-                    limitText = limitText[cfg.id] ?: if (cfg.limit > 0) cfg.limit.toString() else "",
+                    limitText = limitText[cfg.id] ?: if (cfg.limit != 0) cfg.limit.toString() else "",
                     onLimitText = { text ->
                         onLimitText(cfg.id, text)
                         SettingsChecks.homeLimitValue(text)?.let { limit ->
@@ -656,3 +666,19 @@ private fun PortalChatCard(
 }
 
 private val CHAT_HOURS_REGEX = Regex("""^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$""")
+
+/**
+ * #1783: whether the MyTribe panel's problems leave Save on. A limit the
+ * operator is typing that does not read always holds Save back. A stored
+ * limit below zero holds it back only when the Home layout changed, because
+ * the layout is one list the server replaces and checks whole.
+ */
+internal fun portalLimitsAllowSave(
+    loaded: MyTribePortalConfig,
+    portal: MyTribePortalConfig,
+    limitText: Map<String, String>,
+): Boolean {
+    if (limitText.values.any { SettingsChecks.homeLimitProblem(it) != null }) return false
+    val homeChanged = portal.home != loaded.home
+    return !(homeChanged && portal.home.sections.any { it.limit < 0 })
+}

@@ -58,6 +58,7 @@ import {
   reorderMood,
   seedTemplateDraft,
   serviceTypeChoices,
+  trimChecklistItems,
   sortedMoods,
   toggleServiceTypeKey,
   updateChecklistItem,
@@ -695,6 +696,21 @@ function TemplateWizard({
   const [freshIds, setFreshIds] = useState<ReadonlySet<string>>(() => new Set());
   const [saveRevealed, setSaveRevealed] = useState(false);
   const checklist = checklistStepErrors(draft.checklistItems, freshIds, saveRevealed);
+  // #1783: the Firestore rule checks the checklist on a create and on an update
+  // that changes `checklistItems`, so only then can it stop Save. A stored blank
+  // item on a template whose checklist is untouched still shows its sentence
+  // beside the field, and a different edit (the title, say) saves. Compared the
+  // way the write diffs, trimmed on both sides.
+  const checklistInSave =
+    isNew ||
+    JSON.stringify(trimChecklistItems(seed.checklistItems)) !== JSON.stringify(trimChecklistItems(draft.checklistItems));
+  const quiet = (step: ChecklistStepErrors) => ({ ...step, errors: [] as string[], pristine: true });
+  const gatingChecklist = checklistInSave
+    ? checklist
+    : { perPet: quiet(checklist.perPet), perVisit: quiet(checklist.perVisit), hidden: quiet(checklist.hidden) };
+  // What the save leaves alone is still said, as a note on the step.
+  const noteOf = (step: ChecklistStepErrors): { notes?: string[] } =>
+    checklistInSave || step.errors.length === 0 ? {} : { notes: step.errors };
   const displacesDefault = draft.isDefault && siblings.some((t) => t.isDefault && t._id !== draft._id);
 
   function patch(p: Partial<KinTaleTemplate>) {
@@ -737,7 +753,7 @@ function TemplateWizard({
   }
 
   async function handleSave() {
-    if (saving || nameErrors.length > 0 || !checklistIsSaveable(draft.checklistItems)) return;
+    if (saving || nameErrors.length > 0 || (checklistInSave && !checklistIsSaveable(draft.checklistItems))) return;
     setSaving(true);
     setNotice(null);
     try {
@@ -785,7 +801,9 @@ function TemplateWizard({
       blurb: 'Which blocks appear in the recap.',
       // With the checklist switched off its steps are gone, but its items are
       // still written, so their problems land here, beside the Checklist toggle.
-      ...(draft.checklistEnabled ? {} : { errors: checklist.hidden.errors, pristine: checklist.hidden.pristine }),
+      ...(draft.checklistEnabled
+        ? {}
+        : { errors: gatingChecklist.hidden.errors, pristine: gatingChecklist.hidden.pristine, ...noteOf(checklist.hidden) }),
       body: <DisplaySectionsStep draft={draft} patch={patch} />,
     },
     ...(draft.checklistEnabled
@@ -794,8 +812,9 @@ function TemplateWizard({
             key: 'per-kin',
             label: 'Per-Kin items',
             blurb: 'These appear once for each Kin in the visit.',
-            errors: checklist.perPet.errors,
-            pristine: checklist.perPet.pristine,
+            errors: gatingChecklist.perPet.errors,
+            pristine: gatingChecklist.perPet.pristine,
+            ...noteOf(checklist.perPet),
             body: (
               <ChecklistSection
                 scope="PER_PET"
@@ -815,8 +834,9 @@ function TemplateWizard({
             key: 'per-visit',
             label: 'Per-visit items',
             blurb: 'These appear once for the whole visit.',
-            errors: checklist.perVisit.errors,
-            pristine: checklist.perVisit.pristine,
+            errors: gatingChecklist.perVisit.errors,
+            pristine: gatingChecklist.perVisit.pristine,
+            ...noteOf(checklist.perVisit),
             body: (
               <ChecklistSection
                 scope="PER_VISIT"

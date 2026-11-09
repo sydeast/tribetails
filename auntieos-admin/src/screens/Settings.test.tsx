@@ -562,20 +562,9 @@ describe('Settings — Business profile editor', () => {
     expect(saveBtn).toBeEnabled();
 
     await userEvent.click(saveBtn);
-    // `weatherLocation` rides along because this panel saves every field it
-    // renders, and it renders that one since mark 16 moved it here.
-    // `timeZone` rides along too: issue #709 folded it into this panel, so it
-    // is one of the fields this Save carries, unchanged from what loaded.
-    // `privacyPolicyUrl` (#1410) rides along the same way, blank until set.
-    expect(saveBusinessSettings).toHaveBeenCalledWith({
-      businessName: 'New Name',
-      businessEmail: '',
-      businessPhone: '',
-      businessAddress: '',
-      privacyPolicyUrl: '',
-      weatherLocation: '',
-      timeZone: 'America/New_York',
-    });
+    // #1783: only the edited field travels. The server checks the fields in the
+    // save, so an untouched one (a stored bad email, say) must not ride along.
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ businessName: 'New Name' });
     expect(await within(fields).findByText('Saved')).toBeInTheDocument();
     expect(within(fields).getByRole('button', { name: /^save$/i })).toBeDisabled();
   });
@@ -823,7 +812,7 @@ describe('Settings — real editors wire through the shared persist', () => {
     await userEvent.click(within(panel).getByRole('button', { name: /^add kincare type$/i }));
     await userEvent.type(within(panel).getByLabelText('Name'), 'Walk');
     await userEvent.click(within(panel).getByRole('button', { name: /^save kincare types$/i }));
-    expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' }, serviceDurations: {}, serviceStartTimeBooking: {} });
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' } });
   });
 
   it('KinCare Settings holds both the types/rates editor and Visits and tracking, each headed', async () => {
@@ -1209,7 +1198,7 @@ describe('Settings #1593: MyTribe portal checks', () => {
     expect(theme).not.toHaveAttribute('aria-invalid');
   });
 
-  it('shows a stored theme the list does not know under its raw id, refused, with Save off until one is picked', async () => {
+  it('shows a stored theme the list does not know under its raw id, refused, and still saves a different edit (#1783)', async () => {
     getBusinessSettings.mockResolvedValue(
       withOverrides({ mytribePortal: { ...DEFAULT_BUSINESS_SETTINGS.mytribePortal, themeId: 'neon' } }),
     );
@@ -1221,17 +1210,71 @@ describe('Settings #1593: MyTribe portal checks', () => {
     expect(theme).toHaveValue('neon');
     expect(theme).toHaveAttribute('aria-invalid', 'true');
     expect(theme).toHaveAccessibleErrorMessage('Pick a theme from the list.');
-    // Something else changes; Save stays off while the theme is refused.
+    // A different field changes: the stored theme is not in this save, so Save
+    // is on and only the banner travels.
     await userEvent.click(within(panel).getByRole('switch', { name: /toggle the portal top banner/i }));
-    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
-    await userEvent.selectOptions(theme, 'Calm');
-    expect(within(panel).queryByText('Pick a theme from the list.')).toBeNull();
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeEnabled();
+    expect(theme).toHaveAccessibleErrorMessage('Pick a theme from the list.');
     await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
-    expect(saveBusinessSettings).toHaveBeenCalledWith({
-      mytribePortal: expect.objectContaining({ themeId: 'calm' }),
+    expect(saveBusinessSettings).toHaveBeenLastCalledWith({
+      mytribePortal: { banner: expect.objectContaining({ enabled: true }) },
     });
   });
-
+  describe('a stored home limit the portal cannot use (#1783)', () => {
+    const storedBad = () =>
+      withOverrides({
+        mytribePortal: {
+          ...DEFAULT_BUSINESS_SETTINGS.mytribePortal,
+          home: { sections: [{ id: 'upNext', enabled: true, limit: -2 }] },
+        },
+      });
+    async function open() {
+      getBusinessSettings.mockResolvedValue(storedBad());
+      saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+      render(<Settings />);
+      await screen.findByLabelText('Business name');
+      const panel = await openSection('MyTribe portal');
+      const row = within(panel).getByText('Up next').closest('li') as HTMLElement;
+      return { panel, row, limit: within(row).getByLabelText('Limit') };
+    }
+    it('shows its sentence beside the box as the screen opens', async () => {
+      const { row, limit } = await open();
+      expect(limit).toHaveValue('-2');
+      expect(limit).toHaveAttribute('aria-invalid', 'true');
+      expect(within(row).getByRole('alert')).toHaveTextContent(
+        'Enter a limit of 0 or more, as a whole number. 0 shows everything.',
+      );
+    });
+    it('does not stop a save of a different part of the portal, and does not send the home layout', async () => {
+      const { panel } = await open();
+      await userEvent.click(within(panel).getByRole('switch', { name: /toggle the portal top banner/i }));
+      const save = within(panel).getByRole('button', { name: /^save$/i });
+      expect(save).toBeEnabled();
+      await userEvent.click(save);
+      expect(saveBusinessSettings).toHaveBeenLastCalledWith({
+        mytribePortal: { banner: expect.objectContaining({ enabled: true }) },
+      });
+    });
+    it('refuses another bad value typed into the limit, then saves a good one', async () => {
+      const { panel, limit } = await open();
+      await userEvent.clear(limit);
+      await userEvent.type(limit, 'abc');
+      expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+      await userEvent.clear(limit);
+      await userEvent.type(limit, '5');
+      const save = within(panel).getByRole('button', { name: /^save$/i });
+      expect(save).toBeEnabled();
+      await userEvent.click(save);
+      expect(saveBusinessSettings).toHaveBeenLastCalledWith({
+        mytribePortal: { home: { sections: expect.arrayContaining([expect.objectContaining({ id: 'upNext', limit: 5 })]) } },
+      });
+    });
+    it('blocks a change to the layout while a stored limit stays bad, because the layout is checked whole', async () => {
+      const { panel } = await open();
+      await userEvent.click(within(panel).getByRole('switch', { name: /show up next on home/i }));
+      expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+  });
   it.each(['-3', 'abc', '1.5'])(
     'keeps a typed limit of %j in the box, says why beside it, and keeps Save off',
     async (typed) => {

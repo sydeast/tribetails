@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { BusinessSettings } from '../../api/settings';
 import { BusinessHoursEditor } from './BusinessHoursEditor';
@@ -24,7 +24,7 @@ function Harness({
   const [businessHours, setBusinessHours] = useState(initial);
   async function persist(patch: Partial<BusinessSettings>) {
     await onSave(patch);
-    if (patch.businessHours) setBusinessHours(patch.businessHours);
+    if (patch.businessHours) setBusinessHours((h) => ({ ...h, ...patch.businessHours }));
   }
   return <BusinessHoursEditor data={{ businessHours }} onSave={persist} />;
 }
@@ -57,7 +57,7 @@ describe('BusinessHoursEditor', () => {
     );
   });
 
-  it('toggling a closed day open seeds the default range, and Save writes the full businessHours patch', async () => {
+  it('toggling a closed day open seeds the default range, and Save writes only the changed day', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<Harness initial={{ Tuesday: '10:00-14:00' }} onSave={onSave} />);
 
@@ -69,9 +69,8 @@ describe('BusinessHoursEditor', () => {
     expect(saveBtn).toBeEnabled();
 
     await userEvent.click(saveBtn);
-    expect(onSave).toHaveBeenCalledWith({
-      businessHours: { Tuesday: '10:00-14:00', Monday: '09:00-17:00' },
-    });
+    // Only the changed day travels (#1783); Tuesday keeps its stored string.
+    expect(onSave).toHaveBeenCalledWith({ businessHours: { Monday: '09:00-17:00' } });
     expect(await screen.findByText('Saved')).toBeInTheDocument();
   });
 
@@ -219,5 +218,37 @@ describe('BusinessHoursEditor checks', () => {
     await userEvent.click(screen.getByRole('switch', { name: 'Toggle Tuesday open' }));
     await userEvent.click(screen.getByRole('button', SAVE));
     expect(await screen.findByText('The weekly hours did not arrive as a list. Reload and try again.')).toBeInTheDocument();
+  });
+});
+describe('a stored bad day (#1783)', () => {
+  const CLOSE_BEFORE_OPEN = 'The closing time has to be after the opening time.';
+  const stored = { businessHours: { Monday: '17:00-09:00', Tuesday: '09:00-17:00' } };
+  it('shows its sentence beside the day as the panel opens, with Save off', () => {
+    render(<BusinessHoursEditor data={stored} onSave={vi.fn()} />);
+    expect(screen.getByLabelText('Monday open time')).toHaveAccessibleErrorMessage(CLOSE_BEFORE_OPEN);
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+  it('saves a different day, sending only that day', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<BusinessHoursEditor data={stored} onSave={onSave} />);
+    await userEvent.click(screen.getByRole('switch', { name: 'Toggle Wednesday open' }));
+    const save = screen.getByRole('button', { name: /^save$/i });
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+    expect(onSave).toHaveBeenCalledWith({ businessHours: { Wednesday: '09:00-17:00' } });
+    expect(screen.getByLabelText('Monday open time')).toHaveAccessibleErrorMessage(CLOSE_BEFORE_OPEN);
+  });
+  it('refuses the stored day once it is edited to another bad value, and saves a good one', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<BusinessHoursEditor data={stored} onSave={onSave} />);
+    const open = screen.getByLabelText('Monday open time');
+    fireEvent.change(open, { target: { value: '18:00' } });
+    expect(open).toHaveAccessibleErrorMessage(CLOSE_BEFORE_OPEN);
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    fireEvent.change(open, { target: { value: '08:00' } });
+    const save = screen.getByRole('button', { name: /^save$/i });
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+    expect(onSave).toHaveBeenCalledWith({ businessHours: { Monday: '08:00-09:00' } });
   });
 });

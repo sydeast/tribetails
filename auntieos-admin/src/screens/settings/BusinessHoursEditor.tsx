@@ -6,7 +6,7 @@ import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
 import { dayHoursError, hoursRangeError, settingsRefusalsOf } from '../../lib/settingsChecks';
-import { FieldError, fieldErrorAttrs } from './sections';
+import { FieldError, blockingErrors, fieldErrorAttrs } from './sections';
 import '../SettingsEdit.css';
 import './BusinessHoursEditor.css';
 
@@ -83,8 +83,8 @@ function wireValue(state: DayState): string {
 /**
  * #1593: why this day cannot be saved, or null. An open day needs both times,
  * closing after opening; a hand-typed fallback is held to the same range, and
- * a cleared one reads as Closed. Every day is checked, touched or not, because
- * the server checks the whole week this panel sends.
+ * a cleared one reads as Closed. Every day shows its sentence; only a day that
+ * changed blocks Save (#1783), because the server checks the days it is sent.
  */
 function dayError(state: DayState): string | null {
   if (state.mode === 'fallback') return state.raw.trim() === '' ? null : hoursRangeError(state.raw);
@@ -114,32 +114,24 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
   // #1593: a server refusal that names a day, beside that day until it is edited.
   const [serverError, setServerError] = useState<{ day: string; message: string } | null>(null);
 
-  // The patch: the ORIGINAL map (whatever keys the doc actually had, same
-  // sparse shape `getBusinessSettings` returned), with ONLY the days that
-  // actually changed this session overlaid. Never invents a key for an
-  // untouched day, matching the wasm panel's own local state (seeded from
-  // the full loaded map, only the day being typed into ever changes) --
-  // critically, this means a day nobody touched keeps its EXACT original
-  // string (including any malformed legacy value) rather than this editor
-  // re-writing all seven days dense on every save.
-  const hours: Record<string, string> = { ...data.businessHours };
-  let dirty = false;
+  // #1783: the patch is ONLY the days that changed this session. The server
+  // merges `businessHours` day by day and checks only the days it is sent, so a
+  // day nobody touched keeps its exact stored string (including a malformed
+  // legacy one) and never rides along. An untouched bad day shows its sentence
+  // beside it on open and does not block Save.
+  const changedHours: Record<string, string> = {};
   for (const day of DAYS_OF_WEEK) {
     const current = wireValue(days[day]!);
     const original = (data.businessHours[day] ?? '').trim();
-    if (current !== original) {
-      hours[day] = current;
-      dirty = true;
-    }
+    if (current !== original) changedHours[day] = current;
   }
-
+  const dirty = Object.keys(changedHours).length > 0;
   const dayErrors: Record<string, string> = {};
   for (const day of DAYS_OF_WEEK) {
     const message = dayError(days[day]!);
     if (message !== null) dayErrors[day] = message;
   }
-  const invalid = Object.keys(dayErrors).length > 0;
-
+  const invalid = Object.keys(blockingErrors(dayErrors, Object.keys(changedHours))).length > 0;
   function patchDay(day: string, next: DayState) {
     setDays((d) => ({ ...d, [day]: next }));
     setServerError((e) => (e?.day === day ? null : e));
@@ -152,7 +144,7 @@ export function BusinessHoursEditor({ data, onSave }: BusinessHoursEditorProps) 
     setError(null);
     setServerError(null);
     try {
-      await onSave({ businessHours: hours });
+      await onSave({ businessHours: changedHours });
       setJustSaved(true);
     } catch (err) {
       const byDay = refusalByDay(err);

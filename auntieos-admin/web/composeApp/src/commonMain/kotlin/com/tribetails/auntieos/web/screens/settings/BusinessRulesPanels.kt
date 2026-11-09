@@ -366,24 +366,77 @@ internal fun bookingRulesError(
     blocks: List<TimeBlockRow>,
     timeZone: String,
     zoneUsable: Boolean,
+    only: BookingRulesEdits = BookingRulesEdits.ALL,
 ): String? {
-    if (!allowSpecificTimeBooking && !allowTimeBlockBooking) {
-        return "Leave at least one booking mode on, or nothing can be booked at all."
-    }
-    if (defaultBookingMode == "TIME_BLOCK" && !allowTimeBlockBooking) {
-        return "Time blocks are turned off, so they cannot be the default. Pick the other mode."
-    }
-    if (defaultBookingMode == "SPECIFIC_TIME" && !allowSpecificTimeBooking) {
-        return "Specific times are turned off, so they cannot be the default. Pick the other mode."
+    if (only.modes) {
+        if (!allowSpecificTimeBooking && !allowTimeBlockBooking) {
+            return "Leave at least one booking mode on, or nothing can be booked at all."
+        }
+        if (defaultBookingMode == "TIME_BLOCK" && !allowTimeBlockBooking) {
+            return "Time blocks are turned off, so they cannot be the default. Pick the other mode."
+        }
+        if (defaultBookingMode == "SPECIFIC_TIME" && !allowSpecificTimeBooking) {
+            return "Specific times are turned off, so they cannot be the default. Pick the other mode."
+        }
     }
     if (!zoneUsable) return "Nothing here can read a time in \"$timeZone\". Pick a zone from the list."
-    if (parseWholeNumber(blockDurationHours, 1, 24) == null) return "Default block length: enter 1 to 24 hours."
-    if (parseWholeNumber(travelBufferMinutes, 0, 480) == null) return "Travel buffer: enter 0 to 480 minutes."
-    timeBlockError(blocks)?.let { return it }
-    if (allowTimeBlockBooking && blocks.none { it.active }) {
+    if (only.blockLength && parseWholeNumber(blockDurationHours, 1, 24) == null) {
+        return "Default block length: enter 1 to 24 hours."
+    }
+    if (only.travelBuffer && parseWholeNumber(travelBufferMinutes, 0, 480) == null) {
+        return "Travel buffer: enter 0 to 480 minutes."
+    }
+    if (only.blocks) timeBlockError(blocks)?.let { return it }
+    if (only.blocksNeedOneActive && allowTimeBlockBooking && blocks.none { it.active }) {
         return "Time-block booking is on but no block is active, so there is nothing to book into."
     }
     return null
+}
+/**
+ * #1783: which parts of the booking-rules draft are part of the save. The panel
+ * shows every problem; only a part the operator changed holds Save back, because
+ * `saveBusinessSettings` checks the fields it is sent. Time blocks are one list
+ * and go whole, so any change to it checks every block.
+ */
+internal data class BookingRulesEdits(
+    val modes: Boolean,
+    val blockLength: Boolean,
+    val travelBuffer: Boolean,
+    val blocks: Boolean,
+    val blocksNeedOneActive: Boolean,
+) {
+    companion object {
+        val ALL = BookingRulesEdits(true, true, true, true, true)
+    }
+}
+/** The parts of the booking-rules draft that differ from what [stored] holds. */
+internal fun bookingRulesEdits(
+    stored: BusinessSettings,
+    defaultBookingMode: String,
+    defaultCalendarView: String,
+    allowSpecificTimeBooking: Boolean,
+    allowTimeBlockBooking: Boolean,
+    blockDurationHours: String,
+    travelBufferMinutes: String,
+    blocks: List<TimeBlockRow>,
+): BookingRulesEdits {
+    val storedBlocks = stored.timeBlocks.map { it.toRow() }.sortedWith(::compareBlocksByStart)
+    val allowBlockChanged = allowTimeBlockBooking != (stored.allowTimeBlockBooking != false)
+    val blocksChanged = blocks != storedBlocks
+    return BookingRulesEdits(
+        modes = defaultBookingMode != stored.defaultBookingMode ||
+            allowSpecificTimeBooking != (stored.allowSpecificTimeBooking != false) ||
+            allowBlockChanged,
+        blockLength = numberEdited(blockDurationHours, 1, 24, stored.defaultTimeBlockDurationHours),
+        travelBuffer = numberEdited(travelBufferMinutes, 0, 480, stored.travelBufferMinutes),
+        blocks = blocksChanged,
+        blocksNeedOneActive = blocksChanged || allowBlockChanged,
+    )
+}
+/** A typed whole number counts as edited when it reads and differs, or does not read and is not the stored text. */
+internal fun numberEdited(typed: String, lo: Int, hi: Int, stored: Int): Boolean {
+    val n = parseWholeNumber(typed, lo, hi)
+    return if (n != null) n != stored else typed.trim() != stored.toString()
 }
 
 /** What is wrong with the visit-records draft, or null. */
@@ -392,10 +445,11 @@ internal fun visitRecordsError(
     etaOptions: String,
     draftOptions: String,
     arrivalRadiusMeters: String = "150",
+    only: VisitRecordsEdits = VisitRecordsEdits.ALL,
 ): String? {
-    if (parseWholeNumber(saveRoutesForDays, 1, 3650) == null) return "Keep routes for: enter 1 to 3650 days."
-    if (parseOptionList(etaOptions) == null) return "On-my-way choices: whole numbers over zero, no repeats."
-    if (parseOptionList(draftOptions) == null) return "Draft-retention choices: whole numbers over zero, no repeats."
+    if (only.routeDays && parseWholeNumber(saveRoutesForDays, 1, 3650) == null) return "Keep routes for: enter 1 to 3650 days."
+    if (only.etaOptions && parseOptionList(etaOptions) == null) return "On-my-way choices: whole numbers over zero, no repeats."
+    if (only.draftOptions && parseOptionList(draftOptions) == null) return "Draft-retention choices: whole numbers over zero, no repeats."
     // ISSUE #582. The same 10..5000 the rules guard
     // (`bsInt('arrivalRadiusMeters', 10, 5000)`) and the server's
     // ARRIVAL_RADIUS_MIN/MAX_METERS enforce, so the operator reads what is
@@ -403,10 +457,39 @@ internal fun visitRecordsError(
     // Validated even while the switch above is off: the value is saved either
     // way, and a bad one left behind becomes an unfixable problem the first
     // time somebody turns verification on.
-    if (parseWholeNumber(arrivalRadiusMeters, 10, 5000) == null) {
+    if (only.arrivalRadius && parseWholeNumber(arrivalRadiusMeters, 10, 5000) == null) {
         return "Arrival must be within: enter 10 to 5000 metres."
     }
     return null
+}
+/** #1783: which typed fields of the visit-records draft are part of the save. */
+internal data class VisitRecordsEdits(
+    val routeDays: Boolean,
+    val etaOptions: Boolean,
+    val draftOptions: Boolean,
+    val arrivalRadius: Boolean,
+) {
+    companion object {
+        val ALL = VisitRecordsEdits(true, true, true, true)
+    }
+}
+/** The typed fields of the visit-records draft that differ from what [stored] holds. */
+internal fun visitRecordsEdits(
+    stored: BusinessSettings,
+    saveRoutesForDays: String,
+    etaOptions: String,
+    draftOptions: String,
+    arrivalRadiusMeters: String,
+): VisitRecordsEdits = VisitRecordsEdits(
+    routeDays = numberEdited(saveRoutesForDays, 1, 3650, stored.saveRoutesForDays),
+    etaOptions = listEdited(etaOptions, stored.etaMinuteOptions),
+    draftOptions = listEdited(draftOptions, stored.draftRetentionOptions),
+    arrivalRadius = numberEdited(arrivalRadiusMeters, 10, 5000, stored.arrivalRadiusMeters),
+)
+/** A typed option list counts as edited when it reads and differs, or does not read and is not the stored text. */
+internal fun listEdited(typed: String, stored: List<Int>): Boolean {
+    val parsed = parseOptionList(typed)
+    return if (parsed != null) parsed != stored else typed.trim() != formatOptionList(stored)
 }
 
 /**
@@ -484,6 +567,22 @@ internal fun BookingRulesPanel(
         blocks = blocks,
         timeZone = s?.timeZone.orEmpty(),
         zoneUsable = true, // the zone is edited on its own panel; not this panel's gate
+    )
+    // #1783: what is part of this save. A stored problem shows in the banner and
+    // beside its field, and holds Save back only when its part was changed.
+    val edits = s?.let {
+        bookingRulesEdits(it, mode, view, allowSpecific, allowBlock, blockHours, travelBuffer, blocks)
+    } ?: BookingRulesEdits.ALL
+    val gatingProblem = bookingRulesError(
+        defaultBookingMode = mode,
+        allowSpecificTimeBooking = allowSpecific,
+        allowTimeBlockBooking = allowBlock,
+        blockDurationHours = blockHours,
+        travelBufferMinutes = travelBuffer,
+        blocks = blocks,
+        timeZone = s?.timeZone.orEmpty(),
+        zoneUsable = true,
+        only = edits,
     )
     val overlaps = blockOverlaps(blocks)
     // #1593: each number field carries the server's sentence under itself.
@@ -654,7 +753,7 @@ internal fun BookingRulesPanel(
             Spacer(Modifier.height(dims.space2))
             PrimaryButton(
                 label = if (settingsLoaded) "Save booking rules" else "Loading settings…",
-                enabled = settingsLoaded && problem == null,
+                enabled = settingsLoaded && gatingProblem == null,
                 onClick = {
                     val loaded = s ?: return@PrimaryButton
                     scope.launch {
@@ -669,7 +768,7 @@ internal fun BookingRulesPanel(
                                     ?: loaded.defaultTimeBlockDurationHours,
                                 travelBufferMinutes = parseWholeNumber(travelBuffer, 0, 480)
                                     ?: loaded.travelBufferMinutes,
-                                timeBlocks = blocks.toDefinitions(),
+                                timeBlocks = if (edits.blocks) blocks.toDefinitions() else loaded.timeBlocks,
                             )
                         )
                     }
@@ -720,6 +819,10 @@ internal fun VisitsTrackingPanel(
     var draftOptions by remember(s) { mutableStateOf(formatOptionList(s?.draftRetentionOptions.orEmpty())) }
 
     val problem = visitRecordsError(routeDays, etaOptions, draftOptions, arrivalRadius)
+    // #1783: a stored problem shows, and holds Save back only when its field changed.
+    val edits = s?.let { visitRecordsEdits(it, routeDays, etaOptions, draftOptions, arrivalRadius) }
+        ?: VisitRecordsEdits.ALL
+    val gatingProblem = visitRecordsError(routeDays, etaOptions, draftOptions, arrivalRadius, edits)
     // #1593: the banner names the first problem; each field also carries the
     // server's sentence for itself, so every failing field is marked.
     val etaProblem = SettingsChecks.optionListProblem(etaOptions, "minutes")
@@ -864,7 +967,7 @@ internal fun VisitsTrackingPanel(
             Spacer(Modifier.height(dims.space2))
             PrimaryButton(
                 label = if (settingsLoaded) "Save visits and tracking" else "Loading settings…",
-                enabled = settingsLoaded && problem == null,
+                enabled = settingsLoaded && gatingProblem == null,
                 onClick = {
                     val loaded = s ?: return@PrimaryButton
                     val eta = parseOptionList(etaOptions) ?: loaded.etaMinuteOptions
@@ -882,9 +985,9 @@ internal fun VisitsTrackingPanel(
                                 allowClientLocationSharing = clientSharing,
                                 saveRoutesForDays = parseWholeNumber(routeDays, 1, 3650) ?: loaded.saveRoutesForDays,
                                 etaMinuteOptions = eta,
-                                defaultEtaMinutes = clampToOptions(loaded.defaultEtaMinutes, eta),
+                                defaultEtaMinutes = if (edits.etaOptions) clampToOptions(loaded.defaultEtaMinutes, eta) else loaded.defaultEtaMinutes,
                                 draftRetentionOptions = drafts,
-                                draftRetentionDays = clampToOptions(loaded.draftRetentionDays, drafts),
+                                draftRetentionDays = if (edits.draftOptions) clampToOptions(loaded.draftRetentionDays, drafts) else loaded.draftRetentionDays,
                             )
                         )
                     }
