@@ -45,6 +45,9 @@ import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.web.config.LocalFeatureFlags
+import com.tribetails.auntieos.web.data.VisitCompletionAfterSend
+import com.tribetails.auntieos.web.data.kinTaleSentMessage
+import com.tribetails.auntieos.web.data.sentButNotCompletedNotice
 import com.tribetails.auntieos.web.data.ChecklistItem
 import com.tribetails.auntieos.web.data.CommunicationType
 import com.tribetails.auntieos.web.data.GenerateRequest
@@ -238,6 +241,10 @@ private fun KinTaleComposerBody(
     var titleDraft by remember(report._id) { mutableStateOf(report.title) }
     var isSaving by remember { mutableStateOf(false) }
     var isSending by remember { mutableStateOf(false) }
+    // #1799: set once the send has committed but the visit could not be marked
+    // Completed. The editor is replaced by this notice, so a sent tale cannot be
+    // sent (or autosaved) a second time from a screen that still looks like a draft.
+    var sentNotice by remember { mutableStateOf<String?>(null) }
     var isUploading by remember { mutableStateOf(false) }
     var attachedMedia by remember(session._id) { mutableStateOf<List<MediaFile>>(emptyList()) }
     var toast    by remember { mutableStateOf("") }
@@ -412,9 +419,22 @@ private fun KinTaleComposerBody(
                 sentAtIso         = nowIso(),
             )) {
                 is WriteResult.Ok -> {
+                    // #1799: the tale has gone home. A DEPARTED visit is now
+                    // marked Completed through transitionBookingStatus, on
+                    // Android's rule, while the button still reads Sending, so
+                    // Auntie Time shows Completed on return. It never throws, and
+                    // a refusal is never "Couldn't send", which would invite a
+                    // second send.
+                    val completion = client.completeVisitAfterKinTale(session._id)
                     isSending = false
-                    routeToast.show("KinTale sent. Kinfolk will hear from you soon.", ToastKind.Success)
-                    onClose()
+                    when (val next = composerAfterSend(completion)) {
+                        // A toast dismisses itself, so a refusal's reason stays on screen.
+                        is ComposerAfterSend.StayWithNotice -> sentNotice = next.notice
+                        is ComposerAfterSend.Close -> {
+                            routeToast.show(next.toast, ToastKind.Success)
+                            onClose()
+                        }
+                    }
                 }
                 is WriteResult.Err -> {
                     isSending = false
@@ -457,7 +477,8 @@ private fun KinTaleComposerBody(
             isDirty   = isDirty,
             onClose   = onClose,
             onSend    = ::onSend,
-            canDelete = report.canDeleteAsDraft(),
+            isSent    = sentNotice != null,
+            canDelete = sentNotice == null && report.canDeleteAsDraft(),
             isDeleting = isDeleting,
             onDelete  = { confirmDelete = true },
         )
@@ -491,6 +512,23 @@ private fun KinTaleComposerBody(
         )
 
         Spacer(Modifier.height(16.dp))
+
+        // #1799: sent, but the visit is still open. No editor below this.
+        sentNotice?.let { notice ->
+            AuntieBanner(
+                tone  = AuntieBannerTone.Warning,
+                title = "Sent",
+                icon  = Lucide.TriangleAlert,
+                trailing = { GhostButton(label = "Close", onClick = onClose) },
+            ) {
+                Text(
+                    text  = notice,
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+            }
+            return@ScreenScaffold
+        }
 
         // ---- Two-pane composer (reflows to single column on narrow widths) ----
         FlowRow(
@@ -715,6 +753,21 @@ private fun KinTaleComposerBody(
 internal fun kinTaleSendLabel(recipient: String): String =
     if (recipient.isBlank()) "Send KinTale" else "Send to $recipient"
 
+/** #1799: what the composer does once a send has gone through. */
+internal sealed interface ComposerAfterSend {
+    /** Show [toast] on the route and close. */
+    data class Close(val toast: String) : ComposerAfterSend
+
+    /** The visit is still open: stay, show [notice] in place of the editor, and offer no second Send. */
+    data class StayWithNotice(val notice: String) : ComposerAfterSend
+}
+
+/** #1799: a refused completion keeps the screen open on the reason; anything else closes it. Pure. */
+internal fun composerAfterSend(completion: VisitCompletionAfterSend): ComposerAfterSend = when (completion) {
+    is VisitCompletionAfterSend.NotCompleted -> ComposerAfterSend.StayWithNotice(sentButNotCompletedNotice(completion.message))
+    else -> ComposerAfterSend.Close(kinTaleSentMessage(completion))
+}
+
 @Composable
 private fun ComposerHeaderBar(
     session: KinCareSession,
@@ -726,6 +779,8 @@ private fun ComposerHeaderBar(
     canDelete: Boolean = false,
     isDeleting: Boolean = false,
     onDelete: () -> Unit = {},
+    /** #1799: the tale has gone home; there is nothing left to send. */
+    isSent: Boolean = false,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -740,8 +795,12 @@ private fun ComposerHeaderBar(
             onCrumbClick = { onClose() },
         )
         AuntieStatusPill(
-            label = if (isSaving) "Draft · saving…" else "Draft",
-            tone  = AuntieStatusTone.Orange,
+            label = when {
+                isSent   -> "Sent"
+                isSaving -> "Draft · saving…"
+                else     -> "Draft"
+            },
+            tone  = if (isSent) AuntieStatusTone.Success else AuntieStatusTone.Orange,
             showDot = true,
             mono = true,
         )
@@ -759,13 +818,15 @@ private fun ComposerHeaderBar(
                 enabled = !isSending && !isDeleting,
             )
         }
-        PrimaryButton(
-            label   = if (isSending) "Sending…" else kinTaleSendLabel(session.kinfolkName),
-            onClick = onSend,
-            enabled = isDirty && !isSending,
-            loading = isSending,
-            leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(14.dp)) },
-        )
+        if (!isSent) {
+            PrimaryButton(
+                label   = if (isSending) "Sending…" else kinTaleSendLabel(session.kinfolkName),
+                onClick = onSend,
+                enabled = isDirty && !isSending,
+                loading = isSending,
+                leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(14.dp)) },
+            )
+        }
     }
 }
 
