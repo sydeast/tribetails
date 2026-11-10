@@ -134,27 +134,25 @@ export function visitNoticeReasonFor(
 }
 
 /**
- * Who in the household receives the notice (#1794).
+ * Who in the household receives the notice (#1794, #1802): the portal login on
+ * `kinfolk/{id}.uid`, and nothing else.
  *
- * `families/{id}.primaryUid` first, because that is the field this callable has
- * always routed on. But no sign-up path fills it: every `families` writer
- * (`familyProvision`, `inviteKinfolkToPortal`, `provisionTribe`, `mintInvite`)
- * writes `''`, and only the foundation-v1 migration copied a real uid in. The
- * household's portal login is recorded on `kinfolk/{id}.uid` by the
- * `onClientsWrite` backwrite, and that is what every other household
- * notification resolves through (`resolveKinfolkUid`). The family envelope is
- * keyed by the same id as the kinfolk doc (`familyProvision.ts`).
+ * THIS USED TO BE `families/{id}.primaryUid`, which no sign-up path fills:
+ * every `families` writer (`familyProvision`, `inviteKinfolkToPortal`,
+ * `provisionTribe`, `mintInvite`) writes `''`, and only the foundation-v1
+ * migration copied a real uid in. The household's login is recorded on
+ * `kinfolk/{id}.uid` by the `onClientsWrite` backwrite, and that is what every
+ * other household notification resolves through (`resolveKinfolkUid`). The
+ * family envelope is keyed by the same id as the kinfolk doc.
  *
- * It is also the only account field either admin client holds, so it is what
- * their confirm text predicts from. Routing on a field the clients cannot see
- * would let a confirm say "will be told" over an outcome of "no portal account".
+ * NOT `primaryUid` AS A FALLBACK, deliberately. `revokeKinfolkClaim` unlinks a
+ * login by blanking `kinfolk.uid` and never touches `primaryUid`, so a fallback
+ * would keep sending to a revoked login. And `kinfolk.uid` is the only account
+ * field either admin client holds, so it is what their confirm text predicts
+ * from; routing on anything else would let a confirm say "no portal account"
+ * over a notice that went out anyway.
  */
-async function householdRecipientUid(
-  familyId: string,
-  primaryUid: string | undefined,
-): Promise<string | null> {
-  const primary = typeof primaryUid === 'string' ? primaryUid.trim() : '';
-  if (primary !== '') return primary;
+async function householdRecipientUid(familyId: string): Promise<string | null> {
   return resolveKinfolkUid(familyId);
 }
 
@@ -203,8 +201,7 @@ export async function dispatchVisitNotificationCore(
   if (!familySnap.exists) {
     throw new HttpsError('not-found', `families/${args.familyId} not found`);
   }
-  const family = familySnap.data() as { primaryUid?: string; displayName?: string };
-  const recipientUid = await householdRecipientUid(args.familyId, family.primaryUid);
+  const recipientUid = await householdRecipientUid(args.familyId);
   if (!recipientUid) {
     // #1794: a household nobody has signed in for is a normal state, not a
     // failure. This used to throw `failed-precondition`, which every client

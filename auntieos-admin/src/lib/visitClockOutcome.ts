@@ -37,6 +37,13 @@ export type LifecycleWriteState =
 interface Entry {
   seq: number;
   state: LifecycleWriteState;
+  /**
+   * The action the write in flight is sending, so a card that remounts while it
+   * is still `saving` can still offer "Sync now". Kept here for the same reason
+   * as the sentence: a per-component ref is gone after a remount, and the card
+   * then showed a saving row with every clock control disabled and no way on.
+   */
+  action: string | null;
 }
 
 const IDLE: LifecycleWriteState = { status: 'idle' };
@@ -61,11 +68,18 @@ export function visitClockState(sessionId: string | null): LifecycleWriteState {
 }
 
 /** Start a new write on one visit. Returns the stamp its later updates must carry. */
-export function beginVisitClockWrite(sessionId: string): number {
+export function beginVisitClockWrite(sessionId: string, action: string | null = null): number {
   const seq = (entries.get(sessionId)?.seq ?? 0) + 1;
-  entries.set(sessionId, { seq, state: { status: 'saving' } });
+  entries.set(sessionId, { seq, state: { status: 'saving' }, action });
   emit();
   return seq;
+}
+
+/** The action being sent for one visit while its write is `saving`, else null. */
+export function visitClockInFlight(sessionId: string | null): string | null {
+  if (sessionId === null) return null;
+  const entry = entries.get(sessionId);
+  return entry !== undefined && entry.state.status === 'saving' ? entry.action : null;
 }
 
 /**
@@ -75,7 +89,7 @@ export function beginVisitClockWrite(sessionId: string): number {
 export function settleVisitClockWrite(sessionId: string, seq: number, state: LifecycleWriteState): void {
   const entry = entries.get(sessionId);
   if (entry === undefined || entry.seq !== seq) return;
-  entries.set(sessionId, { seq, state });
+  entries.set(sessionId, { seq, state, action: entry.action });
   emit();
 }
 
@@ -83,7 +97,7 @@ export function settleVisitClockWrite(sessionId: string, seq: number, state: Lif
 export function clearVisitClockWrite(sessionId: string): void {
   const entry = entries.get(sessionId);
   if (entry === undefined) return;
-  entries.set(sessionId, { seq: entry.seq + 1, state: IDLE });
+  entries.set(sessionId, { seq: entry.seq + 1, state: IDLE, action: null });
   emit();
 }
 

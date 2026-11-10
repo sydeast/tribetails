@@ -48,7 +48,9 @@ beforeEach(() => {
     writeThrough: true,
     docs: {
       [VISIT_PATH]: { serviceType: 'Dog Walk', scheduledAtMs: NOW, kinfolkId: 'fam1' },
-      'families/fam1': { primaryUid: 'uid_kinfolk', displayName: 'The Rileys' },
+      'families/fam1': { displayName: 'The Rileys' },
+      // #1794/#1802: the household login the notice routes to.
+      'kinfolk/fam1': { uid: 'uid_kinfolk' },
       'clients/uid_kinfolk': { displayName: 'Dana' },
       'staff/uid_auntie': { displayName: 'TiTi' },
     },

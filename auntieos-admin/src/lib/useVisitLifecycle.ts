@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { patchVisitLifecycle, type VisitLifecycleAction } from '../api/sessionsWrite';
 import { lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
 import {
   beginVisitClockWrite,
   clearVisitClockWrite,
+  visitClockInFlight,
   settleVisitClockWrite,
   useVisitClockState,
   type LifecycleWriteState,
@@ -121,11 +122,10 @@ export function useVisitLifecycle(
   const write = useVisitClockState(sessionId);
   /**
    * The action whose write is currently in flight, so "Sync now" knows what to
-   * re-send. A ref rather than state: it is read inside an event handler, never
-   * rendered, and putting it in state would re-render every clock control on
-   * the board for a value none of them draw.
+   * re-send. Read from the same store as `write` (#1794), so a card that
+   * remounts mid-write still has its sync offer rather than a dead saving row.
    */
-  const inFlight = useRef<VisitLifecycleAction | null>(null);
+  const inFlight = visitClockInFlight(sessionId) as VisitLifecycleAction | null;
 
   // A different visit inherits no half-open confirm. Its sentence is keyed by
   // its own id in the store, so it inherits none of that either, and the store
@@ -138,8 +138,7 @@ export function useVisitLifecycle(
   async function run(action: VisitLifecycleAction): Promise<boolean> {
     if (session === null) return false;
     const id = session._id;
-    const seq = beginVisitClockWrite(id);
-    inFlight.current = action;
+    const seq = beginVisitClockWrite(id, action);
     try {
       const res = await patchVisitLifecycle(session, action, { nowIso: lifecycleNowIso() });
 
@@ -183,10 +182,9 @@ export function useVisitLifecycle(
     // Offered only while a write is actually in flight: a sync button on a
     // settled clock would re-send a transition the operator did not ask for.
     retry:
-      write.status === 'saving' && inFlight.current !== null
+      write.status === 'saving' && inFlight !== null
         ? () => {
-            const action = inFlight.current;
-            if (action !== null) void run(action);
+            void run(inFlight);
           }
         : null,
     ask: (action) => {

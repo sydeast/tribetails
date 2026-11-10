@@ -197,6 +197,25 @@ describe('the sentence never claims a notification it has not seen', () => {
     );
   });
 
+  // #1794: a card that remounts while the WRITE is still away (another card's
+  // reload, the Archive toggle) must keep its "Sync now" offer, not come back
+  // as a dead saving row with every clock control disabled.
+  it('a card that remounts mid-write still offers to re-send the same action', async () => {
+    patchVisitLifecycle.mockReturnValue(new Promise(() => {}));
+    const first = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    act(() => first.result.current.ask(actionNamed('ARRIVED')));
+    act(() => first.result.current.confirm());
+    expect(first.result.current.saving).toBe(true);
+    first.unmount();
+
+    const second = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    expect(second.result.current.saving).toBe(true);
+    expect(second.result.current.retry).not.toBeNull();
+    act(() => second.result.current.retry!());
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(2);
+    expect(patchVisitLifecycle.mock.calls[1]![1]).toBe('ARRIVED');
+  });
+
   // #1794: the board unmounts the card between the write and the push (the
   // reload, then the move to Active). Unmount FIRST, settle AFTER: the reverse
   // order passes without the store and proves nothing.

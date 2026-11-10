@@ -105,7 +105,7 @@ describe('a household with no portal account (#1794)', () => {
 });
 
 describe('routing to the household login', () => {
-  it('uses the kinfolk record login when the family envelope has no primaryUid', async () => {
+  it('routes to the kinfolk record login (the family envelope primaryUid is blank on every sign-up)', async () => {
     // No sign-up path fills `families/{id}.primaryUid`; the portal login lives
     // on `kinfolk/{id}.uid` (onClientsWrite backwrite).
     seed({ 'families/fam1': { primaryUid: '', displayName: 'Dre East' }, 'kinfolk/fam1': { uid: 'uid_kinfolk' } });
@@ -117,22 +117,25 @@ describe('routing to the household login', () => {
     expect(householdWrites()).toHaveLength(1);
   });
 
-  it('still prefers primaryUid when the envelope has one', async () => {
+  it('ignores a primaryUid left behind on a household whose login was revoked', async () => {
+    // `revokeKinfolkClaim` blanks `kinfolk.uid` and never touches `primaryUid`.
     seed({
       'families/fam1': { primaryUid: 'uid_kinfolk', displayName: 'The Rileys' },
-      'kinfolk/fam1': { uid: 'uid_other' },
+      'kinfolk/fam1': { uid: '' },
     });
 
-    await tap();
+    const res = await tap();
 
-    expect(householdWrites()).toHaveLength(1);
+    expect(res.reason).toBe('household_has_no_portal_account');
+    expect(householdWrites()).toHaveLength(0);
   });
 });
 
 describe('suppressions are named, not folded into one', () => {
   it('household_notices_off when the switch is off', async () => {
     seed({
-      'families/fam1': { primaryUid: 'uid_kinfolk', displayName: 'The Rileys' },
+      'families/fam1': { displayName: 'The Rileys' },
+      'kinfolk/fam1': { uid: 'uid_kinfolk' },
       [HOUSEHOLD_GATE_SETTINGS_PATH]: { householdNotificationsLive: false },
     });
 
@@ -143,13 +146,13 @@ describe('suppressions are named, not folded into one', () => {
   });
 
   it('household_notices_off when the switch has never been set', async () => {
-    seed({ 'families/fam1': { primaryUid: 'uid_kinfolk' }, [HOUSEHOLD_GATE_SETTINGS_PATH]: {} });
+    seed({ 'families/fam1': {}, 'kinfolk/fam1': { uid: 'uid_kinfolk' }, [HOUSEHOLD_GATE_SETTINGS_PATH]: {} });
 
     expect((await tap()).reason).toBe('household_notices_off');
   });
 
   it('already_notified for a retry of the same tap', async () => {
-    seed({ 'families/fam1': { primaryUid: 'uid_kinfolk' } });
+    seed({ 'families/fam1': {}, 'kinfolk/fam1': { uid: 'uid_kinfolk' } });
 
     expect((await tap()).reason).toBeNull();
     vi.setSystemTime(NOW + 30_000);

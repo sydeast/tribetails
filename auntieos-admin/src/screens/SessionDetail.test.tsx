@@ -31,6 +31,11 @@ const { useCollection, useDocById } = vi.hoisted(() => ({
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
 vi.mock('../api/settings', () => ({ getBusinessSettings }));
+// #1794: the household-notices switch the clock confirm reads. On by default.
+const { useHouseholdNoticesLive } = vi.hoisted(() => ({
+  useHouseholdNoticesLive: vi.fn<() => boolean | null>(() => true),
+}));
+vi.mock('../lib/useHouseholdNoticesLive', () => ({ useHouseholdNoticesLive }));
 // #1744: services are named from the KinCare catalog. "Long walk" runs 45
 // minutes, so a stored `visit_45` reads as "Long walk".
 vi.mock('../lib/useBookingCatalog', () => ({
@@ -73,6 +78,8 @@ beforeEach(() => {
   getBusinessSettings.mockResolvedValue({ serviceRates: {}, serviceDurations: {} });
   useBreadcrumbs.mockReset();
   useBreadcrumbs.mockReturnValue({ points: [], error: null, ready: true });
+  useHouseholdNoticesLive.mockReset();
+  useHouseholdNoticesLive.mockReturnValue(true);
 });
 
 function entry(over: Partial<SessionEntry> = {}): SessionEntry {
@@ -960,5 +967,43 @@ describe('SessionDetail visit facts (#1581)', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [{ _id: 'p1', name: 'QA-Pup' }] });
     render(<SessionDetail entry={entry({ kinIds: ['p1', 'p9'], kinNames: [] })} onBack={vi.fn()} />);
     expect(screen.getByText('QA-Pup · 1 without a name on file')).toBeInTheDocument();
+  });
+});
+// #1794: the visit sheet's clock confirm promises the household a notice only
+// when one can be sent: the switch on, and a portal login on the household
+// record this screen already reads (`kinfolk.uid`).
+describe('SessionDetail: the clock confirm and the household notice', () => {
+  function household(state: { status: 'ready'; data: Record<string, unknown> | null } | { status: 'loading' }) {
+    useDocById.mockImplementation((path: string) => (path === 'kinfolk' ? state : { status: 'ready', data: null }));
+  }
+  async function openOnTheWay() {
+    render(<SessionDetail entry={entry({ status: 'SCHEDULED', kinCareBatchId: 'b1', kinCareVisitId: 'v1' })} onBack={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^on the way$/i }));
+    return screen.getByRole('dialog');
+  }
+  it('promises the notice with a portal login and the switch on', async () => {
+    household({ status: 'ready', data: { uid: 'u1' } });
+    const dialog = await openOnTheWay();
+    expect(within(dialog).getByText('The Whitfields will be told their Auntie is on the way.')).toBeInTheDocument();
+  });
+  it('says the switch is off in Settings when it is', async () => {
+    household({ status: 'ready', data: { uid: 'u1' } });
+    useHouseholdNoticesLive.mockReturnValue(false);
+    const dialog = await openOnTheWay();
+    expect(
+      within(dialog).getByText('The Whitfields will not be told, because notices to households are off in Settings.'),
+    ).toBeInTheDocument();
+  });
+  it('a household record that loaded and is not there has no portal account', async () => {
+    household({ status: 'ready', data: null });
+    const dialog = await openOnTheWay();
+    expect(
+      within(dialog).getByText('The Whitfields will not be told, because they have no portal account.'),
+    ).toBeInTheDocument();
+  });
+  it('says nothing about the household while its record is still loading', async () => {
+    household({ status: 'loading' });
+    const dialog = await openOnTheWay();
+    expect(within(dialog).queryByText(/told/)).toBeNull();
   });
 });
