@@ -25,5 +25,25 @@ export const TRIBETAILS_CORS: Array<string | RegExp> = [
   // React portal rebuild beta (web/ dist) — remove after cutover to
   // kinfolk.tribetails.com or keep for staging.
   'https://mytribe-kinfolk-beta.web.app',
+  // The portal site's own default domains. Same app as kinfolk.tribetails.com.
+  'https://kinfolk-portal.web.app',
+  'https://kinfolk-portal.firebaseapp.com',
+  // Hosting preview channels (main channel, PR previews) of the two sites this
+  // project owns: `<site>--<channelId>-<hash>.web.app`. Only project deployers
+  // can create a channel on these sites. Fully anchored, so a lookalike such
+  // as `kinfolk-portal--x.web.app.evil.com` or `evilkinfolk-portal--x.web.app`
+  // does not match. Without this the browser drops every callable response on
+  // those origins (no ACAO header) and the portal shows "trouble loading".
+  /^https:\/\/(auntieos-ttpc|kinfolk-portal)--[a-z0-9-]+\.web\.app$/,
   /^http:\/\/localhost(:\d+)?$/,
 ];
+/**
+ * Same test the `cors` package applies to an array option: a string must equal
+ * the Origin exactly, a RegExp must match it. Exported for tests.
+ */
+export function isAllowedOrigin(
+  origin: string,
+  allow: Array<string | RegExp> = TRIBETAILS_CORS,
+): boolean {
+  return allow.some((entry) => (typeof entry === 'string' ? entry === origin : entry.test(origin)));
+}
