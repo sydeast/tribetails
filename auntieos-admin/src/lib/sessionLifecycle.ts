@@ -90,8 +90,12 @@ const DEPARTED: LifecycleActionDef = {
   label: 'Clock out',
   cardLabel: 'Departed',
   tone: 'primary',
+  // #1793 made web complete a DEPARTED visit when its KinTale is sent
+  // (`api/kinTalesWrite.ts#completeVisitAfterKinTale`), so "not Completed until
+  // you mark it so" stopped being true. A tale sent BEFORE departure is not
+  // re-sent, so that visit still needs the card's Complete button.
   confirmBody: () =>
-    'The departure time is stamped now. The visit is not Completed until you mark it so.',
+    'The departure time is stamped now. Sending the KinTale marks the visit Completed. If it was already sent, mark it Completed from the card.',
   confirmLabel: 'Yes, clock out',
 };
 
