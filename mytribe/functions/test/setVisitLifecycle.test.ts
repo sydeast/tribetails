@@ -417,4 +417,20 @@ describe('the notification is best-effort, exactly as it is on Android', () => {
     const res = await setVisitLifecycleHandler(req({ sessionId: 's1', action: 'ARRIVED' }));
     expect(res).toMatchObject({ notified: false, notifySkipped: 'household_prefs_suppressed' });
   });
+
+  // #1794: the core names the reason, and this callable passes it through
+  // rather than calling every suppression "prefs".
+  it.each([
+    'household_has_no_portal_account',
+    'household_notices_off',
+    'household_prefs_suppressed',
+    'already_notified',
+  ] as const)('passes the core reason %s through as notifySkipped', async (reason) => {
+    const ctx = seed({ s1: visit() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.dispatch.mockResolvedValue({ ok: true, dispatchIds: [], suppressed: true, reason });
+    const res = await setVisitLifecycleHandler(req({ sessionId: 's1', action: 'ARRIVED' }));
+    expect(res).toMatchObject({ changed: true, notified: false, notifySkipped: reason });
+    expect(writeAt(ctx, 's1')?.data).toMatchObject({ status: 'ARRIVED' });
+  });
 });

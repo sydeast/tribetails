@@ -12,6 +12,8 @@ import { lifecycleActionsFor, savedVisitFieldsMessage } from '../lib/sessionLife
 import { VisitInternalNotes } from '../components/VisitInternalNotes';
 import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
+import { useHouseholdNoticesLive } from '../lib/useHouseholdNoticesLive';
+import { hasPortalAccount, visitNoticeConfirmFor } from '../lib/visitNotice';
 import { useVisitTracking } from '../lib/visitTracking';
 import {
   VisitTrackingIndicator,
@@ -288,6 +290,21 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   // the clock writes to Firestore directly, that live listener repaints the row
   // the instant the local write lands, ahead of the server ack.
   const clock = useVisitLifecycle(entry, household);
+  // #1794: the confirm promises the household a notice only when one can be
+  // sent. The switch joins the settings read `useBookingCatalog` already makes,
+  // and the account is `kinfolk.uid` on the household record read above. A
+  // record that has loaded and is not there has no account to send to.
+  const noticesLive = useHouseholdNoticesLive();
+  const noticeLine =
+    clock.pending === null || entry === null
+      ? null
+      : visitNoticeConfirmFor({
+          action: clock.pending.action,
+          session: entry,
+          hasPortalAccount: kinfolkDoc.status === 'ready' ? (hasPortalAccount(kinfolkDoc.data) ?? false) : null,
+          noticesLive,
+          household,
+        });
   // Whether THIS browser is writing the route (#772). Drives the live line
   // under the clock and the Route panel's empty sentence while ARRIVED.
   const tracking = useVisitTracking(sessionId);
@@ -857,6 +874,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                       already pressed once: the BookingActions confirm-copy
                       rule, and the walk it came from. */}
                   <p>{clock.pending.confirmBody(household)}</p>
+                  {noticeLine !== null && <p>{noticeLine}</p>}
                 </Dialog>
               )}
             </>

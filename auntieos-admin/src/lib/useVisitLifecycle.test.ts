@@ -177,7 +177,7 @@ describe('the sentence never claims a notification it has not seen', () => {
     await waitFor(() =>
       expect(result.current.write).toEqual({
         status: 'done',
-        message: 'ON_MY_WAY → ARRIVED. the Wrens was notified.',
+        message: 'ON_MY_WAY → ARRIVED. The Wrens was notified.',
       }),
     );
   });
@@ -192,8 +192,79 @@ describe('the sentence never claims a notification it has not seen', () => {
     await waitFor(() =>
       expect(result.current.write).toEqual({
         status: 'done',
-        message: 'ON_MY_WAY → ARRIVED. The household was not notified.',
+        message: 'ON_MY_WAY → ARRIVED. The notice to the Wrens could not be sent.',
       }),
+    );
+  });
+
+  // #1794: a card that remounts while the WRITE is still away (another card's
+  // reload, the Archive toggle) must keep its "Sync now" offer, not come back
+  // as a dead saving row with every clock control disabled.
+  it('a card that remounts mid-write still offers to re-send the same action', async () => {
+    patchVisitLifecycle.mockReturnValue(new Promise(() => {}));
+    const first = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    act(() => first.result.current.ask(actionNamed('ARRIVED')));
+    act(() => first.result.current.confirm());
+    expect(first.result.current.saving).toBe(true);
+    first.unmount();
+
+    const second = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    expect(second.result.current.saving).toBe(true);
+    expect(second.result.current.retry).not.toBeNull();
+    act(() => second.result.current.retry!());
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(2);
+    expect(patchVisitLifecycle.mock.calls[1]![1]).toBe('ARRIVED');
+  });
+
+  // #1794: the board unmounts the card between the write and the push (the
+  // reload, then the move to Active). Unmount FIRST, settle AFTER: the reverse
+  // order passes without the store and proves nothing.
+  it('a card that remounts before the push settles still shows why nobody was told', async () => {
+    let settle: (v: unknown) => void = () => {};
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 's1',
+      action: 'ARRIVED',
+      from: 'ON_MY_WAY',
+      status: 'ARRIVED',
+      changed: true,
+      notification: new Promise((r) => (settle = r)),
+    });
+    const first = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    act(() => first.result.current.ask(actionNamed('ARRIVED')));
+    act(() => first.result.current.confirm());
+    await waitFor(() =>
+      expect(first.result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED.' }),
+    );
+    first.unmount();
+
+    const second = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    expect(second.result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED.' });
+    await act(async () => {
+      settle({ notified: false, notifySkipped: 'household_notices_off' });
+    });
+    await waitFor(() =>
+      expect(second.result.current.write).toEqual({
+        status: 'done',
+        message:
+          'ON_MY_WAY → ARRIVED. Dre East was not notified, because notices to households are off in Settings.',
+      }),
+    );
+  });
+
+  it('an undo, which tells nobody, adds no household sentence', async () => {
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 's1',
+      action: 'UNDO_ARRIVAL',
+      from: 'ARRIVED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
+    });
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => result.current.confirm());
+    await waitFor(() =>
+      expect(result.current.write).toEqual({ status: 'done', message: 'ARRIVED → ON_MY_WAY.' }),
     );
   });
 

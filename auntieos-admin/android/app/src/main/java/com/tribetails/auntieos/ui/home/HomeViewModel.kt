@@ -22,6 +22,10 @@ import kotlinx.coroutines.flow.first
 import com.tribetails.auntieos.domain.arrivalCheckNotice
 import com.tribetails.auntieos.domain.arrivalNoFixNotice
 import com.tribetails.auntieos.domain.completeRefusal
+import com.tribetails.auntieos.domain.VisitNotifyOutcome
+import com.tribetails.auntieos.domain.visitNoticeOutcomeSentence
+import com.tribetails.auntieos.domain.visitNotifyOutcomeOf
+import com.tribetails.auntieos.domain.visitRoutingSkip
 import com.tribetails.auntieos.location.ArrivalFixProvider
 import com.tribetails.auntieos.location.FusedArrivalFixProvider
 import com.tribetails.auntieos.location.LocationTrackingService
@@ -105,6 +109,15 @@ data class HomeUiState(
     // entire reason the check runs at arrival rather than only at COMPLETE.
     // Null = nothing worth saying, which is the normal case.
     val arrivalCheckNotice: String? = null,
+    // #1794: what the household was told about the last On My Way / Arrived /
+    // Departed tap, in plain words ("Dre East was not notified, because they
+    // have no portal account."). The notify result used to be dropped, so a
+    // household that heard nothing looked the same as one that was told.
+    // Null = no tap yet, or dismissed.
+    val visitNotice: String? = null,
+    // #1794: whether [visitNotice] reports a notice that went out. Drives the
+    // banner's tone only; the sentence already says which.
+    val visitNoticeSent: Boolean = false,
     // #1798: visits Home tried to complete on its own and the server refused, with
     // the server's reason. The visit stays DEPARTED and its Complete button works.
     val autoCompleteRefusals: List<AutoCompleteRefusal> = emptyList(),
@@ -450,6 +463,10 @@ class HomeViewModel(
                     // notice, so leaving it off would wipe the warning before the
                     // Auntie could read it. It stays until she dismisses it.
                     arrivalCheckNotice = _uiState.value.arrivalCheckNotice,
+                    // #1794: carried forward for the same reason. `runOnSession`
+                    // reloads right after the tap that raised it.
+                    visitNotice = _uiState.value.visitNotice,
+                    visitNoticeSent = _uiState.value.visitNoticeSent,
                 )
             } catch (e: Exception) {
                 e.rethrowIfCancellation()
@@ -552,12 +569,14 @@ class HomeViewModel(
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
-                notifier.notify(
-                    event = VisitNotifier.Event.ON_MY_WAY,
-                    session = card.session,
-                    etaMinutes = etaMinutes,
-                    eventAtIso = onMyWayAt,
-                )
+                reportVisitNotice(card) {
+                    notifier.notify(
+                        event = VisitNotifier.Event.ON_MY_WAY,
+                        session = card.session,
+                        etaMinutes = etaMinutes,
+                        eventAtIso = onMyWayAt,
+                    )
+                }
             }
         }
     }
@@ -586,7 +605,7 @@ class HomeViewModel(
                     startGpsForSession(context, card.session)
                 }
                 // #832: the arrivedAt just written names this notification.
-                notifier.notify(VisitNotifier.Event.ARRIVED, card.session, eventAtIso = arrivedAt)
+                reportVisitNotice(card) { notifier.notify(VisitNotifier.Event.ARRIVED, card.session, eventAtIso = arrivedAt) }
                 // ISSUE #582. AFTER the arrival, never before it, and never
                 // gated on it: the arrival is a direct patch on an offline
                 // write queue and this is a callable, so anything that goes
@@ -630,6 +649,39 @@ class HomeViewModel(
         }
     }
 
+    /**
+     * #1794: run one household dispatch and say what it did. The dispatch never
+     * fails the tap (the visit is already moved); a throw here is reported as a
+     * notice that could not be sent, the same as a failed call.
+     */
+    private suspend fun reportVisitNotice(
+        card: TodayVisitCard,
+        dispatch: suspend () -> Result<VisitNotifier.DispatchResult>,
+    ) {
+        // A row with nothing to route to is named from the row, not reported as
+        // a failed call (VisitNotifier `error()`s on it).
+        val outcome = visitRoutingSkip(card.session)
+            ?.let { VisitNotifyOutcome(notified = false, notifySkipped = it) }
+            ?: try {
+                visitNotifyOutcomeOf(dispatch())
+            } catch (e: Exception) {
+                e.rethrowIfCancellation()
+                VisitNotifyOutcome(notified = false, notifySkipped = "dispatch_failed")
+            }
+        val household = card.kinfolk?.displayName?.takeIf { it.isNotBlank() }
+            ?: card.session.kinfolkName.ifBlank { "the household" }
+        val sentence = visitNoticeOutcomeSentence(outcome, household)
+        _uiState.value = _uiState.value.copy(
+            visitNotice = sentence.ifBlank { null },
+            visitNoticeSent = outcome.notified,
+        )
+    }
+
+    /** #1794: dismisses the household-notice banner. */
+    fun clearVisitNotice() {
+        _uiState.value = _uiState.value.copy(visitNotice = null)
+    }
+
     /** Dismisses the arrival-check notice. Nothing to retry: the arrival already landed. */
     fun clearArrivalCheckNotice() {
         _uiState.value = _uiState.value.copy(arrivalCheckNotice = null)
@@ -650,7 +702,7 @@ class HomeViewModel(
                     stopGpsTracking(context)
                 }
                 // #832: the departedAt just written names this notification.
-                notifier.notify(VisitNotifier.Event.DEPARTED, card.session, eventAtIso = departedAt)
+                reportVisitNotice(card) { notifier.notify(VisitNotifier.Event.DEPARTED, card.session, eventAtIso = departedAt) }
             }
         }
     }

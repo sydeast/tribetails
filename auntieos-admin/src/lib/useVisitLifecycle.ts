@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { patchVisitLifecycle, type VisitLifecycleAction } from '../api/sessionsWrite';
 import { lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
+import {
+  beginVisitClockWrite,
+  clearVisitClockWrite,
+  visitClockInFlight,
+  settleVisitClockWrite,
+  useVisitClockState,
+  type LifecycleWriteState,
+} from './visitClockOutcome';
+import { visitNoticeOutcomeSentence } from './visitNotice';
 import { type VisitLifecycleSession } from './visitLifecyclePatch';
 import { beginVisitTracking, endVisitTracking, stopVisitTracking } from './visitTracking';
 
@@ -40,11 +49,7 @@ import { beginVisitTracking, endVisitTracking, stopVisitTracking } from './visit
  * the screens call it directly.
  */
 
-export type LifecycleWriteState =
-  | { status: 'idle' }
-  | { status: 'saving' }
-  | { status: 'done'; message: string }
-  | { status: 'error'; message: string };
+export type { LifecycleWriteState };
 
 export interface VisitLifecycleController {
   /** The action awaiting confirmation, or `null`. The caller renders the dialog. */
@@ -106,42 +111,34 @@ export function useVisitLifecycle(
   onWritten?: () => void,
 ): VisitLifecycleController {
   const [pending, setPending] = useState<LifecycleActionDef | null>(null);
-  const [write, setWrite] = useState<LifecycleWriteState>({ status: 'idle' });
   const sessionId = session?._id ?? null;
   /**
-   * The action whose write is currently in flight, so "Sync now" knows what to
-   * re-send. A ref rather than state: it is read inside an event handler, never
-   * rendered, and putting it in state would re-render every clock control on
-   * the board for a value none of them draw.
+   * The last write's outcome, held in `lib/visitClockOutcome.ts` keyed by the
+   * session id rather than in this component (#1794). The board unmounts a card
+   * between its write and its notification settling (a reload, and a move to
+   * another phase), so a sentence kept here was lost. The remounted card reads
+   * the same entry.
    */
-  const inFlight = useRef<VisitLifecycleAction | null>(null);
-
+  const write = useVisitClockState(sessionId);
   /**
-   * Which write the notification sentence is still allowed to finish.
-   *
-   * The push settles AFTER the write does, by design, so by the time it lands
-   * the operator may have pressed something else or opened another visit.
-   * Stamping each write and checking the stamp is what stops a stale dispatch
-   * from overwriting a newer sentence -- or from appending "the Wrens were
-   * notified" underneath a visit that is not theirs.
+   * The action whose write is currently in flight, so "Sync now" knows what to
+   * re-send. Read from the same store as `write` (#1794), so a card that
+   * remounts mid-write still has its sync offer rather than a dead saving row.
    */
-  const writeSeq = useRef(0);
+  const inFlight = visitClockInFlight(sessionId) as VisitLifecycleAction | null;
 
-  // A different visit inherits nothing: neither a half-open confirm nor the
-  // sentence the LAST visit's clock-in produced. Keyed on the id alone, which
-  // is the same rule SessionDetail's own form re-seed already follows.
+  // A different visit inherits no half-open confirm. Its sentence is keyed by
+  // its own id in the store, so it inherits none of that either, and the store
+  // stamps each write so a stale dispatch cannot overwrite a newer sentence.
   useEffect(() => {
-    writeSeq.current += 1;
     setPending(null);
-    setWrite({ status: 'idle' });
   }, [sessionId]);
 
   /** Resolves true once the row is where the action put it. */
   async function run(action: VisitLifecycleAction): Promise<boolean> {
     if (session === null) return false;
-    const seq = (writeSeq.current += 1);
-    inFlight.current = action;
-    setWrite({ status: 'saving' });
+    const id = session._id;
+    const seq = beginVisitClockWrite(id, action);
     try {
       const res = await patchVisitLifecycle(session, action, { nowIso: lifecycleNowIso() });
 
@@ -150,7 +147,7 @@ export function useVisitLifecycle(
       // clock-in from moving the arrival time. Saying "clocked in" there would
       // claim a write that did not happen.
       if (!res.changed) {
-        setWrite({
+        settleVisitClockWrite(id, seq, {
           status: 'done',
           message: `Already ${res.status}. Nothing was changed, and the time already on file is unchanged.`,
         });
@@ -160,23 +157,20 @@ export function useVisitLifecycle(
       // THE STATUS SENTENCE LANDS THE MOMENT THE WRITE DOES, and says nothing
       // about the household yet. The push is still in flight; claiming it here
       // would be exactly the lie this hook exists to prevent.
-      setWrite({ status: 'done', message: `${res.from} → ${res.status}.` });
+      const moved = `${res.from} → ${res.status}.`;
+      settleVisitClockWrite(id, seq, { status: 'done', message: moved });
       if (onWritten) onWritten();
 
       // The second half, once the dispatch actually settles. It never rejects,
       // so there is no catch: a failed push comes back as `notified: false`.
+      // Written to the STORE, not to this component, which may have unmounted.
       void res.notification.then((outcome) => {
-        if (writeSeq.current !== seq) return;
-        setWrite({
-          status: 'done',
-          message: `${res.from} → ${res.status}.${
-            outcome.notified ? ` ${household} was notified.` : ' The household was not notified.'
-          }`,
-        });
+        const said = visitNoticeOutcomeSentence(outcome, household);
+        settleVisitClockWrite(id, seq, { status: 'done', message: said === '' ? moved : `${moved} ${said}` });
       });
       return true;
     } catch (err) {
-      if (writeSeq.current === seq) setWrite({ status: 'error', message: messageOf(err) });
+      settleVisitClockWrite(id, seq, { status: 'error', message: messageOf(err) });
       return false;
     }
   }
@@ -188,14 +182,13 @@ export function useVisitLifecycle(
     // Offered only while a write is actually in flight: a sync button on a
     // settled clock would re-send a transition the operator did not ask for.
     retry:
-      write.status === 'saving' && inFlight.current !== null
+      write.status === 'saving' && inFlight !== null
         ? () => {
-            const action = inFlight.current;
-            if (action !== null) void run(action);
+            void run(inFlight);
           }
         : null,
     ask: (action) => {
-      setWrite({ status: 'idle' });
+      if (sessionId !== null) clearVisitClockWrite(sessionId);
       setPending(action);
     },
     dismiss: () => setPending(null),

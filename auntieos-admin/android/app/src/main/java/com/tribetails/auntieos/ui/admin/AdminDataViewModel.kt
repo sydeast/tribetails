@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import com.tribetails.auntieos.util.runCatchingCancellable
+import com.tribetails.auntieos.util.rethrowIfCancellation
 
 /** UI state for the Activity Log hash-chain verification action. */
 sealed interface ChainVerifyUiState {
@@ -77,6 +78,11 @@ class AdminDataViewModel(
     // W4-3: the Auntie Time session list, its row patches and the KinTale
     // buckets (including orphan triage) are KinCare domain.
     private val kinCareRepository: KinCareRepository = AuntieOSApp.instance.kinCareRepository,
+    // #1794: the household push behind an Auntie Time clock tap. A provider,
+    // not an instance, so a test that never taps the clock never reaches
+    // `AuntieOSApp.instance`.
+    private val visitNotifier: () -> com.tribetails.auntieos.notifications.VisitNotifier =
+        { AuntieOSApp.instance.visitNotifier },
 ) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
@@ -254,6 +260,15 @@ class AdminDataViewModel(
     private val _businessTimeZone = MutableStateFlow("")
     val businessTimeZone: StateFlow<String> = _businessTimeZone.asStateFlow()
     private val _timeBlocks = MutableStateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>>(emptyList())
+
+    /**
+     * #1794: the household-notices switch (`householdNotificationsLive`), off
+     * the same settings read that loads [timeBlocks]. Null until it lands, and
+     * after a failed read: the confirm then says nothing about the household
+     * rather than promise a notice or a reason it cannot back.
+     */
+    private val _householdNoticesLive = MutableStateFlow<Boolean?>(null)
+    val householdNoticesLive: StateFlow<Boolean?> = _householdNoticesLive.asStateFlow()
     val timeBlocks: StateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>> = _timeBlocks.asStateFlow()
     // #1592: the KinCare catalog, so the KinTales list names a visit's service
     // instead of printing the stored key. Empty until read, and if the read fails.
@@ -557,7 +572,12 @@ class AdminDataViewModel(
             // §A.8: load time blocks from unified business_settings (best-effort;
             // absence/no-Firebase just means no block labels). Wrapped so a missing
             // FirebaseApp in tests can't crash.
-            runCatchingCancellable { repository.getBusinessSettings().onSuccess { _timeBlocks.value = it.timeBlocks } }
+            runCatchingCancellable {
+                repository.getBusinessSettings().onSuccess {
+                    _timeBlocks.value = it.timeBlocks
+                    _householdNoticesLive.value = it.householdNotificationsLive
+                }
+            }
             // #1608: the arrival rule, so Complete can say what is missing before
             // it is sent. A failed read leaves it null and the server decides.
             runCatchingCancellable { repository.getArrivalRuleRequired().onSuccess { _arrivalRule.value = it } }
@@ -631,6 +651,52 @@ class AdminDataViewModel(
                 _error.value = t.message ?: "Failed to update KinCare"
                 onResult(t)
             }
+        }
+    }
+
+    /**
+     * #1794: an Auntie Time clock tap (On The Way, Arrived): patch the session,
+     * then tell the household, then say what the household was told.
+     *
+     * THE SCREEN USED TO SAY "kinfolk notified" AND NOTIFY NOBODY. Its clock
+     * buttons went through [patchKinCareSession], which writes the status and
+     * nothing else; only Home's buttons called [VisitNotifier]. This is Home's
+     * order, transcribed: the write first, the push after it, and the push can
+     * never fail the tap (the Auntie IS on the way).
+     *
+     * @param onWritten the patch's result, the moment it lands.
+     * @param onNotified the household sentence, once the dispatch settles. Empty
+     *   when there is nothing to say about the household.
+     */
+    fun clockAndNotify(
+        session: com.tribetails.auntieos.data.model.KinCareSession,
+        patch: Map<String, Any>,
+        event: com.tribetails.auntieos.notifications.VisitNotifier.Event,
+        eventAtIso: String,
+        household: String,
+        onWritten: (Throwable?) -> Unit,
+        onNotified: (com.tribetails.auntieos.domain.VisitNotifyOutcome, String) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val written = kinCareRepository.patchKinCareSession(session.id, patch)
+            written.onFailure { t ->
+                _error.value = t.message ?: "Failed to update KinCare"
+                onWritten(t)
+                return@launch
+            }
+            loadKinCareSessions()
+            onWritten(null)
+            val outcome = com.tribetails.auntieos.domain.visitRoutingSkip(session)
+                ?.let { com.tribetails.auntieos.domain.VisitNotifyOutcome(notified = false, notifySkipped = it) }
+                ?: try {
+                    com.tribetails.auntieos.domain.visitNotifyOutcomeOf(
+                        visitNotifier().notify(event, session, eventAtIso = eventAtIso),
+                    )
+                } catch (e: Exception) {
+                    e.rethrowIfCancellation()
+                    com.tribetails.auntieos.domain.VisitNotifyOutcome(notified = false, notifySkipped = "dispatch_failed")
+                }
+            onNotified(outcome, com.tribetails.auntieos.domain.visitNoticeOutcomeSentence(outcome, household))
         }
     }
 

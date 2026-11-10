@@ -28,7 +28,17 @@ vi.mock('../src/lib/wrapTrigger', () => ({
 }));
 vi.mock('../src/notifications/dispatcher', async () => {
   const actual = await vi.importActual<typeof import('../src/notifications/dispatcher')>('../src/notifications/dispatcher');
-  return { contentDedupeKey: actual.contentDedupeKey, enqueueNotification: mocks.enqueue };
+  // `dispatchVisitNotificationCore` reads the detailed form (#1794); it is the
+  // same spy underneath, so `enqueuedKeys()` still counts every enqueue.
+  return {
+    contentDedupeKey: actual.contentDedupeKey,
+    enqueueNotification: mocks.enqueue,
+    enqueueNotificationDetailed: async (args: unknown) => ({
+      written: (await mocks.enqueue(args)) as string[],
+      suppressed: [],
+      unresolved: [],
+    }),
+  };
 });
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
@@ -134,6 +144,6 @@ describe('a KinTale send notifies the household exactly once', () => {
       auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
     } as any);
 
-    expect(res).toEqual({ ok: true, dispatchIds: ['disp_1'], suppressed: false });
+    expect(res).toEqual({ ok: true, dispatchIds: ['disp_1'], suppressed: false, reason: null });
   });
 });

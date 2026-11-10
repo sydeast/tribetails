@@ -124,9 +124,10 @@ export const Result = z
     /** False when the action was already true and nothing was written. */
     changed: z.boolean(),
     /**
-     * Whether the household was told. `false` covers three different, honest
-     * outcomes -- an action that declares no event (undo), a session with no
-     * routing ids, and a dispatch that failed -- so `notifySkipped` names which.
+     * Whether the household was told. `false` covers several honest outcomes
+     * -- an action that declares no event (undo), a session with no routing
+     * ids, a household with no portal account, the household-notices switch
+     * off, and a dispatch that failed -- so `notifySkipped` names which (#1794).
      */
     notified: z.boolean(),
     /** Why no notification went out, or null when one did. */
@@ -244,8 +245,11 @@ async function notifyHousehold(args: {
       args.uid,
       args.actorName,
     );
+    // #1794: the core names why nobody was told. `?? 'household_prefs_suppressed'`
+    // only covers a core that predates `reason`, which cannot happen inside one
+    // deploy but keeps this mapping total.
     return outcome.suppressed
-      ? { notified: false, notifySkipped: 'household_prefs_suppressed' }
+      ? { notified: false, notifySkipped: outcome.reason ?? 'household_prefs_suppressed' }
       : { notified: true, notifySkipped: null };
   } catch (err) {
     logEvent({

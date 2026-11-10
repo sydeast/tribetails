@@ -45,6 +45,8 @@ import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
 import com.tribetails.auntieos.location.LocationTrackingService
+import com.tribetails.auntieos.notifications.VisitNotifier
+import com.tribetails.auntieos.domain.visitNoticeConfirmLine
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
 import com.tribetails.auntieos.ui.theme.*
@@ -176,6 +178,11 @@ fun KinCareSessionsScreen(
     }
 
     var kinfolkById by remember { mutableStateOf<Map<String, Kinfolk>>(emptyMap()) }
+    // #1794: whether the roster above has landed, so a household missing from it
+    // can be told apart from one not loaded yet. Only the first means "no account".
+    var kinfolkLoaded by remember { mutableStateOf(false) }
+    // #1794: the household-notices switch, null until the settings read lands.
+    val noticesLive by viewModel.householdNoticesLive.collectAsState()
     // Stage 2 Step 2: all kin keyed by id, for the stacked multi-pet avatars per stop.
     var kinById by remember { mutableStateOf<Map<String, com.tribetails.auntieos.data.model.Kin>>(emptyMap()) }
 
@@ -187,6 +194,7 @@ fun KinCareSessionsScreen(
         viewModel.loadKinCareSessions()
         AuntieOSApp.instance.repository.getKinfolk().onSuccess { list ->
             kinfolkById = list.associateBy { it.id }
+            kinfolkLoaded = true
         }
         AuntieOSApp.instance.repository.getAllKin().onSuccess { list ->
             kinById = list.associateBy { it.id }
@@ -248,6 +256,51 @@ fun KinCareSessionsScreen(
                     toastVisible = true
                 }
             }
+        }
+
+    /**
+     * #1794: the household's name as the notice sentences use it, and whether it
+     * has a portal login (`kinfolk.uid`, what the server routes to). Null while
+     * the roster loads; a household missing from a loaded roster has none.
+     */
+    val householdOf: (KinCareSession) -> String = { s ->
+        kinfolkById[s.kinfolkId]?.displayName?.takeIf { it.isNotBlank() && it != "Unnamed Kinfolk" }
+            ?: s.kinfolkName.ifBlank { "the household" }
+    }
+    val portalAccountOf: (KinCareSession) -> Boolean? = { s ->
+        if (!kinfolkLoaded) null else kinfolkById[s.kinfolkId]?.uid?.isNotBlank() ?: false
+    }
+
+    /**
+     * #1794: On The Way and Arrived. Patch, then tell the household, then say
+     * what the household was told. These used to go through [patchFn], which
+     * notified nobody while its toast said "kinfolk notified".
+     */
+    val clockFn: (KinCareSession, Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
+        { session, patch, event, eventAtIso, msg ->
+            viewModel.clockAndNotify(
+                session = session,
+                patch = patch,
+                event = event,
+                eventAtIso = eventAtIso,
+                household = householdOf(session),
+                onWritten = { err ->
+                    scope.launch {
+                        toastMessage = err?.let { "Couldn't update: ${it.message}" } ?: msg
+                        toastKind = if (err != null) ToastKind.Error else ToastKind.Success
+                        toastVisible = true
+                    }
+                },
+                onNotified = { outcome, sentence ->
+                    scope.launch {
+                        if (sentence.isNotBlank()) {
+                            toastMessage = "$msg $sentence"
+                            toastKind = if (outcome.notified) ToastKind.Success else ToastKind.Info
+                            toastVisible = true
+                        }
+                    }
+                },
+            )
         }
 
     /** #1580: the toast for a note sent through `addInternalBookingNote`. */
@@ -335,6 +388,16 @@ fun KinCareSessionsScreen(
                                         onWriteKinTale = onWriteKinTale,
                                         onLiveTrack = onLiveTrack,
                                         onPatch = patchFn,
+                                        onClock = clockFn,
+                                        omwNoticeLineFor = { s ->
+                                            visitNoticeConfirmLine(
+                                                VisitNotifier.Event.ON_MY_WAY,
+                                                s,
+                                                hasPortalAccount = portalAccountOf(s),
+                                                noticesLive = noticesLive,
+                                                household = householdOf(s),
+                                            )
+                                        },
                                         onTransition = transitionFn,
                                         onNotice = noticeFn,
                                     )
@@ -393,6 +456,11 @@ private fun PhaseGroup(
     onTransition: (String, BookingTransitionAction, String, String) -> Unit,
     /** #1580: `(message, failed)` for a note sent to the visit's internal list. */
     onNotice: (String, Boolean) -> Unit = { _, _ -> },
+    /** #1794: a clock tap that tells the household. See `clockFn`. */
+    onClock: (KinCareSession, Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
+        { s, patch, _, _, msg -> onPatch(s.id, patch, msg) },
+    /** #1794: the On The Way confirm's household line, or null to say nothing. */
+    omwNoticeLineFor: (KinCareSession) -> String? = { null },
 ) {
     // The mock's `.phlab`: a mono uppercase label with the count in a small
     // capsule beside it, over a bare stack of cards. Not a DenPanel: the mock
@@ -444,6 +512,8 @@ private fun PhaseGroup(
                         onWriteKinTale = { onWriteKinTale(session.id) },
                         onLiveTrack = { onLiveTrack(session.id, session.kinfolkId, session.kinfolkName) },
                         onPatch = { patch, msg -> onPatch(session.id, patch, msg) },
+                        onClock = { patch, event, at, msg -> onClock(session, patch, event, at, msg) },
+                        omwNoticeLine = omwNoticeLineFor(session),
                         onTransition = { action, completedAt, msg ->
                             onTransition(session.id, action, completedAt, msg)
                         },
@@ -493,6 +563,11 @@ private fun KinCareCard(
     onTransition: (BookingTransitionAction, String, String) -> Unit,
     /** #1580: see [PhaseGroup]'s `onNotice`. */
     onNotice: (String, Boolean) -> Unit = { _, _ -> },
+    /** #1794: `(patch, event, stampedAt, successMessage)`, bound to this session. */
+    onClock: (Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
+        { patch, _, _, msg -> onPatch(patch, msg) },
+    /** #1794: see [PhaseGroup]'s `omwNoticeLineFor`. */
+    omwNoticeLine: String? = null,
     /** #1744: the card names the KinCare, never the stored `visit_60`. */
     catalog: ServiceCatalog = rememberServiceCatalog(),
 ) {
@@ -671,6 +746,8 @@ private fun KinCareCard(
             ActionRow(
                 session = session,
                 onPatch = onPatch,
+                onClock = onClock,
+                omwNoticeLine = omwNoticeLine,
                 onTransition = onTransition,
                 onLiveTrack = onLiveTrack,
                 onWriteKinTale = onWriteKinTale,
@@ -697,6 +774,11 @@ private fun ActionRow(
     context: Context,
     /** #1580: `(message, failed)` once a note to the office lands or fails. */
     onNotice: (String, Boolean) -> Unit = { _, _ -> },
+    /** #1794: see [KinCareCard]'s `onClock`. */
+    onClock: (Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
+        { patch, _, _, msg -> onPatch(patch, msg) },
+    /** #1794: the On The Way confirm's household line, or null to say nothing. */
+    omwNoticeLine: String? = null,
 ) {
     var showOMWDialog by remember { mutableStateOf(false) }
     var showOfficeNoteDialog by remember { mutableStateOf(false) }
@@ -724,7 +806,9 @@ private fun ActionRow(
                     label = "Arrived",
                     onClick = {
                         startGpsTracking(context, session.id, session.kinfolkId)
-                        onPatch(mapOf("status" to "ARRIVED", "arrivedAt" to nowIso()), "Arrived - session active.")
+                        // #1794: tells the household, as Home's Arrived does.
+                        val at = nowIso()
+                        onClock(mapOf("status" to "ARRIVED", "arrivedAt" to at), VisitNotifier.Event.ARRIVED, at, "Arrived.")
                     },
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.MapPin, contentDescription = null, modifier = Modifier.size(16.dp)) },
@@ -788,9 +872,15 @@ private fun ActionRow(
             confirmButton = {
                 AuntieTextBtn(onClick = {
                     showOMWDialog = false
-                    onPatch(
-                        mapOf("status" to "ON_MY_WAY", "onMyWayAt" to nowIso()),
-                        "On the way - kinfolk notified.",
+                    // #1794: this toast said "kinfolk notified" and nothing
+                    // was sent. The household sentence now comes from the
+                    // dispatch itself, once it settles.
+                    val at = nowIso()
+                    onClock(
+                        mapOf("status" to "ON_MY_WAY", "onMyWayAt" to at),
+                        VisitNotifier.Event.ON_MY_WAY,
+                        at,
+                        "On the way.",
                     )
                 }) { Text("OK") }
             },
@@ -798,7 +888,12 @@ private fun ActionRow(
                 AuntieTextBtn(onClick = { showOMWDialog = false }) { Text("CANCEL") }
             },
         ) {
-            Text("You are confirming that you are on your way to this assignment and will arrive soon.")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("You are confirming that you are on your way to this assignment and will arrive soon.")
+                // #1794: promises the household a notice only when one can be
+                // sent, and otherwise says why not.
+                omwNoticeLine?.let { Text(it) }
+            }
         }
     }
 

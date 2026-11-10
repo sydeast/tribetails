@@ -30,7 +30,13 @@ class VisitNotifier(
         REPORT_SENT("report_sent"),
     }
 
-    data class DispatchResult(val dispatchIds: List<String>, val suppressed: Boolean)
+    /**
+     * @param reason #1794: why nobody was told, by name, when [suppressed]
+     *   (`household_has_no_portal_account`, `household_notices_off`,
+     *   `household_prefs_suppressed`, `already_notified`). Null when someone was
+     *   told, and from a server that predates the field.
+     */
+    data class DispatchResult(val dispatchIds: List<String>, val suppressed: Boolean, val reason: String? = null)
 
     companion object {
         /** The stamped ISO instant as epoch millis, or null when absent or unparseable (never a guess). */
@@ -99,6 +105,7 @@ class VisitNotifier(
 
         val dispatchIds = (raw["dispatchIds"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
         val suppressed = (raw["suppressed"] as? Boolean) ?: dispatchIds.isEmpty()
-        DispatchResult(dispatchIds = dispatchIds, suppressed = suppressed)
+        val reason = (raw["reason"] as? String)?.takeIf { it.isNotBlank() }
+        DispatchResult(dispatchIds = dispatchIds, suppressed = suppressed, reason = reason)
     }.onFailure { AuntieLog.e("VisitNotifier: dispatch ${event.wire} failed", it) }
 }

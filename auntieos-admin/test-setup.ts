@@ -3,6 +3,7 @@ import { cleanup, configure, getConfig } from '@testing-library/react';
 import { afterEach } from 'vitest';
 // #1138: any request that would leave the machine fails the test that made it.
 import './test-network-guard';
+import { resetVisitClockOutcomes } from './src/lib/visitClockOutcome';
 
 // The SECOND deadline, and the one that hides. Raising vitest's `testTimeout`
 // alone does not make this suite trustworthy, because Testing Library keeps a
@@ -84,6 +85,11 @@ configure({
 // query happily matches the PREVIOUS test's DOM, so an assertion can pass or fail
 // for reasons that have nothing to do with the test that wrote it.
 afterEach(cleanup);
+
+// #1794: the visit clock's last sentence lives for the page, keyed by session
+// id, so it survives the Auntie Time card remounting. A test file is one page
+// for many tests, and a sentence one test left behind would show up in the next.
+afterEach(resetVisitClockOutcomes);
 
 // #953: ProseMirror measures the selection to scroll it into view, and jsdom
 // has no layout, so Range has no rects. Zero-size rects are what a real
