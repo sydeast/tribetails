@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { KINTALES_QUERY, type KinTaleEntry } from '../api/kinTales';
 import { SESSIONS_QUERY, type SessionEntry } from '../api/sessions';
-import { saveKinTaleDraft, sendKinTale, hasKinTaleContent, type KinTaleDraft } from '../api/kinTalesWrite';
+import {
+  completeVisitAfterKinTale,
+  saveKinTaleDraft,
+  sendKinTale,
+  hasKinTaleContent,
+  type KinTaleDraft,
+} from '../api/kinTalesWrite';
 import {
   KINTALE_TEMPLATES_QUERY,
   decodeKinTaleTemplate,
@@ -347,6 +353,12 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
   const [isSending, setIsSending] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
   const [banner, setBanner] = useState<Banner_ | null>(null);
+  /**
+   * #1793: set once a send has committed but the visit could not be marked
+   * Completed. The form is replaced by this notice, so a sent tale cannot be
+   * sent a second time from a screen that still looks like a draft.
+   */
+  const [sentNotice, setSentNotice] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const { showToast } = useToast();
 
@@ -515,20 +527,39 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       if (id !== draft._id) setDraft({ ...draft, _id: id });
       setLoadedDraft({ ...draft, _id: id });
       await sendKinTale({ reportId: id, sessionId: draft.sessionId });
-      setIsSending(false);
-      setConfirmSend(false);
-      // #1013 sweep: this used to set the confirmation on `banner`, this
-      // screen's own local state, in the same breath as `onClose()`, so it was
-      // torn down before it ever painted a frame (the same race #854/#1007
-      // fixed on desktop). `showToast` survives `onClose()` because
-      // `ToastProvider` is mounted once above the router (main.tsx), the same
-      // reason every other confirmation in this file already uses it.
-      showToast('KinTale sent. Kinfolk will hear from you soon.');
-      onClose();
     } catch (err) {
       setIsSending(false);
       setBanner({ tone: 'error', text: `Couldn't send: ${err instanceof Error ? err.message : 'unknown error'}` });
+      return;
     }
+
+    // #1793: the tale has gone home. A DEPARTED visit is now marked Completed,
+    // on Android's rule, under the same "Sending…" state so Auntie Time reads
+    // Completed on return. OUTSIDE the send's try on purpose: a refusal here
+    // must never read "Couldn't send", which would invite a second send.
+    const completion = await completeVisitAfterKinTale(draft.sessionId);
+    setIsSending(false);
+    setConfirmSend(false);
+    if (completion.kind === 'not_completed') {
+      // An error cannot be a toast (they dismiss themselves), so the screen
+      // stays open on a sent notice rather than on a form that could send again.
+      setSentNotice(
+        `KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed: ${completion.message} You can mark it Completed from Auntie Time.`,
+      );
+      return;
+    }
+    // #1013 sweep: this used to set the confirmation on `banner`, this
+    // screen's own local state, in the same breath as `onClose()`, so it was
+    // torn down before it ever painted a frame (the same race #854/#1007
+    // fixed on desktop). `showToast` survives `onClose()` because
+    // `ToastProvider` is mounted once above the router (main.tsx), the same
+    // reason every other confirmation in this file already uses it.
+    showToast(
+      completion.kind === 'completed'
+        ? 'KinTale sent and the visit is marked Completed. Kinfolk will hear from you soon.'
+        : 'KinTale sent. Kinfolk will hear from you soon.',
+    );
+    onClose();
   }
 
   /**
@@ -556,7 +587,13 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       title={page}
       detail={visitLine}
       subtitle="The recap that goes home after a visit."
-      badges={draft !== null ? <StatusPill label="Draft" tone="orange" /> : undefined}
+      badges={
+        sentNotice !== null ? (
+          <StatusPill label="Sent" tone="teal" />
+        ) : draft !== null ? (
+          <StatusPill label="Draft" tone="orange" />
+        ) : undefined
+      }
       trailing={<GhostButton label="Close" onClick={onClose} />}
     />
   );
@@ -641,6 +678,16 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         onUploaded={handleMediaUploaded}
       />
     ) : null;
+
+  // #1793: sent, but the visit is not Completed. Close is the heading's own.
+  if (sentNotice !== null) {
+    return (
+      <div className="screen kintale-compose">
+        {heading}
+        <Banner tone="error">{sentNotice}</Banner>
+      </div>
+    );
+  }
 
   if (kinTaleId) {
     return (
