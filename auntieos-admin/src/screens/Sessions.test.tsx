@@ -766,6 +766,67 @@ describe('Auntie Time: the card runs the visit', () => {
     expect(screen.queryByRole('button', { name: 'View KinTale' })).toBeNull();
   });
 
+  // #1793: the walk's visit. Departed, tale sent, and no way to complete it.
+  describe('#1793: a departed card whose KinTale has been sent', () => {
+    const sentDeparted = {
+      _id: 'sess-sent',
+      status: 'DEPARTED',
+      startTime: at(0, 8),
+      arrivedAt: at(0, 8, 2),
+      departedAt: at(0, 8, 47),
+      reportIds: ['rep-1'],
+      autoCompleteEligible: true,
+    } satisfies Partial<SessionEntry>;
+
+    it('offers Complete, and completes through transitionBookingStatus', async () => {
+      usePagedCollection.mockReturnValue(paged([entry(sentDeparted)]));
+      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
+      await act(/^Complete$/, /yes, mark it completed/i);
+      expect(transitionBookingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'sess-sent', action: 'COMPLETE' }),
+      );
+      expect(patchVisitLifecycle).not.toHaveBeenCalled();
+      expect(reload).toHaveBeenCalled();
+    });
+
+    it('shows View KinTale in place of Complete KinTale', async () => {
+      const onViewKinTale = vi.fn();
+      usePagedCollection.mockReturnValue(paged([entry(sentDeparted)]));
+      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale });
+      expect(screen.queryByRole('button', { name: 'Complete KinTale' })).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'View KinTale' }));
+      expect(onViewKinTale).toHaveBeenCalledWith('rep-1');
+    });
+
+    it('a departed card with no sent tale still offers only Complete KinTale', () => {
+      usePagedCollection.mockReturnValue(
+        paged([entry({ _id: 'sess-dep', status: 'DEPARTED', startTime: at(0, 8), reportIds: [] })]),
+      );
+      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
+      expect(screen.getByRole('button', { name: 'Complete KinTale' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Complete$/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'View KinTale' })).toBeNull();
+    });
+
+    it('an arrived card the tale was sent from offers no Complete until she departs', () => {
+      usePagedCollection.mockReturnValue(
+        paged([entry({ ...sentDeparted, status: 'ARRIVED', departedAt: '' })]),
+      );
+      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
+      expect(screen.queryByRole('button', { name: /^Complete$/ })).toBeNull();
+      expect(screen.getByRole('button', { name: /^Departed$/ })).toBeInTheDocument();
+    });
+
+    it('the completed card it becomes shows View KinTale and no Complete', () => {
+      usePagedCollection.mockReturnValue(
+        paged([entry({ ...sentDeparted, status: 'COMPLETED', completedAt: at(0, 9) })]),
+      );
+      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
+      expect(screen.getByRole('button', { name: 'View KinTale' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Complete$/ })).toBeNull();
+    });
+  });
+
   it('offers no clock action at all on a cancelled card', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ status: 'CANCELLED', startTime: at(0, 9) })]),

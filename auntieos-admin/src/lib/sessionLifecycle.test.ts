@@ -4,6 +4,7 @@ import {
   readableVisitNotes,
   savedVisitFieldsMessage,
   cardLifecycleActionsFor,
+  completesAfterKinTale,
   lifecycleActionsFor,
   lifecycleNowIso,
 } from './sessionLifecycle';
@@ -182,5 +183,27 @@ describe("#1592: visit notes and saves read in the operator's words", () => {
     expect(savedVisitFieldsMessage(['serviceDurationMinutes'])).toBe('Saved: visit length.');
     expect(savedVisitFieldsMessage(['serviceType', 'kinIds'])).toBe('Saved: service, kin on this visit.');
     expect(savedVisitFieldsMessage(['somethingNew'])).toBe('Saved.');
+  });
+});
+
+/**
+ * #1793: Android's rule, `status == DEPARTED && autoCompleteEligible`, read by
+ * `HomeViewModel.kt`'s sweep and `HomeScreen.kt`'s Complete button.
+ */
+describe('completesAfterKinTale', () => {
+  it('is true only for a DEPARTED visit the send flagged', () => {
+    expect(completesAfterKinTale({ status: 'DEPARTED', autoCompleteEligible: true })).toBe(true);
+    // The stored status is read the way `sessionState` reads it.
+    expect(completesAfterKinTale({ status: ' departed ', autoCompleteEligible: true })).toBe(true);
+  });
+  it('is false for a DEPARTED visit with no sent tale', () => {
+    expect(completesAfterKinTale({ status: 'DEPARTED' })).toBe(false);
+    expect(completesAfterKinTale({ status: 'DEPARTED', autoCompleteEligible: false })).toBe(false);
+  });
+  it('is false in every other state, flag or not', () => {
+    for (const status of ['SCHEDULED', 'ON_MY_WAY', 'ARRIVED', 'COMPLETED', 'CANCELLED', 'SOMETHING_NEW', '']) {
+      expect(completesAfterKinTale({ status, autoCompleteEligible: true })).toBe(false);
+    }
+    expect(completesAfterKinTale({ autoCompleteEligible: true })).toBe(false);
   });
 });
