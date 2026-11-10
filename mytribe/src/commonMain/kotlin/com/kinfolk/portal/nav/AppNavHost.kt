@@ -343,6 +343,7 @@ fun AppNavHost(
                             },
                             handoff = scheduleHandoff,
                             onHandoffTaken = { scheduleHandoff = null },
+                            pushCoordinator = pushCoordinator,
                         )
                     }
                 }

@@ -345,4 +345,37 @@ class PushRegistrationCoordinatorTest {
         c.onSignOut()
         assertEquals(DevicePushState.Unknown, c.state.value)
     }
+    @Test
+    fun `the Home card starts shown, stays closed for the session and returns after sign-out`() = runTest {
+        val c = coordinator(fakeWithStubs())
+        assertEquals(false, c.homeCardDismissed.value)
+        c.dismissHomeCard()
+        assertEquals(true, c.homeCardDismissed.value)
+        c.onSignOut()
+        assertEquals(false, c.homeCardDismissed.value)
+    }
+    @Test
+    fun `without a platform gate the permission is not applicable`() {
+        val c = coordinator(fakeWithStubs())
+        assertEquals(NotificationPermissionState.NotApplicable, c.permissionGate.state.value)
+    }
+    @Test
+    fun `a failed registration keeps its state whatever the permission says`() = runTest {
+        val fake = fakeWithStubs()
+        val gate = object : NotificationPermissionGate {
+            override val state = kotlinx.coroutines.flow.MutableStateFlow<NotificationPermissionState>(NotificationPermissionState.Denied)
+            override fun refresh() = Unit
+            override fun requestPermission() = Unit
+            override fun openSystemSettings() = Unit
+        }
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe",
+            tokenProvider = { throw IllegalStateException("down") }, logger = {}, permissionGate = gate,
+        )
+        c.onSignedIn()
+        assertTrue(c.state.value is DevicePushState.Failed)
+        assertEquals(DevicePushCardKind.Blocked, devicePushCardKind(gate.state.value, c.state.value))
+        gate.state.value = NotificationPermissionState.Granted
+        assertEquals(DevicePushCardKind.Finish, devicePushCardKind(gate.state.value, c.state.value))
+    }
 }

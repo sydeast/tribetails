@@ -65,7 +65,6 @@ import com.kinfolk.portal.portal.NotificationPrefsPatch
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.WarmOnOpen
 import com.kinfolk.portal.portal.WarmableSave
-import com.kinfolk.portal.push.DevicePushState
 import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.portal.applyNotificationPrefsPatch
 import com.kinfolk.portal.theme.KinfolkBrand
@@ -266,7 +265,7 @@ fun NotificationSettingsScreen(
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
     ) {
         ScreenHeader(title = "Notification Settings", kicker = "Account")
-        if (pushCoordinator != null) DevicePushCard(pushCoordinator)
+        if (pushCoordinator != null) DevicePushCard(pushCoordinator, onDismiss = null)
 
         if (loaded && prefsLoaded) {
             SectionShortcuts(
@@ -727,44 +726,3 @@ private fun PerKeyRow(
         }
     }
 }
-
-/**
- * #1787: shown only when this device's push registration failed, so the failure
- * is no longer log-only. Same words as the web portal's card: the title, the
- * coded error line, and a Retry that runs the sign-in registration again.
- */
-@Composable
-private fun DevicePushCard(coordinator: PushRegistrationCoordinator) {
-    val state by coordinator.state.collectAsState()
-    val failed = state as? DevicePushState.Failed ?: return
-    val type = LocalKinfolkTypography.current
-    val scope = rememberCoroutineScope()
-    var retrying by remember { mutableStateOf(false) }
-    GlassCard(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l).testTag("device-push-card"),
-        contentPadding = PaddingValues(KinfolkSpacing.l),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-            Text("Finish turning on notifications", style = type.heritageTitle)
-            Text(devicePushFailureLine(failed), style = type.sansBody, modifier = Modifier.testTag("device-push-error"))
-            KinButton(
-                label = if (retrying) "Retrying\u2026" else "Retry",
-                enabled = !retrying,
-                onClick = {
-                    retrying = true
-                    scope.launch {
-                        try {
-                            coordinator.retry()
-                        } finally {
-                            retrying = false
-                        }
-                    }
-                },
-                modifier = Modifier.testTag("device-push-retry"),
-            )
-        }
-    }
-}
-/** The error line under the title: the stage and the exception, never a token. */
-internal fun devicePushFailureLine(failed: DevicePushState.Failed): String =
-    "Could not enable notifications: ${failed.detail} (${failed.stage})"

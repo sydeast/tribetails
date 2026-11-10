@@ -22,6 +22,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +50,8 @@ import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.KinTale
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.push.PushRegistrationCoordinator
+import com.kinfolk.portal.screens.notifications.DevicePushCard
 import com.kinfolk.portal.portal.PortalHomeSection
 import com.kinfolk.portal.portal.VisitProgress
 import com.kinfolk.portal.portal.label
@@ -99,6 +102,8 @@ fun HomeScreen(
     /** #1345: what the booking wizard leaves when it returns here. Taken once, then [onHandoffTaken] clears it. */
     handoff: ScheduleHandoff? = null,
     onHandoffTaken: () -> Unit = {},
+    /** #1788: the device's notifications card (Enable / Blocked / Finish); null draws none. */
+    pushCoordinator: PushRegistrationCoordinator? = null,
 ) {
     val type = LocalKinfolkTypography.current
     // #1345: seeded from the wizard's handoff, so Home shows the new booking
@@ -261,6 +266,10 @@ fun HomeScreen(
                 kicker = "Welcome home",
             )
             notice?.let { text -> SaveNoticeRow(text = text, onDismiss = { notice = null }) }
+            if (pushCoordinator != null) {
+                val cardDismissed by pushCoordinator.homeCardDismissed.collectAsState()
+                if (!cardDismissed) DevicePushCard(pushCoordinator, onDismiss = { pushCoordinator.dismissHomeCard() })
+            }
 
             if (custom) {
                 // Operator order: liveVisit spans full width, everything else
