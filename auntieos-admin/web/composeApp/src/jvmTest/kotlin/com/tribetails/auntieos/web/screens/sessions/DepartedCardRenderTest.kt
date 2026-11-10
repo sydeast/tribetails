@@ -94,7 +94,7 @@ class DepartedCardRenderTest {
     }
 
     @Test
-    fun viewKinTaleOpensTheSentTaleNotANewDraft() = runDesktopComposeUiTest {
+    fun viewKinTaleAsksForTheReportRouteNotTheComposer() = runDesktopComposeUiTest {
         val viewed = mutableListOf<String>()
         val written = mutableListOf<String>()
         show(departed(eligible = true), onViewKinTale = { viewed += it }, onWriteKinTale = { written += it })
