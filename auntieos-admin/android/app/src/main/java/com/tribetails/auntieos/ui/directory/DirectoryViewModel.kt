@@ -1784,7 +1784,7 @@ class DirectoryViewModel(
                     scope            = viewModelScope,
                     repository       = repository,
                     actionType       = "CREATE_KIN",
-                    description      = "Created kin ${newKin.name} for kinfolk ${state.kinfolkId}",
+                    description      = "Created kin ${newKin.name}",
                     targetId         = saved.id,
                     targetCollection = "kin",
                 )

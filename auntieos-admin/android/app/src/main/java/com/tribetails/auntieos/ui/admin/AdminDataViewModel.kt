@@ -892,7 +892,7 @@ class AdminDataViewModel(
                         scope = viewModelScope,
                         repository = repository,
                         actionType = "SEND_INVOICE_REMINDER",
-                        description = "Sent payment reminder for invoice $invoiceId",
+                        description = "Sent payment reminder for invoice ${_invoices.value.firstOrNull { it.id == invoiceId }?.invoiceNumber?.ifBlank { null } ?: "with no number"}",
                         targetId = invoiceId,
                         targetCollection = "invoices",
                     )
@@ -941,7 +941,7 @@ class AdminDataViewModel(
                     scope = viewModelScope,
                     repository = repository,
                     actionType = "SEND_DRAFT_INVOICE",
-                    description = "Reviewed and sent draft invoice ${invoice.invoiceNumber.ifBlank { invoice.id }}",
+                    description = "Reviewed and sent draft invoice ${invoice.invoiceNumber.ifBlank { "with no number" }}",
                     targetId = invoice.id,
                     targetCollection = "invoices",
                 )

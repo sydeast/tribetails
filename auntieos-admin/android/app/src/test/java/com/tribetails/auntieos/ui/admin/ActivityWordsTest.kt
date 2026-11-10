@@ -53,4 +53,17 @@ class ActivityWordsTest {
         assertEquals("Saved Booking Confirmed.", templateSavedNotice("Booking Confirmed"))
         assertEquals("Saved the untitled template.", templateSavedNotice("  "))
     }
+
+    @Test
+    fun anAuditSentenceNamesTheHouseholdNeverItsId() {
+        assertEquals("Robyn Smith", auditHousehold("  Robyn Smith "))
+        assertEquals("a household", auditHousehold(null))
+        assertEquals("a household", auditHousehold("   "))
+    }
+
+    @Test
+    fun aPossessiveNamesTheHouseholdOrSaysThisHousehold() {
+        assertEquals("Robyn Smith's", householdPossessive(" Robyn Smith "))
+        assertEquals("This household's", householdPossessive(""))
+    }
 }

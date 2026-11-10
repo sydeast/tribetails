@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.admin.auditHousehold
 import com.tribetails.auntieos.util.runCatchingCancellable
 import com.tribetails.auntieos.util.rethrowIfCancellation
 
@@ -500,7 +501,7 @@ class HomeViewModel(
                     scope            = viewModelScope,
                     repository       = repo,
                     actionType       = "VISIT_ON_MY_WAY",
-                    description      = "Marked on the way (ETA ${etaMinutes}m) for ${card.session.kinfolkId}",
+                    description      = "Marked on the way (ETA ${etaMinutes}m) for ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
@@ -522,7 +523,7 @@ class HomeViewModel(
                     scope            = viewModelScope,
                     repository       = repo,
                     actionType       = "VISIT_ARRIVED",
-                    description      = "Arrived at ${card.session.kinfolkId}",
+                    description      = "Arrived at ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
@@ -594,7 +595,7 @@ class HomeViewModel(
                     scope            = viewModelScope,
                     repository       = repo,
                     actionType       = "VISIT_DEPARTED",
-                    description      = "Departed ${card.session.kinfolkId}",
+                    description      = "Departed ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
@@ -627,7 +628,7 @@ class HomeViewModel(
                     scope            = viewModelScope,
                     repository       = repo,
                     actionType       = "VISIT_COMPLETED",
-                    description      = "Completed visit for ${card.session.kinfolkId}",
+                    description      = "Completed visit for ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )

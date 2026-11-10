@@ -424,7 +424,7 @@ class InvoiceDetailViewModel(
                 actionType       = "RECORD_PAYMENT",
                 description      = recordPaymentAuditDescription(
                     payment.amount,
-                    payment.invoiceNumber.ifBlank { invoiceId },
+                    payment.invoiceNumber.ifBlank { "with no number" },
                     settlement,
                 ),
                 targetId         = invoiceId,
@@ -615,7 +615,7 @@ class InvoiceDetailViewModel(
                         scope            = viewModelScope,
                         repository       = repository,
                         actionType       = "GENERATE_RECEIPT",
-                        description      = "Generated receipt for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { invoiceId } ?: invoiceId}",
+                        description      = "Generated receipt for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { "with no number" } ?: invoiceId}",
                         targetId         = invoiceId,
                         targetCollection = "invoices",
                     )
@@ -664,7 +664,7 @@ class InvoiceDetailViewModel(
                         scope            = viewModelScope,
                         repository       = repository,
                         actionType       = "DOWNLOAD_INVOICE_PDF",
-                        description      = "Downloaded PDF for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { invoiceId } ?: invoiceId}",
+                        description      = "Downloaded PDF for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { "with no number" } ?: invoiceId}",
                         targetId         = invoiceId,
                         targetCollection = "invoices",
                     )
@@ -751,7 +751,7 @@ class InvoiceDetailViewModel(
                             scope            = viewModelScope,
                             repository       = repository,
                             actionType       = "SEND_INVOICE_REMINDER",
-                            description      = "Sent payment reminder for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { invoiceId } ?: invoiceId}",
+                            description      = "Sent payment reminder for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { "with no number" } ?: invoiceId}",
                             targetId         = invoiceId,
                             targetCollection = "invoices",
                         )
@@ -845,7 +845,7 @@ class InvoiceDetailViewModel(
                         repository       = repository,
                         actionType       = if (restoring) "UNARCHIVE_INVOICE" else "ARCHIVE_INVOICE",
                         description      = (if (restoring) "Restored invoice " else "Archived invoice ") +
-                            invoice.invoiceNumber.ifBlank { invoice.id } +
+                            invoice.invoiceNumber.ifBlank { "with no number" } +
                             (if (!restoring && force) " (forced, money still owed)" else ""),
                         targetId         = invoice.id,
                         targetCollection = "invoices",
@@ -949,7 +949,7 @@ class InvoiceDetailViewModel(
                         scope            = viewModelScope,
                         repository       = repository,
                         actionType       = "SEND_DRAFT_INVOICE",
-                        description      = "Reviewed and sent draft invoice ${invoice.invoiceNumber.ifBlank { invoice.id }}",
+                        description      = "Reviewed and sent draft invoice ${invoice.invoiceNumber.ifBlank { "with no number" }}",
                         targetId         = invoice.id,
                         targetCollection = "invoices",
                     )
@@ -1013,7 +1013,7 @@ class InvoiceDetailViewModel(
                         scope            = viewModelScope,
                         repository       = repository,
                         actionType       = "RESEND_QUOTE",
-                        description      = "Revised and resent quote ${invoice.invoiceNumber.ifBlank { invoice.id }}",
+                        description      = "Revised and resent quote ${invoice.invoiceNumber.ifBlank { "with no number" }}",
                         targetId         = invoice.id,
                         targetCollection = "invoices",
                     )

@@ -124,6 +124,15 @@ function editedFields(raw: string): string {
   return words.length === 0 ? 'Edited a visit' : `Edited a visit: ${words.join(', ')}`;
 }
 
+/**
+ * The sentence for one visit step the web clock tap just took (#1797). Same
+ * words as the server's `visitTransitionWords`
+ * (`mytribe/functions/src/lib/activityWords.ts`); `activityWords.test.ts` pins
+ * the two together. No session id: that stays in the entry's target.
+ */
+export function visitTransitionWords(action: string, from: string, to: string): string {
+  return `${done(action.trim().toUpperCase())}: ${statusWords(from)} to ${statusWords(to)}`;
+}
 const ACTION = '(APPROVE|REJECT|CANCEL|COMPLETE|ON_MY_WAY|ARRIVED|DEPARTED|UNDO_ARRIVAL)';
 const ACTION_ON_SESSION = `^${ACTION} on session \\S+: `;
 

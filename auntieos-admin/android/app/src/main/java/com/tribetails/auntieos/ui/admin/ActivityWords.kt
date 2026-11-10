@@ -176,3 +176,13 @@ fun activityDescriptionWords(description: String): String {
     }
     return DRAFT_PATH.replace(text, "a draft")
 }
+/**
+ * #1797: a household in an Activity Log sentence. The name when there is one,
+ * otherwise "a household"; never the id, which stays on the entry as its
+ * target.
+ */
+fun auditHousehold(name: String?): String = name?.trim().takeUnless { it.isNullOrEmpty() } ?: "a household"
+
+/** "Robyn Smith's", or "This household's" when no name is on file (#1797). Never the id. */
+fun householdPossessive(name: String?): String =
+    name?.trim().takeUnless { it.isNullOrEmpty() }?.let { "$it's" } ?: "This household's"
