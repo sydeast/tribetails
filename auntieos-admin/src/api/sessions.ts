@@ -220,6 +220,13 @@ export interface SessionEntry {
    * extra listener and no composite index.
    */
   reportIds?: string[] | undefined;
+  /**
+   * #1793: set true by the same send batch that appends to `reportIds`, on
+   * every client. A DEPARTED visit carrying it is ready to be marked Completed
+   * (`lib/sessionLifecycle.ts#completesAfterKinTale`), the rule Android's Home
+   * sweep and Complete button have always read.
+   */
+  autoCompleteEligible?: boolean | undefined;
 }
 
 /**

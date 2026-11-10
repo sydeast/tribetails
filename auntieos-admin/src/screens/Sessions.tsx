@@ -21,7 +21,7 @@ import {
   type SessionPhase,
   type SessionState,
 } from '../lib/sessionFormat';
-import { cardLifecycleActionsFor, lifecycleNowIso } from '../lib/sessionLifecycle';
+import { cardLifecycleActionsFor, completesAfterKinTale, lifecycleNowIso } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useHouseholdNoticesLive } from '../lib/useHouseholdNoticesLive';
 import { hasPortalAccount, visitNoticeConfirmFor } from '../lib/visitNotice';
@@ -81,7 +81,10 @@ interface SessionsProps {
    * control that does nothing (the `ControlShell` dead-control rule).
    */
   onComposeKinTale?: (sessionId: string) => void;
-  /** Open one SENT KinTale ("View KinTale" on a completed card). Same absent-means-hidden rule. */
+  /**
+   * Open one SENT KinTale ("View KinTale" on a completed card, and on a departed
+   * one whose tale is sent, #1793). Same absent-means-hidden rule.
+   */
   onViewKinTale?: (kinTaleId: string) => void;
 }
 
@@ -552,10 +555,16 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   // it) and the write-up buttons take over from there. The server accepts
   // COMPLETE from all four pre-terminal states (`bookingTransitions.ts`), so
   // this is the mock narrowing an allowed set, never a guess at what will work.
-  const offersComplete = state === 'scheduled' || state === 'onMyWay';
-  const offersCompose = state === 'departed' && onComposeKinTale !== undefined;
+  //
+  // #1793: a DEPARTED card whose KinTale has been sent offers Complete too, on
+  // Android's rule (`completesAfterKinTale`). Before this a visit finished on
+  // web stayed in Active, because the write-up was its last button. Once the
+  // tale is sent, the card shows View KinTale in place of Complete KinTale.
+  const readyToComplete = completesAfterKinTale(entry);
+  const offersComplete = state === 'scheduled' || state === 'onMyWay' || readyToComplete;
+  const offersCompose = state === 'departed' && !readyToComplete && onComposeKinTale !== undefined;
   const offersView =
-    state === 'completed' && firstReportId !== undefined && onViewKinTale !== undefined;
+    (state === 'completed' || readyToComplete) && firstReportId !== undefined && onViewKinTale !== undefined;
   const hasActions = clockActions.length > 0 || offersComplete || offersCompose || offersView;
 
   return (
