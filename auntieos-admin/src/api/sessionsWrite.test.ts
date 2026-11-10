@@ -270,13 +270,28 @@ describe('the audit and the household push run AFTER the write, and cannot fail 
     expect(callNames()).not.toContain('dispatchVisitNotification');
   });
 
-  it('a suppressed dispatch is reported as not notified', async () => {
+  // #1794: a server that predates `reason` still says `suppressed`. The web
+  // on the main channel talks to production functions until a release, so
+  // this must say "not sent" without guessing why.
+  it('a suppressed dispatch with no reason is reported as not sent', async () => {
     call.mockResolvedValue({ ok: true, dispatchIds: [], suppressed: true });
     const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
-    await expect(res.notification).resolves.toEqual({
-      notified: false,
-      notifySkipped: 'household_prefs_suppressed',
-    });
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'not_sent' });
+  });
+  it.each([
+    'household_has_no_portal_account',
+    'household_notices_off',
+    'household_prefs_suppressed',
+    'already_notified',
+  ])('passes the server reason %s through', async (reason) => {
+    call.mockResolvedValue({ ok: true, dispatchIds: [], suppressed: true, reason });
+    const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: reason });
+  });
+  it('a delivered dispatch is notified, whatever else the answer carries', async () => {
+    call.mockResolvedValue({ ok: true, dispatchIds: ['n1'], suppressed: false, reason: null });
+    const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
+    await expect(res.notification).resolves.toEqual({ notified: true, notifySkipped: null });
   });
 });
 

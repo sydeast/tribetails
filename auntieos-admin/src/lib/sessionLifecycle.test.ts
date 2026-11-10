@@ -101,9 +101,14 @@ describe('the confirm copy', () => {
     }
   });
 
-  it('names the household in the copy that promises to notify them', () => {
-    const arrived = lifecycleActionsFor('onMyWay')[0]!;
-    expect(arrived.confirmBody('The Whitfields')).toContain('The Whitfields');
+  // #1794: the clock confirms no longer promise the household anything on
+  // their own. Whether a notice can be sent depends on the household-notices
+  // switch and the household's portal account, so that line is
+  // `lib/visitNotice.ts#visitNoticeConfirmLine`'s and the dialog adds it.
+  it('the clock confirms describe the visit only, and never promise a notice', () => {
+    for (const a of [...lifecycleActionsFor('scheduled'), ...lifecycleActionsFor('onMyWay'), ...lifecycleActionsFor('arrived')]) {
+      expect(a.confirmBody('The Whitfields')).not.toMatch(/will be told|is told/i);
+    }
   });
 
   // Undoing is the operator correcting their own record. Nothing is sent, and

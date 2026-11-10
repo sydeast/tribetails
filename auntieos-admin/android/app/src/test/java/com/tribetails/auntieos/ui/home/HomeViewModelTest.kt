@@ -294,7 +294,9 @@ class HomeViewModelTest {
     // service when the operator has turned auto-start off.
     private fun arriveWithSettings(settings: BusinessSettings): android.content.Context {
         val context = mockk<android.content.Context>(relaxed = true)
-        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
+        // #1794: routed (envelope ids), so the household dispatch is attempted.
+        // A row with nothing to route to is now named as such without a call.
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(ROUTED_SESSION))
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockRepo.getBusinessSettings() } returns Result.success(settings)
         coEvery { mockKinCareRepo.markSessionArrived(any(), any()) } returns Result.success(ARRIVED_AT)
@@ -358,10 +360,103 @@ class HomeViewModelTest {
         assertNull(VisitNotifier.epochMillisOrNull("not a time"))
     }
 
+    // ── #1794: the household notice says what actually happened ─────────────
+
+    @Test
+    fun `an arrival for a household with no portal account says so, and the arrival stands`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockNotifier.notify(any(), any(), any(), any(), any(), any()) } returns Result.success(
+            VisitNotifier.DispatchResult(emptyList(), suppressed = true, reason = "household_has_no_portal_account"),
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        assertEquals(
+            "Rosa Parks was not notified, because they have no portal account.",
+            vm.uiState.value.visitNotice,
+        )
+        assertFalse(vm.uiState.value.visitNoticeSent)
+        assertNull(vm.uiState.value.actionError)
+    }
+
+    @Test
+    fun `the switch being off is named, and survives the reload after the tap`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockKinCareRepo.markSessionDeparted(any()) } returns Result.success(DEPARTED_AT)
+        coEvery { mockNotifier.notify(any(), any(), any(), any(), any(), any()) } returns Result.success(
+            VisitNotifier.DispatchResult(emptyList(), suppressed = true, reason = "household_notices_off"),
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.departed("ses1", context)
+        advanceUntilIdle()
+
+        assertEquals(
+            "Rosa Parks was not notified, because notices to households are off in Settings.",
+            vm.uiState.value.visitNotice,
+        )
+    }
+
+    @Test
+    fun `a delivered notice says the household was notified`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockNotifier.notify(any(), any(), any(), any(), any(), any()) } returns
+            Result.success(VisitNotifier.DispatchResult(listOf("n1"), suppressed = false))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        assertEquals("Rosa Parks was notified.", vm.uiState.value.visitNotice)
+        assertTrue(vm.uiState.value.visitNoticeSent)
+        vm.clearVisitNotice()
+        assertNull(vm.uiState.value.visitNotice)
+    }
+
+    @Test
+    fun `a failed dispatch never fails the tap, and says the notice could not be sent`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockNotifier.notify(any(), any(), any(), any(), any(), any()) } returns
+            Result.failure(RuntimeException("INTERNAL"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        assertEquals("The notice to Rosa Parks could not be sent.", vm.uiState.value.visitNotice)
+        assertNull(vm.uiState.value.actionError)
+    }
+
+    @Test
+    fun `a visit with nothing to route to is named without a call`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns
+            Result.success(listOf(TestFixtures.session1))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { mockNotifier.notify(any(), any(), any(), any(), any(), any()) }
+        assertEquals(
+            "Rosa Parks was not notified, because this visit is not linked to a booking.",
+            vm.uiState.value.visitNotice,
+        )
+    }
+
     private companion object {
         const val ARRIVED_AT = "2026-09-14T15:00:00Z"
         const val REARRIVED_AT = "2026-09-14T15:03:00Z"
         const val DEPARTED_AT = "2026-09-14T16:00:00Z"
+        /** #1794: [TestFixtures.session1] with the envelope ids a real booking carries. */
+        val ROUTED_SESSION = TestFixtures.session1.copy(kinCareBatchId = "b1", kinCareVisitId = "v1")
     }
     @Test
     fun `arriving does NOT start tracking when auto-start is off`() = runTest(testDispatcher) {

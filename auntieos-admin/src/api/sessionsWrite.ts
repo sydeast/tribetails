@@ -221,20 +221,17 @@ async function notifyHousehold(args: {
   }
 
   try {
-    const res = await call<Record<string, unknown>, { dispatchIds?: string[]; suppressed?: boolean }>(
-      'dispatchVisitNotification',
-      {
-        familyId,
-        ...(useEnvelope ? { batchId, visitId } : { bookingId }),
-        event,
-        ...(args.etaMinutes !== undefined ? { etaMinutes: args.etaMinutes } : {}),
-        ...(args.eventAtMs !== undefined ? { eventAtMs: args.eventAtMs } : {}),
-      },
-    );
-    const suppressed = res.suppressed ?? (res.dispatchIds ?? []).length === 0;
-    return suppressed
-      ? { notified: false, notifySkipped: 'household_prefs_suppressed' }
-      : { notified: true, notifySkipped: null };
+    const res = await call<
+      Record<string, unknown>,
+      { dispatchIds?: string[]; suppressed?: boolean; reason?: string | null }
+    >('dispatchVisitNotification', {
+      familyId,
+      ...(useEnvelope ? { batchId, visitId } : { bookingId }),
+      event,
+      ...(args.etaMinutes !== undefined ? { etaMinutes: args.etaMinutes } : {}),
+      ...(args.eventAtMs !== undefined ? { eventAtMs: args.eventAtMs } : {}),
+    });
+    return visitNotifyOutcomeOf(res);
   } catch (err) {
     // Logged, not thrown, and not surfaced as an error state: the visit is
     // already clocked. The operator learns the household was not told from
@@ -242,6 +239,29 @@ async function notifyHousehold(args: {
     console.warn('[visitLifecycle] household notification failed', err);
     return { notified: false, notifySkipped: 'dispatch_failed' };
   }
+}
+
+/**
+ * #1794: what `dispatchVisitNotification` answered, as a {@link VisitNotifyOutcome}.
+ *
+ * The server names WHY nobody was told in `reason` (no portal account, the
+ * household-notices switch off, the notice turned off for them, already sent).
+ * This used to read every suppression as `household_prefs_suppressed`, which
+ * was wrong for all but one of them.
+ *
+ * A server that predates `reason` still answers `suppressed`, and this says
+ * `not_sent` for it rather than guess a cause: the web on the main channel
+ * talks to production functions until the next release.
+ */
+export function visitNotifyOutcomeOf(res: {
+  dispatchIds?: string[] | undefined;
+  suppressed?: boolean | undefined;
+  reason?: string | null | undefined;
+}): VisitNotifyOutcome {
+  const suppressed = res.suppressed ?? (res.dispatchIds ?? []).length === 0;
+  if (!suppressed) return { notified: true, notifySkipped: null };
+  const reason = typeof res.reason === 'string' && res.reason.trim() !== '' ? res.reason : 'not_sent';
+  return { notified: false, notifySkipped: reason };
 }
 
 /**

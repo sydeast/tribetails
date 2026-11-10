@@ -222,6 +222,24 @@ fun HomeScreen(
         // requires verification. `Warning` rather than `Error` for the same
         // reason: even the out-of-radius case leaves a recorded arrival behind,
         // it just leaves one the visit cannot be completed on.
+        // #1794: what the household was told about the last clock tap. Never an
+        // error: the visit moved either way, so there is nothing to retry here.
+        if (!state.visitNotice.isNullOrBlank()) {
+            item {
+                AuntieBanner(
+                    tone = if (state.visitNoticeSent) AuntieBannerTone.Success else AuntieBannerTone.Warning,
+                    title = if (state.visitNoticeSent) "Household notified" else "Household not notified",
+                    onDismiss = viewModel::clearVisitNotice,
+                ) {
+                    Text(
+                        state.visitNotice.orEmpty(),
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textPrimary,
+                    )
+                }
+            }
+        }
+
         if (!state.arrivalCheckNotice.isNullOrBlank()) {
             item {
                 AuntieBanner(

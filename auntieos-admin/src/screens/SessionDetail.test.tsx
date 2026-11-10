@@ -465,7 +465,9 @@ describe('SessionDetail: the visit clock', () => {
     );
     render(<SessionDetail entry={entry({ status: 'ON_MY_WAY' })} onBack={vi.fn()} />);
     await clock(/^clock in$/i, /yes, clock in/i);
-    expect(await screen.findByText(/household was not notified/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/the whitfields was not notified, because this visit is not linked to a booking/i),
+    ).toBeInTheDocument();
   });
   it('clocks out from ARRIVED and offers the undo beside it', async () => {
     patchVisitLifecycle.mockResolvedValue(clockOk({ action: 'DEPARTED', from: 'ARRIVED', status: 'DEPARTED' }));

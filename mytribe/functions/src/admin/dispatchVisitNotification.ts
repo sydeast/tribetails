@@ -4,7 +4,12 @@ import { db } from '../lib/firestoreAdmin';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { contentDedupeKey, enqueueNotification } from '../notifications/dispatcher';
+import {
+  contentDedupeKey,
+  enqueueNotificationDetailed,
+  type EnqueueOutcome,
+} from '../notifications/dispatcher';
+import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { logEvent } from '../lib/logger';
 import { resolveKinCareRef } from '../lib/resolveKinCareRef';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -70,10 +75,87 @@ export function visitDedupeKey(
   });
 }
 
+/**
+ * #1794: why a visit notification reached nobody, by name.
+ *
+ * Every one of these is an ordinary state, not a failure, and the callers turn
+ * each into a sentence the operator reads on the card (web
+ * `lib/visitNotice.ts`, Android `domain/VisitNoticeWords.kt`). Before #1794 the
+ * first one was a thrown `failed-precondition` that reached Sentry on every tap
+ * for a household with no portal sign-in, and the other three were folded into
+ * one `suppressed: true` that every client read as "prefs".
+ *
+ *   household_has_no_portal_account  nobody in the household has signed in to
+ *                                    the portal, so there is no account to send to.
+ *   household_notices_off            the pre-launch switch
+ *                                    (`business_settings.householdNotificationsLive`)
+ *                                    held the copy back.
+ *   household_prefs_suppressed       this notice is turned off for the household.
+ *   already_notified                 the same step already reached them (#832).
+ *   no_recipient                     the dispatcher resolved nobody at all.
+ *
+ * THE ORDER IS FIXED AND SHARED WITH BOTH CLIENTS' CONFIRM TEXT: a household
+ * with no portal account is named for that first, because turning the switch
+ * on would not reach them either. Only a household that HAS an account is told
+ * the switch is off.
+ */
+export const VISIT_NOTICE_REASONS = [
+  'household_has_no_portal_account',
+  'household_notices_off',
+  'household_prefs_suppressed',
+  'already_notified',
+  'no_recipient',
+] as const;
+export type VisitNoticeReason = (typeof VISIT_NOTICE_REASONS)[number];
+
 export interface DispatchVisitNotificationOutcome {
   ok: true;
   dispatchIds: string[];
+  /** True when nobody was told. Kept beside `reason` because older Android builds read only this. */
   suppressed: boolean;
+  /** Why nobody was told, or null when a notification record was written. */
+  reason: VisitNoticeReason | null;
+}
+
+/**
+ * PURE. The reason a dispatch wrote nothing, read off the dispatcher's own
+ * per-recipient report. `gate` wins because it applies to every household at
+ * once; `prefs` and `duplicate` follow.
+ */
+export function visitNoticeReasonFor(
+  outcome: Pick<EnqueueOutcome, 'written' | 'suppressed'>,
+): VisitNoticeReason | null {
+  if (outcome.written.length > 0) return null;
+  const reasons = new Set(outcome.suppressed.map((s) => s.reason));
+  if (reasons.has('gate')) return 'household_notices_off';
+  if (reasons.has('prefs')) return 'household_prefs_suppressed';
+  if (reasons.has('duplicate')) return 'already_notified';
+  return 'no_recipient';
+}
+
+/**
+ * Who in the household receives the notice (#1794).
+ *
+ * `families/{id}.primaryUid` first, because that is the field this callable has
+ * always routed on. But no sign-up path fills it: every `families` writer
+ * (`familyProvision`, `inviteKinfolkToPortal`, `provisionTribe`, `mintInvite`)
+ * writes `''`, and only the foundation-v1 migration copied a real uid in. The
+ * household's portal login is recorded on `kinfolk/{id}.uid` by the
+ * `onClientsWrite` backwrite, and that is what every other household
+ * notification resolves through (`resolveKinfolkUid`). The family envelope is
+ * keyed by the same id as the kinfolk doc (`familyProvision.ts`).
+ *
+ * It is also the only account field either admin client holds, so it is what
+ * their confirm text predicts from. Routing on a field the clients cannot see
+ * would let a confirm say "will be told" over an outcome of "no portal account".
+ */
+async function householdRecipientUid(
+  familyId: string,
+  primaryUid: string | undefined,
+): Promise<string | null> {
+  const primary = typeof primaryUid === 'string' ? primaryUid.trim() : '';
+  if (primary !== '') return primary;
+  return resolveKinfolkUid(familyId);
 }
 
 /**
@@ -122,12 +204,25 @@ export async function dispatchVisitNotificationCore(
     throw new HttpsError('not-found', `families/${args.familyId} not found`);
   }
   const family = familySnap.data() as { primaryUid?: string; displayName?: string };
-  const recipientUid = family.primaryUid;
+  const recipientUid = await householdRecipientUid(args.familyId, family.primaryUid);
   if (!recipientUid) {
-    throw new HttpsError(
-      'failed-precondition',
-      `families/${args.familyId} has no primaryUid, cannot route notification`,
-    );
+    // #1794: a household nobody has signed in for is a normal state, not a
+    // failure. This used to throw `failed-precondition`, which every client
+    // logged as a failed dispatch and Sentry recorded on every tap.
+    logEvent({
+      severity: 'info',
+      function: 'dispatchVisitNotification',
+      event: 'visit.notification.skipped',
+      uid: actorUid,
+      extra: {
+        familyId: args.familyId,
+        batchId,
+        visitId,
+        event: args.event,
+        reason: 'household_has_no_portal_account',
+      },
+    });
+    return { ok: true, dispatchIds: [], suppressed: true, reason: 'household_has_no_portal_account' };
   }
 
   const [recipientSnap, actorSnap] = await Promise.all([
@@ -157,13 +252,15 @@ export async function dispatchVisitNotificationCore(
   if (args.etaMinutes !== undefined) data.etaMinutes = args.etaMinutes;
   if (args.reportPreviewUrl) data.reportPreviewUrl = args.reportPreviewUrl;
 
-  const dispatchIds = await enqueueNotification({
+  const enqueued = await enqueueNotificationDetailed({
     key,
     recipientUid,
     data,
     actorUid,
     dedupeKey: visitDedupeKey(visitId, args),
   });
+  const dispatchIds = enqueued.written;
+  const reason = visitNoticeReasonFor(enqueued);
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -172,7 +269,7 @@ export async function dispatchVisitNotificationCore(
     actorRole: 'AUNTIE',
     actorUid,
     familyId: args.familyId,
-    payload: { key, batchId, visitId, event: args.event, dispatchIds },
+    payload: { key, batchId, visitId, event: args.event, dispatchIds, reason },
   });
 
   logEvent({
@@ -180,10 +277,10 @@ export async function dispatchVisitNotificationCore(
     function: 'dispatchVisitNotification',
     event: 'visit.notification.dispatched',
     uid: actorUid,
-    extra: { key, familyId: args.familyId, batchId, visitId, dispatchCount: dispatchIds.length },
+    extra: { key, familyId: args.familyId, batchId, visitId, dispatchCount: dispatchIds.length, reason },
   });
 
-  return { ok: true, dispatchIds, suppressed: dispatchIds.length === 0 };
+  return { ok: true, dispatchIds, suppressed: dispatchIds.length === 0, reason };
 }
 
 export async function dispatchVisitNotificationHandler(

@@ -55,7 +55,12 @@ export interface LifecycleActionDef {
    */
   cardLabel: string;
   tone: 'primary' | 'ghost';
-  /** Future tense, per the BookingActions confirm-copy rule. */
+  /**
+   * Future tense, per the BookingActions confirm-copy rule. What happens to the
+   * VISIT only: whether the household is told is a separate line the dialog
+   * takes from `lib/visitNotice.ts#visitNoticeConfirmLine` (#1794), because it
+   * depends on the household-notices switch and the household's portal account.
+   */
   confirmBody: (household: string) => string;
   confirmLabel: string;
 }
@@ -65,8 +70,9 @@ const ON_MY_WAY: LifecycleActionDef = {
   label: 'On the way',
   cardLabel: 'OMW',
   tone: 'primary',
-  confirmBody: (name) =>
-    `${name} will be told their Auntie is on the way, and the visit moves to On the way.`,
+  // #1794: the household half of this confirm is `lib/visitNotice.ts`'s, and
+  // only promises a notice that can actually be sent.
+  confirmBody: () => 'The visit moves to On the way.',
   confirmLabel: 'Yes, mark it on the way',
 };
 
@@ -75,8 +81,7 @@ const ARRIVED: LifecycleActionDef = {
   label: 'Clock in',
   cardLabel: 'Arrived',
   tone: 'primary',
-  confirmBody: (name) =>
-    `The arrival time is stamped now and ${name} is told their Auntie has arrived.`,
+  confirmBody: () => 'The arrival time is stamped now.',
   confirmLabel: 'Yes, clock in',
 };
 
@@ -85,8 +90,8 @@ const DEPARTED: LifecycleActionDef = {
   label: 'Clock out',
   cardLabel: 'Departed',
   tone: 'primary',
-  confirmBody: (name) =>
-    `The departure time is stamped now and ${name} is told the visit has finished. The visit is not Completed until you mark it so.`,
+  confirmBody: () =>
+    'The departure time is stamped now. The visit is not Completed until you mark it so.',
   confirmLabel: 'Yes, clock out',
 };
 
