@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +46,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
+import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinChip
 import com.kinfolk.portal.components.KinInfoTip
 import com.kinfolk.portal.components.KinSpinner
@@ -63,6 +65,8 @@ import com.kinfolk.portal.portal.NotificationPrefsPatch
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.WarmOnOpen
 import com.kinfolk.portal.portal.WarmableSave
+import com.kinfolk.portal.push.DevicePushState
+import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.portal.applyNotificationPrefsPatch
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -115,6 +119,8 @@ fun NotificationSettingsScreen(
     portalApi: PortalApi,
     notificationCatalog: NotificationCatalogRepository? = null,
     sectionFolds: SectionFoldStore = DeviceSectionFoldStore,
+    /** #1787: this device's push registration; null in tests that do not exercise it. */
+    pushCoordinator: PushRegistrationCoordinator? = null,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -260,6 +266,7 @@ fun NotificationSettingsScreen(
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
     ) {
         ScreenHeader(title = "Notification Settings", kicker = "Account")
+        if (pushCoordinator != null) DevicePushCard(pushCoordinator)
 
         if (loaded && prefsLoaded) {
             SectionShortcuts(
@@ -720,3 +727,44 @@ private fun PerKeyRow(
         }
     }
 }
+
+/**
+ * #1787: shown only when this device's push registration failed, so the failure
+ * is no longer log-only. Same words as the web portal's card: the title, the
+ * coded error line, and a Retry that runs the sign-in registration again.
+ */
+@Composable
+private fun DevicePushCard(coordinator: PushRegistrationCoordinator) {
+    val state by coordinator.state.collectAsState()
+    val failed = state as? DevicePushState.Failed ?: return
+    val type = LocalKinfolkTypography.current
+    val scope = rememberCoroutineScope()
+    var retrying by remember { mutableStateOf(false) }
+    GlassCard(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l).testTag("device-push-card"),
+        contentPadding = PaddingValues(KinfolkSpacing.l),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+            Text("Finish turning on notifications", style = type.heritageTitle)
+            Text(devicePushFailureLine(failed), style = type.sansBody, modifier = Modifier.testTag("device-push-error"))
+            KinButton(
+                label = if (retrying) "Retrying\u2026" else "Retry",
+                enabled = !retrying,
+                onClick = {
+                    retrying = true
+                    scope.launch {
+                        try {
+                            coordinator.retry()
+                        } finally {
+                            retrying = false
+                        }
+                    }
+                },
+                modifier = Modifier.testTag("device-push-retry"),
+            )
+        }
+    }
+}
+/** The error line under the title: the stage and the exception, never a token. */
+internal fun devicePushFailureLine(failed: DevicePushState.Failed): String =
+    "Could not enable notifications: ${failed.detail} (${failed.stage})"

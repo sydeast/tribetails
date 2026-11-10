@@ -3,6 +3,9 @@ package com.kinfolk.portal.push
 import com.kinfolk.portal.portal.PortalApi
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -31,6 +34,21 @@ import kotlinx.coroutines.withTimeout
  * class (#1547): `t.message` alone is the server's sentence and said nothing
  * about which step failed or what threw.
  */
+/**
+ * What this device last learned about its own push registration (#1787). Shown
+ * on Notification Settings so a failed registration is no longer log-only.
+ * Nothing here carries a token value.
+ */
+sealed interface DevicePushState {
+    /** No attempt has finished yet (or the kinfolk signed out). */
+    data object Unknown : DevicePushState
+    /** The backend has this device's token. */
+    data object Registered : DevicePushState
+    /** The platform has no push token to give (desktop, or the browser said no). Not a failure to retry. */
+    data object Unavailable : DevicePushState
+    /** [stage] is `token`, `register` or `unregister`; [detail] is `ExceptionClass: message`. */
+    data class Failed(val stage: String, val detail: String) : DevicePushState
+}
 class PushRegistrationCoordinator(
     private val portalApi: PortalApi,
     private val platform: String = pushPlatform,
@@ -41,9 +59,23 @@ class PushRegistrationCoordinator(
 ) {
     var registeredToken: String? = null
         private set
+    private val _state = MutableStateFlow<DevicePushState>(DevicePushState.Unknown)
+    /** Latest outcome of a token fetch or register call; see [DevicePushState]. */
+    val state: StateFlow<DevicePushState> = _state.asStateFlow()
+    /**
+     * Retry button: forget the cached token and run the sign-in path again, so
+     * a failed token fetch or register call gets another try without waiting
+     * for the next launch. Safe to call when already registered.
+     */
+    suspend fun retry() {
+        registeredToken = null
+        onSignedIn()
+    }
 
     /** Call when auth state resolves to SignedIn. Safe to call repeatedly. */
     suspend fun onSignedIn() {
+        // A new attempt starts clean, so a stale failure cannot outlive a clean "no token" answer.
+        if (_state.value is DevicePushState.Failed) _state.value = DevicePushState.Unknown
         val token = try {
             withTimeout(stepTimeoutMs) { tokenProvider() }
         } catch (t: TimeoutCancellationException) {
@@ -56,7 +88,12 @@ class PushRegistrationCoordinator(
         } catch (t: Throwable) {
             logFailure("token", t)
             null
-        } ?: return
+        }
+        if (token == null) {
+            // A failure already set Failed; a clean null is "this platform has no token".
+            if (_state.value !is DevicePushState.Failed) _state.value = DevicePushState.Unavailable
+            return
+        }
         register(token)
     }
 
@@ -67,6 +104,7 @@ class PushRegistrationCoordinator(
 
     /** Call BEFORE backend.signOut() so the callable still has auth. */
     suspend fun onSignOut() {
+        _state.value = DevicePushState.Unknown
         val token = registeredToken ?: return
         registeredToken = null
         try {
@@ -79,10 +117,14 @@ class PushRegistrationCoordinator(
     }
 
     private suspend fun register(token: String) {
-        if (token == registeredToken) return
+        if (token == registeredToken) {
+            _state.value = DevicePushState.Registered
+            return
+        }
         try {
             withTimeout(stepTimeoutMs) { portalApi.registerFcmToken(token, platform, appVersion) }
             registeredToken = token
+            _state.value = DevicePushState.Registered
         } catch (t: TimeoutCancellationException) {
             logFailure("register", t)
         } catch (c: CancellationException) {
@@ -98,8 +140,12 @@ class PushRegistrationCoordinator(
      * whole throwable in PushToken.android.kt; this covers the stages that
      * only this class sees.
      */
-    private fun logFailure(stage: String, t: Throwable) =
-        logger("$stage failed: ${t::class.simpleName}: ${t.message}")
+    private fun logFailure(stage: String, t: Throwable) {
+        val detail = "${t::class.simpleName}: ${t.message}"
+        logger("$stage failed: $detail")
+        // An unregister failure on sign-out is not something the kinfolk can act on.
+        if (stage != "unregister") _state.value = DevicePushState.Failed(stage, detail)
+    }
 
     private companion object {
         /** Longest the token fetch or the register call may take before it is logged as a timeout. */

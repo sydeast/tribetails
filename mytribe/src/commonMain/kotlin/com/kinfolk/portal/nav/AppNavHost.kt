@@ -33,6 +33,7 @@ import com.kinfolk.portal.launch.LaunchSignOutButton
 import com.kinfolk.portal.launch.TribePickerScreen
 import com.kinfolk.portal.notifications.NotificationCatalogRepository
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.portal.TribeSummary
 import com.kinfolk.portal.screens.about.AboutScreen
 import com.kinfolk.portal.screens.account.AccountSettingsScreen
@@ -87,6 +88,8 @@ fun AppNavHost(
     portalApi: PortalApi,
     firestoreClient: FirestoreClient,
     notificationCatalog: NotificationCatalogRepository?,
+    /** #1787: lets Notification Settings show a failed push registration with a Retry. */
+    pushCoordinator: PushRegistrationCoordinator? = null,
     shellKinfolkId: String?,
     shellFamilyName: String,
     /** #1290: the signed-in person, for the header avatar. Blank falls back to [shellFamilyName]. */
@@ -449,7 +452,7 @@ fun AppNavHost(
                 }
             }
             composable<NotificationsRoute> {
-                Shell { mod -> Box(mod) { NotificationSettingsScreen(shellFamilyName, portalApi, notificationCatalog) } }
+                Shell { mod -> Box(mod) { NotificationSettingsScreen(shellFamilyName, portalApi, notificationCatalog, pushCoordinator = pushCoordinator) } }
             }
             // #1316: the list behind the bell. A tap marks the row read and
             // opens the thing it is about: the visit, the booking request, the

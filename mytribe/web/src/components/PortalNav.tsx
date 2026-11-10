@@ -10,6 +10,7 @@ import { billingAccessOf } from '../lib/billingAccess';
 import { bellAccessibleName, unreadBadgeLabel } from '../lib/notificationsList';
 import { SaveNoticeLine } from './SaveNotice';
 import { myHomeKey } from '../lib/portalQueryKeys';
+import { useSilentPushRefresh } from '../lib/useSilentPushRefresh';
 
 export type PortalNavTab = 'home' | 'tribe' | 'schedule' | 'kintales' | 'invoices' | 'account' | 'messages';
 
@@ -56,6 +57,7 @@ const TAB_ITEMS: (NavItem & { icon: string })[] = [
 /** Shared top nav + mobile bottom tab bar, extracted from the identical markup repeated across every mockup. */
 /** `active` is null on a screen that is none of the tabs, such as the not-found page. */
 export function PortalNav(props: { active: PortalNavTab | null }) {
+  useSilentPushRefresh();
   const access = useAccessState();
 
   // Operator branding, off the EXISTING `getMyHome` payload rather than a new
