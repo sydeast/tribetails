@@ -265,7 +265,7 @@ fun NotificationSettingsScreen(
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
     ) {
         ScreenHeader(title = "Notification Settings", kicker = "Account")
-        if (pushCoordinator != null) DevicePushCard(pushCoordinator, onDismiss = null)
+        if (pushCoordinator != null) DevicePushCard(pushCoordinator, onDismiss = null, showDeviceStatus = true)
 
         if (loaded && prefsLoaded) {
             SectionShortcuts(

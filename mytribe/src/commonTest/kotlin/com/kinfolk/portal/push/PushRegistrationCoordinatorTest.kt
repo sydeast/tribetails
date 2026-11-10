@@ -4,6 +4,10 @@ import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.firebase.FunctionsClient
 import kotlinx.serialization.json.JsonObject
 import com.kinfolk.portal.portal.PortalApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -377,5 +381,95 @@ class PushRegistrationCoordinatorTest {
         assertEquals(DevicePushCardKind.Blocked, devicePushCardKind(gate.state.value, c.state.value))
         gate.state.value = NotificationPermissionState.Granted
         assertEquals(DevicePushCardKind.Finish, devicePushCardKind(gate.state.value, c.state.value))
+    }
+
+    // ---- #1808: a sign-up still running has its own state ----
+    @Test
+    fun `the state is Registering while the token fetch runs, then Registered`() = runTest {
+        val release = CompletableDeferred<String?>()
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fakeWithStubs()), platform = "test-mytribe", tokenProvider = { release.await() }, logger = {},
+        )
+        val run = launch { c.onSignedIn() }
+        runCurrent()
+        assertEquals(DevicePushState.Registering, c.state.value)
+        release.complete("tok-1")
+        run.join()
+        assertEquals(DevicePushState.Registered, c.state.value)
+    }
+    @Test
+    fun `the state is Registering while the register call runs`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val functions = object : FunctionsClient {
+            override suspend fun call(name: String, payload: JsonObject?): JsonObject {
+                gate.await()
+                return buildJsonObject {}
+            }
+        }
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(functions), platform = "test-mytribe", tokenProvider = { "tok-1" }, logger = {},
+        )
+        val run = launch { c.onSignedIn() }
+        runCurrent()
+        assertEquals(DevicePushState.Registering, c.state.value)
+        gate.complete(Unit)
+        run.join()
+        assertEquals(DevicePushState.Registered, c.state.value)
+    }
+    @Test
+    fun `a retry after a failure says Registering, not the old failure, while it runs`() = runTest {
+        var next: suspend () -> String? = { throw IllegalStateException("boom") }
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fakeWithStubs()), platform = "test-mytribe", tokenProvider = { next() }, logger = {},
+        )
+        c.onSignedIn()
+        assertTrue(c.state.value is DevicePushState.Failed)
+        val release = CompletableDeferred<String?>()
+        next = { release.await() }
+        val run = launch { c.retry() }
+        runCurrent()
+        assertEquals(DevicePushState.Registering, c.state.value)
+        release.complete("tok-1")
+        run.join()
+        assertEquals(DevicePushState.Registered, c.state.value)
+    }
+    @Test
+    fun `a device already registered stays Registered while its token is refreshed`() = runTest {
+        var next: suspend () -> String? = { "tok-1" }
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fakeWithStubs()), platform = "test-mytribe", tokenProvider = { next() }, logger = {},
+        )
+        c.onSignedIn()
+        val release = CompletableDeferred<String?>()
+        next = { release.await() }
+        val run = launch { c.onSignedIn() }
+        runCurrent()
+        assertEquals(DevicePushState.Registered, c.state.value)
+        release.complete("tok-1")
+        run.join()
+        assertEquals(DevicePushState.Registered, c.state.value)
+    }
+    @Test
+    fun `a sign-up cancelled mid-run never leaves Registering behind`() = runTest {
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fakeWithStubs()), platform = "test-mytribe", tokenProvider = { awaitCancellation() }, logger = {},
+        )
+        val run = launch { c.onSignedIn() }
+        runCurrent()
+        assertEquals(DevicePushState.Registering, c.state.value)
+        run.cancelAndJoin()
+        assertEquals(DevicePushState.Unknown, c.state.value)
+    }
+    @Test
+    fun `a clean null and a failure both end the Registering state`() = runTest {
+        val clean = coordinator(fakeWithStubs(), token = null)
+        clean.onSignedIn()
+        assertEquals(DevicePushState.Unavailable, clean.state.value)
+        val failing = PushRegistrationCoordinator(
+            portalApi = PortalApi(fakeWithStubs()), platform = "test-mytribe",
+            tokenProvider = { throw IllegalStateException("down") }, logger = {},
+        )
+        failing.onSignedIn()
+        assertTrue(failing.state.value is DevicePushState.Failed)
     }
 }

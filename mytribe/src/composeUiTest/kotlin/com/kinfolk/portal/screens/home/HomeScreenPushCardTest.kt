@@ -52,6 +52,18 @@ class HomeScreenPushCardTest {
         onNodeWithTag("device-push-card").assertDoesNotExist()
     }
     @Test
+    fun aSignedUpDevice_showsNoCardOnHome() = runComposeUiTest {
+        // #1808: only Notification Settings says "on"; Home stays as it was.
+        val fake = fake().apply { stub("registerFcmToken", buildJsonObject {}) }
+        val gate = Gate(NotificationPermissionState.Granted)
+        val coordinator = PushRegistrationCoordinator(PortalApi(fake), "test-mytribe", tokenProvider = { "t" }, logger = {}, permissionGate = gate)
+        coordinator.onSignedIn()
+        setThemedContent { HomeScreen("The Foster", "demo-1", PortalApi(fake), pushCoordinator = coordinator) }
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
+        onNodeWithText("Notifications are on for this device.").assertDoesNotExist()
+    }
+    @Test
     fun noCoordinator_noCard() = runComposeUiTest {
         val fake = fake()
         setThemedContent { HomeScreen("The Foster", "demo-1", PortalApi(fake)) }

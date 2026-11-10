@@ -24,6 +24,14 @@ interface BeforeInstallPromptEvent extends Event {
 
 const DISMISS_KEY = 'mytribe.a2hs.dismissed';
 
+/**
+ * Why an iPhone needs the home-screen app before it can get a notification.
+ * Shared with Notification Settings' "This browser can't get notifications"
+ * card (PushPrompt.tsx, #1808), so both places say it in the same words.
+ */
+export const IPHONE_PUSH_NOTE =
+  'An iPhone will not send you a visit update from a Safari tab, only from the app on your home screen.';
+
 export function AddToHomeScreen() {
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1');
@@ -96,10 +104,7 @@ export function AddToHomeScreen() {
               </p>
             </div>
           </div>
-          <p className="note">
-            Adding it is what turns notifications on. An iPhone will not send you a visit update
-            from a Safari tab, only from the app on your home screen.
-          </p>
+          <p className="note">Adding it is what turns notifications on. {IPHONE_PUSH_NOTE}</p>
           <p className="note">
             It will ask you to sign in once more the first time you open it. That is normal. The
             home screen app keeps its own sign in, separate from Safari.

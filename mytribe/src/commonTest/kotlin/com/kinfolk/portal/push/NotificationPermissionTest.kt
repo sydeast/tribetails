@@ -72,4 +72,35 @@ class NotificationPermissionTest {
         assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.Granted, DevicePushState.Unavailable))
         assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.NotApplicable, DevicePushState.Unknown))
     }
+    // ---- #1808: Notification Settings always says what this device is doing ----
+    @Test
+    fun `on Home a signed-up or signing-up device has no card`() {
+        assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.Granted, DevicePushState.Registered))
+        assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.Granted, DevicePushState.Registering))
+        assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.NotApplicable, DevicePushState.Registered))
+        assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.NotApplicable, DevicePushState.Registering))
+    }
+    @Test
+    fun `on Notification Settings a signed-up device is On and one still signing up is SigningUp`() {
+        assertEquals(DevicePushCardKind.On, devicePushCardKind(NotificationPermissionState.Granted, DevicePushState.Registered, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.On, devicePushCardKind(NotificationPermissionState.NotApplicable, DevicePushState.Registered, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.SigningUp, devicePushCardKind(NotificationPermissionState.Granted, DevicePushState.Registering, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.SigningUp, devicePushCardKind(NotificationPermissionState.NotApplicable, DevicePushState.Registering, showDeviceStatus = true))
+    }
+    @Test
+    fun `on Notification Settings only a real registration says On`() {
+        // "Nothing failed" is not "on": no attempt yet, or a platform with no token, stays blank.
+        assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.Granted, DevicePushState.Unknown, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.Granted, DevicePushState.Unavailable, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.None, devicePushCardKind(NotificationPermissionState.NotApplicable, DevicePushState.Unavailable, showDeviceStatus = true))
+    }
+    @Test
+    fun `on Notification Settings the permission and failure cards are unchanged`() {
+        val failed = DevicePushState.Failed("token", "X: y")
+        assertEquals(DevicePushCardKind.Finish, devicePushCardKind(NotificationPermissionState.Granted, failed, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.Enable, devicePushCardKind(NotificationPermissionState.NotAsked, DevicePushState.Registered, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.Blocked, devicePushCardKind(NotificationPermissionState.Denied, DevicePushState.Registered, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.Blocked, devicePushCardKind(NotificationPermissionState.Denied, DevicePushState.Registering, showDeviceStatus = true))
+        assertEquals(DevicePushCardKind.TurnedOff, devicePushCardKind(NotificationPermissionState.DisabledInSettings, DevicePushState.Registered, showDeviceStatus = true))
+    }
 }

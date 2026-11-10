@@ -366,6 +366,44 @@ describe('push', () => {
     await refreshPushRegistration();
     expect(registerFcmToken).toHaveBeenLastCalledWith('fresh-token');
   });
+  // #1808: what Notification Settings reads to draw "on" without a signing-up frame.
+  it('settledPushRegistration is null while the sign-up runs, the answer once it lands, and null after sign-out', async () => {
+    setNotificationPermission('granted');
+    let release: (t: string) => void = () => {};
+    vi.mocked(getToken).mockImplementationOnce(() => new Promise<string>((r) => (release = r)));
+    const { refreshPushRegistration, settledPushRegistration, unregisterForPush } = await import('./push');
+    expect(settledPushRegistration()).toBeNull();
+    const inFlight = refreshPushRegistration();
+    await vi.waitFor(() => expect(getToken).toHaveBeenCalled());
+    expect(settledPushRegistration()).toBeNull();
+    release('a-device-token');
+    await inFlight;
+    expect(settledPushRegistration()).toEqual({ status: 'registered' });
+    await unregisterForPush();
+    expect(settledPushRegistration()).toBeNull();
+  });
+  it('settledPushRegistration keeps a failure, and a Retry that works replaces it', async () => {
+    setNotificationPermission('granted');
+    vi.mocked(getToken).mockRejectedValueOnce(Object.assign(new Error('boom'), { code: 'messaging/token-subscribe-failed' }));
+    const { refreshPushRegistration, registerForPush, settledPushRegistration } = await import('./push');
+    await refreshPushRegistration();
+    expect(settledPushRegistration()).toMatchObject({ status: 'error', code: 'messaging/token-subscribe-failed' });
+    vi.mocked(getToken).mockResolvedValue('later-token');
+    await registerForPush();
+    expect(settledPushRegistration()).toEqual({ status: 'registered' });
+  });
+  it('a sign-up that finishes after sign-out leaves nothing settled for the next sign-in', async () => {
+    setNotificationPermission('granted');
+    let release: (t: string) => void = () => {};
+    vi.mocked(getToken).mockImplementationOnce(() => new Promise<string>((r) => (release = r)));
+    const { refreshPushRegistration, settledPushRegistration, unregisterForPush } = await import('./push');
+    const inFlight = refreshPushRegistration();
+    await vi.waitFor(() => expect(getToken).toHaveBeenCalled());
+    await unregisterForPush();
+    release('stale-token');
+    await inFlight;
+    expect(settledPushRegistration()).toBeNull();
+  });
 
   it('unregisterForPush unregisters the current token and never throws', async () => {
     vi.mocked(getToken).mockResolvedValue('a-device-token');

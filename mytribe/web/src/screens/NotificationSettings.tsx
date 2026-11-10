@@ -615,8 +615,9 @@ export function NotificationSettings() {
           </h1>
         </header>
 
-        {/* #1787: this device's own push state, with the same Retry as Home. */}
-        <PushPrompt ignoreDismissal />
+        {/* #1787: this device's own push state, with the same Retry as Home.
+            #1808: never blank here, so "on" and "signing up" show too. */}
+        <PushPrompt ignoreDismissal showDeviceStatus />
 
         {offline ? (
           <section className="glass card">

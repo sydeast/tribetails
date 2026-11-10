@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -24,6 +25,10 @@ import com.kinfolk.portal.notifications.NotificationCatalogRepository
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.screens.setThemedContent
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
@@ -843,7 +848,8 @@ class NotificationSettingsScreenTest {
         onNodeWithTag("device-push-retry").assertExists()
     }
     @Test
-    fun aRegisteredDevice_showsNoCard() = runComposeUiTest {
+    fun aRegisteredDevice_saysNotificationsAreOnForThisDevice() = runComposeUiTest {
+        // #1808: this used to be a blank, the same blank as signing up, unsupported or a bug.
         val fake = prefsOnlyFake()
         val coordinator = PushRegistrationCoordinator(
             portalApi = PortalApi(fake), platform = "test-mytribe", tokenProvider = { "tok-1" }, logger = {},
@@ -853,7 +859,31 @@ class NotificationSettingsScreenTest {
             NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore(), pushCoordinator = coordinator)
         }
         waitForIdle()
-        onNodeWithTag("device-push-card").assertDoesNotExist()
+        onNodeWithTag("device-push-card").assertExists()
+        onNodeWithTag("device-push-on").assertTextEquals("Notifications are on for this device.")
+        onNodeWithTag("device-push-retry").assertDoesNotExist()
+        onNodeWithTag("device-push-dismiss").assertDoesNotExist()
+    }
+    @Test
+    fun aSignUpStillRunning_saysSigningUpThisDevice_thenOn() = runComposeUiTest {
+        val fake = prefsOnlyFake()
+        val release = CompletableDeferred<String?>()
+        val coordinator = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe", tokenProvider = { release.await() }, logger = {},
+        )
+        val signIn = CoroutineScope(Dispatchers.Default).launch { coordinator.onSignedIn() }
+        setThemedContent {
+            NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore(), pushCoordinator = coordinator)
+        }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("device-push-signing-up").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("device-push-signing-up").assertTextEquals("Signing up this device…")
+        onNodeWithTag("device-push-spinner").assertExists()
+        onNodeWithTag("device-push-on").assertDoesNotExist()
+        release.complete("tok-1")
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("device-push-on").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("device-push-signing-up").assertDoesNotExist()
+        assertTrue(fake.calls.any { it.first == "registerFcmToken" })
+        signIn.cancel()
     }
     @Test
     fun aPlatformWithNoToken_showsNoCard() = runComposeUiTest {

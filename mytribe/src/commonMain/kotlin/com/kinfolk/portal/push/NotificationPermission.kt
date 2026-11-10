@@ -72,12 +72,32 @@ fun notificationBlockReason(sdkInt: Int, runtimeGranted: Boolean, notificationsE
     !notificationsEnabled -> "notifications turned off in system settings"
     else -> null
 }
-/** Which single card Home and Notification Settings draw for this device. */
-enum class DevicePushCardKind { None, Enable, Blocked, TurnedOff, Finish }
-fun devicePushCardKind(permission: NotificationPermissionState, push: DevicePushState): DevicePushCardKind = when (permission) {
+/**
+ * Which single card Home and Notification Settings draw for this device.
+ * [On] and [SigningUp] are Notification Settings only (#1808): Home shows no
+ * card for a device that is signed up or still signing up.
+ */
+enum class DevicePushCardKind { None, Enable, Blocked, TurnedOff, Finish, On, SigningUp }
+/**
+ * [showDeviceStatus] is true on Notification Settings, where the card is never
+ * blank for a device that can take push: "on" once registerFcmToken succeeded,
+ * "signing up" while it runs. "On" comes only from [DevicePushState.Registered],
+ * never from "nothing failed", so [DevicePushState.Unknown] and
+ * [DevicePushState.Unavailable] stay [DevicePushCardKind.None] there too.
+ */
+fun devicePushCardKind(
+    permission: NotificationPermissionState,
+    push: DevicePushState,
+    showDeviceStatus: Boolean = false,
+): DevicePushCardKind = when (permission) {
     NotificationPermissionState.NotAsked -> DevicePushCardKind.Enable
     NotificationPermissionState.Denied -> DevicePushCardKind.Blocked
     NotificationPermissionState.DisabledInSettings -> DevicePushCardKind.TurnedOff
-    NotificationPermissionState.Granted, NotificationPermissionState.NotApplicable ->
-        if (push is DevicePushState.Failed) DevicePushCardKind.Finish else DevicePushCardKind.None
+    NotificationPermissionState.Granted, NotificationPermissionState.NotApplicable -> when {
+        push is DevicePushState.Failed -> DevicePushCardKind.Finish
+        !showDeviceStatus -> DevicePushCardKind.None
+        push == DevicePushState.Registered -> DevicePushCardKind.On
+        push == DevicePushState.Registering -> DevicePushCardKind.SigningUp
+        else -> DevicePushCardKind.None
+    }
 }

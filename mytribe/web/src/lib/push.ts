@@ -15,6 +15,8 @@ let foregroundHandlerInstalled = false;
 let cachedToken: string | null = null;
 /** The sign-in's silent registration (or last Retry); cleared on sign-out. */
 let sessionRun: Promise<PushRegistrationOutcome> | null = null;
+/** What [sessionRun] answered, once it has; null while it runs and after sign-out (#1808). */
+let sessionOutcome: PushRegistrationOutcome | null = null;
 /** Bumped on sign-out so an attempt that finishes afterwards cannot seed the next sign-in. */
 let signInEpoch = 0;
 
@@ -231,8 +233,20 @@ export async function registerForPush(): Promise<PushRegistrationOutcome> {
   const outcome = await attemptRegistration();
   // A tap on Retry replaces the silent attempt's answer, so a later mount of
   // the card in the same sign-in sees the newest outcome and does not rerun.
-  if (epoch === signInEpoch) sessionRun = Promise.resolve(outcome);
+  if (epoch === signInEpoch) {
+    sessionRun = Promise.resolve(outcome);
+    sessionOutcome = outcome;
+  }
   return outcome;
+}
+/**
+ * #1808: the answer this sign-in's registration already gave, or null while it
+ * is still running (or has not started). Lets Notification Settings draw "on"
+ * at once when Home already finished the silent attempt, instead of flashing
+ * "Signing up" for a frame while the memoised promise resolves.
+ */
+export function settledPushRegistration(): PushRegistrationOutcome | null {
+  return sessionOutcome;
 }
 /**
  * #1787: when the browser already said yes, register on sign-in without a
@@ -294,6 +308,7 @@ async function attemptRegistration(): Promise<PushRegistrationOutcome> {
  */
 export async function unregisterForPush(): Promise<void> {
   sessionRun = null;
+  sessionOutcome = null;
   signInEpoch += 1;
   try {
     if (!(await isPushSupported())) return;

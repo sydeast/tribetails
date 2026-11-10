@@ -4,10 +4,13 @@ import {
   isPushSupported,
   refreshPushRegistration,
   registerForPush,
+  settledPushRegistration,
   type PushRegistrationOutcome,
 } from '../lib/push';
 import { reportTaggedError } from '../lib/sentry';
+import { isIos, isStandalone } from '../lib/installState';
 import { BusyLabel } from '../components/Loading';
+import { IPHONE_PUSH_NOTE } from './AddToHomeScreen';
 
 /**
  * Notifications card for the portal home, same card shape as AddToHomeScreen
@@ -24,6 +27,16 @@ import { BusyLabel } from '../components/Loading';
  * - not supported: nothing.
  *
  * "Maybe later" and the note's close button hide the card for this session.
+ *
+ * #1808: Notification Settings passes `showDeviceStatus`, and there the card
+ * never goes blank. Where Home shows nothing it shows this device's state
+ * instead: "Signing up this device…" while the sign-up runs, "Notifications
+ * are on for this device." once registerFcmToken has succeeded (that success
+ * is the proof the server has the token; nothing else is asked), and "This
+ * browser can't get notifications." when push is not supported, with the
+ * home-screen step on an iPhone tab. The settings screen is where someone goes
+ * to check, so "nothing" there could mean signed up, still signing up,
+ * unsupported or a bug, and nobody could tell which.
  */
 const DISMISS_KEY = 'mytribe.push.dismissed';
 
@@ -69,15 +82,35 @@ function failureLine(outcome: PushRegistrationOutcome): string | null {
   }
   return null;
 }
-export function PushPrompt({ ignoreDismissal = false }: { ignoreDismissal?: boolean } = {}) {
+/** The sign-up answered with a failure the Finish card can retry. */
+function isFailure(status: PushRegistrationOutcome['status'] | null): boolean {
+  return status === 'error' || status === 'no-service-worker';
+}
+/** The answer this sign-in already has, so a later mount draws it at once (#1808). */
+function settledForGranted(): PushRegistrationOutcome | null {
+  return currentPushPermission() === 'granted' ? settledPushRegistration() : null;
+}
+export function PushPrompt({
+  ignoreDismissal = false,
+  showDeviceStatus = false,
+}: {
+  ignoreDismissal?: boolean;
+  /** Notification Settings: draw this device's state where Home would draw nothing (#1808). */
+  showDeviceStatus?: boolean;
+} = {}) {
   const [supported, setSupported] = useState<boolean | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(() => currentPushPermission());
   const [dismissed, setDismissed] = useState(() => !ignoreDismissal && sessionStorage.getItem(DISMISS_KEY) === '1');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Granted devices only: has the silent registration answered, and did it fail?
-  const [silentDone, setSilentDone] = useState(false);
-  const [needsFinish, setNeedsFinish] = useState(false);
+  const [error, setError] = useState<string | null>(() => {
+    const settled = settledForGranted();
+    return settled ? failureLine(settled) : null;
+  });
+  // Granted devices only: what the silent registration (or the last Retry)
+  // answered. Null while it is still running.
+  const [silentStatus, setSilentStatus] = useState<PushRegistrationOutcome['status'] | null>(
+    () => settledForGranted()?.status ?? null,
+  );
   useEffect(() => {
     void isPushSupported().then(setSupported);
   }, []);
@@ -89,19 +122,25 @@ export function PushPrompt({ ignoreDismissal = false }: { ignoreDismissal?: bool
       const line = failureLine(outcome);
       if (line) {
         setError(line);
-        setNeedsFinish(true);
       } else if (outcome.status === 'denied') {
         setPermission(currentPushPermission());
+      } else if (outcome.status === 'unsupported') {
+        setSupported(false);
       }
-      setSilentDone(true);
+      setSilentStatus(outcome.status);
     });
     return () => {
       live = false;
     };
   }, [supported, permission]);
-  if (supported === null || !supported || dismissed) return null;
-  if (permission === 'granted' && !(silentDone && needsFinish)) return null;
-  if (permission === 'unsupported') return null;
+  if (supported === null || dismissed) return null;
+  if (!supported || permission === 'unsupported') return showDeviceStatus ? <UnsupportedStatus /> : null;
+  if (permission === 'granted' && !isFailure(silentStatus)) {
+    if (!showDeviceStatus) return null;
+    if (silentStatus === null) return <SigningUpStatus />;
+    if (silentStatus === 'registered') return <OnStatus />;
+    return null;
+  }
   function dismiss() {
     // The settings screen is opened on purpose, so closing the card there hides it
     // for this visit only and leaves the home screen's choice alone.
@@ -115,7 +154,7 @@ export function PushPrompt({ ignoreDismissal = false }: { ignoreDismissal?: bool
     setBusy(false);
     if (outcome.status === 'registered') {
       setPermission('granted');
-      setNeedsFinish(false);
+      setSilentStatus('registered');
       return;
     }
     if (outcome.status === 'denied') {
@@ -178,6 +217,62 @@ export function PushPrompt({ ignoreDismissal = false }: { ignoreDismissal?: bool
         <button className="skiplink" onClick={dismiss}>
           Maybe later
         </button>
+      </div>
+    </section>
+  );
+}
+/** #1808: the settings card once registerFcmToken has succeeded for this device. */
+function OnStatus() {
+  return (
+    <section className="glass push-prompt push-on d2" role="status">
+      <div className="hd">
+        <div className="ico">{'\u{1F514}'}</div>
+        <div>
+          <b>Notifications are on for this device.</b>
+        </div>
+      </div>
+    </section>
+  );
+}
+/** #1808: the settings card while the sign-in's silent registration is still running. */
+function SigningUpStatus() {
+  return (
+    <section className="glass push-prompt push-signing d2" role="status" aria-live="polite" aria-busy="true">
+      <div className="hd">
+        <div className="ico">{'\u{1F514}'}</div>
+        <div>
+          <b>
+            <span className="loading-spinner loading-spinner--inline" aria-hidden="true" />
+            Signing up this device…
+          </b>
+        </div>
+      </div>
+    </section>
+  );
+}
+/**
+ * #1808: the settings card when this browser cannot take web push at all. On
+ * an iPhone tab that is the normal state, and the home-screen app is the fix,
+ * so it says so in AddToHomeScreen's words.
+ */
+function UnsupportedStatus() {
+  const iphoneTab = isIos() && !isStandalone();
+  return (
+    <section className="glass push-prompt push-unsupported d2" role="status">
+      <div className="hd">
+        <div className="ico">{'\u{1F515}'}</div>
+        <div>
+          <b>{"This browser can't get notifications."}</b>
+          {iphoneTab && (
+            <>
+              <p>
+                Add MyTribe to your home screen first. Tap the <strong>Share</strong> button at the bottom of Safari,
+                then <strong>Add to Home Screen</strong>.
+              </p>
+              <p>{IPHONE_PUSH_NOTE}</p>
+            </>
+          )}
+        </div>
       </div>
     </section>
   );
