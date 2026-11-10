@@ -1064,15 +1064,25 @@ class FirestoreClient {
 
     fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> =
         kotlinx.coroutines.flow.flow {
-            reportsStream().collect { res ->
+            reportsForSessionStream(sessionId).collect { res ->
                 when (res) {
-                    is FirestoreResult.Data -> emit(FirestoreResult.Data(res.value.firstOrNull { it.sessionId == sessionId }))
+                    is FirestoreResult.Data -> emit(FirestoreResult.Data(res.value.firstOrNull()))
                     is FirestoreResult.Error -> emit(FirestoreResult.Error(res.message))
                     FirestoreResult.Loading -> emit(FirestoreResult.Loading)
                 }
             }
         }
-
+    /** #1804: all of a visit's reports, sent tales newest first, then drafts ([orderVisitReports]). */
+    fun reportsForSessionStream(sessionId: String): Flow<FirestoreResult<List<KinCareReport>>> =
+        kotlinx.coroutines.flow.flow {
+            reportsStream().collect { res ->
+                when (res) {
+                    is FirestoreResult.Data -> emit(FirestoreResult.Data(orderVisitReports(res.value, sessionId)))
+                    is FirestoreResult.Error -> emit(FirestoreResult.Error(res.message))
+                    FirestoreResult.Loading -> emit(FirestoreResult.Loading)
+                }
+            }
+        }
     /**
      * Live single session for [sessionId], derived off [sessionsStream] (same
      * pattern as [reportForSessionStream]). Carries the persisted [GpsSummary] so
@@ -1111,8 +1121,9 @@ class FirestoreClient {
      * VisitNotifier). This replaces the old [platformSendReport] which wrote an
      * empty receipt on web and was a hard stub on desktop.
      *
-     * Fail-loud: a dispatch error (e.g. blank kinfolkId / sourceBookingId, missing
-     * primaryUid) returns [WriteResult.Err] and the report is NOT flipped to SENT,
+     * Fail-loud: a dispatch error (e.g. blank kinfolkId / sourceBookingId, or a
+     * kinfolk with no linked login; the server routes the notice on
+     * kinfolk/{id}.uid, #1802) returns [WriteResult.Err] and the report is NOT flipped to SENT,
      * so the auntie can retry. A successful dispatch with zero channels
      * (suppressed) still sends, with a blank receipt the Delivery panel honestly
      * omits, never a faked id.
@@ -5036,3 +5047,20 @@ internal fun decodePublishedReportId(raw: String): String? =
     runCatching {
         Json.parseToJsonElement(raw).jsonObject["reportId"]?.jsonPrimitive?.contentOrNull
     }.getOrNull()?.takeIf { it.isNotBlank() }
+
+/**
+ * #1804: the reports of one visit in the order the report screen opens them.
+ * SENT tales come first, newest sent first (ties fall to createdAt, then id so
+ * the order is stable), then everything else (drafts) newest first. A stray
+ * draft therefore never outranks a sent tale.
+ */
+fun orderVisitReports(reports: List<KinCareReport>, sessionId: String): List<KinCareReport> {
+    val forVisit = reports.filter { it.sessionId == sessionId }
+    val newestFirst = compareByDescending<KinCareReport> { it.sentAt }
+        .thenByDescending { it.createdAt }
+        .thenByDescending { it._id }
+    val sent = forVisit.filter { it.status == "SENT" }.sortedWith(newestFirst)
+    val rest = forVisit.filter { it.status != "SENT" }
+        .sortedWith(compareByDescending<KinCareReport> { it.updatedAt }.thenByDescending { it.createdAt }.thenByDescending { it._id })
+    return sent + rest
+}

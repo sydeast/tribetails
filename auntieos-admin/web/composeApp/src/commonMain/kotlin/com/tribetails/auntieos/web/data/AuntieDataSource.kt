@@ -133,6 +133,21 @@ interface AuntieDataSource {
     // KinTale report authoring
     fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>>
     /**
+     * #1804: every report for the visit, newest sent first, then drafts newest
+     * first (see [orderVisitReports]). The default wraps the single report so
+     * delegating data sources that never open the report screen need no change.
+     */
+    fun reportsForSessionStream(sessionId: String): Flow<FirestoreResult<List<KinCareReport>>> =
+        kotlinx.coroutines.flow.flow {
+            reportForSessionStream(sessionId).collect { res ->
+                when (res) {
+                    is FirestoreResult.Data -> emit(FirestoreResult.Data(listOfNotNull(res.value)))
+                    is FirestoreResult.Error -> emit(FirestoreResult.Error(res.message))
+                    FirestoreResult.Loading -> emit(FirestoreResult.Loading)
+                }
+            }
+        }
+    /**
      * Create [edited] when it has no id, else write only the fields it changed
      * relative to [loaded], the report the caller read (#994).
      */

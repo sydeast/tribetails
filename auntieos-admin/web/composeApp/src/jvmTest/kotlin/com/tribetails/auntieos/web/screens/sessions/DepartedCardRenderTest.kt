@@ -104,4 +104,15 @@ class DepartedCardRenderTest {
         assertEquals(listOf("s1"), viewed)
         assertTrue(written.isEmpty())
     }
+    @Test
+    fun completedCardViewKinTaleOpensTheReportNotTheComposer() = runDesktopComposeUiTest {
+        val viewed = mutableListOf<String>()
+        val written = mutableListOf<String>()
+        show(departed(eligible = true).copy(status = "COMPLETED"), onViewKinTale = { viewed += it }, onWriteKinTale = { written += it })
+        waitForText("View KinTale")
+        onNodeWithText("View KinTale", useUnmergedTree = true).performClick()
+        waitForIdle()
+        assertEquals(listOf("s1"), viewed)
+        assertTrue(written.isEmpty())
+    }
 }

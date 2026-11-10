@@ -103,7 +103,16 @@ fun KinTaleReportScreen(
 
     // P0-FLICKER: hoist Flow construction via remember so the live report + media
     // survive recomposition (otherwise data flickers Loading -> Data each frame).
-    val reportState by remember(vm) { vm.reportStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val reportsState by remember(vm) { vm.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #1804: which sent tale the operator picked; null means the newest one.
+    var pickedReportId by remember(vm) { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val reportList = (reportsState as? FirestoreResult.Data)?.value.orEmpty()
+    val sentList = reportList.filter { it.status == "SENT" }
+    val reportState: FirestoreResult<KinCareReport?> = when (val rs = reportsState) {
+        is FirestoreResult.Data -> FirestoreResult.Data(pickVisitReport(rs.value, pickedReportId))
+        is FirestoreResult.Error -> FirestoreResult.Error(rs.message)
+        FirestoreResult.Loading -> FirestoreResult.Loading
+    }
     val mediaState by remember(vm) { vm.mediaStream() }.collectAsState(initial = FirestoreResult.Loading)
     // Live kin for the per-kin checklist name/species join (spec 11 item 4.1).
     val kinState by remember(vm) { vm.kinStream() }.collectAsState(initial = FirestoreResult.Loading)
@@ -189,6 +198,10 @@ fun KinTaleReportScreen(
             }
 
             liveReport.status == "SENT" -> {
+                if (sentList.size > 1) {
+                    SentTalePicker(sent = sentList, selectedId = liveReport._id, onSelect = { pickedReportId = it })
+                    Spacer(Modifier.height(16.dp))
+                }
                 SentReportView(vm = vm, report = liveReport, session = liveSession, media = media, kinById = kinById)
             }
 
@@ -199,6 +212,31 @@ fun KinTaleReportScreen(
     }
 }
 
+/**
+ * #1804: the report to show, given the visit's reports already ordered by
+ * [orderVisitReports]. A picked id wins while it still exists; otherwise the
+ * first (the newest sent tale, or the newest draft when none was sent).
+ */
+internal fun pickVisitReport(ordered: List<KinCareReport>, pickedId: String?): KinCareReport? =
+    ordered.firstOrNull { pickedId != null && it._id == pickedId } ?: ordered.firstOrNull()
+/** Button label for one sent tale in the picker. */
+internal fun sentTaleLabel(report: KinCareReport, position: Int): String {
+    val `when` = report.sentAt.replace('T', ' ').take(16)
+    return if (`when`.isBlank()) "KinTale $position" else "KinTale $position, sent $`when`"
+}
+/** #1804: several sent tales for one visit; the operator picks which to read. */
+@Composable
+internal fun SentTalePicker(sent: List<KinCareReport>, selectedId: String, onSelect: (String) -> Unit) {
+    DenPanel(title = "This visit has ${sent.size} sent KinTales") {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            sent.forEachIndexed { i, r ->
+                val label = sentTaleLabel(r, i + 1)
+                if (r._id == selectedId) PrimaryButton(label = label, onClick = { onSelect(r._id) })
+                else GhostButton(label = label, onClick = { onSelect(r._id) })
+            }
+        }
+    }
+}
 /** DRAFT mode body: editor panel + error toast + save/send actions. */
 @Composable
 private fun DraftBody(vm: KinTaleReportViewModel, report: KinCareReport, session: KinCareSession?) {
