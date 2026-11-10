@@ -186,7 +186,12 @@ interface Answer {
 }
 
 async function bootWorker(swSource: string, origin: string) {
-  const SHELL_BODY = '<!DOCTYPE html><title>the precached shell</title>';
+  // The fake server has a release number, so a spec can tell an answer from
+  // the precache (the release the worker installed with) apart from one the
+  // network produced after a deploy.
+  let release = 1;
+  const shellOf = (n: number) => `<!DOCTYPE html><title>the shell of release ${n}</title>`;
+  const SHELL_BODY = shellOf(release);
   let online = true;
   const caches = new Map<string, Map<string, Response>>();
   const cacheFor = (name: string) => {
@@ -226,8 +231,11 @@ async function bootWorker(swSource: string, origin: string) {
     removeEventListener: () => undefined,
     fetch: async (input: Request | string) => {
       if (!online) throw new TypeError('Failed to fetch');
-      const url = typeof input === 'string' ? input : input.url;
-      const body = url.includes('index.html') ? SHELL_BODY : `asset for ${url}`;
+      const url = new URL(typeof input === 'string' ? input : input.url, origin);
+      // What hosting does: /index.html itself, and every extensionless path
+      // (firebase.json rewrites `**` to /index.html), get the CURRENT shell.
+      const isShell = url.pathname === '/index.html' || !/\.[^/.]+$/.test(url.pathname);
+      const body = isShell ? shellOf(release) : `asset for ${url.href}`;
       return new Response(body, { status: 200, headers: { 'Content-Type': 'text/html' } });
     },
     caches: {
@@ -297,6 +305,12 @@ async function bootWorker(swSource: string, origin: string) {
 
   return {
     SHELL_BODY,
+    shellOf,
+    /** Ship a new release to the server. The worker's precache still holds the old one. */
+    deploy: () => {
+      release += 1;
+      return release;
+    },
     goOffline: () => {
       online = false;
     },
@@ -314,7 +328,7 @@ describe('the worker, actually running, with the network gone', () => {
     worker = await bootWorker(read('sw.js'), ORIGIN);
     worker.goOffline();
   }, 120_000);
-  it.each(['/bookings/bk-2291', '/kintales/kt-77', '/invoices/inv-4', '/home'])(
+  it.each(['/bookings/bk-2291', '/kintales/kt-77', '/invoices/inv-4', '/home', '/', '/index.html'])(
     'answers a cold deep link to %s with the precached shell',
     async (path) => {
       // A household opens a link to one visit, on a phone, with no signal.
@@ -350,4 +364,28 @@ describe('the worker, actually running, with the network gone', () => {
     const answer = await worker.navigate('/assets/does-not-exist-Xy12.js');
     expect(answer.body).not.toBe(worker.SHELL_BODY);
   });
+});
+describe('the worker, actually running, after a release with the network up', () => {
+  // #1812. The worker installed with release 1 in its precache, then release 2
+  // went out. A working network must win for EVERY navigation, the root URL
+  // included: `/` is the manifest start_url, so it is what every home-screen
+  // launch asks for. Before the fix, Workbox's precache route answered `/` (via
+  // its default directoryIndex) and `/index.html` (an exact precache hit)
+  // cache-first, and the household saw release 1 until a hard reload.
+  const ORIGIN = 'https://kinfolk.tribetails.com';
+  let worker: Awaited<ReturnType<typeof bootWorker>>;
+  let current = 0;
+  beforeAll(async () => {
+    worker = await bootWorker(read('sw.js'), ORIGIN);
+    current = worker.deploy();
+  }, 120_000);
+  it.each(['/', '/index.html', '/home', '/bookings/bk-2291'])(
+    'answers a navigation to %s with the new release from the network',
+    async (path) => {
+      const answer = await worker.navigate(path);
+      expect(answer.handled).toBe(true);
+      expect(answer.status).toBe(200);
+      expect(answer.body).toBe(worker.shellOf(current));
+    },
+  );
 });

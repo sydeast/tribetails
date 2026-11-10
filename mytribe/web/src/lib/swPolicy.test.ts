@@ -69,6 +69,18 @@ describe('swPolicy', () => {
       expect(isDeniedNavigation(new URL('/assets/index-abc123.js', base))).toBe(true);
       expect(isDeniedNavigation(new URL('/icon-192.png', base))).toBe(true);
     });
+    it('lets /index.html through to the network, since it is the shell and not an asset (#1812)', () => {
+      // Denying it would hand the navigation to the precache route, which
+      // answers cache-first with the release the worker installed with.
+      const base = 'https://kinfolk.tribetails.com';
+      expect(isDeniedNavigation(new URL('/index.html', base))).toBe(false);
+    });
+    it('exempts only the root /index.html, not any file that happens to share its name', () => {
+      const base = 'https://kinfolk.tribetails.com';
+      expect(isDeniedNavigation(new URL('/assets/index.html', base))).toBe(true);
+      expect(isDeniedNavigation(new URL('/index.html.map', base))).toBe(true);
+      expect(isDeniedNavigation(new URL('/assets/index-abc123.js', base))).toBe(true);
+    });
   });
   describe('navigationHandler', () => {
     const shellResponse = 'the precached shell';
