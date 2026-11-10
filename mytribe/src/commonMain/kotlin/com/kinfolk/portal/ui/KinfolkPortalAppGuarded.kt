@@ -76,7 +76,11 @@ fun KinfolkPortalAppGuarded() {
     LaunchedEffect(Unit) { repo.observe() }
     // Push registration: fires only once auth resolves to SignedIn, so the
     // web Notification permission prompt can never appear on first paint.
-    val pushCoordinator = remember(portalApi) { PushRegistrationCoordinator(portalApi) }
+    // #1788: the platform's notification permission, asked only from the Enable card.
+    val permissionGate = com.kinfolk.portal.push.rememberNotificationPermissionGate()
+    val pushCoordinator = remember(portalApi, permissionGate) {
+        PushRegistrationCoordinator(portalApi, permissionGate = permissionGate)
+    }
     val authState by repo.state.collectAsState()
     LaunchedEffect(authState) {
         if (authState is AuthState.SignedIn) pushCoordinator.onSignedIn()

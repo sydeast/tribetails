@@ -9,8 +9,8 @@ actual val pushPlatform: String = "android-mytribe"
 
 /**
  * Android FCM token. No permission prompt here: fetching a token does not
- * require POST_NOTIFICATIONS (only displaying does — KinfolkFcmService
- * already catches the SecurityException when it's missing).
+ * require POST_NOTIFICATIONS (only displaying does). That permission is asked
+ * from the Enable card through the notification permission gate (#1788).
  *
  * Split of responsibilities with KinfolkFcmService:
  *   - sign-in time registration → common PushRegistrationCoordinator via this

@@ -868,4 +868,26 @@ class NotificationSettingsScreenTest {
         waitForIdle()
         onNodeWithTag("device-push-card").assertDoesNotExist()
     }
+    @Test
+    fun aBlockedDevice_showsTheBlockedCardOnNotificationSettings() = runComposeUiTest {
+        val fake = prefsOnlyFake()
+        val gate = object : com.kinfolk.portal.push.NotificationPermissionGate {
+            override val state = kotlinx.coroutines.flow.MutableStateFlow<com.kinfolk.portal.push.NotificationPermissionState>(
+                com.kinfolk.portal.push.NotificationPermissionState.Denied,
+            )
+            override fun refresh() = Unit
+            override fun requestPermission() = Unit
+            override fun openSystemSettings() = Unit
+        }
+        val coordinator = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe", tokenProvider = { "tok-1" }, logger = {}, permissionGate = gate,
+        )
+        coordinator.onSignedIn()
+        setThemedContent {
+            NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore(), pushCoordinator = coordinator)
+        }
+        waitForIdle()
+        onNodeWithText("Notifications are blocked").assertExists()
+        onNodeWithTag("device-push-open-settings").assertExists()
+    }
 }

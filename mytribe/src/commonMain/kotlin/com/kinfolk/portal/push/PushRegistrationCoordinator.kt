@@ -56,12 +56,20 @@ class PushRegistrationCoordinator(
     private val tokenProvider: suspend () -> String? = { obtainPushToken() },
     private val logger: (String) -> Unit = { println("[Push] $it") },
     private val stepTimeoutMs: Long = STEP_TIMEOUT_MS,
+    /** #1788: whether the device will show a push; the Enable and Blocked cards read it. */
+    val permissionGate: NotificationPermissionGate = NotApplicableNotificationGate,
 ) {
     var registeredToken: String? = null
         private set
     private val _state = MutableStateFlow<DevicePushState>(DevicePushState.Unknown)
     /** Latest outcome of a token fetch or register call; see [DevicePushState]. */
     val state: StateFlow<DevicePushState> = _state.asStateFlow()
+    private val _homeCardDismissed = MutableStateFlow(false)
+    /** "Maybe later" / "Close" on the Home card, for this session only, as on the web portal. */
+    val homeCardDismissed: StateFlow<Boolean> = _homeCardDismissed.asStateFlow()
+    fun dismissHomeCard() {
+        _homeCardDismissed.value = true
+    }
     /**
      * Retry button: forget the cached token and run the sign-in path again, so
      * a failed token fetch or register call gets another try without waiting
@@ -105,6 +113,7 @@ class PushRegistrationCoordinator(
     /** Call BEFORE backend.signOut() so the callable still has auth. */
     suspend fun onSignOut() {
         _state.value = DevicePushState.Unknown
+        _homeCardDismissed.value = false
         val token = registeredToken ?: return
         registeredToken = null
         try {

@@ -13,6 +13,8 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.kinfolk.portal.push.DroppedPushLog
+import com.kinfolk.portal.push.notificationBlockReasonNow
 import com.kinfolk.portal.MainActivity
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -116,10 +118,20 @@ class KinfolkFcmService : FirebaseMessagingService() {
             .setContentIntent(pending)
             .setAutoCancel(true)
             .build()
+        // #1788: a push that cannot be shown is recorded with its reason (the
+        // Notification Settings card reads the same permission), never swallowed.
+        val blocked = notificationBlockReasonNow(this)
+        if (blocked != null) {
+            Log.w(TAG, "push dropped, not shown: $blocked (catalogKey=$catalogKey)")
+            DroppedPushLog.record(blocked)
+            return
+        }
         try {
             NotificationManagerCompat.from(this).notify(notificationId, notification)
         } catch (e: SecurityException) {
-            Log.w(TAG, "POST_NOTIFICATIONS permission missing", e)
+            // The permission can be pulled between the check above and notify().
+            Log.w(TAG, "push dropped, not shown: POST_NOTIFICATIONS revoked (catalogKey=$catalogKey)", e)
+            DroppedPushLog.record("POST_NOTIFICATIONS not granted")
         }
     }
 
