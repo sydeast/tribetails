@@ -44,10 +44,27 @@ vi.mock('../lib/auth', () => ({
   useSignOut: () => ({ signOut: vi.fn(), signingOut: false }),
 }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
-vi.mock('../components/PushPrompt', () => ({
-  PushPrompt: (props: { ignoreDismissal?: boolean }) => (
-    <span data-testid="push-prompt" data-ignore-dismissal={String(Boolean(props.ignoreDismissal))} />
-  ),
+// #1808: the real device card renders here, with only the push module and the
+// iPhone check underneath it faked, so each state is asserted on this screen.
+const push = vi.hoisted(() => ({
+  currentPushPermission: vi.fn<() => NotificationPermission | 'unsupported'>(),
+  isPushSupported: vi.fn<() => Promise<boolean>>(),
+  refreshPushRegistration: vi.fn(),
+  registerForPush: vi.fn(),
+  settledPushRegistration: vi.fn(),
+  isIos: vi.fn<() => boolean>(),
+  isStandalone: vi.fn<() => boolean>(),
+}));
+vi.mock('../lib/push', () => ({
+  currentPushPermission: () => push.currentPushPermission(),
+  isPushSupported: () => push.isPushSupported(),
+  refreshPushRegistration: () => push.refreshPushRegistration(),
+  registerForPush: () => push.registerForPush(),
+  settledPushRegistration: () => push.settledPushRegistration(),
+}));
+vi.mock('../lib/installState', () => ({
+  isIos: () => push.isIos(),
+  isStandalone: () => push.isStandalone(),
 }));
 // #1369: the footnote reads the business name from getMyHome; no network in a unit test.
 vi.mock('../api/portal', () => ({ getMyHome: vi.fn().mockResolvedValue({ businessName: '' }) }));
@@ -147,13 +164,92 @@ beforeEach(() => {
   mocks.saveMyNotificationPrefs.mockReset();
   // #1545: a fold is remembered in this browser; no test inherits another's.
   localStorage.clear();
+  sessionStorage.clear();
+  // A kinfolk's first visit: push works and nothing is decided yet.
+  push.currentPushPermission.mockReset().mockReturnValue('default');
+  push.isPushSupported.mockReset().mockResolvedValue(true);
+  push.refreshPushRegistration.mockReset().mockResolvedValue({ status: 'registered' });
+  push.registerForPush.mockReset();
+  push.settledPushRegistration.mockReset().mockReturnValue(null);
+  push.isIos.mockReset().mockReturnValue(false);
+  push.isStandalone.mockReset().mockReturnValue(false);
 });
 
-describe('this device notifications card (#1787)', () => {
-  it('shows the same card as Home, and ignores the Home dismissal so Retry is never hidden here', async () => {
+describe('this device notifications card (#1787, #1808)', () => {
+  /** The device card holding [text]; there is only ever one on the screen. */
+  async function deviceCard(text: string | RegExp): Promise<HTMLElement> {
+    const line = await screen.findByText(text);
+    const card = line.closest('.push-prompt');
+    expect(card, 'the line sits in the device card').not.toBeNull();
+    return card as HTMLElement;
+  }
+  it('ignores the Home dismissal, so the card is never hidden here', async () => {
+    sessionStorage.setItem('mytribe.push.dismissed', '1');
+    push.currentPushPermission.mockReturnValue('denied');
     await renderLoaded();
-    const card = screen.getByTestId('push-prompt');
-    expect(card.getAttribute('data-ignore-dismissal')).toBe('true');
+    await deviceCard('Notifications are blocked');
+  });
+  it('signed up: says notifications are on for this device', async () => {
+    push.currentPushPermission.mockReturnValue('granted');
+    await renderLoaded();
+    const card = await deviceCard('Notifications are on for this device.');
+    expect(within(card).queryByRole('button')).toBeNull();
+    expect(push.refreshPushRegistration).toHaveBeenCalledTimes(1);
+  });
+  it('signing up: says so, with the loading cue, while registerFcmToken is still out', async () => {
+    push.currentPushPermission.mockReturnValue('granted');
+    push.refreshPushRegistration.mockReturnValue(new Promise(() => {}));
+    await renderLoaded();
+    const card = await deviceCard('Signing up this device…');
+    expect(card.querySelector('.loading-spinner')).not.toBeNull();
+    expect(screen.queryByText('Notifications are on for this device.')).toBeNull();
+  });
+  it('failed: the Finish card with the code and Retry', async () => {
+    push.currentPushPermission.mockReturnValue('granted');
+    push.refreshPushRegistration.mockResolvedValue({
+      status: 'error',
+      message: 'Request timed out.',
+      code: 'messaging/token-subscribe-failed',
+      stage: 'token',
+      error: new Error('Request timed out.'),
+      diagnostics: { permission: 'granted', serviceWorker: 'active', vapidKeySet: true },
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await renderLoaded();
+    const card = await deviceCard('Finish turning on notifications');
+    expect(within(card).getByText(/messaging\/token-subscribe-failed/)).toBeTruthy();
+    expect(within(card).getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+  it('blocked: the blocked note', async () => {
+    push.currentPushPermission.mockReturnValue('denied');
+    await renderLoaded();
+    await deviceCard('Notifications are blocked');
+    expect(screen.queryByText('Notifications are on for this device.')).toBeNull();
+  });
+  it('not decided yet: the Enable card', async () => {
+    await renderLoaded();
+    const card = await deviceCard('Get notified about visits');
+    expect(within(card).getByRole('button', { name: 'Enable notifications' })).toBeTruthy();
+  });
+  it('unsupported browser: says this browser cannot get notifications', async () => {
+    push.isPushSupported.mockResolvedValue(false);
+    push.currentPushPermission.mockReturnValue('unsupported');
+    await renderLoaded();
+    const card = await deviceCard("This browser can't get notifications.");
+    expect(within(card).queryByText(/home screen/)).toBeNull();
+  });
+  it('unsupported on an iPhone tab: also says to add MyTribe to the home screen first', async () => {
+    push.isPushSupported.mockResolvedValue(false);
+    push.currentPushPermission.mockReturnValue('unsupported');
+    push.isIos.mockReturnValue(true);
+    await renderLoaded();
+    const card = await deviceCard("This browser can't get notifications.");
+    expect(within(card).getByText(/Add MyTribe to your home screen first/)).toBeTruthy();
+    expect(
+      within(card).getByText(
+        'An iPhone will not send you a visit update from a Safari tab, only from the app on your home screen.',
+      ),
+    ).toBeTruthy();
   });
 });
 describe('per-key expansion', () => {
@@ -250,7 +346,8 @@ describe('a channel the household cannot change', () => {
     try {
       await renderLockedCategory();
       await waitFor(() => expect(screen.getAllByText('Set by Test Business. Can’t be changed here.')).toHaveLength(2));
-      expect(screen.queryByText(/your Auntie/)).toBeNull();
+      // The fallback name, not the device card's "your Auntie checks in" (#1808 renders it here).
+      expect(screen.queryByText(/Set by your Auntie/)).toBeNull();
     } finally {
       vi.mocked(getMyHome).mockResolvedValue({ businessName: '' } as never);
     }

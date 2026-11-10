@@ -1,16 +1,23 @@
 @file:OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
 package com.kinfolk.portal.screens.notifications
+import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.push.DevicePushState
 import com.kinfolk.portal.push.NotificationPermissionGate
 import com.kinfolk.portal.push.NotificationPermissionState
 import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.screens.setThemedContent
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.buildJsonObject
@@ -156,5 +163,87 @@ class DevicePushCardTest {
         setThemedContent { DevicePushCard(c, onDismiss = null) }
         waitForIdle()
         onNodeWithTag("device-push-dismiss").assertDoesNotExist()
+    }
+
+    // ---- #1808: Notification Settings says what this device is doing ----
+    private fun ComposeUiTest.has(tag: String): Boolean = onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+
+    @Test
+    fun onNotificationSettings_aSignedUpDeviceSaysNotificationsAreOn() = runComposeUiTest {
+        val gate = FakeGate(NotificationPermissionState.Granted)
+        val c = coordinator(gate)
+        c.onSignedIn()
+        setThemedContent { DevicePushCard(c, onDismiss = null, showDeviceStatus = true) }
+        waitForIdle()
+        onNodeWithTag("device-push-on").assertTextEquals("Notifications are on for this device.")
+        onNodeWithTag("device-push-retry").assertDoesNotExist()
+        onNodeWithTag("device-push-enable").assertDoesNotExist()
+        onNodeWithTag("device-push-dismiss").assertDoesNotExist()
+    }
+    @Test
+    fun onHome_aSignedUpDeviceShowsNoCard() = runComposeUiTest {
+        val gate = FakeGate(NotificationPermissionState.Granted)
+        val c = coordinator(gate)
+        c.onSignedIn()
+        setThemedContent { DevicePushCard(c, onDismiss = { c.dismissHomeCard() }) }
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
+        onNodeWithText("Notifications are on for this device.").assertDoesNotExist()
+    }
+    @Test
+    fun onNotificationSettings_aSignUpInFlightSaysSigningUpWithASpinner_thenOn() = runComposeUiTest {
+        val gate = FakeGate(NotificationPermissionState.Granted)
+        val release = CompletableDeferred<String?>()
+        val c = coordinator(gate, token = { release.await() })
+        val signIn = CoroutineScope(Dispatchers.Default).launch { c.onSignedIn() }
+        setThemedContent { DevicePushCard(c, onDismiss = null, showDeviceStatus = true) }
+        waitUntil(timeoutMillis = 5_000) { has("device-push-signing-up") }
+        onNodeWithTag("device-push-signing-up").assertTextEquals("Signing up this device…")
+        onNodeWithTag("device-push-spinner").assertExists()
+        onNodeWithTag("device-push-on").assertDoesNotExist()
+        onNodeWithTag("device-push-dismiss").assertDoesNotExist()
+        release.complete("tok-1")
+        waitUntil(timeoutMillis = 5_000) { has("device-push-on") }
+        onNodeWithTag("device-push-signing-up").assertDoesNotExist()
+        signIn.cancel()
+    }
+    @Test
+    fun onHome_aSignUpInFlightShowsNoCard() = runComposeUiTest {
+        val gate = FakeGate(NotificationPermissionState.Granted)
+        val release = CompletableDeferred<String?>()
+        val c = coordinator(gate, token = { release.await() })
+        val signIn = CoroutineScope(Dispatchers.Default).launch { c.onSignedIn() }
+        setThemedContent { DevicePushCard(c, onDismiss = { c.dismissHomeCard() }) }
+        waitUntil(timeoutMillis = 5_000) { c.state.value == DevicePushState.Registering }
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
+        release.complete("tok-1")
+        signIn.cancel()
+    }
+    @Test
+    fun onNotificationSettings_retryFromTheFinishCardSaysSigningUp_thenOn() = runComposeUiTest {
+        val gate = FakeGate(NotificationPermissionState.Granted)
+        var next: suspend () -> String? = { throw IllegalStateException("SERVICE_NOT_AVAILABLE") }
+        val c = coordinator(gate, token = { next() })
+        c.onSignedIn()
+        setThemedContent { DevicePushCard(c, onDismiss = null, showDeviceStatus = true) }
+        waitForIdle()
+        onNodeWithText("Finish turning on notifications").assertExists()
+        val release = CompletableDeferred<String?>()
+        next = { release.await() }
+        onNodeWithTag("device-push-retry").performClick()
+        waitUntil(timeoutMillis = 5_000) { has("device-push-signing-up") }
+        release.complete("tok-1")
+        waitUntil(timeoutMillis = 5_000) { has("device-push-on") }
+        onNodeWithText("Finish turning on notifications").assertDoesNotExist()
+    }
+    @Test
+    fun onNotificationSettings_aPlatformWithNoTokenStillShowsNoCard() = runComposeUiTest {
+        val gate = FakeGate(NotificationPermissionState.NotApplicable)
+        val c = coordinator(gate, token = { null })
+        c.onSignedIn()
+        setThemedContent { DevicePushCard(c, onDismiss = null, showDeviceStatus = true) }
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
     }
 }

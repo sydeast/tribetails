@@ -58,11 +58,16 @@ const ALLOWED_CALLABLE_ORIGIN = 'http://127.0.0.1:5499/';
  * dead port it is meant to be replacing. `*` is safe because the callable
  * protocol sends its token in an `Authorization` header rather than a cookie,
  * so the request is never in credentials mode.
+ *
+ * `firebase-instance-id-token` is the header the Functions SDK adds to EVERY
+ * callable once Firebase messaging holds a token on a granted browser (#1808).
+ * Without it here, the first spec that signs a device up for push sees each
+ * later callable fail its preflight as `functions/internal`.
  */
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'POST, OPTIONS',
-  'access-control-allow-headers': 'authorization, content-type, x-firebase-appcheck',
+  'access-control-allow-headers': 'authorization, content-type, x-firebase-appcheck, firebase-instance-id-token',
 } as const;
 
 /** Callable names requested during the current test that had no stub. */

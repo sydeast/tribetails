@@ -42,7 +42,13 @@ import kotlinx.coroutines.withTimeout
 sealed interface DevicePushState {
     /** No attempt has finished yet (or the kinfolk signed out). */
     data object Unknown : DevicePushState
-    /** The backend has this device's token. */
+    /**
+     * #1808: a token fetch or register call is running right now. Notification
+     * Settings shows "Signing up this device…" for it, so a sign-up still in
+     * flight is no longer the same blank as a finished one.
+     */
+    data object Registering : DevicePushState
+    /** The backend has this device's token: registerFcmToken succeeded. */
     data object Registered : DevicePushState
     /** The platform has no push token to give (desktop, or the browser said no). Not a failure to retry. */
     data object Unavailable : DevicePushState
@@ -82,8 +88,22 @@ class PushRegistrationCoordinator(
 
     /** Call when auth state resolves to SignedIn. Safe to call repeatedly. */
     suspend fun onSignedIn() {
-        // A new attempt starts clean, so a stale failure cannot outlive a clean "no token" answer.
-        if (_state.value is DevicePushState.Failed) _state.value = DevicePushState.Unknown
+        // A new attempt starts clean, so a stale failure cannot outlive a clean
+        // "no token" answer. #1808: and it says it is running. A device already
+        // registered keeps saying so while the token is refreshed.
+        if (_state.value !is DevicePushState.Registered) _state.value = DevicePushState.Registering
+        try {
+            attemptRegistration()
+        } finally {
+            // Every normal exit leaves Registered, Unavailable or Failed. Only a
+            // cancelled run (sign-out, or the scope that launched a Retry going
+            // away) gets here still Registering, and it must not leave the
+            // settings card on "Signing up" for good.
+            if (_state.value == DevicePushState.Registering) _state.value = DevicePushState.Unknown
+        }
+    }
+
+    private suspend fun attemptRegistration() {
         val token = try {
             withTimeout(stepTimeoutMs) { tokenProvider() }
         } catch (t: TimeoutCancellationException) {

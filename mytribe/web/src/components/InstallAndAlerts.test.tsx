@@ -1,15 +1,23 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { InstallAndAlerts } from './InstallAndAlerts';
 import { isIos, isStandalone } from '../lib/installState';
-import { currentPushPermission, isPushSupported, registerForPush } from '../lib/push';
+import {
+  currentPushPermission,
+  isPushSupported,
+  refreshPushRegistration,
+  registerForPush,
+  settledPushRegistration,
+} from '../lib/push';
 
 vi.mock('../lib/installState', () => ({ isIos: vi.fn(), isStandalone: vi.fn() }));
 vi.mock('../lib/push', () => ({
   currentPushPermission: vi.fn(),
   isPushSupported: vi.fn(),
   registerForPush: vi.fn(),
+  refreshPushRegistration: vi.fn(),
+  settledPushRegistration: vi.fn(),
 }));
 
 /** What a tab-only iPhone looks like: no `Notification` constructor at all. */
@@ -104,6 +112,25 @@ describe('InstallAndAlerts', () => {
       render(<InstallAndAlerts />);
       await screen.findByText('Enable notifications');
       expect(screen.queryByText('Keep MyTribe on your home screen')).not.toBeInTheDocument();
+    });
+
+    // #1808: Home is unchanged. Only Notification Settings says "on".
+    it('a signed-up device shows no notifications card on Home', async () => {
+      vi.mocked(currentPushPermission).mockReturnValue('granted');
+      vi.mocked(refreshPushRegistration).mockResolvedValue({ status: 'registered' });
+      vi.mocked(settledPushRegistration).mockReturnValue(null);
+      const { container } = render(<InstallAndAlerts />);
+      await waitFor(() => expect(refreshPushRegistration).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(container).toBeEmptyDOMElement());
+      expect(screen.queryByText('Notifications are on for this device.')).not.toBeInTheDocument();
+    });
+    it('a device still signing up shows no card on Home either', async () => {
+      vi.mocked(currentPushPermission).mockReturnValue('granted');
+      vi.mocked(refreshPushRegistration).mockReturnValue(new Promise(() => {}));
+      vi.mocked(settledPushRegistration).mockReturnValue(null);
+      const { container } = render(<InstallAndAlerts />);
+      await waitFor(() => expect(refreshPushRegistration).toHaveBeenCalledTimes(1));
+      expect(container).toBeEmptyDOMElement();
     });
   });
 });
