@@ -1,4 +1,4 @@
-import { type SessionState } from './sessionFormat';
+import { sessionState, type SessionState } from './sessionFormat';
 import { type VisitLifecycleAction } from '../api/sessionsWrite';
 
 /**
@@ -158,6 +158,40 @@ export function lifecycleActionsFor(state: SessionState): readonly LifecycleActi
 export function cardLifecycleActionsFor(state: SessionState): readonly LifecycleActionDef[] {
   if (state === 'departed') return [];
   return lifecycleActionsFor(state);
+}
+
+/** The two session fields {@link completesAfterKinTale} reads, as they come off the document. */
+export interface KinTaleCompletionFields {
+  status?: string | undefined;
+  autoCompleteEligible?: boolean | undefined;
+}
+
+/**
+ * #1793: a DEPARTED visit whose KinTale has been sent is ready to be marked
+ * Completed, and nothing else is.
+ *
+ * TRANSCRIBED FROM ANDROID, where both sites read the same two facts:
+ *
+ *   `HomeViewModel.kt` load sweep    status == DEPARTED && autoCompleteEligible
+ *   `HomeScreen.kt` Complete button  status == DEPARTED && autoCompleteEligible
+ *
+ * `autoCompleteEligible` is set by every client's send batch
+ * (`api/kinTalesWrite.ts#sendKinTale`, `KinCareRepository.kt`, the desktop
+ * console's `markKinTaleReportSent`) in the same commit as `sentReportCount`,
+ * so it is the one flag all three agree on. Reading `sentReportCount` as well
+ * would let web complete a visit Android leaves open.
+ *
+ * DEPARTED ONLY, although the server accepts COMPLETE from all four
+ * pre-terminal states. A tale sent while the Auntie is still in the house sets
+ * the flag too, and completing then would close a visit she has not clocked
+ * out of. It becomes ready when she departs.
+ *
+ * This decides what the web OFFERS and when it completes after a send. The
+ * completion itself is still `transitionBookingStatus`, which re-reads the
+ * document and runs the operator's arrival rule.
+ */
+export function completesAfterKinTale(session: KinTaleCompletionFields): boolean {
+  return sessionState(session.status ?? '') === 'departed' && session.autoCompleteEligible === true;
 }
 
 /**
