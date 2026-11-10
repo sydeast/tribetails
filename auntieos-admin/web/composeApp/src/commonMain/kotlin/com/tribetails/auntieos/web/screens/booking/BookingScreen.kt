@@ -1530,6 +1530,7 @@ private class FirestoreClientBookingDataSource(
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)
     override suspend fun saveReport(loaded: com.tribetails.auntieos.web.data.KinCareReport, edited: com.tribetails.auntieos.web.data.KinCareReport) = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = client.sendReport(report, session)
+    override suspend fun completeVisitAfterKinTale(sessionId: String) = client.completeVisitAfterKinTale(sessionId)
     override suspend fun logActivity(entry: com.tribetails.auntieos.web.data.ActivityLogEntry) = client.logActivity(entry)
     override fun trainingDocsStream() = client.trainingDocsStream()
     override fun bookingNotesStream(kinfolkId: String, bookingId: String) =

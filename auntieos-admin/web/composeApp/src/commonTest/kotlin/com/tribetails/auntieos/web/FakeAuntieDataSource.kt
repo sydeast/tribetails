@@ -368,6 +368,15 @@ class FakeAuntieDataSource(
     /** Receipt id the fake stamps onto the SENT report (simulates first dispatchId). */
     var sendDeliveryReceiptId: String = "n8n_fake_123"
 
+    /** #1799: session ids [completeVisitAfterKinTale] was asked for, and what it answers. */
+    val completionRequests = mutableListOf<String>()
+    var completionAfterSend: com.tribetails.auntieos.web.data.VisitCompletionAfterSend =
+        com.tribetails.auntieos.web.data.VisitCompletionAfterSend.LeftOpen("ARRIVED")
+    override suspend fun completeVisitAfterKinTale(sessionId: String): com.tribetails.auntieos.web.data.VisitCompletionAfterSend {
+        completionRequests += sessionId
+        return completionAfterSend
+    }
+
     /** #1631: ids [deleteReportDraft] was called with; a set [deleteReportDraftError] fails it. */
     val deletedReportDrafts = mutableListOf<String>()
     var deleteReportDraftError: String? = null

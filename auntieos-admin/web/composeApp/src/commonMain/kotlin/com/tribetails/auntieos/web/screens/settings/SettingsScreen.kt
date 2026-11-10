@@ -4141,6 +4141,7 @@ private class FirestoreClientSettingsDataSource(
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)
     override suspend fun saveReport(loaded: com.tribetails.auntieos.web.data.KinCareReport, edited: com.tribetails.auntieos.web.data.KinCareReport) = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = client.sendReport(report, session)
+    override suspend fun completeVisitAfterKinTale(sessionId: String) = client.completeVisitAfterKinTale(sessionId)
     override fun trainingDocsStream() = client.trainingDocsStream()
     override fun vetClinicsStream() = client.vetClinicsStream()
     override suspend fun createVetClinic(clinic: com.tribetails.auntieos.web.data.VetClinic) = client.createVetClinic(clinic)

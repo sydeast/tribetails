@@ -1846,6 +1846,22 @@ class FirestoreClient {
      */
     suspend fun completeKinCare(sessionId: String, completedAt: String): WriteResult<Unit> =
         bookingTransition(sessionId, null, "COMPLETE", completedAt = completedAt)
+
+    /**
+     * #1799: after a KinTale send, mark the visit Completed when it is DEPARTED
+     * and the send flagged it (`autoCompleteEligible`), the rule Android's Home
+     * sweep and admin web (#1793) follow. Reads the session fresh, then goes
+     * through [completeKinCare]. Never throws: see [runVisitCompletionAfterKinTale].
+     * Kept apart from [markKinTaleReportSent] and [sendReport] on purpose, so a
+     * refused completion can never read as a failed send.
+     */
+    suspend fun completeVisitAfterKinTale(sessionId: String): VisitCompletionAfterSend =
+        runVisitCompletionAfterKinTale(
+            sessionId = sessionId,
+            read = { platformSessionCompletionFields(it) },
+            complete = { id, at -> completeKinCare(id, at) },
+            now = { com.tribetails.auntieos.web.util.nowIso() },
+        )
     private suspend fun bookingTransition(
         bookingId: String,
         visitId: String?,
@@ -2762,6 +2778,11 @@ internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailM
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
 /** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
 internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
+/**
+ * #1799: `status` and `autoCompleteEligible` of one `kin_care_sessions` doc,
+ * read fresh. Null when the doc does not exist; throws when the read fails.
+ */
+internal expect suspend fun platformSessionCompletionFields(sessionId: String): SessionCompletionFields?
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>

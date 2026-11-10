@@ -52,8 +52,10 @@ import com.composables.icons.lucide.Undo2
 import com.tribetails.auntieos.web.data.AuditLog
 import com.tribetails.auntieos.web.data.AuthClient
 import com.tribetails.auntieos.web.data.Breadcrumb
+import com.tribetails.auntieos.web.data.FirestoreAuntieDataSource
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.completesAfterKinTale
 import com.tribetails.auntieos.web.data.GpsPoint
 import com.tribetails.auntieos.web.data.GpsSummary
 import com.tribetails.auntieos.web.data.GpsTracker
@@ -95,6 +97,8 @@ private sealed interface AuntieTimeRoute {
     data object List                          : AuntieTimeRoute
     data class Detail(val kinCareId: String)  : AuntieTimeRoute
     data class Compose(val kinCareId: String) : AuntieTimeRoute
+    /** #1799: the visit's sent KinTale, read-only (KinTaleReportScreen), not a new draft. */
+    data class Report(val kinCareId: String)  : AuntieTimeRoute
 }
 
 @Composable
@@ -109,6 +113,7 @@ fun KinCareSessionsScreen(
         AuntieTimeRoute.List      -> AuntieTimeListScreen(
             onOpenDetail   = { route = AuntieTimeRoute.Detail(it) },
             onWriteKinTale = { route = AuntieTimeRoute.Compose(it) },
+            onViewKinTale  = { route = AuntieTimeRoute.Report(it) },
         )
         is AuntieTimeRoute.Detail -> KinCareDetailScreen(
             kinCareId = r.kinCareId,
@@ -118,6 +123,14 @@ fun KinCareSessionsScreen(
             sessionId = r.kinCareId,
             onClose   = { route = AuntieTimeRoute.List },
         )
+        is AuntieTimeRoute.Report -> {
+            val dataSource = remember { FirestoreAuntieDataSource(FirestoreClient()) }
+            com.tribetails.auntieos.web.screens.kintales.KinTaleReportScreen(
+                sessionId  = r.kinCareId,
+                dataSource = dataSource,
+                onBack     = { route = AuntieTimeRoute.List },
+            )
+        }
     }
 }
 
@@ -129,9 +142,10 @@ private enum class Phase(val label: String, val tone: AuntieStatusTone) {
 }
 
 @Composable
-private fun AuntieTimeListScreen(
+internal fun AuntieTimeListScreen(
     onOpenDetail: (String) -> Unit,
     onWriteKinTale: (String) -> Unit,
+    onViewKinTale: (String) -> Unit,
 ) {
     val client = remember { FirestoreClient() }
     val auth   = remember { AuthClient() }
@@ -339,6 +353,7 @@ private fun AuntieTimeListScreen(
                                     timeBlockLabelFor = timeBlockLabelFor,
                                     onOpenDetail = onOpenDetail,
                                     onWriteKinTale = onWriteKinTale,
+                                    onViewKinTale = onViewKinTale,
                                     onWrite = { id, write, successMsg ->
                                         scope.launch {
                                             // #1617: the two terminal actions go through
@@ -420,6 +435,7 @@ private fun PhaseGroup(
     timeBlockLabelFor: (KinCareSession) -> String?,
     onOpenDetail: (String) -> Unit,
     onWriteKinTale: (String) -> Unit,
+    onViewKinTale: (String) -> Unit,
     onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     // Each phase is a Den glass panel; the count rides in the panel trailing slot
@@ -449,6 +465,7 @@ private fun PhaseGroup(
                     timeBlockLabel = timeBlockLabelFor(session),
                     onOpenDetail = { onOpenDetail(session._id) },
                     onWriteKinTale = { onWriteKinTale(session._id) },
+                    onViewKinTale = { onViewKinTale(session._id) },
                     onWrite     = onWrite,
                 )
             }
@@ -468,6 +485,7 @@ private fun KinCareCard(
     timeBlockLabel: String?,
     onOpenDetail: () -> Unit,
     onWriteKinTale: () -> Unit,
+    onViewKinTale: () -> Unit,
     onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -619,7 +637,14 @@ private fun KinCareCard(
             }
 
             // ---- State-aware action row ----
-            ActionRow(session = session, onWrite = onWrite, onWriteKinTale = onWriteKinTale)
+            ActionRow(
+                session        = session,
+                arrivalRule    = arrivalRule,
+                onRefused      = onRefused,
+                onWrite        = onWrite,
+                onWriteKinTale = onWriteKinTale,
+                onViewKinTale  = onViewKinTale,
+            )
         }
     }
 }
@@ -627,8 +652,11 @@ private fun KinCareCard(
 @Composable
 private fun ActionRow(
     session: KinCareSession,
+    arrivalRule: Boolean?,
+    onRefused: (String) -> Unit,
     onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
     onWriteKinTale: () -> Unit,
+    onViewKinTale: () -> Unit,
 ) {
     val now = nowIso()
     // Fires [action] through the shared pure patch/message builders so the button
@@ -691,12 +719,34 @@ private fun ActionRow(
             )
         }
 
-        "DEPARTED" -> PrimaryButton(
-            label   = "Complete KinTale",
-            onClick = onWriteKinTale,
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(13.dp)) },
-        )
+        // #1799: once its KinTale is sent (DEPARTED and autoCompleteEligible,
+        // Android's rule), the card offers Complete and View KinTale, as
+        // Android's Home card and admin web's Auntie Time card (#1793) do.
+        "DEPARTED" -> if (departedCardActions(session) == DepartedCardActions.CompleteAndView) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PrimaryButton(
+                    label   = "Complete",
+                    onClick = { markCompleted(session, arrivalRule, onRefused, onWrite) },
+                    modifier = Modifier.weight(1f),
+                    leading = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(13.dp)) },
+                )
+                GhostButton(
+                    label   = "View KinTale",
+                    onClick = onViewKinTale,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        } else {
+            PrimaryButton(
+                label   = "Complete KinTale",
+                onClick = onWriteKinTale,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(13.dp)) },
+            )
+        }
 
         // COMPLETED: offer a read-only jump into the sent KinTale (mockup "View KinTale").
         "COMPLETED" -> GhostButton(
@@ -743,16 +793,7 @@ private fun KebabMenu(
                 text = { Text("Mark Completed") },
                 onClick = {
                     open = false
-                    // #1608: a Mark Completed the server is certain to refuse is
-                    // not sent; the operator reads the same sentence straight away.
-                    // #1617: one that may land goes through transitionBookingStatus.
-                    val refusal = completeRefusal(arrivalRule, session)
-                    if (refusal != null) {
-                        onRefused(refusal)
-                    } else {
-                        val a = AuntieTimeAction.MarkCompleted
-                        onWrite(session._id, kinCareWrite(session, a, nowIso()), kinCareSuccessMessage(a))
-                    }
+                    markCompleted(session, arrivalRule, onRefused, onWrite)
                 },
                 leadingIcon = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(16.dp)) },
             )
@@ -922,6 +963,45 @@ internal fun kinCareWrite(
     AuntieTimeAction.MarkCompleted -> KinCareWrite.Transition("COMPLETE", completedAt = now)
     AuntieTimeAction.Cancel        -> KinCareWrite.Transition("CANCEL")
     else                           -> KinCareWrite.Patch(kinCarePatch(session, action, now))
+}
+
+/** #1799: what a DEPARTED card offers. */
+internal enum class DepartedCardActions {
+    /** No KinTale sent yet: "Complete KinTale" opens the composer. */
+    WriteKinTale,
+
+    /** Its KinTale is sent: "Complete" and "View KinTale". */
+    CompleteAndView,
+}
+
+/**
+ * #1799: a DEPARTED card whose KinTale has been sent offers Complete and View
+ * KinTale, on the same rule the send completes on ([completesAfterKinTale]).
+ * Any other DEPARTED card keeps "Complete KinTale".
+ */
+internal fun departedCardActions(session: KinCareSession): DepartedCardActions =
+    if (completesAfterKinTale(session)) DepartedCardActions.CompleteAndView else DepartedCardActions.WriteKinTale
+
+/**
+ * Mark Completed, from the kebab or a departed card's Complete.
+ * #1608: one the server is certain to refuse is not sent; the operator reads
+ * the same sentence straight away. #1617: one that may land goes through
+ * transitionBookingStatus ([kinCareWrite] gives a Transition, never a patch).
+ */
+internal fun markCompleted(
+    session: KinCareSession,
+    arrivalRule: Boolean?,
+    onRefused: (String) -> Unit,
+    onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
+    now: String = nowIso(),
+) {
+    val refusal = completeRefusal(arrivalRule, session)
+    if (refusal != null) {
+        onRefused(refusal)
+    } else {
+        val a = AuntieTimeAction.MarkCompleted
+        onWrite(session._id, kinCareWrite(session, a, now), kinCareSuccessMessage(a))
+    }
 }
 
 /** Success-toast copy for a transition. */
