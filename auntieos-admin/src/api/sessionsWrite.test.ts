@@ -156,11 +156,13 @@ describe('the audit and the household push run AFTER the write, and cannot fail 
     expect(order).toContain('call:dispatchVisitNotification');
     expect(call).toHaveBeenCalledWith('logActivity', {
       actionType: 'VISIT_DEPARTED',
-      description: 'DEPARTED on session s1: ARRIVED -> DEPARTED',
+      description: 'Marked the departure: arrived to departed',
       status: 'SUCCESS',
       targetId: 's1',
       targetCollection: 'kin_care_sessions',
     });
+    const sent = call.mock.calls.find((c: unknown[]) => c[0] === 'logActivity')![1] as { description: string };
+    expect(sent.description).not.toContain('s1');
   });
 
   it('routes the push on the envelope pair, preferring it over a legacy bookingId', async () => {

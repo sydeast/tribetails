@@ -1072,4 +1072,100 @@ class HomeViewModelTest {
         assertNull(vm.uiState.value.dashboardError)
         assertEquals("Dismissing the banner does not move the board", layoutB, vm.uiState.value.dashboardWidgets)
     }
+
+    // ---- #1798: one refused auto-complete must not fail the Home load ----
+    private fun departedEligible(id: String = "ses1", arrivedAt: String = "2026-06-02T10:00:00Z") =
+        TestFixtures.session1.copy(
+            id = id,
+            status = com.tribetails.auntieos.data.model.VisitStatus.DEPARTED.name,
+            autoCompleteEligible = true,
+            arrivedAt = arrivedAt,
+        )
+    @Test
+    fun `a refused auto-complete leaves Home loaded and says why (1798)`() = runTest(testDispatcher) {
+        val session = departedEligible()
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(session))
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete("ses1") } returns
+            Result.failure(RuntimeException("Arrival was outside the radius"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertFalse(state.isLoading)
+        assertFalse(state.isOffline)
+        assertNull(state.actionError)
+        assertEquals(1, state.todayVisits.size)
+        assertEquals(1, state.autoCompleteRefusals.size)
+        assertEquals(
+            "Could not mark Rosa Parks Completed: Arrival was outside the radius",
+            state.autoCompleteRefusals.single().message,
+        )
+    }
+    @Test
+    fun `a refused visit is not retried on every load, and one refusal does not stop the others (1798)`() = runTest(testDispatcher) {
+        val refused = departedEligible("ses1")
+        val fine = departedEligible("ses2")
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(refused, fine))
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete("ses1") } returns Result.failure(RuntimeException("refused"))
+        coEvery { mockKinCareRepo.markSessionComplete("ses2") } returns Result.success(Unit)
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.load()
+        advanceUntilIdle()
+        vm.load()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete("ses1") }
+        // ses2 stays eligible in the stub, so it is attempted on each load.
+        coVerify(exactly = 3) { mockKinCareRepo.markSessionComplete("ses2") }
+        assertFalse(vm.uiState.value.isOffline)
+        assertEquals(listOf("ses1"), vm.uiState.value.autoCompleteRefusals.map { it.sessionId })
+    }
+    @Test
+    fun `a refused visit is tried again once the visit has changed (1798)`() = runTest(testDispatcher) {
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returnsMany listOf(
+            Result.success(listOf(departedEligible(arrivedAt = "2026-06-02T10:00:00Z"))),
+            Result.success(listOf(departedEligible(arrivedAt = "2026-06-02T10:05:00Z"))),
+        )
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete("ses1") } returns Result.failure(RuntimeException("refused"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.load()
+        advanceUntilIdle()
+        coVerify(exactly = 2) { mockKinCareRepo.markSessionComplete("ses1") }
+        assertFalse(vm.uiState.value.isOffline)
+    }
+    @Test
+    fun `a successful auto-complete still completes and reloads with no refusal (1798)`() = runTest(testDispatcher) {
+        val eligible = departedEligible()
+        val done = eligible.copy(status = com.tribetails.auntieos.data.model.VisitStatus.COMPLETED.name)
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returnsMany listOf(
+            Result.success(listOf(eligible)),
+            Result.success(listOf(done)),
+        )
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete("ses1") } returns Result.success(Unit)
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertFalse(state.isOffline)
+        assertTrue(state.autoCompleteRefusals.isEmpty())
+        assertEquals(com.tribetails.auntieos.data.model.VisitStatus.COMPLETED.name, state.todayVisits.single().session.status)
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete("ses1") }
+    }
+    @Test
+    fun `dismissing a refusal notice hides it without retrying the visit (1798)`() = runTest(testDispatcher) {
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(departedEligible()))
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete("ses1") } returns Result.failure(RuntimeException("refused"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.dismissAutoCompleteRefusal("ses1")
+        assertTrue(vm.uiState.value.autoCompleteRefusals.isEmpty())
+        vm.load()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.autoCompleteRefusals.isEmpty())
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete("ses1") }
+    }
 }

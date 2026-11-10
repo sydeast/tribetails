@@ -157,11 +157,11 @@ class EnhancedSchedulingViewModelCancelBridgeTest {
         // booking() is ACCEPTED (scheduled), the "Cancel" button's shape.
         vm.cancelBooking(booking(), "household away")
 
-        // booking() sets no kinfolkName, so the confirmation falls back to the
-        // kinfolkId, the same fallback approveBooking's own message uses.
+        // booking() sets no kinfolkName, so the confirmation falls back to
+        // plain words, never the kinfolkId (#1797).
         // 1030: matches admin web's ActionDef CANCEL confirmedToast exactly;
         // this used to say "Cancelled kf1." for both Reject and Cancel alike.
-        assertEquals("kf1's visit is cancelled.", vm.state.value.bookingActionMessage)
+        assertEquals("This household's visit is cancelled.", vm.state.value.bookingActionMessage)
     }
 
     // 1030: `cancelBooking` also backs the Pending row's "Reject" button
@@ -178,7 +178,7 @@ class EnhancedSchedulingViewModelCancelBridgeTest {
         val vm = buildViewModel()
         vm.cancelBooking(draft, "household away")
 
-        assertEquals("kf1's request is cancelled.", vm.state.value.bookingActionMessage)
+        assertEquals("This household's request is cancelled.", vm.state.value.bookingActionMessage)
     }
 
     @Test

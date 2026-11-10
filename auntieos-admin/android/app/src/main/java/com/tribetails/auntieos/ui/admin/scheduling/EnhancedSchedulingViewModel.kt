@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import com.tribetails.auntieos.ui.admin.auditHousehold
+import com.tribetails.auntieos.ui.admin.householdPossessive
 import com.tribetails.auntieos.ui.admin.settingsSaveFailureText
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -1077,7 +1079,7 @@ class EnhancedSchedulingViewModel(
                 onSuccess = {
                     _state.value = _state.value.copy(
                         isLoading = false,
-                        bookingActionMessage = "${kinfolkName.ifBlank { kinfolkId }}'s visit is recorded as completed.",
+                        bookingActionMessage = "${householdPossessive(kinfolkName)} visit is recorded as completed.",
                     )
                     loadBookingsForDateRange()
                 },
@@ -1136,7 +1138,7 @@ class EnhancedSchedulingViewModel(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
                     actionType       = "CREATE_BOOKING",
-                    description      = "Created booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} on ${booking.startDateTime}",
+                    description      = "Created booking for ${auditHousehold(booking.kinfolkName)} on ${booking.startDateTime}",
                     targetId         = newBookingId,
                     targetCollection = "enhanced_bookings",
                 )
@@ -1187,7 +1189,7 @@ class EnhancedSchedulingViewModel(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
                     actionType       = "UPDATE_BOOKING",
-                    description      = "Updated booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }}",
+                    description      = "Updated booking for ${auditHousehold(booking.kinfolkName)}",
                     targetId         = booking.id,
                     targetCollection = "enhanced_bookings",
                 )
@@ -1311,7 +1313,7 @@ class EnhancedSchedulingViewModel(
                 scope            = viewModelScope,
                 repository       = auntieRepository,
                 actionType       = "APPROVE_BOOKING",
-                description      = "Approved booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }}",
+                description      = "Approved booking for ${auditHousehold(booking.kinfolkName)}",
                 targetId         = booking.id,
                 targetCollection = "enhanced_bookings",
             )
@@ -1324,7 +1326,7 @@ class EnhancedSchedulingViewModel(
             // from web's own sentence, the same fix #1009 made for kinfolk
             // saves.
             _state.value = _state.value.copy(
-                bookingActionMessage = "${booking.kinfolkName.ifBlank { booking.kinfolkId }}'s request is now Scheduled.",
+                bookingActionMessage = "${householdPossessive(booking.kinfolkName)} request is now Scheduled.",
             )
 
             // Bridge: create a KinCareSession so the visit appears on the Home screen,
@@ -1466,7 +1468,7 @@ class EnhancedSchedulingViewModel(
                 scope            = viewModelScope,
                 repository       = auntieRepository,
                 actionType       = "REJECT_BOOKING",
-                description      = "Cancelled booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} (reason: $reason)",
+                description      = "Cancelled booking for ${auditHousehold(booking.kinfolkName)} (reason: $reason)",
                 targetId         = booking.id,
                 targetCollection = "enhanced_bookings",
             )
@@ -1482,12 +1484,12 @@ class EnhancedSchedulingViewModel(
             // (#1030): this used to say "Cancelled {name}." for both cases,
             // drifted from web's own two distinct sentences (REJECT vs
             // CANCEL), the same fix #1009 made for kinfolk saves.
-            val who = booking.kinfolkName.ifBlank { booking.kinfolkId }
+            val who = householdPossessive(booking.kinfolkName)
             _state.value = _state.value.copy(
                 bookingActionMessage = if (booking.status == BookingStatus.DRAFT)
-                    "$who's request is cancelled."
+                    "$who request is cancelled."
                 else
-                    "$who's visit is cancelled.",
+                    "$who visit is cancelled.",
             )
 
             bridgeCancellationToSession(booking, reason).onFailure { e ->
@@ -1514,7 +1516,7 @@ class EnhancedSchedulingViewModel(
         if (_state.value.isLoading) return
         _state.value = _state.value.copy(isLoading = true)
         viewModelScope.launch {
-            val who = booking.kinfolkName.ifBlank { booking.kinfolkId }
+            val who = auditHousehold(booking.kinfolkName)
             val sessionIds = findLinkedSessionIds(booking.id).getOrElse { e ->
                 _state.value = _state.value.copy(isLoading = false, errorMessage = "Could not look up the visit behind this booking: ${e.message}")
                 return@launch
@@ -1544,7 +1546,7 @@ class EnhancedSchedulingViewModel(
                         isLoading = false,
                         selectedBooking = null,
                         // Same sentence as web's BookingActions COMPLETE.confirmedToast.
-                        bookingActionMessage = "$who's visit is marked Completed.",
+                        bookingActionMessage = "${householdPossessive(booking.kinfolkName)} visit is marked Completed.",
                         errorMessage = patched.exceptionOrNull()?.let {
                             "The visit is completed, but this calendar could not be updated to match: ${it.message}. Refresh to see it."
                         },
@@ -1636,7 +1638,7 @@ class EnhancedSchedulingViewModel(
                 )
                 continue
             }
-            val name = booking.kinfolkName.ifBlank { booking.kinfolkId.ifBlank { booking.id } }
+            val name = auditHousehold(booking.kinfolkName)
             if (!bulkRescheduleApplies(booking.status)) {
                 skipped += BulkRescheduleRow(
                     bookingId = id,
@@ -1986,7 +1988,7 @@ class EnhancedSchedulingViewModel(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
                     actionType       = "RESCHEDULE_BOOKING",
-                    description      = "Rescheduled visit for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} to $startIso" +
+                    description      = "Rescheduled visit for ${auditHousehold(booking.kinfolkName)} to $startIso" +
                         (if (override != null) " (override: ${override.name.lowercase()} conflict)" else ""),
                     targetId         = sessionId,
                     // The write the callable made, not the envelope patch that

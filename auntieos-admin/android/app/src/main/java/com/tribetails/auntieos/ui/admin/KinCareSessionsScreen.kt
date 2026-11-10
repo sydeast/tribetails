@@ -922,7 +922,7 @@ private fun ActionRow(
                                             scope = scope,
                                             repository = AuntieOSApp.instance.repository,
                                             actionType = "SESSION_OFFICE_NOTE_ADDED",
-                                            description = "Field auntie added office note on session ${session.id}",
+                                            description = "Field auntie added office note on a visit",
                                             targetId = session.id,
                                             targetCollection = "kin_care_sessions",
                                         )

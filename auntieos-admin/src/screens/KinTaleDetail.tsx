@@ -58,6 +58,9 @@ import { bookingServiceName } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
 import './KinTaleDetail.css';
 
+/** What a kin with no name on file reads as (#1797): never its id. */
+const NO_NAME_ON_FILE = 'Kin with no name on file';
+
 /**
  * KinTale DETAIL: one report, its comment thread, and its love/react toggle.
  * The surface `KinTales.tsx` deferred (its own doc comment names
@@ -543,7 +546,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
                     {foundSpecies.trim() !== '' ? ` (${foundSpecies})` : ''}
                   </>
                 ) : (
-                  <code>{kinId}</code>
+                  NO_NAME_ON_FILE
                 )}
               </li>
             );
@@ -671,15 +674,15 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
               <ul className="kintale-detail__moods">
                 {moods.map((row) => {
                   // Same kin resolution the rail uses, and the same refusal:
-                  // an id that does not resolve renders as the id, never as a
-                  // fabricated name. The stream still loading is that case too.
+                  // an id that does not resolve says no name is on file (#1797), never
+                  // the id and never a fabricated name. The stream still loading is that case too.
                   const found = (kin.status === 'ready' ? kin.data : []).find((k) => k._id === row.kinId);
                   const foundName = found?.name ?? '';
                   return (
                     <li key={row.kinId} className="kintale-detail__mood" data-resolved={row.resolved ? 'true' : 'false'}>
                       <span className="kintale-detail__mood-label">{row.label}</span>
                       <span className="kintale-detail__mood-kin">
-                        {found && foundName.trim() !== '' ? foundName : <code>{row.kinId}</code>}
+                        {found && foundName.trim() !== '' ? foundName : NO_NAME_ON_FILE}
                       </span>
                     </li>
                   );
@@ -921,12 +924,6 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
               <div className="kintale-detail__who-row">
                 <dt>Arrived</dt>
                 <dd className="kintale-detail__mono">{railWhen(entry.arrivedAt ?? '')}</dd>
-              </div>
-              <div className="kintale-detail__who-row">
-                <dt>Session</dt>
-                <dd>
-                  <code>{entry.sessionId}</code>
-                </dd>
               </div>
             </dl>
           </DenPanel>

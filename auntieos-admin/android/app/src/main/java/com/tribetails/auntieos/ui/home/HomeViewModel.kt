@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.admin.auditHousehold
 import com.tribetails.auntieos.util.runCatchingCancellable
 import com.tribetails.auntieos.util.rethrowIfCancellation
 
@@ -117,7 +118,25 @@ data class HomeUiState(
     // #1794: whether [visitNotice] reports a notice that went out. Drives the
     // banner's tone only; the sentence already says which.
     val visitNoticeSent: Boolean = false,
+    // #1798: visits Home tried to complete on its own and the server refused, with
+    // the server's reason. The visit stays DEPARTED and its Complete button works.
+    val autoCompleteRefusals: List<AutoCompleteRefusal> = emptyList(),
 )
+/** #1798: one refused automatic completion, in the words the operator reads. */
+data class AutoCompleteRefusal(
+    val sessionId: String,
+    val householdName: String,
+    val reason: String,
+    /** What the visit looked like when refused; a change means it is worth trying again. */
+    val fingerprint: String,
+) {
+    val message: String get() = "Could not mark $householdName Completed: $reason"
+}
+/** The parts of a visit and the rule that decide the server's answer. */
+internal fun autoCompleteFingerprint(session: KinCareSession, arrivalRule: Boolean?): String =
+    listOf(session.arrivedAt, session.departedAt, session.sentReportCount, arrivalRule).joinToString("|")
+private fun householdNameFor(session: KinCareSession, kinfolk: Kinfolk?): String =
+    session.kinfolkName.ifBlank { kinfolk?.lastName.orEmpty() }.ifBlank { "this visit" }
 
 class HomeViewModel(
     private val repo: AuntieRepository,
@@ -136,6 +155,10 @@ class HomeViewModel(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
+
+    /** #1798: refusals already recorded this session; not retried until the visit changes. */
+    private val autoCompleteRefusals = linkedMapOf<String, AutoCompleteRefusal>()
+    private val dismissedRefusals = mutableSetOf<String>()
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     // 17.3 Dashboard: the layout the SERVER last confirmed. A failed save reverts to
@@ -371,22 +394,37 @@ class HomeViewModel(
                     .map { it.session }
                     .filter { it.status == VisitStatus.DEPARTED.name && it.autoCompleteEligible }
 
-                if (eligibleForAutoComplete.isNotEmpty()) {
-                    eligibleForAutoComplete.forEach { session ->
-                        kinCareRepo.markSessionComplete(session.id).getOrElse { e ->
-                            throw IllegalStateException(
-                                "Failed to auto-complete session ${session.id} flagged autoCompleteEligible",
-                                e
-                            )
-                        }
+                // #1798: each visit is completed on its own. A refusal (for example an
+                // arrival outside the radius) is recorded and shown, never thrown, so one
+                // visit can no longer take the whole dashboard offline.
+                val eligibleIds = eligibleForAutoComplete.map { it.id }.toSet()
+                autoCompleteRefusals.keys.retainAll(eligibleIds)
+                var completedAny = false
+                eligibleForAutoComplete.forEach { session ->
+                    val fingerprint = autoCompleteFingerprint(session, arrivalRule)
+                    val earlier = autoCompleteRefusals[session.id]
+                    if (earlier != null && earlier.fingerprint == fingerprint) return@forEach
+                    autoCompleteRefusals.remove(session.id)
+                    val result = runCatchingCancellable { kinCareRepo.markSessionComplete(session.id) }
+                        .getOrElse { Result.failure(it) }
+                    result.onSuccess { completedAny = true }.onFailure { e ->
+                        AuntieLog.w("Home: auto-complete of ${session.id} refused: ${e.message}")
+                        val card = cards.firstOrNull { it.session.id == session.id }
+                        autoCompleteRefusals[session.id] = AutoCompleteRefusal(
+                            sessionId = session.id,
+                            householdName = householdNameFor(session, card?.kinfolk),
+                            reason = e.message?.takeIf { it.isNotBlank() } ?: "the server refused",
+                            fingerprint = fingerprint,
+                        )
                     }
+                }
+                if (completedAny) {
                     val (start, end) = todayBoundsIso(bs.timeZone)
                     sessions = kinCareRepo.getKinCareSessionsForDay(start, end).getOrElse { e ->
                         throw IllegalStateException("Auto-complete succeeded but session reload failed", e)
                     }
                     cards = hydrateCards(sessions)
                 }
-
                 AuntieLog.d("Dashboard loaded: $kf kinfolk, $kn kin, $pd drafts, ${cards.size} visits today")
 
                 _uiState.value = HomeUiState(
@@ -413,6 +451,9 @@ class HomeViewModel(
                     kin               = allKin,
                     dashboardWidgets  = profile?.dashboardWidgets ?: emptyList(),
                     actionError       = keepActionError,
+                    autoCompleteRefusals = autoCompleteRefusals.values
+                        .filter { it.sessionId !in dismissedRefusals }
+                        .toList(),
                     // ISSUE #582: CARRIED FORWARD, not defaulted. This is a
                     // whole-model REBUILD, not a `copy`, so every field left off
                     // this list is silently reset — the diff-vs-rebuild trap this
@@ -439,6 +480,13 @@ class HomeViewModel(
         }
     }
 
+    /** Hides one refusal notice. The visit is still not retried until it changes. */
+    fun dismissAutoCompleteRefusal(sessionId: String) {
+        dismissedRefusals += sessionId
+        _uiState.value = _uiState.value.copy(
+            autoCompleteRefusals = _uiState.value.autoCompleteRefusals.filter { it.sessionId != sessionId },
+        )
+    }
     fun clearActionError() {
         _uiState.value = _uiState.value.copy(actionError = null)
     }
@@ -517,7 +565,7 @@ class HomeViewModel(
                     scope            = viewModelScope,
                     repository       = repo,
                     actionType       = "VISIT_ON_MY_WAY",
-                    description      = "Marked on the way (ETA ${etaMinutes}m) for ${card.session.kinfolkId}",
+                    description      = "Marked on the way (ETA ${etaMinutes}m) for ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
@@ -541,7 +589,7 @@ class HomeViewModel(
                     scope            = viewModelScope,
                     repository       = repo,
                     actionType       = "VISIT_ARRIVED",
-                    description      = "Arrived at ${card.session.kinfolkId}",
+                    description      = "Arrived at ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
@@ -646,7 +694,7 @@ class HomeViewModel(
                     scope            = viewModelScope,
                     repository       = repo,
                     actionType       = "VISIT_DEPARTED",
-                    description      = "Departed ${card.session.kinfolkId}",
+                    description      = "Departed ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
@@ -679,7 +727,7 @@ class HomeViewModel(
                     scope            = viewModelScope,
                     repository       = repo,
                     actionType       = "VISIT_COMPLETED",
-                    description      = "Completed visit for ${card.session.kinfolkId}",
+                    description      = "Completed visit for ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
