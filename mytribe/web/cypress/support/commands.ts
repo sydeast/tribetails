@@ -75,6 +75,10 @@ declare global {
     interface Chainable {
       stubAccess(): Chainable<void>;
       signIn(): Chainable<void>;
+      /** Sets what Notification.permission reads on the next page load. Implemented in e2e.ts. */
+      setNotificationPermission(permission: NotificationPermission): Chainable<void>;
+      /** Allows one console.error pattern for the current test only. Implemented in e2e.ts. */
+      expectConsoleError(pattern: RegExp): Chainable<void>;
     }
   }
 }

@@ -52,6 +52,29 @@ const EXPECTED_CONSOLE_ERRORS = [
   /WebChannelConnection RPC .* transport errored/,
 ] as const;
 
+/**
+ * What `Notification.permission` reads in the app under test.
+ *
+ * The Cypress browser reports 'granted' on its own, and a granted browser makes
+ * the portal register for push on sign-in (#1787). With no service worker or
+ * push service in the harness that fails by design and logs a console.error, which
+ * would fail every spec that opens Home. A kinfolk's first visit is 'default',
+ * so that is the baseline; push-card.cy.ts sets the permission it wants with
+ * `cy.setNotificationPermission()` before visiting.
+ */
+let notificationPermission: NotificationPermission = 'default';
+
+Cypress.Commands.add('setNotificationPermission', (permission: NotificationPermission) => {
+  notificationPermission = permission;
+});
+
+Cypress.on('window:before:load', (win) => {
+  if (typeof win.Notification === 'undefined') return;
+  Object.defineProperty(win.Notification, 'permission', {
+    configurable: true,
+    get: () => notificationPermission,
+  });
+});
 Cypress.on('window:before:load', (win) => {
   const original = win.console.error.bind(win.console);
   win.console.error = (...args: unknown[]) => {
@@ -62,8 +85,19 @@ Cypress.on('window:before:load', (win) => {
   };
 });
 
+/**
+ * Console errors ONE test says it expects, via `cy.expectConsoleError()`.
+ * Cleared before every test, so allowing a line here never mutes it for any
+ * other spec (unlike an entry in EXPECTED_CONSOLE_ERRORS above).
+ */
+let expectedThisTest: RegExp[] = [];
+Cypress.Commands.add('expectConsoleError', (pattern: RegExp) => {
+  expectedThisTest.push(pattern);
+});
 beforeEach(() => {
+  notificationPermission = 'default';
   consoleErrors = [];
+  expectedThisTest = [];
 });
 
 /**
@@ -74,7 +108,9 @@ beforeEach(() => {
  */
 function takeConsoleErrors(): string[] {
   const unexpected = consoleErrors.filter(
-    (line) => !EXPECTED_CONSOLE_ERRORS.some((pattern) => pattern.test(line)),
+    (line) =>
+      !EXPECTED_CONSOLE_ERRORS.some((pattern) => pattern.test(line)) &&
+      !expectedThisTest.some((pattern) => pattern.test(line)),
   );
   consoleErrors = [];
   return unexpected;

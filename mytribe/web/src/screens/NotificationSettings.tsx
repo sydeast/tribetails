@@ -28,6 +28,7 @@ import {
 import { useSignOut } from '../lib/auth';
 import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 import { PortalNav } from '../components/PortalNav';
+import { PushPrompt } from '../components/PushPrompt';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { InfoTip } from '../components/InfoTip';
@@ -613,6 +614,9 @@ export function NotificationSettings() {
             Notification <span>Settings</span>
           </h1>
         </header>
+
+        {/* #1787: this device's own push state, with the same Retry as Home. */}
+        <PushPrompt ignoreDismissal />
 
         {offline ? (
           <section className="glass card">

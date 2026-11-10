@@ -64,6 +64,29 @@ describe('registerFcmTokenHandler', () => {
     expect(w!.data.platform).toBe('android');
     expect(w!.merge).toBe(true);
   });
+
+  it('is idempotent: registering the same token twice writes the same single doc, no error, and refreshes lastSeenAt (#1787)', async () => {
+    const ctx = buildDbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { registerFcmTokenHandler } = await import('../src/portal/registerFcmToken');
+    const req = { data: { token: 'token-twice-0123456789', platform: 'web-mytribe' }, auth: { uid: 'u1' } } as any;
+    await expect(registerFcmTokenHandler(req)).resolves.toEqual({ ok: true });
+    await expect(registerFcmTokenHandler(req)).resolves.toEqual({ ok: true });
+    const paths = ctx.writes.map((w) => w.path);
+    expect(paths).toEqual(['fcm_tokens/token-twice-0123456789', 'fcm_tokens/token-twice-0123456789']);
+    for (const w of ctx.writes) {
+      expect(w.merge).toBe(true);
+      expect(w.data.uid).toBe('u1');
+      expect(w.data.lastSeenAt).toBe('__SERVER_TS__');
+    }
+  });
+  it('re-registering a token on a shared device moves it to the signed-in user rather than keeping the old owner (#1787)', async () => {
+    const ctx = buildDbMock({ docs: { 'fcm_tokens/token-shared-0123456789': { uid: 'old-user' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { registerFcmTokenHandler } = await import('../src/portal/registerFcmToken');
+    await registerFcmTokenHandler({ data: { token: 'token-shared-0123456789', platform: 'web-mytribe' }, auth: { uid: 'new-user' } } as any);
+    expect(ctx.writes.find((w) => w.path === 'fcm_tokens/token-shared-0123456789')!.data.uid).toBe('new-user');
+  });
 });
 
 describe('unregisterFcmTokenHandler', () => {

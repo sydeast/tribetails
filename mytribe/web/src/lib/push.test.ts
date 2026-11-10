@@ -308,6 +308,65 @@ describe('push', () => {
     await vi.advanceTimersByTimeAsync(PUSH_TIMEOUTS_MS.permission);
     expect(vi.getTimerCount()).toBe(0);
   });
+  // #1787: silent registration on sign-in.
+  it('refreshPushRegistration registers silently when permission is already granted, once per sign-in', async () => {
+    setNotificationPermission('granted');
+    vi.mocked(getToken).mockResolvedValue('a-device-token');
+    const { refreshPushRegistration } = await import('./push');
+    await expect(refreshPushRegistration()).resolves.toEqual({ status: 'registered' });
+    await expect(refreshPushRegistration()).resolves.toEqual({ status: 'registered' });
+    expect(registerFcmToken).toHaveBeenCalledTimes(1);
+    expect(registerFcmToken).toHaveBeenCalledWith('a-device-token');
+  });
+  it('refreshPushRegistration never prompts and never registers when permission is default or denied', async () => {
+    const requestPermission = vi.fn();
+    Object.defineProperty(globalThis.Notification, 'requestPermission', { configurable: true, value: requestPermission });
+    const { refreshPushRegistration } = await import('./push');
+    setNotificationPermission('default');
+    await refreshPushRegistration();
+    setNotificationPermission('denied');
+    await refreshPushRegistration();
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(registerFcmToken).not.toHaveBeenCalled();
+  });
+  it('refreshPushRegistration returns the coded error, does not rerun it, and a Retry replaces the answer', async () => {
+    setNotificationPermission('granted');
+    vi.mocked(getToken).mockRejectedValueOnce(Object.assign(new Error('boom'), { code: 'messaging/token-subscribe-failed' }));
+    const { refreshPushRegistration, registerForPush } = await import('./push');
+    const first = await refreshPushRegistration();
+    expect(first).toMatchObject({ status: 'error', code: 'messaging/token-subscribe-failed', stage: 'token' });
+    await refreshPushRegistration();
+    expect(getToken).toHaveBeenCalledTimes(1);
+    vi.mocked(getToken).mockResolvedValue('later-token');
+    await expect(registerForPush()).resolves.toEqual({ status: 'registered' });
+    await expect(refreshPushRegistration()).resolves.toEqual({ status: 'registered' });
+    expect(getToken).toHaveBeenCalledTimes(2);
+  });
+  it('unregisterForPush on sign-out lets the next sign-in register again', async () => {
+    setNotificationPermission('granted');
+    vi.mocked(getToken).mockResolvedValue('a-device-token');
+    const { refreshPushRegistration, unregisterForPush } = await import('./push');
+    await refreshPushRegistration();
+    await expect(unregisterForPush()).resolves.toBeUndefined();
+    expect(unregisterFcmToken).toHaveBeenCalledWith('a-device-token');
+    await refreshPushRegistration();
+    expect(registerFcmToken).toHaveBeenCalledTimes(2);
+  });
+  it('a registration still in flight at sign-out does not seed the next sign-in', async () => {
+    setNotificationPermission('granted');
+    let release: (t: string) => void = () => {};
+    vi.mocked(getToken).mockImplementationOnce(() => new Promise<string>((r) => (release = r)));
+    const { refreshPushRegistration, unregisterForPush } = await import('./push');
+    const inFlight = refreshPushRegistration();
+    await vi.waitFor(() => expect(getToken).toHaveBeenCalled());
+    await unregisterForPush();
+    release('stale-token');
+    await inFlight;
+    vi.mocked(getToken).mockResolvedValue('fresh-token');
+    await refreshPushRegistration();
+    expect(registerFcmToken).toHaveBeenLastCalledWith('fresh-token');
+  });
+
   it('unregisterForPush unregisters the current token and never throws', async () => {
     vi.mocked(getToken).mockResolvedValue('a-device-token');
     const { unregisterForPush } = await import('./push');

@@ -13,6 +13,10 @@ const VAPID_KEY = 'BAlfcLT9_cF4Bvd-VSFQkrNIKoKvLXSYuC5zP_Rq2L4l1IRsXBIafs3sOZji8
 
 let foregroundHandlerInstalled = false;
 let cachedToken: string | null = null;
+/** The sign-in's silent registration (or last Retry); cleared on sign-out. */
+let sessionRun: Promise<PushRegistrationOutcome> | null = null;
+/** Bumped on sign-out so an attempt that finishes afterwards cannot seed the next sign-in. */
+let signInEpoch = 0;
 
 /** Whether this browser can support web push at all (feature + secure-context check). */
 export async function isPushSupported(): Promise<boolean> {
@@ -223,6 +227,28 @@ function failure(
  * catch knows where it was.
  */
 export async function registerForPush(): Promise<PushRegistrationOutcome> {
+  const epoch = signInEpoch;
+  const outcome = await attemptRegistration();
+  // A tap on Retry replaces the silent attempt's answer, so a later mount of
+  // the card in the same sign-in sees the newest outcome and does not rerun.
+  if (epoch === signInEpoch) sessionRun = Promise.resolve(outcome);
+  return outcome;
+}
+/**
+ * #1787: when the browser already said yes, register on sign-in without a
+ * prompt. A device that registered earlier keeps a fresh token and gets the
+ * foreground handler back; a device whose first attempt failed (the 2026-11-04
+ * walk) gets its coded error shown instead of a card that vanished. Runs once
+ * per sign-in: later callers get the same answer until sign-out or a Retry.
+ * Never prompts, because it does nothing unless permission is 'granted'.
+ */
+export function refreshPushRegistration(): Promise<PushRegistrationOutcome> {
+  if (sessionRun) return sessionRun;
+  if (currentPushPermission() !== 'granted') return Promise.resolve({ status: 'denied' });
+  sessionRun = registerForPush();
+  return sessionRun;
+}
+async function attemptRegistration(): Promise<PushRegistrationOutcome> {
   let stage: PushFailureStage = 'permission';
   let swReg: ServiceWorkerRegistration | null | undefined;
   try {
@@ -267,6 +293,8 @@ export async function registerForPush(): Promise<PushRegistrationOutcome> {
  * sign-out. Never throws — sign-out must not be blocked by push cleanup.
  */
 export async function unregisterForPush(): Promise<void> {
+  sessionRun = null;
+  signInEpoch += 1;
   try {
     if (!(await isPushSupported())) return;
     const swReg = await navigator.serviceWorker.getRegistration();

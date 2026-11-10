@@ -44,6 +44,11 @@ vi.mock('../lib/auth', () => ({
   useSignOut: () => ({ signOut: vi.fn(), signingOut: false }),
 }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
+vi.mock('../components/PushPrompt', () => ({
+  PushPrompt: (props: { ignoreDismissal?: boolean }) => (
+    <span data-testid="push-prompt" data-ignore-dismissal={String(Boolean(props.ignoreDismissal))} />
+  ),
+}));
 // #1369: the footnote reads the business name from getMyHome; no network in a unit test.
 vi.mock('../api/portal', () => ({ getMyHome: vi.fn().mockResolvedValue({ businessName: '' }) }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
@@ -144,6 +149,13 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+describe('this device notifications card (#1787)', () => {
+  it('shows the same card as Home, and ignores the Home dismissal so Retry is never hidden here', async () => {
+    await renderLoaded();
+    const card = screen.getByTestId('push-prompt');
+    expect(card.getAttribute('data-ignore-dismissal')).toBe('true');
+  });
+});
 describe('per-key expansion', () => {
   it('lists every key in the category with its title', async () => {
     await renderLoaded();
