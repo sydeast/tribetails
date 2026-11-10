@@ -217,6 +217,7 @@ fun KinfolkPortalAppGuarded() {
                             portalApi = portalApi,
                             firestoreClient = firestoreClient,
                             notificationCatalog = notificationCatalog,
+                            pushCoordinator = pushCoordinator,
                             shellKinfolkId = resolvedKinfolkId,
                             shellFamilyName = home?.displayName ?: "",
                             shellPersonName = personName,

@@ -22,6 +22,7 @@ import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.notifications.NotificationCatalogRepository
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.screens.setThemedContent
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
@@ -788,5 +789,83 @@ class NotificationSettingsScreenTest {
         setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore()) }
         waitForIdle()
         assertEquals(emptyList<String>(), fake.warmCalls)
+    }
+
+    // ---- #1787: this device's push registration ----
+    private fun prefsOnlyFake() = FakeFunctionsClient().apply {
+        stub("getMyNotificationPrefs", buildJsonObject {
+            put("prefs", buildJsonObject {})
+            put("updatedAtMs", JsonNull)
+        })
+        stub("registerFcmToken", buildJsonObject {})
+    }
+    @Test
+    fun aFailedPushRegistration_showsTheFinishCardWithTheCodedError_andRetryRegistersAgain() = runComposeUiTest {
+        val fake = prefsOnlyFake()
+        var fail = true
+        val coordinator = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake),
+            platform = "test-mytribe",
+            tokenProvider = { if (fail) throw IllegalStateException("SERVICE_NOT_AVAILABLE") else "tok-1" },
+            logger = {},
+        )
+        coordinator.onSignedIn()
+        setThemedContent {
+            NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore(), pushCoordinator = coordinator)
+        }
+        waitForIdle()
+        onNodeWithText("Finish turning on notifications").assertExists()
+        onNodeWithTag("device-push-error")
+            .assertTextEquals("Could not enable notifications: IllegalStateException: SERVICE_NOT_AVAILABLE (token)")
+        fail = false
+        onNodeWithTag("device-push-retry").performClick()
+        waitForIdle()
+        assertTrue(fake.calls.any { it.first == "registerFcmToken" })
+        onNodeWithText("Finish turning on notifications").assertDoesNotExist()
+    }
+    @Test
+    fun aRetryThatFailsAgain_keepsTheCardAndTheButton() = runComposeUiTest {
+        val fake = prefsOnlyFake()
+        val coordinator = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake),
+            platform = "test-mytribe",
+            tokenProvider = { throw IllegalStateException("still down") },
+            logger = {},
+        )
+        coordinator.onSignedIn()
+        setThemedContent {
+            NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore(), pushCoordinator = coordinator)
+        }
+        waitForIdle()
+        onNodeWithTag("device-push-retry").performClick()
+        waitForIdle()
+        onNodeWithText("Finish turning on notifications").assertExists()
+        onNodeWithTag("device-push-retry").assertExists()
+    }
+    @Test
+    fun aRegisteredDevice_showsNoCard() = runComposeUiTest {
+        val fake = prefsOnlyFake()
+        val coordinator = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe", tokenProvider = { "tok-1" }, logger = {},
+        )
+        coordinator.onSignedIn()
+        setThemedContent {
+            NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore(), pushCoordinator = coordinator)
+        }
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
+    }
+    @Test
+    fun aPlatformWithNoToken_showsNoCard() = runComposeUiTest {
+        val fake = prefsOnlyFake()
+        val coordinator = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe", tokenProvider = { null }, logger = {},
+        )
+        coordinator.onSignedIn()
+        setThemedContent {
+            NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore(), pushCoordinator = coordinator)
+        }
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
     }
 }

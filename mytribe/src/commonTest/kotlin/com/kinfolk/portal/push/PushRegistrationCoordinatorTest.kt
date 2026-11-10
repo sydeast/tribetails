@@ -249,4 +249,100 @@ class PushRegistrationCoordinatorTest {
         assertTrue(propagated)
         assertTrue(lines.isEmpty())
     }
+
+    // ---- #1787: the device's own state and Retry ----
+    @Test
+    fun `state is Unknown before any attempt and Registered after a good sign-in`() = runTest {
+        val c = coordinator(fakeWithStubs())
+        assertEquals(DevicePushState.Unknown, c.state.value)
+        c.onSignedIn()
+        assertEquals(DevicePushState.Registered, c.state.value)
+    }
+    @Test
+    fun `a clean null token is Unavailable, not a failure`() = runTest {
+        val c = coordinator(fakeWithStubs(), token = null)
+        c.onSignedIn()
+        assertEquals(DevicePushState.Unavailable, c.state.value)
+    }
+    @Test
+    fun `a token fetch that throws is Failed at the token stage with the class and message`() = runTest {
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fakeWithStubs()),
+            platform = "test-mytribe",
+            tokenProvider = { throw IllegalStateException("SERVICE_NOT_AVAILABLE") },
+            logger = {},
+        )
+        c.onSignedIn()
+        assertEquals(DevicePushState.Failed("token", "IllegalStateException: SERVICE_NOT_AVAILABLE"), c.state.value)
+    }
+    @Test
+    fun `a register failure is Failed at the register stage and never carries the token`() = runTest {
+        val fake = fakeWithStubs()
+        fake.stubError("registerFcmToken", IllegalStateException("network down"))
+        val c = coordinator(fake, token = "secret-token-value")
+        c.onSignedIn()
+        val state = c.state.value
+        assertTrue(state is DevicePushState.Failed && state.stage == "register")
+        assertTrue(!state.toString().contains("secret-token-value"))
+    }
+    @Test
+    fun `retry registers again after a failure and the state turns Registered`() = runTest {
+        val fake = fakeWithStubs()
+        var failFirst = true
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake),
+            platform = "test-mytribe",
+            tokenProvider = {
+                if (failFirst) { failFirst = false; throw IllegalStateException("boom") }
+                "tok-1"
+            },
+            logger = {},
+        )
+        c.onSignedIn()
+        assertTrue(c.state.value is DevicePushState.Failed)
+        assertEquals(0, fake.calls.size)
+        c.retry()
+        assertEquals(DevicePushState.Registered, c.state.value)
+        assertEquals(1, fake.calls.size)
+    }
+    @Test
+    fun `retry re-sends the register call even when a token was already registered`() = runTest {
+        val fake = fakeWithStubs()
+        val c = coordinator(fake)
+        c.onSignedIn()
+        c.retry()
+        assertEquals(2, fake.calls.size)
+        assertEquals(DevicePushState.Registered, c.state.value)
+    }
+    @Test
+    fun `retry that fails again stays Failed and a later clean null clears the stale failure`() = runTest {
+        val fake = fakeWithStubs()
+        fake.stubError("registerFcmToken", IllegalStateException("network down"))
+        var token: String? = "tok-1"
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe", tokenProvider = { token }, logger = {},
+        )
+        c.onSignedIn()
+        c.retry()
+        assertTrue(c.state.value is DevicePushState.Failed)
+        token = null
+        c.retry()
+        assertEquals(DevicePushState.Unavailable, c.state.value)
+    }
+    @Test
+    fun `sign-out resets the state to Unknown`() = runTest {
+        val c = coordinator(fakeWithStubs())
+        c.onSignedIn()
+        c.onSignOut()
+        assertEquals(DevicePushState.Unknown, c.state.value)
+    }
+    @Test
+    fun `an unregister failure on sign-out does not show as a device failure`() = runTest {
+        val fake = fakeWithStubs()
+        val c = coordinator(fake)
+        c.onSignedIn()
+        fake.stubError("unregisterFcmToken", IllegalStateException("offline"))
+        c.onSignOut()
+        assertEquals(DevicePushState.Unknown, c.state.value)
+    }
 }
