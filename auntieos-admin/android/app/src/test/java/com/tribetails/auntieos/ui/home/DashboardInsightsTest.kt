@@ -201,9 +201,9 @@ class DashboardInsightsTest {
     }
 
     @Test
-    fun `unread falls back to id for a blank name and trims a blank preview`() {
+    fun `unread says a household, never the id, for a blank name and trims a blank preview`() {
         val row = unreadClientMessages(listOf(conv(id = "k9", name = "   ", preview = "  "))).first()
-        assertEquals("k9", row.household)
+        assertEquals("A household", row.household)
         assertEquals("", row.preview)
     }
 

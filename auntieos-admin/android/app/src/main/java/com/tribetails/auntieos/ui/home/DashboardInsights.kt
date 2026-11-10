@@ -206,7 +206,7 @@ fun unreadClientMessages(rows: List<ConversationSummary>, limit: Int = 5): List<
         .map { r ->
             UnreadMessageRow(
                 kinfolkId = r.kinfolkId,
-                household = r.kinfolkName.trim().ifBlank { r.kinfolkId },
+                household = r.kinfolkName.trim().ifBlank { "A household" },
                 preview = r.lastMessagePreview.trim(),
                 atMs = r.lastMessageAtMs,
             )

@@ -182,3 +182,7 @@ fun activityDescriptionWords(description: String): String {
  * target.
  */
 fun auditHousehold(name: String?): String = name?.trim().takeUnless { it.isNullOrEmpty() } ?: "a household"
+
+/** "Robyn Smith's", or "This household's" when no name is on file (#1797). Never the id. */
+fun householdPossessive(name: String?): String =
+    name?.trim().takeUnless { it.isNullOrEmpty() }?.let { "$it's" } ?: "This household's"

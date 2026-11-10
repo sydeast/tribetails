@@ -60,4 +60,10 @@ class ActivityWordsTest {
         assertEquals("a household", auditHousehold(null))
         assertEquals("a household", auditHousehold("   "))
     }
+
+    @Test
+    fun aPossessiveNamesTheHouseholdOrSaysThisHousehold() {
+        assertEquals("Robyn Smith's", householdPossessive(" Robyn Smith "))
+        assertEquals("This household's", householdPossessive(""))
+    }
 }

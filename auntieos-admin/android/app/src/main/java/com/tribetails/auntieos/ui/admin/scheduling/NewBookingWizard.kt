@@ -824,7 +824,7 @@ private fun LazyListScope.reviewStep(
     }
 
     item("review-summary") {
-        val household = allKinfolk.firstOrNull { it.id == state.kinfolkId }?.displayName ?: state.kinfolkId
+        val household = allKinfolk.firstOrNull { it.id == state.kinfolkId }?.displayName ?: "Not chosen"
         // R1: names the Kin either way, resolved exactly as the payload is, so
         // Review can never report a coverage the request does not carry.
         val coveredKinIds = resolveKinIds(state, kin.map { it.id })
