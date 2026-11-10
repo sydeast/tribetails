@@ -749,9 +749,10 @@ private fun ActionRow(
         }
 
         // COMPLETED: offer a read-only jump into the sent KinTale (mockup "View KinTale").
+        // #1804: opens the sent tale (Report route), never a blank composer.
         "COMPLETED" -> GhostButton(
             label   = "View KinTale",
-            onClick = onWriteKinTale,
+            onClick = onViewKinTale,
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
 

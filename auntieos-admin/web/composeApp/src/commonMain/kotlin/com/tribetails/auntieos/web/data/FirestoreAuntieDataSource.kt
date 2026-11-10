@@ -58,6 +58,7 @@ class FirestoreAuntieDataSource(
     override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String): WriteResult<MediaFile> = client.uploadMedia(entityId, entityType, bytes, mimeType)
     override suspend fun deleteMedia(mediaId: String, entityId: String): WriteResult<Unit> = client.deleteMedia(mediaId, entityId)
     override fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> = client.reportForSessionStream(sessionId)
+    override fun reportsForSessionStream(sessionId: String): Flow<FirestoreResult<List<KinCareReport>>> = client.reportsForSessionStream(sessionId)
     override suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport): WriteResult<String> = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit> = client.sendReport(report, session)
     override suspend fun completeVisitAfterKinTale(sessionId: String) = client.completeVisitAfterKinTale(sessionId)

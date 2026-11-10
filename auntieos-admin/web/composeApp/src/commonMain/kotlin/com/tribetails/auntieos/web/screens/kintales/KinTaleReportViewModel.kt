@@ -101,6 +101,9 @@ class KinTaleReportViewModel(
     fun reportStream(): Flow<FirestoreResult<KinCareReport?>> =
         dataSource.reportForSessionStream(sessionId)
 
+    /** #1804: all of the visit's reports, sent tales newest first, then drafts. */
+    fun reportsStream(): Flow<FirestoreResult<List<KinCareReport>>> =
+        dataSource.reportsForSessionStream(sessionId)
     /**
      * Live session, used for (a) the SENT report's GPS RouteMap (real persisted
      * [com.tribetails.auntieos.web.data.GpsSummary] route/stats) and (b) the

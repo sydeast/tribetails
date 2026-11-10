@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web
 
 import com.tribetails.auntieos.web.data.ActivityLogEntry
+import com.tribetails.auntieos.web.data.orderVisitReports
 import com.tribetails.auntieos.web.data.AuntieDataSource
 import com.tribetails.auntieos.web.data.BookingNote
 import com.tribetails.auntieos.web.data.BusinessSettings
@@ -313,12 +314,20 @@ class FakeAuntieDataSource(
     override fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> =
         _reports.map { result ->
             when (result) {
-                is FirestoreResult.Data -> FirestoreResult.Data(result.value.firstOrNull { it.sessionId == sessionId })
+                is FirestoreResult.Data -> FirestoreResult.Data(orderVisitReports(result.value, sessionId).firstOrNull())
                 is FirestoreResult.Error -> FirestoreResult.Error(result.message)
                 FirestoreResult.Loading -> FirestoreResult.Loading
             }
         }
 
+    override fun reportsForSessionStream(sessionId: String): Flow<FirestoreResult<List<KinCareReport>>> =
+        _reports.map { result ->
+            when (result) {
+                is FirestoreResult.Data -> FirestoreResult.Data(orderVisitReports(result.value, sessionId))
+                is FirestoreResult.Error -> FirestoreResult.Error(result.message)
+                FirestoreResult.Loading -> FirestoreResult.Loading
+            }
+        }
     /** The most recent report handed to [saveReport], for test assertions. */
     var lastSavedReport: KinCareReport? = null
         private set
