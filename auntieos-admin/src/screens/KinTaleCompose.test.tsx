@@ -447,6 +447,16 @@ describe('KinTaleCompose: the composer mock', () => {
     );
   });
 
+  it('#1795: the Goes to rail never renders a raw vis_ session id', async () => {
+    const rawId = 'vis_wYqdkJ2YHNt3ViVW8fdj';
+    mockStreams({ sessions: { status: 'ready', data: [session({ _id: rawId })] } });
+    render(<KinTaleCompose sessionId={rawId} onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    const rail = screen.getByRole('complementary', { name: 'Goes to' });
+    expect(rail.textContent ?? '').not.toContain(rawId);
+    expect(rail.textContent ?? '').not.toMatch(/vis_/);
+    expect(within(rail).queryByText('Session')).toBeNull();
+  });
   it('draws the photo strip as the mock: a dashed add tile, and the count as the mono note', async () => {
     mockStreams({
       reports: { status: 'ready', data: [report({ templateId: 'tpl_walk', mediaFileIds: ['m1', 'm2'] })] },
