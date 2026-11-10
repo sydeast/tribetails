@@ -176,3 +176,9 @@ fun activityDescriptionWords(description: String): String {
     }
     return DRAFT_PATH.replace(text, "a draft")
 }
+/**
+ * #1797: a household in an Activity Log sentence. The name when there is one,
+ * otherwise "a household"; never the id, which stays on the entry as its
+ * target.
+ */
+fun auditHousehold(name: String?): String = name?.trim().takeUnless { it.isNullOrEmpty() } ?: "a household"

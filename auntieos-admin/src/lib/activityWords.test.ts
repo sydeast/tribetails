@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { ACTIVITY_WORDS, activityDescriptionWords } from './activityWords';
+import { visitTransitionWords as serverVisitTransitionWords } from '../../../mytribe/functions/src/lib/activityWords';
+import { ACTIVITY_WORDS, activityDescriptionWords, visitTransitionWords } from './activityWords';
+/**
+ * #1797: the web clock tap writes its own Activity Log sentence. It must be the
+ * server's words, so this runs the same inputs through both and pins fixed
+ * strings besides, so a change to one side fails here.
+ */
+describe('visitTransitionWords (web mirror of the server helper)', () => {
+  const cases: [string, string, string, string][] = [
+    ['ON_MY_WAY', 'SCHEDULED', 'ON_MY_WAY', 'Marked the visit on the way: scheduled to on the way'],
+    ['ARRIVED', 'ON_MY_WAY', 'ARRIVED', 'Marked the arrival: on the way to arrived'],
+    ['DEPARTED', 'ARRIVED', 'DEPARTED', 'Marked the departure: arrived to departed'],
+    ['UNDO_ARRIVAL', 'ARRIVED', 'ON_MY_WAY', 'Undid the arrival: arrived to on the way'],
+  ];
+  it.each(cases)('%s reads as words, equal to the server', (action, from, to, words) => {
+    expect(visitTransitionWords(action, from, to)).toBe(words);
+    expect(serverVisitTransitionWords(action, from, to)).toBe(words);
+  });
+  it('carries no session id or raw status key', () => {
+    const text = visitTransitionWords('DEPARTED', 'ARRIVED', 'DEPARTED');
+    expect(text).not.toMatch(/vis_|session|->|[A-Z]{4,}/);
+  });
+});
+
 
 /**
  * #1747: the stored Activity Log rows that name `generated_drafts/<id>` read as

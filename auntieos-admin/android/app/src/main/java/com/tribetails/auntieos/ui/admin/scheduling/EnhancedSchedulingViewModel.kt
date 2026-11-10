@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import com.tribetails.auntieos.ui.admin.auditHousehold
 import com.tribetails.auntieos.ui.admin.settingsSaveFailureText
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -1136,7 +1137,7 @@ class EnhancedSchedulingViewModel(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
                     actionType       = "CREATE_BOOKING",
-                    description      = "Created booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} on ${booking.startDateTime}",
+                    description      = "Created booking for ${auditHousehold(booking.kinfolkName)} on ${booking.startDateTime}",
                     targetId         = newBookingId,
                     targetCollection = "enhanced_bookings",
                 )
@@ -1187,7 +1188,7 @@ class EnhancedSchedulingViewModel(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
                     actionType       = "UPDATE_BOOKING",
-                    description      = "Updated booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }}",
+                    description      = "Updated booking for ${auditHousehold(booking.kinfolkName)}",
                     targetId         = booking.id,
                     targetCollection = "enhanced_bookings",
                 )
@@ -1311,7 +1312,7 @@ class EnhancedSchedulingViewModel(
                 scope            = viewModelScope,
                 repository       = auntieRepository,
                 actionType       = "APPROVE_BOOKING",
-                description      = "Approved booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }}",
+                description      = "Approved booking for ${auditHousehold(booking.kinfolkName)}",
                 targetId         = booking.id,
                 targetCollection = "enhanced_bookings",
             )
@@ -1466,7 +1467,7 @@ class EnhancedSchedulingViewModel(
                 scope            = viewModelScope,
                 repository       = auntieRepository,
                 actionType       = "REJECT_BOOKING",
-                description      = "Cancelled booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} (reason: $reason)",
+                description      = "Cancelled booking for ${auditHousehold(booking.kinfolkName)} (reason: $reason)",
                 targetId         = booking.id,
                 targetCollection = "enhanced_bookings",
             )
@@ -1986,7 +1987,7 @@ class EnhancedSchedulingViewModel(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
                     actionType       = "RESCHEDULE_BOOKING",
-                    description      = "Rescheduled visit for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} to $startIso" +
+                    description      = "Rescheduled visit for ${auditHousehold(booking.kinfolkName)} to $startIso" +
                         (if (override != null) " (override: ${override.name.lowercase()} conflict)" else ""),
                     targetId         = sessionId,
                     // The write the callable made, not the envelope patch that

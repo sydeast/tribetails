@@ -293,10 +293,18 @@ describe('KinTaleDetail: who this covers (kin resolution)', () => {
     expect(await screen.findByText('Biscuit (Dog)')).toBeInTheDocument();
   });
 
-  it('shows the raw kinId, never a fabricated name, when it does not resolve against the kin stream', async () => {
+  it('says no name is on file, never the kin id, when it does not resolve against the kin stream (#1797)', async () => {
     mockStreams({ kin: { status: 'ready', data: [] } });
-    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    expect(await screen.findByText('pet1')).toBeInTheDocument();
+    const { container } = render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Kin with no name on file')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('pet1');
+  });
+  it('prints no session id anywhere on the detail page (#1797)', async () => {
+    const { container } = render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByText('Biscuit (Dog)');
+    expect(container.textContent).not.toContain('sess1');
+    expect(container.textContent).not.toMatch(/vis_/);
+    expect(screen.queryByText('Session')).toBeNull();
   });
 
   it('shows a proven-empty hint when the recap carries no kinIds at all', async () => {
@@ -746,7 +754,7 @@ describe('KinTaleDetail: per-pet mood', () => {
     expect(within(panel as HTMLElement).getByRole('listitem')).toHaveAttribute('data-resolved', 'false');
   });
 
-  it('falls back to the kin id, never a fabricated name, when the kin does not resolve', async () => {
+  it('says no name is on file, never the kin id, when the kin does not resolve', async () => {
     mockStreams({
       reports: {
         status: 'ready',
@@ -755,7 +763,8 @@ describe('KinTaleDetail: per-pet mood', () => {
     });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
     const panel = (await screen.findByRole('heading', { name: 'Pet mood' })).closest('.den-panel');
-    expect(within(panel as HTMLElement).getByText('ghostPet')).toBeInTheDocument();
+    expect(within(panel as HTMLElement).getByText('Kin with no name on file')).toBeInTheDocument();
+    expect((panel as HTMLElement).textContent).not.toContain('ghostPet');
   });
 
   it('renders NO mood section when the template has petMoodEnabled off', async () => {

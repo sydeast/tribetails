@@ -2,6 +2,7 @@ import { doc } from 'firebase/firestore';
 import { updateDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
+import { visitTransitionWords } from '../lib/activityWords';
 import {
   auditActionTypeFor,
   evaluateVisitLifecycle,
@@ -263,7 +264,7 @@ async function fireLifecycleAudit(args: {
   try {
     await call('logActivity', {
       actionType: auditActionTypeFor(args.action),
-      description: `${args.action} on session ${args.sessionId}: ${args.from} -> ${args.to}`,
+      description: visitTransitionWords(args.action, args.from, args.to),
       status: 'SUCCESS',
       targetId: args.sessionId,
       targetCollection: SESSIONS_COLLECTION,
