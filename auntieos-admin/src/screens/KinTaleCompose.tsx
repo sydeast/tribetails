@@ -138,6 +138,20 @@ export function isKinTaleEligibleSession(status: string): boolean {
 }
 
 /**
+ * #1793: what the composer says when the tale went home but the visit could
+ * not be marked Completed. The server's reason is its own sentence whatever
+ * shape it arrives in ("unavailable" from a failed read has no full stop).
+ */
+export function sentButNotCompletedNotice(reason: string): string {
+  const trimmed = reason.trim();
+  const sentence = trimmed === '' ? '' : /[.!?]$/.test(trimmed) ? `${trimmed} ` : `${trimmed}. `;
+  return (
+    'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. ' +
+    `${sentence}You can mark it Completed from Auntie Time.`
+  );
+}
+
+/**
  * Send-button label bound to the REAL recipient household, ported verbatim
  * from the wasm's `kinTaleSendLabel` (`KinTaleComposeScreen.kt`): never a
  * hardcoded sample household, falls back to neutral copy when blank.
@@ -543,9 +557,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     if (completion.kind === 'not_completed') {
       // An error cannot be a toast (they dismiss themselves), so the screen
       // stays open on a sent notice rather than on a form that could send again.
-      setSentNotice(
-        `KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed: ${completion.message} You can mark it Completed from Auntie Time.`,
-      );
+      setSentNotice(sentButNotCompletedNotice(completion.message));
       return;
     }
     // #1013 sweep: this used to set the confirmation on `banner`, this

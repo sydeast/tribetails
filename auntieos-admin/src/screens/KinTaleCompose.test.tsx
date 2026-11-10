@@ -96,6 +96,7 @@ import {
   isKinTaleEligibleSession,
   kinTaleSendLabel,
   scaffoldKinTaleDraft,
+  sentButNotCompletedNotice,
   draftFromKinTaleEntry,
   pickableSessions,
 } from './KinTaleCompose';
@@ -606,6 +607,19 @@ describe('KinTaleCompose: Send, gated behind a confirm dialog', () => {
  * #1793: on Android a DEPARTED visit with a sent tale is completed by the Home
  * sweep. On web nothing read the flag, so the walk's visit stayed DEPARTED.
  */
+describe('sentButNotCompletedNotice (pure, #1793)', () => {
+  it('gives the reason its own sentence, whatever shape it arrives in', () => {
+    expect(sentButNotCompletedNotice('unavailable')).toBe(
+      'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. unavailable. You can mark it Completed from Auntie Time.',
+    );
+    expect(sentButNotCompletedNotice('Too far from the household.')).toBe(
+      'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. Too far from the household. You can mark it Completed from Auntie Time.',
+    );
+    expect(sentButNotCompletedNotice('  ')).toBe(
+      'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. You can mark it Completed from Auntie Time.',
+    );
+  });
+});
 describe('KinTaleCompose: #1793, the visit is completed after the send', () => {
   async function sendIt(onClose = vi.fn()) {
     mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
@@ -655,7 +669,7 @@ describe('KinTaleCompose: #1793, the visit is completed after the send', () => {
     const onClose = await sendIt();
     expect(
       await screen.findByText(
-        'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed: The arrival was recorded 900 m from the household. You can mark it Completed from Auntie Time.',
+        'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. The arrival was recorded 900 m from the household. You can mark it Completed from Auntie Time.',
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/couldn't send/i)).toBeNull();
