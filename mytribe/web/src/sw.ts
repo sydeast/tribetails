@@ -12,7 +12,8 @@
  */
 
 import {
-  precacheAndRoute,
+  precache,
+  addRoute as addPrecacheRoute,
   cleanupOutdatedCaches,
   createHandlerBoundToURL,
 } from 'workbox-precaching';
@@ -33,7 +34,11 @@ declare const self: ServiceWorkerGlobalScope & {
 
 // ── Precaching + routing (ported from the old vite.config.ts `workbox` block) ──
 
-precacheAndRoute(self.__WB_MANIFEST);
+// Fill the precache now, but register its ROUTE LAST (bottom of this block).
+// `createHandlerBoundToURL` below needs the entries already registered, and
+// the route has to come after the navigation route, so precacheAndRoute's
+// single call is split into precache() here and addPrecacheRoute() there.
+precache(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
 // Navigations: network-first, falling back to the cached shell once the
@@ -63,8 +68,25 @@ cleanupOutdatedCaches();
 // rewrites `**` to /index.html, so answering any navigation with the precached
 // index.html is what the server does online, not a compromise. swPolicy.ts
 // carries the denylist and why a 404 never reaches this path.
+//
+// THE ROOT URL INCLUDED (#1812). Workbox's router answers a request with the
+// FIRST registered route that matches it. Workbox's precache route matches
+// `/` (it appends its default directoryIndex, index.html) and `/index.html`
+// (an exact hit), and it answers cache-first. While it was registered ahead
+// of the navigation route, opening `/`, which is also the manifest start_url
+// and so every home-screen launch, painted the release this worker installed
+// with, and only a hard reload showed the new one. The navigation route is
+// now registered before it, so `/` and `/index.html` get the same NetworkFirst
+// turn as every other route, and the precached shell is only their fallback.
+// The precache route still serves the precached assets (scripts, styles,
+// icons), which the navigation route never matches.
+//
+// The release that ships this change still opens `/` stale ONE more time: the
+// worker already installed on the phone answers that first navigation, and
+// it has the old order. From the next release on, `/` is current.
 
-// FIRST, so it wins by registration order: nothing below may cache these.
+// Registered before the navigation and precache routes, so it wins by
+// registration order: nothing below may cache these.
 registerRoute(({ url }) => isNeverCachedHost(url), new NetworkOnly());
 
 const networkFirstPage = new NetworkFirst({
@@ -82,6 +104,9 @@ registerRoute(
     { denylist: NAVIGATION_FALLBACK_DENYLIST },
   ),
 );
+
+// LAST, so it can never answer a navigation the route above takes (#1812).
+addPrecacheRoute();
 
 // registerType: 'autoUpdate' expects the worker to activate itself immediately
 // rather than wait for all tabs to close (injectManifest doesn't do this for

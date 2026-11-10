@@ -57,7 +57,22 @@ export function isNeverCachedHost(url: URL): boolean {
   );
 }
 
-/** The precached entry every in-app route is answered with when offline. */
+/**
+ * The precached entry every in-app route is answered with when offline.
+ *
+ * THE ROOT URL IS NOT SPECIAL ONLINE (#1812). `/` (the manifest start_url) and
+ * `/index.html` go through the same NetworkFirst path as every other route,
+ * and this precached copy only answers them when the network fails. That holds
+ * because sw.ts registers the navigation route BEFORE Workbox's precache
+ * route. The precache route matches `/` by appending its default
+ * directoryIndex and matches `/index.html` exactly, and it answers
+ * cache-first, so whichever route is registered first decides which release a
+ * household sees.
+ *
+ * Offline, `/` behaves like every other route: NetworkFirst's own copy in
+ * NAVIGATION_CACHE_NAME answers if this device has one, and this precached
+ * shell answers if it does not.
+ */
 export const NAVIGATION_FALLBACK_URL = '/index.html';
 
 /**
@@ -81,8 +96,19 @@ export const NAVIGATION_FALLBACK_URL = '/index.html';
  * segment carrying an extension). Those are assets, and a missing asset should
  * 404 rather than come back as HTML no image decoder, stylesheet parser or
  * script loader can read.
+ *
+ * EXCEPT /index.html ITSELF (#1812). It has an extension, but it is the shell,
+ * and a navigation to it must go through the network first like any other
+ * page. If this pattern denied it, the navigation would fall through to the
+ * precache route in sw.ts, which answers cache-first, and the household would
+ * see the release this worker installed with instead of the one on the server.
+ * Only the root /index.html is exempt; /assets/x.js and /icon-192.png are
+ * still denied.
  */
-export const NAVIGATION_FALLBACK_DENYLIST: RegExp[] = [/^\/share\//, /\/[^/?]+\.[^/.?]+$/];
+export const NAVIGATION_FALLBACK_DENYLIST: RegExp[] = [
+  /^\/share\//,
+  /^(?!\/index\.html$).*\/[^/?]+\.[^/.?]+$/,
+];
 
 /**
  * Whether the navigation fallback is denied for [url]. Mirrors how Workbox's
