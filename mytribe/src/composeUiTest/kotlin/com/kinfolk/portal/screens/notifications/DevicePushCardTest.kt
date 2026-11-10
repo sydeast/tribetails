@@ -1,6 +1,7 @@
 @file:OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
 package com.kinfolk.portal.screens.notifications
 import androidx.compose.ui.test.ComposeUiTest
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -123,6 +124,8 @@ class DevicePushCardTest {
         onNodeWithText("Finish turning on notifications").assertExists()
         fail = false
         onNodeWithTag("device-push-retry").performClick()
+        // #1809: Retry runs in the coordinator's scope, off the composition.
+        waitUntil(timeoutMillis = 5_000) { !c.retrying.value }
         waitForIdle()
         onNodeWithTag("device-push-card").assertDoesNotExist()
     }
@@ -245,5 +248,49 @@ class DevicePushCardTest {
         setThemedContent { DevicePushCard(c, onDismiss = null, showDeviceStatus = true) }
         waitForIdle()
         onNodeWithTag("device-push-card").assertDoesNotExist()
+    }
+
+    // ---- #1809: Retry survives the card leaving composition ----
+    @Test
+    fun onHome_retryWithATokenFetchThatWaits_finishesRegistered() = runComposeUiTest {
+        // On Home the card leaves composition as soon as Retry clears the
+        // failure. Before #1809 that cancelled the Retry and the state ended Unknown.
+        val gate = FakeGate(NotificationPermissionState.Granted)
+        var next: suspend () -> String? = { throw IllegalStateException("SERVICE_NOT_AVAILABLE") }
+        val c = coordinator(gate, token = { next() })
+        c.onSignedIn()
+        setThemedContent { DevicePushCard(c, onDismiss = { c.dismissHomeCard() }) }
+        waitForIdle()
+        val release = CompletableDeferred<String?>()
+        next = { release.await() }
+        onNodeWithTag("device-push-retry").performClick()
+        waitUntil(timeoutMillis = 5_000) { c.state.value == DevicePushState.Registering }
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
+        release.complete("tok-1")
+        waitUntil(timeoutMillis = 5_000) { !c.retrying.value }
+        assertEquals(DevicePushState.Registered, c.state.value)
+        assertEquals("tok-1", c.registeredToken)
+    }
+    @Test
+    fun aRetryThatFailsAgain_clearsTheCoordinatorFlag_andTheButtonIsEnabledAgain() = runComposeUiTest {
+        // Settings keeps the card on screen through a Retry; a Retry that fails
+        // again comes back to the Finish card with the button enabled.
+        val gate = FakeGate(NotificationPermissionState.Granted)
+        var next: suspend () -> String? = { throw IllegalStateException("down") }
+        val c = coordinator(gate, token = { next() })
+        c.onSignedIn()
+        setThemedContent { DevicePushCard(c, onDismiss = null, showDeviceStatus = true) }
+        waitForIdle()
+        val release = CompletableDeferred<String?>()
+        next = { release.await(); throw IllegalStateException("still down") }
+        onNodeWithTag("device-push-retry").performClick()
+        waitUntil(timeoutMillis = 5_000) { has("device-push-signing-up") }
+        assertEquals(true, c.retrying.value)
+        release.complete(null)
+        waitUntil(timeoutMillis = 5_000) { has("device-push-retry") }
+        onNodeWithTag("device-push-retry").assertTextEquals("Retry")
+        onNodeWithTag("device-push-retry").assertIsEnabled()
+        assertEquals(false, c.retrying.value)
     }
 }

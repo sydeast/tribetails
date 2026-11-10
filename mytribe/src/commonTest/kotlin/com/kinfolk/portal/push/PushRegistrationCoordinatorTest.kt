@@ -458,7 +458,8 @@ class PushRegistrationCoordinatorTest {
         runCurrent()
         assertEquals(DevicePushState.Registering, c.state.value)
         run.cancelAndJoin()
-        assertEquals(DevicePushState.Unknown, c.state.value)
+        // #1809: an attempt that did not finish is a failure with a Retry, never a blank.
+        assertEquals(DevicePushState.Failed("token", "CancellationException: stopped before it finished"), c.state.value)
     }
     @Test
     fun `a clean null and a failure both end the Registering state`() = runTest {
@@ -471,5 +472,86 @@ class PushRegistrationCoordinatorTest {
         )
         failing.onSignedIn()
         assertTrue(failing.state.value is DevicePushState.Failed)
+    }
+
+    // ---- #1809: Retry runs in the coordinator's scope and outlives the card ----
+    @Test
+    fun `a register call cancelled mid-run is a failure at the register stage`() = runTest {
+        val functions = object : FunctionsClient {
+            override suspend fun call(name: String, payload: JsonObject?): JsonObject = awaitCancellation()
+        }
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(functions), platform = "test-mytribe", tokenProvider = { "tok-1" }, logger = {},
+        )
+        val run = launch { c.onSignedIn() }
+        runCurrent()
+        run.cancelAndJoin()
+        assertEquals(DevicePushState.Failed("register", "CancellationException: stopped before it finished"), c.state.value)
+    }
+    @Test
+    fun `startRetry finishes in the coordinator scope and clears the retrying flag`() = runTest {
+        var next: suspend () -> String? = { throw IllegalStateException("boom") }
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fakeWithStubs()), platform = "test-mytribe", tokenProvider = { next() }, logger = {},
+            scope = backgroundScope,
+        )
+        c.onSignedIn()
+        val release = CompletableDeferred<String?>()
+        next = { release.await() }
+        val job = c.startRetry()
+        runCurrent()
+        assertEquals(true, c.retrying.value)
+        assertEquals(DevicePushState.Registering, c.state.value)
+        release.complete("tok-1")
+        job.join()
+        assertEquals(false, c.retrying.value)
+        assertEquals(DevicePushState.Registered, c.state.value)
+    }
+    @Test
+    fun `a second Retry tap while one runs joins it instead of starting another`() = runTest {
+        val fake = fakeWithStubs()
+        val release = CompletableDeferred<String?>()
+        var fetches = 0
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe",
+            tokenProvider = { fetches += 1; release.await() }, logger = {}, scope = backgroundScope,
+        )
+        val first = c.startRetry()
+        runCurrent()
+        val second = c.startRetry()
+        assertTrue(first === second)
+        release.complete("tok-1")
+        first.join()
+        assertEquals(1, fetches)
+        assertEquals(1, fake.calls.count { it.first == "registerFcmToken" })
+    }
+    @Test
+    fun `sign-out stops a running Retry, which ends blank rather than failed, and registers nothing`() = runTest {
+        val fake = fakeWithStubs()
+        val release = CompletableDeferred<String?>()
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe",
+            tokenProvider = { release.await() }, logger = {}, scope = backgroundScope,
+        )
+        val job = c.startRetry()
+        runCurrent()
+        c.onSignOut()
+        assertTrue(job.isCancelled)
+        assertEquals(DevicePushState.Unknown, c.state.value)
+        assertEquals(false, c.retrying.value)
+        release.complete("tok-1")
+        runCurrent()
+        assertEquals(0, fake.calls.count { it.first == "registerFcmToken" })
+    }
+    @Test
+    fun `a sign-in attempt interrupted by sign-out ends blank`() = runTest {
+        val c = PushRegistrationCoordinator(
+            portalApi = PortalApi(fakeWithStubs()), platform = "test-mytribe", tokenProvider = { awaitCancellation() }, logger = {},
+        )
+        val run = launch { c.onSignedIn() }
+        runCurrent()
+        c.onSignOut()
+        run.cancelAndJoin()
+        assertEquals(DevicePushState.Unknown, c.state.value)
     }
 }

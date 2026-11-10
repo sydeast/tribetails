@@ -10,10 +10,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -28,7 +24,6 @@ import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.push.devicePushCardKind
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
-import kotlinx.coroutines.launch
 /** Card copy, shared with the web portal's PushPrompt where the words apply. */
 internal const val PUSH_ENABLE_TITLE = "Get notified about visits"
 internal const val PUSH_ENABLE_BODY = "Know the moment your Auntie checks in, sends a KinTale, or replies to a message."
@@ -66,6 +61,9 @@ internal fun DevicePushCard(
     val gate = coordinator.permissionGate
     val permission by gate.state.collectAsState()
     val push by coordinator.state.collectAsState()
+    // #1809: Retry runs in the coordinator's scope and its flag lives there too,
+    // so leaving composition mid-Retry neither cancels it nor loses the flag.
+    val retrying by coordinator.retrying.collectAsState()
     // Re-read when the screen appears, so a change made in system settings shows at once.
     DisposableEffect(gate) {
         gate.refresh()
@@ -74,8 +72,6 @@ internal fun DevicePushCard(
     val kind = devicePushCardKind(permission, push, showDeviceStatus)
     if (kind == DevicePushCardKind.None) return
     val type = LocalKinfolkTypography.current
-    val scope = rememberCoroutineScope()
-    var retrying by remember { mutableStateOf(false) }
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l).testTag("device-push-card"),
         contentPadding = PaddingValues(KinfolkSpacing.l),
@@ -113,16 +109,7 @@ internal fun DevicePushCard(
                     KinButton(
                         label = if (retrying) "Retrying…" else "Retry",
                         enabled = !retrying,
-                        onClick = {
-                            retrying = true
-                            scope.launch {
-                                try {
-                                    coordinator.retry()
-                                } finally {
-                                    retrying = false
-                                }
-                            }
-                        },
+                        onClick = { coordinator.startRetry() },
                         modifier = Modifier.testTag("device-push-retry"),
                     )
                 }

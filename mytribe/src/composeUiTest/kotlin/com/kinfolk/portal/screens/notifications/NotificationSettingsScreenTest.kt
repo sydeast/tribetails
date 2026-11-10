@@ -8,6 +8,7 @@ import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -28,6 +29,7 @@ import com.kinfolk.portal.screens.setThemedContent
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
@@ -824,6 +826,8 @@ class NotificationSettingsScreenTest {
             .assertTextEquals("Could not enable notifications: IllegalStateException: SERVICE_NOT_AVAILABLE (token)")
         fail = false
         onNodeWithTag("device-push-retry").performClick()
+        // #1809: Retry runs in the coordinator's scope, off the composition.
+        waitUntil(timeoutMillis = 5_000) { !coordinator.retrying.value }
         waitForIdle()
         assertTrue(fake.calls.any { it.first == "registerFcmToken" })
         onNodeWithText("Finish turning on notifications").assertDoesNotExist()
@@ -843,9 +847,38 @@ class NotificationSettingsScreenTest {
         }
         waitForIdle()
         onNodeWithTag("device-push-retry").performClick()
+        waitUntil(timeoutMillis = 5_000) { !coordinator.retrying.value }
         waitForIdle()
         onNodeWithText("Finish turning on notifications").assertExists()
         onNodeWithTag("device-push-retry").assertExists()
+        onNodeWithTag("device-push-retry").assertIsEnabled()
+    }
+    // ---- #1809: an attempt that never finished is never a blank card here ----
+    @Test
+    fun aCancelledAttempt_leavesTheFinishCardWithARetry_andTheRetryWorks() = runComposeUiTest {
+        val fake = prefsOnlyFake()
+        var next: suspend () -> String? = { kotlinx.coroutines.awaitCancellation() }
+        val coordinator = PushRegistrationCoordinator(
+            portalApi = PortalApi(fake), platform = "test-mytribe", tokenProvider = { next() }, logger = {},
+        )
+        // The sign-in attempt's scope goes away mid-fetch, as the card's own scope used to on Home.
+        val owner = CoroutineScope(Dispatchers.Default)
+        owner.launch { coordinator.onSignedIn() }
+        waitUntil(timeoutMillis = 5_000) { coordinator.state.value == com.kinfolk.portal.push.DevicePushState.Registering }
+        owner.cancel()
+        waitUntil(timeoutMillis = 5_000) { coordinator.state.value is com.kinfolk.portal.push.DevicePushState.Failed }
+        setThemedContent {
+            NotificationSettingsScreen("The Foster", PortalApi(fake), sectionFolds = MemoryFoldStore(), pushCoordinator = coordinator)
+        }
+        waitForIdle()
+        onNodeWithText("Finish turning on notifications").assertExists()
+        onNodeWithTag("device-push-error")
+            .assertTextEquals("Could not enable notifications: CancellationException: stopped before it finished (token)")
+        onNodeWithTag("device-push-retry").assertIsEnabled()
+        next = { "tok-1" }
+        onNodeWithTag("device-push-retry").performClick()
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("device-push-on").fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(fake.calls.any { it.first == "registerFcmToken" })
     }
     @Test
     fun aRegisteredDevice_saysNotificationsAreOnForThisDevice() = runComposeUiTest {

@@ -2,10 +2,16 @@ package com.kinfolk.portal.push
 
 import com.kinfolk.portal.portal.PortalApi
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -64,6 +70,13 @@ class PushRegistrationCoordinator(
     private val stepTimeoutMs: Long = STEP_TIMEOUT_MS,
     /** #1788: whether the device will show a push; the Enable and Blocked cards read it. */
     val permissionGate: NotificationPermissionGate = NotApplicableNotificationGate,
+    /**
+     * #1809: where a Retry tapped on a card runs. It has to outlive the card:
+     * on Home the card leaves composition the moment Retry clears the failure,
+     * and a Retry launched in the card's own scope was cancelled with it. The
+     * app passes its root composition scope, the one sign-out already runs in.
+     */
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     var registeredToken: String? = null
         private set
@@ -86,8 +99,37 @@ class PushRegistrationCoordinator(
         onSignedIn()
     }
 
+    private val _retrying = MutableStateFlow(false)
+    /** True while a Retry started by [startRetry] is running; the Finish card's button reads it. */
+    val retrying: StateFlow<Boolean> = _retrying.asStateFlow()
+    private var retryJob: Job? = null
+    /**
+     * The Retry button (#1809): runs [retry] in the coordinator's [scope], so it
+     * finishes even when the card that asked for it leaves composition. A tap
+     * while one is already running joins that one instead of starting another.
+     */
+    fun startRetry(): Job {
+        retryJob?.takeIf { it.isActive }?.let { return it }
+        _retrying.value = true
+        val job = scope.launch {
+            try {
+                retry()
+            } finally {
+                _retrying.value = false
+            }
+        }
+        retryJob = job
+        return job
+    }
+
+    /** Bumped on sign-out, so an attempt interrupted by it ends blank rather than as a failure. */
+    private var signInGeneration = 0
+    /** The step the running attempt is on, for the line an interrupted attempt leaves behind. */
+    private var stage = "token"
+
     /** Call when auth state resolves to SignedIn. Safe to call repeatedly. */
     suspend fun onSignedIn() {
+        val generation = signInGeneration
         // A new attempt starts clean, so a stale failure cannot outlive a clean
         // "no token" answer. #1808: and it says it is running. A device already
         // registered keeps saying so while the token is refreshed.
@@ -96,14 +138,22 @@ class PushRegistrationCoordinator(
             attemptRegistration()
         } finally {
             // Every normal exit leaves Registered, Unavailable or Failed. Only a
-            // cancelled run (sign-out, or the scope that launched a Retry going
-            // away) gets here still Registering, and it must not leave the
-            // settings card on "Signing up" for good.
-            if (_state.value == DevicePushState.Registering) _state.value = DevicePushState.Unknown
+            // cancelled run gets here still Registering. Sign-out cancelling it
+            // is the one case that should end blank. Anything else (#1809: the
+            // scope that ran it went away) is an attempt that did not finish,
+            // so it ends as a failure with a Retry, never as a blank card.
+            if (_state.value == DevicePushState.Registering) {
+                _state.value = if (generation != signInGeneration) {
+                    DevicePushState.Unknown
+                } else {
+                    DevicePushState.Failed(stage, INTERRUPTED_DETAIL)
+                }
+            }
         }
     }
 
     private suspend fun attemptRegistration() {
+        stage = "token"
         val token = try {
             withTimeout(stepTimeoutMs) { tokenProvider() }
         } catch (t: TimeoutCancellationException) {
@@ -132,6 +182,11 @@ class PushRegistrationCoordinator(
 
     /** Call BEFORE backend.signOut() so the callable still has auth. */
     suspend fun onSignOut() {
+        // A Retry still running belongs to the session being torn down: stop
+        // it before the token is forgotten, so it cannot register afterwards.
+        signInGeneration += 1
+        retryJob?.cancelAndJoin()
+        retryJob = null
         _state.value = DevicePushState.Unknown
         _homeCardDismissed.value = false
         val token = registeredToken ?: return
@@ -150,6 +205,7 @@ class PushRegistrationCoordinator(
             _state.value = DevicePushState.Registered
             return
         }
+        stage = "register"
         try {
             withTimeout(stepTimeoutMs) { portalApi.registerFcmToken(token, platform, appVersion) }
             registeredToken = token
@@ -179,5 +235,7 @@ class PushRegistrationCoordinator(
     private companion object {
         /** Longest the token fetch or the register call may take before it is logged as a timeout. */
         const val STEP_TIMEOUT_MS = 30_000L
+        /** [DevicePushState.Failed.detail] for an attempt that was stopped part way, same `Class: message` shape. */
+        const val INTERRUPTED_DETAIL = "CancellationException: stopped before it finished"
     }
 }
