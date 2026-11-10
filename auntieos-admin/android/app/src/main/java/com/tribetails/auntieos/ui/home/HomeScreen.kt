@@ -238,6 +238,23 @@ fun HomeScreen(
             }
         }
 
+        // #1798: a visit Home could not mark Completed on its own. Its Complete
+        // button on the card still works; this says why the automatic try stopped.
+        state.autoCompleteRefusals.forEach { refusal ->
+            item(key = "autoCompleteRefusal_${refusal.sessionId}") {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Warning,
+                    title = "Visit not completed",
+                    onDismiss = { viewModel.dismissAutoCompleteRefusal(refusal.sessionId) },
+                ) {
+                    Text(
+                        refusal.message,
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textPrimary,
+                    )
+                }
+            }
+        }
         if (!state.isOffline) {
             // 17.3 Dashboard: render the widgets in the operator's saved order; hidden
             // widgets are omitted. On a phone everything stacks full-width. In edit mode
