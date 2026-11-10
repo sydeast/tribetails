@@ -78,8 +78,10 @@ fun KinfolkPortalAppGuarded() {
     // web Notification permission prompt can never appear on first paint.
     // #1788: the platform's notification permission, asked only from the Enable card.
     val permissionGate = com.kinfolk.portal.push.rememberNotificationPermissionGate()
+    // #1809: the root scope, so a Retry tapped on a card outlives the card. It
+    // is the same scope the sign-out below runs in.
     val pushCoordinator = remember(portalApi, permissionGate) {
-        PushRegistrationCoordinator(portalApi, permissionGate = permissionGate)
+        PushRegistrationCoordinator(portalApi, permissionGate = permissionGate, scope = scope)
     }
     val authState by repo.state.collectAsState()
     LaunchedEffect(authState) {

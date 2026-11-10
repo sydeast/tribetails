@@ -6,10 +6,12 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.push.DevicePushState
 import com.kinfolk.portal.push.NotificationPermissionGate
 import com.kinfolk.portal.push.NotificationPermissionState
 import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.screens.setThemedContent
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonArray
@@ -62,6 +64,31 @@ class HomeScreenPushCardTest {
         waitForIdle()
         onNodeWithTag("device-push-card").assertDoesNotExist()
         onNodeWithText("Notifications are on for this device.").assertDoesNotExist()
+    }
+    @Test
+    fun retryOnHome_withATokenFetchThatWaits_completesToRegistered() = runComposeUiTest {
+        // #1809: the Home card leaves composition the moment Retry clears the
+        // failure; the Retry must keep running and finish Registered.
+        val fake = fake().apply { stub("registerFcmToken", buildJsonObject {}) }
+        val gate = Gate(NotificationPermissionState.Granted)
+        var next: suspend () -> String? = { throw IllegalStateException("SERVICE_NOT_AVAILABLE") }
+        val coordinator = PushRegistrationCoordinator(PortalApi(fake), "test-mytribe", tokenProvider = { next() }, logger = {}, permissionGate = gate)
+        coordinator.onSignedIn()
+        setThemedContent { HomeScreen("The Foster", "demo-1", PortalApi(fake), pushCoordinator = coordinator) }
+        waitForIdle()
+        onNodeWithText("Finish turning on notifications").assertExists()
+        val release = CompletableDeferred<String?>()
+        next = { release.await() }
+        onNodeWithTag("device-push-retry").performClick()
+        waitUntil(timeoutMillis = 5_000) { coordinator.state.value == DevicePushState.Registering }
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
+        release.complete("tok-1")
+        waitUntil(timeoutMillis = 5_000) { !coordinator.retrying.value }
+        assertEquals(DevicePushState.Registered, coordinator.state.value)
+        assertEquals(true, fake.calls.any { it.first == "registerFcmToken" })
+        waitForIdle()
+        onNodeWithTag("device-push-card").assertDoesNotExist()
     }
     @Test
     fun noCoordinator_noCard() = runComposeUiTest {
