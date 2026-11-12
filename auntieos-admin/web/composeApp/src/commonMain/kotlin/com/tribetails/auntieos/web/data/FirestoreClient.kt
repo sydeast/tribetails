@@ -3134,6 +3134,11 @@ data class StaffMember(
     val uid: String,
     val displayName: String? = null,
     val email: String? = null,
+    /**
+     * #1820: "owner" or "auntie", from the sign-in account's claims. Null when
+     * the server could not tell, or is an older deploy that does not say.
+     */
+    val role: String? = null,
 ) {
     /** What the picker row shows: name, else email, else the uid. */
     val pickerLabel: String get() = displayName ?: email ?: uid
@@ -3145,6 +3150,13 @@ data class StaffMember(
  */
 fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
     staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+
+/**
+ * #1820: uid -> "owner" or "auntie", for the Activity Log's actor role. Only
+ * staff the server could place are in it; a uid that is absent is not relabelled.
+ */
+fun staffRolesFrom(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { m -> m.role?.let { m.uid to it } }.toMap()
 
 /**
  * Pure decode of the listStaff body `{staff:[{uid, displayName, email}]}`.
@@ -3165,6 +3177,7 @@ internal fun decodeStaffList(dataJson: String): List<StaffMember> =
                 // through to the next label rather than showing an empty row.
                 displayName = o["displayName"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
                 email = o["email"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+                role = (o["role"] as? JsonPrimitive)?.contentOrNull?.takeIf { it == "owner" || it == "auntie" },
             )
         }
 
@@ -4175,7 +4188,40 @@ data class ActivityLogEntry(
     val seq: Int? = null,
     val prevHash: String = "",
     val entryHash: String = "",
+    // #1820: the role the server filed the actor under (SYSTEM | PRIMARY |
+    // SECONDARY | AUNTIE). Read only: `logActivityBody` never sends it.
+    val actorRole: String = "",
+    // #1820: the facts behind the line. On a stored entry the server has also
+    // stamped `admin` and `staffRole` here, which is how the screen tells the
+    // owner from an Auntie. Any JSON, so an odd stored value cannot fail the list.
+    val payload: JsonElement? = null,
 )
+
+/**
+ * The body of one `logActivity` call. Pure, so it is tested directly.
+ *
+ * #1820: NO ROLE IS SENT. [ActivityLogEntry] is also the model the Activity Log
+ * reads, so it carries `actorRole` and the chain fields, and the whole entry
+ * used to be serialized into the request. Only the fields the callable takes
+ * are written here. The server works out who the caller is from the sign-in.
+ * `payload` carries the facts behind the sentence, with this client named.
+ */
+internal fun logActivityBody(entry: ActivityLogEntry): String = buildJsonObject {
+    put("actionType", entry.actionType)
+    if (entry.description.isNotBlank()) put("description", entry.description)
+    if (entry.status.isNotBlank()) put("status", entry.status)
+    if (entry.actorId.isNotBlank()) put("actorId", entry.actorId)
+    if (entry.targetId.isNotBlank()) put("targetId", entry.targetId)
+    if (entry.targetCollection.isNotBlank()) put("targetCollection", entry.targetCollection)
+    if (entry.familyId.isNotBlank()) put("familyId", entry.familyId)
+    put("payload", buildJsonObject {
+        (entry.payload as? JsonObject)?.forEach { (key, value) ->
+            // The server stamps these two itself and refuses them from a client.
+            if (value !is JsonNull && key != "admin" && key != "staffRole") put(key, value)
+        }
+        put("source", "desktop")
+    })
+}.toString()
 
 /**
  * Firestore collection: `notifications`. Catalog-dispatched notifications

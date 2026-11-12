@@ -32,6 +32,24 @@ class ActivityCategoryTest {
         check(ActivityCategory.KinTales, "CONTENT_KINTALE_PHOTO_UPLOADED", "AI_TALE_TITLES_APPLIED", "MEDIA_FILE_DELETED", "DRAFT_APPROVED")
         check(ActivityCategory.Notifications, "NOTIFICATION_VIEWED", "BROADCAST_SENT", "CONVERSATION_REPLIED", "MARKETING_BLAST_SCHEDULED")
     }
+    /** #1820: the keys declared ahead of their writers. CREATE_KIN and UPDATE_KIN are exact, so a visit stays under Bookings. */
+    @Test
+    fun theKeysDeclaredAheadOfTheirWritersAreFiled() {
+        check(
+            ActivityCategory.Admin,
+            "UPDATE_KINFOLK", "UPDATE_KINFOLK_TAGS", "ARCHIVE_KINFOLK", "RESTORE_KINFOLK", "CREATE_KIN", "UPDATE_KIN",
+            "UPDATE_KIN_TAGS", "SECONDARY_KINFOLK_SAVED", "SECONDARY_KINFOLK_REMOVED", "HOUSEHOLD_DATA_SAVED",
+            "TEMPLATE_SAVED", "TEMPLATE_DELETED", "TEMPLATE_ASSIGNED", "TEMPLATE_UNASSIGNED", "TEMPLATE_CONVERTED",
+        )
+        check(ActivityCategory.KinTales, "CONTENT_KINTALE_SENT", "KINTALE_TEMPLATE_SAVED", "KINTALE_TEMPLATE_DELETED")
+        check(
+            ActivityCategory.Bookings,
+            "VISIT_ON_MY_WAY", "VISIT_ARRIVED", "VISIT_DEPARTED", "VISIT_UNDO_ARRIVAL",
+            "CREATE_KINCARE_SESSION", "UPDATE_KINCARE_SESSION",
+        )
+        check(ActivityCategory.Notifications, "NOTIFICATION_NOT_SENT", "NOTIFICATION_MARKED_UNREAD")
+        check(ActivityCategory.Billing, "BILLING_PAYMENT_PARTIAL")
+    }
     @Test
     fun anActionNothingClaimsHasNoCategory() {
         assertNull(activityCategoryOf("RECONCILE_RUN"))

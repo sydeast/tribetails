@@ -568,6 +568,7 @@ class HomeViewModel(
                     description      = "Marked on the way (ETA ${etaMinutes}m) for ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
+                    payload          = visitTapFacts(sessionId, "ON_MY_WAY", card.session.status),
                 )
                 reportVisitNotice(card) {
                     notifier.notify(
@@ -592,6 +593,7 @@ class HomeViewModel(
                     description      = "Arrived at ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
+                    payload          = visitTapFacts(sessionId, "ARRIVED", card.session.status),
                 )
                 // ISSUE #519: `autoStartTrackingOnVisitStart` was persisted by
                 // the Settings panel and read by nothing — arriving always
@@ -697,6 +699,7 @@ class HomeViewModel(
                     description      = "Departed ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
+                    payload          = visitTapFacts(sessionId, "DEPARTED", card.session.status),
                 )
                 if (_uiState.value.businessSettings.enableGPSTrackingForAllVisits) {
                     stopGpsTracking(context)
@@ -730,6 +733,7 @@ class HomeViewModel(
                     description      = "Completed visit for ${auditHousehold(card.kinfolk?.displayName)}",
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
+                    payload          = visitTapFacts(sessionId, "COMPLETED", card.session.status),
                 )
             }
         }
@@ -797,3 +801,15 @@ class HomeViewModel(
         return today.minusDays(mondayOffset.toLong()).toString()
     }
 }
+
+/**
+ * #1820: the facts behind a clock tap's Activity Log line, so the opened line
+ * says which visit and what changed. The same four keys the admin web sends.
+ * [from] is the status on the card the Auntie tapped.
+ */
+internal fun visitTapFacts(sessionId: String, action: String, from: String): Map<String, Any?> = mapOf(
+    "visitId" to sessionId,
+    "action" to action,
+    "from" to from,
+    "to" to action,
+)

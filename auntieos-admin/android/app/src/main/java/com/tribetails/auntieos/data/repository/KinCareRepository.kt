@@ -1082,6 +1082,11 @@ data class StaffMember(
     val uid: String,
     val displayName: String?,
     val email: String?,
+    /**
+     * #1820: "owner" or "auntie", from the sign-in account's claims. Null when
+     * the server could not tell, or is an older deploy that does not say.
+     */
+    val role: String? = null,
 ) {
     /** What the picker shows: display name, else email, else the raw uid. */
     val label: String get() = displayName?.ifBlank { null } ?: email?.ifBlank { null } ?: uid
@@ -1102,9 +1107,21 @@ internal fun decodeListStaff(raw: Map<*, *>?): List<StaffMember> =
                 uid = uid,
                 displayName = m["displayName"] as? String,
                 email = m["email"] as? String,
+                role = (m["role"] as? String)?.takeIf { it == STAFF_ROLE_OWNER || it == STAFF_ROLE_AUNTIE },
             )
         }
         .sortedBy { it.label.lowercase() }
+
+/** The two values `listStaff` sends for a staff member's role (#1820). */
+internal const val STAFF_ROLE_OWNER = "owner"
+internal const val STAFF_ROLE_AUNTIE = "auntie"
+
+/**
+ * #1820: uid -> "owner" or "auntie", for the Activity Log's actor role. Only
+ * staff the server could place are in it; a uid that is absent is not relabelled.
+ */
+internal fun staffRolesByUid(staff: List<StaffMember>): Map<String, String> =
+    staff.mapNotNull { member -> member.role?.let { member.uid to it } }.toMap()
 
 /**
  * #1564: uid -> the name the Gallery shows for an uploader (name, else email).

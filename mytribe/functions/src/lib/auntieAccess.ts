@@ -143,6 +143,13 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'archiveNotification',
   'bulkMarkNotificationsRead',
   'listStaff', // the Assigned Auntie picker renders from this
+  // #1820: the Activity Log line for her own taps (On my way, Arrived,
+  // Departed, a sent KinTale). Writing a line, never reading the log: reading
+  // is audit oversight (rule 4) and stays with the owner. firestore.rules has
+  // always let staff create an activity_log row; this is the chained path the
+  // admin clients use, and it was refusing her, so her taps left no line. The
+  // server works out and records that she is the Auntie (lib/auditActor.ts).
+  'logActivity',
 ]);
 
 /**

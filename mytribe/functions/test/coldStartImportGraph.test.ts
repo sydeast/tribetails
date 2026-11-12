@@ -186,8 +186,16 @@ const ALLOWED_EAGER_PACKAGES = [
  * email and phone shapes the admin clients check, which `portal/secondaryKinfolk.ts`
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
+ *
+ * 441 since #1820: three helpers behind two entries already in this graph.
+ * `lib/auditActor.ts` (who the caller is, for an Activity Log line) and
+ * `lib/activityPayload.ts` (the allow-list for a line's facts) load with
+ * `admin/logActivity.ts`; `lib/staffRoles.ts` (owner or Auntie, per staff
+ * uid) loads with `admin/listStaff.ts`. Their imports are zod and modules
+ * already resident (`staffGate`, `auntieAccess`, `operatorAllowlist`,
+ * `firestoreAdmin`, `logger`), so they add no package to a cold start.
  */
-const MAX_OWN_EAGER_MODULES = 438;
+const MAX_OWN_EAGER_MODULES = 441;
 
 interface Edge {
   spec: string;
