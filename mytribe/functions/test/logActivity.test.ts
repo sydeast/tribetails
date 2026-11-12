@@ -276,6 +276,45 @@ describe('#1820 logActivity is still a staff callable', () => {
   });
 });
 
+/**
+ * #1820 opened this callable to an Auntie so her taps leave a line. She gets
+ * the lines her own work writes and none about the owner's side of the split.
+ */
+describe('#1820 what an Auntie may write a line about', () => {
+  const hers = [
+    'VISIT_ON_MY_WAY', 'VISIT_ARRIVED', 'VISIT_DEPARTED', 'VISIT_COMPLETED', 'VISIT_NOTE_ADDED', 'VISIT_PHOTO_ADDED',
+    'CONTENT_KINTALE_SENT', 'UPDATE_KIN', 'CREATE_KIN', 'UPDATE_KINFOLK', 'DRAFT_APPROVED', 'BLOCK_TIME_SLOT',
+  ];
+  it.each(hers)('writes %s for an Auntie', async (actionType) => {
+    await logActivityHandler(req({ actionType }, 'auntie-1', AUNTIE));
+    expect(written().event).toBe(actionType);
+    expect(written().payload).toEqual({ admin: false, staffRole: 'auntie' });
+  });
+
+  const notHers = [
+    'BILLING_INVOICE_PAID', 'RECORD_PAYMENT', 'SEND_DRAFT_INVOICE', 'RESEND_QUOTE', 'GENERATE_RECEIPT', 'EXPENSE_LOGGED',
+    'AUTH_LOGIN_SUCCESS', 'LOGIN', 'SECRETS_TRIBEPIN_SET', 'PERM_BILLING_GRANTED', 'MEMBERSHIP_MEMBER_REMOVED',
+    'ADMIN_FEATURE_FLAGS_UPDATED', 'UPDATE_BUSINESS_SETTINGS', 'OPERATOR_CROSSTENANT_ACCESS', 'ACCOUNT_CREDIT_GIVEN',
+  ];
+  it.each(notHers)('refuses %s from an Auntie and writes nothing', async (actionType) => {
+    await expect(logActivityHandler(req({ actionType }, 'auntie-1', AUNTIE))).rejects.toMatchObject({
+      code: 'permission-denied',
+    });
+    expect(writeAuditEntryMock).not.toHaveBeenCalled();
+  });
+
+  it.each(notHers)('still writes %s for the owner', async (actionType) => {
+    await logActivityHandler(req({ actionType }, 'owner-1', OWNER));
+    expect(written().event).toBe(actionType);
+  });
+
+  it('an account carrying both claims is held to the Auntie rule', async () => {
+    await expect(
+      logActivityHandler(req({ actionType: 'RECORD_PAYMENT' }, 'both-1', { admin: true, staffRole: 'auntie' })),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+});
+
 describe('#1820 logActivity takes a bounded payload', () => {
   it('stores the listed facts beside the server stamp', async () => {
     await logActivityHandler(

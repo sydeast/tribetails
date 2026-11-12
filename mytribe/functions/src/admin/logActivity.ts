@@ -35,12 +35,35 @@ import { ActivityPayload, compactActivityPayload } from '../lib/activityPayload'
  *
  * Auth: wrapAdminCallable. The owner always may; an Auntie may because
  * `lib/auntieAccess.ts` lists this callable (her taps were refused, and so
- * left no line, until #1820). The `actorId` field is informational only; the
+ * left no line, until #1820), for the kinds of line `auntieMayLog` allows. The `actorId` field is informational only; the
  * actual actor uid comes from `req.auth.uid`, which is what writeAuditEntry
  * signs into the chain.
  */
 
 const SCREAMING_SNAKE = /^[A-Z][A-Z0-9_]*$/;
+
+/**
+ * What an Auntie may NOT write a line about (#1820): money, sign-in and
+ * secrets, permissions and membership, and business settings. Those are the
+ * owner's side of the #944 split, and no screen an Auntie can reach logs one,
+ * so a line of that kind under her name could only be a made-up one. Her own
+ * lines are visits, KinTales, Kin and Kinfolk records, notes and photos.
+ */
+const AUNTIE_REFUSED_PREFIXES = [
+  'BILLING_', 'EXPENSE_', 'AUTH', 'SECRETS_', 'PERM_', 'MEMBERSHIP_', 'ADMIN', 'OPERATOR_', 'BUSINESS_', 'THEME_',
+  'RETENTION_',
+];
+const AUNTIE_REFUSED_WORDS = [
+  'INVOICE', 'PAYMENT', 'QUOTE', 'RECEIPT', 'CREDIT', 'REFUND', 'PAYOUT', 'STRIPE', 'LOGIN', 'LOGOUT', 'PASSWORD',
+  'CLAIM', 'SETTINGS',
+];
+
+export function auntieMayLog(actionType: string): boolean {
+  return (
+    !AUNTIE_REFUSED_PREFIXES.some((p) => actionType.startsWith(p)) &&
+    !AUNTIE_REFUSED_WORDS.some((w) => actionType.includes(w))
+  );
+}
 
 const Args = z.object({
   actionType: z.string().min(1).max(120).regex(SCREAMING_SNAKE, {
@@ -88,6 +111,9 @@ export async function logActivityHandler(
       ? `${args.actionType} (client-actor=${suppliedActorId})`
       : args.actionType);
   const actor = await resolveAuditActor(req.auth, 'logActivity', args.familyId || undefined);
+  if (actor.staffRole !== null && !auntieMayLog(args.actionType)) {
+    throw new HttpsError('permission-denied', 'This is not available to caretaker accounts.');
+  }
 
   const entryId = await writeAuditEntry({
     event: args.actionType as AuditEvent,

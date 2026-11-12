@@ -60,7 +60,8 @@ internal fun actorRoleFor(
     if (stored == "AUNTIE") {
         val facts = payload as? JsonObject
         if ((facts?.get("staffRole") as? JsonPrimitive)?.contentOrNull == "auntie") return AUNTIE_ROLE_LABEL
-        if ((facts?.get("admin") as? JsonPrimitive)?.booleanOrNull == true) return OWNER_ROLE_LABEL
+        // A real boolean only: `booleanOrNull` would also read the text "true".
+        if ((facts?.get("admin") as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull == true) return OWNER_ROLE_LABEL
     }
     return when (roles[actorId.trim()]) {
         "owner" -> OWNER_ROLE_LABEL
