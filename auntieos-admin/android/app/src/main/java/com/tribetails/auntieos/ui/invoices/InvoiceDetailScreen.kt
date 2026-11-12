@@ -132,10 +132,19 @@ fun InvoiceDetailScreen(
     onOpenVisit: (sessionId: String) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val applyCreditState by viewModel.applyCredit.state.collectAsState()
     val context = LocalContext.current
 
     LaunchedEffect(invoiceId) {
         viewModel.loadInvoice(invoiceId)
+    }
+
+    // #1872: the household's available credit is read only for an invoice that
+    // offers the Account credit box, so a draft, a quote, a paid invoice and an
+    // archived one never ask for it.
+    val creditInvoice = uiState.invoice?.takeIf { com.tribetails.auntieos.domain.applyCreditOffered(it) }
+    LaunchedEffect(creditInvoice?.id, creditInvoice?.kinfolkId) {
+        creditInvoice?.let { viewModel.applyCredit.load(it.id, it.kinfolkId) }
     }
 
     // Stage 3 / 16.2: open the generated invoice PDF URL in the system
@@ -181,8 +190,7 @@ fun InvoiceDetailScreen(
                 text = if (action == "reminder") {
                     "This sends a real payment-reminder notification to the household."
                 } else {
-                    "This sends the draft to the household and marks the invoice open. A draft missing its " +
-                        "total, household, or invoice number is rejected rather than sent."
+                    REVIEW_AND_SEND_CONFIRM_COPY
                 },
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
@@ -303,6 +311,14 @@ fun InvoiceDetailScreen(
                         onOpenEdit        = { viewModel.openEditMode() },
                         onEditInvoice     = { viewModel.openInvoiceEdit() },
                         onRecordPayment   = { viewModel.openRecordPayment() },
+                        applyCreditState  = applyCreditState,
+                        applyCreditDueCents = com.tribetails.auntieos.domain.applyCreditDueCents(
+                            uiState.ledgerAmountDueCents,
+                            invoice,
+                        ),
+                        onApplyCreditAmount = { viewModel.applyCredit.setAmount(it) },
+                        onApplyCreditReview = { due -> viewModel.applyCredit.review(due) },
+                        onApplyCreditRetry  = { viewModel.applyCredit.retryLoad() },
                         onRetryPayments   = { viewModel.retryPayments() },
                         onGenerateReceipt = { viewModel.generateReceipt() },
                         // #1609: both open a confirm naming who the send reaches.
@@ -316,6 +332,17 @@ fun InvoiceDetailScreen(
                 }
             }
         }
+    }
+
+    // ── Apply account credit: the confirmation (#1872) ───────────────────────────
+    uiState.invoice?.let { inv ->
+        ApplyCreditConfirmDialog(
+            state         = applyCreditState,
+            invoiceNumber = inv.invoiceNumber,
+            dueCents      = com.tribetails.auntieos.domain.applyCreditDueCents(uiState.ledgerAmountDueCents, inv),
+            onBack        = { viewModel.applyCredit.back() },
+            onConfirm     = { viewModel.applyCredit.confirm(inv.invoiceNumber) },
+        )
     }
 
     // ── Record-payment dialog (writes Payment.invoiceId) ──────────────────────────
@@ -406,6 +433,11 @@ private fun invoiceDetailBody(
     onOpenEdit: () -> Unit,
     onEditInvoice: () -> Unit,
     onRecordPayment: () -> Unit,
+    applyCreditState: ApplyCreditUiState,
+    applyCreditDueCents: Long?,
+    onApplyCreditAmount: (String) -> Unit,
+    onApplyCreditReview: (Long?) -> Unit,
+    onApplyCreditRetry: () -> Unit,
     onRetryPayments: () -> Unit,
     onGenerateReceipt: () -> Unit,
     onSendReminder: () -> Unit,
@@ -921,6 +953,21 @@ private fun invoiceDetailBody(
                         )
                 }
             }
+        }
+    }
+
+    // ── Account credit (#1872) ───────────────────────────────────────────────────
+    // Credit is never spent automatically. It goes onto this invoice only here,
+    // as an amount she types and confirms. Offered where Record payment is (the
+    // same stored-state answer) and never on an archived invoice.
+    if (com.tribetails.auntieos.domain.applyCreditOffered(invoice)) {
+        item {
+            InvoiceApplyCreditPanel(
+                state       = applyCreditState,
+                onAmount    = onApplyCreditAmount,
+                onReview    = { onApplyCreditReview(applyCreditDueCents) },
+                onRetryLoad = onApplyCreditRetry,
+            )
         }
     }
 
@@ -1863,6 +1910,15 @@ internal fun recordPaymentSplitCopy(split: PaymentSplit?, feeCents: Long?): Stri
  *   positive          money over, and what happens to it depends on the
  *                     auto-apply switch, so the copy follows the switch
  */
+/**
+ * #1872: what Review and send does, and only that. It sends the draft and marks
+ * the invoice open. It takes no payment and spends no account credit, so it
+ * says nothing about either.
+ */
+internal const val REVIEW_AND_SEND_CONFIRM_COPY: String =
+    "This sends the draft to the household and marks the invoice open. A draft missing its " +
+        "total, household, or invoice number is rejected rather than sent."
+
 internal fun recordPaymentBalanceCopy(unappliedCents: Long?, autoApply: Boolean): String = when {
     unappliedCents == null ->
         "Unapplied balance: not yet, one of the amounts above cannot be read."
@@ -1870,12 +1926,14 @@ internal fun recordPaymentBalanceCopy(unappliedCents: Long?, autoApply: Boolean)
         "This payment does not cover the amount applied plus the tip. " +
             "Raise the payment amount, or lower one of the other two."
     unappliedCents == 0L -> "Unapplied balance ${formatCentsUsd(0)}."
+    // #1872: credit is never spent automatically. Held credit stays on the
+    // household's account until she applies an amount to an invoice.
     autoApply ->
         "Unapplied balance ${formatCentsUsd(unappliedCents)}, and it will be held as this " +
-            "household's account credit for their next invoice."
+            "household's account credit until you apply an amount to an invoice."
     else ->
         "Unapplied balance ${formatCentsUsd(unappliedCents)}, and it will not be applied to " +
-            "anything unless you switch on auto-apply."
+            "anything."
 }
 
 // ── Edit dialog: "Link Sessions" ─────────────────────────────────────────────
