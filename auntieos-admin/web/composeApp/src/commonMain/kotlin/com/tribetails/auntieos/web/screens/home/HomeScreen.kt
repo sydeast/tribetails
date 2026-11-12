@@ -92,6 +92,7 @@ import com.tribetails.auntieos.web.ui.components.greetingForHour
 import com.tribetails.auntieos.web.ui.components.statusLabel
 import com.tribetails.auntieos.web.ui.shell.Destination
 import com.tribetails.auntieos.web.util.nowIso
+import com.tribetails.auntieos.web.screens.schedule.scheduleClockOf
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.datetime.DateTimeUnit
@@ -139,6 +140,7 @@ internal fun statCardNumeric(state: FirestoreResult<*>, ready: Double): Double? 
  * aggregation yet so it is gated behind [LocalFeatureFlags] (off → the 4th card
  * shows the real active-Kinfolk count instead).
  */
+@OptIn(ExperimentalTime::class)
 @Composable
 fun HomeScreen(
     authUser: AuthUser? = null,
@@ -436,7 +438,12 @@ fun HomeScreen(
                                 // #1590: late work belongs on the card that opens the day. The
                                 // count is Auntie Time's own Overdue rule over the same stream.
                                 val overdueLabel = if (sessionsState is FirestoreResult.Data) {
-                                    todaysPackOverdueLabel(overdueOnAuntieTime(sessions, todayKey))
+                                    // #2036: counted on the business's day, as the board counts it.
+                                    todaysPackOverdueLabel(
+                                        scheduleClockOf(businessSettings.timeZone, Clock.System.now()).let { clock ->
+                                            overdueOnAuntieTime(sessions, clock.today.toString(), clock.zone)
+                                        },
+                                    )
                                 } else null
                                 if (overdueLabel != null) {
                                     TodaysPackOverdueRow(overdueLabel) { onNavigate(Destination.Sessions) }

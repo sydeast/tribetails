@@ -428,6 +428,30 @@ export function sessionsPageQuery(fromDay: string, toDay: string): PagedCollecti
   };
 }
 
+/**
+ * #2036: THE ARCHIVE'S PAGED QUERY. Same collection, order and page size as
+ * `sessionsPageQuery`, over the bare-day bounds `archiveFetchBounds` widens the
+ * operator's FROM and TO to: from [fromDay], up to but not including
+ * [beforeDay].
+ *
+ * The bounds are wider than the picked days on purpose. A bare day compared
+ * against a stored instant cuts at UTC midnight, which is the evening before
+ * where the business is, and a `startTime` is stored both as an instant and as
+ * a zone-less business wall clock, so no string bound places both. The screen
+ * makes the exact cut on the business's clock (`lib/sessionArchive.ts`).
+ */
+export function sessionsArchivePageQuery(fromDay: string, beforeDay: string): PagedCollectionSpec {
+  return {
+    path: 'kin_care_sessions',
+    order: ['startTime', 'desc'],
+    pageSize: SESSIONS_PAGE_SIZE,
+    filters: [
+      ['startTime', '>=', fromDay],
+      ['startTime', '<', beforeDay],
+    ],
+  };
+}
+
 /** The day-of window as a paged query: the same bounds `sessionsWindowQuery` uses. */
 export function sessionsWindowPageQuery(todayIso: string): PagedCollectionSpec {
   const { from, to } = sessionsWindowBounds(todayIso);
