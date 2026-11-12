@@ -187,13 +187,17 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
  *
- * 439 since #1962: `lib/savedByStamp.ts`, the one "last saved" stamp the four
- * writers of the Settings documents share (`saveBusinessSettings`,
- * `removeBusinessTag`, `confirmBrandAssetUpload`, `saveEmailFrame`, all
- * entries already in this graph), so they can no longer disagree about what
- * `updatedBy` holds. One function with no import of its own.
+ * 439 since #1830: `lib/portalVisitProgress.ts`, the pure rules `getMyBookings`
+ * (an entry already in this graph) reads a visit's On the way / Arrived /
+ * Departed and its list by. Its one import is a type, erased at build.
+ *
+ * 440 since #1962 (on top of #1830's 439): `lib/savedByStamp.ts`, the one
+ * "last saved" stamp the four writers of the Settings documents share
+ * (`saveBusinessSettings`, `removeBusinessTag`, `confirmBrandAssetUpload`,
+ * `saveEmailFrame`, all entries already in this graph), so they can no longer
+ * disagree about what `updatedBy` holds. One function with no import of its own.
  */
-const MAX_OWN_EAGER_MODULES = 439;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;
