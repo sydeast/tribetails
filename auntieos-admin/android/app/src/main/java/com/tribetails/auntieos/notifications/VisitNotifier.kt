@@ -38,6 +38,36 @@ class VisitNotifier(
      */
     data class DispatchResult(val dispatchIds: List<String>, val suppressed: Boolean, val reason: String? = null)
 
+    /**
+     * #1840: what `previewVisitNotification` answered for one household.
+     * [reason] is `household_has_no_portal_account` or `household_notices_off`
+     * when [willNotify] is false.
+     */
+    data class PreviewResult(val willNotify: Boolean, val reason: String? = null)
+
+    /**
+     * #1840: ask the server whether a visit notice can reach this household,
+     * with the same two checks the dispatch makes (a member login to send to,
+     * and the household-notices switch). Read-only.
+     *
+     * The confirm used to guess this from `kinfolk.uid` on the roster, which on
+     * an unclaimed household held the Admin's own login. A failure here (no
+     * signal, or a server from before this callable) leaves the confirm saying
+     * nothing about the household.
+     */
+    suspend fun preview(familyId: String): Result<PreviewResult> = runCatching {
+        if (familyId.isBlank()) error("VisitNotifier: familyId is blank - nothing to preview")
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions
+            .getHttpsCallable("previewVisitNotification")
+            .call(mapOf("familyId" to familyId))
+            .awaitCallable()
+            .data as? Map<String, Any?>
+            ?: error("VisitNotifier: preview returned non-map payload")
+        val willNotify = raw["willNotify"] as? Boolean ?: error("VisitNotifier: preview carried no answer")
+        PreviewResult(willNotify = willNotify, reason = (raw["reason"] as? String)?.takeIf { it.isNotBlank() })
+    }.onFailure { AuntieLog.e("VisitNotifier: preview failed", it) }
+
     companion object {
         /** The stamped ISO instant as epoch millis, or null when absent or unparseable (never a guess). */
         fun epochMillisOrNull(iso: String?): Long? =

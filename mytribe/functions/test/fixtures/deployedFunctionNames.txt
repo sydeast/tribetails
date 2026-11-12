@@ -205,6 +205,7 @@ previewEmailTemplate
 previewInvoiceNotice
 previewMarketingBlastAudience
 previewMarketingBlastCopy
+previewVisitNotification
 provisionBusinessAdmins
 provisionTribe
 publishGeneratedDraft

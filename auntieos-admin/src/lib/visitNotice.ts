@@ -10,6 +10,14 @@ import { type VisitLifecycleSession } from './visitLifecyclePatch';
  * East had no portal account, so nothing could be sent. The server threw on
  * the missing account, and the card never said the household was not told.
  *
+ * #1840: THE CONFIRM ASKS THE SERVER. It used to predict from `kinfolk.uid` on
+ * the roster, which is a field any client record listing the household can
+ * stamp: on an unclaimed demo household it held the Admin's own login, so the
+ * confirm promised a notice and the notice went to the Admin. Whether a
+ * household has a portal sign-in is a membership question only the server can
+ * answer (`previewVisitNotification`, the same check the dispatch makes), so
+ * the confirm waits for that answer and says it is checking meanwhile.
+ *
  * ONE ORDER, SHARED WITH THE SERVER AND ANDROID. When more than one reason
  * applies, a household with no portal account is named for that first: turning
  * the switch on would not reach them either. Only a household that has an
@@ -80,11 +88,23 @@ export function visitNoticeOutcomeSentence(
   }
 }
 
+/**
+ * What the server said about reaching this household (#1840), as the confirm
+ * holds it: still asking, no usable answer, or the answer.
+ */
+export type VisitNoticeReach =
+  | { status: 'checking' }
+  /** The call failed, or a server that predates the preview answered. */
+  | { status: 'unknown' }
+  | { status: 'ready'; willNotify: boolean; reason: string | null };
+
 /** What the confirm can honestly say before the tap. */
 export type VisitNoticePreview =
   /** The action tells nobody anything (undo). The confirm says nothing about it. */
   | { kind: 'none' }
-  /** The switch or the account has not loaded yet: neither promise nor reason. */
+  /** The server is being asked. The confirm says so. */
+  | { kind: 'checking' }
+  /** No usable answer: neither promise nor reason. */
   | { kind: 'unknown' }
   | { kind: 'will_notify' }
   | {
@@ -97,42 +117,53 @@ export type VisitNoticePreview =
     };
 
 /**
- * PURE. Whether this tap can reach the household, from what the screen already
- * holds.
+ * Why this visit cannot be routed to a household at all, read off the row, or
+ * `null` when it can. Nothing to ask the server in either refused case.
+ */
+export function visitRoutingSkip(
+  session: Pick<VisitLifecycleSession, 'kinfolkId' | 'kinCareBatchId' | 'kinCareVisitId' | 'sourceBookingId'>,
+): 'session_has_no_kinfolk' | 'session_has_no_routing_ids' | null {
+  if ((session.kinfolkId ?? '').trim() === '') return 'session_has_no_kinfolk';
+  const envelope = (session.kinCareBatchId ?? '').trim() !== '' && (session.kinCareVisitId ?? '').trim() !== '';
+  if (!envelope && (session.sourceBookingId ?? '').trim() === '') return 'session_has_no_routing_ids';
+  return null;
+}
+
+/** Whether this action tells the household anything, so whether there is a question to ask. */
+export function actionNotifiesHousehold(action: VisitLifecycleAction): boolean {
+  return TOLD_WHAT[action] !== undefined;
+}
+
+/**
+ * PURE. Whether this tap can reach the household: the row's own routing first,
+ * then the server's answer.
  *
- * @param hasPortalAccount whether the household's `kinfolk` record carries a
- *        linked login (`uid`), which is what the server routes to. `null` while
- *        that record has not loaded.
- * @param noticesLive `business_settings.householdNotificationsLive`, `null`
- *        while the settings read has not landed or has failed.
+ * @param reach what `previewVisitNotification` said for this household. Its
+ *        two reasons arrive already in the shared order (no portal account
+ *        before the switch).
  */
 export function visitNoticePreview(input: {
   action: VisitLifecycleAction;
   session: Pick<VisitLifecycleSession, 'kinfolkId' | 'kinCareBatchId' | 'kinCareVisitId' | 'sourceBookingId'>;
-  hasPortalAccount: boolean | null;
-  noticesLive: boolean | null;
+  reach: VisitNoticeReach;
 }): VisitNoticePreview {
-  if (TOLD_WHAT[input.action] === undefined) return { kind: 'none' };
-  const { session } = input;
-  if ((session.kinfolkId ?? '').trim() === '') {
-    return { kind: 'will_not_notify', reason: 'session_has_no_kinfolk' };
+  if (!actionNotifiesHousehold(input.action)) return { kind: 'none' };
+  const skip = visitRoutingSkip(input.session);
+  if (skip !== null) return { kind: 'will_not_notify', reason: skip };
+  const { reach } = input;
+  if (reach.status === 'checking') return { kind: 'checking' };
+  if (reach.status === 'unknown') return { kind: 'unknown' };
+  if (reach.willNotify) return { kind: 'will_notify' };
+  if (reach.reason === 'household_has_no_portal_account' || reach.reason === 'household_notices_off') {
+    return { kind: 'will_not_notify', reason: reach.reason };
   }
-  const envelope = (session.kinCareBatchId ?? '').trim() !== '' && (session.kinCareVisitId ?? '').trim() !== '';
-  if (!envelope && (session.sourceBookingId ?? '').trim() === '') {
-    return { kind: 'will_not_notify', reason: 'session_has_no_routing_ids' };
-  }
-  if (input.hasPortalAccount === false) {
-    return { kind: 'will_not_notify', reason: 'household_has_no_portal_account' };
-  }
-  if (input.hasPortalAccount === null) return { kind: 'unknown' };
-  if (input.noticesLive === false) return { kind: 'will_not_notify', reason: 'household_notices_off' };
-  if (input.noticesLive === null) return { kind: 'unknown' };
-  return { kind: 'will_notify' };
+  // A reason this build has no words for. It promises nothing.
+  return { kind: 'unknown' };
 }
 
 /**
  * The confirm's line about the household, future tense, or `null` when the
- * confirm should say nothing about it (an undo, or a state not yet loaded).
+ * confirm should say nothing about it (an undo, or no usable answer).
  */
 export function visitNoticeConfirmLine(
   preview: VisitNoticePreview,
@@ -144,6 +175,8 @@ export function visitNoticeConfirmLine(
     case 'none':
     case 'unknown':
       return null;
+    case 'checking':
+      return household === '' ? 'Checking who will be told.' : `Checking whether ${household} will be told.`;
     case 'will_notify':
       return `${name} will be told ${TOLD_WHAT[action] ?? 'about this step'}.`;
     case 'will_not_notify':
@@ -158,12 +191,6 @@ export function visitNoticeConfirmLine(
           return 'No household will be told, because this visit is not linked to one.';
       }
   }
-}
-
-/** Whether a household record carries a linked portal login. `null` while it has not loaded. */
-export function hasPortalAccount(kinfolk: { uid?: unknown } | null | undefined): boolean | null {
-  if (kinfolk === undefined || kinfolk === null) return null;
-  return typeof kinfolk.uid === 'string' && kinfolk.uid.trim() !== '';
 }
 
 /** {@link visitNoticePreview} then {@link visitNoticeConfirmLine}, for a dialog that wants the line. */

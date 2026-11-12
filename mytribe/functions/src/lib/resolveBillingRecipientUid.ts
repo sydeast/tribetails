@@ -6,9 +6,8 @@ import { resolveKinfolkUid } from './resolveKinfolkUid';
  * WHO IN THE HOUSEHOLD HEARS ABOUT MONEY (#1005).
  *
  * Every invoice, receipt, reminder, overdue and payment notice used to go to
- * `resolveKinfolkUid`, which reads `kinfolk/{id}.uid`. That field is a
- * backwrite from `syncKinfolkClaim`, stamped by whichever client doc synced
- * last. A SECONDARY accepting an invite syncs, so from then on the household's
+ * whatever `kinfolk/{id}.uid` held. That field is a backwrite from
+ * `syncKinfolkClaim`, stamped by whichever client doc synced last. A SECONDARY accepting an invite syncs, so from then on the household's
  * bills, amounts and receipts went to the secondary, billing access or not.
  * An owner stepping into a household through the tribe picker syncs too.
  *
@@ -25,6 +24,15 @@ import { resolveKinfolkUid } from './resolveKinfolkUid';
  *     its primary (the same anti-lockout `hasKinfolkPerm` makes)
  *   no backwrite uid                                       -> the ACTIVE PRIMARY,
  *     or null
+ *
+ * #1840: THE THIRD ROW'S "uid itself" NO LONGER HAPPENS. A backwrite uid with
+ * no member doc, in a household with no PRIMARY member, is the exact shape of
+ * an unclaimed household whose record carries a staff login, and this arm sent
+ * that household's amounts to the staff login. `resolveKinfolkUid` now returns
+ * a login only when it is an ACTIVE member of this household (the ACTIVE
+ * PRIMARY in its place when the backwrite is not one, else null), so the uid
+ * this function starts from always has a member doc and the `?? uid` below is
+ * not reached with a stranger. The code is left as it was.
  *
  * Null means "no household recipient", which every caller already handles as a
  * household with no portal account: the office copy still goes out.

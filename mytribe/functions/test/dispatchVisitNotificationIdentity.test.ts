@@ -51,6 +51,8 @@ beforeEach(() => {
       'families/fam1': { displayName: 'The Rileys' },
       // #1794/#1802: the household login the notice routes to.
       'kinfolk/fam1': { uid: 'uid_kinfolk' },
+      // #1840: a login is a household's only when it is an ACTIVE member.
+      'families/fam1/members/uid_kinfolk': { role: 'PRIMARY', status: 'ACTIVE' },
       'clients/uid_kinfolk': { displayName: 'Dana' },
       'staff/uid_auntie': { displayName: 'TiTi' },
     },

@@ -461,6 +461,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // validates and persists the URL that upload produced. See `lib/brandAsset.ts`.
   confirmBrandAssetUpload: () => require('./admin/confirmBrandAssetUpload'),
   dispatchVisitNotification: () => require('./admin/dispatchVisitNotification'),
+  // #1840: what a clock confirm may promise the household, answered by the
+  // same member-login and switch checks the dispatch above makes.
+  previewVisitNotification: () => require('./admin/dispatchVisitNotification'),
   scheduleMarketingBlast: () => require('./admin/scheduleMarketingBlast'),
   // The read + cancel half of Marketing blasts. `scheduleMarketingBlast` was
   // deployed with nothing calling it; these three are what a screen needs to be

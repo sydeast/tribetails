@@ -265,6 +265,8 @@ describe('householdSendGate: flipping it on after a spell off', () => {
         kinfolkId: 'kf1',
       },
       'kinfolk/kf1': { uid: 'kinUid' },
+      // #1840: a login is a household's only when it is an ACTIVE member.
+      'families/kf1/members/kinUid': { role: 'PRIMARY', status: 'ACTIVE' },
     };
     const ctx = buildDbMock({ docs, writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);

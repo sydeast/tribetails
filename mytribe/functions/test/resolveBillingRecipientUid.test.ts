@@ -66,9 +66,12 @@ describe('resolveBillingRecipientUid', () => {
     expect(await resolveBillingRecipientUid('fam1')).toBe('pk1');
   });
 
-  it('a legacy household with no member docs keeps its one account', async () => {
-    seed('legacy1', {});
-    expect(await resolveBillingRecipientUid('fam1')).toBe('legacy1');
+  it('#1840: a stored login with no member docs in the household gets no money notice', async () => {
+    // This used to return the stored login as "the household's one account".
+    // An unclaimed household whose record carries a staff login has exactly
+    // this shape, and its invoices went to the staff login.
+    seed('uid_admin', {});
+    expect(await resolveBillingRecipientUid('fam1')).toBeNull();
   });
 
   it('no synced account: the PRIMARY', async () => {

@@ -23,8 +23,8 @@ import {
 } from '../lib/sessionFormat';
 import { cardLifecycleActionsFor, completesAfterKinTale, lifecycleNowIso } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
-import { useHouseholdNoticesLive } from '../lib/useHouseholdNoticesLive';
-import { hasPortalAccount, visitNoticeConfirmFor } from '../lib/visitNotice';
+import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
+import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
 import { completeRefusal } from '../lib/completeRule';
 import { useArrivalRule } from '../lib/useArrivalRule';
 import { usePagedCollection } from '../lib/usePagedCollection';
@@ -211,29 +211,12 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
     return map;
   }, [kinState]);
   const catalog = useBookingCatalog();
-  /**
-   * #1794: what a clock confirm needs to decide whether it may promise the
-   * household a notice. Both come off reads this screen already runs: the
-   * roster above (a household's linked login is `kinfolk.uid`) and the
-   * settings document `useBookingCatalog` reads (the household-notices switch).
-   * `null` while either has not landed, and the confirm then says nothing
-   * about the household rather than guess.
-   */
-  const noticesLive = useHouseholdNoticesLive();
-  const portalById = useMemo(() => {
-    if (kinfolkState.status !== 'ready') return null;
-    const map = new Map<string, boolean>();
-    for (const kf of kinfolkState.data) map.set(kf._id, hasPortalAccount(kf) === true);
-    return map;
-  }, [kinfolkState]);
 
   const cardContext: CardContext = {
     todayIso,
     addressById,
     kinById,
     catalog,
-    noticesLive,
-    portalById,
     onSelect,
     onWritten: reload,
     ...(onComposeKinTale ? { onComposeKinTale } : {}),
@@ -381,13 +364,6 @@ interface CardContext {
   kinById: Map<string, Kin>;
   /** #1744: what a card's service is named against, never the stored `visit_60`. */
   catalog: BookingCatalog;
-  /** #1794: the household-notices switch, `null` until the settings read lands. */
-  noticesLive: boolean | null;
-  /**
-   * #1794: kinfolk id to "has a linked portal login", `null` until the roster
-   * lands. A household missing from a loaded roster has no account to send to.
-   */
-  portalById: Map<string, boolean> | null;
   onSelect: (sessionId: string) => void;
   /** Re-runs the paged read after a write that changed the document. */
   onWritten: () => void;
@@ -458,18 +434,17 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   // Firestore now, and it decides legality, no-op and notification routing from
   // this row rather than reading the document back first.
   const clock = useVisitLifecycle(entry, household, onWritten);
-  // #1794: the confirm's household line, from the switch and the roster.
+  // #1840: the confirm's household line, from the server's answer (a member
+  // login to send to, and the switch), asked when the confirm opens.
+  const reach = useVisitNoticeReach(
+    clock.pending !== null && actionNotifiesHousehold(clock.pending.action) && visitRoutingSkip(entry) === null
+      ? str(entry.kinfolkId).trim()
+      : null,
+  );
   const noticeLine =
     clock.pending === null
       ? null
-      : visitNoticeConfirmFor({
-          action: clock.pending.action,
-          session: entry,
-          hasPortalAccount:
-            ctx.portalById === null ? null : (ctx.portalById.get(str(entry.kinfolkId).trim()) ?? false),
-          noticesLive: ctx.noticesLive,
-          household,
-        });
+      : visitNoticeConfirmFor({ action: clock.pending.action, session: entry, reach, household });
 
   // "Complete" is NOT an in-visit clock action and so does not go through the
   // hook: completing a visit is terminal and billable, so it goes through
@@ -720,9 +695,10 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
               household, and a mis-tap on a dense board is easier than one on a
               sheet with a single action row. */}
           <p>{clock.pending.confirmBody(household)}</p>
-          {/* #1794: promises a notice only when one can be sent, and otherwise
-              says why not. Says nothing while the switch or roster loads. */}
-          {noticeLine !== null && <p>{noticeLine}</p>}
+          {/* #1794, #1840: promises a notice only when the server says one can
+              be sent, and otherwise says why not. Says it is checking while
+              that answer is on its way. */}
+          {noticeLine !== null && <p role="status">{noticeLine}</p>}
         </Dialog>
       )}
 

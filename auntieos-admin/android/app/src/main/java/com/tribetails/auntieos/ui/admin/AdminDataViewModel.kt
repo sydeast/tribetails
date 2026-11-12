@@ -701,6 +701,29 @@ class AdminDataViewModel(
     }
 
     /**
+     * #1840: ask the server whether a visit notice can reach this visit's
+     * household, for the clock confirm. [onAnswer] gets
+     * [com.tribetails.auntieos.domain.VisitNoticeReach.Unknown] when the call
+     * fails, and is never called for a visit that cannot be routed to a
+     * household at all (the confirm names that from the row).
+     */
+    fun previewVisitNotice(
+        session: com.tribetails.auntieos.data.model.KinCareSession,
+        onAnswer: (com.tribetails.auntieos.domain.VisitNoticeReach) -> Unit,
+    ) {
+        if (com.tribetails.auntieos.domain.visitRoutingSkip(session) != null) return
+        viewModelScope.launch {
+            val reach = try {
+                com.tribetails.auntieos.domain.visitNoticeReachOf(visitNotifier().preview(session.kinfolkId))
+            } catch (e: Exception) {
+                e.rethrowIfCancellation()
+                com.tribetails.auntieos.domain.VisitNoticeReach.Unknown
+            }
+            onAnswer(reach)
+        }
+    }
+
+    /**
      * A3: applies one OPERATOR status transition through the
      * `transitionBookingStatus` callable, then reloads so the row shows what the
      * server actually did.
