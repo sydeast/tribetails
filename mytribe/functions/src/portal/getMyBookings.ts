@@ -24,6 +24,14 @@ import {
   type BookingDto,
   type EnvelopeDto,
 } from '../lib/portalBookingDto';
+import {
+  LATE_VISIT_WINDOW_MS,
+  bucketOf,
+  isUnderWay,
+  pickLiveVisit,
+  sessionProgressOf,
+  withSessionProgress,
+} from '../lib/portalVisitProgress';
 
 interface GetMyBookingsRequest { kinfolkId?: string }
 
@@ -60,23 +68,58 @@ export async function getMyBookingsHandler(
 
   // The settings read rides alongside the visit query. Fail-soft: a settings
   // doc that will not load leaves names unresolved, never the schedule empty.
-  const [snap, settingsSnap] = await Promise.all([
+  //
+  // #1830: the household's sessions are read HERE, with the visits, not after
+  // the buckets are cut. A visit takes its On the way / Arrived / Departed from
+  // the session it is linked to (`lib/portalVisitProgress.ts`), and that has to
+  // be known before anything is sorted into a list. Both queries are scoped to
+  // the resolved household, so a visit can only ever be joined to a session of
+  // its own household.
+  const [snap, settingsSnap, sessionSnap] = await Promise.all([
     firestore.collectionGroup('kinCares').where('familyId', '==', kinfolkId).get(),
     firestore
       .collection('business_settings')
       .doc('business_settings')
       .get()
       .catch(() => null),
+    firestore.collection('kin_care_sessions').where('kinfolkId', '==', kinfolkId).get(),
   ]);
   const serviceCatalog = settingsSnap ? serviceNameCatalogFrom(settingsSnap.data()) : EMPTY_SERVICE_NAME_CATALOG;
+
+  // Two ways a visit and its session name each other, and a record can carry
+  // either alone: the visit's `sessionId` (every record written since #1575),
+  // and the session's `kinCareVisitId` (approval's `vis_` sessions).
+  const sessionStatusById = new Map<string, unknown>();
+  const sessionByVisitId = new Map<string, { id: string; status: unknown }>();
+  for (const d of sessionSnap.docs) {
+    const s = d.data() as Record<string, unknown>;
+    sessionStatusById.set(d.id, s['status']);
+    const visitId = stringOrNull(s['kinCareVisitId']);
+    if (visitId !== null) sessionByVisitId.set(visitId, { id: d.id, status: s['status'] });
+  }
+  /** Sessions that stand behind a booking record, so they are not listed a second time below. */
+  const linkedSessionIds = new Set<string>();
+  const visitRows = snap.docs.map((d) => {
+    const raw = d.data() as Record<string, unknown>;
+    const ownSessionId = stringOrNull(raw['sessionId']);
+    const linked =
+      ownSessionId !== null && sessionStatusById.has(ownSessionId)
+        ? { id: ownSessionId, status: sessionStatusById.get(ownSessionId) }
+        : (sessionByVisitId.get(d.id) ?? null);
+    if (ownSessionId !== null) linkedSessionIds.add(ownSessionId);
+    if (linked !== null) linkedSessionIds.add(linked.id);
+    // A visit reached only through `kinCareVisitId` still reports its session,
+    // which is what the live map and the replay are keyed on.
+    const withLink = ownSessionId === null && linked !== null ? { ...raw, sessionId: linked.id } : raw;
+    return { doc: d, data: linked !== null ? withSessionProgress(withLink, linked.status) : withLink };
+  });
 
   // #1303: the address, and for completed visits the KinTale and invoice they
   // point at. Billing access is asked after the household is resolved, as the
   // helper requires, and only when a completed visit could use the answer.
-  const completedSessions = snap.docs.filter((d) => {
-    const data = d.data() as Record<string, unknown>;
-    return data['status'] === 'completed' && stringOrNull(data['sessionId']) !== null;
-  });
+  const completedSessions = visitRows.filter(
+    ({ data }) => data['status'] === 'completed' && stringOrNull(data['sessionId']) !== null,
+  );
   let extras: VisitExtras = NO_EXTRAS;
   try {
     const billingAccess =
@@ -91,8 +134,11 @@ export async function getMyBookingsHandler(
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
   const byBatch = new Map<string, BookingDto[]>();
-  const all: BookingDto[] = snap.docs.map((d) => {
-    const data = d.data() as Record<string, unknown>;
+  // Each DTO is built ONCE, from the fields with the session's progress already
+  // on them, and that same object goes into its bucket and its envelope. The
+  // by-id lookups on every client read the envelope copy too, so a second,
+  // unjoined copy there would put CONFIRMED back on a visit that is under way.
+  const all: BookingDto[] = visitRows.map(({ doc: d, data }) => {
     const batchId = resolveBatchId(d, data);
     const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, blocksById, serviceCatalog);
     if (batchId) {
@@ -103,41 +149,37 @@ export async function getMyBookingsHandler(
     return dto;
   });
 
-  // Bucket logic, IDENTICAL to the pre-envelope behaviour so the UI is
-  // unchanged when the envelope flag is off.
-  let liveVisit = all.find((b) => b.status === 'active' || b.status === 'enRoute') ?? null;
+  // #1832: the lists are cut by `bucketOf` (lib/portalVisitProgress.ts). A
+  // visit that is under way is on Upcoming whatever the clock says, and the
+  // live visit is ON that list as well as on the live card, so the count beside
+  // the tab never reads 0 while the Auntie is at the door.
   //
   // #1098: a night awaiting its start time has no `startTimeMs`, and reading
   // that as 0 dropped it from Upcoming entirely. It is upcoming while its night
   // has not passed, and it sorts by that night (see `visitSortMs`).
-  const upcoming = all
-    .filter((b) => (b.status === 'requested' || b.status === 'confirmed') && isUpcoming(b, nowMs))
-    .sort((a, b) => visitSortMs(a) - visitSortMs(b));
+  const upcoming = all.filter((b) => bucketOf(b, nowMs) === 'upcoming');
   const recent = all
-    .filter((b) => b.status === 'completed' || b.status === 'cancelled')
+    .filter((b) => bucketOf(b, nowMs) === 'recent')
     .sort((a, b) => visitSortMs(b) - visitSortMs(a))
     .slice(0, 10);
 
   // Surface AuntieOS-scheduled visits that have NO booking envelope. A visit
-  // scheduled directly in the admin app (createKinCareSession / an ad-hoc
-  // sitter visit) lives only in `kin_care_sessions`, never in the `kinCares`
-  // collection group above, so before this it never reached the kinfolk's
-  // Upcoming list. Bookings that DID spawn a session already carry that
-  // session's id in `sessionId`; those are skipped here so nothing double-shows.
-  const linkedSessionIds = new Set(all.map((b) => b.sessionId).filter((s): s is string => !!s));
-  const sessionSnap = await firestore
-    .collection('kin_care_sessions')
-    .where('kinfolkId', '==', kinfolkId)
-    .get();
+  // scheduled directly in the admin app (an older ad-hoc visit) lives only in
+  // `kin_care_sessions`, never in the `kinCares` collection group above, so
+  // before this it never reached the kinfolk's Upcoming list. A session that
+  // stands behind a booking record was joined to it above; those are skipped
+  // here so nothing double-shows.
+  //
   // A SCHEDULED visit whose start is more than a day past is stale, not upcoming;
-  // in-flight (ON_MY_WAY/ARRIVED) visits show regardless of clock so the kinfolk
-  // can watch a live visit that started late.
-  const staleFloorMs = nowMs - 24 * 3600_000;
+  // a visit that is under way (ON_MY_WAY / ARRIVED / DEPARTED) shows regardless
+  // of clock so the kinfolk can follow a visit that started late.
+  const staleFloorMs = nowMs - LATE_VISIT_WINDOW_MS;
   for (const d of sessionSnap.docs) {
     if (linkedSessionIds.has(d.id)) continue;
     const s = d.data() as Record<string, unknown>;
-    const status = mapSessionStatus(stringOrNull(s['status']));
-    if (status === null) continue; // completed / cancelled / departed / unknown → not upcoming
+    const progress = mapSessionStatus(stringOrNull(s['status']));
+    if (progress === null) continue; // completed / cancelled / unknown → not upcoming
+    const { status, visitProgress } = progress;
     const startTimeMs = isoMillis(s['startTime']);
     if (status === 'confirmed' && (startTimeMs === null || startTimeMs < staleFloorMs)) continue;
     const dto: BookingDto = {
@@ -159,7 +201,9 @@ export async function getMyBookingsHandler(
       timeBlockStartTime: null,
       timeBlockEndTime: null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
-      kinNames: [],
+      // #1832: the session carries the names it was scheduled with, and the
+      // live card says who the Auntie is with. This used to be always empty.
+      kinNames: stringList(s['kinNames']),
       auntieDisplayName: null,
       auntieAvatarUrl: null,
       // #1628: NEVER the session's `notes`. On `kin_care_sessions` that field
@@ -171,7 +215,7 @@ export async function getMyBookingsHandler(
       requestedByUid: stringOrNull(s['createdBy']),
       createdAtMs: isoMillis(s['createdAt']),
       updatedAtMs: isoMillis(s['updatedAt']),
-      visitProgress: status === 'active' ? 'active' : status === 'enRoute' ? 'enRoute' : null,
+      visitProgress,
       sourceBookingId: stringOrNull(s['sourceBookingId']),
       sessionId: d.id,
       cancelRequested: false,
@@ -190,14 +234,13 @@ export async function getMyBookingsHandler(
       kinTaleId: null,
       invoiceId: null,
     };
-    if (status === 'active' || status === 'enRoute') {
-      if (!liveVisit) liveVisit = dto;
-      else upcoming.push(dto);
-    } else {
-      upcoming.push(dto);
-    }
+    upcoming.push(dto);
   }
-  upcoming.sort((a, b) => visitSortMs(a) - visitSortMs(b));
+  // What is happening now leads the list; the rest follow in time order.
+  upcoming.sort((a, b) => Number(isUnderWay(b)) - Number(isUnderWay(a)) || visitSortMs(a) - visitSortMs(b));
+  // The live card's visit: the one the Auntie is at, else on the way to. A
+  // departed visit is never it, so the card clears when she leaves.
+  const liveVisit = pickLiveVisit(upcoming);
 
   // Read the parent envelopes for envelope-level fields.
   const batchIds = [...byBatch.keys()];
@@ -219,21 +262,6 @@ export async function getMyBookingsHandler(
   return validateResponse('getMyBookings', Result, { liveVisit, upcoming, recent, envelopes });
 }
 
-/**
- * Still ahead of the household? A timed visit: its start is no more than a
- * minute past (unchanged). A night awaiting its start time (#1098): its night
- * is today or later, judged in UTC with a day of slack, since this callable
- * reads no business zone. An American evening is already "tomorrow" in UTC,
- * and tonight's overnight must not vanish from the list at 8 PM.
- */
-function isUpcoming(b: BookingDto, nowMs: number): boolean {
-  if (b.startTimeMs == null && b.startTimePending && b.requestedDate) {
-    const yesterdayUtc = new Date(nowMs - 24 * 3600_000).toISOString().slice(0, 10);
-    return b.requestedDate >= yesterdayUtc;
-  }
-  return (b.startTimeMs ?? 0) >= nowMs - 60_000;
-}
-
 /** An envelope's order: its first start, or its earliest visit's sort time when it has none (#1098). */
 function envelopeSortMs(e: EnvelopeDto): number {
   if (e.firstStartTimeMs != null) return e.firstStartTimeMs;
@@ -242,22 +270,25 @@ function envelopeSortMs(e: EnvelopeDto): number {
 }
 
 /**
- * Maps an AuntieOS kin_care_sessions `status` onto the booking status the portal
- * renders. Only non-terminal states map to a value; COMPLETED/DEPARTED/CANCELLED
- * (and anything unrecognized) return null so they are not surfaced as upcoming
- * (completed visits already reach the UI via getMyVisits for GPS replay).
+ * Maps an AuntieOS kin_care_sessions `status` onto what the portal renders for
+ * a visit with NO booking record. Only unfinished states map to a value;
+ * COMPLETED / CANCELLED (and anything unrecognized) return null so they are
+ * not surfaced as upcoming (completed visits already reach the UI via
+ * getMyVisits for GPS replay).
+ *
+ * #1832: DEPARTED used to be null too, so the visit left the household's
+ * schedule the moment the Auntie clocked out and stayed gone until its
+ * KinTale was sent. It is still the household's visit until then.
  */
-function mapSessionStatus(raw: string | null): BookingDto['status'] | null {
-  switch ((raw ?? '').toUpperCase()) {
-    case 'SCHEDULED':
-      return 'confirmed';
-    case 'ON_MY_WAY':
-      return 'enRoute';
-    case 'ARRIVED':
-      return 'active';
-    default:
-      return null;
-  }
+function mapSessionStatus(raw: string | null): Pick<BookingDto, 'status' | 'visitProgress'> | null {
+  if ((raw ?? '').trim().toUpperCase() === 'SCHEDULED') return { status: 'confirmed', visitProgress: null };
+  const progress = sessionProgressOf(raw);
+  return progress === null || progress.status === 'completed' ? null : progress;
+}
+
+/** The strings of a stored array, or none. A session's `kinNames` is unvalidated. */
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
 }
 
 /** Parses an ISO-8601 string (kin_care_sessions stamps times as strings) to millis. */

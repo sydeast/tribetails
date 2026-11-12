@@ -102,6 +102,8 @@ export const SERVER_OWNED_SETTINGS_FIELDS: ReadonlySet<string> = new Set([
   'calendarSyncLastStatus',
   'calendarSyncLastImported',
   'calendarSyncLastError',
+  // #1978: derived by the save from what is stored, see `closedDayHoursChanges`.
+  'closedDayHours',
 ]);
 
 /**
@@ -162,6 +164,48 @@ export function hoursRangeProblem(raw: string): string | null {
   if (open === null || close === null) return HOURS_RANGE_INVALID;
   if (close <= open) return HOURS_CLOSE_BEFORE_OPEN;
   return null;
+}
+
+/**
+ * #1978: what a save of `businessHours` does to `closedDayHours`, the hours
+ * each closed day had when it was last open. A day name maps to the range to
+ * keep, or to null when the kept range is to be dropped.
+ *
+ * A closed day is a PRESENT BLANK key in `businessHours`; that is what the
+ * phone line, the booking checks and the portal read as Closed, so the hours
+ * the day had cannot stay in that map. They are kept here instead, where no
+ * reader of the weekly hours looks, and only the Settings editors read them,
+ * to fill the Open and Close boxes when the day is switched back on.
+ *
+ *  - A day saved as Closed whose stored value is a readable range keeps that
+ *    range. A day that is not set, already closed, or holds text nobody can
+ *    read has nothing to keep, and whatever is already kept for it stays.
+ *  - A day saved with hours drops what was kept for it.
+ *
+ * Never a default: a day with nothing kept reopens blank in every editor.
+ * The clients carry the same rule for the copy they hold after a save
+ * (`foldSettingsPatch.ts`, `BusinessHoursHelpers.kt`).
+ */
+export function closedDayHoursChanges(
+  sentHours: unknown,
+  stored: Record<string, unknown>,
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  if (!isPlainObject(sentHours)) return out;
+  const storedHours = isPlainObject(stored['businessHours']) ? stored['businessHours'] : {};
+  const kept = isPlainObject(stored['closedDayHours']) ? stored['closedDayHours'] : {};
+  for (const [day, value] of Object.entries(sentHours)) {
+    if (!(DAY_NAMES as readonly string[]).includes(day) || typeof value !== 'string') continue;
+    if (value.trim() !== '') {
+      if (day in kept) out[day] = null;
+      continue;
+    }
+    const was = storedHours[day];
+    if (typeof was !== 'string') continue;
+    const range = was.trim();
+    if (range !== '' && hoursRangeProblem(range) === null) out[day] = range;
+  }
+  return out;
 }
 
 /**

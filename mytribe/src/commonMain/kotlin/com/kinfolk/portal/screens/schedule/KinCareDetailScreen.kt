@@ -42,8 +42,11 @@ import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingMode
 import com.kinfolk.portal.portal.BookingNotes
 import com.kinfolk.portal.portal.BookingPolicy
+import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.BusinessCalendar
+import com.kinfolk.portal.portal.findBooking
 import com.kinfolk.portal.portal.label
+import com.kinfolk.portal.portal.stage
 import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.WarmOnOpen
@@ -110,6 +113,9 @@ fun KinCareDetailScreen(
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
     var kinCare by remember { mutableStateOf<Booking?>(null) }
+    // #1823: the whole answer is kept so the screen knows whether this visit
+    // is one to keep current (see KeepBookingsCurrent below).
+    var bookings by remember { mutableStateOf<BookingsResult?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var noteInput by remember { mutableStateOf("") }
     var saveError by remember { mutableStateOf<String?>(null) }
@@ -152,15 +158,30 @@ fun KinCareDetailScreen(
     suspend fun reload() {
         try {
             val all = portalApi.getMyBookings(kinfolkId)
-            val fromEnvelopes = all.envelopes.flatMap { it.kinCares }
-            kinCare = (all.upcoming + all.recent + fromEnvelopes).firstOrNull { it.id == kinCareId }
-                ?: all.liveVisit?.takeIf { it.id == kinCareId }
+            bookings = all
+            // #1830: the lists, then the envelopes, so a visit notice opens
+            // its visit at every status of the visit's life.
+            kinCare = all.findBooking(kinCareId)
             loadError = if (kinCare == null) "Booking not found." else null
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load booking."
         }
+    }
+
+    // #1823: while this visit is under way or about due, the screen follows the
+    // Auntie's taps (On the way, Arrived, Departed, Completed) without being
+    // left and reopened. Quiet on purpose: a dropped re-read, or one that no
+    // longer lists the visit, leaves what is on screen alone.
+    KeepBookingsCurrent(bookings, nowMs) {
+        try {
+            val all = portalApi.getMyBookings(kinfolkId)
+            bookings = all
+            all.findBooking(kinCareId)?.let { kinCare = it }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) { /* the next turn tries again */ }
     }
 
     LaunchedEffect(kinCareId, kinfolkId) {
@@ -986,4 +1007,4 @@ private fun CancelRequestSection(
 
 /** #1298: the status row says the same word as the list and Home pills, in sentence case. */
 private fun statusLabel(b: Booking): String =
-    b.status.label().lowercase().replaceFirstChar { it.uppercase() }
+    b.stage().label().lowercase().replaceFirstChar { it.uppercase() }

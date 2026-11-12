@@ -187,11 +187,15 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
  *
- * 439 since #1872: `admin/applyAccountCredit.ts` is a new FUNCTIONS entry, in
+ * 439 since #1830: `lib/portalVisitProgress.ts`, the pure rules `getMyBookings`
+ * (an entry already in this graph) reads a visit's On the way / Arrived /
+ * Departed and its list by. Its one import is a type, erased at build.
+ *
+ * 440 since #1872: `admin/applyAccountCredit.ts` is a new FUNCTIONS entry, in
  * this graph by construction (the one callable that spends account credit, by
  * an amount the admin enters). Everything it imports was already here.
  */
-const MAX_OWN_EAGER_MODULES = 439;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;

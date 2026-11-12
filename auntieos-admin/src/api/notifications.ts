@@ -142,44 +142,46 @@ export interface NotificationEntry {
   archivedAt?: FsTimeLike;
 }
 
-/** True once the recipient (or an admin) has marked this notification read. */
+/** True once the recipient has marked this notification read. */
 export function isRead(entry: NotificationEntry): boolean {
   return entry.readAt !== undefined;
 }
 
 /**
- * The bounded, server-ordered notifications listener. Ordered by `createdAt`
- * descending, capped at 200 (the same cap ActivityLog uses for its stream).
+ * The signed-in staff member's own notifications, newest first, capped at 200
+ * (the same cap ActivityLog uses for its stream).
  *
- * NO `filters` here, and that is a deliberate read of firestore.rules
- * (web/firestore.rules:497-506), not an omission:
+ * ALWAYS FILTERED TO `recipientUid == uid` (#1837). This used to be an
+ * unfiltered listen on the whole collection, which the rules allowed for the
+ * owner, so every notice addressed to a household was listed here as a card,
+ * and its Mark read, Mark unread and Archive buttons changed that household's
+ * own list. A staff member's notices carry their own uid as `recipientUid` (the
+ * dispatcher writes one doc per business admin), so this filter is the whole of
+ * what the Notifications screen is for. What a household was sent is on the
+ * Activity Log and on the household's own screens.
  *
- *   match /notifications/{id} {
- *     // AuntieOS admin console lists the whole collection (unfiltered listen);
- *     // kinfolk (MyTribe) may still read only their own dispatches.
- *     allow read: if isAuntie()
- *                 || (signedIn() && resource.data.recipientUid == request.auth.uid)
- *                 || (isTestAdmin() && resource.data.recipientUid == request.auth.uid);
- *   }
+ * `firestore.rules` now denies an unfiltered list for every role, so a caller
+ * cannot get this wrong quietly: without the filter the listener errors.
  *
- * The admin console runs as `isAuntie()`, which already grants an unfiltered
- * collection read, exactly what `platformNotificationsStream()` does in
- * FirestoreInterop.*.kt (a plain `collectionStream("notifications")`, no
- * recipientUid where-clause). Adding `['recipientUid', '==', uid]` here would
- * under-scope the admin's own inbox relative to the wasm original. Because
- * there is no `where` combined with the `orderBy`, this query needs NO
- * composite index, a single-field orderBy is always covered by Firestore's
- * automatic single-field indexes.
+ * Needs the composite index `notifications: recipientUid ASC, createdAt DESC`
+ * (mytribe/firestore.indexes.json), the same one the portal's list uses.
+ *
+ * `uid` is a parameter rather than read from `auth.currentUser` here so the
+ * spec changes, and the listener re-subscribes, when the signed-in account
+ * does. An empty uid still carries the filter: it matches no document and can
+ * never widen to the collection.
  */
-export const NOTIFICATIONS_QUERY: CollectionSpec = {
-  path: 'notifications',
-  order: ['createdAt', 'desc'],
-  max: 200,
-};
-
+export function notificationsQueryFor(uid: string): CollectionSpec {
+  return {
+    path: 'notifications',
+    order: ['createdAt', 'desc'],
+    max: 200,
+    filters: [['recipientUid', '==', uid]],
+  };
+}
 /**
- * markNotificationRead (recipient-or-admin gated server-side; an admin uid
- * bypasses the recipient check per markNotificationRead.ts). Stamps `readAt`
+ * markNotificationRead (recipient-only server-side: the caller must be the
+ * notification's `recipientUid`, whatever their role). Stamps `readAt`
  * server-side. Server arg key is `notificationId`.
  */
 export async function markNotificationRead(notificationId: string): Promise<void> {
@@ -193,7 +195,7 @@ export async function markNotificationUnread(notificationId: string): Promise<vo
 
 /**
  * bulkMarkNotificationsRead. Returns the number ACTUALLY marked, ids that are
- * missing, not owned (for a non-admin caller), or lack a `recipientUid` are
+ * missing, not addressed to the caller, or lack a `recipientUid` are
  * silently skipped server-side rather than erroring the whole batch, so this
  * count can be smaller than `ids.length` even on success.
  */

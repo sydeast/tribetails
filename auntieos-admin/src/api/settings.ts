@@ -375,7 +375,18 @@ export interface BusinessSettings {
    * flag or renaming the type removes the old key.
    */
   serviceStartTimeBooking: Record<string, true>;
+  /**
+   * Day name to "HH:MM-HH:MM", or "" for Closed. A day with NO key is not set:
+   * the server reads that as "cannot tell", never as Closed.
+   */
   businessHours: Record<string, string>;
+  /**
+   * #1978: the hours each Closed day had when it was last open, by day name.
+   * READ ONLY. The server writes it when a save closes a day and drops the
+   * entry when a save opens one; a client that sends it is refused. Only the
+   * Business hours editor reads it, to fill a reopened day's boxes.
+   */
+  closedDayHours: Record<string, string>;
   venmoHandle: string;
   paypalHandle: string;
   cashappHandle: string;
@@ -573,6 +584,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   serviceDurations: {},
   serviceStartTimeBooking: {},
   businessHours: {},
+  closedDayHours: {},
   venmoHandle: '',
   paypalHandle: '',
   cashappHandle: '',
@@ -824,6 +836,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     serviceDurations: pickMap(r.serviceDurations, d.serviceDurations),
     serviceStartTimeBooking: pickTrueMap(r.serviceStartTimeBooking),
     businessHours: pickMap(r.businessHours, d.businessHours),
+    closedDayHours: pickMap(r.closedDayHours, d.closedDayHours),
     venmoHandle: pickString(r.venmoHandle, d.venmoHandle),
     paypalHandle: pickString(r.paypalHandle, d.paypalHandle),
     cashappHandle: pickString(r.cashappHandle, d.cashappHandle),

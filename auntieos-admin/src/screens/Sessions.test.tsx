@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type SessionEntry } from '../api/sessions';
 import { type Kin, type Kinfolk } from '../api/directory';
@@ -79,6 +79,19 @@ vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
 }));
 import { Sessions } from './Sessions';
+import { businessTodayIso, businessWallClockToMs } from '../lib/businessZoneTime';
+import { shiftDayIso } from '../lib/sessionFormat';
+/** The zone the mocked settings resolve to: no `timeZone` stored, so the server default. */
+const CHICAGO = 'America/Chicago';
+/** A wall clock in the business zone, as the UTC instant string a server writer stamps (#2036). */
+function chicago(day: string, hhmm: string): string {
+  return new Date(businessWallClockToMs(day, hhmm, CHICAGO) ?? Number.NaN).toISOString();
+}
+/** Set the Archive's two date boxes. */
+function pickRange(from: string, to: string): void {
+  fireEvent.change(screen.getByLabelText('From'), { target: { value: from } });
+  fireEvent.change(screen.getByLabelText('To'), { target: { value: to } });
+}
 
 /**
  * Local wall-clock time [offset] days from today, as the UTC instant string a
@@ -969,17 +982,88 @@ describe('Auntie Time: the Archive', () => {
     expect(screen.getByLabelText('To')).toBeInTheDocument();
   });
 
-  it('defaults to the range just BEFORE the day-of window, so it never re-shows the same rows', async () => {
+  it('opens on the 30 business days that end where Recent stops (#2036)', async () => {
     usePagedCollection.mockReturnValue(paged([]));
     renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
-    const from = (screen.getByLabelText('From') as HTMLInputElement).value;
-    const to = (screen.getByLabelText('To') as HTMLInputElement).value;
-    expect(from < to).toBe(true);
-    // The window fetches back 30 days; the archive starts where that stops.
-    expect(new Date(`${to}T12:00:00`).getTime()).toBeLessThan(Date.now());
+    const today = businessTodayIso(CHICAGO);
+    expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe(shiftDayIso(today, -2));
+    expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe(shiftDayIso(today, -31));
   });
-
+  it('shows a visit from 10 days ago without touching the dates (#2036)', async () => {
+    const day = shiftDayIso(businessTodayIso(CHICAGO), -10);
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({
+          _id: 'ten',
+          kinfolkName: 'Ten Days Back',
+          status: 'COMPLETED',
+          startTime: chicago(day, '18:30'),
+          completedAt: chicago(day, '19:05'),
+        }),
+      ]),
+    );
+    renderBoard();
+    expect(screen.queryByText('Ten Days Back')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(screen.getByText('Ten Days Back')).toBeInTheDocument();
+  });
+  it('asks for a day wider than the boxes on each side, never the bare picked days (#2036)', async () => {
+    usePagedCollection.mockReturnValue(paged([]));
+    renderBoard();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    pickRange('2025-11-10', '2025-11-11');
+    expect(lastSpec().filters).toEqual([
+      ['startTime', '>=', '2025-11-09'],
+      ['startTime', '<', '2025-11-13'],
+    ]);
+  });
+  it('counts FROM and TO as whole business days: 23:30 on the TO day is in, 00:15 after it is out (#2036)', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'eve', kinfolkName: 'Evening Before', startTime: chicago('2025-11-09', '22:32') }),
+        entry({ _id: 'first', kinfolkName: 'First Minute', startTime: chicago('2025-11-10', '00:00') }),
+        entry({ _id: 'late', kinfolkName: 'Late Visit', startTime: chicago('2025-11-11', '23:30') }),
+        entry({ _id: 'bare', kinfolkName: 'Bare Clock', startTime: '2025-11-11T21:00' }),
+        entry({ _id: 'next', kinfolkName: 'Next Day', startTime: chicago('2025-11-12', '00:15') }),
+      ]),
+    );
+    renderBoard();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    pickRange('2025-11-10', '2025-11-11');
+    expect(screen.getByText('First Minute')).toBeInTheDocument();
+    expect(screen.getByText('Late Visit')).toBeInTheDocument();
+    expect(screen.getByText('Bare Clock')).toBeInTheDocument();
+    expect(screen.queryByText('Evening Before')).toBeNull();
+    expect(screen.queryByText('Next Day')).toBeNull();
+    // The 23:30 visit sits under Nov 11, the business day it happened on, not
+    // under the Nov 12 its UTC instant falls on.
+    const headers = [...document.querySelectorAll('.sessions__day-header')];
+    const nov11 = headers.find((h) => /Nov 11/.test(h.textContent ?? ''));
+    expect(nov11).toBeDefined();
+    expect(within(nov11!.closest('.sessions__day-group') as HTMLElement).getByText('Late Visit')).toBeInTheDocument();
+    expect(headers.some((h) => /Nov 12/.test(h.textContent ?? ''))).toBe(false);
+  });
+  it('says the range is empty when the fetch brought back only rows from outside it (#2036)', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'next', kinfolkName: 'Next Day', startTime: chicago('2025-11-12', '00:15') })]),
+    );
+    renderBoard();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    pickRange('2025-11-10', '2025-11-11');
+    expect(screen.getByText('No KinCares in this range.')).toBeInTheDocument();
+    expect(screen.queryByText('Next Day')).toBeNull();
+  });
+  it('keeps the clock buttons on an old unfinished visit, as before (#2036)', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'open', kinfolkName: 'Still Open', status: 'SCHEDULED', startTime: chicago('2025-11-10', '09:00') })]),
+    );
+    renderBoard();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    pickRange('2025-11-10', '2025-11-11');
+    const card = screen.getByText('Still Open').closest('li') as HTMLElement;
+    expect(within(card).getByRole('button', { name: 'OMW' })).toBeInTheDocument();
+  });
   it('drops the phase groups and heads by DAY instead, with the year outside this one', async () => {
     const lastYear = new Date().getFullYear() - 1;
     usePagedCollection.mockReturnValue(
@@ -995,6 +1079,7 @@ describe('Auntie Time: the Archive', () => {
     );
     renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: `${lastYear}-01-01` } });
     expect(phaseHeadings()).toHaveLength(0);
     expect(
       screen.getByText(`Thu, Jan 16, ${lastYear}`, { selector: '.sessions__day-header' }),
@@ -1017,6 +1102,7 @@ describe('Auntie Time: the Archive', () => {
     renderBoard();
     expect(screen.queryByText('Old News')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: shiftDayIso(businessTodayIso(CHICAGO), -200) } });
     expect(screen.getByText('Old News')).toBeInTheDocument();
   });
 
@@ -1076,6 +1162,7 @@ describe('Auntie Time: paging', () => {
     );
     renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: shiftDayIso(businessTodayIso(CHICAGO), -200) } });
     await user.click(screen.getByRole('button', { name: 'Load more' }));
     expect(loadMore).toHaveBeenCalledOnce();
   });

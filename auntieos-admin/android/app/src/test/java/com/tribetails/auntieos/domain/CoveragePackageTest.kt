@@ -152,11 +152,12 @@ class CoveragePackageTest {
     }
 
     @Test
-    fun `packagesFromPatterns turns the tiers into editable packages carrying the note`() {
+    fun `packagesFromPatterns turns the tiers into editable packages and the note is read off the rules`() {
         val packages = packagesFromPatterns(degenerate())
         assertEquals(listOf("Lean", "Balance", "Premium"), packages.map { it.name })
         assertEquals(1, packages[0].visits.size)
-        assertTrue(packages[0].note.isNotEmpty())
+        // #1858: a package keeps no sentence of its own; the card reads it off the current tiers.
+        assertTrue(packageNote(packages[0], degenerate()).isNotEmpty())
         // Distinct ids, so the operator can delete or edit one without the others.
         assertEquals(3, packages.map { it.id }.toSet().size)
     }
