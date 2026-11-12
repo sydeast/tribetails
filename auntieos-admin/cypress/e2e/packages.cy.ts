@@ -152,4 +152,16 @@ describe('packages', () => {
         cy.get('[role="alert"]').should('not.exist');
       });
   });
+  it('#2021 a discount typed over 100 prices at the discount from before the typing, not at its first digits', () => {
+    cy.signIn();
+    cy.visit('/packages');
+    cy.get('.cpb__pkg')
+      .first()
+      .within(() => {
+        cy.get('input[aria-label="Discount percent"]').type('150').blur();
+        cy.get('input[aria-label="Discount percent"]').should('have.value', '150');
+        cy.get('[role="alert"]').should('have.text', 'Enter a discount from 0 to 100 percent. Prices still use 0%.');
+        cy.contains('(15%)').should('not.exist');
+      });
+  });
 });

@@ -19,6 +19,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -69,6 +70,12 @@ import com.tribetails.auntieos.web.screens.KinAvatar
 import com.tribetails.auntieos.web.screens.kinAvatarsForSession
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.util.nowIso
+import com.tribetails.auntieos.web.screens.booking.NewBookingMath
+import com.tribetails.auntieos.web.screens.schedule.scheduleClockOf
+import com.tribetails.auntieos.web.ui.components.AuntieDatePickerDialog
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
+import kotlinx.datetime.TimeZone
 import com.tribetails.auntieos.web.util.openInMaps
 import com.tribetails.auntieos.web.ui.components.AuntieAvatarStack
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -141,6 +148,7 @@ private enum class Phase(val label: String, val tone: AuntieStatusTone) {
     CompletedToday("Recent",   AuntieStatusTone.Muted),
 }
 
+@OptIn(ExperimentalTime::class)
 @Composable
 internal fun AuntieTimeListScreen(
     onOpenDetail: (String) -> Unit,
@@ -161,6 +169,18 @@ internal fun AuntieTimeListScreen(
     // §A.8: Business-Settings time blocks drive the "Evening block" descriptor on cards.
     val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val timeBlocks = remember(settingsState) { (settingsState as? FirestoreResult.Data)?.value?.timeBlocks.orEmpty() }
+    // #2036: "today", and every day a visit is filed under, is the BUSINESS's
+    // calendar day (`business_settings.timeZone`), never the UTC date.
+    val storedZone = (settingsState as? FirestoreResult.Data)?.value?.timeZone
+    val clock = remember(storedZone) { scheduleClockOf(storedZone, Clock.System.now()) }
+    val zone = clock.zone
+    // #2036: the Archive. Older visits had no list on the console. A null range
+    // means the operator has not set a box and the opening range stands.
+    var archiveOpen by remember { mutableStateOf(false) }
+    var pickedRange by remember { mutableStateOf<ArchiveRange?>(null) }
+    var pickingFrom by remember { mutableStateOf(false) }
+    var pickingTo by remember { mutableStateOf(false) }
+    val archiveRange = pickedRange ?: archiveDefaultRange(clock.today)
     // #1608: "Verify arrival and departure", read raw (absent is off, as on the
     // server). Null until read, or when the read fails: then the server decides.
     val arrivalRule by produceState<Boolean?>(initialValue = null) {
@@ -246,6 +266,7 @@ internal fun AuntieTimeListScreen(
         ({ id -> byId[id] })
     }
 
+    CompositionLocalProvider(LocalAuntieTimeZone provides zone) {
     ScreenScaffold {
         // Den editorial header: mono kicker + Fraunces title + sub, mirrors the
         // Auntie Time mockup (.head .kick / .head h2 / .head .sub).
@@ -258,9 +279,45 @@ internal fun AuntieTimeListScreen(
             kicker     = "Care Ops · Auntie Time",
             title      = "Auntie",
             accentTail = "Time.",
-            subtitle   = "Day-of view. Clock in, clock out, every KinCare in flight.",
+            subtitle   = if (archiveOpen) {
+                "Older history, by day. Pick a range; the year shows on any day outside this one."
+            } else {
+                "Day-of view. Clock in, clock out, every KinCare in flight."
+            },
+            // Same words as the web board's heading link.
+            trailing   = {
+                GhostButton(
+                    label   = if (archiveOpen) "Back to Auntie Time" else "Archive",
+                    onClick = { archiveOpen = !archiveOpen },
+                )
+            },
         )
         Spacer(Modifier.height(20.dp))
+        if (archiveOpen) {
+            // The Archive's FROM and TO boxes, labelled as on web. Both days are
+            // in the list whole, on the business's calendar.
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("FROM", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                GhostButton(label = archiveBoxLabel(archiveRange.from), onClick = { pickingFrom = true })
+                Text("TO", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                GhostButton(label = archiveBoxLabel(archiveRange.to), onClick = { pickingTo = true })
+            }
+            Spacer(Modifier.height(20.dp))
+            AuntieDatePickerDialog(
+                visible      = pickingFrom,
+                selectedDate = archiveRange.from,
+                today        = clock.today,
+                onPick       = { pickedRange = archiveRange.withFrom(it); pickingFrom = false },
+                onDismiss    = { pickingFrom = false },
+            )
+            AuntieDatePickerDialog(
+                visible      = pickingTo,
+                selectedDate = archiveRange.to,
+                today        = clock.today,
+                onPick       = { pickedRange = archiveRange.withTo(it); pickingTo = false },
+                onDismiss    = { pickingTo = false },
+            )
+        }
 
         // Transient write-feedback toast (clock-in/out, GPS). Stream-load errors do
         // NOT use this path: per the fail-loud policy a load failure shows a
@@ -297,7 +354,7 @@ internal fun AuntieTimeListScreen(
                 }
 
             is FirestoreResult.Data -> {
-                val today = nowIso().take(10)
+                val today = clock.today.toString()
                 // Only show sessions that are relevant for a day-of operational view:
                 //   Active:   always (any date, currently in flight)
                 //   Overdue:  SCHEDULED more than a day past its slot, back 30 days (#702, #1590)
@@ -305,21 +362,77 @@ internal fun AuntieTimeListScreen(
                 //   Recent:   completed/cancelled today or yesterday only
                 // NOTE (audit): DRAFT/PENDING bookings are intentionally excluded;
                 // a booking surfaces here only once it is approved to SCHEDULED.
-                val visible = s.value.filter { session -> isVisibleOnAuntieTime(session, today) }
+                val visible = s.value.filter { session -> isVisibleOnAuntieTime(session, today, zone) }
 
-                if (visible.isEmpty()) {
+                // One writer for both lists, so an Archive card does exactly what
+                // the same card does on the board.
+                val writeFn: (String, KinCareWrite, String) -> Unit = { id, write, successMsg ->
+                    scope.launch {
+                        // #1617: the two terminal actions go through
+                        // transitionBookingStatus; the rules refuse a
+                        // client write of COMPLETED or CANCELLED.
+                        val r = when (write) {
+                            is KinCareWrite.Patch -> client.patchKinCare(id, write.fields)
+                            is KinCareWrite.Transition -> when (write.action) {
+                                "COMPLETE" -> client.completeKinCare(id, write.completedAt.orEmpty())
+                                else       -> client.cancelBooking(id)
+                            }
+                        }
+                        when (r) {
+                            is WriteResult.Ok  -> {
+                                when (gpsEffectAfter(write)) {
+                                    GpsEffect.Start -> startGpsFor(id)
+                                    GpsEffect.Stop  -> stopGpsFor(id)
+                                    GpsEffect.None  -> Unit
+                                }
+                                showToast(successMsg, ToastKind.Success)
+                            }
+                            is WriteResult.Err -> showToast("Couldn't update: ${r.message}", ToastKind.Error)
+                        }
+                    }
+                }
+                if (archiveOpen) {
+                    val archive = remember(s.value, archiveRange, zone) { archiveDays(s.value, archiveRange, zone) }
+                    if (archive.isEmpty()) {
+                        Text(
+                            text  = "No KinCares in this range.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                        archive.forEach { day ->
+                            PhaseGroup(
+                                title    = archiveDayLabel(day.day, clock.today),
+                                count    = null,
+                                tone     = AuntieStatusTone.Muted,
+                                sessions = day.sessions,
+                                kinfolkById = kinfolkById,
+                                kinById = kinById,
+                                arrivalRule = arrivalRule,
+                                onRefused = { msg -> showToast("Couldn't complete: $msg", ToastKind.Error) },
+                                breadcrumbsFor = { client.breadcrumbsStream(it) },
+                                timeBlockLabelFor = timeBlockLabelFor,
+                                onOpenDetail = onOpenDetail,
+                                onWriteKinTale = onWriteKinTale,
+                                onViewKinTale = onViewKinTale,
+                                onWrite = writeFn,
+                            )
+                        }
+                    }
+                } else if (visible.isEmpty()) {
                     EmptyState()
                 } else {
                     val grouped = visible
                         .sortedBy { it.startTime }   // earliest first inside each phase
-                        .groupBy { phaseFor(it, today) }
+                        .groupBy { phaseFor(it, today, zone) }
 
                     // Real stat row, computed from the same stream (no extra fetch):
                     // in-flight count, today's scheduled run, and today's wraps.
                     val activeCount   = grouped[Phase.Active].orEmpty().size
-                    val upcomingToday = grouped[Phase.Upcoming].orEmpty().count { it.startTime.take(10) == today }
+                    val upcomingToday = grouped[Phase.Upcoming].orEmpty().count { businessDayOf(it.startTime, zone) == today }
                     val recentDone    = grouped[Phase.CompletedToday].orEmpty()
-                        .count { it.status.uppercase() == "COMPLETED" && it.completedAt.take(10) == today }
+                        .count { it.status.uppercase() == "COMPLETED" && businessDayOf(it.completedAt, zone) == today }
 
                     StatRow(activeCount = activeCount, upcomingToday = upcomingToday, recentDone = recentDone)
                     Spacer(Modifier.height(20.dp))
@@ -342,8 +455,9 @@ internal fun AuntieTimeListScreen(
                             val items = grouped[phase].orEmpty()
                             if (items.isNotEmpty()) {
                                 PhaseGroup(
-                                    phase   = phase,
+                                    title   = phase.label,
                                     count   = items.size,
+                                    tone    = phase.tone,
                                     sessions = items,
                                     kinfolkById = kinfolkById,
                                     kinById = kinById,
@@ -354,31 +468,7 @@ internal fun AuntieTimeListScreen(
                                     onOpenDetail = onOpenDetail,
                                     onWriteKinTale = onWriteKinTale,
                                     onViewKinTale = onViewKinTale,
-                                    onWrite = { id, write, successMsg ->
-                                        scope.launch {
-                                            // #1617: the two terminal actions go through
-                                            // transitionBookingStatus; the rules refuse a
-                                            // client write of COMPLETED or CANCELLED.
-                                            val r = when (write) {
-                                                is KinCareWrite.Patch -> client.patchKinCare(id, write.fields)
-                                                is KinCareWrite.Transition -> when (write.action) {
-                                                    "COMPLETE" -> client.completeKinCare(id, write.completedAt.orEmpty())
-                                                    else       -> client.cancelBooking(id)
-                                                }
-                                            }
-                                            when (r) {
-                                                is WriteResult.Ok  -> {
-                                                    when (gpsEffectAfter(write)) {
-                                                        GpsEffect.Start -> startGpsFor(id)
-                                                        GpsEffect.Stop  -> stopGpsFor(id)
-                                                        GpsEffect.None  -> Unit
-                                                    }
-                                                    showToast(successMsg, ToastKind.Success)
-                                                }
-                                                is WriteResult.Err -> showToast("Couldn't update: ${r.message}", ToastKind.Error)
-                                            }
-                                        }
-                                    },
+                                    onWrite = writeFn,
                                 )
                             }
                         }
@@ -386,6 +476,7 @@ internal fun AuntieTimeListScreen(
                 }
             }
         }
+    }
     }
 }
 
@@ -424,8 +515,11 @@ private fun StatRow(activeCount: Int, upcomingToday: Int, recentDone: Int) {
 
 @Composable
 private fun PhaseGroup(
-    phase: Phase,
-    count: Int,
+    /** The panel's title: a phase name on the board, a day in the Archive. */
+    title: String,
+    /** The count pill, or null for a panel with no pill. */
+    count: Int?,
+    tone: AuntieStatusTone,
     sessions: List<KinCareSession>,
     kinfolkById: (String) -> Kinfolk?,
     kinById: Map<String, Kin>,
@@ -441,14 +535,16 @@ private fun PhaseGroup(
     // Each phase is a Den glass panel; the count rides in the panel trailing slot
     // as a toned status pill (replaces the bespoke mockup .phlab chip).
     DenPanel(
-        title    = phase.label,
+        title    = title,
         modifier = Modifier.fillMaxWidth(),
         trailing = {
-            AuntieStatusPill(
-                label = count.toString(),
-                tone  = phase.tone,
-                mono  = true,
-            )
+            if (count != null) {
+                AuntieStatusPill(
+                    label = count.toString(),
+                    tone  = tone,
+                    mono  = true,
+                )
+            }
         },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -572,7 +668,7 @@ private fun KinCareCard(
                             Text(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current.nameOf(session.serviceType), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                             Text("·", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
                         }
-                        Text(sessionWindow(session), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Text(sessionWindow(session, LocalAuntieTimeZone.current), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                 }
                 // §A.8: Business-Settings time-block descriptor (e.g. "Evening block"),
@@ -1064,9 +1160,14 @@ internal fun gpsEffectFor(patch: Map<String, String>): GpsEffect =
  * (`overdueBeforeWindowQuery`, #1607's one definition of overdue), so a July visit
  * nobody closed out is Overdue here and in Home's Today's Pack count too.
  */
-internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Boolean {
+internal fun isVisibleOnAuntieTime(
+    session: KinCareSession,
+    today: String,
+    zone: TimeZone = NewBookingMath.businessTimeZone(null),
+): Boolean {
     val status    = session.status.uppercase()
-    val date      = session.startTime.take(10)
+    // #2036: the BUSINESS day the visit starts on, not the stored text's UTC day.
+    val date      = businessDayOf(session.startTime, zone)
     val yesterday = dateSubDays(today, 1)
     val cutoff    = dateAddDays(today, 14)
     return when {
@@ -1080,9 +1181,13 @@ internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Bool
  * A SCHEDULED visit whose slot passed more than a day ago (#702): yesterday is
  * still "today's run sheet", the day before is a problem to close out.
  */
-internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean {
+internal fun isOverdueScheduled(
+    session: KinCareSession,
+    today: String,
+    zone: TimeZone = NewBookingMath.businessTimeZone(null),
+): Boolean {
     if (session.status.uppercase() != "SCHEDULED") return false
-    val date = session.startTime.take(10)
+    val date = businessDayOf(session.startTime, zone)
     if (date.length < 10) return false
     return date < dateSubDays(today, 1)
 }
@@ -1090,8 +1195,11 @@ internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean
  * How many sessions the board files under Overdue: on the board AND overdue.
  * Home's Today's Pack reads this so its count is the heading's count (#1590).
  */
-internal fun overdueOnAuntieTime(sessions: List<KinCareSession>, today: String): Int =
-    sessions.count { isVisibleOnAuntieTime(it, today) && isOverdueScheduled(it, today) }
+internal fun overdueOnAuntieTime(
+    sessions: List<KinCareSession>,
+    today: String,
+    zone: TimeZone = NewBookingMath.businessTimeZone(null),
+): Int = sessions.count { isVisibleOnAuntieTime(it, today, zone) && isOverdueScheduled(it, today, zone) }
 // ---------- Status mapping ----------
 
 /** Maps a session status to the Den status tone (color signature). */
@@ -1117,36 +1225,22 @@ private fun statusGlyph(status: String) = when (status.uppercase()) {
     else                  -> Lucide.CalendarClock
 }
 
-private fun phaseFor(s: KinCareSession, today: String): Phase = when (s.status.uppercase()) {
+private fun phaseFor(s: KinCareSession, today: String, zone: TimeZone): Phase = when (s.status.uppercase()) {
     "ON_MY_WAY", "ARRIVED", "DEPARTED" -> Phase.Active
-    "SCHEDULED"                        -> if (isOverdueScheduled(s, today)) Phase.Overdue else Phase.Upcoming
+    "SCHEDULED"                        -> if (isOverdueScheduled(s, today, zone)) Phase.Overdue else Phase.Upcoming
     else                               -> Phase.CompletedToday
 }
 
-private fun sessionWindow(s: KinCareSession): String {
-    val start = shortDateTime(s.startTime)
-    val end   = shortTime(s.endTime)
+/** #2036: the card's day and clock are the business's, not the stored instant's UTC characters. */
+internal fun sessionWindow(s: KinCareSession, zone: TimeZone): String {
+    val start = businessShortDateTime(s.startTime, zone)
+    val end   = businessShortTime(s.endTime, zone)
     return when {
         start.isBlank() && end.isBlank() -> "Time TBD"
         end.isBlank()                    -> start
         else                             -> "$start to $end"
     }
 }
-
-private fun shortDateTime(iso: String): String =
-    runCatchingCancellable {
-        if (iso.length < 16) return@runCatchingCancellable iso
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        "$month $day · $time"
-    }.getOrDefault(iso)
-
-private fun shortTime(iso: String): String =
-    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso }
-        .getOrDefault(iso)
-
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
 /** Add [days] days to an ISO date string "YYYY-MM-DD". Handles month/year rollover. */
 private fun dateAddDays(iso: String, days: Int): String = dateOffset(iso, days)

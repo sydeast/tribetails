@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { BusinessSettings } from '../api/settings';
 
@@ -132,6 +132,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   serviceDurations: {},
   serviceStartTimeBooking: {},
   businessHours: {},
+  closedDayHours: {},
   venmoHandle: '',
   paypalHandle: '',
   cashappHandle: '',
@@ -843,6 +844,10 @@ describe('Settings — real editors wire through the shared persist', () => {
     await screen.findByLabelText('Business name');
     const panel = await openSection('Business hours');
     await userEvent.click(within(panel).getByRole('switch', { name: 'Toggle Monday open' }));
+    // #1978: a day switched on opens blank; the operator sets its hours.
+    expect(within(panel).getByLabelText('Monday open time')).toHaveValue('');
+    fireEvent.change(within(panel).getByLabelText('Monday open time'), { target: { value: '09:00' } });
+    fireEvent.change(within(panel).getByLabelText('Monday close time'), { target: { value: '17:00' } });
     await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
     expect(saveBusinessSettings).toHaveBeenCalledWith({ businessHours: { Monday: '09:00-17:00' } });
     expect(await within(panel).findByText('Saved')).toBeInTheDocument();
