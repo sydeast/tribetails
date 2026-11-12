@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { serviceEyebrowOf, serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { getMyBookings, getMyVisits } from '../api/portal';
+import { getMyVisits } from '../api/portal';
+import { useMyBookings } from '../lib/useMyBookings';
 import { PAST_VISITS_LIMIT, myVisitsKey } from '../lib/portalQueryKeys';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
@@ -13,31 +14,22 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { LaunchError } from './LaunchError';
 import { countLabel, countOfQuery, viewOfQuery } from '../lib/queryState';
-import { auntieName, bookingChip, bookingSubtitle, fullDateKick, isoTime, pendingChangeLabel, speciesEmoji, visitTile, visitVariant } from '../lib/portalFormat';
-import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
+import { auntieName, bookingChip, bookingSubtitle, fullDateKick, isoTime, liveVisitOf, pendingChangeLabel, speciesEmoji, visitStageOf, visitTile, visitVariant } from '../lib/portalFormat';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
 type Tab = 'upcoming' | 'past';
 
-function findBookingBySessionId(
-  result: GetMyBookingsResult | undefined,
-  sessionId: string,
-): GetMyBookingsResultLiveVisit | null {
-  if (!result) return null;
-  const all = [result.liveVisit, ...result.upcoming, ...result.recent].filter(
-    (b): b is GetMyBookingsResultLiveVisit => b !== null,
-  );
-  return all.find((b) => b.sessionId === sessionId) ?? null;
-}
-
 /**
  * Schedule, ported from ui-ideas/mytribe-schedule-2026-05-31.html.
  * Upcoming/Past is a client-side tab toggle over one getMyBookings call.
- * The live-visit gate uses getMyVisits's AuntieOS "ARRIVED" status (not
- * getMyBookings' active/enRoute) — mirrors ScheduleScreen.kt exactly, since
- * that's the signal that also unlocks the breadcrumbs live map. getMyVisits
- * is best-effort: a failure there only drops the live map + replay data,
- * it never blocks the upcoming/recent lists (which come from getMyBookings).
+ *
+ * #1832: the live card is getMyBookings' `liveVisit`, the same visit Home's
+ * card shows. It used to be found a second way, by looking for an ARRIVED row
+ * in getMyVisits and then hunting for its booking, which is why the card had
+ * no Kin to name, could not be opened, said nothing while the Auntie was on
+ * the way, and was still up after she left. getMyVisits now only adds what the
+ * booking does not carry: the arrival time, and the replay routes for Past
+ * Visits. It is best-effort: a failure there drops those and nothing else.
  *
  * Every branch below goes through lib/queryState.ts rather than reading
  * `isLoading` and a list length. A signal drop with the tab open PAUSES these
@@ -59,12 +51,14 @@ export function Schedule() {
   const [openReplayId, setOpenReplayId] = useState<string | null>(null);
 
   const kinfolkId = getActiveKinfolkId();
-  const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId) });
+  const bookings = useMyBookings(kinfolkId);
   const visits = useQuery({ queryKey: myVisitsKey(kinfolkId), queryFn: () => getMyVisits(kinfolkId, PAST_VISITS_LIMIT), retry: false });
 
-  const liveVisit = visits.data?.visits.find((v) => v.status.toLowerCase() === 'arrived') ?? null;
-  const liveBooking = liveVisit ? findBookingBySessionId(bookings.data, liveVisit.id) : null;
-  const { points: breadcrumbs, error: breadcrumbsError } = useBreadcrumbs(liveVisit?.id ?? null);
+  const live = liveVisitOf(bookings.data);
+  // On the way has no map yet: the breadcrumbs are the visit's own walk, and
+  // they start when the Auntie arrives.
+  const arrived = live !== null && visitStageOf(live) === 'active';
+  const { points: breadcrumbs, error: breadcrumbsError } = useBreadcrumbs(arrived ? (live.sessionId ?? null) : null);
 
   const { signOut, signingOut } = useSignOut();
 
@@ -85,8 +79,13 @@ export function Schedule() {
   const pastView = viewOfQuery(bookings, { isEmpty: (d) => d.recent.length === 0 });
   const upcomingCount = countLabel(countOfQuery(bookings, (d) => d.upcoming.length));
   const pastCount = countLabel(countOfQuery(bookings, (d) => d.recent.length));
-  const visitsView = viewOfQuery(visits);
+  // The live card is fed by `bookings`, so its check is that query's wait.
+  const liveCheckView = viewOfQuery(bookings);
   const visitsBySession = new Map((visits.data?.visits ?? []).map((v) => [v.id, v]));
+  const liveSession = live?.sessionId ? visitsBySession.get(live.sessionId) : undefined;
+  const liveAuntie = auntieName(live?.auntieDisplayName) ?? 'Your Auntie';
+  const liveKin = live?.kinNames.length ? live.kinNames.join(', ') : null;
+  const liveService = live ? (serviceLabelOf(live) ?? visitTitleOf(live)) : null;
 
   return (
     <>
@@ -112,9 +111,9 @@ export function Schedule() {
           slot keeps its height whether it is saying something or not, so the
           answer arriving moves nothing. (A live visit still adds its hero,
           which is content arriving, not a line leaving.)
-          The hero used to appear out of nothing: `visits.isLoading` was never
-          read, so between mount and the answer landing there was no sign the
-          screen was still deciding, and while paused there never would be one.
+          The hero used to appear out of nothing: no wait was read, so between
+          mount and the answer landing there was no sign the screen was still
+          deciding, and while paused there never would be one.
           A compact line rather than a second full panel, because the card
           below already carries the offline panel for the same outage.
         */}
@@ -134,43 +133,56 @@ export function Schedule() {
             </button>
           </div>
           <div className="livecheck">
-            {!liveVisit && visitsView.kind === 'offline' && <OfflineNotice compact what="whether a visit is under way" />}
-            {!liveVisit && visitsView.kind === 'loading' && (
-              <LoadingLine what="whether a visit is under way" retry={() => void visits.refetch()}>
+            {!live && liveCheckView.kind === 'offline' && <OfflineNotice compact what="whether a visit is under way" />}
+            {!live && liveCheckView.kind === 'loading' && (
+              <LoadingLine what="whether a visit is under way" retry={() => void bookings.refetch()}>
                 Checking whether a visit is under way&hellip;
               </LoadingLine>
             )}
           </div>
         </div>
-        {liveVisit && (
-          <section className="live" aria-label="Visit in progress">
-            <div className="lrow">
-              <span className="pulse" />
-              <span className="tag">VISIT IN PROGRESS</span>
-            </div>
-            <h2>
-              {auntieName(liveBooking?.auntieDisplayName) ?? 'Your Auntie'} is at your place
-              {liveBooking?.kinNames.length ? ` with ${liveBooking.kinNames.join(', ')}` : ''}
-            </h2>
-            <p>
-              {serviceLabelOf(liveVisit) ?? visitTitleOf(liveBooking) ?? 'A visit'} in progress. You&rsquo;ll get a
-              KinTale the moment {liveBooking?.auntieDisplayName ?? 'they'} wraps up.
-            </p>
-            {liveVisit.arrivedAtIso && <div className="laddr">{'\u{1F4CD}'} Arrived {isoTime(liveVisit.arrivedAtIso)}</div>}
-            <div className="lwho">
-              <div className="lav">{speciesEmoji(null)}</div>
-              <div style={{ flex: '0 0 auto' }}>
-                <b>{liveBooking?.kinNames[0] ?? 'Your kin'}</b>
-                <small>{(serviceLabelOf(liveVisit) ?? 'Visit').toUpperCase()}</small>
-              </div>
-              <div className="track">
-                <i />
-              </div>
-              <span className="statepill">
+        {live && (
+          <section
+            className="live"
+            aria-label={arrived ? 'Visit in progress' : 'Your Auntie is on the way'}
+            data-testid="live-visit"
+          >
+            {/* #1832: the card opens the visit. The map below stays outside the
+                link, so dragging it does not leave the page. */}
+            <Link className="live-open" to="/schedule/$visitId" params={{ visitId: live.id }}>
+              <div className="lrow">
                 <span className="pulse" />
-                ARRIVED &middot; AT YOUR PLACE
-              </span>
-            </div>
+                <span className="tag">{arrived ? 'VISIT IN PROGRESS' : 'ON THE WAY'}</span>
+              </div>
+              <h2>
+                {arrived
+                  ? `${liveAuntie} is at your place${liveKin ? ` with ${liveKin}` : ''}`
+                  : `${liveAuntie} is on the way${liveKin ? ` to ${liveKin}` : ''}`}
+              </h2>
+              <p>
+                {arrived
+                  ? `${liveService ?? 'A visit'} in progress. You’ll get a KinTale the moment ${live.auntieDisplayName ?? 'they'} wraps up.`
+                  : `${liveService ?? 'Your visit'} starts when ${live.auntieDisplayName ?? 'your Auntie'} arrives.`}
+              </p>
+              {arrived && liveSession?.arrivedAtIso && (
+                <div className="laddr">{'\u{1F4CD}'} Arrived {isoTime(liveSession.arrivedAtIso)}</div>
+              )}
+              <div className="lwho">
+                <div className="lav">{speciesEmoji(null)}</div>
+                <div style={{ flex: '0 0 auto' }}>
+                  <b>{liveKin ?? 'Your kin'}</b>
+                  <small>{(liveService ?? 'Visit').toUpperCase()}</small>
+                </div>
+                <div className="track">
+                  <i />
+                </div>
+                <span className="statepill">
+                  <span className="pulse" />
+                  {arrived ? <>ARRIVED &middot; AT YOUR PLACE</> : 'ON THE WAY'}
+                </span>
+              </div>
+            </Link>
+            {arrived && (
             <div className="routemap-wrap">
               {breadcrumbsError !== null ? (
                 // A dead subscription must not read as a visit that has not
@@ -188,6 +200,7 @@ export function Schedule() {
                 <RouteMap route={breadcrumbs} />
               )}
             </div>
+            )}
           </section>
         )}
 
@@ -211,7 +224,7 @@ export function Schedule() {
                 ) : (
                   upcomingView.data.upcoming.map((b, i) => {
                     const tile = visitTile(b);
-                    const chip = bookingChip(b.status);
+                    const chip = bookingChip(visitStageOf(b));
                     return (
                       <div key={b.id}>
                         <Link className={`visit ${visitVariant(i)}`} to="/schedule/$visitId" params={{ visitId: b.id }}>
@@ -254,7 +267,7 @@ export function Schedule() {
                 ) : (
                   pastView.data.recent.map((b, i) => {
                     const tile = visitTile(b);
-                    const chip = bookingChip(b.status);
+                    const chip = bookingChip(visitStageOf(b));
                     const visit = b.sessionId ? visitsBySession.get(b.sessionId) : undefined;
                     const route = visit?.gpsSummary?.route ?? [];
                     const isOpen = openReplayId === b.id;
