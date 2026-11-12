@@ -157,6 +157,29 @@ async function createUser(
 }
 
 /**
+ * The fixture admin's auth uid, looked up by email for the reason `setPassword`
+ * below gives: the seed may not have run in this process.
+ *
+ * For a spec-owned `notifications` row (#1837). The Notifications screen lists
+ * only the signed-in staff member's own notices, so a fixture has to carry the
+ * admin's uid as `recipientUid`, and that uid is minted by the auth emulator.
+ */
+export async function fixtureAdminUid(): Promise<string> {
+  const lookup = await seedFetch(
+    `${AUTH}/identitytoolkit.googleapis.com/v1/accounts:lookup`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...OWNER },
+      body: JSON.stringify({ email: [ADMIN.email] }),
+    },
+    `lookup ${ADMIN.email}`,
+  );
+  const users = lookup.users as Array<{ localId?: string }> | undefined;
+  const localId = users?.[0]?.localId;
+  if (!localId) throw new Error(`fixtureAdminUid: no auth-emulator account for ${ADMIN.email}`);
+  return localId;
+}
+/**
  * Resets one seeded account's password, by email, without touching its uid or
  * its claims.
  *
@@ -415,5 +438,5 @@ export default async function seed(): Promise<void> {
   // on that collection. See `seed.rows.ts` for why they are no longer
   // capture-only: without them every list screen in this suite renders its
   // empty state, and an empty list cannot be measured for overflow.
-  await seedDenseRows(put, seedNow());
+  await seedDenseRows(put, seedNow(), adminUid);
 }
