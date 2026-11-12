@@ -186,8 +186,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * email and phone shapes the admin clients check, which `portal/secondaryKinfolk.ts`
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
+ *
+ * 439 since #1872: `admin/applyAccountCredit.ts` is a new FUNCTIONS entry, in
+ * this graph by construction (the one callable that spends account credit, by
+ * an amount the admin enters). Everything it imports was already here.
  */
-const MAX_OWN_EAGER_MODULES = 438;
+const MAX_OWN_EAGER_MODULES = 439;
 
 interface Edge {
   spec: string;

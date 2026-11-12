@@ -1,4 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore';
+import type { Firestore, Transaction } from 'firebase-admin/firestore';
 import { createHash } from 'crypto';
 import { db } from './firestoreAdmin';
 import type { AuditEvent } from './auditEvents';
@@ -130,22 +131,20 @@ export function computeEntryHash(
   return createHash('sha256').update(canonicalHashInput(seq, prevHash, hashableDoc)).digest('hex');
 }
 
-export async function writeAuditEntry(args: WriteAuditArgs): Promise<string> {
-  const status = args.status;
+/**
+ * The hashed part of one entry: everything except the chain fields and the
+ * server timestamp. Built once per attempt and handed to `stageAuditEntry`.
+ */
+export function auditHashableDoc(args: WriteAuditArgs, timestampIso: string): Record<string, unknown> {
   // Default human-readable description when caller didn't supply one.
   // Keeps the admin list readable without forcing every emit site to spell
   // it out: e.g. "AUTH_LOGIN_SUCCESS for uid abc" is fine fallback.
   const description = args.description ?? buildDefaultDescription(args);
-
-  // Hash-input must be deterministic across Firestore tx retries. Compute
-  // ISO timestamp + everything besides the server-timestamp sentinel + the
-  // chain fields outside the tx callback. Capturing the closure variable
-  // means retries re-use the same object.
-  const hashableDoc: Record<string, unknown> = {
-    timestamp: new Date().toISOString(),
+  return {
+    timestamp: timestampIso,
     actionType: args.event,
     description,
-    status,
+    status: args.status,
     actorId: args.actorUid ?? '',
     targetId: args.targetUid ?? '',
     targetCollection: args.targetCollection ?? '',
@@ -160,55 +159,104 @@ export async function writeAuditEntry(args: WriteAuditArgs): Promise<string> {
     ...(args.ip && { ip: args.ip }),
     ...(args.userAgent && { userAgent: args.userAgent }),
   };
-
-  const id = await db().runTransaction(async (tx) => {
-    const headRef = db().collection(CHAIN_HEAD_COLLECTION).doc(CHAIN_HEAD_DOC_ID);
-    // #866: an at-most-once entry. Read before any write, as Firestore requires;
-    // an existing entry means an earlier attempt already recorded this, so the
-    // chain is left exactly where it is.
-    if (args.docId !== undefined) {
-      const existingRef = db().collection('activity_log').doc(args.docId);
-      const existing = await tx.get(existingRef);
-      if (existing.exists) return existingRef.id;
-    }
-    const headSnap = await tx.get(headRef);
-    const headData = headSnap.exists ? (headSnap.data() as ChainHeadDoc | undefined) : undefined;
-    const prevSeq = typeof headData?.seq === 'number' ? headData.seq : 0;
-    const prevHash =
-      typeof headData?.lastHash === 'string' && headData.lastHash.length === 64
-        ? headData.lastHash
-        : GENESIS_PREV_HASH;
-    const seq = prevSeq + 1;
-    const entryHash = computeEntryHash(seq, prevHash, hashableDoc);
-
-    const logRef =
-      args.docId !== undefined
-        ? db().collection('activity_log').doc(args.docId)
-        : db().collection('activity_log').doc();
-    const fullDoc = {
-      ...hashableDoc,
-      seq,
-      prevHash,
-      entryHash,
-      createdAt: FieldValue.serverTimestamp(),
-    };
-    // A fixed id is created, never set: if two attempts race past the existence
-    // check above, Firestore refuses the second rather than overwriting the first.
-    if (args.docId !== undefined) tx.create(logRef, fullDoc);
-    else tx.set(logRef, fullDoc);
-    tx.set(headRef, {
-      seq,
-      lastHash: entryHash,
-      lastEntryId: logRef.id,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    return logRef.id;
-  });
-
-  return id;
 }
 
-interface ChainHeadDoc {
+/** What a transaction must READ before it may stage an entry. */
+export interface AuditChainRead {
+  /** The id of an entry already stored at the fixed `docId`, or null. */
+  existingId: string | null;
+  head: ChainHeadDoc | undefined;
+}
+
+/**
+ * THE READ HALF of an entry, on the caller's transaction. Firestore refuses a
+ * read after a write, so a caller that stages an entry beside its own writes
+ * (#1872, `drawAccountCredit`) calls this with its other reads and
+ * `stageAuditEntry` with its other writes.
+ */
+export async function readAuditChain(
+  firestore: Firestore,
+  tx: Transaction,
+  docId?: string,
+): Promise<AuditChainRead> {
+  // #866: an at-most-once entry. Read before any write, as Firestore requires;
+  // an existing entry means an earlier attempt already recorded this, so the
+  // chain is left exactly where it is.
+  if (docId !== undefined) {
+    const existingRef = firestore.collection('activity_log').doc(docId);
+    const existing = await tx.get(existingRef);
+    if (existing.exists) return { existingId: existingRef.id, head: undefined };
+  }
+
+  const headRef = firestore.collection(CHAIN_HEAD_COLLECTION).doc(CHAIN_HEAD_DOC_ID);
+  const headSnap = await tx.get(headRef);
+  return {
+    existingId: null,
+    head: headSnap.exists ? (headSnap.data() as ChainHeadDoc | undefined) : undefined,
+  };
+}
+
+/**
+ * THE WRITE HALF: seals the entry onto the chain `readAuditChain` read, on the
+ * same transaction. The one implementation of the hash chain; `writeAuditEntry`
+ * is these two halves in a transaction of their own.
+ */
+export function stageAuditEntry(
+  firestore: Firestore,
+  tx: Transaction,
+  hashableDoc: Record<string, unknown>,
+  chain: AuditChainRead,
+  docId?: string,
+): string {
+  if (chain.existingId !== null) return chain.existingId;
+  const headRef = firestore.collection(CHAIN_HEAD_COLLECTION).doc(CHAIN_HEAD_DOC_ID);
+  const headData = chain.head;
+  const prevSeq = typeof headData?.seq === 'number' ? headData.seq : 0;
+  const prevHash =
+    typeof headData?.lastHash === 'string' && headData.lastHash.length === 64
+      ? headData.lastHash
+      : GENESIS_PREV_HASH;
+  const seq = prevSeq + 1;
+  const entryHash = computeEntryHash(seq, prevHash, hashableDoc);
+  const logRef =
+    docId !== undefined
+      ? firestore.collection('activity_log').doc(docId)
+      : firestore.collection('activity_log').doc();
+  const fullDoc = {
+    ...hashableDoc,
+    seq,
+    prevHash,
+    entryHash,
+    createdAt: FieldValue.serverTimestamp(),
+  };
+
+  // A fixed id is created, never set: if two attempts race past the existence
+  // check above, Firestore refuses the second rather than overwriting the first.
+  if (docId !== undefined) tx.create(logRef, fullDoc);
+  else tx.set(logRef, fullDoc);
+  tx.set(headRef, {
+    seq,
+    lastHash: entryHash,
+    lastEntryId: logRef.id,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return logRef.id;
+}
+
+export async function writeAuditEntry(args: WriteAuditArgs): Promise<string> {
+  // Hash-input must be deterministic across Firestore tx retries. Compute
+  // ISO timestamp + everything besides the server-timestamp sentinel + the
+  // chain fields outside the tx callback. Capturing the closure variable
+  // means retries re-use the same object.
+  const hashableDoc = auditHashableDoc(args, new Date().toISOString());
+  const id = await db().runTransaction(async (tx) => {
+    const chain = await readAuditChain(db(), tx, args.docId);
+    return stageAuditEntry(db(), tx, hashableDoc, chain, args.docId);
+  });
+  return id;
+}
+export interface ChainHeadDoc {
   seq?: number;
   lastHash?: string;
   lastEntryId?: string;

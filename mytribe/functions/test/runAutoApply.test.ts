@@ -17,19 +17,16 @@ vi.mock('firebase-admin/firestore', async () => {
   };
 });
 
-import { runAutoApplyHandler } from '../src/admin/runAutoApply';
+import { AUTO_APPLY_DISABLED_REASON, runAutoApplyHandler } from '../src/admin/runAutoApply';
 
 beforeEach(() => mocks.dbFn.mockReset());
 
 /**
- * The on-demand half of auto-apply.
- *
- * The trigger only fires on the transition into collectable, so the two most
- * ordinary cases in the world are unreachable without this: she ticks the box
- * on a payment for a household whose invoice is already sent, and a trigger
- * that failed left credit unspent against a bill that still says it is owed.
+ * #1872, operator ruling 2026-11-11: this callable took no amount and spent
+ * everything the household held. It is disabled: every call from someone
+ * allowed to make it is refused and writes nothing. Credit is applied through
+ * `applyAccountCredit`, by an amount the admin enters.
  */
-
 function req(
   data: unknown,
   token: Record<string, unknown> = { admin: true },
@@ -61,61 +58,32 @@ function seed(
   });
 }
 
-describe('runAutoApply: the happy path', () => {
-  it('spends the household credit on the named invoice and reports every figure', async () => {
+describe('runAutoApply: disabled, it spends nothing (#1872)', () => {
+  it('refuses an admin and leaves the credit and the invoice untouched', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
-
-    const res = await runAutoApplyHandler(req({ invoiceId: 'inv1' }));
-
-    expect(res.ok).toBe(true);
-    expect(res.skipped).toBe('');
-    expect(res.appliedCents).toBe(10000);
-    expect(res.amountDueCents).toBe(0);
-    // $120 held, $100 spent, $20 still on account for the invoice after this.
-    expect(res.accountBalanceCents).toBe(2000);
+    await expect(runAutoApplyHandler(req({ invoiceId: 'inv1' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'Account credit is applied only as an amount you enter on the invoice.',
+      details: { reason: AUTO_APPLY_DISABLED_REASON },
+    });
+    expect(ctx.writes).toHaveLength(0);
   });
-
-  it('is safe to press twice: the second pass finds a drained balance', async () => {
-    const ctx = seed({ family: { accountBalanceCents: 0 } });
+  it('refuses a sandbox admin inside their own tribe the same way', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv1': { kinfolkId: 'test-kinfolk-001', status: 'open', total: 100 },
+        'families/test-kinfolk-001': { accountBalanceCents: 5000 },
+      },
+      queryDocs: { 'invoices/inv1/payments': [] },
+    });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await runAutoApplyHandler(req({ invoiceId: 'inv1' }));
-    expect(res.skipped).toBe('no_credit');
-    expect(res.appliedCents).toBe(0);
+    await expect(
+      runAutoApplyHandler(req({ invoiceId: 'inv1' }, { testTribeId: 'test-kinfolk-001' }, 'tester')),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
     expect(ctx.writes).toHaveLength(0);
   });
 });
-
-describe('runAutoApply: skipped is an ANSWER, not an error channel', () => {
-  async function skipped(over: Parameters<typeof seed>[0]) {
-    const ctx = seed(over);
-    mocks.dbFn.mockReturnValue(ctx.db);
-    return (await runAutoApplyHandler(req({ invoiceId: 'inv1' }))).skipped;
-  }
-
-  it('says a draft is not collectable rather than throwing at the operator', async () => {
-    // Throwing would make "nothing needed doing" look like "something broke",
-    // which is how an operator learns to ignore the red.
-    expect(await skipped({ invoice: { kinfolkId: 'fam1', status: 'draft', total: 100 } })).toBe(
-      'invoice_not_collectable',
-    );
-  });
-
-  it('says a settled invoice is not collectable', async () => {
-    expect(await skipped({ subPayments: [{ id: 'p1', data: { amountCents: 10000 } }] })).toBe(
-      'invoice_not_collectable',
-    );
-  });
-
-  it('says an invoice with no household cannot be credited', async () => {
-    expect(await skipped({ invoice: { status: 'open', total: 100 } })).toBe('no_household');
-  });
-
-  it('says there is no credit when the family holds none', async () => {
-    expect(await skipped({ family: { accountBalanceCents: 0 } })).toBe('no_credit');
-  });
-});
-
 describe('runAutoApply: refusals', () => {
   it('throws not-found for an invoice that does not exist', async () => {
     const ctx = seed({ invoice: null });
@@ -132,21 +100,6 @@ describe('runAutoApply: refusals', () => {
       runAutoApplyHandler(req({ invoiceId: 'inv1' }, { testTribeId: 'test-kinfolk-001' }, 'tester')),
     ).rejects.toMatchObject({ code: 'permission-denied' });
     expect(ctx.writes).toHaveLength(0);
-  });
-
-  it('ADMITS a sandbox admin inside their own tribe, like every callable on this surface', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'invoices/inv1': { kinfolkId: 'test-kinfolk-001', status: 'open', total: 100 },
-        'families/test-kinfolk-001': { accountBalanceCents: 5000 },
-      },
-      queryDocs: { 'invoices/inv1/payments': [] },
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await runAutoApplyHandler(
-      req({ invoiceId: 'inv1' }, { testTribeId: 'test-kinfolk-001' }, 'tester'),
-    );
-    expect(res.appliedCents).toBe(5000);
   });
 
   it('refuses an unauthenticated caller', async () => {
