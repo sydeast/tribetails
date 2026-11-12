@@ -150,17 +150,27 @@ describe('auntie time', () => {
     cy.contains('label', 'To').find('input').type(ARCHIVE_DAY);
 
     // 11:30 PM on the picked day is in, under that day's heading.
-    cy.contains('.sessions__day-group', 'Wed, Jan 14').within(() => {
-      cy.contains(LATE_NAME).should('be.visible');
-    });
+    //
+    // NO `.within()` HERE. Moving a box changes the query, so the list goes
+    // back to its loading row and is drawn again; `.within()` holds on to the
+    // day group it first found, which that redraw removes from the page, and
+    // then looks for the card inside an element nobody can see. Each check
+    // below is one chain from the page down, so Cypress looks again at
+    // whatever list is on screen until it holds or times out.
+    cy.contains('.sessions__day-group', 'Wed, Jan 14')
+      .contains('.sessions__card', LATE_NAME)
+      .should('be.visible');
     // 12:15 AM the next morning is not.
     cy.contains(NEXT_NAME).should('not.exist');
 
-    // Moving TO on a day brings it in, under its own day.
+    // Moving TO on a day brings it in, under its own day and no other.
     cy.contains('label', 'To').find('input').type('2026-01-15');
-    cy.contains('.sessions__day-group', 'Thu, Jan 15').within(() => {
-      cy.contains(NEXT_NAME).should('be.visible');
-      cy.contains(LATE_NAME).should('not.exist');
-    });
+    cy.contains('.sessions__day-group', 'Thu, Jan 15')
+      .contains('.sessions__card', NEXT_NAME)
+      .should('be.visible');
+    cy.contains('.sessions__day-group', 'Thu, Jan 15').should('not.contain.text', LATE_NAME);
+    cy.contains('.sessions__day-group', 'Wed, Jan 14')
+      .should('contain.text', LATE_NAME)
+      .and('not.contain.text', NEXT_NAME);
   });
 });
