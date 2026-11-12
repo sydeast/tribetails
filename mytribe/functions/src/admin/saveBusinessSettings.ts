@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldPath } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
@@ -36,6 +36,9 @@ import type { SettingsRefusal } from '../lib/businessSettingsChecks';
  *  - Arrays replace. `null` is a value (it is how a send hour is cleared).
  *  - #1987: a portal Home layout equal to the default is stored as the empty
  *    list, which is what "default" has always been (`lib/homeLayout.ts`).
+ *  - #1978: a save that closes a day keeps the hours it had in `closedDayHours`,
+ *    and one that opens a day drops them (`closedDayHoursChanges`). The server
+ *    derives it from what is stored; no client sends it.
  *
  * REFUSED SAVES WRITE NOTHING. Every field is checked before the write, and a
  * refusal names the field (`details.field`) and lists every refusal
@@ -156,10 +159,22 @@ export async function saveBusinessSettingsHandler(
   // empty list), so it reads as "Default" on every client and the portal keeps
   // its standard page. After the checks, so a bad row is still refused by name.
   const toStore = withDefaultHomeLayoutCollapsed(changes);
-  const body = { ...toStore, updatedAt, updatedBy };
+  // #1978: the hours each day closed by this save had, kept beside the weekly
+  // hours so reopening the day gives them back. Each day is its own merge path.
+  const kept = checks.closedDayHoursChanges(changes['businessHours'], stored);
+  const keptDays = Object.keys(kept);
+  const closedDayHours: Record<string, unknown> = {};
+  for (const day of keptDays) closedDayHours[day] = kept[day] ?? FieldValue.delete();
+  const body = {
+    ...toStore,
+    ...(keptDays.length > 0 ? { closedDayHours } : {}),
+    updatedAt,
+    updatedBy,
+  };
   await ref.set(body, {
     mergeFields: [
       ...mergeFieldPaths(toStore, checks.WHOLE_MAP_SETTINGS_FIELDS),
+      ...keptDays.map((day) => new FieldPath('closedDayHours', day)),
       new FieldPath('updatedAt'),
       new FieldPath('updatedBy'),
     ],

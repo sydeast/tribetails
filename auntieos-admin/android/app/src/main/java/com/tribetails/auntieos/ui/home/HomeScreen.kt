@@ -383,7 +383,14 @@ fun HomeScreen(
                                 // count is Auntie Time's own Overdue rule over the same session
                                 // list, so it matches the heading the row opens.
                                 val overdueCount = if (state.gapsLoaded && !state.isLoading) {
-                                    overdueOnAuntieTime(state.allSessions, java.time.LocalDate.now().toString())
+                                    // #2036: counted on the business's day, as the board counts it.
+                                    com.tribetails.auntieos.data.model.businessZone(state.businessSettings.timeZone).let { zone ->
+                                        overdueOnAuntieTime(
+                                            state.allSessions,
+                                            com.tribetails.auntieos.ui.admin.scheduling.businessToday(zone).toString(),
+                                            zone,
+                                        )
+                                    }
                                 } else 0
                                 val overdueLabel = todaysPackOverdueLabel(overdueCount)
                                 if (!state.isLoading && !state.gapsLoaded) {

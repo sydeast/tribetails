@@ -176,4 +176,44 @@ class ServiceManagementBusinessHoursTest {
         assertEquals("Reopen Services before saving: the settings doc was never loaded.", vm.state.value.errorMessage)
         coVerify(exactly = 0) { auntieRepo.updateBusinessSettingsFields(any(), any()) }
     }
+
+    // ── #1978: a closed day reopens with the hours it had ────────────────────
+
+    @Test
+    fun `a closed day's card opens the dialog with the hours the server kept`() = runTest(testDispatcher) {
+        coEvery { auntieRepo.getBusinessSettings() } returns Result.success(
+            BusinessSettings(businessHours = stored, closedDayHours = mapOf("Saturday" to "10:00-14:00")),
+        )
+        val vm = ServiceManagementViewModel(serviceRepository = serviceRepo, auntieRepository = auntieRepo)
+        val saturday = vm.state.value.businessHours[5]
+        assertEquals("Closed", saturday.display)
+        // What the Edit hours dialog seeds its two times from.
+        assertEquals("10:00", saturday.openTime)
+        assertEquals("14:00", saturday.closeTime)
+    }
+
+    @Test
+    fun `a closed day with nothing kept opens the dialog blank`() = runTest(testDispatcher) {
+        val saturday = vm().state.value.businessHours[5]
+        assertEquals(WeeklyHoursRow(6, DayHoursKind.CLOSED), saturday)
+        assertEquals(HOURS_RANGE_INVALID, saturday.copy(kind = DayHoursKind.OPEN).problem)
+    }
+
+    @Test
+    fun `closing a day keeps its hours for the next time the dialog opens, and sends only the blank`() = runTest(testDispatcher) {
+        coEvery { auntieRepo.updateBusinessSettingsFields(capture(changes), any()) } returns Result.success(Unit)
+        val vm = vm()
+        vm.updateBusinessHours(vm.state.value.businessHours[0].copy(kind = DayHoursKind.CLOSED))
+        advanceUntilIdle()
+
+        assertEquals(mapOf("businessHours" to mapOf("Monday" to "")), changes.captured)
+        val monday = vm.state.value.businessHours[0]
+        assertEquals(WeeklyHoursRow(1, DayHoursKind.CLOSED, "09:00", "17:00"), monday)
+
+        // Reopened with those hours: the day goes back, and nothing stays kept.
+        vm.updateBusinessHours(monday.copy(kind = DayHoursKind.OPEN))
+        advanceUntilIdle()
+        assertEquals(mapOf("businessHours" to mapOf("Monday" to "09:00-17:00")), changes.captured)
+        assertTrue(vm.state.value.businessSettings.closedDayHours.isEmpty())
+    }
 }

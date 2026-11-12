@@ -2,7 +2,8 @@ import { Fragment, type ReactNode } from 'react';
 import { serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { getMyBookings, getMyHome, getMyKinTales } from '../api/portal';
+import { getMyHome, getMyKinTales } from '../api/portal';
+import { useMyBookings } from '../lib/useMyBookings';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { LaunchError } from './LaunchError';
@@ -20,11 +21,13 @@ import {
   bookingSubtitle,
   elapsedMinutes,
   greetingKick,
+  liveVisitOf,
   pendingChangeLabel,
   relativeDay,
   homeLayoutMode,
   resolveHomeLayout,
   speciesEmoji,
+  visitStageOf,
   visitTile,
   visitVariant,
 } from '../lib/portalFormat';
@@ -71,7 +74,7 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
 export function Home() {
   const kinfolkId = getActiveKinfolkId();
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId) });
-  const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId) });
+  const bookings = useMyBookings(kinfolkId);
   const kinTales = useQuery({
     queryKey: ['myKinTales', 'home-preview', kinfolkId],
     queryFn: () => getMyKinTales(kinfolkId, { limit: 3 }),
@@ -94,7 +97,8 @@ export function Home() {
     );
   }
 
-  const liveVisit = bookings.data?.liveVisit ?? null;
+  const liveVisit = liveVisitOf(bookings.data);
+  const liveArrived = liveVisit !== null && visitStageOf(liveVisit) === 'active';
   // `home.isError` is answered by the early return above, and `home` is not
   // gated, so homeView is only ever data / offline / loading. The other two
   // are best-effort (see the header): each can fail on its own while the rest of
@@ -160,34 +164,43 @@ export function Home() {
           const liveVisitSection = !liveVisit ? (
             bookingsView.kind === 'offline' ? <OfflineNotice compact what="whether a visit is under way" /> : null
           ) : (
-            <section className="live">
-              <div className="lrow">
-                <span className="pulse" />
-                <span className="tag">LIVE NOW</span>
-              </div>
-              <h2>
-                {auntieName(liveVisit.auntieDisplayName) ?? 'Your Auntie'} is with{' '}
-                {liveVisit.kinNames.join(', ') || 'your kin'}
-              </h2>
-              <p>
-                {liveVisit.startTimeMs !== null ? `Checked in ${elapsedMinutes(liveVisit.startTimeMs)} minutes ago` : 'Checked in'} for{' '}
-                {visitTitleOf(liveVisit) ?? 'a visit'}. You&rsquo;ll get a KinTale the moment they wrap up.
-              </p>
-              <div className="lwho">
-                <div className="lav">{speciesEmoji(null)}</div>
-                <div style={{ flex: '0 0 auto' }}>
-                  <b>{liveVisit.kinNames[0] ?? 'Your kin'}</b>
-                  <small>{(serviceLabelOf(liveVisit) ?? visitTitleOf(liveVisit) ?? 'Visit').toUpperCase()}</small>
+            // #1832: the card opens the visit, and it says On the way while the
+            // Auntie is on the way. It used to read "Checked in N minutes ago"
+            // for that too, counted from the booked start.
+            <section className="live" data-testid="live-visit">
+              <Link className="live-open" to="/schedule/$visitId" params={{ visitId: liveVisit.id }}>
+                <div className="lrow">
+                  <span className="pulse" />
+                  <span className="tag">{liveArrived ? 'LIVE NOW' : 'ON THE WAY'}</span>
                 </div>
-                <div className="track">
-                  <i />
-                </div>
-                {liveVisit.startTimeMs !== null && (
-                  <span className="chip" style={{ background: 'rgba(255,255,255,.22)', color: '#fff', flex: '0 0 auto' }}>
-                    {elapsedMinutes(liveVisit.startTimeMs)} MIN IN
-                  </span>
+                <h2>
+                  {auntieName(liveVisit.auntieDisplayName) ?? 'Your Auntie'} {liveArrived ? 'is with' : 'is on the way to'}{' '}
+                  {liveVisit.kinNames.join(', ') || 'your kin'}
+                </h2>
+                {liveArrived ? (
+                  <p>
+                    {liveVisit.startTimeMs !== null ? `Checked in ${elapsedMinutes(liveVisit.startTimeMs)} minutes ago` : 'Checked in'} for{' '}
+                    {visitTitleOf(liveVisit) ?? 'a visit'}. You&rsquo;ll get a KinTale the moment they wrap up.
+                  </p>
+                ) : (
+                  <p>{visitTitleOf(liveVisit) ?? 'Your visit'} starts when they arrive.</p>
                 )}
-              </div>
+                <div className="lwho">
+                  <div className="lav">{speciesEmoji(null)}</div>
+                  <div style={{ flex: '0 0 auto' }}>
+                    <b>{liveVisit.kinNames.join(', ') || 'Your kin'}</b>
+                    <small>{(serviceLabelOf(liveVisit) ?? visitTitleOf(liveVisit) ?? 'Visit').toUpperCase()}</small>
+                  </div>
+                  <div className="track">
+                    <i />
+                  </div>
+                  {liveArrived && liveVisit.startTimeMs !== null && (
+                    <span className="chip" style={{ background: 'rgba(255,255,255,.22)', color: '#fff', flex: '0 0 auto' }}>
+                      {elapsedMinutes(liveVisit.startTimeMs)} MIN IN
+                    </span>
+                  )}
+                </div>
+              </Link>
             </section>
           );
 
@@ -213,7 +226,7 @@ export function Home() {
               ) : (
                 upcoming.map((b, i) => {
                   const tile = visitTile(b);
-                  const chip = bookingChip(b.status);
+                  const chip = bookingChip(visitStageOf(b));
                   const change = pendingChangeLabel(b);
                   // #1461: each row opens that booking, the same route the
                   // Schedule rows use.

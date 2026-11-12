@@ -2241,11 +2241,25 @@ the handler.
 - res `{ liveVisit: BookingDto | null, upcoming: BookingDto[], recent: BookingDto[], envelopes: EnvelopeDto[] }`
 - READ-ONLY. `BookingDto` is one `kinCares` (per-visit) doc; `EnvelopeDto` is
   one parent `bookings/{batchId}` envelope plus its `kinCares` children.
-  `liveVisit` is the one visit currently `active`/`enRoute`, if any.
   `upcoming` also folds in AuntieOS-scheduled `kin_care_sessions` docs that
   have no booking envelope at all (a session created directly in the admin
   app), so a kinfolk sees those too; a session already linked to a booking via
-  `sessionId` is not double-shown.
+  `sessionId` or the session's `kinCareVisitId` is not double-shown.
+- #1830 / #1832 / #1823: a visit takes its progress from the session it is
+  linked to (`lib/portalVisitProgress.ts`), because On my way, Arrived and
+  Departed are written to `kin_care_sessions.status` only. ON_MY_WAY reads
+  `status: 'enRoute'`, ARRIVED `status: 'active'` + `visitProgress: 'active'`,
+  DEPARTED `status: 'active'` + `visitProgress: 'ended'` (no new status value,
+  so older clients still decode it), COMPLETED `status: 'completed'`. A visit
+  already `completed` or `cancelled` is left alone. The envelope copy of each
+  visit carries the same answer.
+- Lists: a visit that is under way (on the way, arrived or departed) is on
+  `upcoming` whatever the clock says, ahead of the rest; a `confirmed` visit
+  stays on `upcoming` for 24 hours past its start; `recent` is the latest ten
+  completed or cancelled. `liveVisit` is the visit the Auntie is at, else the
+  one she is on the way to, never a departed one, and it is also on
+  `upcoming`. A visit on neither list is still in `envelopes`, which is what
+  the clients' by-id lookup falls back to.
 - kinfolk portal only; not called by the React admin or android (android
   reads the underlying Firestore docs directly for its own booking views).
 

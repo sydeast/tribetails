@@ -187,14 +187,18 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
  *
- * 439 since #1987: `lib/homeLayout.ts`, the one test for "this portal Home
+ * 439 since #1830: `lib/portalVisitProgress.ts`, the pure rules `getMyBookings`
+ * (an entry already in this graph) reads a visit's On the way / Arrived /
+ * Departed and its list by. Its one import is a type, erased at build.
+ *
+ * 440 since #1987 (on top of #1830's 439): `lib/homeLayout.ts`, the one test for "this portal Home
  * layout is the default", which `admin/saveBusinessSettings.ts` (stores such a
  * layout as the empty list) and `portal/getMyHome.ts` (answers with the empty
  * list for a document stored earlier) share. Both are entries already in this
  * graph. It has no import of its own, and it cannot sit behind the lazy
  * `businessSettingsChecks.ts` because `getMyHome` needs it on every call.
  */
-const MAX_OWN_EAGER_MODULES = 439;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;

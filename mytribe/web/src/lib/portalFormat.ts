@@ -14,6 +14,66 @@ import { formatClockRange12, parseDateKey } from './bookingWizardLogic';
  */
 type BookingStatus = GetMyBookingsResultLiveVisit['status'];
 
+/**
+ * #1830 / #1832 / #1823: a visit's place in its life as the household reads
+ * it. One more value than the wire's `status`, because Departed has no status
+ * of its own there: the server sends it as `status: 'active'` with
+ * `visitProgress: 'ended'` (see `functions/src/lib/portalVisitProgress.ts`,
+ * which this mirrors). Every chip, the timeline, the status tile and the live
+ * card read the stage through {@link visitStageOf}, never `status` alone, so a
+ * departed visit cannot read IN PROGRESS on one screen and DEPARTED on another.
+ */
+export type VisitStage = BookingStatus | 'departed';
+type StagePair = Pick<GetMyBookingsResultLiveVisit, 'status' | 'visitProgress'>;
+
+export function visitStageOf(b: StagePair): VisitStage {
+  if (b.status === 'active' && b.visitProgress === 'ended') return 'departed';
+  return b.status;
+}
+
+/** On the way, arrived or departed: the Auntie has started and the visit is not finished. */
+export function isUnderWay(b: StagePair): boolean {
+  const stage = visitStageOf(b);
+  return stage === 'enRoute' || stage === 'active' || stage === 'departed';
+}
+
+/**
+ * The visit the live card is about, or null. The server's `liveVisit`, checked
+ * again here: a cached or older answer that still names a departed visit must
+ * not keep the card up after the Auntie has left.
+ */
+export function liveVisitOf(result: GetMyBookingsResult | undefined): GetMyBookingsResultLiveVisit | null {
+  const live = result?.liveVisit ?? null;
+  if (live === null) return null;
+  const stage = visitStageOf(live);
+  return stage === 'enRoute' || stage === 'active' ? live : null;
+}
+
+/** How often the schedule is re-read while a visit could change under the household's eyes. */
+export const BOOKINGS_POLL_MS = 30_000;
+/** A confirmed visit is watched from this long before its start. */
+const POLL_LEAD_MS = 60 * 60_000;
+
+/**
+ * Whether to keep re-reading the schedule, and how often: {@link BOOKINGS_POLL_MS}
+ * while a visit is under way, or while a confirmed visit is within the hour
+ * before its start or past it (the Auntie's first tap is the one a poll gated
+ * on "under way" alone would never see). `false` otherwise, so a household
+ * with nothing due today costs no reads.
+ *
+ * There is no listener to use instead: the visit's progress lives on the
+ * AuntieOS session, which the rules do not let a household read (#584).
+ */
+export function bookingsPollMs(result: GetMyBookingsResult | undefined, now: number = Date.now()): number | false {
+  if (!result) return false;
+  const due = [result.liveVisit, ...result.upcoming].some(
+    (b) =>
+      b !== null &&
+      (isUnderWay(b) || (b.status === 'confirmed' && b.startTimeMs !== null && b.startTimeMs - POLL_LEAD_MS <= now)),
+  );
+  return due ? BOOKINGS_POLL_MS : false;
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -176,11 +236,13 @@ export interface ChipInfo {
  * so one booking cannot read PENDING in a list and REQUESTED on its page. This
  * function only picks the coarser three-tone colour.
  */
-export function bookingChip(status: BookingStatus): ChipInfo {
-  const { label } = bookingStatusChip(status);
-  switch (status) {
+export function bookingChip(stage: VisitStage): ChipInfo {
+  const { label } = bookingStatusChip(stage);
+  switch (stage) {
     case 'requested':
       return { label, tone: 'go' };
+    // Departed is over for the Auntie, so it takes the finished colour.
+    case 'departed':
     case 'completed':
     case 'cancelled':
       return { label, tone: 'done' };
@@ -219,8 +281,8 @@ export function pendingChangeLabel(b: ChangeFields): string | null {
  * green check for every status, which on REQUESTED read as confirmed. Only a
  * visit that is confirmed or beyond gets the check.
  */
-export function bookingStatusIcon(status: BookingStatus): string {
-  switch (status) {
+export function bookingStatusIcon(stage: VisitStage): string {
+  switch (stage) {
     case 'requested':
       return '\u{1F552}';
     case 'cancelled':
@@ -230,16 +292,26 @@ export function bookingStatusIcon(status: BookingStatus): string {
   }
 }
 /**
- * Finds one booking by its visit id across the live/upcoming/recent buckets
- * of a getMyBookings result — the drill-in lookup BookingDetail.tsx uses.
- * Mirrors Schedule.tsx's own findBookingBySessionId, keyed on `id` instead.
+ * Finds one booking by its visit id: the drill-in lookup BookingDetail.tsx
+ * uses, and where every visit notice lands.
+ *
+ * #1830: the three lists are not every visit. Upcoming and Past Visits are
+ * what belongs on a list today (Past Visits is the latest ten), so a visit can
+ * be on neither and still be the household's: one whose time passed with
+ * nothing done about it, or an older completed one. The envelopes carry every
+ * visit the household has, so the lookup falls back to them and a notice
+ * opens its visit at any point in the visit's life.
  */
 export function findBookingById(result: GetMyBookingsResult | undefined, id: string): GetMyBookingsResultLiveVisit | null {
   if (!result) return null;
-  const all = [result.liveVisit, ...result.upcoming, ...result.recent].filter(
+  const listed = [result.liveVisit, ...result.upcoming, ...result.recent].filter(
     (b): b is GetMyBookingsResultLiveVisit => b !== null,
   );
-  return all.find((b) => b.id === id) ?? null;
+  return (
+    listed.find((b) => b.id === id) ??
+    (result.envelopes ?? []).flatMap((e) => e.kinCares).find((b) => b.id === id) ??
+    null
+  );
 }
 
 export interface BookingStatusChip {
@@ -253,8 +325,8 @@ export interface BookingStatusChip {
  * granular tone set than bookingChip's 3-tone summary chip above — this one
  * needs to tell EN ROUTE from CONFIRMED from IN PROGRESS at a glance.
  */
-export function bookingStatusChip(status: BookingStatus): BookingStatusChip {
-  switch (status) {
+export function bookingStatusChip(stage: VisitStage): BookingStatusChip {
+  switch (stage) {
     case 'requested':
       return { label: 'REQUESTED', tone: 'requested' };
     case 'confirmed':
@@ -263,6 +335,10 @@ export function bookingStatusChip(status: BookingStatus): BookingStatusChip {
       return { label: 'EN ROUTE', tone: 'inprogress' };
     case 'active':
       return { label: 'IN PROGRESS', tone: 'inprogress' };
+    // The Auntie has left and the KinTale is still to come. Not the pulsing
+    // in-progress chip: nobody is at the house.
+    case 'departed':
+      return { label: 'DEPARTED', tone: 'completed' };
     case 'completed':
       return { label: 'COMPLETED', tone: 'completed' };
     case 'cancelled':
@@ -288,9 +364,13 @@ export const BOOKING_TIMELINE_STEPS: { id: BookingTimelineStepId; label: string 
  * Every other status gets its own forward step, including `enRoute`, which
  * is distinct from `active`: the Auntie being on her way is not the same as
  * the Auntie being in the house.
+ *
+ * Departed has no step of its own (the mock draws five): In progress is behind
+ * it and Completed is the step it is waiting on, so it sits on Completed
+ * without that step being ticked. {@link isTimelineStepDone} is what ticks it.
  */
-export function bookingTimelineIndex(status: BookingStatus): number | null {
-  switch (status) {
+export function bookingTimelineIndex(stage: VisitStage): number | null {
+  switch (stage) {
     case 'requested':
       return 0;
     case 'confirmed':
@@ -299,11 +379,23 @@ export function bookingTimelineIndex(status: BookingStatus): number | null {
       return 2;
     case 'active':
       return 3;
+    case 'departed':
     case 'completed':
       return 4;
     case 'cancelled':
       return null;
   }
+}
+
+/**
+ * Whether timeline step `i` is ticked. Every step behind the current one is,
+ * and on a completed visit the last one is too (#1303: nothing comes after
+ * Completed, so it does not stay "current"). A departed visit stops one short:
+ * four ticks, with Completed as the step it is on.
+ */
+export function isTimelineStepDone(stage: VisitStage, i: number): boolean {
+  const index = bookingTimelineIndex(stage);
+  return index !== null && (i < index || stage === 'completed');
 }
 
 /** Cycles the mockup's v1/v2/v3 calendar-tile color variants by row index. */

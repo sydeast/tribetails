@@ -126,6 +126,9 @@ h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display
 .live { padding: 24px 26px; color: #fff; border-radius: 24px; position: relative; overflow: hidden; background: var(--tribe-grad);
   box-shadow: var(--shadow-warm); margin-bottom: 30px; animation: rise .6s var(--ease) .08s both; }
 .live::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 90% at 88% 0%, rgba(255, 255, 255, .32), transparent 55%); pointer-events: none; }
+/* #1832: the card opens its visit. The link takes the card's own colours in every state. */
+.live a.live-open, .live a.live-open:visited, .live a.live-open:hover, .live a.live-open:active { display: block; position: relative; color: inherit; text-decoration: none; }
+.live a.live-open:focus-visible { outline: 2px solid #fff; outline-offset: 4px; border-radius: 12px; }
 .live .lrow { display: flex; align-items: center; gap: 7px; position: relative; }
 .live .tag { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; }
 .pulse { width: 9px; height: 9px; border-radius: 50%; background: #fff; animation: pulse 1.6s var(--ease) infinite; }
