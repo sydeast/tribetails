@@ -29,7 +29,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -47,13 +49,17 @@ import com.kinfolk.portal.components.KinTintPill
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.Booking
-import com.kinfolk.portal.portal.BookingStatus
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.VisitStage
+import com.kinfolk.portal.portal.isUnderWay
 import com.kinfolk.portal.portal.label
+import com.kinfolk.portal.portal.liveVisitOrNull
 import com.kinfolk.portal.portal.pendingChangeLabel
+import com.kinfolk.portal.portal.stage
 import com.kinfolk.portal.theme.KinfolkBrand
+import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
@@ -128,6 +134,22 @@ fun ScheduleScreen(
         } catch (_: Throwable) { /* leave null; replay simply hides */ }
     }
 
+    // #1832: while a visit is under way or about due, the list keeps itself
+    // current. Quiet on purpose: a dropped re-read leaves the screen as it is.
+    KeepBookingsCurrent(data) {
+        try {
+            data = portalApi.getMyBookings(kinfolkId)
+            error = null
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) { /* keep what is on screen; the next turn tries again */ }
+        try {
+            visits = portalApi.getMyVisits(kinfolkId, limit = 10)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) { /* replays only */ }
+    }
+
     // Re-fetch on first load and whenever a mutating detail returns (the host
     // bumps reloadSignal off the back-stack dirty flag), reproducing the old
     // reload-on-back behavior after a saved note or new booking.
@@ -174,6 +196,19 @@ fun ScheduleScreen(
             notice?.let { text -> SaveNoticeRow(text = text, onDismiss = { notice = null }) }
 
             val mainColumn: @Composable () -> Unit = {
+                // #1832: the live card is getMyBookings' live visit, the same
+                // one Home shows. It used to be an ARRIVED row found in
+                // getMyVisits, which named no Kin, could not be opened, showed
+                // nothing while the Auntie was on the way and outlived her
+                // leaving. It sits above the lists, as on the web portal.
+                data?.liveVisitOrNull()?.let { live ->
+                    LiveVisitCard(
+                        booking = live,
+                        firestoreClient = firestoreClient,
+                        onOpen = { onOpenKinCare(live.id, live.batchId) },
+                    )
+                }
+
                 UpcomingCard(
                     data = data,
                     error = error,
@@ -185,16 +220,6 @@ fun ScheduleScreen(
                     // than the tap looking like it did nothing.
                     onReload = { scope.launch { data = null; reload() } },
                 )
-
-                // Active visit (status ARRIVED on AuntieOS) — live polyline grows as
-                // new GPS pings land. Hides when no active visit.
-                val activeVisit = visits?.visits.orEmpty().firstOrNull {
-                    it.status.equals("ARRIVED", ignoreCase = true)
-                }
-                if (activeVisit != null) {
-                    Text("Auntie's On Her Way / At Your Place", style = type.heritageSection)
-                    LiveVisitCard(visit = activeVisit, firestoreClient = firestoreClient)
-                }
 
                 PastVisitsCard(data = data, onOpenKinCare = onOpenKinCare)
 
@@ -320,12 +345,21 @@ private fun UpcomingCard(
                     message = "Request your first booking below or wait for your Auntie to confirm one.",
                 )
                 envelopeOn -> {
-                    // Group upcoming KinCares by their parent envelope. A batch with
+                    // #1832: a visit that is under way gets a row of its own at
+                    // the top, with its status, even when it belongs to a
+                    // multi-visit booking. Folded into an ENVELOPE row it would
+                    // show no status and open the booking, not the visit.
+                    val (underWay, ahead) = data.upcoming.partition { it.isUnderWay() }
+                    var index = 0
+                    underWay.forEach { b ->
+                        if (index > 0) RowDivider()
+                        VisitRow(b, index++, onClick = { onOpenKinCare(b.id, b.batchId) })
+                    }
+                    // Group the rest by their parent envelope. A batch with
                     // a single visit drills straight into KinCareDetail; multi-visit
                     // batches open the BookingEnvelopeScreen. KinCares with no
                     // batchId (legacy/back-compat) fall back to one row each.
-                    val groups = data.upcoming.groupBy { it.batchId }
-                    var index = 0
+                    val groups = ahead.groupBy { it.batchId }
                     groups.forEach { (batchId, kinCares) ->
                         if (batchId == null || kinCares.size == 1) {
                             kinCares.forEach { b ->
@@ -426,7 +460,7 @@ private fun VisitRow(b: Booking, index: Int, onClick: (() -> Unit)? = null) {
                 )
             }
         }
-        StatusChip(b.status)
+        StatusChip(b.stage())
     }
 }
 
@@ -457,17 +491,19 @@ private fun EnvelopeRow(kinCares: List<Booking>, index: Int, onClick: () -> Unit
 }
 
 @Composable
-private fun StatusChip(status: BookingStatus) {
-    // #1298: the words come from BookingStatus.label(); only the colour is this screen's.
-    val color = when (status) {
-        BookingStatus.Requested -> KinfolkBrand.KinfolkOrange
-        BookingStatus.Confirmed -> KinfolkBrand.KinfolkOrange
-        BookingStatus.EnRoute -> KinfolkBrand.PackPink
-        BookingStatus.Active -> KinfolkBrand.SnuggleCoral
-        BookingStatus.Completed -> KinfolkBrand.FamilyPurple
-        BookingStatus.Cancelled -> KinfolkBrand.NavyMuted
+private fun StatusChip(stage: VisitStage) {
+    // #1298: the words come from VisitStage.label(); only the colour is this screen's.
+    val color = when (stage) {
+        VisitStage.Requested -> KinfolkBrand.KinfolkOrange
+        VisitStage.Confirmed -> KinfolkBrand.KinfolkOrange
+        VisitStage.EnRoute -> KinfolkBrand.PackPink
+        VisitStage.Active -> KinfolkBrand.SnuggleCoral
+        // Over for the Auntie, so it takes the finished colour.
+        VisitStage.Departed -> KinfolkBrand.FamilyPurple
+        VisitStage.Completed -> KinfolkBrand.FamilyPurple
+        VisitStage.Cancelled -> KinfolkBrand.NavyMuted
     }
-    KinTintPill(status.label(), color)
+    KinTintPill(stage.label(), color)
 }
 
 // ---- Shared bits ----
@@ -551,35 +587,69 @@ private fun RequestBookingDialog(
 }
 
 /**
- * Live tracking card for the active visit. Subscribes to the
- * `kin_care_sessions/{visit.id}/breadcrumbs` subcollection via gitlive Firestore
- * so the polyline grows as Auntie sends new GPS pings.
+ * The live visit card: the Auntie is on the way to, or at, this household.
+ * Names the Kin on the visit and opens it on tap (#1832).
+ *
+ * Once she has arrived it subscribes to the visit's
+ * `kin_care_sessions/{sessionId}/breadcrumbs` subcollection via gitlive
+ * Firestore, so the polyline grows as Auntie sends new GPS pings.
  */
 @Composable
 private fun LiveVisitCard(
-    visit: com.kinfolk.portal.portal.Visit,
+    booking: Booking,
     firestoreClient: com.kinfolk.portal.firebase.FirestoreClient,
+    onOpen: () -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
-    val live by remember(visit.id) { firestoreClient.breadcrumbsStream(visit.id) }
-        .collectAsState(initial = emptyList())
-
-    GlassCard(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(KinfolkSpacing.l),
+    val arrived = booking.stage() == VisitStage.Active
+    val auntie = com.kinfolk.portal.util.auntieName(booking.auntieDisplayName) ?: "Your Auntie"
+    val kin = booking.kinNames.joinToString(", ").ifBlank { null }
+    val white = Color.White
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KinfolkShapes.card)
+            .background(KinfolkGradients.tribe)
+            .testTag(LIVE_VISIT_TAG)
+            .clickable(role = Role.Button, onClickLabel = "Open this booking", onClick = onOpen)
+            .padding(KinfolkSpacing.l),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-            Text(visit.serviceLabel ?: "Visit in progress", style = type.heritageTitle)
             Text(
-                if (live.isEmpty()) "Waiting for first GPS ping…" else "${live.size} pings · live",
-                style = type.sansLabel,
+                if (arrived) "VISIT IN PROGRESS" else "ON THE WAY",
+                style = type.sansMeta.copy(color = white),
             )
-            if (live.isNotEmpty()) {
-                com.kinfolk.portal.components.RouteMap(route = live)
+            Text(
+                if (arrived) "$auntie is at your place" else "$auntie is on the way",
+                style = type.heritageTitle.copy(color = white),
+            )
+            Text(
+                listOfNotNull(
+                    kin?.let { if (arrived) "With $it" else "To $it" },
+                    com.kinfolk.portal.util.visitTitle(booking.title, booking.serviceLabel),
+                ).joinToString(" \u2022 ").ifBlank { "Your visit" },
+                style = type.sansBody.copy(color = white),
+            )
+            // The live map is the visit's own walk, so it starts on arrival.
+            val sessionId = booking.sessionId
+            if (arrived && sessionId != null) {
+                val live by remember(sessionId) { firestoreClient.breadcrumbsStream(sessionId) }
+                    .collectAsState(initial = emptyList())
+                Text(
+                    if (live.isEmpty()) "Waiting for first GPS ping\u2026" else "${live.size} pings · live",
+                    style = type.sansLabel.copy(color = white.copy(alpha = 0.88f)),
+                )
+                if (live.isNotEmpty()) {
+                    com.kinfolk.portal.components.RouteMap(route = live)
+                }
             }
         }
     }
 }
+
+/** #1832: test tag on Schedule's live visit card. */
+const val LIVE_VISIT_TAG = "schedule-live-visit"
+
 /** #1281: test tag on Schedule's post-save confirmation line. */
 /** The confirmation line a save leaves behind. Schedule and Home both draw it (#1345). */
 @Composable
