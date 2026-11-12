@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
-import { listStaff, loadStaffNames, resetStaffNamesForTest, staffLabel, staffNamesByUid } from './staff';
+import { listStaff, loadStaffNames, loadStaffRoster, resetStaffNamesForTest, staffLabel, staffNamesByUid } from './staff';
 
 beforeEach(() => {
   call.mockReset();
@@ -71,6 +71,22 @@ describe('staff names by uid (#1564)', () => {
     expect(one.get('a')).toBe('E2E Admin');
     expect(two).toBe(one);
     expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('#1962 the roster and the names share the one read', async () => {
+    call.mockResolvedValue({ staff: [{ uid: 'a', displayName: 'E2E Admin', email: null }] });
+    const [roster, names] = await Promise.all([loadStaffRoster(), loadStaffNames()]);
+    expect(roster).toEqual([{ uid: 'a', displayName: 'E2E Admin', email: null }]);
+    expect(names.get('a')).toBe('E2E Admin');
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('#1962 a failed roster read gives an empty roster and is tried again next time', async () => {
+    call.mockRejectedValueOnce(new Error('permission-denied'));
+    expect(await loadStaffRoster()).toEqual([]);
+    call.mockResolvedValue({ staff: [{ uid: 'a', displayName: 'E2E Admin', email: null }] });
+    expect(await loadStaffRoster()).toHaveLength(1);
+    expect((await loadStaffNames()).get('a')).toBe('E2E Admin');
   });
 
   it('a failed read gives an empty map and is tried again next time', async () => {

@@ -186,8 +186,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * email and phone shapes the admin clients check, which `portal/secondaryKinfolk.ts`
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
+ *
+ * 439 since #1962: `lib/savedByStamp.ts`, the one "last saved" stamp the four
+ * writers of the Settings documents share (`saveBusinessSettings`,
+ * `removeBusinessTag`, `confirmBrandAssetUpload`, `saveEmailFrame`, all
+ * entries already in this graph), so they can no longer disagree about what
+ * `updatedBy` holds. One function with no import of its own.
  */
-const MAX_OWN_EAGER_MODULES = 438;
+const MAX_OWN_EAGER_MODULES = 439;
 
 interface Edge {
   spec: string;

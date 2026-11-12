@@ -5,6 +5,7 @@ import {
   EMAIL_FRAME_DOC_PATH,
   parseStoredFrame,
   resolveEmailFrame,
+  withoutDefaults,
   type StoredEmailFrame,
 } from './emailFrameConfig';
 import { BUSINESS_SETTINGS_SOURCE_DOC, buildBusinessPublicCard } from './businessPublicCard';
@@ -35,12 +36,18 @@ export interface StoredFrameRead {
  * The stored fields, validated field by field. Throws when the read fails, so
  * the callables can report a failure; the send path uses `loadEmailFrame`,
  * which never throws.
+ *
+ * #1989: a field equal to its default is not reported as stored, and a document
+ * with nothing left is the default frame: no stamp is reported for it. That
+ * covers documents written before the save callable stopped keeping them (a
+ * stamp with no fields, which no control on the screen could clear).
  */
 export async function readStoredEmailFrame(caller: string): Promise<StoredFrameRead> {
   const snap = await db().doc(EMAIL_FRAME_DOC_PATH).get();
   if (!snap.exists) return { stored: {}, updatedAt: null, updatedBy: null };
   const raw = snap.data() ?? {};
-  const { stored, dropped } = parseStoredFrame(raw);
+  const { stored: parsed, dropped } = parseStoredFrame(raw);
+  const stored = withoutDefaults(parsed);
   if (dropped.length > 0) {
     // A value that fails the schema can only come from a hand edit in the
     // console (the save callable refuses it). It is dropped so the field
@@ -52,6 +59,7 @@ export async function readStoredEmailFrame(caller: string): Promise<StoredFrameR
       extra: { fields: dropped, action: 'sent the default for these fields; re-save the email frame in Settings' },
     });
   }
+  if (Object.keys(stored).length === 0) return { stored, updatedAt: null, updatedBy: null };
   return {
     stored,
     updatedAt: typeof raw['updatedAt'] === 'string' ? raw['updatedAt'] : null,

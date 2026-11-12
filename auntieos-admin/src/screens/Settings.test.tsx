@@ -10,6 +10,13 @@ vi.mock('../api/settings', async (orig) => ({
   getBusinessSettings: () => getBusinessSettings(),
 }));
 
+// #1962: the shared staff roster (`listStaff`), stubbed so no test dials it.
+// Null is "not read yet".
+const staffRoster = vi.hoisted(() => ({
+  current: null as { uid: string; displayName: string | null; email: string | null }[] | null,
+}));
+vi.mock('../lib/useStaffRoster', () => ({ useStaffRoster: () => staffRoster.current }));
+
 const saveBusinessSettings = vi.fn();
 vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
 
@@ -304,9 +311,8 @@ describe('Settings — section nav shell', () => {
 // `ui-ideas/auntieos-settings-2026-05-27.html` on the navy ground.
 describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
   it('heads the screen with the mock kicker and title, the last save as the detail line', async () => {
-    getBusinessSettings.mockResolvedValue(
-      withOverrides({ updatedAt: '2026-07-31T12:00:00.000Z', updatedBy: 'auntie@example.com' }),
-    );
+    staffRoster.current = [{ uid: 'owner-1', displayName: 'Syd East', email: null }];
+    getBusinessSettings.mockResolvedValue(withOverrides({ updatedAt: '2026-07-31T12:00:00.000Z', updatedBy: 'owner-1' }));
     render(<Settings />);
     await screen.findByLabelText('Business name');
 
@@ -317,8 +323,67 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
     // The stamp is a VALUE, so it sits on the heading's detail line, never as
     // a stray paragraph between the band and the columns.
     const detail = document.querySelector('.den-heading-detail');
-    expect(detail).toHaveTextContent(/^Last saved .* by auntie@example\.com$/);
+    expect(detail).toHaveTextContent(/^Last saved .* by Syd East$/);
     expect(document.querySelector('.settings__updated')).toBeNull();
+  });
+
+  // #1962: after a tag was removed the line ended in a 28-character user id,
+  // and before that in the sign-in email. Neither is a name.
+  describe('who the last-saved line names (#1962)', () => {
+    const UID = 'nppJNdMNYJfUigibGKUQj3n4obt2';
+    const ROSTER = [{ uid: UID, displayName: 'Syd East', email: 'e2e-admin@tribetails.com' }];
+
+    async function detailFor(updatedBy: string, roster: typeof staffRoster.current): Promise<string> {
+      staffRoster.current = roster;
+      getBusinessSettings.mockResolvedValue(withOverrides({ updatedAt: '2026-11-11T18:47:00.000Z', updatedBy }));
+      render(<Settings />);
+      await screen.findByLabelText('Business name');
+      return document.querySelector('.den-heading-detail')?.textContent ?? '';
+    }
+
+    it('shows the name for a uid stamp already stored', async () => {
+      const detail = await detailFor(UID, ROSTER);
+      expect(detail).toMatch(/^Last saved .* by Syd East$/);
+      expect(detail).not.toContain(UID);
+    });
+
+    it('shows the name for an older sign-in email stamp, never the email', async () => {
+      const detail = await detailFor('e2e-admin@tribetails.com', ROSTER);
+      expect(detail).toMatch(/^Last saved .* by Syd East$/);
+      expect(detail).not.toContain('@');
+    });
+
+    it('says "an Admin" for a uid nobody on the roster answers to', async () => {
+      const detail = await detailFor('gone-uid-0000000000000000000', ROSTER);
+      expect(detail).toMatch(/^Last saved .* by an Admin$/);
+      expect(detail).not.toContain('gone-uid');
+    });
+
+    it('says "an Admin" when the roster only knows the person by an email', async () => {
+      const detail = await detailFor(UID, [{ uid: UID, displayName: 'e2e-admin@tribetails.com', email: null }]);
+      expect(detail).toMatch(/^Last saved .* by an Admin$/);
+    });
+
+    it('prints no stamp while the roster is still being read', async () => {
+      const detail = await detailFor(UID, null);
+      expect(detail).toMatch(/^Last saved \S+ \S+$/);
+      expect(detail).not.toContain(UID);
+      expect(detail).not.toContain(' by ');
+    });
+
+    it('names the saver from the uid a save answers with', async () => {
+      staffRoster.current = ROSTER;
+      getBusinessSettings.mockResolvedValue(withOverrides({ updatedAt: '', updatedBy: '' }));
+      saveBusinessSettings.mockResolvedValue({ updatedAt: '2026-11-11T18:47:00.000Z', updatedBy: UID });
+      const user = userEvent.setup();
+      render(<Settings />);
+      const name = await screen.findByLabelText('Business name');
+      expect(document.querySelector('.den-heading-detail')).toHaveTextContent('Never saved yet');
+      await user.type(name, 'Tribe Tails');
+      await user.click(within(panelOwning(name)).getByRole('button', { name: /save/i }));
+      await screen.findByText(/^Last saved .* by Syd East$/);
+      expect(document.querySelector('.den-heading-detail')?.textContent).not.toContain(UID);
+    });
   });
 
   it('draws the nav as its own panel: one glyph per tab, the label the whole accessible name', async () => {
