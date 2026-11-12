@@ -229,13 +229,17 @@ class AuntieTimeWindowTest {
 
     @Test
     fun `the year shows once the visit is not in the current year`() {
-        assertEquals("Jan 16, 2025 · 14:00", auntieTimeDate("2025-01-16T14:00:00Z", today))
-        assertEquals("Mar 2, 2027 · 09:30", auntieTimeDate("2027-03-02T09:30:00Z", today))
+        // #2036: a zone-less time is the business's wall clock and prints as written;
+        // an instant prints on the business's clock (14:00Z is 08:00 in Chicago in January).
+        assertEquals("Jan 16, 2025 · 14:00", auntieTimeDate("2025-01-16T14:00:00", today))
+        assertEquals("Jan 16, 2025 · 08:00", auntieTimeDate("2025-01-16T14:00:00Z", today))
+        assertEquals("Mar 2, 2027 · 09:30", auntieTimeDate("2027-03-02T09:30:00", today))
     }
 
     @Test
     fun `the year is omitted in the current year, so the common case stays short`() {
-        assertEquals("Jul 16 · 14:00", auntieTimeDate("2026-07-16T14:00:00Z", today))
+        assertEquals("Jul 16 · 14:00", auntieTimeDate("2026-07-16T14:00:00", today))
+        assertEquals("Jul 16 · 09:00", auntieTimeDate("2026-07-16T14:00:00Z", today))
     }
 
     @Test
@@ -245,7 +249,7 @@ class AuntieTimeWindowTest {
 
     @Test
     fun `the session window carries the year through to the row label`() {
-        val s = session(startTime = "2025-01-16T14:00:00Z").apply { endTime = "2025-01-16T15:30:00Z" }
+        val s = session(startTime = "2025-01-16T14:00:00").apply { endTime = "2025-01-16T15:30:00" }
         assertEquals("Jan 16, 2025 · 14:00 to 15:30", sessionWindow(s, today))
     }
 
