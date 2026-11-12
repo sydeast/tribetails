@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
@@ -54,8 +55,12 @@ import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.screens.notifications.DevicePushCard
 import com.kinfolk.portal.portal.PortalHomeSection
 import com.kinfolk.portal.portal.VisitProgress
+import com.kinfolk.portal.portal.VisitStage
 import com.kinfolk.portal.portal.label
+import com.kinfolk.portal.portal.liveVisitOrNull
 import com.kinfolk.portal.portal.pendingChangeLabel
+import com.kinfolk.portal.portal.stage
+import com.kinfolk.portal.screens.schedule.KeepBookingsCurrent
 import com.kinfolk.portal.screens.schedule.SAVE_NOTICE_MS
 import com.kinfolk.portal.screens.schedule.SaveNoticeRow
 import com.kinfolk.portal.screens.schedule.ScheduleHandoff
@@ -145,6 +150,17 @@ fun HomeScreen(
             error = t.message ?: "Could not load home"
         }
     }
+    // #1832: while a visit is under way or about due, Home keeps itself
+    // current, so the live card appears, changes and clears without leaving
+    // the screen. Quiet on purpose: a dropped re-read leaves Home as it is.
+    KeepBookingsCurrent(data) {
+        try {
+            data = portalApi.getMyBookings(kinfolkId)
+            error = null
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) { /* keep what is on screen; the next turn tries again */ }
+    }
     LaunchedEffect(handoff) {
         if (handoff != null) {
             handoff.bookings?.let { data = it }
@@ -195,8 +211,10 @@ fun HomeScreen(
                 text = "Checking whether a visit is under way\u2026",
                 onSync = { data = null; bookingsReloadKey += 1 },
             )
-            data?.liveVisit == null -> Unit
-            else -> LiveVisitCard(data!!.liveVisit!!)
+            else -> data?.liveVisitOrNull()?.let { live ->
+                // #1832: the card opens the visit it is about.
+                LiveVisitCard(live, onOpen = { onOpenBooking(live.id, live.batchId) })
+            }
         }
     }
     val upNextSection: @Composable () -> Unit = {
@@ -575,8 +593,11 @@ private fun BalanceDueLine(cents: Long?, onOpen: () -> Unit, onReload: () -> Uni
 // ---- Live Visit hero (unchanged) ----
 
 @Composable
-private fun LiveVisitCard(b: Booking) {
+private fun LiveVisitCard(b: Booking, onOpen: () -> Unit) {
     val type = LocalKinfolkTypography.current
+    // #1832: On the way and Arrived are different cards in words. It used to
+    // say LIVE for both, as if the Auntie were already with the Kin.
+    val arrived = b.stage() == VisitStage.Active
     // Signature full-bleed Tribe-gradient hero (orange to pink to teal) with white
     // text, the brightest moment on Home when an Auntie is actively with the Kin.
     Box(
@@ -585,6 +606,8 @@ private fun LiveVisitCard(b: Booking) {
             .padding(horizontal = KinfolkSpacing.l)
             .clip(KinfolkShapes.card)
             .background(KinfolkGradients.tribe)
+            .testTag(HOME_LIVE_VISIT_TAG)
+            .clickable(role = Role.Button, onClickLabel = "Open this booking", onClick = onOpen)
             .padding(KinfolkSpacing.l),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
@@ -597,23 +620,29 @@ private fun LiveVisitCard(b: Booking) {
                     Text(auntieName(b.auntieDisplayName) ?: "Auntie", style = type.heritageTitle.copy(color = Color.White))
                     Text(b.serviceLabel ?: "Visit", style = type.sansLabel.copy(color = Color.White.copy(alpha = 0.88f)))
                 }
-                LivePill(onGradient = true)
+                LivePill(label = if (arrived) "LIVE" else "ON THE WAY", onGradient = true)
             }
-            val withText = b.kinNames.joinToString(", ").ifBlank { null }
-            if (withText != null) {
-                Text("With $withText", style = type.sansBody.copy(color = Color.White))
+            val kinText = b.kinNames.joinToString(", ").ifBlank { null }
+            if (kinText != null) {
+                Text(if (arrived) "With $kinText" else "On the way to $kinText", style = type.sansBody.copy(color = Color.White))
             }
             if (!b.notes.isNullOrBlank()) {
                 Text(b.notes, style = type.sansBody.copy(color = Color.White.copy(alpha = 0.85f)))
             }
             Spacer(Modifier.height(KinfolkSpacing.s))
-            VisitProgressTimeline(b.visitProgress ?: VisitProgress.Active, onGradient = true)
+            VisitProgressTimeline(
+                b.visitProgress ?: if (arrived) VisitProgress.Active else VisitProgress.EnRoute,
+                onGradient = true,
+            )
         }
     }
 }
 
+/** #1832: test tag on Home's live visit card. */
+const val HOME_LIVE_VISIT_TAG = "home-live-visit"
+
 @Composable
-private fun LivePill(onGradient: Boolean = false) {
+private fun LivePill(label: String = "LIVE", onGradient: Boolean = false) {
     val type = LocalKinfolkTypography.current
     val accent = if (onGradient) Color.White else KinfolkBrand.SnuggleCoral
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -622,7 +651,7 @@ private fun LivePill(onGradient: Boolean = false) {
             color = accent,
             shape = CircleShape,
         ) {}
-        Text("LIVE", style = type.sansMeta.copy(color = accent))
+        Text(label, style = type.sansMeta.copy(color = accent))
     }
 }
 
@@ -669,16 +698,19 @@ private fun VisitProgressTimeline(progress: VisitProgress, onGradient: Boolean =
 @Composable
 private fun StatusPill(b: Booking) {
     val type = LocalKinfolkTypography.current
-    // #1298: the words come from BookingStatus.label(); only the colour is this screen's.
-    val color = when (b.status) {
-        com.kinfolk.portal.portal.BookingStatus.Requested -> KinfolkBrand.KinfolkOrange
-        com.kinfolk.portal.portal.BookingStatus.Confirmed -> KinfolkBrand.KinTeal
-        com.kinfolk.portal.portal.BookingStatus.EnRoute -> KinfolkBrand.PackPink
-        com.kinfolk.portal.portal.BookingStatus.Active -> KinfolkBrand.SnuggleCoral
-        com.kinfolk.portal.portal.BookingStatus.Completed -> KinfolkBrand.KinTeal
-        com.kinfolk.portal.portal.BookingStatus.Cancelled -> KinfolkBrand.NavyMuted
+    // #1298: the words come from VisitStage.label(); only the colour is this screen's.
+    val stage = b.stage()
+    val color = when (stage) {
+        VisitStage.Requested -> KinfolkBrand.KinfolkOrange
+        VisitStage.Confirmed -> KinfolkBrand.KinTeal
+        VisitStage.EnRoute -> KinfolkBrand.PackPink
+        VisitStage.Active -> KinfolkBrand.SnuggleCoral
+        // Over for the Auntie, so it takes the finished colour.
+        VisitStage.Departed -> KinfolkBrand.KinTeal
+        VisitStage.Completed -> KinfolkBrand.KinTeal
+        VisitStage.Cancelled -> KinfolkBrand.NavyMuted
     }
-    val label = b.status.label()
+    val label = stage.label()
     GlassCard(
         modifier = Modifier,
         shape = KinfolkShapes.pill,

@@ -8,6 +8,8 @@ import {
   zonedNow,
   type BusinessHoursSettings,
 } from '../src/lib/businessHours';
+import { weeklyHoursRefusal, weeklyHoursRefusalForNight } from '../src/lib/weeklyHoursRule';
+import { buildBusinessPublicCard } from '../src/lib/businessPublicCard';
 
 /**
  * The rules the business phone line answers from.
@@ -377,5 +379,46 @@ describe('resolveLiveTransferEnabled', () => {
     for (const value of cases) {
       expect(resolveLiveTransferEnabled({ voiceLiveTransferEnabled: value })).toBe(true);
     }
+  });
+});
+
+/**
+ * #1978: the save keeps the hours a closed day had in `closedDayHours`, beside
+ * `businessHours`. Every reader of the weekly hours has to go on reading the
+ * day as Closed; only the Settings editors look at the kept hours.
+ */
+describe('#1978: a closed day with kept hours still reads as Closed', () => {
+  const raw = {
+    ...LIVE,
+    businessHours: { ...LIVE_HOURS, Tuesday: '' },
+    closedDayHours: { Tuesday: '08:00-18:00' },
+  };
+
+  it('the phone line says closed at an hour the kept range would cover', () => {
+    expect(resolveBusinessOpen(raw, THE_CALL_MS)).toMatchObject({
+      open: false,
+      reason: 'closed-day',
+      uncertain: false,
+      dayName: 'Tuesday',
+    });
+    expect(businessHoursForDayName(raw.businessHours, 'Tuesday')).toEqual({ kind: 'closed' });
+  });
+
+  it('a booking on that day is refused, by instant and by date', () => {
+    const sentence = 'We are closed on Tuesdays. Pick another day for this visit.';
+    expect(
+      weeklyHoursRefusal(raw, 'America/Chicago', { startTimeServiceIds: [] }, {
+        startTimeMs: THE_CALL_MS,
+        timeBlockId: null,
+      }),
+    ).toBe(sentence);
+    expect(weeklyHoursRefusalForNight(raw, { requestedDate: '2026-08-11' })).toBe(sentence);
+  });
+
+  it('the public card carries the day blank and never the kept hours', () => {
+    const card = buildBusinessPublicCard(raw);
+    expect(card.hours.Tuesday).toBe('');
+    expect(JSON.stringify(card)).not.toContain('closedDayHours');
+    expect(Object.keys(card).sort()).toEqual(['hours', 'name', 'phone', 'privacyPolicyUrl']);
   });
 });

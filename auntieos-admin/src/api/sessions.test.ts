@@ -4,6 +4,7 @@ import {
   SESSIONS_PAGE_SIZE,
   sessionsWindowQuery,
   sessionsArchiveQuery,
+  sessionsArchivePageQuery,
   sessionsPageQuery,
   sessionsWindowPageQuery,
 } from './sessions';
@@ -110,6 +111,21 @@ describe('sessionsPageQuery: the paged range', () => {
   });
 });
 
+describe('sessionsArchivePageQuery: the Archive, paged (#2036)', () => {
+  const spec = sessionsArchivePageQuery('2026-11-09', '2026-11-13');
+  it('reads from the first bound up to, and not including, the second', () => {
+    expect(spec.path).toBe('kin_care_sessions');
+    expect(spec.filters).toEqual([
+      ['startTime', '>=', '2026-11-09'],
+      ['startTime', '<', '2026-11-13'],
+    ]);
+  });
+  it('pages and orders exactly like the day-of window, so it needs no new index', () => {
+    expect(spec.pageSize).toBe(SESSIONS_PAGE_SIZE);
+    expect(spec.order).toEqual(['startTime', 'desc']);
+    for (const f of spec.filters ?? []) expect(f[0]).toBe(spec.order[0]);
+  });
+});
 describe('sessionsWindowPageQuery: the day-of window, paged', () => {
   it('uses exactly the bounds the unpaged window query already used', () => {
     const paged = sessionsWindowPageQuery('2026-07-16');

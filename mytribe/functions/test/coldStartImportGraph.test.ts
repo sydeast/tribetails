@@ -187,13 +187,17 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
  *
- * 439 since #1912: `lib/kinLink.ts`, the one place that says which admin
- * record is a household Kin's own. `portal/kinWrites.ts`,
+ * 439 since #1830: `lib/portalVisitProgress.ts`, the pure rules `getMyBookings`
+ * (an entry already in this graph) reads a visit's On the way / Arrived /
+ * Departed and its list by. Its one import is a type, erased at build.
+ *
+ * 440 since #1912 (on top of #1830's 439): `lib/kinLink.ts`, the one place
+ * that says which admin record is a household Kin's own. `portal/kinWrites.ts`,
  * `admin/kinArchive.ts`, `admin/kinRemovalRequests.ts` and
  * `triggers/onFamilyKinWrite.ts` (four entries already in this graph) all ask
  * it, so it is resident by construction; every module it imports is too.
  */
-const MAX_OWN_EAGER_MODULES = 439;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;

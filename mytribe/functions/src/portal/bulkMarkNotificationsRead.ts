@@ -15,7 +15,7 @@ import { staffBypass } from '../lib/staffGate';
  * single markNotificationRead callable; reuses the exact same read-field
  * semantics it writes (`readAt` + `viewedAt` server timestamps + `viewedByUid`)
  * and the same recipient guard: a caller may only mark notifications whose
- * `recipientUid` is the caller (admins may mark any, matching markNotificationRead).
+ * `recipientUid` is the caller, whatever role the caller holds (#1837).
  *
  * Notifications live in the flat top-level `notifications` collection keyed by
  * doc id with a `recipientUid` field.
@@ -34,8 +34,8 @@ export async function bulkMarkNotificationsReadHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  // #944: allowlisted - her own inbox.
-  const isAdmin = staffBypass(req.auth, 'bulkMarkNotificationsRead');
+  // The audit line's actor label only. It never widens the recipient check.
+  const actorIsStaff = staffBypass(req.auth, 'bulkMarkNotificationsRead');
 
   let args: z.infer<typeof Args>;
   try {
@@ -58,7 +58,7 @@ export async function bulkMarkNotificationsReadHandler(
     if (!snap.exists) continue;
     const data = snap.data() as { recipientUid?: string } | undefined;
     if (!data?.recipientUid) continue;
-    if (!isAdmin && data.recipientUid !== uid) continue;
+    if (data.recipientUid !== uid) continue;
 
     await ref.set(
       {
@@ -75,7 +75,7 @@ export async function bulkMarkNotificationsReadHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATIONS_BULK_READ,
     severity: 'info',
-    actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
+    actorRole: actorIsStaff ? 'AUNTIE' : 'PRIMARY',
     actorUid: uid,
     targetCollection: 'notifications',
     description: `Bulk marked ${marked} of ${requestedIds.length} notification(s) read`,

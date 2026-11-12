@@ -4,6 +4,7 @@ import com.tribetails.auntieos.ui.admin.settingsSaveFailureText
 import com.tribetails.auntieos.ui.admin.WeeklyHoursRow
 import com.tribetails.auntieos.ui.admin.weeklyHoursPatch
 import com.tribetails.auntieos.ui.admin.weeklyHoursRows
+import com.tribetails.auntieos.ui.admin.withWeeklyHoursSaved
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.data.model.*
@@ -31,7 +32,7 @@ data class ServiceManagementState(
      * it: the same map the Settings panel, the web and the phone line read.
      * Derived, so it is always what was last loaded or saved.
      */
-    val businessHours: List<WeeklyHoursRow> get() = weeklyHoursRows(businessSettings.businessHours)
+    val businessHours: List<WeeklyHoursRow> get() = weeklyHoursRows(businessSettings)
 }
 
 enum class ServiceTab(val displayName: String) {
@@ -410,7 +411,8 @@ class ServiceManagementViewModel(
         val patch = weeklyHoursPatch(baseline.businessHours, listOf(row))
         if (patch.isEmpty()) return
         val current = _state.value.businessSettings
-        updateBusinessSettings(current.copy(businessHours = current.businessHours + patch))
+        // #1978: with the hours a day closed here had, as the server keeps them.
+        updateBusinessSettings(current.withWeeklyHoursSaved(baseline.businessHours, listOf(row)))
     }
 
     /**

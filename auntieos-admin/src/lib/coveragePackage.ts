@@ -82,12 +82,6 @@ export interface Package {
   readonly overnightBufferHours: number;
   readonly discountLabel: string;
   readonly discountPct: number;
-  /**
-   * One line on the card saying this package's tier could not meet the client's
-   * rules as written and what it did instead. '' on a hand-built package and on
-   * a tier that met them.
-   */
-  readonly note: string;
 }
 
 /** One visit inside a generated SUGGESTION (pinned or gap-filling check-in). */
@@ -324,7 +318,6 @@ export const PACKAGE_DEFAULTS: Omit<Package, 'id' | 'name'> = {
   overnightBufferHours: 2,
   discountLabel: '',
   discountPct: 0,
-  note: '',
 };
 
 /** What a package's Discount % or Buffer (hrs) field made of its typed text (#1593). */
@@ -337,8 +330,8 @@ const PLAIN_NUMBER = /^\d+(\.\d+)?$/;
  *
  * REFUSES instead of coercing (#1593). The field used to read "150" as 100,
  * "-20" and "abc" as 0, with no message. Blank still means no discount. Anything
- * else must be a plain number from 0 to 100; the caller keeps the last good
- * value and shows the message beside the field.
+ * else must be a plain number from 0 to 100; the caller shows the message beside
+ * the field and prices at the value held before the edit (`typeIntoFields`).
  */
 export function parseDiscountPct(text: string): PackageFieldParse {
   const t = text.trim();
@@ -361,6 +354,63 @@ export function parseBufferHours(text: string): PackageFieldParse {
   return { ok: true, value };
 }
 /**
+ * One typed field on the quote: the text as typed, the value pricing held when
+ * this edit began, and whether the edit is still going (#2021).
+ */
+export interface FieldDraft {
+  readonly text: string;
+  readonly before: number;
+  readonly open: boolean;
+}
+/** Every typed field on the quote, by field key. */
+export type FieldDrafts = Readonly<Record<string, FieldDraft>>;
+/** The key Max gap is held under in a `FieldDrafts`; package fields use "<package id>:<field>". */
+export const MAX_GAP_FIELD = 'rules:gap';
+/**
+ * One change to a typed number field: the drafts afterwards, and the value
+ * pricing uses now.
+ *
+ * `accepted` is what the field's parser made of `typed`, or null when it refused
+ * it. `committed` is the value pricing holds at this moment.
+ *
+ * WHY THERE IS A `before` (#2021). #1593 priced every keystroke that parsed and
+ * called that "the last good value". Typed a key at a time, "150" is "1", then
+ * "15", then a refusal, so the package was left 15% off: a discount nobody
+ * chose, under a message that said the entry was refused. A good keystroke is
+ * still priced as it is typed, but a refused entry now prices at what the field
+ * held when the edit began, however many readable prefixes it passed through.
+ *
+ * An edit begins at the first change after the field was last left and ends at
+ * `closeFieldEdits`. Typing in one field ends the edit in every other, so a
+ * value typed and then left alone counts as chosen.
+ */
+export function typeIntoFields(
+  drafts: FieldDrafts,
+  key: string,
+  committed: number,
+  typed: string,
+  accepted: number | null,
+): { drafts: FieldDrafts; value: number } {
+  const current = drafts[key];
+  const before = current !== undefined && current.open ? current.before : committed;
+  const next: Record<string, FieldDraft> = {};
+  for (const [k, d] of Object.entries(drafts)) next[k] = d.open ? { ...d, open: false } : d;
+  next[key] = { text: typed, before, open: true };
+  return { drafts: next, value: accepted ?? before };
+}
+/**
+ * Ends every edit in progress: the field was left, Enter was pressed, or
+ * something else on the quote was used. What each field holds now is the value a
+ * later refused entry falls back to. Hands back the same map when nothing is
+ * open, so calling it on every blur costs no render.
+ */
+export function closeFieldEdits(drafts: FieldDrafts): FieldDrafts {
+  if (!Object.values(drafts).some((d) => d.open)) return drafts;
+  const next: Record<string, FieldDraft> = {};
+  for (const [k, d] of Object.entries(drafts)) next[k] = d.open ? { ...d, open: false } : d;
+  return next;
+}
+/**
  * A stored package's Discount % and Buffer (hrs) the fields would refuse, as the
  * text each field shows, or null when the stored value is usable or absent. A
  * quote saved while the fields still coerced can hold `150` or `-1`; the screen
@@ -376,8 +426,13 @@ export function storedPackageRefusals(p: Partial<Package>): { discount: string |
  * Fill a partial (persisted) package up to a full one. A stored discount or
  * buffer the field would refuse prices at the default; `storedPackageRefusals`
  * names it so the screen can say so.
+ *
+ * A quote saved before #1858 carries a `note` on each tier: the sentence written
+ * when the tier was built. It is dropped here, so it is neither shown nor saved
+ * again; `packageNote` works the sentence out from the rules as they are now.
  */
-export function normalizePackage(p: Partial<Package>): Package {
+export function normalizePackage(stored: Partial<Package>): Package {
+  const { note: _frozenNote, ...p } = stored as Partial<Package> & { note?: unknown };
   const refusals = storedPackageRefusals(p);
   const readable = (v: unknown, fallback: number): number => (v === undefined || v === null ? fallback : Number(v));
   return {
@@ -529,7 +584,8 @@ const FALLBACK_WAKE_END = 22 * 60;
  * closest thing it can build (one check-in in the middle of the day, in a length
  * that fits the window) and says so in `note`, and nothing is deduped: three
  * tiers that happen to price the same are still three cards the operator edits
- * apart. The one precondition left is a priced visit duration; with none there is
+ * apart. The `note` stays on the pattern and is never copied onto a package:
+ * `packageNote` reads it back for a package that still holds the tier's visits. The one precondition left is a priced visit duration; with none there is
  * no tier to build and the list is empty.
  */
 export function buildDayPatterns(
@@ -643,8 +699,34 @@ export function buildDayPatterns(
  */
 export function packagesFromPatterns(patterns: readonly DayPattern[]): Package[] {
   return patterns.map((p) =>
-    normalizePackage({ id: uid(), name: p.strategyLabel, visits: visitsFromPattern(p), note: p.note }),
+    normalizePackage({ id: uid(), name: p.strategyLabel, visits: visitsFromPattern(p) }),
   );
+}
+/** Times and lengths only, in one fixed order: ids, labels and list order are not what a tier is. */
+function scheduleKey(entries: readonly { readonly time: number; readonly durationId: string }[]): string {
+  return entries
+    .map((e) => `${Math.round(e.time)}@${e.durationId}`)
+    .sort()
+    .join('|');
+}
+/**
+ * The line at the top of a package card: what a tier did instead when the
+ * client's rules could not be met as written, or '' when there is nothing to say.
+ *
+ * WORKED OUT, NEVER STORED (#1858). The sentence used to be written once, when
+ * the tier was built, and saved on the package. So a tier built under a 24 hour
+ * max gap went on saying "24h" after the rule became 6, a duplicate inherited
+ * it, and it stayed on a package whose only visit had been removed. Now
+ * `patterns` is the three tiers the rules build at this moment, and a package
+ * shows a pattern's note only while its every-day visits are that pattern's
+ * visits, time for time and length for length. Change the rule and the sentence
+ * follows it; change or remove the visit and the sentence, no longer true of the
+ * package, goes.
+ */
+export function packageNote(pkg: Pick<Package, 'visits'>, patterns: readonly DayPattern[]): string {
+  if (pkg.visits.length === 0) return '';
+  const held = scheduleKey(pkg.visits);
+  return patterns.find((p) => p.note !== '' && scheduleKey(p.touchpoints) === held)?.note ?? '';
 }
 
 /** Seed a package's visit template from a suggestion. */

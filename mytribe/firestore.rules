@@ -1336,8 +1336,13 @@ service cloud.firestore {
  // All notifications collections are written by Cloud Functions only - clients
  // never write. Recipients can read their own dispatches for UI display.
     match /notifications/{id} {
- // AuntieOS admin console lists the whole collection (unfiltered listen);
- // kinfolk (MyTribe) may still read only their own dispatches.
+ // RECIPIENT ONLY, FOR EVERY ROLE (#1837). The owner used to hold a
+ // whole-collection read here, and the admin console listened to all of it, so
+ // notices addressed to households were listed on the admin's own Notifications
+ // screen. A staff member's notices carry their own uid as `recipientUid`
+ // (the dispatcher writes one doc per business admin), so the recipient branch
+ // is the whole of what that screen needs. Every client query must therefore
+ // filter on `recipientUid == <own uid>`; an unfiltered list is denied.
  //
  // Both gates carried a third branch, `isTestAdmin() && recipientUid ==
  // request.auth.uid`, added by NOTE-55 to "mirror the parent's three-branch
@@ -1347,8 +1352,7 @@ service cloud.firestore {
  // dispatch - test admin included. Dropped from both. Sandbox behaviour is
  // unchanged; what goes away is a branch that reads as an extra grant while
  // granting nothing, and the get() it re-ran on the channels gate.
-      allow read: if isOwner()
-                  || (signedIn() && resource.data.recipientUid == request.auth.uid);
+      allow read: if signedIn() && resource.data.recipientUid == request.auth.uid;
       allow write: if false;
  //
  // THE `channels` SUBCOLLECTION MATCH THAT SAT HERE IS GONE (operator ruling
@@ -1367,10 +1371,10 @@ service cloud.firestore {
  // ── Delivery work orders (R5) ────────────────────────────────────────────
  // `notificationDispatch/{id}` is id-matched to `notifications/{id}` and holds
  // the delivery pipeline: mode, channel list, dispatch status, and the
- // per-channel subdocs beneath it. Same recipient gate as the notification it
- // delivers, so nobody gains or loses visibility by the split - what changes is
- // that a client reading its INBOX no longer receives workflow fields it then
- // rendered as card content.
+ // per-channel subdocs beneath it. The recipient reads their own, as on the
+ // notification it delivers. The owner branch stays here and only here (#1837
+ // removed it from `notifications`): this is the delivery record, it holds no
+ // read or archived state, and no client lists it.
     match /notificationDispatch/{id} {
       allow read: if isOwner()
                   || (signedIn() && resource.data.recipientUid == request.auth.uid);

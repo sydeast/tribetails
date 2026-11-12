@@ -20,10 +20,15 @@ beforeEach(() => {
   (writeAuditEntry as any).mockClear();
 });
 
-function req(data: unknown, uid: string | null = 'kin1', admin = false): CallableRequest<unknown> {
+function req(
+  data: unknown,
+  uid: string | null = 'kin1',
+  admin = false,
+  token?: Record<string, unknown>,
+): CallableRequest<unknown> {
   return {
     data,
-    auth: uid ? ({ uid, token: (admin ? { admin: true } : {}) as any } as any) : undefined,
+    auth: uid ? ({ uid, token: (token ?? (admin ? { admin: true } : {})) as any } as any) : undefined,
     rawRequest: {} as any, instanceIdToken: undefined, acceptsStreaming: false,
   } as unknown as CallableRequest<unknown>;
 }
@@ -35,6 +40,7 @@ function seed() {
       'notifications/n2': { recipientUid: 'kin1', key: 'invoice.reminder' },
       'notifications/n3': { recipientUid: 'other', key: 'invoice.overdue' },
       'notifications/n4': { key: 'no-recipient' },
+      'notifications/n5': { recipientUid: 'admin1', key: 'kincare.requested' },
     },
   });
 }
@@ -58,11 +64,33 @@ describe('bulkMarkNotificationsRead happy path', () => {
     expect(ctx.writes.find((w) => w.path === 'notifications/n3')).toBeUndefined();
   });
 
-  it('admin may mark any recipients notification', async () => {
+  // #1837: `readAt` sits on the doc the recipient's own list reads, so no role
+  // may set it on somebody else's notification.
+  it('an admin marks only their own rows out of a mixed selection', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await bulkMarkNotificationsReadHandler(req({ ids: ['n1', 'n3'] }, 'admin1', true));
-    expect(res.marked).toBe(2);
+    const res = await bulkMarkNotificationsReadHandler(req({ ids: ['n1', 'n3', 'n5'] }, 'admin1', true));
+    expect(res.marked).toBe(1);
+    expect(ctx.writes.map((w) => w.path)).toEqual(['notifications/n5']);
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ actorRole: 'AUNTIE', actorUid: 'admin1' }),
+    );
+  });
+  it('an Auntie marks nothing that is not addressed to her', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkMarkNotificationsReadHandler(
+      req({ ids: ['n1', 'n3', 'n5'] }, 'auntie1', false, { staffRole: 'auntie' }),
+    );
+    expect(res.marked).toBe(0);
+    expect(ctx.writes).toEqual([]);
+  });
+  it('a Kinfolk cannot mark another households or an admins notification', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkMarkNotificationsReadHandler(req({ ids: ['n3', 'n5'] }));
+    expect(res.marked).toBe(0);
+    expect(ctx.writes).toEqual([]);
   });
 
   it('skips missing ids and docs with no recipientUid', async () => {

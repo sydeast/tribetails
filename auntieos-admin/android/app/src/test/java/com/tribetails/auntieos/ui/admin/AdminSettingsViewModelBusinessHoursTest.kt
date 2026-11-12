@@ -251,4 +251,97 @@ class AdminSettingsViewModelBusinessHoursTest {
         advanceUntilIdle()
         coVerify(exactly = 0) { mockRepo.updateBusinessSettingsFields(any(), any()) }
     }
+
+    // ── #1978: a closed day reopens with the hours it had ────────────────────
+
+    @Test
+    fun `after a reload a closed day reopens with the hours the server kept`() = runTest(testDispatcher) {
+        acceptSaves()
+        coEvery { mockRepo.getBusinessSettings() } returns Result.success(
+            BusinessSettings(
+                businessName = "Den",
+                businessHours = week + ("Sunday" to ""),
+                closedDayHours = mapOf("Sunday" to "08:00-16:00"),
+            ),
+        )
+        val vm = AdminSettingsViewModel(repository = mockRepo).also { it.loadBusinessSettings() }
+        val sunday = vm.uiState.value.businessHours[6]
+        assertEquals(DayHoursKind.CLOSED, sunday.kind)
+        assertEquals("Closed", sunday.display)
+
+        // The panel's toggle: the same row, switched on.
+        vm.setBusinessHourRow(sunday.copy(kind = DayHoursKind.OPEN))
+        val reopened = vm.uiState.value.businessHours[6]
+        assertEquals("08:00", reopened.openTime)
+        assertEquals("16:00", reopened.closeTime)
+        assertNull(reopened.problem)
+
+        vm.saveBusinessHours()
+        advanceUntilIdle()
+        assertEquals(mapOf("businessHours" to mapOf("Sunday" to "08:00-16:00")), changes.captured)
+        // Open again, so nothing is kept for it any more.
+        assertTrue(vm.uiState.value.businessSettings.closedDayHours.isEmpty())
+    }
+
+    @Test
+    fun `close then reopen in one visit gives back the hours and sends nothing`() = runTest(testDispatcher) {
+        val vm = loaded(week)
+        val friday = vm.uiState.value.businessHours[4]
+        vm.setBusinessHourRow(friday.copy(kind = DayHoursKind.CLOSED))
+        vm.setBusinessHourRow(vm.uiState.value.businessHours[4].copy(kind = DayHoursKind.OPEN))
+        assertEquals(friday, vm.uiState.value.businessHours[4])
+
+        vm.saveBusinessHours()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { mockRepo.updateBusinessSettingsFields(any(), any()) }
+    }
+
+    @Test
+    fun `a closed day with no kept hours reopens blank and the save refuses it beside the day`() = runTest(testDispatcher) {
+        val vm = loaded(week)
+        val saturday = vm.uiState.value.businessHours[5]
+        vm.setBusinessHourRow(saturday.copy(kind = DayHoursKind.OPEN))
+        val reopened = vm.uiState.value.businessHours[5]
+        assertEquals("", reopened.openTime)
+        assertEquals("", reopened.closeTime)
+        // The sentence the panel prints under the row, which also holds Save off.
+        assertEquals(HOURS_RANGE_INVALID, reopened.problem)
+
+        vm.saveBusinessHours()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { mockRepo.updateBusinessSettingsFields(any(), any()) }
+        assertEquals("Saturday: $HOURS_RANGE_INVALID", vm.uiState.value.error)
+    }
+
+    @Test
+    fun `closing a day sends only the blank, and the saved copy keeps the hours it had`() = runTest(testDispatcher) {
+        acceptSaves()
+        val vm = loaded(week)
+        vm.setBusinessHourRow(vm.uiState.value.businessHours[4].copy(kind = DayHoursKind.CLOSED))
+        vm.saveBusinessHours()
+        advanceUntilIdle()
+
+        // The kept hours are the server's to write: the phone never sends them.
+        assertEquals(mapOf("businessHours" to mapOf("Friday" to "")), changes.captured)
+        assertEquals("", vm.uiState.value.businessSettings.businessHours["Friday"])
+        assertEquals(mapOf("Friday" to "09:00-15:00"), vm.uiState.value.businessSettings.closedDayHours)
+
+        // A later save of another day does not send them either.
+        vm.setBusinessHourRow(vm.uiState.value.businessHours[0].copy(closeTime = "18:00"))
+        vm.saveBusinessHours()
+        advanceUntilIdle()
+        assertEquals(mapOf("businessHours" to mapOf("Monday" to "09:00-18:00")), changes.captured)
+    }
+
+    @Test
+    fun `a refused close keeps nothing`() = runTest(testDispatcher) {
+        coEvery { mockRepo.updateBusinessSettingsFields(any(), any()) } returns Result.failure(RuntimeException("net"))
+        val vm = loaded(week)
+        vm.setBusinessHourRow(vm.uiState.value.businessHours[4].copy(kind = DayHoursKind.CLOSED))
+        vm.saveBusinessHours()
+        advanceUntilIdle()
+
+        assertEquals("09:00-15:00", vm.uiState.value.businessSettings.businessHours["Friday"])
+        assertTrue(vm.uiState.value.businessSettings.closedDayHours.isEmpty())
+    }
 }

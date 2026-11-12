@@ -387,6 +387,22 @@ class BusinessSettingsDiffTest {
      * introduced by the fix itself. Every declared field except the id and the two
      * stamps must be diffed, and nothing else may be.
      */
+    /** #1978: the hours kept for closed days are the server's to write, whatever the screen holds. */
+    @Test
+    fun `the hours kept for closed days are never sent`() {
+        val loaded = BusinessSettings(businessHours = mapOf("Sunday" to "08:00-16:00"))
+        val edited = loaded.copy(
+            businessHours = mapOf("Sunday" to ""),
+            closedDayHours = mapOf("Sunday" to "08:00-16:00"),
+        )
+        assertEquals(
+            mapOf("businessHours" to mapOf("Sunday" to "")),
+            businessSettingsFieldChanges(loaded, edited),
+        )
+        assertTrue("closedDayHours" in BUSINESS_SETTINGS_SERVER_OWNED)
+        assertFalse("closedDayHours" in BUSINESS_SETTINGS_DIFF_FIELDS.keys)
+    }
+
     @Test
     fun `every model field is covered by the differ`() {
         val modelled = BusinessSettings::class.java.declaredFields

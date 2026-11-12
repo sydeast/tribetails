@@ -71,9 +71,18 @@ describe('businessHoursForDay', () => {
     });
   });
 
-  it('treats a blank entry, and a missing key, as closed', () => {
+  it('treats a blank entry as closed, and a missing key as unknown, the way the server does (#1978)', () => {
     expect(businessHoursForDay(HOURS, '2026-08-04')).toEqual({ kind: 'closed' }); // Tuesday, ''
-    expect(businessHoursForDay(HOURS, '2026-08-07')).toEqual({ kind: 'closed' }); // Friday, absent
+    expect(businessHoursForDay(HOURS, '2026-08-07')).toEqual({ kind: 'unknown' }); // Friday, absent
+  });
+
+  it('a day nobody has set is never called closed or outside hours', () => {
+    const friday = day({ iso: '2026-08-07', hours: businessHoursForDay(HOURS, '2026-08-07') });
+    expect(isWithinBusinessHours('03:00', friday.hours)).toBe(true);
+    expect(dayBadge(friday)).toBeNull();
+    expect(dayDescription(friday)).toBe('');
+    expect(selectionWarnings([friday], '03:00')).toEqual([]);
+    expect(dayHoursLabel(friday.hours)).toBe('Not set');
   });
 
   it('keeps a legacy value it cannot parse as unreadable, never as closed', () => {

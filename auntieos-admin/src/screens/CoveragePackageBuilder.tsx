@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getBusinessSettings, type BusinessSettings } from '../api/settings';
 import {
   DEFAULT_COVERAGE_RULES,
+  MAX_GAP_FIELD,
   alignPinnedToDurations,
   buildDayPatterns,
+  closeFieldEdits,
   dateLabel,
   dateRangeRefusal,
   daysBetween,
@@ -14,6 +16,7 @@ import {
   parseMaxGapHours,
   minutesToTime,
   normalizePackage,
+  packageNote,
   packagesFromPatterns,
   parseBufferHours,
   parseDiscountPct,
@@ -25,12 +28,15 @@ import {
   storedPackageRefusals,
   timeToMinutes,
   todayIso,
+  typeIntoFields,
   uid,
   visitsFromPattern,
   visitsFromPinned,
   type CoverageRules,
   type DayPattern,
   type Duration,
+  type FieldDraft,
+  type FieldDrafts,
   type Package,
   type PricedDayRow,
   type Visit,
@@ -146,27 +152,34 @@ interface StoredQuote {
 type PackageField = 'discount' | 'buffer';
 const fieldKey = (pkgId: string, field: PackageField): string => `${pkgId}:${field}`;
 interface LoadedQuote extends Partial<StoredQuote> {
-  /** Stored discount / buffer values the fields would refuse, keyed by `fieldKey`, shown as stored (#1593). */
-  refusedText: Record<string, string>;
+  /**
+   * Stored max gap, discount and buffer values the fields would refuse, shown as
+   * stored beside the value pricing uses in their place (#1582, #1593). None is
+   * being edited, so each opens closed.
+   */
+  refused: FieldDrafts;
 }
 function loadQuote(): LoadedQuote {
   try {
     const raw = window.localStorage.getItem(QUOTE_KEY);
-    if (!raw) return { refusedText: {} };
+    if (!raw) return { refused: {} };
     const parsed = JSON.parse(raw) as Partial<StoredQuote>;
-    const refusedText: Record<string, string> = {};
+    const refused: Record<string, FieldDraft> = {};
     const packages = Array.isArray(parsed.packages)
       ? parsed.packages.map((stored) => {
           const pkg = normalizePackage(stored);
-          const refused = storedPackageRefusals(stored);
-          if (refused.discount !== null) refusedText[fieldKey(pkg.id, 'discount')] = refused.discount;
-          if (refused.buffer !== null) refusedText[fieldKey(pkg.id, 'buffer')] = refused.buffer;
+          const bad = storedPackageRefusals(stored);
+          if (bad.discount !== null) refused[fieldKey(pkg.id, 'discount')] = { text: bad.discount, before: pkg.discountPct, open: false };
+          if (bad.buffer !== null) refused[fieldKey(pkg.id, 'buffer')] = { text: bad.buffer, before: pkg.overnightBufferHours, open: false };
           return pkg;
         })
       : [];
-    return { ...parsed, packages, refusedText };
+    if (parsed.rules && storedMaxGapRefusal(parsed.rules) !== null) {
+      refused[MAX_GAP_FIELD] = { text: String(parsed.rules.maxGapHours), before: sanitizeStoredRules(parsed.rules).maxGapHours, open: false };
+    }
+    return { ...parsed, packages, refused };
   } catch {
-    return { refusedText: {} };
+    return { refused: {} };
   }
 }
 
@@ -267,41 +280,31 @@ function Builder({ settings }: BuilderProps) {
   // ── per-client rules ────────────────────────────────────────────────────────
 
   const patchRules = (patch: Partial<CoverageRules>) => setRules((r) => ({ ...r, ...patch }));
-  // What is typed in Max gap, kept apart from the rule it feeds (#1582). A half-typed
-  // or negative entry is refused here with a message; the rule, and every price
-  // built from it, keeps the last good value until the text reads as a valid gap.
-  // A stored gap the field would refuse (saved while it still coerced) is shown as
-  // stored, with its message, and prices use the default until it is retyped.
-  const storedRefusal = stored.rules ? storedMaxGapRefusal(stored.rules) : null;
-  const [gapText, setGapText] = useState(
-    storedRefusal !== null && stored.rules ? String(stored.rules.maxGapHours) : String(initialRules.maxGapHours),
-  );
-  const [gapError, setGapError] = useState(storedRefusal ?? '');
-  // Rules that change from outside the field (Undo, a new quote) bring the text with
-  // them. Only a CHANGE to the rule does this, never the first render, so a refused
-  // stored gap keeps its message.
-  const lastGap = useRef(rules.maxGapHours);
-  useEffect(() => {
-    if (lastGap.current === rules.maxGapHours) return;
-    lastGap.current = rules.maxGapHours;
-    const parsed = parseMaxGapHours(gapText);
-    if (!(parsed.ok && parsed.value === rules.maxGapHours)) {
-      setGapText(String(rules.maxGapHours));
-      setGapError('');
-    }
-    // Only a change to the rule itself; typing never moves it away from the text.
-  }, [rules.maxGapHours]); // eslint-disable-line react-hooks/exhaustive-deps
-  const changeGap = (text: string) => {
-    setGapText(text);
-    const parsed = parseMaxGapHours(text);
-    if (parsed.ok) {
-      setGapError('');
-      patchRules({ maxGapHours: parsed.value });
-    } else {
-      setGapError(parsed.message);
-    }
+  // What is typed in Max gap and in each package's Discount % and Buffer (hrs), kept
+  // apart from the values pricing uses (#1582, #1593). Once a field is touched its text
+  // stays exactly as typed, and a refused entry shows its message beside the field.
+  //
+  // A refused entry prices at the value the field held BEFORE THE EDIT BEGAN (#2021).
+  // It used to keep "the last good value", which typed a key at a time is whatever
+  // prefix last parsed: "150" left the package 15% off. `typeIntoFields` holds the
+  // rule; an edit ends when the field is left or Enter is pressed (`endFieldEdits`).
+  //
+  // A stored value a field would refuse (saved while the fields still coerced) opens
+  // as stored, with its message, and prices at the default until it is retyped.
+  const [drafts, setDrafts] = useState<FieldDrafts>(stored.refused);
+  const endFieldEdits = () => setDrafts(closeFieldEdits);
+  const endOnEnter = (e: { key: string }) => {
+    if (e.key === 'Enter') endFieldEdits();
   };
-
+  const gapText = drafts[MAX_GAP_FIELD]?.text ?? String(rules.maxGapHours);
+  const gapParsed = parseMaxGapHours(gapText);
+  const gapError = gapParsed.ok ? '' : gapParsed.message;
+  const changeGap = (text: string) => {
+    const parsed = parseMaxGapHours(text);
+    const next = typeIntoFields(drafts, MAX_GAP_FIELD, rules.maxGapHours, text, parsed.ok ? parsed.value : null);
+    setDrafts(next.drafts);
+    patchRules({ maxGapHours: next.value });
+  };
   const addPinned = () => {
     if (!newPinned.label.trim() || !newPinned.time || !newPinned.durationId) {
       setError('Enter a label, time, and visit length for the pinned visit.');
@@ -336,13 +339,13 @@ function Builder({ settings }: BuilderProps) {
     undo.restore();
     setUndo(null);
   };
-  const newPackage = (name: string, visits: Visit[], note = '') => {
-    const pkg = normalizePackage({ id: uid(), name, visits, note });
+  const newPackage = (name: string, visits: Visit[]) => {
+    const pkg = normalizePackage({ id: uid(), name, visits });
     setPackages((prev) => [...prev, pkg]);
     setDetailId(pkg.id);
     setError('');
   };
-  const addFromSuggestion = (pattern: DayPattern) => newPackage(pattern.strategyLabel, visitsFromPattern(pattern), pattern.note);
+  const addFromSuggestion = (pattern: DayPattern) => newPackage(pattern.strategyLabel, visitsFromPattern(pattern));
   const addBlankPackage = () => newPackage(`Package ${packages.length + 1}`, visitsFromPinned(rules.pinnedTimes));
   const duplicatePackage = (id: string) => {
     const src = packages.find((p) => p.id === id);
@@ -373,25 +376,21 @@ function Builder({ settings }: BuilderProps) {
   };
   const patchPackage = (id: string, patch: Partial<Package>) =>
     setPackages((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-  // What is typed in each package's Discount % and Buffer (hrs), kept apart from the
-  // value pricing uses (#1593, the #1582 Max gap pattern). Once a field is touched its
-  // text stays exactly as typed; a refused entry shows its message beside the field and
-  // the package keeps its last good value. A stored value the field would refuse opens
-  // as stored, with its message, and prices at the default until it is retyped.
-  const [fieldText, setFieldText] = useState<Record<string, string>>(stored.refusedText);
+  // Discount % and Buffer (hrs) share the typed-field rules written up beside Max gap.
   const fieldParse = (field: PackageField) => (field === 'discount' ? parseDiscountPct : parseBufferHours);
   const fieldError = (pkgId: string, field: PackageField): string => {
-    const text = fieldText[fieldKey(pkgId, field)];
-    if (text === undefined) return '';
-    const parsed = fieldParse(field)(text);
+    const draft = drafts[fieldKey(pkgId, field)];
+    if (draft === undefined) return '';
+    const parsed = fieldParse(field)(draft.text);
     return parsed.ok ? '' : parsed.message;
   };
-  const changePackageField = (pkgId: string, field: PackageField, text: string) => {
-    setFieldText((prev) => ({ ...prev, [fieldKey(pkgId, field)]: text }));
+  const changePackageField = (pkg: Package, field: PackageField, text: string) => {
     const parsed = fieldParse(field)(text);
-    if (parsed.ok) patchPackage(pkgId, field === 'discount' ? { discountPct: parsed.value } : { overnightBufferHours: parsed.value });
+    const committed = field === 'discount' ? pkg.discountPct : pkg.overnightBufferHours;
+    const next = typeIntoFields(drafts, fieldKey(pkg.id, field), committed, text, parsed.ok ? parsed.value : null);
+    setDrafts(next.drafts);
+    patchPackage(pkg.id, field === 'discount' ? { discountPct: next.value } : { overnightBufferHours: next.value });
   };
-
   const patchVisit = (pkgId: string, visitId: string, patch: Partial<Visit>) =>
     setPackages((prev) =>
       prev.map((p) => (p.id !== pkgId ? p : { ...p, visits: p.visits.map((v) => (v.id === visitId ? { ...v, ...patch } : v)) })),
@@ -502,7 +501,7 @@ function Builder({ settings }: BuilderProps) {
 
   const startNewQuote = () => {
     // Everything this wipes comes back whole with Undo (#1605).
-    const snapshot = { packages, detailId, clientName, startDate, endDate, rules, overnightDurationId, gapText, gapError, fieldText };
+    const snapshot = { packages, detailId, clientName, startDate, endDate, rules, overnightDurationId, drafts };
     offerUndo('Started a new quote.', () => {
       setPackages(snapshot.packages);
       setDetailId(snapshot.detailId);
@@ -510,11 +509,9 @@ function Builder({ settings }: BuilderProps) {
       setStartDate(snapshot.startDate);
       setEndDate(snapshot.endDate);
       setRules(snapshot.rules);
-      // The Max gap text and its message come back with the rule they feed (#1582).
-      setGapText(snapshot.gapText);
-      setGapError(snapshot.gapError);
-      // So do each package's typed Discount and Buffer (#1593).
-      setFieldText(snapshot.fieldText);
+      // The Max gap text and each package's typed Discount and Buffer come back with
+      // the values they feed (#1582, #1593), as entries nobody is typing in (#2021).
+      setDrafts(closeFieldEdits(snapshot.drafts));
       setOvernightDurationId(snapshot.overnightDurationId);
     });
     // Rules are per-client, so reset them for the next one, repointed at the menu
@@ -527,9 +524,7 @@ function Builder({ settings }: BuilderProps) {
     setStartDate(todayIso()); // same default a fresh load opens on
     setEndDate('');
     setRules(freshRules);
-    setGapText(String(freshRules.maxGapHours));
-    setGapError('');
-    setFieldText({});
+    setDrafts({});
   };
 
   // ── pricing ─────────────────────────────────────────────────────────────────
@@ -538,11 +533,13 @@ function Builder({ settings }: BuilderProps) {
     () =>
       packages.map((p) => ({
         pkg: p,
+        // Read off the rules and the visits as they are now, never stored (#1858).
+        note: packageNote(p, suggestions),
         ...pricePackage(p, { days, nights, durations, overnightDuration }),
         // Warn against a day with no overnight — the one that has to stand on its own.
         warnings: gapWarnings(p.visits, rules.wakeStart, rules.wakeEnd, rules.maxGapHours, { eveningFrom: null, morningUntil: null, bonusFreeVisit: false }),
       })),
-    [packages, days, nights, durations, overnightDuration, rules],
+    [packages, days, nights, durations, overnightDuration, rules, suggestions],
   );
   const detail = priced.find((p) => p.pkg.id === detailId) ?? null;
 
@@ -664,6 +661,8 @@ function Builder({ settings }: BuilderProps) {
               aria-invalid={gapError !== '' ? true : undefined}
               aria-describedby={gapError !== '' ? 'cpb-gap-error' : undefined}
               onChange={(e) => changeGap(e.target.value)}
+              onBlur={endFieldEdits}
+              onKeyDown={endOnEnter}
             />
             {gapError !== '' ? (
               <span id="cpb-gap-error" className="cpb__fieldError" role="alert">
@@ -742,7 +741,7 @@ function Builder({ settings }: BuilderProps) {
           </p>
         ) : (
           <div className="cpb__pkgGrid">
-            {priced.map(({ pkg, subtotal, discount, discountPct, total, warnings }) => (
+            {priced.map(({ pkg, note, subtotal, discount, discountPct, total, warnings }) => (
               <div key={pkg.id} className={detailId === pkg.id ? 'cpb__pkg cpb__pkg--active' : 'cpb__pkg'}>
                 <div className="cpb__pkgHead">
                   <input className="cpb__input cpb__pkgName" aria-label="Package name" value={pkg.name} onChange={(e) => patchPackage(pkg.id, { name: e.target.value })} />
@@ -750,7 +749,7 @@ function Builder({ settings }: BuilderProps) {
                   <IconButton icon={<TrashGlyph />} label="Delete package" destructive size={30} onClick={() => removePackage(pkg.id)} />
                 </div>
 
-                {pkg.note ? <p className="cpb__pkgNote">{pkg.note}</p> : null}
+                {note !== '' ? <p className="cpb__pkgNote">{note}</p> : null}
 
                 <p className="cpb__pkgSectionLabel">Every day of the stay</p>
                 <div className="cpb__visitList">
@@ -789,10 +788,12 @@ function Builder({ settings }: BuilderProps) {
                       className="cpb__input"
                       type="text"
                       inputMode="decimal"
-                      value={fieldText[fieldKey(pkg.id, 'buffer')] ?? String(pkg.overnightBufferHours)}
+                      value={drafts[fieldKey(pkg.id, 'buffer')]?.text ?? String(pkg.overnightBufferHours)}
                       aria-invalid={fieldError(pkg.id, 'buffer') !== '' ? true : undefined}
                       aria-describedby={fieldError(pkg.id, 'buffer') !== '' ? `cpb-buffer-error-${pkg.id}` : undefined}
-                      onChange={(e) => changePackageField(pkg.id, 'buffer', e.target.value)}
+                      onChange={(e) => changePackageField(pkg, 'buffer', e.target.value)}
+                      onBlur={endFieldEdits}
+                      onKeyDown={endOnEnter}
                     />
                     {fieldError(pkg.id, 'buffer') !== '' ? (
                       <span id={`cpb-buffer-error-${pkg.id}`} className="cpb__fieldError" role="alert">
@@ -837,10 +838,12 @@ function Builder({ settings }: BuilderProps) {
                       inputMode="decimal"
                       placeholder="0"
                       aria-label="Discount percent"
-                      value={fieldText[fieldKey(pkg.id, 'discount')] ?? (pkg.discountPct ? String(pkg.discountPct) : '')}
+                      value={drafts[fieldKey(pkg.id, 'discount')]?.text ?? (pkg.discountPct ? String(pkg.discountPct) : '')}
                       aria-invalid={fieldError(pkg.id, 'discount') !== '' ? true : undefined}
                       aria-describedby={fieldError(pkg.id, 'discount') !== '' ? `cpb-discount-error-${pkg.id}` : undefined}
-                      onChange={(e) => changePackageField(pkg.id, 'discount', e.target.value)}
+                      onChange={(e) => changePackageField(pkg, 'discount', e.target.value)}
+                      onBlur={endFieldEdits}
+                      onKeyDown={endOnEnter}
                     />
                     <span className="cpb__unit">%</span>
                   </span>
