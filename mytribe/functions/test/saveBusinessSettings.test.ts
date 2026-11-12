@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { FieldPath } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, Firestore } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 
 /**
@@ -28,6 +28,7 @@ import {
   businessSettingsRefusals,
   WHOLE_MAP_SETTINGS_FIELDS,
   cashappHandleProblem,
+  closedDayHoursChanges,
   durationProblem,
   hoursRangeProblem,
   isEmailShape,
@@ -478,6 +479,156 @@ describe('saveBusinessSettings', () => {
     const [w] = settingsWrites();
     expect(w!.data['householdNotificationHour']).toBeNull();
     expect((w!.options?.mergeFields ?? []).map(String)).toContain('householdNotificationHour');
+  });
+});
+
+/**
+ * #1978: a closed day is a present blank key in `businessHours`, which has no
+ * room for the hours the day had. The save keeps them beside it, in
+ * `closedDayHours`, so reopening the day gives them back after a reload.
+ */
+describe('#1978: the hours a closed day had', () => {
+  const HOURS = { Monday: '09:00-17:00', Sunday: '08:00-16:00' };
+  const stored = (extra: Record<string, unknown> = {}) => ({
+    businessName: 'Tribe Tails',
+    timeZone: 'America/Chicago',
+    businessHours: HOURS,
+    ...extra,
+  });
+  const paths = (w: { options?: { mergeFields?: ReadonlyArray<unknown> } }) =>
+    (w.options?.mergeFields ?? []).map(String);
+
+  it('closing a day keeps its stored hours, and the day itself is stored blank', async () => {
+    setup(stored());
+    await saveBusinessSettingsHandler(owner({ changes: { businessHours: { Sunday: '' } } }));
+    const [w] = settingsWrites();
+    expect(w!.data['businessHours']).toEqual({ Sunday: '' });
+    expect(w!.data['closedDayHours']).toEqual({ Sunday: '08:00-16:00' });
+    expect(paths(w!)).toEqual([
+      'businessHours.Sunday',
+      'closedDayHours.Sunday',
+      'updatedAt',
+      'updatedBy',
+    ]);
+  });
+
+  it('reopening a day drops what was kept for it', async () => {
+    setup(
+      stored({
+        businessHours: { ...HOURS, Sunday: '' },
+        closedDayHours: { Sunday: '08:00-16:00' },
+      }),
+    );
+    await saveBusinessSettingsHandler(
+      owner({ changes: { businessHours: { Sunday: '10:00-14:00' } } }),
+    );
+    const [w] = settingsWrites();
+    expect(w!.data['businessHours']).toEqual({ Sunday: '10:00-14:00' });
+    expect(w!.data['closedDayHours']).toEqual({ Sunday: FieldValue.delete() });
+    expect(paths(w!)).toContain('closedDayHours.Sunday');
+  });
+
+  it('a day with no hours to keep writes nothing beside it', async () => {
+    // Monday has no key, Sunday is already closed, Saturday holds text nobody can read.
+    setup(stored({ businessHours: { Sunday: '', Saturday: 'by appointment' } }));
+    await saveBusinessSettingsHandler(
+      owner({ changes: { businessHours: { Monday: '', Sunday: '', Saturday: '' } } }),
+    );
+    const [w] = settingsWrites();
+    expect('closedDayHours' in w!.data).toBe(false);
+    expect(paths(w!).some((p) => p.startsWith('closedDayHours'))).toBe(false);
+  });
+
+  it('closing an already closed day again keeps the hours kept the first time', async () => {
+    setup(
+      stored({
+        businessHours: { ...HOURS, Sunday: '' },
+        closedDayHours: { Sunday: '08:00-16:00' },
+      }),
+    );
+    await saveBusinessSettingsHandler(owner({ changes: { businessHours: { Sunday: '' } } }));
+    const [w] = settingsWrites();
+    expect('closedDayHours' in w!.data).toBe(false);
+  });
+
+  it('opening a day that had nothing kept writes only the day', async () => {
+    setup(stored());
+    await saveBusinessSettingsHandler(
+      owner({ changes: { businessHours: { Monday: '10:00-15:00' } } }),
+    );
+    const [w] = settingsWrites();
+    expect('closedDayHours' in w!.data).toBe(false);
+    expect(paths(w!)).toEqual(['businessHours.Monday', 'updatedAt', 'updatedBy']);
+  });
+
+  it('a save of another field leaves the kept hours alone', async () => {
+    setup(stored({ closedDayHours: { Sunday: '08:00-16:00' } }));
+    await saveBusinessSettingsHandler(owner({ changes: { travelBufferMinutes: 30 } }));
+    const [w] = settingsWrites();
+    expect('closedDayHours' in w!.data).toBe(false);
+  });
+
+  it("is the server's to write: a client that sends it is refused", async () => {
+    setup(stored());
+    const { details } = await refusalOf({ closedDayHours: { Sunday: '00:00-23:59' } });
+    expect(details.field).toBe('closedDayHours');
+    expect(settingsWrites()).toHaveLength(0);
+  });
+
+  it('still refuses an open day without hours, and keeps nothing', async () => {
+    setup(stored());
+    const { message, details } = await refusalOf({ businessHours: { Sunday: '-' } });
+    expect(message).toBe('Sunday: Enter both an opening and a closing time.');
+    expect(details.field).toBe('businessHours');
+    expect(settingsWrites()).toHaveLength(0);
+  });
+
+  it('both writes are shapes the real Firestore SDK accepts', async () => {
+    // The mock records a write without checking it. A real client checks a
+    // `set` with `mergeFields` as the call is made, with no network: every
+    // masked path has to be in the data, and a delete has to be masked.
+    const real = new Firestore({ projectId: 'demo-tribetails' });
+    const ref = real.doc(PATH);
+    const check = (w: { data: unknown; options?: unknown }) =>
+      real.batch().set(ref, w.data as never, w.options as never);
+
+    setup(stored());
+    await saveBusinessSettingsHandler(owner({ changes: { businessHours: { Sunday: '' } } }));
+    expect(() => check(settingsWrites()[0]!)).not.toThrow();
+
+    setup(
+      stored({
+        businessHours: { ...HOURS, Sunday: '' },
+        closedDayHours: { Sunday: '08:00-16:00' },
+      }),
+    );
+    await saveBusinessSettingsHandler(
+      owner({ changes: { businessHours: { Sunday: '10:00-14:00', Monday: '' } } }),
+    );
+    const [w] = settingsWrites();
+    expect(w!.data['closedDayHours']).toEqual({
+      Sunday: FieldValue.delete(),
+      Monday: '09:00-17:00',
+    });
+    expect(() => check(w!)).not.toThrow();
+    // The check is live: a masked path with no data behind it is refused.
+    expect(() =>
+      real.batch().set(ref, { b: 1 } as never, { mergeFields: ['b', 'closedDayHours.Sunday'] }),
+    ).toThrow();
+  });
+
+  it('closedDayHoursChanges: the rule on its own', () => {
+    expect(
+      closedDayHoursChanges(
+        { Monday: '', Tuesday: '09:00-12:00', Wednesday: '', Thursday: '' },
+        {
+          businessHours: { Monday: ' 9:00-17:00 ', Tuesday: '', Wednesday: '17:00-09:00' },
+          closedDayHours: { Tuesday: '08:00-16:00' },
+        },
+      ),
+    ).toEqual({ Monday: '9:00-17:00', Tuesday: null });
+    expect(closedDayHoursChanges('nope', {})).toEqual({});
+    expect(closedDayHoursChanges({ Monday: '' }, { businessHours: 'nope' })).toEqual({});
   });
 });
 

@@ -185,6 +185,12 @@ data class BusinessSettings(
     // only, so a stray `false` decoded here never goes back out.
     var serviceStartTimeBooking: Map<String, Boolean> = emptyMap(),
     var businessHours: Map<String, String> = emptyMap(), // day -> "HH:MM-HH:MM" or ""
+    // #1978: day -> the hours a Closed day had when it was last open. READ ONLY:
+    // the `saveBusinessSettings` callable writes it when a save closes a day and
+    // drops the entry when a save opens one, and refuses a client that sends it
+    // (BUSINESS_SETTINGS_SERVER_OWNED). The hours editors read it to fill a
+    // reopened day's two times; see ui/admin/BusinessHoursHelpers.kt.
+    var closedDayHours: Map<String, String> = emptyMap(),
     // --- GPS / tracking ---
     var enableGPSTrackingForAllVisits: Boolean = true, // Master GPS tracking switch
     var enablePhotoLocationTagging: Boolean = true,

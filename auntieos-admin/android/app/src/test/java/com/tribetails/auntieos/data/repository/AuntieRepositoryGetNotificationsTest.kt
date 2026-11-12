@@ -12,6 +12,7 @@ import com.google.firebase.firestore.QuerySnapshot
 import com.tribetails.auntieos.data.api.N8nApi
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -89,5 +90,56 @@ class AuntieRepositoryGetNotificationsTest {
         val rows = result.getOrThrow()
         assertEquals(listOf("a", "b", "c"), rows.map { it.id })
         assertEquals(listOf(iso, "", iso), rows.map { it.createdAt })
+    }
+
+    /**
+     * #1837: the admin's Notifications screen holds the signed-in staff
+     * member's own notices. Admin web listed the whole collection; this client
+     * already asked for its own uid, and these keep it that way. The rules now
+     * deny an unfiltered list for every role.
+     */
+    @Test
+    fun `asks only for the signed-in uid, never the whole collection`() = runBlocking {
+        val firestore = mockk<FirebaseFirestore>()
+        // Strict mocks: any call not stubbed below (an unfiltered get(), a
+        // different field, another uid) throws and fails the test.
+        val collection = mockk<CollectionReference>()
+        val query = mockk<Query>()
+        val result = mockk<QuerySnapshot>()
+        every { firestore.collection("notifications") } returns collection
+        every { collection.whereEqualTo("recipientUid", "staff-1") } returns query
+        every { query.get() } returns Tasks.forResult(result)
+        every { result.documents } returns listOf(
+            snap("mine", mapOf("key" to "kincare.requested", "recipientUid" to "staff-1", "createdAt" to ts)),
+        )
+        val user = mockk<FirebaseUser>()
+        every { user.uid } returns "staff-1"
+        val auth = mockk<FirebaseAuth>()
+        every { auth.currentUser } returns user
+        val rows = AuntieRepository(
+            n8n = mockk<N8nApi>(),
+            authGate = mockk(relaxed = true),
+            functionsOverride = mockk(),
+            firestoreProvider = { firestore },
+            authProvider = { auth },
+        ).getNotifications().getOrThrow()
+        assertEquals(listOf("mine"), rows.map { it.id })
+        verify(exactly = 1) { collection.whereEqualTo("recipientUid", "staff-1") }
+        verify(exactly = 0) { collection.get() }
+    }
+    @Test
+    fun `with nobody signed in it fails and reads nothing`() = runBlocking {
+        val firestore = mockk<FirebaseFirestore>()
+        val auth = mockk<FirebaseAuth>()
+        every { auth.currentUser } returns null
+        val result = AuntieRepository(
+            n8n = mockk<N8nApi>(),
+            authGate = mockk(relaxed = true),
+            functionsOverride = mockk(),
+            firestoreProvider = { firestore },
+            authProvider = { auth },
+        ).getNotifications()
+        assertTrue(result.isFailure)
+        verify(exactly = 0) { firestore.collection(any()) }
     }
 }

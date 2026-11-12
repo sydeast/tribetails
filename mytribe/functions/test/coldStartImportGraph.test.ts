@@ -187,13 +187,17 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
  *
- * 439 since #1935: `admin/templateChannels.ts` is a new FUNCTIONS entry (the
- * read and the save of a template's text-message and push wording, which no
- * client may touch directly). Its rules, `lib/templateChannelWording.ts`, load
- * with `await import()` inside the handler, so the entry is the only module it
- * adds.
+ * 439 since #1830: `lib/portalVisitProgress.ts`, the pure rules `getMyBookings`
+ * (an entry already in this graph) reads a visit's On the way / Arrived /
+ * Departed and its list by. Its one import is a type, erased at build.
+ *
+ * 440 since #1935 (on top of #1830's 439): `admin/templateChannels.ts` is a new
+ * FUNCTIONS entry (the read and the save of a template's text-message and push
+ * wording, which no client may touch directly). Its rules,
+ * `lib/templateChannelWording.ts`, load with `await import()` inside the
+ * handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 439;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;

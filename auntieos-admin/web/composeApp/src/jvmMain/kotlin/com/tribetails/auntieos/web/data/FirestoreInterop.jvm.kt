@@ -310,12 +310,30 @@ internal actual fun platformActivityStream(): Flow<FirestoreResult<List<Activity
 internal actual fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>> =
     JvmFirestoreFixtures.notifications?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream {
-            // firestore.rules is recipient-scoped, so the admin can only read their own.
-            val uid = jvmFirebaseUid()
-            JvmFirestoreRest.list<NotificationEntry>("notifications") {
-                uid == null || it["recipientUid"]?.jsonPrimitive?.content == uid
+            ownNotifications(jvmFirebaseUid()) { uid ->
+                JvmFirestoreRest.listWhereEq<NotificationEntry>("notifications", "recipientUid", uid)
             }
         }
+/**
+ * #1837: the signed-in staff member's own notifications, and nobody else's.
+ *
+ * The read used to list the whole `notifications` collection and filter it in
+ * memory, and with no uid it kept every row. Two things were wrong with that.
+ * The rules now deny an unfiltered list for every role, so the screen would
+ * fail to load. And a missing uid must mean "nothing to show", never "show
+ * everyone's". [listOwn] is the server-side `recipientUid == uid` query; it is
+ * a parameter so the no-uid branch can be tested without a network.
+ */
+internal suspend fun ownNotifications(
+    uid: String?,
+    listOwn: suspend (String) -> List<NotificationEntry>,
+): List<NotificationEntry> {
+    val own = uid?.trim().orEmpty()
+    if (own.isEmpty()) return emptyList()
+    // The query already filters; this keeps a row that is not the caller's off
+    // the screen even if a fixture or a future query change returns one.
+    return listOwn(own).filter { it.recipientUid == own }
+}
 
 internal actual fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>> =
     JvmFirestoreRest.pollingScalar {

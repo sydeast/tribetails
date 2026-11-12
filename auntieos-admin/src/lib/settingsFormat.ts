@@ -64,9 +64,14 @@ export interface BusinessHoursRow {
   label: string;
 }
 
-/** One row per day of the week, in order, "Closed" for a blank/missing entry. */
+/**
+ * One row per day of the week, in order: "Closed" for a blank entry, "Not set"
+ * for a day with no entry (#1978: the server reads a missing day as "cannot
+ * tell", never as Closed).
+ */
 export function businessHoursRows(hours: Record<string, string>): BusinessHoursRow[] {
   return DAYS_OF_WEEK.map((day) => {
+    if (hours[day] === undefined) return { day, label: 'Not set' };
     const raw = str(hours[day]).trim();
     return { day, label: raw === '' ? 'Closed' : raw };
   });
