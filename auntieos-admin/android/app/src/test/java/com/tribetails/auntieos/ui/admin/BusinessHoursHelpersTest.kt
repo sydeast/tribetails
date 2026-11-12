@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.BusinessHours
+import com.tribetails.auntieos.data.model.BusinessSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -215,5 +216,91 @@ class BusinessHoursHelpersTest {
         assertNull(weeklyHoursRefusal(SettingsRefusal("businessHours", "The weekly hours did not arrive as a list.")))
         assertNull(weeklyHoursRefusal(SettingsRefusal("serviceRates", "Monday: x")))
         assertNull(weeklyHoursRefusal(null))
+    }
+
+    // ─── #1978: the hours a closed day had ──────────────────────────────────────
+
+    @Test
+    fun `a closed day carries the hours kept for it, and switching it on gives them back`() {
+        val rows = weeklyHoursRows(
+            mapOf("Monday" to "09:00-17:00", "Sunday" to ""),
+            kept = mapOf("Sunday" to "8:00-16:00"),
+        )
+        val sunday = rows[6]
+        assertEquals(WeeklyHoursRow(7, DayHoursKind.CLOSED, "08:00", "16:00"), sunday)
+        // Still closed everywhere it is read or written.
+        assertEquals("Closed", sunday.display)
+        assertEquals("", sunday.wireValue)
+        assertNull(sunday.problem)
+
+        val reopened = sunday.copy(kind = DayHoursKind.OPEN)
+        assertNull(reopened.problem)
+        assertEquals("08:00-16:00", reopened.wireValue)
+    }
+
+    @Test
+    fun `close then reopen in one visit keeps the times the row had`() {
+        val monday = weeklyHoursRows(mapOf("Monday" to "09:00-17:00"))[0]
+        val closed = monday.copy(kind = DayHoursKind.CLOSED)
+        assertEquals("", closed.wireValue)
+        assertEquals(monday, closed.copy(kind = DayHoursKind.OPEN))
+    }
+
+    @Test
+    fun `a closed day with nothing kept reopens blank and is refused, never 9 to 5`() {
+        for (kept in listOf(emptyMap(), mapOf("Sunday" to "by appointment"), mapOf("Sunday" to "17:00-09:00"), mapOf("Sunday" to ""))) {
+            val sunday = weeklyHoursRows(mapOf("Sunday" to ""), kept)[6]
+            assertEquals(WeeklyHoursRow(7, DayHoursKind.CLOSED), sunday)
+            val reopened = sunday.copy(kind = DayHoursKind.OPEN)
+            assertEquals("", reopened.openTime)
+            assertEquals("", reopened.closeTime)
+            assertEquals(HOURS_RANGE_INVALID, reopened.problem)
+            assertNull(reopened.wireValue)
+        }
+    }
+
+    @Test
+    fun `kept hours never touch a day that is open or not set`() {
+        val rows = weeklyHoursRows(
+            mapOf("Monday" to "09:00-17:00"),
+            kept = mapOf("Monday" to "08:00-16:00", "Tuesday" to "08:00-16:00"),
+        )
+        assertEquals(WeeklyHoursRow(1, DayHoursKind.OPEN, "09:00", "17:00"), rows[0])
+        assertEquals(WeeklyHoursRow(2, DayHoursKind.NOT_SET), rows[1])
+    }
+
+    @Test
+    fun `readers still see a closed day as closed, with no times`() {
+        val settings = BusinessSettings(
+            businessHours = mapOf("Monday" to "09:00-17:00", "Sunday" to ""),
+            closedDayHours = mapOf("Sunday" to "08:00-16:00"),
+        )
+        val sunday = businessHoursOf(settings.businessHours).first { it.dayOfWeek == 7 }
+        assertEquals(BusinessHours(dayOfWeek = 7, isOpen = false, openTime = "", closeTime = ""), sunday)
+        // A week read with its kept hours writes nothing until a day is changed.
+        assertTrue(weeklyHoursPatch(settings.businessHours, weeklyHoursRows(settings)).isEmpty())
+    }
+
+    @Test
+    fun `closedDayHoursAfterSave follows the server's rule`() {
+        val stored = mapOf("Monday" to " 9:00-17:00 ", "Tuesday" to "", "Wednesday" to "all day")
+        val kept = mapOf("Tuesday" to "08:00-16:00")
+        // Closing a day keeps its readable range; one with nothing readable keeps nothing.
+        assertEquals(
+            mapOf("Tuesday" to "08:00-16:00", "Monday" to "9:00-17:00"),
+            closedDayHoursAfterSave(stored, kept, mapOf("Monday" to "", "Wednesday" to "", "Friday" to "", "Tuesday" to "")),
+        )
+        // Opening a day drops what was kept for it.
+        assertEquals(emptyMap<String, String>(), closedDayHoursAfterSave(stored, kept, mapOf("Tuesday" to "10:00-14:00")))
+        assertEquals(kept, closedDayHoursAfterSave(stored, kept, emptyMap()))
+    }
+
+    @Test
+    fun `withWeeklyHoursSaved moves the hours and what is kept together`() {
+        val settings = BusinessSettings(businessHours = mapOf("Monday" to "09:00-17:00", "Sunday" to "08:00-16:00"))
+        val rows = weeklyHoursRows(settings).withRow(WeeklyHoursRow(7, DayHoursKind.CLOSED, "08:00", "16:00"))
+        val saved = settings.withWeeklyHoursSaved(settings.businessHours, rows)
+        assertEquals(mapOf("Monday" to "09:00-17:00", "Sunday" to ""), saved.businessHours)
+        assertEquals(mapOf("Sunday" to "08:00-16:00"), saved.closedDayHours)
     }
 }
