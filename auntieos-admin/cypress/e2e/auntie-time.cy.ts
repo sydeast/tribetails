@@ -149,28 +149,35 @@ describe('auntie time', () => {
     cy.contains('label', 'From').find('input').type(ARCHIVE_DAY);
     cy.contains('label', 'To').find('input').type(ARCHIVE_DAY);
 
+    /**
+     * A day's group, FOUND BY ITS HEADING and by nothing else in it.
+     *
+     * The first two shapes of this case looked for a group that "contains" the
+     * day's text, and in CI that matched the wrong group. A card prints its own
+     * day and clock on the BROWSER's clock (#2105), and the CI browser is on
+     * UTC, where the 11:30 PM Jan 14 visit is 05:30 on Jan 15. So the Jan 14
+     * group held the text "Thu, Jan 15" inside that card, came first on the
+     * page, and was searched for the after-midnight visit it rightly lacks.
+     * The heading is the business day the Archive filed the group under, which
+     * is the thing this case is about.
+     *
+     * One chain of queries with no `.within()`, so Cypress looks again at
+     * whatever list is on screen after a box moves and the list is redrawn.
+     */
+    const dayGroup = (heading: string) =>
+      cy.contains('.sessions__day-header', heading).parent('.sessions__day-group');
+
     // 11:30 PM on the picked day is in, under that day's heading.
-    //
-    // NO `.within()` HERE. Moving a box changes the query, so the list goes
-    // back to its loading row and is drawn again; `.within()` holds on to the
-    // day group it first found, which that redraw removes from the page, and
-    // then looks for the card inside an element nobody can see. Each check
-    // below is one chain from the page down, so Cypress looks again at
-    // whatever list is on screen until it holds or times out.
-    cy.contains('.sessions__day-group', 'Wed, Jan 14')
-      .contains('.sessions__card', LATE_NAME)
-      .should('be.visible');
-    // 12:15 AM the next morning is not.
+    dayGroup('Wed, Jan 14').contains('.sessions__card', LATE_NAME).should('be.visible');
+    // 12:15 AM the next morning is not, and Jan 15 has no heading at all.
     cy.contains(NEXT_NAME).should('not.exist');
+    cy.contains('.sessions__day-header', 'Thu, Jan 15').should('not.exist');
 
     // Moving TO on a day brings it in, under its own day and no other.
     cy.contains('label', 'To').find('input').type('2026-01-15');
-    cy.contains('.sessions__day-group', 'Thu, Jan 15')
-      .contains('.sessions__card', NEXT_NAME)
-      .should('be.visible');
-    cy.contains('.sessions__day-group', 'Thu, Jan 15').should('not.contain.text', LATE_NAME);
-    cy.contains('.sessions__day-group', 'Wed, Jan 14')
-      .should('contain.text', LATE_NAME)
-      .and('not.contain.text', NEXT_NAME);
+    dayGroup('Thu, Jan 15').contains('.sessions__card', NEXT_NAME).should('be.visible');
+    dayGroup('Thu, Jan 15').find('.sessions__card').should('have.length', 1);
+    dayGroup('Wed, Jan 14').contains('.sessions__card', LATE_NAME).should('be.visible');
+    dayGroup('Wed, Jan 14').find('.sessions__card').should('have.length', 1);
   });
 });
