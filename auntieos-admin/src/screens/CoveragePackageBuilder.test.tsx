@@ -422,23 +422,23 @@ describe('CoveragePackageBuilder Discount, Buffer and dates (issue #1593)', () =
     quote();
     render(<CoveragePackageBuilder />);
     await packageNames();
-    // Typed a key at a time, "150" passes through "15", a real discount, so that is
-    // the last good value; "-20" and "abc" are refused from the first key.
-    for (const [bad, kept] of [['-20', 0], ['abc', 0], ['150', 15]] as const) {
+    // Typed a key at a time, "150" passes through "15", a real discount. That prefix
+    // is not what the operator chose (#2021): every refused entry prices at the 0%
+    // the package held before the typing started.
+    for (const bad of ['-20', 'abc', '150']) {
       await user.clear(discount());
       await user.type(discount(), bad);
       // What was typed stays typed: refused, not rewritten into 100 or 0.
       expect(discount().value).toBe(bad);
       expect(discount().getAttribute('aria-invalid')).toBe('true');
-      expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use ${kept}%.`);
-      expect(screen.getByRole('alert').textContent).toBe(`${DISCOUNT} Prices still use ${kept}%.`);
+      expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 0%.`);
+      expect(screen.getByRole('alert').textContent).toBe(`${DISCOUNT} Prices still use 0%.`);
     }
-    // Never capped at 100: the price carries the last good 15%.
-    expect(screen.getByText('Discount (15%)')).toBeTruthy();
-    expect(screen.queryByText('Discount (100%)')).toBeNull();
-    await waitFor(() => expect(storedPkg().discountPct).toBe(15));
+    // Never capped at 100, and never the first digits of what was typed.
+    expect(screen.queryByText(/Discount \(/)).toBeNull();
+    await waitFor(() => expect(storedPkg().discountPct).toBe(0));
   });
-  it('keeps pricing at the last good discount while a typed one is refused, and fixing it clears', async () => {
+  it('prices at the discount held before the edit while a typed one is refused, and fixing it clears', async () => {
     const user = userEvent.setup();
     quote();
     render(<CoveragePackageBuilder />);
@@ -447,13 +447,16 @@ describe('CoveragePackageBuilder Discount, Buffer and dates (issue #1593)', () =
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByText('Discount (12.5%)')).toBeTruthy();
     await waitFor(() => expect(storedPkg().discountPct).toBe(12.5));
+    // Same edit, one more key: "12.5x" is refused, so the price is the 0% from
+    // before the edit, not the "12.5" the entry passed through (#2021).
     await user.type(discount(), 'x');
     expect(discount().value).toBe('12.5x');
-    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 12.5%.`);
-    expect(screen.getByText('Discount (12.5%)')).toBeTruthy();
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 0%.`);
+    expect(screen.queryByText(/Discount \(/)).toBeNull();
     await user.type(discount(), '{Backspace}');
     expect(screen.queryByRole('alert')).toBeNull();
     expect(discount().getAttribute('aria-invalid')).toBeNull();
+    expect(screen.getByText('Discount (12.5%)')).toBeTruthy();
     // Blank means no discount.
     await user.clear(discount());
     expect(screen.queryByRole('alert')).toBeNull();
@@ -549,5 +552,245 @@ describe('CoveragePackageBuilder Discount, Buffer and dates (issue #1593)', () =
     const end = screen.getByLabelText('End') as HTMLInputElement;
     expect(end.getAttribute('aria-invalid')).toBe('true');
     expect(messageFor(end)).toBe(DATES);
+  });
+});
+
+/**
+ * #2021, a regression of #1593. The Discount field refused "150" with a message,
+ * but every keystroke that parsed had already been priced, so the "15" on the way
+ * to "150" stayed as the discount. A refused entry now prices at what the field
+ * held before the edit began. Buffer and Max gap shared the handler and the fault.
+ */
+describe('CoveragePackageBuilder refused entries keep no typed prefix (issue #2021)', () => {
+  const DISCOUNT = 'Enter a discount from 0 to 100 percent.';
+  const BUFFER = 'Enter the buffer in hours, 0 or more, like 1 or 1.5.';
+  const stored = (): { packages: Record<string, unknown>[]; rules: { maxGapHours: number } } =>
+    JSON.parse(window.localStorage.getItem('tt-coverage-quote-v1')!);
+  const quote = (pkgOver: Record<string, unknown> = {}) =>
+    storeQuote({
+      clientName: 'Rex',
+      startDate: '2026-12-01',
+      endDate: '2026-12-03',
+      overnightDurationId: '',
+      rules: DEFAULT_COVERAGE_RULES,
+      // $25 a day for 3 days: subtotal $75.00.
+      packages: [{ id: 'a', name: 'Alpha', visits: [{ id: 'va', time: 540, durationId: '30Minute', label: 'Morning' }], ...pkgOver }],
+      tiersSeeded: true,
+    });
+  const discount = () => screen.getByLabelText('Discount percent') as HTMLInputElement;
+  const buffer = () => screen.getByLabelText('Buffer (hrs)') as HTMLInputElement;
+  const gap = () => screen.getByLabelText('Max gap between visits (hrs)') as HTMLInputElement;
+  const messageFor = (field: HTMLElement): string | null => {
+    const id = field.getAttribute('aria-describedby');
+    return id ? (document.getElementById(id)?.textContent ?? null) : null;
+  };
+  const total = (): string => document.querySelector('.cpb__totalLine--final')!.textContent!;
+  const open = async () => {
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    return userEvent.setup();
+  };
+  it('prices 150 then Tab at the 0% from before the typing, then 250 the same (the walk)', async () => {
+    quote();
+    const user = await open();
+    expect(total()).toBe('Total$75.00');
+    await user.click(discount());
+    await user.keyboard('150');
+    await user.tab();
+    expect(discount().value).toBe('150');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 0%.`);
+    expect(screen.queryByText(/Discount \(/)).toBeNull();
+    expect(total()).toBe('Total$75.00');
+    await waitFor(() => expect(stored().packages[0]!.discountPct).toBe(0));
+    // Set the box to 0, then 250.
+    await user.clear(discount());
+    await user.type(discount(), '0');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await user.clear(discount());
+    await user.type(discount(), '250');
+    await user.tab();
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 0%.`);
+    expect(total()).toBe('Total$75.00');
+    // "abc" next leaves it alone too.
+    await user.clear(discount());
+    await user.type(discount(), 'abc');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 0%.`);
+    expect(total()).toBe('Total$75.00');
+    await waitFor(() => expect(stored().packages[0]!.discountPct).toBe(0));
+  });
+  it('still shows the price of a good discount as it is typed', async () => {
+    quote();
+    const user = await open();
+    await user.type(discount(), '20');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Discount (20%)')).toBeTruthy();
+    expect(total()).toBe('Total$60.00');
+    await waitFor(() => expect(stored().packages[0]!.discountPct).toBe(20));
+  });
+  it('takes 100 and 0 and blank, and refuses 101 and letters back to the discount held before', async () => {
+    quote({ discountPct: 20 });
+    const user = await open();
+    expect(screen.getByText('Discount (20%)')).toBeTruthy();
+    // 101: one over the limit. Passes through 1 and 10; prices at the 20% held before.
+    await user.clear(discount());
+    await user.type(discount(), '101');
+    expect(discount().value).toBe('101');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 20%.`);
+    expect(screen.getByText('Discount (20%)')).toBeTruthy();
+    expect(total()).toBe('Total$60.00');
+    await waitFor(() => expect(stored().packages[0]!.discountPct).toBe(20));
+    // Not a number at all.
+    await user.clear(discount());
+    await user.type(discount(), '5x');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 20%.`);
+    expect(total()).toBe('Total$60.00');
+    // 100 is the top of the range and is taken.
+    await user.clear(discount());
+    await user.type(discount(), '100');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Discount (100%)')).toBeTruthy();
+    expect(total()).toBe('Total$0.00');
+    // 0 and blank both mean no discount.
+    await user.clear(discount());
+    await user.type(discount(), '0');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/Discount \(/)).toBeNull();
+    await user.clear(discount());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(total()).toBe('Total$75.00');
+    await waitFor(() => expect(stored().packages[0]!.discountPct).toBe(0));
+  });
+  it('counts a discount as chosen once the field is left: 20, Tab, then 200 keeps 20%', async () => {
+    quote();
+    const user = await open();
+    await user.type(discount(), '20');
+    await user.tab();
+    await user.type(discount(), '0');
+    expect(discount().value).toBe('200');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 20%.`);
+    expect(screen.getByText('Discount (20%)')).toBeTruthy();
+    await waitFor(() => expect(stored().packages[0]!.discountPct).toBe(20));
+  });
+  it('counts a discount as chosen on Enter as well', async () => {
+    quote();
+    const user = await open();
+    await user.type(discount(), '20{Enter}0');
+    expect(discount().value).toBe('200');
+    expect(messageFor(discount())).toBe(`${DISCOUNT} Prices still use 20%.`);
+  });
+  it('keeps the buffer held before the edit when 12a is typed', async () => {
+    quote();
+    const user = await open();
+    await user.clear(buffer());
+    await user.type(buffer(), '12a');
+    expect(buffer().value).toBe('12a');
+    expect(messageFor(buffer())).toBe(`${BUFFER} Prices still use 2h.`);
+    await waitFor(() => expect(stored().packages[0]!.overnightBufferHours).toBe(2));
+    await user.type(buffer(), '{Backspace}');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(stored().packages[0]!.overnightBufferHours).toBe(12));
+  });
+  it('keeps the max gap held before the edit when 12a is typed, and leaves the text as typed', async () => {
+    quote();
+    const user = await open();
+    await user.clear(gap());
+    await user.type(gap(), '12a');
+    expect(gap().value).toBe('12a');
+    expect(gap().getAttribute('aria-invalid')).toBe('true');
+    expect(messageFor(gap())).toMatch(/Enter hours as a plain number.*Prices still use 6h\./);
+    await waitFor(() => expect(stored().rules.maxGapHours).toBe(6));
+    await user.type(gap(), '{Backspace}');
+    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(stored().rules.maxGapHours).toBe(12));
+  });
+});
+/**
+ * #1858. The line at the top of a tier ("The 2h day fits inside the 24h max gap,
+ * so this tier is one check-in at 12:00 PM.") was written once, when the tier was
+ * built, and stored on the package. It went on saying 24h after Max gap became 6
+ * and stayed on a package whose visit had been removed. It is now worked out from
+ * the rules and the visits on screen.
+ */
+describe('CoveragePackageBuilder package note (issue #1858)', () => {
+  const stored = (): { packages: Record<string, unknown>[] } => JSON.parse(window.localStorage.getItem('tt-coverage-quote-v1')!);
+  /** A 3 hour day with no pinned visit: every tier is one check-in at 12:30 PM. */
+  const shortDay = (maxGapHours: number) => ({ wakeStart: '11:00', wakeEnd: '14:00', maxGapHours, pinnedTimes: [] });
+  const note = (hours: number): string => `The 3h day fits inside the ${hours}h max gap, so this tier is one check-in at 12:30 PM.`;
+  const notes = (): string[] => [...document.querySelectorAll('.cpb__pkgNote')].map((el) => el.textContent ?? '');
+  const cards = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.cpb__pkg')];
+  const gap = () => screen.getByLabelText('Max gap between visits (hrs)') as HTMLInputElement;
+  const fresh = (maxGapHours: number) =>
+    storeQuote({ clientName: '', startDate: '2026-12-01', endDate: '2026-12-03', overnightDurationId: '', rules: shortDay(maxGapHours), packages: [] });
+  it('says the max gap the rules hold now, and follows it when it changes', async () => {
+    const user = userEvent.setup();
+    fresh(24);
+    render(<CoveragePackageBuilder />);
+    expect(await packageNames()).toEqual(['Lean', 'Balance', 'Premium']);
+    expect(notes()).toEqual([note(24), note(24), note(24)]);
+    await user.clear(gap());
+    await user.type(gap(), '6');
+    expect(notes()).toEqual([note(6), note(6), note(6)]);
+    // A 2h gap no longer holds the 3h day, so no tier is "one check-in because the day fits".
+    await user.clear(gap());
+    await user.type(gap(), '2');
+    expect(notes()).toEqual([]);
+  });
+  it('drops a note stored with the package and never writes it back', async () => {
+    // What the walk found: built under a 24h gap, opened with Max gap at 6 on a 15h day.
+    storeQuote({
+      clientName: '', startDate: '2026-12-01', endDate: '2026-12-03', overnightDurationId: '',
+      rules: { ...DEFAULT_COVERAGE_RULES, pinnedTimes: [] },
+      packages: [{
+        id: 'b', name: 'Balance',
+        visits: [{ id: 'vb', time: 720, durationId: '30Minute', label: 'Check-in' }],
+        note: 'The 2h day fits inside the 24h max gap, so this tier is one check-in at 12:00 PM.',
+      }],
+      tiersSeeded: true,
+    });
+    render(<CoveragePackageBuilder />);
+    expect(await packageNames()).toEqual(['Balance']);
+    expect(screen.queryByText(/24h max gap/)).toBeNull();
+    expect(notes()).toEqual([]);
+    // The warning in the same card is the only word on the gap, and it says 6.
+    expect(screen.getAllByText(/over your 6h max gap/).length).toBeGreaterThan(0);
+    await waitFor(() => expect(stored().packages[0]).not.toHaveProperty('note'));
+  });
+  it('goes when the package no longer holds the check-in it describes, and returns with Undo', async () => {
+    const user = userEvent.setup();
+    fresh(6);
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    expect(notes()).toHaveLength(3);
+    await user.click(within(cards()[1]!).getByRole('button', { name: 'Remove visit' }));
+    expect(within(cards()[1]!).getByText('No visits yet.')).toBeTruthy();
+    expect(cards()[1]!.querySelector('.cpb__pkgNote')).toBeNull();
+    expect(notes()).toEqual([note(6), note(6)]);
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(notes()).toEqual([note(6), note(6), note(6)]);
+    // Moving the check-in off 12:30 PM makes the sentence untrue, so it goes.
+    fireEvent.change(within(cards()[0]!).getByLabelText('Visit time'), { target: { value: '09:00' } });
+    expect(cards()[0]!.querySelector('.cpb__pkgNote')).toBeNull();
+    expect(notes()).toHaveLength(2);
+  });
+  it('a duplicate carries the note only while it holds the check-in (the walk)', async () => {
+    const user = userEvent.setup();
+    fresh(6);
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    await user.click(within(cards()[1]!).getByRole('button', { name: 'Duplicate package' }));
+    expect(await packageNames()).toEqual(['Lean', 'Balance', 'Premium', 'Balance copy']);
+    expect(cards()[3]!.querySelector('.cpb__pkgNote')!.textContent).toBe(note(6));
+    await user.click(within(cards()[3]!).getByRole('button', { name: 'Remove visit' }));
+    expect(within(cards()[3]!).getByText('No visits yet.')).toBeTruthy();
+    expect(cards()[3]!.querySelector('.cpb__pkgNote')).toBeNull();
+    expect(notes()).toHaveLength(3);
+  });
+  it('shows no note on a tier that meets the rules or on a hand-built package', async () => {
+    const user = userEvent.setup();
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    await user.click(screen.getByRole('button', { name: 'New package' }));
+    expect(await packageNames()).toHaveLength(4);
+    expect(notes()).toEqual([]);
   });
 });

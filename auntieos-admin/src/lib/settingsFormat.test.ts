@@ -27,12 +27,12 @@ describe('businessHoursRows', () => {
     expect(rows[0]).toEqual({ day: 'Monday', label: '09:00-17:00' });
   });
 
-  it('shows "Closed" for a blank or missing day, never an empty string', () => {
+  it('shows "Closed" for a blank day and "Not set" for a day with no entry (#1978)', () => {
     const rows = businessHoursRows({ Sunday: '  ' });
     const sunday = rows.find((r) => r.day === 'Sunday');
     const tuesday = rows.find((r) => r.day === 'Tuesday');
     expect(sunday?.label).toBe('Closed');
-    expect(tuesday?.label).toBe('Closed');
+    expect(tuesday?.label).toBe('Not set');
   });
 });
 

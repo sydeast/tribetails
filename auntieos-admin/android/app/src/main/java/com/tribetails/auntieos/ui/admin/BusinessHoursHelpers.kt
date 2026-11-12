@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.BusinessHours
+import com.tribetails.auntieos.data.model.BusinessSettings
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The weekly hours, read from and written to `business_settings.businessHours`.
@@ -17,6 +18,13 @@ import com.tribetails.auntieos.data.model.BusinessHours
 // spells them. A value is "HH:MM-HH:MM", or "" for Closed. A day with no key
 // is NOT SET: the server reads that as "cannot tell", not as Closed, so this
 // file never turns one into Closed or into invented hours.
+//
+// #1978, THE HOURS A CLOSED DAY HAD. "" has no room for them, so the save
+// keeps them beside the map, in `business_settings.closedDayHours` (the server
+// writes it, see `closedDayHoursChanges` in businessSettingsChecks.ts). A
+// Closed row carries that range in its two times, hidden while it is closed,
+// so switching the day back on shows the hours it had. A day with nothing kept
+// reopens with both times empty and the "Enter both..." sentence under it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -46,6 +54,10 @@ enum class DayHoursKind { NOT_SET, CLOSED, OPEN }
  * parser cannot read keeps its own text in them (split at the dash), so the
  * operator sees what is stored and [problem] says what is wrong with it. It is
  * never shown as Closed or as a default range.
+ *
+ * #1978: a Closed row keeps the hours the day had in the same two fields, so
+ * `copy(kind = OPEN)` gives them back. They are not written while it is
+ * closed: [wireValue] is "" whatever they hold.
  */
 data class WeeklyHoursRow(
     val dayOfWeek: Int,
@@ -86,11 +98,18 @@ internal fun normalizedHoursRange(open: String, close: String): String? {
     return "${hhmm(open)}-${hhmm(close)}"
 }
 
-/** One stored value as a row. */
-internal fun weeklyHoursRowOf(dayOfWeek: Int, stored: String?): WeeklyHoursRow {
+/**
+ * One stored value as a row. [kept] is the day's entry in `closedDayHours`:
+ * a Closed row carries it in its two times when it is a readable range, and
+ * empty times otherwise (never a default).
+ */
+internal fun weeklyHoursRowOf(dayOfWeek: Int, stored: String?, kept: String? = null): WeeklyHoursRow {
     if (stored == null) return WeeklyHoursRow(dayOfWeek, DayHoursKind.NOT_SET)
     val raw = stored.trim()
-    if (raw.isEmpty()) return WeeklyHoursRow(dayOfWeek, DayHoursKind.CLOSED)
+    if (raw.isEmpty()) {
+        val had = readableRangeOrNull(kept) ?: return WeeklyHoursRow(dayOfWeek, DayHoursKind.CLOSED)
+        return WeeklyHoursRow(dayOfWeek, DayHoursKind.CLOSED, openTime = had.first, closeTime = had.second)
+    }
     val parts = raw.split("-")
     if (parts.size != 2) return WeeklyHoursRow(dayOfWeek, DayHoursKind.OPEN, openTime = raw, closeTime = "")
     val open = parts[0].trim()
@@ -104,9 +123,24 @@ internal fun weeklyHoursRowOf(dayOfWeek: Int, stored: String?): WeeklyHoursRow {
     )
 }
 
-/** The seven days of [map], Monday first. Keys other than [WEEK_DAY_NAMES] are not days and are ignored. */
-fun weeklyHoursRows(map: Map<String, String>): List<WeeklyHoursRow> =
-    WEEK_DAY_NAMES.mapIndexed { index, day -> weeklyHoursRowOf(index + 1, map[day]) }
+/** The two times of a stored range the server's rule accepts, two-digit hours, or null. */
+private fun readableRangeOrNull(stored: String?): Pair<String, String>? {
+    val parts = stored?.trim()?.split("-") ?: return null
+    if (parts.size != 2) return null
+    val range = normalizedHoursRange(parts[0].trim(), parts[1].trim()) ?: return null
+    return range.substringBefore("-") to range.substringAfter("-")
+}
+
+/**
+ * The seven days of [map], Monday first. Keys other than [WEEK_DAY_NAMES] are
+ * not days and are ignored. [kept] is `closedDayHours` (#1978).
+ */
+fun weeklyHoursRows(map: Map<String, String>, kept: Map<String, String> = emptyMap()): List<WeeklyHoursRow> =
+    WEEK_DAY_NAMES.mapIndexed { index, day -> weeklyHoursRowOf(index + 1, map[day], kept[day]) }
+
+/** The week of [settings] as the editors show it: the hours map, with each Closed day's kept hours. */
+fun weeklyHoursRows(settings: BusinessSettings): List<WeeklyHoursRow> =
+    weeklyHoursRows(settings.businessHours, settings.closedDayHours)
 
 /** True when no day of [rows] has been set, the state of a business that never saved hours. */
 fun noWeeklyHoursSet(rows: List<WeeklyHoursRow>): Boolean = rows.all { it.kind == DayHoursKind.NOT_SET }
@@ -132,6 +166,43 @@ fun weeklyHoursPatch(stored: Map<String, String>, rows: List<WeeklyHoursRow>): M
 /** [stored] with [rows]' changed days written over it, the map the server holds after the save. */
 fun withWeeklyHours(stored: Map<String, String>, rows: List<WeeklyHoursRow>): Map<String, String> =
     stored + weeklyHoursPatch(stored, rows)
+
+/**
+ * #1978: `closedDayHours` after a save of [sent] over [storedHours], by the
+ * rule the server applies (`closedDayHoursChanges`): a day saved as Closed
+ * keeps the readable range it had stored, and a day saved with hours drops
+ * what was kept for it. The server writes the field; this keeps the copy a
+ * screen holds the same until its next load.
+ */
+fun closedDayHoursAfterSave(
+    storedHours: Map<String, String>,
+    kept: Map<String, String>,
+    sent: Map<String, String>,
+): Map<String, String> {
+    val next = LinkedHashMap(kept)
+    for ((day, value) in sent) {
+        if (value.isNotBlank()) {
+            next.remove(day)
+            continue
+        }
+        val was = storedHours[day]?.trim().orEmpty()
+        if (readableRangeOrNull(was) != null) next[day] = was
+    }
+    return next
+}
+
+/**
+ * [this] as the server holds it once [rows]' changed days are saved: the hours
+ * map with those days written, and `closedDayHours` moved by the same save.
+ * [stored] is the map the changes are measured against.
+ */
+fun BusinessSettings.withWeeklyHoursSaved(stored: Map<String, String>, rows: List<WeeklyHoursRow>): BusinessSettings {
+    val patch = weeklyHoursPatch(stored, rows)
+    return copy(
+        businessHours = businessHours + patch,
+        closedDayHours = closedDayHoursAfterSave(stored, closedDayHours, patch),
+    )
+}
 
 /** [this] with [row] in place of the row for the same day. */
 fun List<WeeklyHoursRow>.withRow(row: WeeklyHoursRow): List<WeeklyHoursRow> =

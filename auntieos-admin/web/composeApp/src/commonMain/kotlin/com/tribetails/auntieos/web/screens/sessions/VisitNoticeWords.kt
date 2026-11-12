@@ -88,6 +88,7 @@ internal fun visitNotifyOutcomeOf(result: WriteResult<String>): VisitNotifyOutco
 }
 
 /** The stamp as epoch milliseconds, or null when it does not parse. */
+@OptIn(kotlin.time.ExperimentalTime::class)
 internal fun visitNoticeAtMs(atIso: String): Long? =
     runCatchingCancellable { Instant.parse(atIso).toEpochMilliseconds() }.getOrNull()
 

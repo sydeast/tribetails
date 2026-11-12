@@ -21,8 +21,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +45,9 @@ import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.admin.AuditLog
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone
+import com.tribetails.auntieos.ui.admin.scheduling.businessToday
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
 import com.tribetails.auntieos.location.LocationTrackingService
@@ -55,6 +61,8 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 internal fun nowIso(): String = Instant.now().toString().substringBefore('.') + "Z"
 
@@ -200,19 +208,30 @@ fun KinCareSessionsScreen(
     // does, live in `AuntieTimeWindow.kt` alongside their tests; this screen
     // just applies them. Web's `lib/sessionFormat.ts` is the twin.
     //
-    // AO-18: the operator's "today" must be the LOCAL calendar date, not UTC.
-    // nowIso() is UTC (correct for the stored *At timestamps below), but using
-    // its date here shifted the whole Auntie Time day-window to tomorrow every
-    // evening after ~19:00 CDT (UTC has already rolled over). LocalDate.now()
-    // matches how android's Home/Invoices/Activity screens already compute today.
-    val today = LocalDate.now().toString()
-    val visible = sessions.filter { isVisibleOnAuntieTime(it, today) }
+    // #2036: "today", and every day a visit is filed under, is the BUSINESS's
+    // calendar day (`business_settings.timeZone`), not the phone's and not
+    // UTC. AO-18 had moved this off UTC onto the phone's date; the rules below
+    // still took a stored instant's UTC day, so an evening visit was filed
+    // under tomorrow. Both read the one zone now.
+    val storedZone by viewModel.businessTimeZone.collectAsState()
+    val zone = remember(storedZone) { businessZone(storedZone) }
+    val todayDate = businessToday(zone)
+    val today = todayDate.toString()
+    val visible = sessions.filter { isVisibleOnAuntieTime(it, today, zone) }
+
+    // #2036: the Archive. Older history had no list on this app, so a visit
+    // wrapped ten days ago could not be reached from here. `null` in a box
+    // means the operator has not set it and the opening range stands.
+    var archiveOpen by remember { mutableStateOf(false) }
+    var pickedRange by remember { mutableStateOf<ArchiveRange?>(null) }
+    val archiveRange = pickedRange ?: archiveDefaultRange(todayDate)
+    val archive = remember(sessions, archiveRange, zone) { archiveDays(sessions, archiveRange, zone) }
 
     // A run sheet reads forwards: ascending by start within each phase. The
     // soonest/latest sort control #17 added is gone since #755 (the mock has
     // no sort, and the web board dropped its Sort select in #703).
     val grouped = visible
-        .groupBy { phaseFor(it, today) }
+        .groupBy { phaseFor(it, today, zone) }
         .mapValues { (_, rows) -> sortSessions(rows) }
 
     val patchFn: (String, Map<String, Any>, String) -> Unit = { id, patch, msg ->
@@ -304,6 +323,7 @@ fun KinCareSessionsScreen(
         }
     }
     AuntieScreenScaffold(title = "Auntie Time", onBack = onBack) {
+      CompositionLocalProvider(LocalBusinessZone provides zone) {
         Box(modifier = Modifier.fillMaxSize()) {
             AuntiePullRefresh(
                 isRefreshing = isLoading,
@@ -324,9 +344,29 @@ fun KinCareSessionsScreen(
                     DenScreenHeading(
                         kicker = "Care Ops · Auntie Time",
                         title = "🐾 Auntie Time",
-                        subtitle = "Day-of view. Clock in, clock out, every KinCare in flight.",
+                        subtitle = if (archiveOpen) {
+                            "Older history, by day. Pick a range; the year shows on any day outside this one."
+                        } else {
+                            "Day-of view. Clock in, clock out, every KinCare in flight."
+                        },
+                        // Same words as the web board's heading link.
+                        trailing = {
+                            GhostButton(
+                                label = if (archiveOpen) "Back to Auntie Time" else "Archive",
+                                onClick = { archiveOpen = !archiveOpen },
+                            )
+                        },
                     )
                     Spacer(Modifier.height(16.dp))
+
+                    if (archiveOpen) {
+                        ArchiveRangeRow(
+                            range = archiveRange,
+                            onFrom = { pickedRange = archiveRange.withFrom(it) },
+                            onTo = { pickedRange = archiveRange.withTo(it) },
+                        )
+                        Spacer(Modifier.height(16.dp))
+                    }
 
                     when {
                         // FAIL-LOUD: a load failure stays on screen as a persistent banner
@@ -352,6 +392,47 @@ fun KinCareSessionsScreen(
                             }
                         }
 
+                        archiveOpen -> {
+                            if (archive.isEmpty()) {
+                                Text(
+                                    text = "No KinCares in this range.",
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                                archive.forEach { day ->
+                                    PhaseGroup(
+                                        label = archiveDayLabel(day.day, todayDate),
+                                        count = null,
+                                        emptyLine = "",
+                                        sessions = day.sessions,
+                                        todayIso = today,
+                                        kinfolkById = { kinfolkById[it] },
+                                        kinById = kinById,
+                                        breadcrumbsFor = breadcrumbsFor,
+                                        timeBlockLabelFor = timeBlockLabelFor,
+                                        onOpenDetail = onOpenDetail,
+                                        onWriteKinTale = onWriteKinTale,
+                                        onLiveTrack = onLiveTrack,
+                                        onPatch = patchFn,
+                                        onClock = clockFn,
+                                        omwNoticeLineFor = { s, reach ->
+                                            visitNoticeConfirmLine(
+                                                VisitNotifier.Event.ON_MY_WAY,
+                                                s,
+                                                reach = reach,
+                                                household = householdOf(s),
+                                            )
+                                        },
+                                        onPreviewNotice = { s, onAnswer -> viewModel.previewVisitNotice(s, onAnswer) },
+                                        onTransition = transitionFn,
+                                        onNotice = noticeFn,
+                                    )
+                                }
+                            }
+                        }
+
                         else -> {
                             // ISSUE #703: every phase renders, empty ones
                             // included. The guard here used to be
@@ -368,8 +449,9 @@ fun KinCareSessionsScreen(
                                 Phase.entries.forEach { phase ->
                                     val items = grouped[phase].orEmpty()
                                     PhaseGroup(
-                                        phase = phase,
+                                        label = phase.label,
                                         count = items.size,
+                                        emptyLine = phaseEmptyLine(phase),
                                         sessions = items,
                                         todayIso = today,
                                         kinfolkById = { kinfolkById[it] },
@@ -424,6 +506,64 @@ fun KinCareSessionsScreen(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
             )
         }
+      }
+    }
+}
+
+// ── Archive range (#2036) ───────────────────────────────────────────────────────
+
+/**
+ * The Archive's FROM and TO boxes, labelled as on web. Each opens the date
+ * picker; the day picked is a day on the business's calendar, and both days
+ * are in the list whole.
+ */
+@Composable
+private fun ArchiveRangeRow(
+    range: ArchiveRange,
+    onFrom: (LocalDate) -> Unit,
+    onTo: (LocalDate) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        ArchiveDateBox(label = "From", day = range.from, onPick = onFrom, modifier = Modifier.weight(1f))
+        ArchiveDateBox(label = "To", day = range.to, onPick = onTo, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun ArchiveDateBox(
+    label: String,
+    day: LocalDate,
+    onPick: (LocalDate) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var open by remember { mutableStateOf(false) }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        AuntieFieldLabel(text = label)
+        GhostButton(
+            label = archiveBoxLabel(day),
+            onClick = { open = true },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    if (open) {
+        // The picker counts in UTC. It is seeded and read back in UTC so the
+        // day tapped is the day that lands in the box, whatever zone the phone
+        // is in; the business zone is applied to that day afterwards.
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = day.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { open = false },
+            confirmButton = {
+                AuntieTextBtn(onClick = {
+                    pickerState.selectedDateMillis?.let { ms ->
+                        onPick(Instant.ofEpochMilli(ms).atZone(ZoneOffset.UTC).toLocalDate())
+                    }
+                    open = false
+                }) { Text("OK") }
+            },
+            dismissButton = { AuntieTextBtn(onClick = { open = false }) { Text("Cancel") } },
+        ) { DatePicker(state = pickerState) }
     }
 }
 
@@ -431,10 +571,14 @@ fun KinCareSessionsScreen(
 
 @Composable
 private fun PhaseGroup(
-    phase: Phase,
-    count: Int,
+    /** The group's heading: a phase name on the board, a day in the Archive. */
+    label: String,
+    /** The count chip beside the heading, or null for a heading with no chip. */
+    count: Int?,
+    /** What an empty group says. */
+    emptyLine: String,
     sessions: List<KinCareSession>,
-    /** LOCAL today, so a card can decide whether its date needs a year. */
+    /** The business's today, so a card can decide whether its date needs a year. */
     todayIso: String,
     kinfolkById: (String) -> Kinfolk?,
     kinById: Map<String, com.tribetails.auntieos.data.model.Kin>,
@@ -467,24 +611,26 @@ private fun PhaseGroup(
             horizontalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             Text(
-                text = phase.label.uppercase(),
+                text = label.uppercase(),
                 style = AuntieTheme.typography.mono.copy(fontSize = 11.sp, letterSpacing = 1.3.sp),
                 color = c.textPrimary,
                 // A heading, so TalkBack can hop phase to phase the way the web
                 // board's `h3` lets a screen reader.
                 modifier = Modifier.semantics { heading() },
             )
-            AuntieStatusPill(
-                label = count.toString(),
-                tone = AuntieStatusTone.Neutral,
-                mono = true,
-            )
+            if (count != null) {
+                AuntieStatusPill(
+                    label = count.toString(),
+                    tone = AuntieStatusTone.Neutral,
+                    mono = true,
+                )
+            }
         }
         if (sessions.isEmpty()) {
             // An empty phase keeps its heading, because the count chip beside it
             // is the answer. This line only says the group is empty ON PURPOSE.
             Text(
-                text = phaseEmptyLine(phase),
+                text = emptyLine,
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textFaint,
             )
@@ -635,7 +781,7 @@ private fun KinCareCard(
                         text = auntieTimeIdentityLine(
                             service = auntieTimeServiceName(session.serviceType, catalog),
                             kinNames = kinNames,
-                            window = sessionWindow(session, todayIso),
+                            window = sessionWindow(session, todayIso, LocalBusinessZone.current),
                             timeBlockLabel = timeBlockLabel,
                         ),
                         style = AuntieTheme.typography.bodySmall,
@@ -1104,10 +1250,10 @@ private fun statusGlyph(status: String): ImageVector = when (status.uppercase())
  * produces today is therefore never swept into Recent by elimination, it is
  * placed by its date like SCHEDULED (matching web's `sessionPhase`).
  */
-private fun phaseFor(s: KinCareSession, today: String): Phase = when {
+private fun phaseFor(s: KinCareSession, today: String, zone: ZoneId): Phase = when {
     s.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> Phase.Active
     s.status.uppercase() in setOf("COMPLETED", "CANCELLED") -> Phase.CompletedToday
-    isOverdueScheduled(s, today) -> Phase.Overdue
+    isOverdueScheduled(s, today, zone) -> Phase.Overdue
     else -> Phase.Upcoming
 }
 

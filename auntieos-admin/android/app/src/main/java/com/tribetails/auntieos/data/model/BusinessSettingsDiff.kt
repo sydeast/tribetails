@@ -225,11 +225,13 @@ internal fun portalHomeSlice(raw: Any?): Any? {
  * - `id`         the document id (`@DocumentId`, never serialised anyway)
  * - `updatedAt`  stamped by the `saveBusinessSettings` callable, never sent
  * - `updatedBy`  same, from the caller's sign-in
+ * - `closedDayHours`  #1978, derived by that callable from the day it closes;
+ *                the server refuses a save that names it
  *
  * The four `calendarSyncLast*` receipt fields are not listed because they are not
  * on this model at all; see the file header.
  */
-internal val BUSINESS_SETTINGS_SERVER_OWNED = setOf("id", "updatedAt", "updatedBy")
+internal val BUSINESS_SETTINGS_SERVER_OWNED = setOf("id", "updatedAt", "updatedBy", "closedDayHours")
 
 /**
  * #1593: [changes] as the `saveBusinessSettings` callable can carry it.

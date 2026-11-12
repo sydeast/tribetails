@@ -1,6 +1,11 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useCallback, useMemo, useState } from 'react';
-import { overdueBeforeWindowQuery, sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
+import {
+  overdueBeforeWindowQuery,
+  sessionsArchivePageQuery,
+  sessionsWindowPageQuery,
+  type SessionEntry,
+} from '../api/sessions';
 import { KIN_QUERY, type Kin } from '../api/directory';
 import { transitionBookingStatus } from '../api/bookingsWrite';
 import {
@@ -10,19 +15,19 @@ import {
   sessionWindow,
   sessionDayKey,
   sessionDayLabel,
-  groupSessionsByDay,
   groupSessionsByPhase,
   localDateIso,
-  FETCH_DAYS_BACK,
   UPCOMING_WINDOW_DAYS,
   SESSION_STATE_TONE,
-  shiftDayIso,
   type SessionDayGroup,
   type SessionPhase,
   type SessionState,
 } from '../lib/sessionFormat';
 import { cardLifecycleActionsFor, completesAfterKinTale, lifecycleNowIso } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
+import { archiveDefaultRange, archiveFetchBounds, archiveRows, groupArchiveByBusinessDay } from '../lib/sessionArchive';
+import { businessTodayIso } from '../lib/businessZoneTime';
+import { useBusinessZone } from '../lib/useBusinessZone';
 import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
 import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
 import { completeRefusal } from '../lib/completeRule';
@@ -148,13 +153,24 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
 
-  // The Archive's default range is the month immediately BEFORE the day-of
-  // window's own fetch reaches, so opening it never re-shows what the board was
-  // already showing.
-  const [archiveFrom, setArchiveFrom] = useState(() =>
-    shiftDayIso(todayIso, -(FETCH_DAYS_BACK + 30)),
+  // #2036: the Archive's FROM and TO are days on the BUSINESS's calendar. It
+  // opens on the 30 days that end where Recent stops, so no wrapped visit sits
+  // between the two lists; a box the operator has set is left alone.
+  const businessZone = useBusinessZone();
+  const archiveToday = useMemo(() => businessTodayIso(businessZone), [businessZone]);
+  const [pickedFrom, setArchiveFrom] = useState<string | null>(null);
+  const [pickedTo, setArchiveTo] = useState<string | null>(null);
+  const archiveRange = useMemo(() => {
+    const opening = archiveDefaultRange(archiveToday);
+    return { from: pickedFrom ?? opening.from, to: pickedTo ?? opening.to };
+  }, [archiveToday, pickedFrom, pickedTo]);
+  const archiveFrom = archiveRange.from;
+  const archiveTo = archiveRange.to;
+  /** The fetch reaches a day past each box; this keeps the picked business days. */
+  const inArchiveRange = useCallback(
+    (data: SessionEntry[]) => archiveRows(data, archiveRange, businessZone),
+    [archiveRange, businessZone],
   );
-  const [archiveTo, setArchiveTo] = useState(() => shiftDayIso(todayIso, -(FETCH_DAYS_BACK + 1)));
 
   // One bounded, PAGED read either way. The spec is memoized on its inputs so a
   // re-render cannot churn the read (see CollectionSpec's own note, which the
@@ -162,11 +178,12 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
   // the cursor and the page error, which is the hook's own contract: page two of
   // the day-of window must never append itself under the Archive's rows.
   const spec = useMemo(
-    () =>
-      mode === 'archive'
-        ? sessionsPageQuery(archiveFrom, archiveTo)
-        : sessionsWindowPageQuery(todayIso),
-    [mode, archiveFrom, archiveTo, todayIso],
+    () => {
+      if (mode !== 'archive') return sessionsWindowPageQuery(todayIso);
+      const { fromDay, beforeDay } = archiveFetchBounds(archiveRange);
+      return sessionsArchivePageQuery(fromDay, beforeDay);
+    },
+    [mode, archiveRange, todayIso],
   );
   const { state: rows, hasMore, more, loadMore, reload } = usePagedCollection<SessionEntry>(spec);
   // #1607: the overdue visits older than the window, so Overdue here counts the
@@ -253,7 +270,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
               className="sessions__range-input"
               value={archiveFrom}
               max={archiveTo}
-              onChange={(e) => setArchiveFrom(e.target.value)}
+              onChange={(e) => setArchiveFrom(e.target.value === '' ? null : e.target.value)}
             />
           </label>
           <label className="sessions__range-field">
@@ -263,7 +280,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
               className="sessions__range-input"
               value={archiveTo}
               min={archiveFrom}
-              onChange={(e) => setArchiveTo(e.target.value)}
+              onChange={(e) => setArchiveTo(e.target.value === '' ? null : e.target.value)}
             />
           </label>
         </div>
@@ -276,14 +293,18 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
         // says, so `isEmpty` is false there by construction and the "nothing on
         // the books" line rides UNDER the groups instead of replacing them. The
         // Archive is a plain list and keeps the ordinary empty state.
-        isEmpty={(data) => mode === 'archive' && data.length === 0}
+        isEmpty={(data) => mode === 'archive' && inArchiveRange(data).length === 0}
         loading={<LoadingRow label="Loading KinCare sessions…" className="sessions__hint" />}
         empty={<EmptyHint>No KinCares in this range.</EmptyHint>}
       >
         {(data) => (
           <>
             {mode === 'archive' ? (
-              <DayList days={groupSessionsByDay(data)} ctx={cardContext} />
+              <DayList
+                days={groupArchiveByBusinessDay(inArchiveRange(data), businessZone)}
+                businessToday={archiveToday}
+                ctx={cardContext}
+              />
             ) : (
               <>
                 {/* NO `d1`..`d4` entrance on the groups, though the mock staggers
@@ -372,12 +393,21 @@ interface CardContext {
 }
 
 /** The Archive's day-grouped list, the one place a day header still earns its line. */
-function DayList({ days, ctx }: { days: SessionDayGroup<SessionEntry>[]; ctx: CardContext }) {
+function DayList({
+  days,
+  businessToday,
+  ctx,
+}: {
+  days: SessionDayGroup<SessionEntry>[];
+  /** Today on the business's calendar, the one the day headers are counted from (#2036). */
+  businessToday: string;
+  ctx: CardContext;
+}) {
   return (
     <ul className="sessions__list">
       {days.map((g) => (
         <li key={g.dayKeyValue} className="sessions__day-group">
-          <h4 className="sessions__day-header">{sessionDayLabel(g.dayKeyValue, ctx.todayIso)}</h4>
+          <h4 className="sessions__day-header">{sessionDayLabel(g.dayKeyValue, businessToday)}</h4>
           <ul className="sessions__cards">
             {g.rows.map((entry) => (
               <SessionCard key={entry._id} entry={entry} ctx={ctx} />

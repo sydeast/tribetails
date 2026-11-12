@@ -576,6 +576,8 @@ class AdminDataViewModel(
                 repository.getBusinessSettings().onSuccess {
                     _timeBlocks.value = it.timeBlocks
                     _householdNoticesLive.value = it.householdNotificationsLive
+                    // #2036: the zone Auntie Time counts its days in.
+                    _businessTimeZone.value = it.timeZone
                 }
             }
             // #1608: the arrival rule, so Complete can say what is missing before

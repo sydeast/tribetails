@@ -52,6 +52,16 @@ describe('mergeBusinessSettings', () => {
     expect(mergeBusinessSettings({}).serviceStartTimeBooking).toEqual({});
     expect(mergeBusinessSettings({ serviceStartTimeBooking: ['Overnight'] }).serviceStartTimeBooking).toEqual({});
   });
+  it('#1978: reads the hours kept for closed days, and keeps a missing day missing', () => {
+    const result = mergeBusinessSettings({
+      businessHours: { Monday: '09:00-17:00', Sunday: '' },
+      closedDayHours: { Sunday: '08:00-16:00' },
+    });
+    expect(result.closedDayHours).toEqual({ Sunday: '08:00-16:00' });
+    expect('Tuesday' in result.businessHours).toBe(false);
+    expect(mergeBusinessSettings({}).closedDayHours).toEqual({});
+    expect(mergeBusinessSettings({ closedDayHours: ['Sunday'] }).closedDayHours).toEqual({});
+  });
   it('defaults every field when the doc is entirely undefined', () => {
     expect(mergeBusinessSettings(undefined)).toEqual(DEFAULT_BUSINESS_SETTINGS);
   });
