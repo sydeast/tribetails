@@ -25,10 +25,15 @@ beforeEach(() => {
   (writeAuditEntry as any).mockClear();
 });
 
-function req(data: unknown, uid: string | null = 'kin1', admin = false): CallableRequest<unknown> {
+function req(
+  data: unknown,
+  uid: string | null = 'kin1',
+  admin = false,
+  token?: Record<string, unknown>,
+): CallableRequest<unknown> {
   return {
     data,
-    auth: uid ? ({ uid, token: (admin ? { admin: true } : {}) as any } as any) : undefined,
+    auth: uid ? ({ uid, token: (token ?? (admin ? { admin: true } : {})) as any } as any) : undefined,
     rawRequest: {} as any, instanceIdToken: undefined, acceptsStreaming: false,
   } as unknown as CallableRequest<unknown>;
 }
@@ -40,6 +45,7 @@ function seed() {
       'notifications/n2': { recipientUid: 'kin1', key: 'invoice.reminder' },
       'notifications/n3': { recipientUid: 'other', key: 'invoice.overdue' },
       'notifications/n4': { key: 'no-recipient' },
+      'notifications/n5': { recipientUid: 'admin1', key: 'kincare.requested' },
     },
   });
 }
@@ -56,11 +62,31 @@ describe('archiveNotification (single) happy path', () => {
     expect(w?.data.archivedByUid).toBe('kin1');
   });
 
-  it('admin may archive any recipients notification', async () => {
+  // #1837: `archivedAt` sits on the doc the recipient's own list reads, so no
+  // role may set it on somebody else's notification.
+  it('an admin cannot archive another recipients notification (archived 0, no write)', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await archiveNotificationHandler(req({ id: 'n3' }, 'admin1', true));
+    expect(res.archived).toBe(0);
+    expect(ctx.writes).toEqual([]);
+  });
+  it('an Auntie cannot archive another recipients notification (archived 0, no write)', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await archiveNotificationHandler(req({ id: 'n1' }, 'auntie1', false, { staffRole: 'auntie' }));
+    expect(res.archived).toBe(0);
+    expect(ctx.writes).toEqual([]);
+  });
+  it('an admin archives a notification addressed to them, and the audit line names them as staff', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await archiveNotificationHandler(req({ id: 'n5' }, 'admin1', true));
     expect(res.archived).toBe(1);
+    expect(ctx.writes.map((w) => w.path)).toEqual(['notifications/n5']);
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ actorRole: 'AUNTIE', actorUid: 'admin1' }),
+    );
   });
 
   it('writes a NOTIFICATIONS_ARCHIVE audit entry', async () => {
@@ -133,11 +159,21 @@ describe('bulkArchiveNotifications happy path', () => {
     expect(ctx.writes.find((w) => w.path === 'notifications/n3')).toBeUndefined();
   });
 
-  it('admin may archive any recipients notification', async () => {
+  it('an admin archives only their own rows out of a mixed selection', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await bulkArchiveNotificationsHandler(req({ ids: ['n1', 'n3'] }, 'admin1', true));
-    expect(res.archived).toBe(2);
+    const res = await bulkArchiveNotificationsHandler(req({ ids: ['n1', 'n3', 'n5'] }, 'admin1', true));
+    expect(res.archived).toBe(1);
+    expect(ctx.writes.map((w) => w.path)).toEqual(['notifications/n5']);
+  });
+  it('an Auntie archives nothing that is not addressed to her', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkArchiveNotificationsHandler(
+      req({ ids: ['n1', 'n3', 'n5'] }, 'auntie1', false, { staffRole: 'auntie' }),
+    );
+    expect(res.archived).toBe(0);
+    expect(ctx.writes).toEqual([]);
   });
 
   it('skips missing ids and docs with no recipientUid', async () => {
@@ -197,11 +233,26 @@ describe('unarchiveNotification (single) happy path', () => {
     const w = ctx.writes.find((w) => w.path === 'notifications/n1');
     expect(w?.data).not.toHaveProperty('archivedByUid');
   });
-  it('admin may restore any recipients notification', async () => {
+  it('an admin cannot restore another recipients notification (unarchived 0, no write)', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await unarchiveNotificationHandler(req({ id: 'n3' }, 'admin1', true));
+    expect(res.unarchived).toBe(0);
+    expect(ctx.writes).toEqual([]);
+  });
+  it('an Auntie cannot restore another recipients notification (unarchived 0, no write)', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await unarchiveNotificationHandler(req({ id: 'n1' }, 'auntie1', false, { staffRole: 'auntie' }));
+    expect(res.unarchived).toBe(0);
+    expect(ctx.writes).toEqual([]);
+  });
+  it('an admin restores a notification addressed to them', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await unarchiveNotificationHandler(req({ id: 'n5' }, 'admin1', true));
     expect(res.unarchived).toBe(1);
+    expect(ctx.writes.map((w) => w.path)).toEqual(['notifications/n5']);
   });
   it('writes a NOTIFICATIONS_UNARCHIVE audit entry with an explicit SUCCESS status', async () => {
     const ctx = seed();
@@ -305,11 +356,21 @@ describe('bulkUnarchiveNotifications happy path', () => {
     expect(res.unarchived).toBe(1);
     expect(ctx.writes.find((w) => w.path === 'notifications/n3')).toBeUndefined();
   });
-  it('admin may restore any recipients notification', async () => {
+  it('an admin restores only their own rows out of a mixed selection', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await bulkUnarchiveNotificationsHandler(req({ ids: ['n1', 'n3'] }, 'admin1', true));
-    expect(res.unarchived).toBe(2);
+    const res = await bulkUnarchiveNotificationsHandler(req({ ids: ['n1', 'n3', 'n5'] }, 'admin1', true));
+    expect(res.unarchived).toBe(1);
+    expect(ctx.writes.map((w) => w.path)).toEqual(['notifications/n5']);
+  });
+  it('an Auntie restores nothing that is not addressed to her', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await bulkUnarchiveNotificationsHandler(
+      req({ ids: ['n1', 'n3', 'n5'] }, 'auntie1', false, { staffRole: 'auntie' }),
+    );
+    expect(res.unarchived).toBe(0);
+    expect(ctx.writes).toEqual([]);
   });
   it('skips missing ids and docs with no recipientUid, and reports the real number', async () => {
     const ctx = seed();

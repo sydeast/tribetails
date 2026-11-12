@@ -28,9 +28,14 @@ import { usingFixtureAdmin } from '../support/commands';
  * them again in `after`, so a later run of this spec (or another spec file
  * later in the same `cypress open` session) sees the shared seed unchanged.
  *
+ * ADDRESSED TO THE FIXTURE ADMIN (#1837). The screen lists only the signed-in
+ * staff member's own notices (`recipientUid == uid`), so both rows are written
+ * with `adminUidFields: ['recipientUid']`, and the last test seeds one row
+ * addressed to a household to prove it stays off this screen.
+ *
  * UI-ONLY, per the 2026-09-01 operator ruling: no callable is stubbed here
  * because none of these three assertions needs one. Reading the feed is a
- * live Firestore listener (`NOTIFICATIONS_QUERY`), and expanding a card,
+ * live Firestore listener (`notificationsQueryFor`), and expanding a card,
  * checking which buttons render, and reading a row's own class are all pure
  * client state and CSS.
  */
@@ -79,6 +84,24 @@ const CONFIRMED_DOC = {
   createdAt: new Date(Date.now() - 60_000).toISOString(),
 };
 
+/**
+ * #1837: a notice addressed to a household, not to the admin. It must never be
+ * drawn on the admin's Notifications screen. `recipientUid` is a household
+ * account's uid, deliberately not the fixture admin's.
+ */
+const HOUSEHOLD_ID = 'e2e-notif-household';
+const HOUSEHOLD_DOC = {
+  key: 'kincare.auntie.arrived',
+  category: 'booking',
+  recipientUid: 'e2e-household-account',
+  title: 'Your Auntie has arrived',
+  description: 'Addressed to the household.',
+  actorName: 'Auntie',
+  targetType: 'booking',
+  targetId: 'e2e-notif-visit-1',
+  data: { kinfolkId: 'e2e-kf-1' },
+  createdAt: new Date(Date.now() - 30_000).toISOString(),
+};
 describe('notifications', () => {
   // One `before`, not two: `usingFixtureAdmin()` is read synchronously and
   // `this.skip()` on a deployed-host run must stop the seeding hook too
@@ -92,11 +115,19 @@ describe('notifications', () => {
       id: PENDING_ID,
       doc: PENDING_DOC,
       timestampFields: ['createdAt'],
+      adminUidFields: ['recipientUid'],
     });
     cy.task('upsertDoc', {
       collection: 'notifications',
       id: CONFIRMED_ID,
       doc: CONFIRMED_DOC,
+      timestampFields: ['createdAt'],
+      adminUidFields: ['recipientUid'],
+    });
+    cy.task('upsertDoc', {
+      collection: 'notifications',
+      id: HOUSEHOLD_ID,
+      doc: HOUSEHOLD_DOC,
       timestampFields: ['createdAt'],
     });
   });
@@ -105,6 +136,7 @@ describe('notifications', () => {
     if (!usingFixtureAdmin()) return;
     cy.task('deleteDoc', { collection: 'notifications', id: PENDING_ID });
     cy.task('deleteDoc', { collection: 'notifications', id: CONFIRMED_ID });
+    cy.task('deleteDoc', { collection: 'notifications', id: HOUSEHOLD_ID });
   });
 
   // The support file's global afterEach reads and asserts on `console.error`
@@ -165,5 +197,16 @@ describe('notifications', () => {
         cy.contains('button', 'Mark read').should('exist');
         cy.contains('button', 'Mark unread').should('not.exist');
       });
+  });
+
+  it('#1837 lists the notices addressed to the signed-in admin and none addressed to a household', () => {
+    cy.signIn();
+    cy.visit('/notifications');
+    // The admin's own rows are drawn, so the absence below is not an empty or
+    // still-loading list.
+    cy.contains('.notif-row', 'KinCare visit requested').should('exist');
+    cy.contains('.notif-row', 'KinCare booking confirmed').should('exist');
+    cy.contains('.notif-row', 'Your Auntie has arrived').should('not.exist');
+    cy.contains('Addressed to the household.').should('not.exist');
   });
 });
