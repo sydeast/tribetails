@@ -418,6 +418,13 @@ fun TemplateBankBody(
                     templateRepo.previewEmailTemplate(req.subject, req.headline, req.content, req.catalogKey)
                 },
                 previewCatalogKey = previewCatalogKey(current.templateId, bindings),
+                channelWording = {
+                    TemplateChannelWording(
+                        templateId = current.templateId.takeIf { !creating && it.isNotBlank() },
+                        load = templateRepo::getTemplateChannels,
+                        save = templateRepo::saveTemplateChannels,
+                    )
+                },
             )
             return
         }
@@ -456,6 +463,13 @@ fun TemplateBankBody(
                             }
                         }
                 }
+            },
+            channelWording = {
+                TemplateChannelWording(
+                    templateId = current.templateId.takeIf { !creating && it.isNotBlank() },
+                    load = templateRepo::getTemplateChannels,
+                    save = templateRepo::saveTemplateChannels,
+                )
             },
         )
         return
@@ -644,6 +658,14 @@ fun TemplateBankBody(
                 templateRepo.previewEmailTemplate(req.subject, req.headline, req.content, req.catalogKey)
             },
             previewCatalogKey = previewCatalogKey(current.templateId, bindings),
+            channelWording = {
+                TemplateChannelWording(
+                    templateId = current.templateId.takeIf { it.isNotBlank() },
+                    load = templateRepo::getTemplateChannels,
+                    save = templateRepo::saveTemplateChannels,
+                    readOnly = true,
+                )
+            },
         )
     }
 }
@@ -857,6 +879,8 @@ private fun TemplateViewOverlay(
     onEdit: () -> Unit,
     loadPreview: suspend (EmailPreviewRequest) -> Result<TemplateRepository.EmailPreview>,
     previewCatalogKey: String,
+    /** #1935: the text-message and push wording, read-only, under the email. */
+    channelWording: @Composable () -> Unit = {},
 ) {
     AuntieDialog(
         visible = true,
@@ -923,6 +947,7 @@ private fun TemplateViewOverlay(
                 )
             }
         }
+        channelWording()
     }
 }
 
@@ -1067,6 +1092,8 @@ private fun TemplateEditorScreen(
     onDismissError: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (TemplateRepository.EmailTemplate) -> Unit,
+    /** #1935: the text-message and push wording, drawn under the email. */
+    channelWording: @Composable () -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     // #953 review fix: rotation (which recreates the Activity) reopens this
@@ -1182,6 +1209,7 @@ private fun TemplateEditorScreen(
         // screen and the mono caps name each field.
         GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(CHANNEL_EMAIL, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                 // Only complain once the operator has started typing. An empty
                 // field on a page that just opened is not a mistake yet.
                 if (keyError != null && templateId.isNotBlank()) {
@@ -1462,6 +1490,7 @@ private fun TemplateEditorScreen(
                 }
             }
         }
+        channelWording()
     }
 }
 

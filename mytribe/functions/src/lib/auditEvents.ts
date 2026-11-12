@@ -520,6 +520,11 @@ export const AUDIT_EVENTS = {
   // portals included. The payload carries the household, the error code and the
   // refusal message with any phone-shaped digits masked; never a name or phone.
   EMERGENCY_CONTACT_SAVE_REFUSED: 'EMERGENCY_CONTACT_SAVE_REFUSED',
+
+  // #1935: an admin changed what a notification says by text message or by
+  // push (`saveTemplateChannels`). The payload names the template and which
+  // channels changed, never the wording itself.
+  ADMIN_TEMPLATE_WORDING_UPDATED: 'ADMIN_TEMPLATE_WORDING_UPDATED',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];

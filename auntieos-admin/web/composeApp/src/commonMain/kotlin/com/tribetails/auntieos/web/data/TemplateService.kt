@@ -202,6 +202,33 @@ class TemplateService {
         }
     }
 
+    /**
+     * #1935: what [templateId] says by text message and by push, with whether its
+     * notification sends each one. Owner-only on the server.
+     */
+    suspend fun getTemplateChannels(templateId: String): WriteResult<TemplateChannels> {
+        val payload = buildJsonObject { put("templateId", JsonPrimitive(templateId)) }
+        return channelsReply(platformInvokeCallable("getTemplateChannels", json.encodeToString(JsonObject.serializer(), payload)))
+    }
+
+    /**
+     * #1935: save one channel's wording, or both. A null channel is not sent, so
+     * saving the text message never touches the push notification. A refusal
+     * comes back as the Err with its `details`; read it with [wordingFieldErrors].
+     */
+    suspend fun saveTemplateChannels(
+        templateId: String,
+        smsText: String?,
+        push: PushWording?,
+    ): WriteResult<TemplateChannels> =
+        channelsReply(platformInvokeCallable("saveTemplateChannels", saveTemplateChannelsPayload(templateId, smsText, push)))
+
+    private fun channelsReply(r: WriteResult<String>): WriteResult<TemplateChannels> = when (r) {
+        is WriteResult.Err -> r
+        is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeTemplateChannels(r.value)) }
+            .getOrElse { WriteResult.Err(CALLABLE_FALLBACK_TEXT) }
+    }
+
     private fun decodeTemplate(o: JsonObject): EmailTemplate = EmailTemplate(
         templateId = o["templateId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         subject = o["subject"]?.jsonPrimitive?.contentOrNull.orEmpty(),
@@ -312,3 +339,108 @@ internal fun keysAwaitingImport(rows: List<CatalogKeyRow>, bankIds: Set<String>,
             resolvedTemplateMissing(it, bankIds, bankLoaded)
     }.map { it.key }
 
+// ── #1935: a template's text message and push notification wording ──────────
+
+/** What a template's notification says by text message. */
+data class TextMessageWording(
+    /** False when the notification is never sent by text message: nothing to read or add. */
+    val supported: Boolean,
+    /** False with [supported] means "not set, can be added". */
+    val set: Boolean,
+    val text: String,
+    val maxLength: Int,
+)
+
+/** What a template's notification says as a push notification. */
+data class PushNotificationWording(
+    val supported: Boolean,
+    val set: Boolean,
+    val title: String,
+    val body: String,
+    val titleMaxLength: Int,
+    val bodyMaxLength: Int,
+)
+
+/** The `getTemplateChannels` / `saveTemplateChannels` response. */
+data class TemplateChannels(
+    /** The notification that sends this template, in words. Null when none does. */
+    val notificationLabel: String?,
+    /** The `{{field}}` names that notification fills in. */
+    val fields: List<String>,
+    val sms: TextMessageWording,
+    val push: PushNotificationWording,
+)
+
+/** The push half of a save. */
+data class PushWording(val title: String, val body: String)
+
+/** The `details.reason` of a refused wording save. */
+const val WORDING_REFUSAL_REASON = "template-wording-refused"
+
+/** The `fieldErrors` keys a refused save names. */
+const val WORDING_FIELD_TEXT = "smsText"
+const val WORDING_FIELD_PUSH_TITLE = "pushTitle"
+const val WORDING_FIELD_PUSH_BODY = "pushBody"
+
+/**
+ * Pure decode of the channels response. A missing channel reads as not
+ * supported, and a missing limit as 0, which the editor treats as "no limit
+ * known" and leaves to the server. Throws on malformed JSON.
+ */
+internal fun decodeTemplateChannels(body: String): TemplateChannels {
+    val obj = rowJson.parseToJsonElement(body).jsonObject
+    fun JsonObject?.str(k: String) = (this?.get(k) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+    fun JsonObject?.bool(k: String) = (this?.get(k) as? JsonPrimitive)?.booleanOrNull ?: false
+    fun JsonObject?.int(k: String) = (this?.get(k) as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
+    val sms = obj["sms"] as? JsonObject
+    val push = obj["push"] as? JsonObject
+    return TemplateChannels(
+        notificationLabel = obj.str("notificationLabel")?.takeIf { it.isNotBlank() },
+        fields = (obj["fields"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty(),
+        sms = TextMessageWording(
+            supported = sms.bool("supported"),
+            set = sms.bool("set"),
+            text = sms.str("text").orEmpty(),
+            maxLength = sms.int("maxLength"),
+        ),
+        push = PushNotificationWording(
+            supported = push.bool("supported"),
+            set = push.bool("set"),
+            title = push.str("title").orEmpty(),
+            body = push.str("body").orEmpty(),
+            titleMaxLength = push.int("titleMaxLength"),
+            bodyMaxLength = push.int("bodyMaxLength"),
+        ),
+    )
+}
+
+/** The `saveTemplateChannels` request. Only the channel being saved is in it. */
+internal fun saveTemplateChannelsPayload(templateId: String, smsText: String?, push: PushWording?): String =
+    rowJson.encodeToString(
+        JsonObject.serializer(),
+        buildJsonObject {
+            put("templateId", JsonPrimitive(templateId))
+            if (smsText != null) put("sms", buildJsonObject { put("text", JsonPrimitive(smsText)) })
+            if (push != null) {
+                put("push", buildJsonObject {
+                    put("title", JsonPrimitive(push.title))
+                    put("body", JsonPrimitive(push.body))
+                })
+            }
+        },
+    )
+
+/**
+ * The sentence the server wrote for each field it refused, keyed by
+ * [WORDING_FIELD_TEXT], [WORDING_FIELD_PUSH_TITLE], [WORDING_FIELD_PUSH_BODY].
+ * Empty for any other failure, so the caller shows that one as a single line.
+ */
+internal fun wordingFieldErrors(err: WriteResult.Err): Map<String, String> {
+    val details = err.details ?: return emptyMap()
+    val obj = runCatchingCancellable { rowJson.parseToJsonElement(details) as? JsonObject }.getOrNull() ?: return emptyMap()
+    if ((obj["reason"] as? JsonPrimitive)?.contentOrNull != WORDING_REFUSAL_REASON) return emptyMap()
+    val fields = obj["fieldErrors"] as? JsonObject ?: return emptyMap()
+    return fields.mapNotNull { (k, v) ->
+        (v as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { k to it }
+    }.toMap()
+}

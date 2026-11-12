@@ -60,6 +60,8 @@ object JvmFirestoreFixtures {
     var callableErrors: Map<String, String> = emptyMap()
     /** #1145: the `details.code` a [callableErrors] refusal carries, by callable name. */
     var callableErrorCodes: Map<String, String> = emptyMap()
+    /** #1935: the `details` JSON a [callableErrors] refusal carries, by callable name. */
+    var callableErrorDetails: Map<String, String> = emptyMap()
     /** #867 re-review: the admin's `broadcasts` rows, flat JSON with `_id`, for [platformBroadcastRowsForCurrentAdmin]. */
     var broadcastRows: List<JsonObject>? = null
     var incomingKinCares: List<KinCareVisit>? = null
@@ -118,7 +120,7 @@ object JvmFirestoreFixtures {
         provideUserProfile = false; userProfile = null
         voicemails = null; calls = null; sms = null; emails = null
         activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
-        callableResponses = emptyMap(); callableErrors = emptyMap(); callableErrorCodes = emptyMap(); broadcastRows = null; incomingKinCares = null
+        callableResponses = emptyMap(); callableErrors = emptyMap(); callableErrorCodes = emptyMap(); callableErrorDetails = emptyMap(); broadcastRows = null; incomingKinCares = null
         arrivalRuleRaw = null
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null; callablePayloads.clear()
@@ -847,7 +849,9 @@ private suspend fun rawInvokeCallable(name: String, payloadJson: String): WriteR
     JvmFirestoreFixtures.lastCallableName = name
     JvmFirestoreFixtures.lastCallablePayloadJson = payloadJson
     JvmFirestoreFixtures.callablePayloads += name to payloadJson
-    JvmFirestoreFixtures.callableErrors[name]?.let { return WriteResult.Err(it, JvmFirestoreFixtures.callableErrorCodes[name]) }
+    JvmFirestoreFixtures.callableErrors[name]?.let {
+        return WriteResult.Err(it, JvmFirestoreFixtures.callableErrorCodes[name], JvmFirestoreFixtures.callableErrorDetails[name])
+    }
     return JvmFirestoreFixtures.callableResponses[name]?.let { WriteResult.Ok(it) }
         ?: JvmFirestoreRest.callable(name, payloadJson)
 }
