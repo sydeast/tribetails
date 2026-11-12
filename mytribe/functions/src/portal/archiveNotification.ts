@@ -19,15 +19,17 @@ import { staffBypass } from '../lib/staffGate';
  * inbox into active vs archived without deleting anything.
  *
  * Security mirrors markNotificationRead / bulkMarkNotificationsRead exactly:
- * a caller may only archive notifications whose `recipientUid` is the caller;
- * admins (admin claim or role) may archive any. Missing ids, docs with no
- * `recipientUid`, and other-recipient docs are skipped (not counted, no write),
+ * a caller may only archive notifications whose `recipientUid` is the caller,
+ * whatever role the caller holds (#1837). `archivedAt` lives on the one doc the
+ * recipient's own list reads, so a staff exception here would remove a row from
+ * a Kinfolk's list. Missing ids, docs with no `recipientUid`, and
+ * other-recipient docs are skipped (not counted, no write),
  * so a partially-stale client list still archives everything it legitimately
  * can.
  */
 
-function isAdminReq(req: CallableRequest<unknown>, functionName: string): boolean {
-  // #944: allowlisted - her own inbox.
+/** The audit line's actor label only. It never widens the recipient check. */
+function actorIsStaffReq(req: CallableRequest<unknown>, functionName: string): boolean {
   return staffBypass(req.auth, functionName);
 }
 
@@ -42,7 +44,7 @@ export async function archiveNotificationHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = isAdminReq(req, 'archiveNotification');
+  const actorIsStaff = actorIsStaffReq(req, 'archiveNotification');
 
   let args: z.infer<typeof ArchiveArgs>;
   try {
@@ -60,7 +62,7 @@ export async function archiveNotificationHandler(
   const ref = db().collection('notifications').doc(args.id);
   const snap = await ref.get();
   const data = snap.exists ? (snap.data() as { recipientUid?: string; key?: string } | undefined) : undefined;
-  if (data?.recipientUid && (isAdmin || data.recipientUid === uid)) {
+  if (data?.recipientUid && data.recipientUid === uid) {
     await ref.set({ archivedAt: FieldValue.serverTimestamp(), archivedByUid: uid }, { merge: true });
     archived = 1;
   }
@@ -69,7 +71,7 @@ export async function archiveNotificationHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATIONS_ARCHIVE,
     severity: 'info',
-    actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
+    actorRole: actorIsStaff ? 'AUNTIE' : 'PRIMARY',
     actorUid: uid,
     targetUid: args.id,
     targetCollection: 'notifications',
@@ -112,7 +114,7 @@ export async function bulkArchiveNotificationsHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = isAdminReq(req, 'bulkArchiveNotifications');
+  const actorIsStaff = actorIsStaffReq(req, 'bulkArchiveNotifications');
 
   let args: z.infer<typeof BulkArchiveArgs>;
   try {
@@ -135,7 +137,7 @@ export async function bulkArchiveNotificationsHandler(
     if (!snap.exists) continue;
     const data = snap.data() as { recipientUid?: string } | undefined;
     if (!data?.recipientUid) continue;
-    if (!isAdmin && data.recipientUid !== uid) continue;
+    if (data.recipientUid !== uid) continue;
 
     await ref.set({ archivedAt: FieldValue.serverTimestamp(), archivedByUid: uid }, { merge: true });
     archived += 1;
@@ -145,7 +147,7 @@ export async function bulkArchiveNotificationsHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATIONS_ARCHIVE,
     severity: 'info',
-    actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
+    actorRole: actorIsStaff ? 'AUNTIE' : 'PRIMARY',
     actorUid: uid,
     targetCollection: 'notifications',
     description: `Bulk archived ${archived} of ${requestedIds.length} notification(s)`,
@@ -222,7 +224,7 @@ export async function unarchiveNotificationHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = isAdminReq(req, 'unarchiveNotification');
+  const actorIsStaff = actorIsStaffReq(req, 'unarchiveNotification');
 
   let args: z.infer<typeof UnarchiveArgs>;
   try {
@@ -242,7 +244,7 @@ export async function unarchiveNotificationHandler(
   const data = snap.exists
     ? (snap.data() as { recipientUid?: string; key?: string } | undefined)
     : undefined;
-  if (data?.recipientUid && (isAdmin || data.recipientUid === uid)) {
+  if (data?.recipientUid && data.recipientUid === uid) {
     await ref.set({ archivedAt: null }, { merge: true });
     unarchived = 1;
   }
@@ -251,7 +253,7 @@ export async function unarchiveNotificationHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATIONS_UNARCHIVE,
     severity: 'info',
-    actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
+    actorRole: actorIsStaff ? 'AUNTIE' : 'PRIMARY',
     actorUid: uid,
     targetUid: args.id,
     targetCollection: 'notifications',
@@ -293,7 +295,7 @@ export async function bulkUnarchiveNotificationsHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = isAdminReq(req, 'bulkUnarchiveNotifications');
+  const actorIsStaff = actorIsStaffReq(req, 'bulkUnarchiveNotifications');
 
   let args: z.infer<typeof BulkUnarchiveArgs>;
   try {
@@ -316,7 +318,7 @@ export async function bulkUnarchiveNotificationsHandler(
     if (!snap.exists) continue;
     const data = snap.data() as { recipientUid?: string } | undefined;
     if (!data?.recipientUid) continue;
-    if (!isAdmin && data.recipientUid !== uid) continue;
+    if (data.recipientUid !== uid) continue;
 
     await ref.set({ archivedAt: null }, { merge: true });
     unarchived += 1;
@@ -326,7 +328,7 @@ export async function bulkUnarchiveNotificationsHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATIONS_UNARCHIVE,
     severity: 'info',
-    actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
+    actorRole: actorIsStaff ? 'AUNTIE' : 'PRIMARY',
     actorUid: uid,
     targetCollection: 'notifications',
     description: `Bulk restored ${unarchived} of ${requestedIds.length} notification(s)`,

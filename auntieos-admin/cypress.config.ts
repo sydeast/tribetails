@@ -1,5 +1,5 @@
 import { defineConfig } from 'cypress';
-import seed, { setPassword, put, upsert, remove } from './e2e/seed';
+import seed, { setPassword, put, upsert, remove, fixtureAdminUid } from './e2e/seed';
 import { ADMIN } from './e2e/fixtures/accounts';
 
 /**
@@ -160,19 +160,30 @@ export default defineConfig({
          * (`lib/time.ts`'s `tsToDate` calls `.toDate()` on it) throws on that
          * shape rather than rendering it. Naming the field here is what turns
          * it back into a real `Date` before `upsert` encodes it.
+         *
+         * `adminUidFields` names properties to fill with the fixture admin's
+         * auth uid, which the emulator mints and a spec cannot know. A
+         * `notifications` row needs it as `recipientUid` (#1837): the screen
+         * lists only the signed-in staff member's own notices.
          */
         async upsertDoc({
           collection,
           id,
           doc,
           timestampFields,
+          adminUidFields,
         }: {
           collection: string;
           id: string;
           doc: Record<string, unknown>;
           timestampFields?: string[];
+          adminUidFields?: string[];
         }) {
           const prepared = { ...doc };
+          if (adminUidFields && adminUidFields.length > 0) {
+            const uid = await fixtureAdminUid();
+            for (const field of adminUidFields) prepared[field] = uid;
+          }
           for (const field of timestampFields ?? []) {
             if (field in prepared) prepared[field] = new Date(String(prepared[field]));
           }
