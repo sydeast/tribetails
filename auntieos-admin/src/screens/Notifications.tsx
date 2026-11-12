@@ -1,7 +1,7 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useMemo, useState } from 'react';
 import {
-  NOTIFICATIONS_QUERY,
+  notificationsQueryFor,
   markNotificationRead,
   markNotificationUnread,
   isRead,
@@ -19,6 +19,7 @@ import { type BatchBookingAction } from '../api/bookingsWrite';
 import { approveBookingRequest, declineBookingRequest } from '../api/bookingRequests';
 import { kinfolkDisplayName } from '../api/directory';
 import { useCollection } from '../lib/firestore';
+import { useAuth } from '../lib/auth';
 import {
   NOTIF_UNREAD_FILTER,
   actionableNotificationCount,
@@ -120,8 +121,8 @@ export interface NotificationsProps {
  * a route would throw the feed away to show one. The entities themselves keep
  * their own screens, which is what the Open button is for.
  *
- * TWO LISTENERS. The feed itself (`NOTIFICATIONS_QUERY`, createdAt desc, capped
- * 200) plus the `kinfolk` directory (`KINFOLK_QUERY`), because notification docs
+ * TWO LISTENERS. The feed itself (`notificationsQueryFor(uid)`: the signed-in
+ * staff member's own notices, createdAt desc, capped 200) plus the `kinfolk` directory (`KINFOLK_QUERY`), because notification docs
  * carry a household ID and almost never a household NAME (see
  * lib/notificationContext.ts for the full accounting of what the dispatcher
  * actually writes). The directory is already streamed by Directory and
@@ -161,7 +162,10 @@ export interface NotificationsProps {
  * list than the one on screen.
  */
 export function Notifications({ onNavigate }: NotificationsProps = {}) {
-  const rows = useCollection<NotificationEntry>(NOTIFICATIONS_QUERY);
+  // #1837: only the signed-in staff member's own notices. Never a household's.
+  const auth = useAuth();
+  const ownUid = auth.status === 'signedIn' ? auth.user.uid : '';
+  const rows = useCollection<NotificationEntry>(notificationsQueryFor(ownUid));
   const households = useKinfolkRoster();
 
   // Issue #707: WAS a Set<string>, so any write for a row disabled all six of

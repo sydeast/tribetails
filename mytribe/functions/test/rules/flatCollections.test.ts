@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, it } from 'vitest';
 import { assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { getEnv, cleanup, shutdown, asUser } from './setup';
+import { getEnv, cleanup, shutdown, asUser, asUnauth } from './setup';
 
 /** An AuntieOS operator: the `admin: true` custom claim isAuntie() keys on. */
 function asAuntie(env: Awaited<ReturnType<typeof getEnv>>) {
@@ -480,7 +480,7 @@ describe('rules: flat top-level collections', () => {
     await assertFails(fs.doc('notificationDispatch/n1/channels/email').get());
   });
 
-  it('notifications: a non-recipient is denied, the operator is not, nobody writes', async () => {
+  it('notifications: a non-recipient is denied, the operator reads only the delivery record, nobody writes', async () => {
     const env = await getEnv();
     await seedNotification('u-recipient');
     await assertFails(asUser(env, 'u-other').firestore().doc('notifications/n1').get());
@@ -488,7 +488,9 @@ describe('rules: flat top-level collections', () => {
     await assertFails(
       asUser(env, 'u-other').firestore().doc('notificationDispatch/n1/channels/email').get(),
     );
-    await assertSucceeds(asAuntie(env).firestore().doc('notifications/n1').get());
+    // #1837: the operator no longer reads a notification addressed to someone
+    // else. The delivery record keeps its owner read; it holds no read state.
+    await assertFails(asAuntie(env).firestore().doc('notifications/n1').get());
     await assertSucceeds(asAuntie(env).firestore().doc('notificationDispatch/n1').get());
     await assertFails(
       asUser(env, 'u-recipient').firestore().doc('notifications/n1').update({ read: true }),
@@ -504,6 +506,101 @@ describe('rules: flat top-level collections', () => {
     );
   });
 
+  // ── #1837: a notification is read by its recipient and by nobody else ─────
+  // The owner held a whole-collection read, and the admin console listed every
+  // household's notices on its own Notifications screen. These pin the gate for
+  // each role, for a single doc and for the two list shapes a client can send.
+  async function seedTwoRecipients(): Promise<void> {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await db.doc('notifications/house-a').set({
+        recipientUid: 'kin-a', key: 'kincare.auntie.arrived', createdAt: new Date(1_000),
+      });
+      await db.doc('notifications/house-b').set({
+        recipientUid: 'kin-b', key: 'kintale.published', createdAt: new Date(2_000),
+      });
+      await db.doc('notifications/staff').set({
+        recipientUid: 'staff-1', key: 'kincare.requested', createdAt: new Date(3_000),
+      });
+    });
+  }
+  it('notifications: the owner cannot read a households notification, only their own', async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    const fs = asAuntie(env).firestore();
+    await assertFails(fs.doc('notifications/house-a').get());
+    await assertFails(fs.doc('notifications/house-b').get());
+    await assertSucceeds(fs.doc('notifications/staff').get());
+  });
+  it('notifications: a caretaker cannot read a households or the owners notification', async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    const fs = env.authenticatedContext('auntie-1', { staffRole: 'auntie' }).firestore();
+    await assertFails(fs.doc('notifications/house-a').get());
+    await assertFails(fs.doc('notifications/staff').get());
+  });
+  it('notifications: a Kinfolk cannot read another households or the owners notification', async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    const fs = asUser(env, 'kin-a').firestore();
+    await assertSucceeds(fs.doc('notifications/house-a').get());
+    await assertFails(fs.doc('notifications/house-b').get());
+    await assertFails(fs.doc('notifications/staff').get());
+  });
+  it('notifications: a signed-out caller reads nothing', async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    const fs = asUnauth(env).firestore();
+    await assertFails(fs.doc('notifications/house-a').get());
+    await assertFails(fs.collection('notifications').get());
+    await assertFails(fs.collection('notifications').where('recipientUid', '==', 'kin-a').get());
+  });
+  it('notifications: the owners own-recipient list is allowed and returns only their rows', async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    const fs = asAuntie(env).firestore();
+    // The admin web query: recipientUid == own uid, newest first, capped.
+    const snap = await assertSucceeds(
+      fs.collection('notifications')
+        .where('recipientUid', '==', 'staff-1')
+        .orderBy('createdAt', 'desc')
+        .limit(200)
+        .get(),
+    );
+    if (snap.docs.map((d) => d.id).join(',') !== 'staff') {
+      throw new Error(`expected only the owners own row, got: ${snap.docs.map((d) => d.id).join(',')}`);
+    }
+  });
+  it('notifications: an unfiltered list is denied for the owner, a caretaker and a Kinfolk', async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    await assertFails(
+      asAuntie(env).firestore().collection('notifications').orderBy('createdAt', 'desc').limit(200).get(),
+    );
+    await assertFails(
+      env.authenticatedContext('auntie-1', { staffRole: 'auntie' }).firestore().collection('notifications').get(),
+    );
+    await assertFails(asUser(env, 'kin-a').firestore().collection('notifications').get());
+  });
+  it('notifications: a list filtered to somebody elses uid is denied for every role', async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    const others = (fs: ReturnType<ReturnType<typeof asUser>['firestore']>) =>
+      fs.collection('notifications').where('recipientUid', '==', 'kin-a').get();
+    await assertFails(others(asAuntie(env).firestore()));
+    await assertFails(others(env.authenticatedContext('auntie-1', { staffRole: 'auntie' }).firestore()));
+    await assertFails(others(asUser(env, 'kin-b').firestore()));
+    await assertSucceeds(others(asUser(env, 'kin-a').firestore()));
+  });
+  it('notifications: no role can write read or archived state from a client', async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    await assertFails(asAuntie(env).firestore().doc('notifications/house-a').update({ readAt: new Date() }));
+    await assertFails(asAuntie(env).firestore().doc('notifications/house-a').update({ archivedAt: new Date() }));
+    await assertFails(asUser(env, 'kin-b').firestore().doc('notifications/house-a').update({ readAt: new Date() }));
+    await assertFails(asUser(env, 'kin-a').firestore().doc('notifications/house-a').update({ archivedAt: new Date() }));
+  });
   /**
    * The LEGACY shape is no longer readable by a client, and that is deliberate.
    *
