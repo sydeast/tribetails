@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.repository.mintApplyCreditIdempotencyKey
 import com.tribetails.auntieos.domain.ApplyCreditForm
 import com.tribetails.auntieos.domain.creditAppliedText
 import com.tribetails.auntieos.domain.parseApplyCreditAmount
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,14 +79,18 @@ class InvoiceApplyCreditController(
         }
         _state.update { it.copy(loading = true, loadError = null) }
         scope.launch {
-            invoiceRepository.getAccountCreditHistory(kinfolkId).fold(
-                onSuccess = { h ->
+            // The balance is read out inside `settled`, so an answer that is not
+            // what it claims to be is a failed read, not a crash.
+            settled {
+                invoiceRepository.getAccountCreditHistory(kinfolkId).map { it.accountBalanceCents }
+            }.fold(
+                onSuccess = { balanceCents ->
                     if (_state.value.kinfolkId == kinfolkId) {
                         _state.update {
                             it.copy(
                                 loading = false,
                                 visible = true,
-                                availableCents = h.accountBalanceCents.coerceAtLeast(0L),
+                                availableCents = balanceCents.coerceAtLeast(0L),
                             )
                         }
                     }
@@ -140,7 +145,7 @@ class InvoiceApplyCreditController(
         val key = pendingKey ?: mintKey().also { pendingKey = it }
         _state.update { it.copy(busy = true, fieldError = null) }
         scope.launch {
-            invoiceRepository.applyAccountCredit(s.invoiceId, s.pendingAmountCents, key).fold(
+            settled { invoiceRepository.applyAccountCredit(s.invoiceId, s.pendingAmountCents, key) }.fold(
                 onSuccess = { res ->
                     pendingKey = null
                     _state.update {
@@ -174,6 +179,21 @@ class InvoiceApplyCreditController(
         }
     }
 }
+
+/**
+ * The call's outcome as a real [Result], whatever the call did. A throw from the
+ * call (or from reading its answer) becomes a failure the box can show, so the
+ * invoice screen never falls over because the credit read did. Cancellation is
+ * passed on untouched.
+ */
+private suspend fun <T> settled(call: suspend () -> Result<T>): Result<T> =
+    try {
+        Result.success(call().getOrThrow())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 
 internal fun isApplyCreditPermissionDenied(err: Throwable): Boolean =
     (err as? FirebaseFunctionsException)?.code == FirebaseFunctionsException.Code.PERMISSION_DENIED
