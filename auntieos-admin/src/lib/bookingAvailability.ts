@@ -72,9 +72,13 @@ export function businessHoursKeyForIso(iso: string): string {
 /**
  * What `businessHours[day]` says about one day.
  *
- * `closed` is the documented meaning of a blank or absent entry, which is what
+ * `closed` is the documented meaning of a PRESENT blank entry, which is what
  * `BusinessHoursEditor` writes for a day toggled off and what
- * `businessHoursRows` already renders as "Closed".
+ * `businessHoursRows` renders as "Closed".
+ *
+ * `unknown` (#1978) is a day with no entry at all, one nobody has set. The
+ * server reads it the same way (`businessHoursForDayName`, #1424) and fails
+ * open, so this picker does not call such a day closed either.
  *
  * `unreadable` is the legacy/hand-edited value that same editor refuses to
  * coerce (it drops that day to a free-text field with a "Check format" pill).
@@ -86,7 +90,8 @@ export function businessHoursKeyForIso(iso: string): string {
 export type DayHours =
   | { kind: 'open'; startHHmm: string; endHHmm: string }
   | { kind: 'closed' }
-  | { kind: 'unreadable'; raw: string };
+  | { kind: 'unreadable'; raw: string }
+  | { kind: 'unknown' };
 
 /** Matches the "HH:MM-HH:MM" wire format `BusinessHoursEditor` writes. */
 const HOURS_RANGE_RE = /^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/;
@@ -107,6 +112,7 @@ function padHHmm(value: string): string {
  */
 export function businessHoursForDay(hours: Record<string, string>, iso: string): DayHours {
   const key = businessHoursKeyForIso(iso);
+  if (hours[key] === undefined) return { kind: 'unknown' };
   const raw = str(hours[key]).trim();
   if (raw === '') return { kind: 'closed' };
   const match = HOURS_RANGE_RE.exec(raw);
@@ -126,6 +132,8 @@ export function dayHoursLabel(hours: DayHours): string {
       return hours.raw;
     case 'closed':
       return 'Closed';
+    case 'unknown':
+      return 'Not set';
   }
 }
 
@@ -139,7 +147,7 @@ export function dayHoursLabel(hours: DayHours): string {
  */
 export function isWithinBusinessHours(timeHHmm: string, hours: DayHours): boolean {
   if (hours.kind === 'closed') return false;
-  if (hours.kind === 'unreadable') return true;
+  if (hours.kind === 'unreadable' || hours.kind === 'unknown') return true;
   if (!isValidHHmm(timeHHmm)) return true;
   return timeHHmm >= hours.startHHmm && timeHHmm < hours.endHHmm;
 }

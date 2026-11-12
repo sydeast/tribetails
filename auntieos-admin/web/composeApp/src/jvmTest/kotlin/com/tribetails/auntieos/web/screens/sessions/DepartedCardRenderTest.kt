@@ -52,14 +52,19 @@ class DepartedCardRenderTest {
 
     private fun ComposeUiTest.count(text: String) = onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().size
 
+    private fun hoursAgo(hours: Long): String =
+        java.time.Instant.now().minusSeconds(hours * 3600).truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString()
+
     private fun departed(eligible: Boolean) = KinCareSession(
         _id = "s1",
         kinfolkId = "kf1",
         kinfolkName = "Whitfield",
         status = "DEPARTED",
-        startTime = "2026-11-10T16:00:00Z",
-        arrivedAt = "2026-11-10T16:02:00Z",
-        departedAt = "2026-11-10T17:00:00Z",
+        // Relative to now, not a fixed day: a COMPLETED visit is on the board only
+        // until the day after it, and a fixed 2026-11-10 start fell off on Nov 12.
+        startTime = hoursAgo(3),
+        arrivedAt = hoursAgo(3),
+        departedAt = hoursAgo(2),
         autoCompleteEligible = eligible,
     )
 

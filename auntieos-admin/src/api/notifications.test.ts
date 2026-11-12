@@ -9,6 +9,7 @@ import {
   markNotificationUnread,
   bulkMarkNotificationsRead,
   isRead,
+  notificationsQueryFor,
   type NotificationEntry,
 } from './notifications';
 
@@ -51,4 +52,20 @@ describe('notifications api', () => {
 
 
 
+});
+// #1837: the admin feed is the signed-in staff member's own notices.
+describe('notificationsQueryFor', () => {
+  it('filters to the given recipient, newest first, capped at 200', () => {
+    expect(notificationsQueryFor('staff-1')).toEqual({
+      path: 'notifications',
+      order: ['createdAt', 'desc'],
+      max: 200,
+      filters: [['recipientUid', '==', 'staff-1']],
+    });
+  });
+  it('carries the recipient filter for every uid, an empty one included', () => {
+    for (const uid of ['staff-1', 'auntie-7', '']) {
+      expect(notificationsQueryFor(uid).filters).toEqual([['recipientUid', '==', uid]]);
+    }
+  });
 });

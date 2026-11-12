@@ -24,6 +24,11 @@ import {
   sanitizeStoredRules,
   storedMaxGapRefusal,
   packagesFromPatterns,
+  packageNote,
+  typeIntoFields,
+  closeFieldEdits,
+  type FieldDrafts,
+  type PackageFieldParse,
   priceDay,
   pricePackage,
   quoteText,
@@ -211,16 +216,16 @@ describe('buildDayPatterns tiers (issue #694)', () => {
     expect(buildDayPatterns(unpriced, [], 6, '07:00', '22:00')).toEqual([]);
   });
 
-  it('turns the tiers into editable packages carrying the note', () => {
+  it('turns the tiers into editable packages that store no note (#1858)', () => {
     const packages = packagesFromPatterns(DEGENERATE());
     expect(packages.map((p) => p.name)).toEqual(['Lean', 'Balance', 'Premium']);
     expect(packages[0]!.visits).toHaveLength(1);
-    expect(packages[0]!.note).not.toBe('');
+    // The sentence lives on the pattern and is read off the current rules.
+    for (const p of packages) expect(p).not.toHaveProperty('note');
     // Distinct ids, so the operator can delete or edit one without the others.
     expect(new Set(packages.map((p) => p.id)).size).toBe(3);
   });
 });
-
 describe('buildDayPatterns (fill)', () => {
   it('only fills with visit-kind durations, never overnights', () => {
     const patterns = buildDayPatterns(DURATIONS, [], 3, '07:00', '22:00');
@@ -466,5 +471,122 @@ describe('dateRangeRefusal (#1593)', () => {
     expect(dateRangeRefusal('2026-07-01', '2026-07-05')).toBeNull();
     expect(dateRangeRefusal('2026-07-01', '')).toBeNull();
     expect(dateRangeRefusal('', '2026-07-01')).toBeNull();
+  });
+});
+
+describe('packageNote (#1858)', () => {
+  const short = (gap: number) => buildDayPatterns(DURATIONS, [], gap, '11:00', '14:00');
+  const tier = (gap: number) => packagesFromPatterns(short(gap))[0]!;
+  it('reads the sentence off the rules as they are now, not as they were when the tier was built', () => {
+    const built = tier(24);
+    expect(packageNote(built, short(24))).toBe('The 3h day fits inside the 24h max gap, so this tier is one check-in at 12:30 PM.');
+    expect(packageNote(built, short(6))).toBe('The 3h day fits inside the 6h max gap, so this tier is one check-in at 12:30 PM.');
+  });
+  it('is empty once the rules no longer build that tier', () => {
+    // A 2h gap fills the 3h day on purpose; a 15h day under a 6h gap builds three check-ins.
+    expect(packageNote(tier(24), short(2))).toBe('');
+    expect(packageNote(tier(24), buildDayPatterns(DURATIONS, [], 6, '07:00', '22:00'))).toBe('');
+  });
+  it('is empty once the visit is removed, moved or joined by another', () => {
+    const built = tier(6);
+    const only = built.visits[0]!;
+    expect(packageNote({ ...built, visits: [] }, short(6))).toBe('');
+    expect(packageNote({ ...built, visits: [{ ...only, time: only.time + 30 }] }, short(6))).toBe('');
+    expect(packageNote({ ...built, visits: [only, { ...only, id: 'x', time: 800 }] }, short(6))).toBe('');
+  });
+  it('ignores the label, the ids and the order the visits are held in', () => {
+    const built = tier(6);
+    expect(packageNote({ ...built, visits: [{ ...built.visits[0]!, id: 'copy', label: 'Lunch' }] }, short(6))).not.toBe('');
+    const pinned = [
+      { id: 'a', label: 'AM', time: '15:00', durationId: 'd2' },
+      { id: 'b', label: 'PM', time: '12:00', durationId: 'd3' },
+    ];
+    // A reversed day window still explains itself on a tier with several visits.
+    const patterns = buildDayPatterns(DURATIONS, pinned, 6, '14:00', '11:00');
+    const many = packagesFromPatterns(patterns)[0]!;
+    expect(many.visits.length).toBeGreaterThan(1);
+    expect(packageNote({ ...many, visits: [...many.visits].reverse() }, patterns)).toMatch(/7:00 AM to 10:00 PM/);
+  });
+  it('is empty for a tier that met the rules and for an empty package', () => {
+    const met = buildDayPatterns(DURATIONS, [], 3, '07:00', '22:00');
+    expect(packageNote(packagesFromPatterns(met)[0]!, met)).toBe('');
+    expect(packageNote(pkg(), short(6))).toBe('');
+  });
+  it('a stored package loses the sentence it was saved with', () => {
+    const loaded = normalizePackage({ id: 'x', name: 'Balance', note: 'The 2h day fits inside the 24h max gap.' } as Partial<Package>);
+    expect(loaded).not.toHaveProperty('note');
+  });
+});
+describe('typeIntoFields (#2021)', () => {
+  /** Types `text` one key at a time, the way the screen feeds it. */
+  function typeKeys(
+    start: { drafts: FieldDrafts; value: number },
+    key: string,
+    text: string,
+    parse: (t: string) => PackageFieldParse = parseDiscountPct,
+  ): { drafts: FieldDrafts; value: number } {
+    let state = start;
+    for (let i = 1; i <= text.length; i++) {
+      const typed = text.slice(0, i);
+      const parsed = parse(typed);
+      state = typeIntoFields(state.drafts, key, state.value, typed, parsed.ok ? parsed.value : null);
+    }
+    return state;
+  }
+  const EMPTY = { drafts: {} as FieldDrafts, value: 0 };
+  it('prices each good keystroke as it is typed', () => {
+    expect(typeKeys(EMPTY, 'd', '2').value).toBe(2);
+    expect(typeKeys(EMPTY, 'd', '20').value).toBe(20);
+    expect(typeKeys(EMPTY, 'd', '12.5').value).toBe(12.5);
+  });
+  it('150 passes through 1 and 15 and prices at the value held before the edit', () => {
+    const after = typeKeys(EMPTY, 'd', '150');
+    expect(after.value).toBe(0);
+    expect(after.drafts.d).toEqual({ text: '150', before: 0, open: true });
+    expect(typeKeys({ drafts: {}, value: 20 }, 'd', '250').value).toBe(20);
+  });
+  it('takes 100, 0 and blank; refuses 101, a minus and letters', () => {
+    expect(typeKeys({ drafts: {}, value: 20 }, 'd', '100').value).toBe(100);
+    expect(typeKeys({ drafts: {}, value: 20 }, 'd', '0').value).toBe(0);
+    expect(typeIntoFields({}, 'd', 20, '', 0).value).toBe(0);
+    expect(typeKeys({ drafts: {}, value: 20 }, 'd', '101').value).toBe(20);
+    expect(typeKeys({ drafts: {}, value: 20 }, 'd', '-5').value).toBe(20);
+    expect(typeKeys({ drafts: {}, value: 20 }, 'd', 'abc').value).toBe(20);
+    expect(typeKeys({ drafts: {}, value: 20 }, 'd', '15x').value).toBe(20);
+  });
+  it('deleting the bad key prices what is left', () => {
+    const bad = typeKeys(EMPTY, 'd', '150');
+    expect(typeIntoFields(bad.drafts, 'd', bad.value, '15', 15).value).toBe(15);
+  });
+  it('a closed edit is a choice: 20, close, then 200 prices at 20', () => {
+    const chosen = typeKeys(EMPTY, 'd', '20');
+    const closed = { drafts: closeFieldEdits(chosen.drafts), value: chosen.value };
+    expect(closed.drafts.d).toEqual({ text: '20', before: 0, open: false });
+    const again = typeIntoFields(closed.drafts, 'd', closed.value, '200', null);
+    expect(again.value).toBe(20);
+    expect(again.drafts.d).toEqual({ text: '200', before: 20, open: true });
+  });
+  it('without a close the same edit goes on: 20 then 200 prices at the value before the 20', () => {
+    const chosen = typeKeys(EMPTY, 'd', '20');
+    expect(typeIntoFields(chosen.drafts, 'd', chosen.value, '200', null).value).toBe(0);
+  });
+  it('typing in one field closes the edit in every other', () => {
+    const first = typeKeys(EMPTY, 'a:discount', '20');
+    const second = typeIntoFields(first.drafts, 'b:discount', 0, '5', 5);
+    expect(second.drafts['a:discount']!.open).toBe(false);
+    expect(second.drafts['b:discount']!.open).toBe(true);
+    expect(typeIntoFields(second.drafts, 'a:discount', 20, '200', null).value).toBe(20);
+  });
+  it('closing with nothing open hands back the same map', () => {
+    const none: FieldDrafts = {};
+    expect(closeFieldEdits(none)).toBe(none);
+    const closed = closeFieldEdits(typeKeys(EMPTY, 'd', '20').drafts);
+    expect(closeFieldEdits(closed)).toBe(closed);
+  });
+  it('keeps the buffer and the max gap held before the edit the same way', () => {
+    expect(typeKeys({ drafts: {}, value: 2 }, 'b', '12a', parseBufferHours).value).toBe(2);
+    const gap = (t: string): PackageFieldParse => parseMaxGapHours(t);
+    expect(typeKeys({ drafts: {}, value: 6 }, 'g', '12a', gap).value).toBe(6);
+    expect(typeKeys({ drafts: {}, value: 6 }, 'g', '4.5', gap).value).toBe(4.5);
   });
 });

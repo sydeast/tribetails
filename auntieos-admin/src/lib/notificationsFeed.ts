@@ -13,7 +13,7 @@ import { applicableNotificationActions } from './notificationActions';
  * that happen to match today.
  *
  * Both surfaces subscribe through the SAME bounded listener
- * (`NOTIFICATIONS_QUERY` in `api/notifications.ts`, createdAt desc, capped
+ * (`notificationsQueryFor` in `api/notifications.ts`, createdAt desc, capped
  * 200); nothing here re-queries Firestore.
  */
 

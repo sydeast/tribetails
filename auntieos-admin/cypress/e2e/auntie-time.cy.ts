@@ -24,6 +24,19 @@ const OVERDUE_STAMP = Date.now().toString(36);
 const OVERDUE_ID = `e2e-overdue-${OVERDUE_STAMP}`;
 const OVERDUE_NAME = `E2E Overdue Household ${OVERDUE_STAMP}`;
 
+/**
+ * #2036: the Archive's FROM and TO are whole days on the BUSINESS's calendar.
+ * The fixture has no `timeZone` in business settings, so the zone is the
+ * server default, America/Chicago, which is UTC-6 in January. Two visits either
+ * side of midnight after Jan 14: 11:30 PM that night, and 12:15 AM on Jan 15.
+ * Both instants fall on Jan 15 in UTC, which is how the old cut lost the first.
+ */
+const ARCHIVE_DAY = '2026-01-14';
+const LATE_ID = `e2e-archive-late-${OVERDUE_STAMP}`;
+const LATE_NAME = `E2E Late Evening Household ${OVERDUE_STAMP}`;
+const NEXT_ID = `e2e-archive-next-${OVERDUE_STAMP}`;
+const NEXT_NAME = `E2E After Midnight Household ${OVERDUE_STAMP}`;
+
 describe('auntie time', () => {
   // FIXTURE ONLY: `cy.task('seedKinCareSession')` POSTs straight to
   // `127.0.0.1:8385`, which does not exist off the emulator, so this hook
@@ -44,6 +57,30 @@ describe('auntie time', () => {
         createdAt: new Date(Date.now() - 10 * 86_400_000).toISOString(),
       },
     });
+    cy.task('seedKinCareSession', {
+      id: LATE_ID,
+      fields: {
+        kinfolkId: 'e2e-kf-1',
+        kinfolkName: LATE_NAME,
+        serviceType: 'Drop-in visit',
+        status: 'COMPLETED',
+        startTime: '2026-01-15T05:30:00.000Z',
+        completedAt: '2026-01-15T05:55:00.000Z',
+        createdAt: '2026-01-10T15:00:00.000Z',
+      },
+    });
+    cy.task('seedKinCareSession', {
+      id: NEXT_ID,
+      fields: {
+        kinfolkId: 'e2e-kf-1',
+        kinfolkName: NEXT_NAME,
+        serviceType: 'Drop-in visit',
+        status: 'COMPLETED',
+        startTime: '2026-01-15T06:15:00.000Z',
+        completedAt: '2026-01-15T06:40:00.000Z',
+        createdAt: '2026-01-10T15:00:00.000Z',
+      },
+    });
   });
 
   after(() => {
@@ -51,6 +88,8 @@ describe('auntie time', () => {
     // against a deployed host there is no fixture doc to delete.
     if (!usingFixtureAdmin()) return;
     cy.task('deleteKinCareSession', { id: OVERDUE_ID });
+    cy.task('deleteKinCareSession', { id: LATE_ID });
+    cy.task('deleteKinCareSession', { id: NEXT_ID });
   });
 
   beforeEach(() => {
@@ -100,5 +139,45 @@ describe('auntie time', () => {
       cy.contains('button', 'Arrived').should('be.visible');
       cy.contains('button', 'Complete').should('be.visible');
     });
+  });
+
+  it('#2036 the Archive counts FROM and TO as whole business days', () => {
+    cy.contains('button', 'Archive').click();
+    cy.contains('button', 'Back to Auntie Time').should('be.visible');
+
+    // One day in both boxes: that whole day, and nothing beside it.
+    cy.contains('label', 'From').find('input').type(ARCHIVE_DAY);
+    cy.contains('label', 'To').find('input').type(ARCHIVE_DAY);
+
+    /**
+     * A day's group, FOUND BY ITS HEADING and by nothing else in it.
+     *
+     * The first two shapes of this case looked for a group that "contains" the
+     * day's text, and in CI that matched the wrong group. A card prints its own
+     * day and clock on the BROWSER's clock (#2105), and the CI browser is on
+     * UTC, where the 11:30 PM Jan 14 visit is 05:30 on Jan 15. So the Jan 14
+     * group held the text "Thu, Jan 15" inside that card, came first on the
+     * page, and was searched for the after-midnight visit it rightly lacks.
+     * The heading is the business day the Archive filed the group under, which
+     * is the thing this case is about.
+     *
+     * One chain of queries with no `.within()`, so Cypress looks again at
+     * whatever list is on screen after a box moves and the list is redrawn.
+     */
+    const dayGroup = (heading: string) =>
+      cy.contains('.sessions__day-header', heading).parent('.sessions__day-group');
+
+    // 11:30 PM on the picked day is in, under that day's heading.
+    dayGroup('Wed, Jan 14').contains('.sessions__card', LATE_NAME).should('be.visible');
+    // 12:15 AM the next morning is not, and Jan 15 has no heading at all.
+    cy.contains(NEXT_NAME).should('not.exist');
+    cy.contains('.sessions__day-header', 'Thu, Jan 15').should('not.exist');
+
+    // Moving TO on a day brings it in, under its own day and no other.
+    cy.contains('label', 'To').find('input').type('2026-01-15');
+    dayGroup('Thu, Jan 15').contains('.sessions__card', NEXT_NAME).should('be.visible');
+    dayGroup('Thu, Jan 15').find('.sessions__card').should('have.length', 1);
+    dayGroup('Wed, Jan 14').contains('.sessions__card', LATE_NAME).should('be.visible');
+    dayGroup('Wed, Jan 14').find('.sessions__card').should('have.length', 1);
   });
 });

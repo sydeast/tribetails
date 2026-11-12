@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMyBookings, getMyVisits } from '../api/portal';
+import { getMyVisits } from '../api/portal';
+import { useMyBookings } from '../lib/useMyBookings';
 import { RouteMap } from '../components/RouteMap';
 import { addBookingNote, getBookingNotes, requestBookingCancellation, requestBookingReschedule } from '../api/bookingApi';
 import { ReschedulePicker } from '../components/ReschedulePicker';
@@ -27,6 +28,8 @@ import {
   bookingSubtitle,
   findBookingById,
   isStartTimePending,
+  isTimelineStepDone,
+  visitStageOf,
   speciesEmoji,
   visitTile,
   visitWhenLine,
@@ -63,7 +66,10 @@ export function BookingDetail() {
   const businessName = useBusinessName();
   const kinfolkId = getActiveKinfolkId();
 
-  const bookings = useQuery({ queryKey: ['myBookings', kinfolkId], queryFn: () => getMyBookings(kinfolkId) });
+  // #1823: the shared read keeps itself current while this visit is under way
+  // or about due, so the chip, the timeline and the status tile follow the
+  // Auntie's taps without a reload.
+  const bookings = useMyBookings(kinfolkId);
   const { signOut, signingOut } = useSignOut();
 
   const [noteBody, setNoteBody] = useState('');
@@ -227,11 +233,14 @@ export function BookingDetail() {
     );
   }
 
-  const chip = bookingStatusChip(found.status);
-  const timelineIndex = bookingTimelineIndex(found.status);
+  // #1823: the stage, not `status` alone. A departed visit is sent as active +
+  // ended, and reading `status` would call it IN PROGRESS after the Auntie left.
+  const stage = visitStageOf(found);
+  const chip = bookingStatusChip(stage);
+  const timelineIndex = bookingTimelineIndex(stage);
   // #1303: Completed is the last step and nothing comes after it, so on a
   // completed visit it is done too. It used to stay "current" and draw a 5.
-  const stepDone = (i: number) => timelineIndex !== null && (i < timelineIndex || found.status === 'completed');
+  const stepDone = (i: number) => isTimelineStepDone(stage, i);
   const canAct = found.batchId !== null;
   // `cancelRequested` means an ask is PENDING, not "was ever asked". A declined
   // ask therefore reopens the button, which is the point: the household can ask
@@ -354,7 +363,7 @@ export function BookingDetail() {
                   </div>
                 </div>
                 <div className="bk-field f4">
-                  <div className="ic">{bookingStatusIcon(found.status)}</div>
+                  <div className="ic">{bookingStatusIcon(stage)}</div>
                   <div>
                     <div className="lab">Status</div>
                     <div className="val">{chip.label.charAt(0) + chip.label.slice(1).toLowerCase()}</div>

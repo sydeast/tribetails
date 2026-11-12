@@ -187,15 +187,20 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) now refuses by, so the client and the server
  * agree exactly. A dozen lines with no import of its own.
  *
- * 441 since #1820: three helpers behind two entries already in this graph.
- * `lib/auditActor.ts` (who the caller is, for an Activity Log line) and
- * `lib/activityPayload.ts` (the allow-list for a line's facts) load with
- * `admin/logActivity.ts`; `lib/staffRoles.ts` (owner or Auntie, per staff
- * uid) loads with `admin/listStaff.ts`. Their imports are zod and modules
- * already resident (`staffGate`, `auntieAccess`, `operatorAllowlist`,
- * `firestoreAdmin`, `logger`), so they add no package to a cold start.
+ * 439 since #1830: `lib/portalVisitProgress.ts`, the pure rules `getMyBookings`
+ * (an entry already in this graph) reads a visit's On the way / Arrived /
+ * Departed and its list by. Its one import is a type, erased at build.
+ *
+ * 442 since #1820 (on top of #1830's 439): three helpers behind two entries
+ * already in this graph. `lib/auditActor.ts` (who the caller is, for an
+ * Activity Log line) and `lib/activityPayload.ts` (the allow-list for a
+ * line's facts) load with `admin/logActivity.ts`; `lib/staffRoles.ts` (owner
+ * or Auntie, per staff uid) loads with `admin/listStaff.ts`. Their imports
+ * are zod and modules already resident (`staffGate`, `auntieAccess`,
+ * `operatorAllowlist`, `firestoreAdmin`, `logger`), so they add no package
+ * to a cold start.
  */
-const MAX_OWN_EAGER_MODULES = 441;
+const MAX_OWN_EAGER_MODULES = 442;
 
 interface Edge {
   spec: string;

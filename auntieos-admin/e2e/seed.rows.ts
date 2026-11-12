@@ -47,7 +47,7 @@
  */
 type Put = (collection: string, id: string, doc: Record<string, unknown>) => Promise<void>;
 
-export async function seedDenseRows(put: Put, now: number): Promise<void> {
+export async function seedDenseRows(put: Put, now: number, adminUid: string): Promise<void> {
   /** `YYYY-MM-DD`, UTC, `days` from the seed's now. The shape the invoice date
    *  filter compares as a plain string. */
   const dayIso = (days: number): string =>
@@ -233,7 +233,12 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
   // `createdAt` IS a real Timestamp here (the feed calls `.toDate()` on it), the
   // opposite of `kin_care_reports` above. Omitting `readAt` is what makes a row
   // unread; omitting `archivedAt` is what keeps it in the feed.
+  //
+  // `recipientUid` is the fixture admin (#1837): the Notifications screen lists
+  // only the signed-in staff member's own notices, and the rules deny any other
+  // read, so a row without it is on nobody's screen.
   await put('notifications', 'vis-note-1', {
+    recipientUid: adminUid,
     key: 'kincare.booking.confirm',
     category: 'booking',
     title: 'Booking confirmed',
@@ -247,6 +252,7 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
     createdAt: stampAt(-0.5),
   });
   await put('notifications', 'vis-note-2', {
+    recipientUid: adminUid,
     key: 'invoice.issued',
     category: 'invoice',
     title: 'Invoice AO-2026-0184 issued',
@@ -260,6 +266,7 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
     createdAt: stampAt(-2),
   });
   await put('notifications', 'vis-note-3', {
+    recipientUid: adminUid,
     key: 'kintale.sent',
     category: 'kintale',
     title: 'KinTale delivered',

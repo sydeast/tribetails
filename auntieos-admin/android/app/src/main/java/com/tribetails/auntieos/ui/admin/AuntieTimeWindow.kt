@@ -1,6 +1,10 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.data.repository.parseVisitInstant
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Auntie Time's window, order, date labels and identity line: the pure half of
@@ -45,6 +49,13 @@ import com.tribetails.auntieos.data.model.KinCareSession
  * to a status code no writer produces, which web also reads only inside its
  * window.
  *
+ * ISSUE #2036: every day on this screen is a BUSINESS day. A stored time is an
+ * instant (`...Z`) or a zone-less business wall clock, and the rules used to
+ * take the first ten characters of either, which for an instant is the UTC
+ * day: a 23:30 visit in America/Chicago was filed under tomorrow. Days and
+ * clock labels now go through [businessDayOf] and [businessLocalOf], in the
+ * zone `business_settings.timeZone` names ([businessZone]).
+ *
  * DRAFT / PENDING / REJECTED stay hidden and are matched POSITIVELY by name
  * (the archive's AO-60: the Bookings screen owns that queue). A status code no
  * writer produces today is therefore not swept in with them; it lands in
@@ -72,10 +83,32 @@ private val WRAPPED_STATUSES = setOf("COMPLETED", "CANCELLED")
  * The day a wrapped visit is dated by: completedAt when present, else the start
  * it was scheduled for. Returns "" when neither parses to a date.
  */
-internal fun wrapDayOf(session: KinCareSession): String {
-    val completed = session.completedAt.orEmpty().take(10)
-    if (completed.length == 10) return completed
-    return session.startTime.take(10).takeIf { it.length == 10 }.orEmpty()
+internal fun wrapDayOf(session: KinCareSession, zone: ZoneId = businessZone(null)): String {
+    val completed = businessDayOf(session.completedAt, zone)
+    if (completed.isNotEmpty()) return completed
+    return businessDayOf(session.startTime, zone)
+}
+
+/**
+ * A stored time on the business's clock (#2036): an instant is converted into
+ * [zone], a zone-less value is already that wall clock. Null when neither reads.
+ */
+internal fun businessLocalOf(raw: String?, zone: ZoneId): LocalDateTime? {
+    val text = raw?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    return parseVisitInstant(text, zone)?.atZone(zone)?.toLocalDateTime()
+}
+
+private val LEADING_DAY = Regex("""^\d{4}-\d{2}-\d{2}""")
+
+/**
+ * The business day ("YYYY-MM-DD") a stored time falls on, or "" when it has
+ * none. A value that is only a date, or whose clock does not parse, keeps its
+ * own leading day rather than being dropped.
+ */
+internal fun businessDayOf(raw: String?, zone: ZoneId): String {
+    businessLocalOf(raw, zone)?.let { return it.toLocalDate().toString() }
+    return LEADING_DAY.find(raw?.trim().orEmpty())?.value.orEmpty()
 }
 
 /**
@@ -83,13 +116,17 @@ internal fun wrapDayOf(session: KinCareSession): String {
  * "YYYY-MM-DD" (a LOCAL date; see the AO-18 note in [KinCareSessionsScreen]).
  * Everything else is older history and belongs behind an archive view.
  */
-internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Boolean {
+internal fun isVisibleOnAuntieTime(
+    session: KinCareSession,
+    today: String,
+    zone: ZoneId = businessZone(null),
+): Boolean {
     val status = session.status.uppercase()
     if (isBookingQueueStatus(status)) return false
     if (status in ACTIVE_STATUSES) return true
 
     if (status in WRAPPED_STATUSES) {
-        val wrapDay = wrapDayOf(session)
+        val wrapDay = wrapDayOf(session, zone)
         if (wrapDay.isEmpty()) return false
         return wrapDay in dateAddDays(today, -RECENT_WINDOW_DAYS)..today
     }
@@ -99,7 +136,7 @@ internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Bool
     // the lower bound used to be `today - 1`, so anything older simply
     // vanished; it now reaches back to OVERDUE_WINDOW_DAYS instead of
     // dropping the row outright.
-    val date = session.startTime.take(10)
+    val date = businessDayOf(session.startTime, zone)
     if (date.length < 10) return false
     val horizon = dateAddDays(today, UPCOMING_WINDOW_DAYS)
     // #1704: a SCHEDULED visit is Overdue at any age, as on web.
@@ -112,12 +149,16 @@ internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Bool
  * passed more than a day ago, issue #702's OVERDUE phase. Active and wrapped
  * statuses are never overdue by this definition, they have their own phases.
  */
-internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean {
+internal fun isOverdueScheduled(
+    session: KinCareSession,
+    today: String,
+    zone: ZoneId = businessZone(null),
+): Boolean {
     val status = session.status.uppercase()
     if (isBookingQueueStatus(status) || status in ACTIVE_STATUSES || status in WRAPPED_STATUSES) {
         return false
     }
-    val date = session.startTime.take(10)
+    val date = businessDayOf(session.startTime, zone)
     if (date.length < 10) return false
     return date < dateAddDays(today, -1)
 }
@@ -127,8 +168,11 @@ internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean
  * the board AND [isOverdueScheduled]. Home's Today's Pack reads this, so the
  * count on Home is the count on the board by construction (#1590).
  */
-internal fun overdueOnAuntieTime(sessions: List<KinCareSession>, today: String): Int =
-    sessions.count { isVisibleOnAuntieTime(it, today) && isOverdueScheduled(it, today) }
+internal fun overdueOnAuntieTime(
+    sessions: List<KinCareSession>,
+    today: String,
+    zone: ZoneId = businessZone(null),
+): Int = sessions.count { isVisibleOnAuntieTime(it, today, zone) && isOverdueScheduled(it, today, zone) }
 /**
  * One phase's sessions in reading order: ascending by startTime, since a run
  * sheet reads forwards. The soonest/latest switch #17 added was removed in
@@ -177,31 +221,35 @@ private val MONTHS =
  * which is the one thing a dated label must never be ambiguous about. Omitted
  * in the current year so the common case stays short.
  */
-internal fun auntieTimeDate(iso: String, todayIso: String): String =
-    runCatching {
-        if (iso.length < 16) return@runCatching iso
-        val year = iso.substring(0, 4)
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time = iso.substring(11, 16)
-        val yearSuffix = if (year == todayIso.take(4)) "" else ", $year"
-        "$month $day$yearSuffix · $time"
-    }.getOrDefault(iso)
+internal fun auntieTimeDate(iso: String, todayIso: String, zone: ZoneId = businessZone(null)): String {
+    // #2036: the day and the clock are the business's. An instant used to be
+    // printed as its own characters, which is the UTC day and hour.
+    val at = businessLocalOf(iso, zone) ?: return iso
+    val month = MONTHS[at.monthValue - 1]
+    val yearSuffix = if (at.year.toString().padStart(4, '0') == todayIso.take(4)) "" else ", ${at.year}"
+    return "$month ${at.dayOfMonth}$yearSuffix · ${clockOf(at)}"
+}
 
-internal fun auntieTimeClock(iso: String): String =
-    runCatching { if (iso.length >= 16) iso.substring(11, 16) else iso }.getOrDefault(iso)
+internal fun auntieTimeClock(iso: String, zone: ZoneId = businessZone(null)): String =
+    businessLocalOf(iso, zone)?.let(::clockOf) ?: iso
+
+private fun clockOf(at: LocalDateTime): String =
+    "${at.hour.toString().padStart(2, '0')}:${at.minute.toString().padStart(2, '0')}"
 
 /** "09:00 to 17:00", with the start's date (and year, when it needs one). */
-internal fun sessionWindow(session: KinCareSession, todayIso: String): String {
-    val start = auntieTimeDate(session.startTime, todayIso)
-    val end = auntieTimeClock(session.endTime)
+internal fun sessionWindow(
+    session: KinCareSession,
+    todayIso: String,
+    zone: ZoneId = businessZone(null),
+): String {
+    val start = auntieTimeDate(session.startTime, todayIso, zone)
+    val end = auntieTimeClock(session.endTime, zone)
     return when {
         start.isBlank() && end.isBlank() -> "Time TBD"
         end.isBlank() -> start
         else -> "$start to $end"
     }
 }
-
 /** Add [days] days to an ISO date string "YYYY-MM-DD". Handles month/year rollover. */
 internal fun dateAddDays(iso: String, days: Int): String = runCatching {
     if (iso.length < 10) return@runCatching iso

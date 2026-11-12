@@ -80,12 +80,6 @@ data class Package(
     val overnightBufferHours: Double = 2.0,
     val discountLabel: String = "",
     val discountPct: Double = 0.0,
-    /**
-     * One line on the card saying this package's tier could not meet the client's
-     * rules as written and what it did instead. "" on a hand-built package and on
-     * a tier that met them.
-     */
-    val note: String = "",
 )
 
 /** One visit inside a generated suggestion (pinned or gap-filling check-in). */
@@ -298,7 +292,8 @@ const val DATE_ORDER_REFUSAL = "The end date has to be on or after the start dat
  *
  * REFUSES instead of coercing (#1593). The field used to read "150" as 100 and
  * "-20" or "abc" as 0, with no message. Blank still means no discount; anything
- * else must be a plain number from 0 to 100. The caller keeps the last good value.
+ * else must be a plain number from 0 to 100. The caller prices at the value held
+ * before the edit ([typeIntoFields]).
  * Mirrors `parseDiscountPct` in `auntieos-admin/src/lib/coveragePackage.ts`.
  */
 fun parseDiscountPct(text: String): PackageFieldParse {
@@ -324,6 +319,75 @@ fun parseBufferHours(text: String): PackageFieldParse {
     return PackageFieldParse.Ok(value)
 }
 /**
+ * One typed field on the quote: the text as typed, the value pricing held when this
+ * edit began, and whether the edit is still going (#2021). Mirrors the web `FieldDraft`.
+ */
+data class FieldDraft(val text: String, val before: Double, val open: Boolean)
+/** What one change to a typed field leaves behind: the drafts, and the value pricing uses now. */
+data class FieldTyped(val drafts: Map<String, FieldDraft>, val value: Double)
+/** The key Max gap is held under among the drafts; package fields use [packageFieldKey]. */
+const val MAX_GAP_FIELD = "rules:gap"
+/** A package's typed number fields. */
+enum class PackageNumberField { DISCOUNT, BUFFER }
+fun packageFieldKey(pkgId: String, field: PackageNumberField): String = "$pkgId:${field.name}"
+/**
+ * One change to a typed number field.
+ *
+ * [accepted] is what the field's parser made of [typed], or null when it refused it.
+ * [committed] is the value pricing holds at this moment.
+ *
+ * WHY THERE IS A `before` (#2021). #1593 priced every keystroke that parsed and
+ * called that "the last good value". Typed a key at a time, "150" is "1", then
+ * "15", then a refusal, so the package was left 15% off: a discount nobody chose,
+ * under a message that said the entry was refused. A good keystroke is still
+ * priced as it is typed, but a refused entry now prices at what the field held
+ * when the edit began, however many readable prefixes it passed through.
+ *
+ * An edit begins at the first change after the field was last left and ends at
+ * [closeFieldEdits]. Typing in one field ends the edit in every other, so a value
+ * typed and then left alone counts as chosen. Mirrors the web `typeIntoFields`.
+ */
+fun typeIntoFields(
+    drafts: Map<String, FieldDraft>,
+    key: String,
+    committed: Double,
+    typed: String,
+    accepted: Double?,
+): FieldTyped {
+    val current = drafts[key]
+    val before = if (current != null && current.open) current.before else committed
+    val next = drafts.mapValues { (_, d) -> if (d.open) d.copy(open = false) else d } + (key to FieldDraft(typed, before, true))
+    return FieldTyped(next, accepted ?: before)
+}
+/**
+ * Ends every edit in progress: the field lost focus, Done was pressed, or something
+ * else on the quote was used. A phone keeps a text field focused through a button
+ * tap and through the keyboard closing, so focus alone cannot say an entry is
+ * finished. Hands back the same map when nothing is open, which also makes the
+ * "not focused" a field reports when it first appears harmless.
+ */
+fun closeFieldEdits(drafts: Map<String, FieldDraft>): Map<String, FieldDraft> =
+    if (drafts.values.none { it.open }) drafts else drafts.mapValues { (_, d) -> if (d.open) d.copy(open = false) else d }
+/** What typing [typed] into Max gap leaves: the drafts, and the rules pricing uses now. */
+fun typeMaxGap(drafts: Map<String, FieldDraft>, rules: CoverageRules, typed: String): Pair<Map<String, FieldDraft>, CoverageRules> {
+    val accepted = (parseMaxGapHours(typed) as? MaxGapParse.Ok)?.hours
+    val next = typeIntoFields(drafts, MAX_GAP_FIELD, rules.maxGapHours, typed, accepted)
+    return next.drafts to rules.copy(maxGapHours = next.value)
+}
+/** What typing [typed] into a package's Discount % or Buffer (hrs) leaves: the drafts, and the package as priced now. */
+fun typePackageField(
+    drafts: Map<String, FieldDraft>,
+    pkg: Package,
+    field: PackageNumberField,
+    typed: String,
+): Pair<Map<String, FieldDraft>, Package> {
+    val discount = field == PackageNumberField.DISCOUNT
+    val parsed = if (discount) parseDiscountPct(typed) else parseBufferHours(typed)
+    val committed = if (discount) pkg.discountPct else pkg.overnightBufferHours
+    val next = typeIntoFields(drafts, packageFieldKey(pkg.id, field), committed, typed, (parsed as? PackageFieldParse.Ok)?.value)
+    return next.drafts to (if (discount) pkg.copy(discountPct = next.value) else pkg.copy(overnightBufferHours = next.value))
+}
+/**
  * The message beside End when it falls before Start, or null (#1593). A reversed
  * range used to price nothing with no reason given. Mirrors `dateRangeRefusal`.
  */
@@ -345,8 +409,7 @@ fun normalizePackage(
     id: String = uid(),
     name: String = "Package",
     visits: List<Visit> = emptyList(),
-    note: String = "",
-): Package = Package(id = id, name = name, visits = visits, note = note)
+): Package = Package(id = id, name = name, visits = visits)
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 
@@ -446,7 +509,9 @@ private const val FALLBACK_WAKE_END = 22 * 60
  * but "New package". Now a tier that cannot satisfy the rules DEGRADES to the
  * closest thing it can build (one check-in in the middle of the day, in a length
  * that fits the window) and says so in `note`, and nothing is deduped. The one
- * precondition left is a priced visit duration. Mirrors the web buildDayPatterns.
+ * precondition left is a priced visit duration. The `note` stays on the pattern and
+ * is never copied onto a package: [packageNote] reads it back for a package that
+ * still holds the tier's visits. Mirrors the web buildDayPatterns.
  */
 fun buildDayPatterns(
     durations: List<Duration>,
@@ -564,7 +629,29 @@ private fun numLabel(v: Double): String = if (v == floor(v)) v.toLong().toString
  * buttons they have to find and press (issue #694).
  */
 fun packagesFromPatterns(patterns: List<DayPattern>): List<Package> =
-    patterns.map { p -> normalizePackage(id = uid(), name = p.strategyLabel, visits = visitsFromPattern(p), note = p.note) }
+    patterns.map { p -> normalizePackage(id = uid(), name = p.strategyLabel, visits = visitsFromPattern(p)) }
+/** Times and lengths only, in one fixed order: ids, labels and list order are not what a tier is. */
+private fun scheduleKey(entries: List<Pair<Int, String>>): String =
+    entries.map { (time, durationId) -> "$time@$durationId" }.sorted().joinToString("|")
+/**
+ * The line at the top of a package card: what a tier did instead when the client's
+ * rules could not be met as written, or "" when there is nothing to say.
+ *
+ * WORKED OUT, NEVER STORED (#1858). The sentence used to be written once, when the
+ * tier was built, and kept on the package. So a tier built under a 24 hour max gap
+ * went on saying "24h" after the rule became 6, a duplicate inherited it, and it
+ * stayed on a package whose only visit had been removed. Now [patterns] is the
+ * three tiers the rules build at this moment, and a package shows a pattern's note
+ * only while its every-day visits are that pattern's visits, time for time and
+ * length for length. Mirrors the web `packageNote`.
+ */
+fun packageNote(pkg: Package, patterns: List<DayPattern>): String {
+    if (pkg.visits.isEmpty()) return ""
+    val held = scheduleKey(pkg.visits.map { it.time to it.durationId })
+    return patterns.firstOrNull { p ->
+        p.note.isNotEmpty() && scheduleKey(p.touchpoints.map { it.time.roundToInt() to it.durationId }) == held
+    }?.note ?: ""
+}
 
 /** Seed a package's visit template from a suggestion. */
 fun visitsFromPattern(pattern: DayPattern): List<Visit> =

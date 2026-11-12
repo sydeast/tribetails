@@ -272,9 +272,11 @@ describe('Schedule, the open tab lives in the URL (#1304)', () => {
 });
 describe('Schedule, nothing moves when the live-visit check finishes (#1305)', () => {
   it('draws the check inside the tab row, in a slot that stays when the check is done', async () => {
-    let finishVisits: (v: { visits: unknown[] }) => void = () => {};
-    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [] });
-    mocks.getMyVisits.mockReturnValue(new Promise((resolve) => { finishVisits = resolve; }));
+    // #1832: the live card is fed by getMyBookings now, so that is the read
+    // this check waits on.
+    let finishBookings: (v: { liveVisit: null; upcoming: unknown[]; recent: unknown[] }) => void = () => {};
+    mocks.getMyBookings.mockReturnValue(new Promise((resolve) => { finishBookings = resolve; }));
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { container } = render(
       <QueryClientProvider client={client}>
@@ -287,7 +289,7 @@ describe('Schedule, nothing moves when the live-visit check finishes (#1305)', (
     expect(slot).toContainElement(line);
     // Nothing between the tabs and the lists: the check is not a row of its own.
     expect(container.querySelector('.sched-tabbar')!.nextElementSibling?.classList.contains('cols')).toBe(true);
-    finishVisits({ visits: [] });
+    finishBookings({ liveVisit: null, upcoming: [], recent: [] });
     await waitFor(() => expect(screen.queryByText(/Checking whether a visit is under way/)).toBeNull());
     expect(container.querySelector('.sched-tabbar > .livecheck')).toBe(slot);
   });

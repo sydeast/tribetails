@@ -16,8 +16,10 @@ import { isOwner, staffBypass } from '../lib/staffGate';
  * NOTIFICATION_VIEWED audit entry so admins can see exactly which catalog
  * messages have been read.
  *
- * Security: only the recipient (or an admin) may mark a notification read.
- * The caller's uid must match `recipientUid` on the parent doc.
+ * Security: only the recipient may mark a notification read. The caller's uid
+ * must match `recipientUid` on the doc, whatever role the caller holds (#1837).
+ * `readAt` lives on the one doc the recipient's own list reads, so a staff
+ * exception here would change what a Kinfolk sees in their list.
  */
 const Args = z.object({
   notificationId: z.string().min(1).max(200),
@@ -29,8 +31,8 @@ export async function markNotificationReadHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  // #944: allowlisted - her own inbox.
-  const isAdmin = staffBypass(req.auth, 'markNotificationRead');
+  // The audit line's actor label only. It never widens the recipient check.
+  const actorIsStaff = staffBypass(req.auth, 'markNotificationRead');
   const args = Args.parse(req.data);
 
   const ref = db().collection('notifications').doc(args.notificationId);
@@ -42,7 +44,7 @@ export async function markNotificationReadHandler(
   if (!data?.recipientUid) {
     throw new HttpsError('failed-precondition', 'Notification has no recipientUid.');
   }
-  if (!isAdmin && data.recipientUid !== uid) {
+  if (data.recipientUid !== uid) {
     throw new HttpsError('permission-denied', 'Not your notification.');
   }
 
@@ -67,7 +69,7 @@ export async function markNotificationReadHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATION_VIEWED,
     severity: 'info',
-    actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
+    actorRole: actorIsStaff ? 'AUNTIE' : 'PRIMARY',
     actorUid: uid,
     // Audit target is the notification doc; recipientUid moved into payload
     // so the canonical Activity Log "Target" column points to the notification.
@@ -95,7 +97,7 @@ export const markNotificationRead = onCall(
 
 /**
  * Inverse of markNotificationRead: clears the read markers so the notification
- * shows as unread again. Same recipient-or-admin guard. Backs the read/unread
+ * shows as unread again. Same recipient-only guard. Backs the read/unread
  * toggle quick-action.
  */
 export async function markNotificationUnreadHandler(
@@ -104,7 +106,8 @@ export async function markNotificationUnreadHandler(
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
-  const isAdmin = isOwner(uid, req.auth?.token?.admin === true || req.auth?.token?.role === 'admin', 'markNotificationUnread');
+  // The audit line's actor label only. It never widens the recipient check.
+  const actorIsStaff = isOwner(uid, req.auth?.token?.admin === true || req.auth?.token?.role === 'admin', 'markNotificationUnread');
   const args = Args.parse(req.data);
 
   const ref = db().collection('notifications').doc(args.notificationId);
@@ -116,7 +119,7 @@ export async function markNotificationUnreadHandler(
   if (!data?.recipientUid) {
     throw new HttpsError('failed-precondition', 'Notification has no recipientUid.');
   }
-  if (!isAdmin && data.recipientUid !== uid) {
+  if (data.recipientUid !== uid) {
     throw new HttpsError('permission-denied', 'Not your notification.');
   }
 
@@ -141,7 +144,7 @@ export async function markNotificationUnreadHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.NOTIFICATION_VIEWED,
     severity: 'info',
-    actorRole: isAdmin ? 'AUNTIE' : 'PRIMARY',
+    actorRole: actorIsStaff ? 'AUNTIE' : 'PRIMARY',
     actorUid: uid,
     targetUid: args.notificationId,
     targetCollection: 'notifications',
