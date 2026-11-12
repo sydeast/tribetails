@@ -4,7 +4,6 @@ package com.kinfolk.portal.screens.schedule
 
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
@@ -89,7 +88,7 @@ class VisitUnderWayTest {
         waitForIdle()
     }
 
-    private fun onCard(text: String) = hasText(text, substring = true) and hasAnyAncestor(hasTestTag(LIVE_VISIT_TAG))
+    private fun onCard(text: String) = hasTestTag(LIVE_VISIT_TAG) and hasText(text, substring = true)
 
     @Test
     fun schedule_onTheWay_cardSaysSoNamesTheKinAndOpensTheVisit() = runComposeUiTest {

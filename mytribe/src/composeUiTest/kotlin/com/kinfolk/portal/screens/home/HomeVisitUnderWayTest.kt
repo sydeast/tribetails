@@ -4,7 +4,6 @@ package com.kinfolk.portal.screens.home
 
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
@@ -73,7 +72,7 @@ class HomeVisitUnderWayTest {
         waitForIdle()
     }
 
-    private fun onCard(text: String) = hasText(text, substring = true) and hasAnyAncestor(hasTestTag(HOME_LIVE_VISIT_TAG))
+    private fun onCard(text: String) = hasTestTag(HOME_LIVE_VISIT_TAG) and hasText(text, substring = true)
 
     @Test
     fun onTheWay_cardSaysSoNamesTheKinAndOpensTheVisit() = runComposeUiTest {
@@ -84,7 +83,8 @@ class HomeVisitUnderWayTest {
         onNode(onCard("On the way to Biscuit")).assertIsDisplayed()
         onNode(onCard("With Biscuit")).assertDoesNotExist()
         // Up next lists it with its status.
-        onNodeWithText("EN ROUTE").assertIsDisplayed()
+        // (The card's own progress line also says EN ROUTE, so the row is the node without the card's tag.)
+        onNode(hasText("EN ROUTE", substring = true) and !hasTestTag(HOME_LIVE_VISIT_TAG)).assertIsDisplayed()
 
         onNodeWithTag(HOME_LIVE_VISIT_TAG).performClick()
         waitForIdle()
