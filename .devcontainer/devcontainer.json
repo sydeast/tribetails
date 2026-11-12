@@ -1,0 +1,95 @@
+// GitHub Codespaces / Dev Containers config for the tribetails monorepo.
+//
+// Mirrors what CI already pins (.github/workflows/ci.yml): Node 22, Temurin
+// JDK 21, firebase-tools 15.18.0. Adds what CI gets for free from the
+// ubuntu-latest image and a codespace does not: the Android SDK.
+// mytribe/ asks for JDK 17 via jvmToolchain(17); its foojay resolver downloads
+// that on first Gradle run, so it is not installed here.
+//
+// No Android EMULATOR in a codespace (no nested virtualisation). Unit tests,
+// Robolectric, compileDebugKotlin and assembleDebug all work; instrumented and
+// on-device testing stays on the Mac.
+{
+  "name": "tribetails",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+  // 4 cores / 16 GB is the smallest machine that runs a Gradle build and the
+  // Firestore emulator side by side without swapping. Pick 8-core at launch
+  // for a full `npm run check` plus Android.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "32gb"
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "21",
+      "jdkDistro": "tem"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    // Only for the 'reconcile' Python functions codebase (python313 runtime).
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.13"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "containerEnv": {
+    "ANDROID_HOME": "/home/vscode/android-sdk",
+    "ANDROID_SDK_ROOT": "/home/vscode/android-sdk"
+  },
+
+  "remoteEnv": {
+    "PATH": "${containerEnv:PATH}:/home/vscode/android-sdk/cmdline-tools/latest/bin:/home/vscode/android-sdk/platform-tools",
+    // settings.gradle.kts reads MAPBOX_DOWNLOADS_TOKEN from the environment
+    // directly. app/build.gradle.kts reads MAPBOX_PUBLIC_TOKEN as a Gradle
+    // project property, which Gradle takes from ORG_GRADLE_PROJECT_*.
+    "ORG_GRADLE_PROJECT_MAPBOX_PUBLIC_TOKEN": "${containerEnv:MAPBOX_PUBLIC_TOKEN}"
+  },
+
+  // Codespaces prompts for these when the codespace is created and stores them
+  // as user secrets scoped to this repo. Android builds fail without the
+  // downloads token; web and functions work without either.
+  "secrets": {
+    "MAPBOX_DOWNLOADS_TOKEN": {
+      "description": "Mapbox secret token with DOWNLOADS:READ scope. Needed for any Android Gradle build in auntieos-admin/android."
+    },
+    "MAPBOX_PUBLIC_TOKEN": {
+      "description": "Mapbox public (pk.) token baked into the admin Android build. Optional; empty disables maps."
+    }
+  },
+
+  "forwardPorts": [5173, 5174, 4000, 8080, 9099, 5001, 9199],
+  "portsAttributes": {
+    "5173": { "label": "Vite (first dev server)" },
+    "5174": { "label": "Vite (second dev server)" },
+    "4000": { "label": "Firebase Emulator UI" },
+    "8080": { "label": "Firestore emulator", "onAutoForward": "silent" },
+    "9099": { "label": "Auth emulator", "onAutoForward": "silent" },
+    "5001": { "label": "Functions emulator", "onAutoForward": "silent" },
+    "9199": { "label": "Storage emulator", "onAutoForward": "silent" }
+  },
+
+  // Runs once when the codespace (or a prebuild) is created.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "vitest.explorer",
+        "toba.vsfire",
+        "mathiasfrohlich.Kotlin",
+        "github.vscode-github-actions"
+      ]
+    },
+    "codespaces": {
+      "openFiles": ["README.md"]
+    }
+  },
+
+  "remoteUser": "vscode"
+}
