@@ -81,10 +81,15 @@
       "extensions": [
         "dbaeumer.vscode-eslint",
         "vitest.explorer",
-        "toba.vsfire",
+        "chflick.firecode",
         "mathiasfrohlich.Kotlin",
         "github.vscode-github-actions"
-      ]
+      ],
+      // vitest.scripts-emulator.config.ts throws without FIRESTORE_EMULATOR_HOST
+      // (run it with npm run test:scripts:emulator), so the explorer skips it.
+      "settings": {
+        "vitest.configSearchPatternExclude": "{**/node_modules/**,**/.*/**,**/*.d.ts,**/vitest.*emulator*.config.*}"
+      }
     },
     "codespaces": {
       "openFiles": ["README.md"]
