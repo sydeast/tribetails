@@ -149,7 +149,7 @@ class AdminSettingsViewModel(
                     settingsBaseline = settings
                     _uiState.value = _uiState.value.copy(
                         businessSettings = settings,
-                        businessHours = weeklyHoursRows(settings.businessHours),
+                        businessHours = weeklyHoursRows(settings),
                         isLoading = false
                     )
                 },
@@ -243,12 +243,16 @@ class AdminSettingsViewModel(
                     // the on-screen copy. Replacing either wholesale also dragged
                     // in whatever else the caller's snapshot held, so an earlier
                     // toggle the server had already taken showed its old value.
+                    //
+                    // #1978: a save of the weekly hours also moves the hours the
+                    // server keeps for each closed day, so that field moves too.
+                    val moved = if ("businessHours" in changes) changes.keys + "closedDayHours" else changes.keys
                     settingsBaseline = revertBusinessSettingsFields(
-                        settingsBaseline ?: baseline, settings, changes.keys,
+                        settingsBaseline ?: baseline, settings, moved,
                     )
                     _uiState.value = _uiState.value.copy(
                         businessSettings = revertBusinessSettingsFields(
-                            _uiState.value.businessSettings, settings, changes.keys,
+                            _uiState.value.businessSettings, settings, moved,
                         ),
                         stagedLogoUrl = if (clearStagedLogo) null else _uiState.value.stagedLogoUrl,
                         saveSuccess = true,
@@ -357,7 +361,8 @@ class AdminSettingsViewModel(
         }
         val current = _uiState.value.businessSettings
         saveSettingsDiff(
-            current.copy(businessHours = withWeeklyHours(current.businessHours, rows)),
+            // #1978: with the hours each day closed here had, as the server keeps them.
+            current.withWeeklyHoursSaved(current.businessHours, rows),
             failureLabel = "Failed to save business hours",
         )
     }
