@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { FieldPath, FieldValue } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, Firestore } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 
 /**
@@ -581,6 +581,40 @@ describe('#1978: the hours a closed day had', () => {
     expect(message).toBe('Sunday: Enter both an opening and a closing time.');
     expect(details.field).toBe('businessHours');
     expect(settingsWrites()).toHaveLength(0);
+  });
+
+  it('both writes are shapes the real Firestore SDK accepts', async () => {
+    // The mock records a write without checking it. A real client checks a
+    // `set` with `mergeFields` as the call is made, with no network: every
+    // masked path has to be in the data, and a delete has to be masked.
+    const real = new Firestore({ projectId: 'demo-tribetails' });
+    const ref = real.doc(PATH);
+    const check = (w: { data: unknown; options?: unknown }) =>
+      real.batch().set(ref, w.data as never, w.options as never);
+
+    setup(stored());
+    await saveBusinessSettingsHandler(owner({ changes: { businessHours: { Sunday: '' } } }));
+    expect(() => check(settingsWrites()[0]!)).not.toThrow();
+
+    setup(
+      stored({
+        businessHours: { ...HOURS, Sunday: '' },
+        closedDayHours: { Sunday: '08:00-16:00' },
+      }),
+    );
+    await saveBusinessSettingsHandler(
+      owner({ changes: { businessHours: { Sunday: '10:00-14:00', Monday: '' } } }),
+    );
+    const [w] = settingsWrites();
+    expect(w!.data['closedDayHours']).toEqual({
+      Sunday: FieldValue.delete(),
+      Monday: '09:00-17:00',
+    });
+    expect(() => check(w!)).not.toThrow();
+    // The check is live: a masked path with no data behind it is refused.
+    expect(() =>
+      real.batch().set(ref, { b: 1 } as never, { mergeFields: ['b', 'closedDayHours.Sunday'] }),
+    ).toThrow();
   });
 
   it('closedDayHoursChanges: the rule on its own', () => {
