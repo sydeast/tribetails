@@ -26,8 +26,8 @@ trap finish EXIT
 say() { printf '\n\033[36m==> %s\033[0m\n' "$*"; }
 
 # Keep these in step with the Gradle builds and CI.
-ANDROID_PLATFORM="android-37"        # compileSdk in both build.gradle.kts files
-CMDLINE_TOOLS_BUILD="13114758"       # bootstrap only; updated to latest below
+ANDROID_PLATFORM="android-37.0"        # compileSdk in both build.gradle.kts files
+CMDLINE_TOOLS_BUILD="13114758"       # installed as cmdline-tools/latest
 FIREBASE_TOOLS_VERSION="15.18.0"     # pinned in ci.yml, emulator behaviour moves in minors
 
 SDK="${ANDROID_HOME:-$HOME/android-sdk}"
@@ -69,9 +69,10 @@ yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null
 set -o pipefail
 
 STEP="installing Android SDK packages"
-say "$STEP (platform-tools, platforms;$ANDROID_PLATFORM, cmdline-tools;latest)"
+say "$STEP (platform-tools, platforms;$ANDROID_PLATFORM)"
+# cmdline-tools is not listed: the zip above already sits at cmdline-tools/latest,
+# and listing it makes sdkmanager install a second copy at latest-2.
 "$SDKMANAGER" --sdk_root="$SDK" --install \
-  "cmdline-tools;latest" \
   "platform-tools" \
   "platforms;$ANDROID_PLATFORM" >/dev/null
 
@@ -126,8 +127,8 @@ fi
 
 say "codespace ready"
 cat <<'EOF'
-    npm run dev:admin        admin web  (port 5173)
-    npm run dev:portal       portal web (port 5174 if admin is running)
+    npm run dev:admin        admin web  (port 5174)
+    npm run dev:portal       portal web (port 5173)
     npm run test:functions   functions unit tests
     npm run test:rules       Firestore rules tests (boots the emulator)
     npm run test:android     admin Android unit tests (needs the Mapbox token)

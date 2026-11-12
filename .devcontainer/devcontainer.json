@@ -64,8 +64,8 @@
 
   "forwardPorts": [5173, 5174, 4000, 8080, 9099, 5001, 9199],
   "portsAttributes": {
-    "5173": { "label": "Vite (first dev server)" },
-    "5174": { "label": "Vite (second dev server)" },
+    "5173": { "label": "Portal web (npm run dev:portal)" },
+    "5174": { "label": "Admin web (npm run dev:admin)" },
     "4000": { "label": "Firebase Emulator UI" },
     "8080": { "label": "Firestore emulator", "onAutoForward": "silent" },
     "9099": { "label": "Auth emulator", "onAutoForward": "silent" },
