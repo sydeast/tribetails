@@ -1012,7 +1012,7 @@ internal fun applicableNotificationActions(entry: NotificationEntry): Notificati
     return base.copy(
         // #1003: the unapplied-payment notice opens the household, so it can
         // open whenever the household is known, whatever its target says.
-        canOpen = base.canOpen || unappliedPaymentNotice(entry) != null,
+        canOpen = base.canOpen || unappliedPaymentNotice(entry) != null || kinRemovalNoticeRequestId(entry) != null,
         canApproveDeny = isPendingBookingRequest,
         canCreateQuote = quoteEligible,
         outcome = outcome,
@@ -1040,6 +1040,21 @@ internal fun unappliedPaymentNotice(entry: NotificationEntry): UnappliedPaymentN
     return UnappliedPaymentNotice(kinfolkId, dataString(entry, "stripeEventId"))
 }
 
+/** #1408: a household asked the office to remove a Kin. */
+internal const val KIN_REMOVAL_REQUESTED_NOTICE_KEY = "kin.removal.requested"
+/**
+ * #1912: the `kin.removal.requested` notice targets the HOUSEHOLD on the
+ * server, and the household profile has no place to answer the request, so
+ * Open used to land where nothing could be done. This is the request the
+ * notice is about (`data.requestId`), for the screen that lists the waiting
+ * requests with Archive and Decline. Null for every other key, or when the
+ * notice names no request, so those rows keep their target routing. Pure;
+ * unit-tested.
+ */
+internal fun kinRemovalNoticeRequestId(entry: NotificationEntry): String? {
+    if (entry.key.trim() != KIN_REMOVAL_REQUESTED_NOTICE_KEY) return null
+    return dataString(entry, "requestId").ifBlank { null }
+}
 // ---- row DETAIL: what the notification is actually about (R5) ----------------
 //
 // Operator ruling R5, 2026-08-03, verbatim: "CTAs on the Notifications have

@@ -220,7 +220,13 @@ describe('setKinArchived (#1492)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { setKinArchivedHandler } = await import('../src/admin/kinArchive');
     await setKinArchivedHandler(call({ kinId: 'flat1', archived: true }));
-    expect(ctx.writes.map((w) => w.path)).toEqual(['kin/flat1']);
+    const paths = ctx.writes.map((w) => w.path);
+    expect(paths).not.toContain('business_settings/business_settings');
+    // #1912: the Kin stamped with this record still owns it, so the pointer is
+    // put back and the archive reaches that Kin's household copy.
+    expect([...new Set(paths)].sort()).toEqual([FAMILY_PATH, 'kin/flat1'].sort());
+    expect(ctx.writes.find((w) => w.path === 'kin/flat1')?.data).toMatchObject({ familyKinPath: FAMILY_PATH });
+    expect(familyWrite(ctx)).toMatchObject({ status: 'archived' });
   });
 
   it('archiving an already archived household copy does not write it again', async () => {

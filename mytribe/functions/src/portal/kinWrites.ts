@@ -12,6 +12,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { isPortalHiddenKinStatus } from '../lib/kinStatus';
 import { enqueueNotification } from '../notifications/dispatcher';
+import { ensureOwnFlatKinId, resolveKinLink } from '../lib/kinLink';
 import {
   KIN_REMOVAL_REQUESTS,
   kinRemovalRequestDto,
@@ -41,7 +42,9 @@ const KinPayload = z.object({
   allergies: z.string().max(2000).nullable().optional(),
   emergencyNotes: z.string().max(2000).nullable().optional(),
   sitterNotes: z.string().max(2000).nullable().optional(),
-  legacyKinId: z.string().max(40).nullable().optional(),
+  // #1912: no `legacyKinId` here. The mirror makes the tie between a Kin and
+  // its admin record (lib/kinLink.ts); zod drops the key when an older client
+  // still sends one.
   // Descriptive fields the admin also persists on the pet (the AuntieOS `Kin`
   // model: sex, weight, colorMarkings, spayedNeutered, vetInfo). The household
   // owns them too (kinMirror.ts HOUSEHOLD_SHARED_FIELDS). They are NOT
@@ -304,11 +307,15 @@ export async function archiveKinHandler(req: CallableRequest<unknown>): Promise<
  *
  * Without `confirm: true` this is a read: it answers `canDelete` and writes
  * nothing. With it, and no history, it hard-deletes the family doc
- * `families/{kinfolkId}/kin/{kinId}` AND its flat mirror `kin/{legacyKinId}`
- * in one batch. Both mirror triggers (`onFamilyKinWrite`, `onFlatKinWrite`)
- * return on a delete event (`!after`), so neither copy is re-created. The flat
- * doc is only deleted when it links back to this family doc; a flat pet that
- * merely shares the name (the `findFlatMirror` name fallback) is left alone.
+ * `families/{kinfolkId}/kin/{kinId}` AND its flat mirror in one batch, with
+ * the Kin's removal request when one is on file (a request for a Kin that no
+ * longer exists has nothing left to answer). Both mirror triggers
+ * (`onFamilyKinWrite`, `onFlatKinWrite`) return on a delete event (`!after`),
+ * so neither copy is re-created.
+ *
+ * #1912: "its flat mirror" is the record `lib/kinLink.ts` says is this Kin's
+ * own, never just the one its stamp names. A record another Kin holds, or one
+ * outside the household, is not this Kin's history and is never deleted here.
  */
 export async function deleteKinHandler(req: CallableRequest<unknown>): Promise<DeleteKinResult> {
   initSentry();
@@ -327,13 +334,13 @@ export async function deleteKinHandler(req: CallableRequest<unknown>): Promise<D
   const family = (familySnap.data() ?? {}) as Record<string, unknown>;
   const kinName = typeof family['name'] === 'string' ? (family['name'] as string) : null;
 
-  // The flat mirror: the stamped link first, else the reverse link the mirror
-  // writes onto the flat doc. Never the name fallback (see the docblock).
-  const flatId = await resolveLinkedFlatKinId(familyKinPath, family);
-
-  const blockedBy = await findKinHistory(kinfolkId, flatId ? [args.kinId, flatId] : [args.kinId]);
+  // The Kin's own admin record, verified (#1912). Read-only here: a link that
+  // names another Kin's record counts as no record, so that Kin's visits are
+  // not this one's history.
+  const link = await resolveKinLink(kinfolkId, args.kinId, family);
+  const linkedFlatId = link.state === 'linked' ? link.flatId : null;
+  const blockedBy = await findKinHistory(kinfolkId, linkedFlatId ? [args.kinId, linkedFlatId] : [args.kinId]);
   const canDelete = blockedBy.length === 0;
-
   if (args.confirm !== true) {
     const removalRequest = await readKinRemovalRequest(kinfolkId, args.kinId);
     logEvent({ severity: 'info', function: 'deleteKin', event: 'portal.kin.delete.checked', uid, extra: { kinfolkId, kinId: args.kinId, canDelete, blockedBy, removalRequest: removalRequest?.status ?? null } });
@@ -343,38 +350,19 @@ export async function deleteKinHandler(req: CallableRequest<unknown>): Promise<D
     logEvent({ severity: 'info', function: 'deleteKin', event: 'portal.kin.delete.refused', uid, extra: { kinfolkId, kinId: args.kinId, blockedBy } });
     throw new HttpsError('failed-precondition', deleteRefusalMessage(kinName, blockedBy));
   }
-
+  // The write path repairs a crossed link first, so the record another Kin
+  // owns is handed back to it before this Kin goes.
+  const flatId =
+    link.state === 'linked' && !link.contested ? link.flatId : await ensureOwnFlatKinId(kinfolkId, args.kinId, family);
   const batch = firestore.batch();
   batch.delete(familyRef);
-  let flatDeleted: string | null = null;
-  if (flatId) {
-    const flatRef = firestore.doc(`kin/${flatId}`);
-    const flatSnap = await flatRef.get();
-    const flat = (flatSnap.data() ?? {}) as Record<string, unknown>;
-    const linksBack = flat['familyKinPath'] === familyKinPath || flat['kinfolkId'] === kinfolkId;
-    if (flatSnap.exists && linksBack) {
-      batch.delete(flatRef);
-      flatDeleted = flatId;
-    } else if (flatSnap.exists) {
-      logEvent({ severity: 'warn', function: 'deleteKin', event: 'portal.kin.delete.flat-unlinked', uid, extra: { kinfolkId, kinId: args.kinId, flatId } });
-    }
-  }
+  if (flatId) batch.delete(firestore.doc(`kin/${flatId}`));
+  const requestRef = firestore.doc(`${KIN_REMOVAL_REQUESTS}/${kinRemovalRequestId(kinfolkId, args.kinId)}`);
+  const hadRequest = (await requestRef.get()).exists;
+  if (hadRequest) batch.delete(requestRef);
   await batch.commit();
-  logEvent({ severity: 'info', function: 'deleteKin', event: 'portal.kin.deleted', uid, extra: { kinfolkId, kinId: args.kinId, flatId: flatDeleted } });
+  logEvent({ severity: 'info', function: 'deleteKin', event: 'portal.kin.deleted', uid, extra: { kinfolkId, kinId: args.kinId, flatId, removalRequestCleared: hadRequest } });
   return { ok: true, deleted: true, canDelete: true, blockedBy: [], removalRequest: null };
-}
-
-/**
- * The flat `kin/{id}` mirror of a family Kin doc: the stamped `legacyKinId`
- * first, else the reverse `familyKinPath` link the mirror writes onto the flat
- * doc. Never the name fallback `onFamilyKinWrite` uses to adopt a pet: a flat
- * pet that merely shares the name is not this Kin.
- */
-async function resolveLinkedFlatKinId(familyKinPath: string, family: Record<string, unknown>): Promise<string | null> {
-  const stamped = family['legacyKinId'];
-  if (typeof stamped === 'string' && stamped !== '') return stamped;
-  const byPath = await db().collection('kin').where('familyKinPath', '==', familyKinPath).limit(1).get();
-  return byPath.empty ? null : byPath.docs[0].id;
 }
 
 /** #1408. The Kin's removal request, or null when there has never been one. */
@@ -429,7 +417,8 @@ export async function requestKinRemovalHandler(req: CallableRequest<unknown>): P
     throw new HttpsError('failed-precondition', `${kinName ?? 'This Kin'} is already archived.`);
   }
 
-  const flatId = await resolveLinkedFlatKinId(familyKinPath, family);
+  // #1912: the Kin's own admin record, after any repair a crossed link needed.
+  const flatId = await ensureOwnFlatKinId(kinfolkId, args.kinId, family);
   const blockedBy = await findKinHistory(kinfolkId, flatId ? [args.kinId, flatId] : [args.kinId]);
   if (blockedBy.length === 0) {
     logEvent({ severity: 'info', function: 'requestKinRemoval', event: 'portal.kin.removal.no-history', uid, extra: { kinfolkId, kinId: args.kinId } });

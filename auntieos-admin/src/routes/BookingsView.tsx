@@ -9,8 +9,16 @@ import { Bookings } from '../screens/Bookings';
  * envelope-visit-to-session derivation happens once, in
  * `lib/notificationActions.ts`, so the URL names the thing the screen actually
  * opens and stays readable and shareable on its own terms.
+ *
+ * `/bookings?kinRemoval=<request id>` is the other arrival (#1912): the
+ * "Kinfolk asked to remove a Kin" notice, which opens the removal queue here.
  */
 export function BookingsView() {
-  const { bookingId } = useSearch({ from: '/admin/bookings' });
-  return <Bookings {...(bookingId ? { initialBookingId: bookingId } : {})} />;
+  const { bookingId, kinRemoval } = useSearch({ from: '/admin/bookings' });
+  return (
+    <Bookings
+      {...(bookingId ? { initialBookingId: bookingId } : {})}
+      {...(kinRemoval ? { kinRemovalRequestId: kinRemoval } : {})}
+    />
+  );
 }

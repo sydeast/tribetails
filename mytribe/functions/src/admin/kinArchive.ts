@@ -10,6 +10,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { healKinLink } from '../lib/kinLink';
 import {
   OFFICE_STATUS_WRITE_ID,
   STATUS_BEFORE_ARCHIVE,
@@ -100,6 +101,17 @@ export async function setKinArchivedHandler(
 
   const firestore = db();
   const flatRef = firestore.doc(`kin/${args.kinId}`);
+
+  // #1912: the household copy this record's pointer names may be another
+  // Kin's (a pair crossed by the old name match). Put the record and its
+  // claimants right first, so the status below lands on this Kin's own copy.
+  // A healthy record is read and left as it is.
+  const current = await flatRef.get();
+  const currentKinfolkId = (current.data() as Record<string, unknown> | undefined)?.['kinfolkId'];
+  if (current.exists && typeof currentKinfolkId === 'string' && currentKinfolkId !== '') {
+    await healKinLink(currentKinfolkId, args.kinId);
+  }
+
   const outcome = await firestore.runTransaction(async (tx) => {
     const flatSnap = await tx.get(flatRef);
     if (!flatSnap.exists) throw new HttpsError('not-found', 'That Kin no longer exists.');

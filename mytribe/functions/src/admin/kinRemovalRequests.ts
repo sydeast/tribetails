@@ -17,6 +17,7 @@ import {
   type KinRemovalRequestDto,
 } from '../lib/kinRemovalRequest';
 import { archiveStash } from '../lib/kinArchive';
+import { ensureOwnFlatKinId } from '../lib/kinLink';
 
 /**
  * #1408. The office's half of a household's request to remove a Kin with
@@ -104,6 +105,22 @@ export async function resolveKinRemovalRequestHandler(
 
   const firestore = db();
   const ref = firestore.doc(`${KIN_REMOVAL_REQUESTS}/${args.requestId}`);
+
+  // #1912: the admin record to archive is the one that is this Kin's own NOW
+  // (lib/kinLink.ts), not the id the request was stamped with when it was
+  // sent. A request sent while the Kin was tied to another Kin's record
+  // carries that other record's id; the link is repaired first, so the answer
+  // lands on the right Kin and the request names the right record after it.
+  const pending = await ref.get();
+  const asked = (pending.data() ?? {}) as Record<string, unknown>;
+  let ownFlatId: string | null = null;
+  if (pending.exists && asked['status'] === 'pending' && typeof asked['kinfolkId'] === 'string' && typeof asked['kinId'] === 'string') {
+    const familySnap = await firestore.doc(`families/${asked['kinfolkId']}/kin/${asked['kinId']}`).get();
+    if (familySnap.exists) {
+      ownFlatId = await ensureOwnFlatKinId(asked['kinfolkId'], asked['kinId'], (familySnap.data() ?? {}) as Record<string, unknown>);
+    }
+  }
+
   const outcome = await firestore.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new HttpsError('not-found', 'That removal request no longer exists.');
@@ -120,12 +137,7 @@ export async function resolveKinRemovalRequestHandler(
       const familyRef = kinfolkId && kinId ? firestore.doc(`families/${kinfolkId}/kin/${kinId}`) : null;
       const familySnap = familyRef ? await tx.get(familyRef) : null;
       const family = (familySnap?.data() ?? {}) as Record<string, unknown>;
-      const stampedFlat = typeof data['flatKinId'] === 'string' && data['flatKinId'] !== ''
-        ? data['flatKinId']
-        : typeof family['legacyKinId'] === 'string' && family['legacyKinId'] !== ''
-          ? (family['legacyKinId'] as string)
-          : null;
-      const flatRef = stampedFlat ? firestore.doc(`kin/${stampedFlat}`) : null;
+      const flatRef = ownFlatId ? firestore.doc(`kin/${ownFlatId}`) : null;
       const flatSnap = flatRef ? await tx.get(flatRef) : null;
 
       if (flatRef && flatSnap?.exists) {
@@ -153,6 +165,7 @@ export async function resolveKinRemovalRequestHandler(
       ref,
       {
         status: args.decision === 'archive' ? 'archived' : 'declined',
+        ...(ownFlatId ? { flatKinId: ownFlatId } : {}),
         resolvedByUid: uid,
         resolvedAt: FieldValue.serverTimestamp(),
         resolutionNote: note,
