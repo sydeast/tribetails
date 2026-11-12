@@ -13,6 +13,12 @@ vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: { '60Minute': '40' }, serviceDurations: { '60Minute': '60' }, timeBlocks: [] }),
 }));
 
+// #1837: the feed is the signed-in staff member's own notices. `authState` is
+// swapped per test to prove the listener follows the account.
+const { authState } = vi.hoisted(() => ({
+  authState: { current: { status: 'signedIn', user: { uid: 'staff-1' } } as unknown },
+}));
+vi.mock('../lib/auth', () => ({ useAuth: () => authState.current }));
 const { markNotificationRead, markNotificationUnread, bulkMarkNotificationsRead } = vi.hoisted(() => ({
   markNotificationRead: vi.fn(),
   markNotificationUnread: vi.fn(),
@@ -120,6 +126,7 @@ function detailed(over: Partial<NotificationEntry> = {}): NotificationEntry {
 }
 
 beforeEach(() => {
+  authState.current = { status: 'signedIn', user: { uid: 'staff-1' } };
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<NotificationEntry[]>);
   markNotificationRead.mockReset().mockResolvedValue(undefined);
   markNotificationUnread.mockReset().mockResolvedValue(undefined);
@@ -1158,5 +1165,60 @@ describe('Notifications read-row styling (issue #707)', () => {
     expect(rows[0]).not.toHaveClass('notif-row--read');
     expect(rows[1]).toHaveClass('notif-row--read');
     expect(rows[1]).not.toHaveClass('notif-row--unread');
+  });
+});
+/**
+ * #1837. The screen listed every household's notices, and its buttons changed
+ * them for the Kinfolk. The feed is now the signed-in staff member's own.
+ */
+describe('Notifications: only the signed-in staff members own notices (#1837)', () => {
+  function notificationSpecs(): CollectionSpec[] {
+    return useCollection.mock.calls
+      .map((c) => c[0] as CollectionSpec)
+      .filter((spec) => spec.path === 'notifications');
+  }
+  it('listens with recipientUid == the signed-in uid, newest first, capped', () => {
+    render(<Notifications />);
+    const specs = notificationSpecs();
+    expect(specs.length).toBeGreaterThan(0);
+    for (const spec of specs) {
+      expect(spec).toEqual({
+        path: 'notifications',
+        order: ['createdAt', 'desc'],
+        max: 200,
+        filters: [['recipientUid', '==', 'staff-1']],
+      });
+    }
+  });
+  it('never opens an unfiltered listener on the collection', () => {
+    render(<Notifications />);
+    const unfiltered = notificationSpecs().filter(
+      (spec) => !(spec.filters ?? []).some((f) => f[0] === 'recipientUid' && f[1] === '=='),
+    );
+    expect(unfiltered).toEqual([]);
+  });
+  it('follows the account: another staff member gets their own filter', () => {
+    authState.current = { status: 'signedIn', user: { uid: 'auntie-7' } };
+    render(<Notifications />);
+    expect(notificationSpecs().every((spec) => spec.filters?.[0]?.[2] === 'auntie-7')).toBe(true);
+  });
+  it('keeps the recipient filter when no account is resolved, so it cannot widen to the collection', () => {
+    authState.current = { status: 'loading' };
+    render(<Notifications />);
+    const specs = notificationSpecs();
+    expect(specs.length).toBeGreaterThan(0);
+    for (const spec of specs) expect(spec.filters).toEqual([['recipientUid', '==', '']]);
+  });
+  it('counts and tiles describe only the rows the scoped listener returned', () => {
+    mockStreams({
+      status: 'ready',
+      data: [
+        entry({ _id: 'mine-1', recipientUid: 'staff-1', title: 'A KinCare visit was requested' }),
+        entry({ _id: 'mine-2', recipientUid: 'staff-1', title: 'Invoice paid', readAt: fakeTs('2026-07-16T10:00:00Z') }),
+      ],
+    });
+    render(<Notifications />);
+    expect(document.querySelectorAll('.notif-row')).toHaveLength(2);
+    expect(screen.getByText('1 unread')).toBeTruthy();
   });
 });

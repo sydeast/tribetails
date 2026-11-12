@@ -23,7 +23,7 @@ describe('getMyBookingsHandler', () => {
     await expect(getMyBookingsHandler({ data: {}, auth: undefined } as any)).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 
-  it('splits live, upcoming, recent — buckets unchanged from the pre-envelope shape', async () => {
+  it('splits live, upcoming, recent; the live visit is on Upcoming as well (#1832)', async () => {
     const future = Date.now() + 86400_000;
     const past = Date.now() - 86400_000;
     const ctx = buildDbMock({
@@ -69,18 +69,19 @@ describe('getMyBookingsHandler', () => {
     const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
     const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
 
-    // Buckets identical to the old behaviour.
+    // #1832: the live visit leads Upcoming, so the tab's count is never 0
+    // while the Auntie is at the door. Recent is unchanged.
     expect(res.liveVisit?.id).toBe('b-active');
-    expect(res.upcoming.map((b) => b.id)).toEqual(['b-up']);
+    expect(res.upcoming.map((b) => b.id)).toEqual(['b-active', 'b-up']);
     expect(res.recent.map((b) => b.id).sort()).toEqual(['b-cancel', 'b-done']);
 
     // Each kinCare carries id + batchId + sourceBookingId + sessionId.
     expect(res.liveVisit?.batchId).toBe('env-a');
     expect(res.liveVisit?.sourceBookingId).toBe('auntie-1');
     expect(res.liveVisit?.sessionId).toBe('sess-1');
-    expect(res.upcoming[0].batchId).toBe('env-a');
-    expect(res.upcoming[0].sourceBookingId).toBeNull();
-    expect(res.upcoming[0].sessionId).toBeNull();
+    expect(res.upcoming[1].batchId).toBe('env-a');
+    expect(res.upcoming[1].sourceBookingId).toBeNull();
+    expect(res.upcoming[1].sessionId).toBeNull();
   });
 
   it('returns an envelopes[] array grouping kinCares with envelope-level fields', async () => {
