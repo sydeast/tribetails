@@ -1,6 +1,7 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { arr } from '../lib/coerce';
+import { normalizeHomeSections } from '../lib/settingsFormat';
 import type { TagDef } from '../lib/tags/model';
 
 /**
@@ -755,7 +756,12 @@ function mergePortalHome(raw: unknown): PortalHome {
   const r = (raw ?? {}) as Partial<PortalHome>;
   // Only the LIST is validated here; the rows inside it stay a cast, which is
   // why `HomeSectionCfg.id` is optional.
-  return { sections: pickList<HomeSectionCfg>(r.sections, DEFAULT_PORTAL_HOME.sections) };
+  // #1987: a stored layout equal to the default is read as the default. The
+  // save stores it as the empty list now; this covers a document written
+  // before it did, so the editor opens on "Default" with nothing to reset.
+  return {
+    sections: normalizeHomeSections(pickList<HomeSectionCfg>(r.sections, DEFAULT_PORTAL_HOME.sections)),
+  };
 }
 
 /**

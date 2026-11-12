@@ -22,6 +22,7 @@ import {
   greetingKick,
   pendingChangeLabel,
   relativeDay,
+  homeLayoutMode,
   resolveHomeLayout,
   speciesEmoji,
   visitTile,
@@ -46,11 +47,11 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
  * O-14 parity fix: the operator-configurable section layout
  * (`portal.home`, resolved via resolveHomeLayout — a direct port of
  * HomeScreen.kt's resolveHomeLayout) was previously ignored entirely on
- * web while Android already respected it. Empty config -> the same fixed
- * two-column layout as before (unchanged for every kinfolk until an
- * operator actually configures something); a non-empty config renders the
- * configured order/limits in a single column, exactly like the Kotlin
- * `custom` branch.
+ * web while Android already respected it. #1987: the ORDER chooses the page.
+ * The standard order keeps the two-column page, with any limits applied and
+ * any switched-off card left out; an order the operator changed renders in a
+ * single column, exactly like the Kotlin stacked branch. A Limit never
+ * changes the page shape.
  *
  * Every branch reads lib/queryState.ts rather than `isLoading` plus a length.
  * A signal drop with the tab open pauses these queries: `isLoading` goes false
@@ -106,7 +107,10 @@ export function Home() {
 
   const sections = home.data?.portal.home ?? [];
   const layout = resolveHomeLayout(sections);
-  const custom = sections.length > 0;
+  // #1987: the order alone chooses the page shape. A Limit or a hidden card
+  // never does (see `homeLayoutMode`).
+  const stacked = homeLayoutMode(sections) === 'stacked';
+  const shows = (id: string) => layout.some((s) => s.id === id);
   function sectionLimit(id: string, fallback: number): number {
     const configured = layout.find((s) => s.id === id)?.limit ?? 0;
     return configured > 0 ? configured : fallback;
@@ -303,33 +307,42 @@ export function Home() {
             quickStart: quickStartSection,
           };
 
-          // Empty operator config -> the fixed two-column layout. A configured
-          // layout -> the configured order/limits in a single column (a custom
-          // order can't be meaningfully forced into two fixed columns) —
-          // matches HomeScreen.kt's `custom` branch.
-          if (custom) {
+          // The standard order -> the two-column page. An order the operator
+          // changed -> that order in a single column (a custom order can't be
+          // meaningfully forced into two fixed columns), matching
+          // HomeScreen.kt's stacked branch.
+          if (stacked) {
             // The Balance due line follows Up next; with Up next switched off
             // it goes last, so a configured layout never hides money owed.
-            const hasUpNext = layout.some((s) => s.id === 'upNext');
-            return (
-              <>
-                {layout.map((sec) => {
-                  const el = sectionById[sec.id];
-                  if (!el) return null;
-                  return sec.id === 'liveVisit' ? (
-                    <Fragment key={sec.id}>{el}</Fragment>
-                  ) : (
-                    <div className="stack" key={sec.id}>
-                      {el}
-                      {sec.id === 'upNext' && balanceDueSection}
-                    </div>
-                  );
-                })}
-                {!hasUpNext && balanceDueSection && <div className="stack">{balanceDueSection}</div>}
-              </>
-            );
+            // #1987: the cards between two live-visit slots share ONE `.stack`,
+            // which is what puts the gap between them. Each used to sit in a
+            // stack of its own and touch the card above.
+            const groups: ReactNode[] = [];
+            let run: ReactNode[] = [];
+            const flush = (key: string) => {
+              if (run.length === 0) return;
+              groups.push(<div className="stack" key={key}>{run}</div>);
+              run = [];
+            };
+            for (const sec of layout) {
+              const el = sectionById[sec.id];
+              if (!el) continue;
+              if (sec.id === 'liveVisit') {
+                flush(`before-${sec.id}`);
+                groups.push(<Fragment key={sec.id}>{el}</Fragment>);
+                continue;
+              }
+              run.push(<Fragment key={sec.id}>{el}</Fragment>);
+              if (sec.id === 'upNext' && balanceDueSection) {
+                run.push(<Fragment key="balanceDue">{balanceDueSection}</Fragment>);
+              }
+            }
+            if (!shows('upNext') && balanceDueSection) {
+              run.push(<Fragment key="balanceDue">{balanceDueSection}</Fragment>);
+            }
+            flush('last');
+            return <div data-home-layout="stacked">{groups}</div>;
           }
-
           // Quick Start comes FIRST in the DOM so the phone's single column
           // (where `.cols` collapses in DOM order) puts it above Up next, above
           // the fold at 390px. On a wide screen `.cols > .aside { order: 2 }`
@@ -338,15 +351,15 @@ export function Home() {
           // HomeScreen.kt's Row.
           return (
             <>
-              {liveVisitSection}
-              <div className="cols">
+              {shows('liveVisit') && liveVisitSection}
+              <div className="cols" data-home-layout="columns">
                 <div className="stack aside">
                   {quickStartSection}
                 </div>
                 <div className="stack">
-                  {upNextSection}
+                  {shows('upNext') && upNextSection}
                   {balanceDueSection}
-                  {talesSection}
+                  {shows('tales') && talesSection}
                 </div>
               </div>
             </>

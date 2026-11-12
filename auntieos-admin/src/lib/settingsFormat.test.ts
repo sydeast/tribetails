@@ -13,12 +13,15 @@ import {
   effectiveHomeSections,
   homeSectionLabel,
   homeLayoutModeLabel,
+  isDefaultHomeLayout,
+  normalizeHomeSections,
   moveHomeSectionUp,
   moveHomeSectionDown,
   HOME_SECTION_CATALOG,
   RESET_HOME_SECTIONS,
   lastSavedLabel,
 } from './settingsFormat';
+import type { HomeSectionCfg } from '../api/settings';
 
 describe('businessHoursRows', () => {
   it('renders one row per day, Monday first, matching the wasm daysOfWeek order', () => {
@@ -132,6 +135,12 @@ describe('portalHomeSummary', () => {
   it('reports the default layout when no sections are configured', () => {
     expect(portalHomeSummary({ sections: [] })).toBe('Default layout (no custom sections configured)');
   });
+
+  it('reports the default layout for stored rows equal to the default (#1987)', () => {
+    expect(
+      portalHomeSummary({ sections: HOME_SECTION_CATALOG.map((c) => ({ id: c.id, enabled: true, limit: 0 })) }),
+    ).toBe('Default layout (no custom sections configured)');
+  });
 });
 
 describe('homeSectionLabel', () => {
@@ -199,21 +208,66 @@ describe('moveHomeSectionUp / moveHomeSectionDown', () => {
   });
 });
 
-// ISSUE #397 M10 follow-up: the one-way-door guard. `homeLayoutModeLabel` is
-// what lets the operator tell the two states apart, and `RESET_HOME_SECTIONS`
-// is the literal value that gets the document back to the portal's own
-// implicit default -- not a canonical list built to look the same.
-describe('homeLayoutModeLabel', () => {
-  it('is "Default layout" for an empty (unconfigured) sections array', () => {
-    expect(homeLayoutModeLabel({ sections: [] })).toBe('Default layout');
+// #1987: a layout equal to the default IS the default. This block used to pin
+// the opposite ("an explicit array is Custom even when its contents match
+// canonical defaults exactly"), which is the rule that left the chip on Custom
+// and the portal in one stacked column after a Limit was typed and put back.
+// The vectors are the same ones the server (`homeLayoutDefault.test.ts`) and
+// admin Android (`HomeLayoutConfigTest.kt`) pin.
+const row = (id: string, enabled = true, limit = 0) => ({ id, enabled, limit });
+const DEFAULT_ROWS = HOME_SECTION_CATALOG.map((s) => row(s.id));
+const LIMIT_ONLY = DEFAULT_ROWS.map((r) => (r.id === 'upNext' ? { ...r, limit: 2 } : r));
+const CUSTOM_ORDER = [row('quickStart'), row('liveVisit'), row('upNext'), row('tales')];
+describe('isDefaultHomeLayout', () => {
+  it('is true for the empty list and for the four default rows written out', () => {
+    expect(isDefaultHomeLayout([])).toBe(true);
+    expect(isDefaultHomeLayout(DEFAULT_ROWS)).toBe(true);
   });
-
-  it('is "Custom layout" for any non-empty array, even one that matches the canonical defaults', () => {
-    const canonicalLooking = HOME_SECTION_CATALOG.map((s) => ({ id: s.id, enabled: true, limit: 0 }));
-    expect(homeLayoutModeLabel({ sections: canonicalLooking })).toBe('Custom layout');
+  it('reads a row with no enabled as on and a row with no limit as unlimited', () => {
+    const bare = HOME_SECTION_CATALOG.map((s) => ({ id: s.id })) as unknown as HomeSectionCfg[];
+    expect(isDefaultHomeLayout(bare)).toBe(true);
+  });
+  it('is false as soon as a limit, a switch or the order differs', () => {
+    expect(isDefaultHomeLayout(LIMIT_ONLY)).toBe(false);
+    expect(isDefaultHomeLayout(DEFAULT_ROWS.map((r) => (r.id === 'tales' ? { ...r, enabled: false } : r)))).toBe(false);
+    expect(isDefaultHomeLayout(CUSTOM_ORDER)).toBe(false);
+  });
+  it('never calls a list with a row it does not know the default', () => {
+    expect(isDefaultHomeLayout([...DEFAULT_ROWS, row('roster')])).toBe(false);
+    expect(isDefaultHomeLayout([...DEFAULT_ROWS.slice(0, 3), row('roster'), row('quickStart')])).toBe(false);
+    expect(isDefaultHomeLayout([...DEFAULT_ROWS, row('somethingNew')])).toBe(false);
+    expect(isDefaultHomeLayout([...DEFAULT_ROWS, row('tales')])).toBe(false);
+    expect(isDefaultHomeLayout([row('liveVisit'), row('upNext'), row('tales'), { enabled: true, limit: 0 }])).toBe(false);
+    expect(isDefaultHomeLayout(DEFAULT_ROWS.slice(0, 3))).toBe(false);
   });
 });
-
+describe('normalizeHomeSections', () => {
+  it('holds a layout equal to the default as the empty list', () => {
+    expect(normalizeHomeSections(DEFAULT_ROWS)).toEqual([]);
+    expect(normalizeHomeSections([])).toEqual([]);
+  });
+  it('leaves a limit-only change, a custom order and an unknown row exactly as they are', () => {
+    expect(normalizeHomeSections(LIMIT_ONLY)).toEqual(LIMIT_ONLY);
+    expect(normalizeHomeSections(CUSTOM_ORDER)).toEqual(CUSTOM_ORDER);
+    const withRoster = [...DEFAULT_ROWS, row('roster')];
+    expect(normalizeHomeSections(withRoster)).toEqual(withRoster);
+  });
+});
+describe('homeLayoutModeLabel', () => {
+  it('reads Default layout for an empty sections array', () => {
+    expect(homeLayoutModeLabel({ sections: [] })).toBe('Default layout');
+  });
+  it('reads Default layout for stored rows equal to the default', () => {
+    expect(homeLayoutModeLabel({ sections: DEFAULT_ROWS })).toBe('Default layout');
+  });
+  it('reads Custom layout for a limit, a hidden section or a custom order', () => {
+    expect(homeLayoutModeLabel({ sections: LIMIT_ONLY })).toBe('Custom layout');
+    expect(homeLayoutModeLabel({ sections: CUSTOM_ORDER })).toBe('Custom layout');
+    expect(
+      homeLayoutModeLabel({ sections: DEFAULT_ROWS.map((r) => (r.id === 'tales' ? { ...r, enabled: false } : r)) }),
+    ).toBe('Custom layout');
+  });
+});
 describe('RESET_HOME_SECTIONS', () => {
   it('is the empty array the portal reads as its own implicit default', () => {
     expect(RESET_HOME_SECTIONS).toEqual([]);

@@ -70,6 +70,34 @@ describe('mergeBusinessSettings', () => {
     expect(result.mytribePortal.chat.maxMessageLength).toBe(2000);
   });
 
+  // #1987: prod holds a Home layout of four rows equal to the default, left
+  // by a Limit that was typed and put back. It reads as the default.
+  it('reads a stored Home layout equal to the default as the default, the empty list', () => {
+    const rows = ['liveVisit', 'upNext', 'tales', 'quickStart'].map((id) => ({ id, enabled: true, limit: 0 }));
+    expect(mergeBusinessSettings({ mytribePortal: { home: { sections: rows } } }).mytribePortal.home).toEqual({
+      sections: [],
+    });
+  });
+  it('reads a limit-only Home layout and a custom order exactly as stored', () => {
+    const limitOnly = [
+      { id: 'liveVisit', enabled: true, limit: 0 },
+      { id: 'upNext', enabled: true, limit: 2 },
+      { id: 'tales', enabled: true, limit: 0 },
+      { id: 'quickStart', enabled: true, limit: 0 },
+    ];
+    expect(mergeBusinessSettings({ mytribePortal: { home: { sections: limitOnly } } }).mytribePortal.home.sections).toEqual(
+      limitOnly,
+    );
+    const custom = [
+      { id: 'quickStart', enabled: true, limit: 0 },
+      { id: 'liveVisit', enabled: true, limit: 0 },
+      { id: 'upNext', enabled: true, limit: 0 },
+      { id: 'tales', enabled: true, limit: 0 },
+    ];
+    expect(mergeBusinessSettings({ mytribePortal: { home: { sections: custom } } }).mytribePortal.home.sections).toEqual(
+      custom,
+    );
+  });
   it('preserves a real false/0/empty-string value rather than treating it as missing', () => {
     const result = mergeBusinessSettings({
       observeUsHolidays: false,

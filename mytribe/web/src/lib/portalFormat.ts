@@ -373,3 +373,33 @@ export function resolveHomeLayout(sections: PortalHomeSection[]): HomeSectionRes
     .filter((s) => s.enabled && (CANONICAL_HOME_ORDER as readonly string[]).includes(s.id))
     .map((s) => ({ id: s.id, limit: s.limit }));
 }
+
+/** The sections Home can draw. `roster` is in the canonical order for old configs but has had no card since #1412. */
+const DRAWN_HOME_ORDER: readonly string[] = ['liveVisit', 'upNext', 'tales', 'quickStart'];
+/**
+ * #1987: which page shape Home takes. `columns` is the standard page (Quick
+ * start beside Up next and Recent KinTales on a wide screen, above them on a
+ * phone); `stacked` is one column in the operator's own order.
+ *
+ * ORDER is the only thing that chooses. The page is stacked when the operator
+ * has moved a section out of the standard order, because a custom order cannot
+ * be forced into two fixed columns. A Limit only caps how many rows a card
+ * lists and a switch only hides a card, so neither is read here: before this,
+ * any saved list at all (one Limit of 2, or four rows equal to the default)
+ * flipped every household's Home to the stacked page.
+ *
+ * Two cases have nothing to put side by side, so they are stacked too, in the
+ * same order the columns would have read on a phone: Quick start switched off,
+ * or both Up next and Recent KinTales switched off.
+ *
+ * Mirrored by `homeLayoutMode` in the Android portal's `HomeLayout.kt`.
+ */
+export function homeLayoutMode(sections: PortalHomeSection[]): 'columns' | 'stacked' {
+  const shown = resolveHomeLayout(sections)
+    .map((s) => DRAWN_HOME_ORDER.indexOf(s.id))
+    .filter((i) => i >= 0);
+  const standardOrder = shown.every((at, i) => i === 0 || at > shown[i - 1]!);
+  if (!standardOrder) return 'stacked';
+  const has = (id: string) => shown.includes(DRAWN_HOME_ORDER.indexOf(id));
+  return has('quickStart') && (has('upNext') || has('tales')) ? 'columns' : 'stacked';
+}

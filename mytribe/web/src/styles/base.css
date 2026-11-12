@@ -145,6 +145,8 @@ h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display
 /* #1412: Home's aside (Quick Start) is first in the DOM so the phone column
    leads with it; on wide screens `order` sends it to the right-hand 1fr track. */
 .cols > .aside { order: 2; }
+/* #1987: a custom Home order can put the live visit under other cards. */
+.stack + .live { margin-top: 24px; }
 
 /* booking rows */
 .visit { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 16px; cursor: pointer; border: 1px solid transparent; transition: .2s var(--ease); }
