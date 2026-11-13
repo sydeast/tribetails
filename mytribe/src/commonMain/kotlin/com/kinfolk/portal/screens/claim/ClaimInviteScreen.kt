@@ -42,6 +42,7 @@ import com.kinfolk.portal.auth.AccountLockedException
 import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.AuthState
 import com.kinfolk.portal.auth.RESET_RATE_LIMITED_MESSAGE
+import com.kinfolk.portal.auth.SIGN_OUT_FAILED
 import com.kinfolk.portal.auth.isResetRateLimited
 import com.kinfolk.portal.auth.WRONG_CREDENTIALS_MESSAGE
 import com.kinfolk.portal.components.GlassCard
@@ -91,6 +92,8 @@ fun ClaimInviteScreen(
     var acceptedForUid by remember { mutableStateOf<String?>(null) }
     var resetting by remember { mutableStateOf(false) }
     var resetSent by remember { mutableStateOf(false) }
+    var signingOut by remember { mutableStateOf(false) }
+    var signOutError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(inviteId) {
         try {
@@ -212,10 +215,38 @@ fun ClaimInviteScreen(
                             textAlign = TextAlign.Center,
                         )
                         Spacer(Modifier.height(KinfolkSpacing.m))
+                        // #2140: a wait while it runs, and a refusal said in
+                        // plain words. It used to be a bare launch: a throw went
+                        // nowhere and the card sat there as if nothing was pressed.
                         Button(
-                            onClick = { scope.launch { repo.signOut() } },
+                            onClick = {
+                                if (!signingOut) {
+                                    signingOut = true
+                                    signOutError = null
+                                    scope.launch {
+                                        try {
+                                            repo.signOut()
+                                        } catch (c: CancellationException) {
+                                            throw c
+                                        } catch (t: Throwable) {
+                                            println("[Claim] signOut THREW ${t::class.simpleName}: ${t.message}")
+                                            signOutError = SIGN_OUT_FAILED
+                                        } finally {
+                                            signingOut = false
+                                        }
+                                    }
+                                }
+                            },
+                            enabled = !signingOut,
                             colors = orangeButton(),
-                        ) { Text("Sign out and continue") }
+                        ) { Text(if (signingOut) "Signing out…" else "Sign out and continue") }
+                        signOutError?.let { message ->
+                            Text(
+                                text = message,
+                                style = type.sansBody.copy(color = KinfolkBrand.SnuggleCoral),
+                                textAlign = TextAlign.Center,
+                            )
+                        }
                     }
 
                     step is ClaimStep.CreateAccount -> {

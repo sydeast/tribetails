@@ -60,7 +60,7 @@ export function Schedule() {
   const arrived = live !== null && visitStageOf(live) === 'active';
   const { points: breadcrumbs, error: breadcrumbsError } = useBreadcrumbs(arrived ? (live.sessionId ?? null) : null);
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (bookings.isError) {
     return (
@@ -68,6 +68,7 @@ export function Schedule() {
         onRetry={() => void bookings.refetch()}
         retrying={bookings.isRefetching}
         onSignOut={signOut} signingOut={signingOut}
+        signOutError={signOutError}
       />
     );
   }

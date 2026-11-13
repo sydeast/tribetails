@@ -41,7 +41,7 @@ const PAGE_SIZE = 50;
  */
 export function NotificationsList() {
   const kinfolkId = getActiveKinfolkId();
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const queryKey = ['myNotifications', kinfolkId] as const;
@@ -61,6 +61,7 @@ export function NotificationsList() {
         retrying={list.isRefetching}
         onSignOut={signOut}
         signingOut={signingOut}
+        signOutError={signOutError}
       />
     );
   }

@@ -4,7 +4,7 @@
    Extracted verbatim from ui-ideas/mytribe-home-2026-05-31.html.
    ============================================================ */
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scrollbar-gutter: stable; }
 body {
   font-family: var(--sans); color: var(--navy); min-height: 100vh; -webkit-font-smoothing: antialiased;
   background:
@@ -72,7 +72,9 @@ body {
 button.avatar { border: 0; padding: 0; }
 .avatar-menu { position: relative; }
 .avatar-menu__panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 50; min-width: 210px; padding: 6px;
-  display: flex; flex-direction: column; gap: 2px; border-radius: 16px; box-shadow: var(--shadow-lift); }
+  display: flex; flex-direction: column; gap: 2px; border-radius: 16px; box-shadow: var(--shadow-lift);
+  background: var(--surface-solid); border: 1px solid var(--hairline); }
+.avatar-menu__panel .avatar-menu__error { margin: 4px 8px 6px; font-size: 13px; line-height: 1.4; color: var(--coral); }
 .avatar-menu__panel a, .avatar-menu__panel button { display: block; width: 100%; text-align: left; padding: 11px 14px; border: 0;
   border-radius: 11px; background: transparent; color: var(--navy); font: inherit; font-size: 14.5px; cursor: pointer; text-decoration: none; }
 .avatar-menu__panel a:hover, .avatar-menu__panel button:hover:not(:disabled) { background: rgba(223, 132, 49, .12); }
@@ -222,6 +224,7 @@ h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display
 .session-notice .hd b { font-size: 16px; }
 .session-notice .hd p { font-size: 14px; color: var(--navy-muted); margin-top: 3px; line-height: 1.5; }
 .session-notice .btn { margin-top: 14px; }
+.session-notice .session-notice__err { margin-top: 10px; font-size: 14px; line-height: 1.5; color: var(--coral); }
 
 /* reduced-motion fallback: freeze orbs + entrance animation */
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }

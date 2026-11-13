@@ -81,4 +81,35 @@ describe('SessionNotice', () => {
     render(<SessionNotice />);
     expect(screen.getByRole('button', { name: 'Signing out…' })).toBeDisabled();
   });
+
+  /** #2140: the "Sign in again" press failing used to just hand the button back. */
+  describe('when sign-out fails (#2140)', () => {
+    const FAILED = "We couldn't sign you out. You are still signed in. Check your connection and try again.";
+
+    it('says so inside the notice and leaves the button usable for another try', async () => {
+      useSessionHealth.mockReturnValue({ status: 'expired' });
+      useSignOut.mockReturnValue({ signOut, signingOut: false, error: FAILED });
+      render(<SessionNotice />);
+      const notice = screen.getByRole('alert');
+      expect(notice).toHaveTextContent('You are still signed in');
+      const again = screen.getByRole('button', { name: 'Sign in again' });
+      expect(again).toBeEnabled();
+      await userEvent.click(again);
+      expect(signOut).toHaveBeenCalledTimes(1);
+    });
+
+    it('is announced through the notice itself, not a second alert nested inside it', () => {
+      useSessionHealth.mockReturnValue({ status: 'expired' });
+      useSignOut.mockReturnValue({ signOut, signingOut: false, error: FAILED });
+      render(<SessionNotice />);
+      expect(screen.getAllByRole('alert')).toHaveLength(1);
+    });
+
+    it('says nothing about sign-out while there was no failure', () => {
+      useSessionHealth.mockReturnValue({ status: 'expired' });
+      useSignOut.mockReturnValue({ signOut, signingOut: false, error: null });
+      render(<SessionNotice />);
+      expect(screen.getByRole('alert')).not.toHaveTextContent('still signed in');
+    });
+  });
 });

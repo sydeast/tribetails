@@ -16,7 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.collectAsState
 import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.AuthState
-import com.kinfolk.portal.auth.tearDownSession
+import com.kinfolk.portal.auth.SignOutFailure
 import com.kinfolk.portal.firebase.FunctionsClient
 import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.firebase.platformAuthBackend
@@ -83,6 +83,8 @@ fun KinfolkPortalAppGuarded() {
     val pushCoordinator = remember(portalApi, permissionGate) {
         PushRegistrationCoordinator(portalApi, permissionGate = permissionGate, scope = scope)
     }
+    // #2140: a refused sign-out, kept for the dialog drawn over the shell.
+    val signOutFailure = remember { SignOutFailure() }
     val authState by repo.state.collectAsState()
     LaunchedEffect(authState) {
         if (authState is AuthState.SignedIn) pushCoordinator.onSignedIn()
@@ -290,7 +292,7 @@ fun KinfolkPortalAppGuarded() {
                                 // household. tearDownSession is what guarantees the
                                 // sign-out happens either way.
                                 scope.launch {
-                                    tearDownSession(
+                                    signOutFailure.run(
                                         cleanUp = {
                                             pushCoordinator.onSignOut()
                                             // Local sign-out only drops this device's
@@ -303,8 +305,9 @@ fun KinfolkPortalAppGuarded() {
                                         // The sign-out itself refusing is the one case
                                         // where the kinfolk really is still signed in.
                                         // Re-resolve rather than strand them on the
-                                        // spinner the resets below just produced.
-                                        onFailure = { scope.launch { repo.refresh() } },
+                                        // spinner the resets below just produced, and
+                                        // (#2140) say so: SignOutFailedDialog below.
+                                        reResolve = { repo.refresh() },
                                     )
                                 }
                                 // Synchronous, and deliberately not inside the coroutine:
@@ -331,6 +334,9 @@ fun KinfolkPortalAppGuarded() {
                             },
                         )
                     }
+                }
+                signOutFailure.message?.let { message ->
+                    SignOutFailedDialog(message = message, onDismiss = signOutFailure::dismiss)
                 }
             }
         }

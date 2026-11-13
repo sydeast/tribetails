@@ -91,12 +91,12 @@ export function Invoices() {
   // Try again." over a payment whose fate is unknown is the one line this
   // screen must not print.
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   // #1005: refused billing access is not a failure to report. Back to Home.
   if (invoices.isError && isPermissionDenied(invoices.error)) return <LeaveBilling />;
   if (invoices.isError) {
-    return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   const data = invoices.data;

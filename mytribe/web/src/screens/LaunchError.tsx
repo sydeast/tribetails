@@ -6,7 +6,14 @@
 import { BusyLabel } from '../components/Loading';
 import { readCachedBusinessName } from '../lib/businessPublicCard';
 
-export function LaunchError(props: { onRetry: () => void; onSignOut: () => void; retrying?: boolean; signingOut?: boolean }) {
+export function LaunchError(props: {
+  onRetry: () => void;
+  onSignOut: () => void;
+  retrying?: boolean;
+  signingOut?: boolean;
+  /** `useSignOut().error`: said under the buttons when sign-out failed (#2140). */
+  signOutError?: string | null | undefined;
+}) {
   const name = readCachedBusinessName();
   return (
     <main className="errshell">
@@ -39,6 +46,11 @@ export function LaunchError(props: { onRetry: () => void; onSignOut: () => void;
             {props.signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign out'}
           </button>
         </div>
+        {props.signOutError && (
+          <p className="errsignout" role="alert">
+            {props.signOutError}
+          </p>
+        )}
       </section>
 
       {name !== '' && (
