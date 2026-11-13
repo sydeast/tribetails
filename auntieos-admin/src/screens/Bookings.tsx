@@ -10,6 +10,7 @@ import {
   isBookingInFlight,
   EMPTY_BOOKING_CATALOG,
   type BookingCatalog,
+  type BookingRowHouseholdTime,
   type BookingState,
 } from '../lib/bookingFormat';
 import { useWorkSettingsRead } from '../lib/useWorkSettings';
@@ -394,6 +395,8 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
    * (BOOKINGS_QUERY) still surfaces its own failure through AsyncRegion.
    */
   const [catalog, setCatalog] = useState<BookingCatalog>(EMPTY_BOOKING_CATALOG);
+  /** #1863: null until the work-settings read lands; rows then name the clock only. */
+  const [householdTime, setHouseholdTime] = useState<BookingRowHouseholdTime | null>(null);
   /**
    * `business_settings.timeZone`: the clock the detail sheet's Reschedule and
    * the bulk Reschedule sheet read and write (#1155). America/Chicago, the
@@ -413,6 +416,21 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
       serviceRates: settings.serviceRates,
       serviceDurations: settings.serviceDurations,
       timeBlocks: settings.timeBlocks,
+    });
+    // #1863 / #2034: what each row says the household is shown, by the same
+    // rule as the portal: the business's mode, its blocks and its clock.
+    setHouseholdTime({
+      settings: {
+        defaultBookingMode: settings.defaultBookingMode,
+        allowTimeBlockBooking: settings.allowTimeBlockBooking,
+        allowSpecificTimeBooking: settings.allowSpecificTimeBooking,
+        timeBlocks: settings.timeBlocks,
+        startTimeServiceIds: settings.startTimeServiceIds,
+        ...(settings.defaultTimeBlockDurationHours !== undefined
+          ? { defaultTimeBlockDurationHours: settings.defaultTimeBlockDurationHours }
+          : {}),
+      },
+      businessZone: resolveBusinessTimeZone(settings.timeZone),
     });
   }, [workSettings]);
 
@@ -727,6 +745,7 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
               key={section.key}
               section={section}
               catalog={catalog}
+              householdTime={householdTime}
               // History is where the volume is: 96 of the 100 rows on the live
               // screen. Open like the other two, per the mock, and drawn a page
               // at a time so those 96 do not bury the ones needing an answer.
@@ -857,6 +876,8 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
 interface BookingSectionBlockProps {
   section: BookingSection;
   catalog: BookingCatalog;
+  /** #1863: the mode and blocks each row's household line follows. */
+  householdTime: BookingRowHouseholdTime | null;
   /** Rows drawn before "Load more", or `null` for a section that draws them all. */
   limit: number | null;
   onShowMore: () => void;
@@ -896,6 +917,7 @@ interface BookingSectionBlockProps {
 function BookingSectionBlock({
   section,
   catalog,
+  householdTime,
   limit,
   onShowMore,
   onSelectBooking,
@@ -928,6 +950,7 @@ function BookingSectionBlock({
               key={v.entry._id}
               view={v}
               catalog={catalog}
+              householdTime={householdTime}
               onSelectBooking={onSelectBooking}
               onAct={onAct}
               selecting={selecting}
@@ -1169,6 +1192,7 @@ function BulkRescheduleBanner({
 interface BookingRowProps {
   view: RowView;
   catalog: BookingCatalog;
+  householdTime: BookingRowHouseholdTime | null;
   onSelectBooking?: ((bookingId: string) => void) | undefined;
   /** The card's own transition buttons. Absent, the card draws none. */
   onAct?: ((bookingId: string, action: BookingActionKind) => void) | undefined;
@@ -1232,6 +1256,7 @@ const CARD_ACTIONS: Record<BookingState, readonly { kind: BookingActionKind; lab
 function BookingRow({
   view,
   catalog,
+  householdTime,
   onSelectBooking,
   onAct,
   selecting,
@@ -1248,7 +1273,7 @@ function BookingRow({
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
   // Recomputed per row per render (not memoized): each is a handful of cheap
   // string ops, not worth the hook bookkeeping at list scale.
-  const meta = bookingMetaLine(entry, catalog);
+  const meta = bookingMetaLine(entry, catalog, householdTime);
   const kinfolkNotes = entry.kinfolkNotes ?? '';
   const notePreview = kinfolkNotes.trim() !== '' ? kinfolkNotes : (entry.notes ?? '');
 

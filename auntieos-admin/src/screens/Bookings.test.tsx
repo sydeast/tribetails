@@ -80,6 +80,12 @@ vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fn
 const TEST_SETTINGS = {
   serviceRates: { '30Minute': '25', '60Minute': '45' },
   serviceDurations: {},
+  // #1863: Time Blocks mode, on this machine's clock so the rows' wall-clock
+  // strings and the business clock agree.
+  defaultBookingMode: 'TIME_BLOCK',
+  allowTimeBlockBooking: true,
+  allowSpecificTimeBooking: false,
+  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   timeBlocks: [
     { id: 'morning', label: 'Morning', startTime: '08:00', endTime: '11:00', active: true },
     { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true },
@@ -206,14 +212,35 @@ describe('Bookings screen', () => {
     // "opens BookingActions" tests below for the interactive assertions.
     const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
-    // ONE line built by one formatter: service, the visit's own date, then the
-    // operator's named window (09:00 sits inside the Morning block above).
-    // Awaited because the window comes from the one-shot `business_settings`
-    // read: before it lands the row honestly shows the clock time instead.
+    // ONE line built by one formatter: service, the visit's own date and clock
+    // time, then in Time Blocks mode the block the household sees (09:00 sits
+    // inside the Morning block above). Awaited because the mode comes from the
+    // work-settings read: before it lands the row shows the clock only.
     expect(
-      await within(row).findByText('Dog Walking · Jul 16 · Morning block'),
+      await within(row).findByText('Dog Walking · Jul 16 · 9:00 AM · Morning block'),
     ).toBeInTheDocument();
     expect(within(row).getByText('SCHEDULED')).toBeInTheDocument();
+  });
+  it('#2034: a visit the office moved off its block names the block the household now sees', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ startTime: '2026-07-16T15:30:00' })] });
+    render(<Bookings />);
+    const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
+    // 15:30 is in no block; Midday (to 15:00) is the nearest.
+    expect(await within(row).findByText('Dog Walking · Jul 16 · 3:30 PM · Midday block')).toBeInTheDocument();
+  });
+  it('#1863: in Exact times mode the row names the clock and no block, as the household sees it', async () => {
+    getBusinessSettings.mockResolvedValue({
+      ...TEST_SETTINGS,
+      defaultBookingMode: 'SPECIFIC_TIME',
+      allowTimeBlockBooking: false,
+      allowSpecificTimeBooking: true,
+    });
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    render(<Bookings />);
+    const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    expect(await within(row).findByText('Dog Walking · Jul 16 · 9:00 AM')).toBeInTheDocument();
+    expect(within(row).queryByText(/block/)).toBeNull();
   });
 
   it('an unnamed kinfolk renders "Unnamed Kinfolk" rather than a blank row', () => {

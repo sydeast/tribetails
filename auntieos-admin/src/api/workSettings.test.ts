@@ -16,6 +16,7 @@ vi.mock('./settings', async (orig) => ({
 }));
 
 import { decodeStaffWorkSettings, getWorkSettings } from './workSettings';
+import { servedHouseholdTimeMode } from '../lib/householdVisitTime';
 import { mergeBusinessSettings } from './settings';
 import { loadSharedWorkSettings } from '../lib/useWorkSettings';
 import { invalidateSharedLoad } from '../lib/useSharedOneShot';
@@ -34,6 +35,7 @@ const STAFF_REPLY = {
   allowTimeBlockBooking: true,
   allowSpecificTimeBooking: false,
   defaultBookingMode: 'TIME_BLOCK',
+  startTimeServiceIds: ['Overnight'],
   requireArrivalDepartureVerification: true,
   kinTaleRequired: true,
 };
@@ -76,6 +78,29 @@ describe('#2164 getWorkSettings', () => {
     expect(s.snapRescheduleTo15Min).toBe(false);
   });
 
+  it('#1863: both seats get the start-time KinCares and the one mode a household sees', async () => {
+    currentSessionSeat.mockResolvedValue(AUNTIE);
+    call.mockResolvedValue(STAFF_REPLY);
+    const auntie = await getWorkSettings();
+    expect(auntie.startTimeServiceIds).toEqual(['Overnight']);
+    expect(servedHouseholdTimeMode(auntie)).toBe('TIME_BLOCK');
+    invalidateSharedLoad();
+    currentSessionSeat.mockResolvedValue(OWNER);
+    getBusinessSettings.mockResolvedValue(
+      mergeBusinessSettings({
+        serviceStartTimeBooking: { Overnight: true },
+        timeBlocks: STAFF_REPLY.timeBlocks,
+        allowTimeBlockBooking: true,
+        allowSpecificTimeBooking: true,
+        defaultBookingMode: 'TIME_BLOCK',
+      }),
+    );
+    const owner = await getWorkSettings();
+    expect(owner.startTimeServiceIds).toEqual(['Overnight']);
+    // The owner reads the raw document; a legacy both-on one reads as the one
+    // mode the server serves, so her rows and an Auntie's agree.
+    expect(servedHouseholdTimeMode(owner)).toBe('TIME_BLOCK');
+  });
   it("an Auntie's failed read throws, for the screen to say so", async () => {
     currentSessionSeat.mockResolvedValue(AUNTIE);
     call.mockRejectedValue(new Error('functions/unavailable'));

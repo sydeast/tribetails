@@ -17,9 +17,11 @@ export const STAFF_WORK_REPLY = {
     { id: 'morning', label: 'Morning', startTime: '08:00', endTime: '11:00', active: true },
     { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true },
   ],
-  allowTimeBlockBooking: true,
+  // #1863: the server always sends ONE mode.
+  allowTimeBlockBooking: false,
   allowSpecificTimeBooking: true,
   defaultBookingMode: 'SPECIFIC_TIME',
+  startTimeServiceIds: [],
   requireArrivalDepartureVerification: true,
   kinTaleRequired: false,
 };

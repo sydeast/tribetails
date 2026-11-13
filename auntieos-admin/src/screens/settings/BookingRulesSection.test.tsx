@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_BUSINESS_SETTINGS, mergeBusinessSettings, type BusinessSettings } from '../../api/settings';
-import { BookingRulesSection, bookingRulesPatch } from './BookingRulesSection';
+import { BookingRulesSection, bookingRulesPatch, TIME_BLOCKS_NEED_A_BLOCK } from './BookingRulesSection';
 import { VisitsTrackingSection, visitsTrackingPatch } from './VisitsTrackingSection';
 import { NotificationScheduleSection } from './NotificationScheduleSection';
 import { VISIT_REMINDER_TIMING } from '../../lib/businessOperations';
@@ -30,57 +30,45 @@ function settings(over: Partial<BusinessSettings> = {}): BusinessSettings {
 
 describe('bookingRulesPatch (pure)', () => {
   const base = {
-    defaultBookingMode: 'SPECIFIC_TIME',
+    timeMode: 'SPECIFIC_TIME' as const,
     defaultCalendarView: 'MONTH',
-    allowTimeBlockBooking: true,
-    allowSpecificTimeBooking: true,
     defaultTimeBlockDurationHours: '4',
     travelBufferMinutes: '30',
     enableAutoReminder24h: true,
     blocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
   };
-
-  it('builds every one of the eight fields', () => {
+  it('builds every field, the mode as all three of its stored fields', () => {
     const out = bookingRulesPatch(base);
     expect('patch' in out && out.patch).toEqual({
       defaultBookingMode: 'SPECIFIC_TIME',
-      defaultCalendarView: 'MONTH',
-      allowTimeBlockBooking: true,
+      allowTimeBlockBooking: false,
       allowSpecificTimeBooking: true,
+      defaultCalendarView: 'MONTH',
       defaultTimeBlockDurationHours: 4,
       travelBufferMinutes: 30,
       enableAutoReminder24h: true,
       timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
     });
-  });
-
-  it('refuses turning both booking modes off', () => {
-    const out = bookingRulesPatch({ ...base, allowTimeBlockBooking: false, allowSpecificTimeBooking: false });
-    expect(out).toEqual({ error: 'Leave at least one booking mode on, or nothing can be booked at all.' });
-  });
-
-  it('refuses defaulting to a mode that is turned off', () => {
-    const out = bookingRulesPatch({ ...base, defaultBookingMode: 'TIME_BLOCK', allowTimeBlockBooking: false });
-    expect(out).toHaveProperty('error');
-  });
-
-  it('refuses time-block booking with no active block behind it', () => {
-    const out = bookingRulesPatch({
-      ...base,
-      blocks: [{ ...base.blocks[0]!, active: false }],
-    });
-    expect(out).toEqual({
-      error: 'Time-block booking is on but no block is active, so there is nothing to book into.',
+    const blocks = bookingRulesPatch({ ...base, timeMode: 'TIME_BLOCK' });
+    expect('patch' in blocks && blocks.patch).toMatchObject({
+      defaultBookingMode: 'TIME_BLOCK',
+      allowTimeBlockBooking: true,
+      allowSpecificTimeBooking: false,
     });
   });
-
+  it('refuses Time Blocks with no active block behind it, in the server\'s words', () => {
+    const out = bookingRulesPatch({ ...base, timeMode: 'TIME_BLOCK', blocks: [{ ...base.blocks[0]!, active: false }] });
+    expect(out).toEqual({ error: TIME_BLOCKS_NEED_A_BLOCK });
+  });
+  it('lets Exact times keep every block switched off', () => {
+    expect(bookingRulesPatch({ ...base, blocks: [{ ...base.blocks[0]!, active: false }] })).toHaveProperty('patch');
+  });
   it('names the field in a numeric error', () => {
     expect(bookingRulesPatch({ ...base, travelBufferMinutes: 'soon' })).toEqual({
       error: 'Travel buffer: Whole numbers only.',
     });
   });
 });
-
 describe('BookingRulesSection', () => {
   it('saves a changed travel buffer as a number', async () => {
     const user = userEvent.setup();
@@ -139,76 +127,63 @@ describe('BookingRulesSection', () => {
     expect(onSave.mock.calls[0]?.[0]?.timeBlocks?.[0]?.id).toBe('midday');
   });
 
-  // -- #710: turning off the default mode should not need a second edit ------
-
-  it('auto-selects the remaining mode as default when the current default is turned off', async () => {
+  // -- #1863: ONE mode, Time Blocks or Exact times ---------------------------
+  it('shows the stored mode, a legacy both-on document as the mode bookings opened on', () => {
+    const { unmount } = render(<BookingRulesSection data={settings({ defaultBookingMode: 'TIME_BLOCK' })} onSave={onSave} />);
+    expect(screen.getByRole('radio', { name: 'Time Blocks' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Exact times' })).not.toBeChecked();
+    unmount();
+    render(<BookingRulesSection data={settings({ defaultBookingMode: 'SPECIFIC_TIME' })} onSave={onSave} />);
+    expect(screen.getByRole('radio', { name: 'Exact times' })).toBeChecked();
+  });
+  it('has no per-mode switches and no default-mode picker any more', () => {
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    expect(screen.queryByRole('switch', { name: /specific time|time block/i })).toBeNull();
+    expect(screen.queryByLabelText('New bookings start as')).toBeNull();
+  });
+  it('saves Time Blocks as all three fields, and nothing else', async () => {
     const user = userEvent.setup();
     render(<BookingRulesSection data={settings({ defaultBookingMode: 'SPECIFIC_TIME' })} onSave={onSave} />);
-
-    await user.click(screen.getByRole('switch', { name: 'Toggle booking at a specific time' }));
-
-    expect(screen.getByLabelText('New bookings start as')).toHaveValue('TIME_BLOCK');
-    expect(screen.queryByText(/Specific times are turned off/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-
+    await user.click(screen.getByRole('radio', { name: 'Time Blocks' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(onSave.mock.calls[0]?.[0]).toMatchObject({
+    expect(onSave.mock.calls[0]?.[0]).toEqual({
       defaultBookingMode: 'TIME_BLOCK',
+      allowTimeBlockBooking: true,
       allowSpecificTimeBooking: false,
     });
   });
-
-  it('auto-selects specific time as default when time blocks are turned off', async () => {
+  it('saves Exact times as all three fields', async () => {
     const user = userEvent.setup();
-    render(<BookingRulesSection data={settings({ defaultBookingMode: 'TIME_BLOCK' })} onSave={onSave} />);
-
-    await user.click(screen.getByRole('switch', { name: 'Toggle booking into a time block' }));
-
-    expect(screen.getByLabelText('New bookings start as')).toHaveValue('SPECIFIC_TIME');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-  });
-
-  it('keeps a loaded default visible under its real label even when its mode is already off', () => {
     render(
       <BookingRulesSection
-        data={settings({ defaultBookingMode: 'SPECIFIC_TIME', allowSpecificTimeBooking: false })}
+        data={settings({ defaultBookingMode: 'TIME_BLOCK', allowTimeBlockBooking: true, allowSpecificTimeBooking: false })}
         onSave={onSave}
       />,
     );
-    expect(screen.getByRole('option', { name: 'A specific time (11:15 AM)' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /not a known value/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'Exact times' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).toEqual({
+      defaultBookingMode: 'SPECIFIC_TIME',
+      allowTimeBlockBooking: false,
+      allowSpecificTimeBooking: true,
+    });
   });
-
-  it('only offers enabled modes in the default-mode picker', async () => {
+  it('holds Save and says why when Time Blocks has no block turned on', async () => {
     const user = userEvent.setup();
-    render(<BookingRulesSection data={settings()} onSave={onSave} />);
-
-    await user.click(screen.getByRole('switch', { name: 'Toggle booking at a specific time' }));
-
-    expect(
-      screen.queryByRole('option', { name: 'A specific time (11:15 AM)' }),
-    ).not.toBeInTheDocument();
-  });
-
-  it('blocks the save and says why when both modes are turned off', async () => {
-    const user = userEvent.setup();
-    render(<BookingRulesSection data={settings()} onSave={onSave} />);
-
-    await user.click(screen.getByRole('switch', { name: 'Toggle booking at a specific time' }));
-    await user.click(screen.getByRole('switch', { name: 'Toggle booking into a time block' }));
-
-    expect(
-      screen.getByText('Leave at least one booking mode on, or nothing can be booked at all.'),
-    ).toBeInTheDocument();
+    render(
+      <BookingRulesSection
+        data={settings({
+          defaultBookingMode: 'SPECIFIC_TIME',
+          timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: false }],
+        })}
+        onSave={onSave}
+      />,
+    );
+    await user.click(screen.getByRole('radio', { name: 'Time Blocks' }));
+    expect(screen.getByText(TIME_BLOCKS_NEED_A_BLOCK)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(onSave).not.toHaveBeenCalled();
-    // The default still names a real mode, so it keeps its real label instead
-    // of being mislabelled "(not a known value)".
-    expect(
-      screen.queryByRole('option', { name: /not a known value/ }),
-    ).not.toBeInTheDocument();
   });
-
   it('surfaces a save failure instead of swallowing it', async () => {
     const user = userEvent.setup();
     onSave.mockRejectedValue(new Error('permission-denied'));
@@ -230,9 +205,9 @@ describe('BookingRulesSection', () => {
   // ISSUE #708 mark 38: "This is just a huge weird block, there is no spacial
   // breakup." The panel now reads as three named groups rather than one flat
   // column.
-  it('groups the panel into Booking modes, Defaults, and Time blocks, each headed', () => {
+  it('groups the panel into the mode, Defaults, and Time blocks, each headed', () => {
     render(<BookingRulesSection data={settings()} onSave={onSave} />);
-    expect(screen.getByText('Booking modes')).toBeInTheDocument();
+    expect(screen.getByText('Kinfolk book and see')).toBeInTheDocument();
     expect(screen.getByText('Defaults')).toBeInTheDocument();
     expect(screen.getByText('Time blocks')).toBeInTheDocument();
   });
@@ -654,16 +629,21 @@ describe('BookingRulesSection, the number fields carry their own refusal (#1593)
 
   it('a panel-wide problem still shows in the banner beside a field refusal', async () => {
     const user = userEvent.setup();
-    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    render(
+      <BookingRulesSection
+        data={settings({
+          defaultBookingMode: 'SPECIFIC_TIME',
+          timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: false }],
+        })}
+        onSave={onSave}
+      />,
+    );
     const buffer = screen.getByLabelText('Travel buffer (minutes)');
     await user.clear(buffer);
-    await user.click(screen.getByRole('switch', { name: 'Toggle booking at a specific time' }));
-    await user.click(screen.getByRole('switch', { name: 'Toggle booking into a time block' }));
+    await user.click(screen.getByRole('radio', { name: 'Time Blocks' }));
     expect(buffer).toHaveAccessibleErrorMessage('Enter a number.');
     expect(screen.getByText('Not ready to save')).toBeInTheDocument();
-    expect(
-      screen.getByText('Leave at least one booking mode on, or nothing can be booked at all.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText(TIME_BLOCKS_NEED_A_BLOCK)).toBeInTheDocument();
   });
 
   it('puts a server refusal for a number field under that field', async () => {
@@ -708,17 +688,20 @@ describe('BookingRulesSection, a stored bad value (#1783)', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSave).toHaveBeenCalledWith({ travelBufferMinutes: 45 });
   });
-  it('shows two stored booking modes both off, and saves an unrelated edit anyway', async () => {
+  it('#1863: a stored Time Blocks with no block on shows why, and still saves an unrelated edit', async () => {
     const user = userEvent.setup();
     render(
       <BookingRulesSection
-        data={settings({ allowSpecificTimeBooking: false, allowTimeBlockBooking: false })}
+        data={settings({
+          defaultBookingMode: 'TIME_BLOCK',
+          allowTimeBlockBooking: true,
+          allowSpecificTimeBooking: false,
+          timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: false }],
+        })}
         onSave={onSave}
       />,
     );
-    expect(
-      screen.getByText('Leave at least one booking mode on, or nothing can be booked at all.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText(TIME_BLOCKS_NEED_A_BLOCK)).toBeInTheDocument();
     await user.click(screen.getByRole('switch', { name: 'Toggle the visit reminder' }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Save' }));

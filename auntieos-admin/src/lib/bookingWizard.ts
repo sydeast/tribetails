@@ -83,8 +83,8 @@ export interface BillingChoice {
 export interface CommunicationChoice {
   /** Send the household a confirmation email. Off by default, per the mock. */
   emailConfirmation: boolean;
-  /** Show the household exact start times. Off means they see the window instead. */
-  timeVisibility: boolean;
+  // #1863: no per-booking "Exact times" choice. What a household sees is the
+  // business's one Time Blocks | Exact times mode, set in Settings.
 }
 
 export interface WizardState {
@@ -162,7 +162,7 @@ export function initialWizardState(): WizardState {
     weeklyDays: [],
     weeks: 4,
     billing: { mode: 'new-invoice' },
-    communication: { emailConfirmation: false, timeVisibility: false },
+    communication: { emailConfirmation: false },
     notes: '',
     businessTimeZone: DEFAULT_BUSINESS_TIME_ZONE,
   };
