@@ -284,7 +284,7 @@ export function Account() {
     })();
   }, [kinfolkId, queryClient]);
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (account.isError) {
     return <LaunchError onRetry={() => void account.refetch()} retrying={account.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
@@ -662,25 +662,30 @@ export function Account() {
         </div>
         <OfflineMutationNotice phase={save.phase} what="this update" check="your details" />
 
-        {/* #1308: Sign Out is its own row, away from Save Changes, and its
+        {/* #1308/#1932: Sign out is its own row, away from Save Changes, and its
             confirmation keeps Cancel and the confirm button together. */}
         <section className="signout" aria-label="Sign out">
           {confirmingSignOut ? (
-            <>
+            <div className="signout__group">
               <span className="sub">Sign out of MyTribe?</span>
               <div className="signout__choices">
-                <button className="btn ghost" type="button" onClick={() => setConfirmingSignOut(false)}>
+                <button className="btn ghost" type="button" onClick={() => setConfirmingSignOut(false)} disabled={signingOut}>
                   Cancel
                 </button>
                 <button className="btn coral" type="button" onClick={signOut} disabled={signingOut}>
-                  {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, Sign Out'}
+                  {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, sign out'}
                 </button>
               </div>
-            </>
+            </div>
           ) : (
             <button className="btn coral" type="button" onClick={() => setConfirmingSignOut(true)}>
-              Sign Out
+              Sign out
             </button>
+          )}
+          {signOutError && (
+            <p className="note err signout__error" role="alert">
+              {signOutError}
+            </p>
           )}
         </section>
         <BusinessFootnote name={businessName} />
