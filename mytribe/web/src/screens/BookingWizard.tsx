@@ -572,7 +572,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
             const n = idx + 1;
             const state = n === step ? 'on' : n < step ? 'done' : '';
             return (
-              <div key={label} className={`step ${state}`} role="listitem">
+              <div key={label} className={`step ${state}`} role="listitem" aria-current={n === step ? 'step' : undefined}>
                 <div className="dot">
                   <div className="num">{n}</div>
                   <div className="lbl">{label}</div>

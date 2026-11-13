@@ -89,12 +89,25 @@ export const UNAPPLIED_PAYMENTS_SECTION = 'unapplied-payments';
 const UNAPPLIED_PAYMENT_KEY = 'invoice.payment.unapplied';
 
 /**
+ * #1912: a household asked to remove a Kin. The server targets the HOUSEHOLD,
+ * and the household profile has no place to answer the request, so Open used
+ * to land where nothing could be done. The queue on Bookings lists every
+ * waiting request with Archive and Decline; `kinRemoval` names the one this
+ * notice is about so the queue opens on arrival.
+ */
+const KIN_REMOVAL_REQUESTED_KEY = 'kin.removal.requested';
+/**
  * Where "Open" goes for one notification: a per-key override first, then the
- * target-type table above. Only `invoice.payment.unapplied` overrides today,
- * and only when the notice names its household; without one it falls back to
- * the invoice like any other invoice notice.
+ * target-type table above. `invoice.payment.unapplied` overrides only when the
+ * notice names its household, and `kin.removal.requested` only when it names
+ * its request; without those each falls back to its target like any other
+ * notice.
  */
 export function notificationOpenRoute(entry: NotificationEntry): NotificationRoute | null {
+  if (str(entry.key).trim() === KIN_REMOVAL_REQUESTED_KEY) {
+    const requestId = str(rec(entry.data)['requestId']).trim();
+    if (requestId !== '') return { to: '/bookings', search: { kinRemoval: requestId } };
+  }
   if (str(entry.key).trim() === UNAPPLIED_PAYMENT_KEY) {
     const kinfolkId = notificationKinfolkId(entry);
     if (kinfolkId !== '') {
