@@ -1,6 +1,9 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
+import { unauditedRefusal } from '../lib/wrapCallable';
+import { isAuntieClaim } from '../lib/staffGate';
+import { logEvent } from '../lib/logger';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { isServerOnlyAuditEvent, SERVER_ONLY_EVENT_REFUSAL, type AuditEvent } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -152,7 +155,21 @@ export async function logActivityHandler(
   // #2162: a kind the server writes itself is refused from every sign-in, the
   // owner's included, before anything else is looked up.
   if (isServerOnlyAuditEvent(args.actionType)) {
-    throw new HttpsError('permission-denied', SERVER_ONLY_EVENT_REFUSAL);
+    const caretaker = isAuntieClaim(req.auth?.token);
+    logEvent({
+      severity: 'warn',
+      function: 'logActivity',
+      event: 'logActivity.serverOnlyRefused',
+      uid: authUid,
+      extra: { actionType: args.actionType, caretaker },
+    });
+    const refusal = new HttpsError('permission-denied', SERVER_ONLY_EVENT_REFUSAL);
+    // From the owner this is a copy of a line the server already wrote: an
+    // older installed build still sends one after a form schema save, a visit
+    // move or a series answer. Nothing failed, so it writes no failure line for
+    // the daily error digest. An Auntie's apps never sent one, so hers keeps
+    // the failure line.
+    throw caretaker ? refusal : unauditedRefusal(refusal);
   }
   const actor = await resolveAuditActor(req.auth, 'logActivity', args.familyId || undefined);
   if (actor.staffRole !== null && !auntieMayLog(args.actionType)) {
