@@ -305,6 +305,14 @@ fun tagListChanges(scope: TagScope, baseline: List<TagDef>, draft: List<TagDef>)
         }
     }
 
+/**
+ * #2205: what the screen says when `changeBusinessTags` answered without its
+ * lists. The change may well have saved, so the sentence sends the owner to
+ * look again rather than to try again (a retried add would read as a duplicate).
+ */
+const val TAG_LISTS_NOT_RETURNED: String =
+    "The tags may have saved, but the updated list did not come back. Reopen this screen to check."
+
 /** Both tag lists as the server stored them after a `changeBusinessTags` write. */
 data class TagListsAfterChange(val household: List<TagDef>, val pet: List<TagDef>) {
     fun forScope(scope: TagScope): List<TagDef> = if (scope == TagScope.HOUSEHOLD) household else pet

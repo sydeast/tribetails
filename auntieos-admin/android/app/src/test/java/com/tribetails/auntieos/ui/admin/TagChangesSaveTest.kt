@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.TagChange
 import com.tribetails.auntieos.data.model.TagDef
 import com.tribetails.auntieos.data.model.TagListsAfterChange
 import com.tribetails.auntieos.data.model.TagScope
+import com.tribetails.auntieos.data.model.TAG_LISTS_NOT_RETURNED
 import com.tribetails.auntieos.data.model.encodeTagDefs
 import com.tribetails.auntieos.data.model.paletteColor
 import com.tribetails.auntieos.data.model.tagListChanges
@@ -183,5 +184,11 @@ class TagChangesSaveTest {
             ),
             TagChange.addFromProfile(TagScope.PET, "  Shy ").toWire(),
         )
+    }
+
+    @Test
+    fun `an answer without the lists is worded for the owner, never with the function name`() {
+        assertFalse(TAG_LISTS_NOT_RETURNED.contains("changeBusinessTags"))
+        assertTrue(TAG_LISTS_NOT_RETURNED.startsWith("The tags may have saved"))
     }
 }

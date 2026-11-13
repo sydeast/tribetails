@@ -1924,7 +1924,8 @@ class FirestoreClient {
             is WriteResult.Err -> WriteResult.Err(r.message, r.code)
             is WriteResult.Ok -> decodeTagListsAfterChange(r.value)
                 ?.let { WriteResult.Ok(it) }
-                ?: WriteResult.Err("changeBusinessTags returned no tag lists")
+                // The write may have landed: say so in plain words, never the function name.
+                ?: WriteResult.Err(TAG_LISTS_NOT_RETURNED)
         }
     }
 
@@ -5228,7 +5229,14 @@ internal fun publishGeneratedDraftPayloadOf(draftId: String, bodyCopy: String, t
         put("bodyCopy", JsonPrimitive(bodyCopy))
         if (title.isNotBlank()) put("title", JsonPrimitive(title.trim()))
     }
-/** #1563: the report id out of a `publishGeneratedDraft` reply, or null. Pure; tested. */
+/**
+ * #2205: what the screen says when `changeBusinessTags` answered without its
+ * lists. The change may well have saved, so the sentence sends the owner to
+ * look again rather than to try again (a retried add would read as a duplicate).
+ */
+internal const val TAG_LISTS_NOT_RETURNED: String =
+    "The tags may have saved, but the updated list did not come back. Reopen this screen to check."
+
 /** #2205: the two tag callables this console calls by name. */
 internal const val CHANGE_BUSINESS_TAGS_CALLABLE = "changeBusinessTags"
 internal const val REMOVE_BUSINESS_TAG_CALLABLE = "removeBusinessTag"
@@ -5259,6 +5267,7 @@ internal fun decodeRecordsTouched(raw: String): Int =
     runCatching { Json.parseToJsonElement(raw).jsonObject["recordsTouched"]?.jsonPrimitive?.intOrNull }
         .getOrNull() ?: 0
 
+/** #1563: the report id out of a `publishGeneratedDraft` reply, or null. Pure; tested. */
 internal fun decodePublishedReportId(raw: String): String? =
     runCatching {
         Json.parseToJsonElement(raw).jsonObject["reportId"]?.jsonPrimitive?.contentOrNull

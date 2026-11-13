@@ -240,7 +240,8 @@ export async function changeBusinessTagsHandler(
     description: summary
       .map(
         (s) =>
-          `${s.action === 'add' ? 'Added' : 'Recoloured'} the tag "${s.name}" ${s.action === 'add' ? 'to' : 'on'} the ${s.scope === 'household' ? 'household' : 'Kin'} tag list`,
+          // A style change may be the emoji alone, so it is not called a recolour.
+          `${s.action === 'add' ? 'Added the tag' : 'Changed the colour or emoji of the tag'} "${s.name}" ${s.action === 'add' ? 'to' : 'on'} the ${s.scope === 'household' ? 'household' : 'Kin'} tag list`,
       )
       .join('. '),
     payload: { changes: summary },

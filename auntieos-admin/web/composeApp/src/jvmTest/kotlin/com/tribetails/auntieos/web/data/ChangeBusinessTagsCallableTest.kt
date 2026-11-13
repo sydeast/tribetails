@@ -78,6 +78,15 @@ class ChangeBusinessTagsCallableTest {
     }
 
     @Test
+    fun anAnswerWithoutTheListsSaysSoInPlainWords() {
+        JvmFirestoreFixtures.callableResponses = mapOf(CHANGE_BUSINESS_TAGS_CALLABLE to """{"ok":true}""")
+        val r = runBlocking { client.addTagToVocabulary("household", "Gate code") }
+        val message = (r as WriteResult.Err).message
+        assertEquals(TAG_LISTS_NOT_RETURNED, message)
+        assertTrue("changeBusinessTags" !in message, "no function name on screen: $message")
+    }
+
+    @Test
     fun noChangesMakesNoCall() {
         val r = runBlocking { client.changeBusinessTags(emptyList()) }
         assertTrue(r is WriteResult.Err)

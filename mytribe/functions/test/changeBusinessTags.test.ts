@@ -199,6 +199,14 @@ describe('changeBusinessTags: one Save carrying several changes', () => {
     expect(entry.description).toBe('Added the tag "VIP" to the household tag list');
     expect(SERVER_ONLY_AUDIT_EVENTS.has(AUDIT_EVENTS.BUSINESS_TAGS_CHANGED)).toBe(true);
   });
+  it('words a colour or emoji change plainly, and joins several changes', async () => {
+    world({ householdTags: [def('VIP')], petTags: [] });
+    await changeBusinessTagsHandler(req({ changes: [style('VIP'), add('Shy', 'pet')] }));
+    const entry = (writeAuditEntry as any).mock.calls[0][0];
+    expect(entry.description).toBe(
+      'Changed the colour or emoji of the tag "VIP" on the household tag list. Added the tag "Shy" to the Kin tag list',
+    );
+  });
 });
 
 describe('changeBusinessTags: concurrency (optimistic transactions)', () => {

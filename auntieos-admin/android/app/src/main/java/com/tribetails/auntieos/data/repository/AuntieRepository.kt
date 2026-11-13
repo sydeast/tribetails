@@ -1063,7 +1063,8 @@ class AuntieRepository(
         val raw = functions.getHttpsCallable("changeBusinessTags")
             .call(mapOf("changes" to changes.map { it.toWire() }))
             .awaitCallable().data as? Map<String, Any?>
-            ?: error("changeBusinessTags: non-map payload")
+            // The write may have landed: say so in plain words, never the function name.
+            ?: error(TAG_LISTS_NOT_RETURNED)
         TagListsAfterChange(
             household = decodeTagDefs(raw["householdTags"]),
             pet = decodeTagDefs(raw["petTags"]),
