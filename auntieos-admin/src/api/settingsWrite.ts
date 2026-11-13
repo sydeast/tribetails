@@ -19,8 +19,9 @@ import { type TagScope } from '../lib/tags/model';
  * KinCare rate card (`serviceRates`, `serviceDurations`,
  * `serviceStartTimeBooking`) replaces what is stored, so a removed type goes.
  *
- * The server stamps `updatedAt` and `updatedBy` (the signed-in email, else the
- * uid) and answers with both, which `Settings.tsx` folds onto its baseline.
+ * The server stamps `updatedAt` and `updatedBy` (the caller's uid, #1962) and
+ * answers with both, which `Settings.tsx` folds onto its baseline. The screen
+ * shows the person's name for that uid (`lib/actorLabel.ts`).
  *
  * Fail-loud: a refusal rejects with the server's sentence as `message`, and
  * `details.refusals` lists each `{ field, message }` (`settingsRefusalsOf` in

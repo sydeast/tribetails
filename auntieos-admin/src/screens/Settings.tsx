@@ -7,6 +7,8 @@ import { DenScreenHeading } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { lastSavedLabel } from '../lib/settingsFormat';
+import { actorLabel } from '../lib/actorLabel';
+import { useStaffRoster } from '../lib/useStaffRoster';
 import { SectionNav, sectionTabId, sectionPanelId, type SectionNavItem } from './settings/SectionNav';
 import { SECTION_ICONS } from './settings/sectionIcons';
 import { BookingBehaviorSection, MyTribePortalSection, PaymentOptionsSection } from './settings/sections';
@@ -203,6 +205,8 @@ export function Settings({ initialSection, onSectionChange }: SettingsProps = {}
   }, []);
 
   useEffect(() => load(), [load]);
+  // #1962: the stamp is a uid (or an older sign-in email); the line names the person.
+  const staff = useStaffRoster();
 
   // Shared write plumbing every section's Save calls with ONLY that section's own
   // fields. Folds the confirmed stamp back onto the local ready-baseline (no
@@ -259,7 +263,7 @@ export function Settings({ initialSection, onSectionChange }: SettingsProps = {}
         subtitle="Pick a section on the left. Each one edits and saves on its own."
         detail={
           settings.status === 'ready'
-            ? lastSavedLabel(settings.data.updatedAt, settings.data.updatedBy)
+            ? lastSavedLabel(settings.data.updatedAt, actorLabel(settings.data.updatedBy, staff))
             : undefined
         }
       />

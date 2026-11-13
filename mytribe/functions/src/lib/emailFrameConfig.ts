@@ -154,6 +154,22 @@ export function parseStoredFrame(raw: unknown): { stored: StoredEmailFrame; drop
   return { stored, dropped };
 }
 
+/**
+ * #1989: the stored fields that differ from the default. A field holding its
+ * default value is the default, so it is not kept: a frame whose every value is
+ * back at the default is no stored frame at all. Colors are compared as the
+ * schema stores them (lower case).
+ */
+export function withoutDefaults(stored: StoredEmailFrame): StoredEmailFrame {
+  const out: StoredEmailFrame = {};
+  for (const key of EMAIL_FRAME_FIELDS) {
+    const value = stored[key];
+    if (value === undefined || value === '' || value === DEFAULT_EMAIL_FRAME[key]) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 /** Stored fields over the defaults: the frame a send renders. */
 export function resolveEmailFrame(stored: StoredEmailFrame): EmailFrame {
   return { ...DEFAULT_EMAIL_FRAME, ...stored };

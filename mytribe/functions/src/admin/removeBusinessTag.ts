@@ -8,6 +8,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { savedByStamp } from '../lib/savedByStamp';
 
 /**
  * removeBusinessTag (admin). Deletes ONE tag from a vocabulary and strips that
@@ -204,7 +205,7 @@ export async function removeBusinessTagHandler(
   const { next, removed } = filterVocab(stored[scope.vocabField], key);
   if (removed) {
     await settingsRef.set(
-      { [scope.vocabField]: next, updatedAt: new Date().toISOString(), updatedBy: uid },
+      { [scope.vocabField]: next, ...savedByStamp(uid) },
       { merge: true },
     );
   }

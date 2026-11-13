@@ -197,8 +197,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * list for a document stored earlier) share. Both are entries already in this
  * graph. It has no import of its own, and it cannot sit behind the lazy
  * `businessSettingsChecks.ts` because `getMyHome` needs it on every call.
+ *
+ * 441 since #1962 (on top of #1987's 440): `lib/savedByStamp.ts`, the one
+ * "last saved" stamp the four writers of the Settings documents share
+ * (`saveBusinessSettings`, `removeBusinessTag`, `confirmBrandAssetUpload`,
+ * `saveEmailFrame`, all entries already in this graph), so they can no longer
+ * disagree about what `updatedBy` holds. One function with no import of its own.
  */
-const MAX_OWN_EAGER_MODULES = 440;
+const MAX_OWN_EAGER_MODULES = 441;
 
 interface Edge {
   spec: string;
