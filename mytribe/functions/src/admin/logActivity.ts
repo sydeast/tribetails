@@ -35,7 +35,8 @@ import { ActivityPayload, compactActivityPayload } from '../lib/activityPayload'
  *
  * Auth: wrapAdminCallable. The owner always may; an Auntie may because
  * `lib/auntieAccess.ts` lists this callable (her taps were refused, and so
- * left no line, until #1820), for the kinds of line `auntieMayLog` allows. The `actorId` field is informational only; the
+ * left no line, until #1820), and only for the lines `AUNTIE_LOGGABLE_EVENTS`
+ * lists. The `actorId` field is informational only; the
  * actual actor uid comes from `req.auth.uid`, which is what writeAuditEntry
  * signs into the chain.
  */
@@ -43,26 +44,59 @@ import { ActivityPayload, compactActivityPayload } from '../lib/activityPayload'
 const SCREAMING_SNAKE = /^[A-Z][A-Z0-9_]*$/;
 
 /**
- * What an Auntie may NOT write a line about (#1820): money, sign-in and
- * secrets, permissions and membership, and business settings. Those are the
- * owner's side of the #944 split, and no screen an Auntie can reach logs one,
- * so a line of that kind under her name could only be a made-up one. Her own
- * lines are visits, KinTales, Kin and Kinfolk records, notes and photos.
+ * The lines an Auntie may write (#1820). ABSENT MEANS REFUSED, the same rule
+ * as `AUNTIE_ALLOWED_CALLABLES` in `lib/auntieAccess.ts`: a key nobody listed
+ * here is refused, so a made-up key, a server-only line (a notice delivered,
+ * a payment, a sign-in, a chain check) or an owner action cannot appear under
+ * her name, whatever it is spelled.
+ *
+ * Each entry is a line an admin client writes for work her job covers and
+ * the rules or the callable list already let her do: the in-visit clock and
+ * its notes and photos, bookings she creates or moves (never delete, archive,
+ * approve, force or batch), her own blocked time, KinTales and the drafts she
+ * sends, and edits to a Kin or Kinfolk record (never archive). Money, sign-in,
+ * permissions, membership, settings, pricing, templates and anything
+ * destructive are left out on purpose (#944).
+ *
+ * To add one: a line here, and a test in `test/logActivity.test.ts`.
  */
-const AUNTIE_REFUSED_PREFIXES = [
-  'BILLING_', 'EXPENSE_', 'AUTH', 'SECRETS_', 'PERM_', 'MEMBERSHIP_', 'ADMIN', 'OPERATOR_', 'BUSINESS_', 'THEME_',
-  'RETENTION_',
-];
-const AUNTIE_REFUSED_WORDS = [
-  'INVOICE', 'PAYMENT', 'QUOTE', 'RECEIPT', 'CREDIT', 'REFUND', 'PAYOUT', 'STRIPE', 'LOGIN', 'LOGOUT', 'PASSWORD',
-  'CLAIM', 'SETTINGS',
-];
+export const AUNTIE_LOGGABLE_EVENTS: ReadonlySet<string> = new Set<string>([
+  // The in-visit clock (web sessionsWrite, Android HomeViewModel, desktop sessions).
+  'VISIT_ON_MY_WAY',
+  'VISIT_ARRIVED',
+  'VISIT_DEPARTED',
+  'VISIT_UNDO_ARRIVAL',
+  'VISIT_COMPLETED',
+  'KINCARE_ARRIVED',
+  'GPS_START',
+  'GPS_STOP',
+  'VISIT_NOTE_ADDED',
+  'VISIT_PHOTO_ADDED',
+  'SESSION_OFFICE_NOTE_ADDED',
+  'ROUTE_SHARE_INITIATED',
+  // Bookings she makes or moves (createKinCareSession / updateKinCareSession).
+  'CREATE_BOOKING',
+  'UPDATE_BOOKING',
+  'RESCHEDULE_BOOKING',
+  // Her own availability.
+  'BLOCK_TIME_SLOT',
+  'UNBLOCK_TIME_SLOT',
+  // KinTales, and a generated draft she sends (publishGeneratedDraft).
+  'CONTENT_KINTALE_SENT',
+  'CONTENT_KINTALE_NOTE_ADDED',
+  'DRAFT_APPROVED',
+  // The households she serves: record edits, never archive or delete.
+  'UPDATE_KINFOLK',
+  'UPDATE_KINFOLK_TAGS',
+  'CREATE_KIN',
+  'UPDATE_KIN',
+  'UPDATE_KIN_TAGS',
+  'SECONDARY_KINFOLK_SAVED',
+  'HOUSEHOLD_DATA_SAVED',
+]);
 
 export function auntieMayLog(actionType: string): boolean {
-  return (
-    !AUNTIE_REFUSED_PREFIXES.some((p) => actionType.startsWith(p)) &&
-    !AUNTIE_REFUSED_WORDS.some((w) => actionType.includes(w))
-  );
+  return AUNTIE_LOGGABLE_EVENTS.has(actionType);
 }
 
 const Args = z.object({

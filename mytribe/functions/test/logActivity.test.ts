@@ -13,7 +13,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevocation'));
 
-import { logActivityHandler } from '../src/admin/logActivity';
+import { AUNTIE_LOGGABLE_EVENTS, logActivityHandler } from '../src/admin/logActivity';
 import { wrapAdminCallable } from '../src/lib/wrapAdminCallable';
 import { ACTIVITY_PAYLOAD_MAX_CHARS } from '../src/lib/activityPayload';
 const writeAuditEntryMock = mocks.writeAuditEntryMock;
@@ -306,6 +306,33 @@ describe('#1820 what an Auntie may write a line about', () => {
   it.each(notHers)('still writes %s for the owner', async (actionType) => {
     await logActivityHandler(req({ actionType }, 'owner-1', OWNER));
     expect(written().event).toBe(actionType);
+  });
+
+  // Deny by default: a key nobody listed for her is refused, whatever its
+  // spelling. These all slipped past a list of refused words: destructive
+  // record changes, pricing, staff upkeep, server-only delivery and chain
+  // lines, and keys that do not exist at all.
+  const notListed = [
+    'DELETE_BOOKING', 'ARCHIVE_KINFOLK', 'ARCHIVE_BOOKING', 'DELETE_FORM_SCHEMA', 'SAVE_FORM_SCHEMA',
+    'BASE_SERVICE_UPDATED', 'APPROVE_BOOKING', 'BATCH_UPDATE_BOOKINGS', 'STAFF_ROLE_GRANTED', 'USER_DELETED',
+    'NOTIFICATION_DISPATCHED', 'NOTIFICATION_RECEIVED', 'AUDIT_CHAIN_VERIFIED', 'DATA_EXPORTED',
+    'KINTALE_TEMPLATE_DELETED', 'TEMPLATE_DELETED', 'ROLE_CHANGED', 'MADE_UP_EVENT',
+  ];
+  it.each(notListed)('refuses %s from an Auntie because nobody listed it for her', async (actionType) => {
+    await expect(logActivityHandler(req({ actionType }, 'auntie-1', AUNTIE))).rejects.toMatchObject({
+      code: 'permission-denied',
+    });
+    expect(writeAuditEntryMock).not.toHaveBeenCalled();
+  });
+
+  it('the list itself names no money, sign-in, permission, settings or destructive line', () => {
+    const forbidden =
+      /BILLING|INVOICE|PAYMENT|QUOTE|RECEIPT|CREDIT|REFUND|PAYOUT|STRIPE|EXPENSE|AUTH|LOGIN|PASSWORD|SECRET|PERM_|MEMBERSHIP|ADMIN|OPERATOR|SETTINGS|BUSINESS|THEME|DELETE|ARCHIVE|NOTIFICATION|AUDIT|SERVICE|TEMPLATE/;
+    expect([...AUNTIE_LOGGABLE_EVENTS].filter((k) => forbidden.test(k))).toEqual([]);
+  });
+
+  it('every line she may write is a well-formed key', () => {
+    for (const k of AUNTIE_LOGGABLE_EVENTS) expect(k).toMatch(/^[A-Z][A-Z0-9_]*$/);
   });
 
   it('an account carrying both claims is held to the Auntie rule', async () => {

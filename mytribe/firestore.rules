@@ -1301,17 +1301,19 @@ service cloud.firestore {
 
     match /sharedKinTales/{id}     { allow read, write: if false; }
     match /auditLog/{id}           { allow read, write: if false; }
- // activity_log (canonical, 2026-05-19): admin-only via isAuntie() for
- // read+create. Update/delete NEVER permitted - forensic non-repudiation,
- // immutable audit history. MyTribe Functions write via admin SDK which
- // bypasses rules; AuntieOS Android `AuntieRepository.logActivity` and the
- // AuntieOS Web `jsAddDoc("activity_log", ...)` paths both create-only via
- // `.add()` / batched `set()` on a fresh auto-id ref, so this rule keeps
- // existing writers green while sealing off any mutation pathway.
+ // activity_log (canonical, 2026-05-19): the owner reads. Update/delete NEVER
+ // permitted - forensic non-repudiation, immutable audit history. MyTribe
+ // Functions write via admin SDK which bypasses rules.
+ //
+ // #1820: NO CLIENT CREATES A LINE. Every admin client (web, Android, desktop)
+ // logs through the `logActivity` callable, which seals the line into the hash
+ // chain and works out the actor and role on the server. The old direct-create
+ // grant let any staff account, an Auntie included, file an unchained line
+ // under any role, actor, event or payload it liked, which is the forgery
+ // #1820 closes on the callable.
     match /activity_log/{id} {
       allow read: if isOwner();
-      allow create: if isStaff();
-      allow update, delete: if false;
+      allow create, update, delete: if false;
     }
  // activity_log_chain_head/{current}: holds the SHA-256 hash-chain head
  // pointer that seals every audit write (writeAuditEntry runs inside a

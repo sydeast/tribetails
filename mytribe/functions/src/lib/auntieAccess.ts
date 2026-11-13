@@ -148,8 +148,9 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // is audit oversight (rule 4) and stays with the owner. This is the path
   // the admin clients log through, and it was refusing her, so her taps left
   // no line. The server works out and records that she is the Auntie
-  // (lib/auditActor.ts), and the callable refuses her any line about money,
-  // sign-in, permissions or settings (`auntieMayLog` in admin/logActivity.ts).
+  // (lib/auditActor.ts), and the callable refuses her any line it does not list
+  // for her (`AUNTIE_LOGGABLE_EVENTS` in admin/logActivity.ts): never money,
+  // sign-in, permissions, settings or anything destructive.
   'logActivity',
 ]);
 

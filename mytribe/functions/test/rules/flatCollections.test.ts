@@ -275,19 +275,43 @@ describe('rules: flat top-level collections', () => {
   // ── activity_log: duplicate match block deleted ───────────────────────────
   // Two identical `match /activity_log/{id}` blocks existed and Firestore UNIONs
   // them, so narrowing one would have been silently undone by the other. These
-  // pin the surviving block's exact shape: operator read + create, never update
-  // or delete (forensic non-repudiation), nothing for anyone else.
+  // pin the surviving block's exact shape: operator read, never update or
+  // delete (forensic non-repudiation), nothing for anyone else.
+  //
+  // #1820: and no client creates a line at all. Every client logs through the
+  // `logActivity` callable, which seals the line into the chain and works out
+  // the role on the server. A direct create skipped both, so any staff account
+  // could file a line under any role, actor or event it liked.
 
-  it('activity_log: operator can read and create, but never update or delete', async () => {
+  it('activity_log: operator can read, but never create, update or delete', async () => {
     const env = await getEnv();
     await env.withSecurityRulesDisabled(async (ctx) => {
       await ctx.firestore().doc('activity_log/a1').set({ action: 'SEEDED', at: new Date() });
     });
     const fs = asAuntie(env).firestore();
     await assertSucceeds(fs.doc('activity_log/a1').get());
-    await assertSucceeds(fs.doc('activity_log/a2').set({ action: 'ADMIN_X', at: new Date() }));
+    await assertFails(fs.doc('activity_log/a2').set({ action: 'ADMIN_X', at: new Date() }));
+    await assertFails(fs.collection('activity_log').add({ action: 'ADMIN_X', at: new Date() }));
     await assertFails(fs.doc('activity_log/a1').update({ action: 'TAMPERED' }));
     await assertFails(fs.doc('activity_log/a1').delete());
+  });
+
+  it('activity_log (#1820): a caretaker can neither read nor create a line, forged role or not', async () => {
+    const env = await getEnv();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('activity_log/a1').set({ action: 'SEEDED', at: new Date() });
+    });
+    const fs = env.authenticatedContext('auntie-1', { staffRole: 'auntie' }).firestore();
+    await assertFails(fs.doc('activity_log/a1').get());
+    await assertFails(
+      fs.doc('activity_log/a4').set({
+        actionType: 'RECORD_PAYMENT',
+        actorId: 'staff-1',
+        actorRole: 'AUNTIE',
+        payload: { admin: true, staffRole: null },
+        seq: 999999,
+      }),
+    );
   });
 
   it('activity_log: a signed-in non-operator cannot create an entry', async () => {
