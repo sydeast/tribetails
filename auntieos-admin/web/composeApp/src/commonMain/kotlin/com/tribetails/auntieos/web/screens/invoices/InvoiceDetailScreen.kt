@@ -492,7 +492,7 @@ private fun InvoiceDetailBody(
         if (archived) {
             AuntieBanner(tone = AuntieBannerTone.Info, title = "Archived") {
                 Text(
-                    if (archivedQuote) ARCHIVED_QUOTE_TEXT else ARCHIVED_INVOICE_TEXT,
+                    if (archivedQuote) archivedQuoteText(invoice) else ARCHIVED_INVOICE_TEXT,
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
@@ -508,7 +508,7 @@ private fun InvoiceDetailBody(
             },
         ) {
             Text(
-                if (archivedQuote) RESTORE_QUOTE_CONFIRM_TEXT else RESTORE_CONFIRM_TEXT,
+                if (archivedQuote) restoreQuoteConfirmText(invoice) else RESTORE_CONFIRM_TEXT,
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )

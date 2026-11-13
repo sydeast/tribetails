@@ -703,10 +703,40 @@ export const QUOTE_ACTION_COPY = {
   },
 } as const;
 
-/** #2195: an archived quote the household could answer again once it is restored. */
-function changeableQuoteOnRestore(invoice: InvoiceEntry): boolean {
+/**
+ * #2195: the Restore confirm for an archived quote, or null when it is not one.
+ * Only a SENT quote nobody has answered goes back in front of the household to
+ * be answered. A quote saved unsent comes back as the hidden draft it was, and
+ * a declined one comes back declined, holding no visits.
+ */
+export function quoteRestoreConfirmText(invoice: InvoiceEntry): string | null {
   const { archivedAt: _archived, ...live } = invoice;
-  return quoteIsChangeable(live);
+  if (!quoteIsChangeable(live)) return null;
+  if (isQuoteDraft(live)) {
+    return 'This puts the quote back into the working list as a draft. The household still cannot see it until you send it. It takes back the visits no other invoice has billed since. Continue?';
+  }
+  if (invoiceQuoteDecision(live) === 'denied') {
+    return 'This puts the quote back into the working list. The household sees it again, as declined. Continue?';
+  }
+  return 'This puts the quote back into the working list, and back in front of the household, who can answer it again. It takes back the visits no other invoice has billed since. Continue?';
+}
+
+/**
+ * #2195: the Archived banner on a quote, or null when it is not one. An
+ * archived quote is the office's alone, so the invoice banner's "the household
+ * can still see it and still pay it" would be false. Same words as Android and
+ * the desktop console.
+ */
+export function archivedQuoteBannerText(invoice: InvoiceEntry): string | null {
+  const { archivedAt: _archived, ...live } = invoice;
+  if (!quoteIsChangeable(live)) return null;
+  if (isQuoteDraft(live)) {
+    return 'This quote is out of the working list. It was never sent, so the household cannot see it, and the visits it held are back on the not yet invoiced list.';
+  }
+  if (invoiceQuoteDecision(live) === 'denied') {
+    return 'This quote is out of the working list. The household cannot see it until it is restored.';
+  }
+  return 'This quote is out of the working list. The household cannot see it or answer it until it is restored, and the visits it held are back on the not yet invoiced list.';
 }
 /** The confirmation once a quote is withdrawn, naming how many visits went back on the list. */
 export function withdrawNoticeText(released: number): string {
@@ -1815,8 +1845,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
 
         {archived && !notice && (
           <Banner tone="info" title="Archived" dismissible>
-            This invoice is out of the working list and out of the outstanding and billed totals. It
-            has not been deleted or cancelled, and the household can still see it and still pay it.
+            {archivedQuoteBannerText(invoice) ??
+              'This invoice is out of the working list and out of the outstanding and billed totals. It has not been deleted or cancelled, and the household can still see it and still pay it.'}
           </Banner>
         )}
 
@@ -2134,9 +2164,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">
               {archivePrompt.direction === 'restore'
-                ? changeableQuoteOnRestore(invoice)
-                  ? 'This puts the quote back into the working list, and back in front of the household, who can answer it again. It takes back the visits no other invoice has billed since. Continue?'
-                  : 'This puts the invoice back into the working list and back into the outstanding and billed totals. Continue?'
+                ? (quoteRestoreConfirmText(invoice) ??
+                  'This puts the invoice back into the working list and back into the outstanding and billed totals. Continue?')
                 : changeableQuote
                   ? 'This takes the quote out of the working list. The household no longer sees it and cannot answer it, and the visits it holds go back on the not yet invoiced list. It is not deleted, and Restore brings it back. Continue?'
                   : 'This takes the invoice out of the working list and out of the outstanding and billed totals. It does NOT delete it, cancel it, or forgive what is owed, and the household can still see it and still pay it. Continue?'}

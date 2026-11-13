@@ -4200,6 +4200,13 @@ data class Invoice(
      * the server only. Read through `screens.invoices.isQuoteDraft`.
      */
     val quoteDraft: Boolean? = null,
+    /**
+     * #2195: the household's answer to a quote ('accepted' or 'denied'), read
+     * only so the Archived and Restore words do not promise a declined quote an
+     * answer. Raw, so an odd stored value cannot fail the whole decode. Read
+     * through `screens.invoices.quoteDeclined`.
+     */
+    val quoteDecision: JsonElement? = null,
 )
 
 /**

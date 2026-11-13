@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens.invoices
 
 import com.tribetails.auntieos.web.data.APP_ONLY_NOTE
 import com.tribetails.auntieos.web.data.Invoice
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * #2087 / #2088 / #2195 on the desktop console: what the office can do with a
@@ -54,12 +55,41 @@ fun quoteWithdrawnText(released: Int): String = when {
         "Quote withdrawn. The household no longer sees it, and its $released visits are back on the not yet invoiced list."
 }
 
-/** #2195: the Archived notice on a quote. */
+/** #2195: the household declined this quote (`quoteDecision` 'denied'). */
+fun quoteDeclined(invoice: Invoice): Boolean =
+    (invoice.quoteDecision as? JsonPrimitive)?.takeIf { it.isString }?.content == "denied"
+
+/** #2195: the Archived notice on a sent quote nobody has answered. */
 const val ARCHIVED_QUOTE_TEXT: String =
     "This quote is out of the working list. The household cannot see it or answer it until it is restored, " +
         "and the visits it held are back on the not yet invoiced list."
 
-/** #2195: the Restore confirm on a quote. */
+/** #2195: the Restore confirm on a sent quote nobody has answered. */
 const val RESTORE_QUOTE_CONFIRM_TEXT: String =
     "This puts the quote back into the working list, and back in front of the household, who can answer it " +
         "again. It takes back the visits no other invoice has billed since. Continue?"
+
+/**
+ * #2195: the Archived notice on an archived quote. Only a SENT quote nobody
+ * has answered goes back in front of the household to be answered; one saved
+ * unsent was never shown to them, and a declined one holds no visits. Same
+ * words as admin web and Android.
+ */
+fun archivedQuoteText(invoice: Invoice): String = when {
+    isQuoteDraft(invoice) ->
+        "This quote is out of the working list. It was never sent, so the household cannot see it, and the " +
+            "visits it held are back on the not yet invoiced list."
+    quoteDeclined(invoice) ->
+        "This quote is out of the working list. The household cannot see it until it is restored."
+    else -> ARCHIVED_QUOTE_TEXT
+}
+
+/** #2195: the Restore confirm on an archived quote, by the same three cases. */
+fun restoreQuoteConfirmText(invoice: Invoice): String = when {
+    isQuoteDraft(invoice) ->
+        "This puts the quote back into the working list as a draft. The household still cannot see it until " +
+            "you send it. It takes back the visits no other invoice has billed since. Continue?"
+    quoteDeclined(invoice) ->
+        "This puts the quote back into the working list. The household sees it again, as declined. Continue?"
+    else -> RESTORE_QUOTE_CONFIRM_TEXT
+}

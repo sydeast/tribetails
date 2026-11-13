@@ -462,7 +462,7 @@ fun InvoiceDetailScreen(
             Text(
                 text = if (quote) {
                     if (restoring) {
-                        com.tribetails.auntieos.domain.RESTORE_QUOTE_CONFIRM_COPY
+                        com.tribetails.auntieos.domain.restoreQuoteConfirmCopy(inv)
                     } else {
                         com.tribetails.auntieos.domain.ARCHIVE_QUOTE_CONFIRM_COPY
                     }
@@ -752,9 +752,8 @@ private fun invoiceDetailBody(
             ) {
                 Text(
                     text = if (com.tribetails.auntieos.domain.quoteIsChangeableOnRestore(invoice)) {
-                        // #2195: an archived quote is the office's alone until it is restored.
-                        "This quote is out of the working list. The household cannot see it or answer it " +
-                            "until it is restored, and the visits it held are back on the not yet invoiced list."
+                        // #2195: an archived quote is the office's alone.
+                        com.tribetails.auntieos.domain.archivedQuoteBannerCopy(invoice)
                     } else {
                         "This invoice is out of the working list and out of the revenue and outstanding " +
                             "totals. It has not been deleted or cancelled, and the household can still see it " +

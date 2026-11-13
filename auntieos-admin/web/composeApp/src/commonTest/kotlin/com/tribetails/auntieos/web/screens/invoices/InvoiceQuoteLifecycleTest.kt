@@ -54,4 +54,24 @@ class InvoiceQuoteLifecycleTest {
         )
         assertEquals("Quote sent. The household can accept or decline it now.", quoteSentMessage(false))
     }
+
+    @Test
+    fun theArchivedAndRestoreWordsPromiseAnAnswerOnlyForASentQuoteNobodyHasAnswered() {
+        val pending = inv("quote", archived = true)
+        val unsent = inv("draft", quoteDraft = true, archived = true)
+        val declined = inv("quote", archived = true).copy(quoteDecision = JsonPrimitive("denied"))
+        assertEquals(RESTORE_QUOTE_CONFIRM_TEXT, restoreQuoteConfirmText(pending))
+        assertEquals(ARCHIVED_QUOTE_TEXT, archivedQuoteText(pending))
+        // Saved unsent: the household never saw it and still will not after a restore.
+        assertTrue(restoreQuoteConfirmText(unsent).contains("as a draft. The household still cannot see it until you send it."))
+        assertFalse(restoreQuoteConfirmText(unsent).contains("answer it again"))
+        assertTrue(archivedQuoteText(unsent).contains("never sent"))
+        // Declined: back in view, still declined, holding no visits.
+        assertTrue(quoteDeclined(declined))
+        assertFalse(quoteDeclined(pending))
+        assertTrue(restoreQuoteConfirmText(declined).contains("as declined"))
+        assertFalse(restoreQuoteConfirmText(declined).contains("answer it again"))
+        assertFalse(restoreQuoteConfirmText(declined).contains("takes back the visits"))
+        for (q in listOf(pending, unsent, declined)) assertFalse(archivedQuoteText(q).contains("still see it"))
+    }
 }

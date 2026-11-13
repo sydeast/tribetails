@@ -70,7 +70,39 @@ const val ARCHIVE_QUOTE_CONFIRM_COPY: String =
     "This takes the quote out of the working list. The household no longer sees it and cannot answer it, and " +
         "the visits it holds go back on the not yet invoiced list. It is not deleted, and Restore brings it back."
 
-/** #2195: the restore confirm for a quote, which goes back in front of the household. */
+/** #2195: the restore confirm for a sent quote nobody has answered, which goes back in front of the household. */
 const val RESTORE_QUOTE_CONFIRM_COPY: String =
     "This puts the quote back into the working list, and back in front of the household, who can answer it " +
         "again. It takes back the visits no other invoice has billed since."
+
+/**
+ * #2195: the restore confirm for an archived quote. Only a SENT quote nobody
+ * has answered goes back in front of the household to be answered; a quote
+ * saved unsent comes back as the hidden draft it was, and a declined one comes
+ * back declined, holding no visits. Same words as admin web and the console.
+ */
+fun restoreQuoteConfirmCopy(invoice: Invoice): String = when {
+    isQuoteDraft(invoice) ->
+        "This puts the quote back into the working list as a draft. The household still cannot see it until " +
+            "you send it. It takes back the visits no other invoice has billed since."
+    invoiceQuoteDecision(invoice) == QuoteDecision.DENIED ->
+        "This puts the quote back into the working list. The household sees it again, as declined."
+    else -> RESTORE_QUOTE_CONFIRM_COPY
+}
+
+/** #2195: the toast once an archived quote is restored; [quoteDraft] for one saved unsent, still hidden. */
+fun quoteRestoredMessage(quoteDraft: Boolean): String =
+    if (quoteDraft) "Quote restored as a draft. The household cannot see it until you send it."
+    else "Quote restored. The household can see it again."
+
+/** #2195: the Archived banner on a quote, which the household cannot see while it is archived. */
+fun archivedQuoteBannerCopy(invoice: Invoice): String = when {
+    isQuoteDraft(invoice) ->
+        "This quote is out of the working list. It was never sent, so the household cannot see it, and the " +
+            "visits it held are back on the not yet invoiced list."
+    invoiceQuoteDecision(invoice) == QuoteDecision.DENIED ->
+        "This quote is out of the working list. The household cannot see it until it is restored."
+    else ->
+        "This quote is out of the working list. The household cannot see it or answer it until it is restored, " +
+            "and the visits it held are back on the not yet invoiced list."
+}

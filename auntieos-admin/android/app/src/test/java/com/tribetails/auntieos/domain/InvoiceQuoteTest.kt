@@ -61,4 +61,42 @@ class InvoiceQuoteTest {
         )
         assertEquals("Invoice archived.", archiveSuccessMessage(restoring = false, force = false))
     }
+
+    @Test
+    fun `restoring promises an answer only for a sent quote nobody has answered`() {
+        val archived = "2026-11-12"
+        assertEquals(RESTORE_QUOTE_CONFIRM_COPY, restoreQuoteConfirmCopy(inv("quote", archivedAt = archived)))
+        // Saved unsent: it comes back as the hidden draft it was.
+        val draft = restoreQuoteConfirmCopy(inv("draft", quoteDraft = true, archivedAt = archived))
+        assertTrue(draft.contains("as a draft. The household still cannot see it until you send it."))
+        assertFalse(draft.contains("answer it again"))
+        // Declined: back in view, still declined, holding no visits.
+        val declined = restoreQuoteConfirmCopy(inv("quote", quoteDecision = "denied", archivedAt = archived))
+        assertTrue(declined.contains("as declined"))
+        assertFalse(declined.contains("answer it again"))
+        assertFalse(declined.contains("takes back the visits"))
+        assertEquals(
+            "Quote restored as a draft. The household cannot see it until you send it.",
+            archiveSuccessMessage(restoring = true, force = false, quote = true, quoteDraft = true),
+        )
+        assertEquals(
+            "Quote restored. The household can see it again.",
+            archiveSuccessMessage(restoring = true, force = false, quote = true),
+        )
+    }
+
+    @Test
+    fun `the Archived banner on a quote never says the household can still see it`() {
+        val archived = "2026-11-12"
+        for (quote in listOf(
+            inv("quote", archivedAt = archived),
+            inv("draft", quoteDraft = true, archivedAt = archived),
+            inv("quote", quoteDecision = "denied", archivedAt = archived),
+        )) {
+            val text = archivedQuoteBannerCopy(quote)
+            assertTrue(text.startsWith("This quote is out of the working list."))
+            assertFalse(text.contains("still see it"))
+        }
+        assertTrue(archivedQuoteBannerCopy(inv("draft", quoteDraft = true, archivedAt = archived)).contains("never sent"))
+    }
 }

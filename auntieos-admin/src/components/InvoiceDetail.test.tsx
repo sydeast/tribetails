@@ -134,7 +134,9 @@ import {
   InvoiceDetail,
   archiveNoticeText,
   paymentSplit,
+  archivedQuoteBannerText,
   parseOptionalMoney,
+  quoteRestoreConfirmText,
   restoreNoticeText,
 } from './InvoiceDetail';
 import { CallableTimeoutError } from '../lib/fns';
@@ -3688,6 +3690,56 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     expect(screen.getByText(/The household no longer sees it and cannot answer it/)).toBeInTheDocument();
     expect(screen.queryByText(/still see it and still pay it/)).toBeNull();
+  });
+
+  it('#2195 the restore confirm promises an answer only for a sent quote nobody has answered', () => {
+    const archived = { archivedAt: fakeTs('2026-07-20T00:00:00Z') };
+    expect(quoteRestoreConfirmText(entry({ status: 'quote', editScope: 'all', ...archived }))).toMatch(
+      /back in front of the household, who can answer it again/,
+    );
+    // Saved unsent: it stays the office's alone after a restore.
+    const draftText = quoteRestoreConfirmText(entry({ status: 'draft', editScope: 'all', quoteDraft: true, ...archived }));
+    expect(draftText).toMatch(/as a draft\. The household still cannot see it until you send it/);
+    expect(draftText).not.toMatch(/answer it again/);
+    // Declined: back in view, still declined, holding no visits.
+    const declinedText = quoteRestoreConfirmText(
+      entry({ status: 'quote', editScope: 'all', quoteDecision: 'denied', ...archived }),
+    );
+    expect(declinedText).toMatch(/as declined/);
+    expect(declinedText).not.toMatch(/answer it again|takes back the visits/);
+    expect(quoteRestoreConfirmText(entry({ ...archived }))).toBeNull();
+  });
+
+  it('#2195 the Archived banner on a quote never says the household can still see it', () => {
+    const archived = { archivedAt: fakeTs('2026-07-20T00:00:00Z') };
+    for (const quote of [
+      entry({ status: 'quote', editScope: 'all', ...archived }),
+      entry({ status: 'draft', editScope: 'all', quoteDraft: true, ...archived }),
+      entry({ status: 'quote', editScope: 'all', quoteDecision: 'denied', ...archived }),
+    ]) {
+      const text = archivedQuoteBannerText(quote);
+      expect(text).toMatch(/^This quote is out of the working list\./);
+      expect(text).not.toMatch(/still see it/);
+    }
+    expect(archivedQuoteBannerText(entry({ status: 'draft', editScope: 'all', quoteDraft: true, ...archived }))).toMatch(
+      /never sent/,
+    );
+    expect(archivedQuoteBannerText(entry({ ...archived }))).toBeNull();
+  });
+
+  it('#2195 an archived quote saved unsent: the banner and the restore confirm keep it the office\'s alone', async () => {
+    const user = userEvent.setup();
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'draft', editScope: 'all', quoteDraft: true, archivedAt: fakeTs('2026-07-20T00:00:00Z') })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/It was never sent, so the household cannot see it/)).toBeInTheDocument();
+    expect(screen.queryByText(/still see it and still pay it/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: /^restore$/i }));
+    expect(screen.getByText(/The household still cannot see it until you send it/)).toBeInTheDocument();
+    expect(screen.queryByText(/answer it again/)).toBeNull();
   });
 
   it('#2195 the archive notice names a quote as a quote', () => {

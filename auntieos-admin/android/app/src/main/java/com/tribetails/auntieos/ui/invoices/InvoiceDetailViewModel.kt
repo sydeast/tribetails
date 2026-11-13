@@ -906,7 +906,10 @@ class InvoiceDetailViewModel(
                         targetId         = invoice.id,
                         targetCollection = "invoices",
                     )
-                    val message = archiveSuccessMessage(restoring, force, released, notice, quote)
+                    val message = archiveSuccessMessage(
+                        restoring, force, released, notice, quote,
+                        quoteDraft = com.tribetails.auntieos.domain.isQuoteDraft(invoice),
+                    )
                     // #2168: visits a restore could not take back stay on screen
                     // until dismissed; every other outcome is a toast.
                     val lasting = restoring && notice.isNotBlank()
@@ -1469,9 +1472,15 @@ internal fun archiveSuccessMessage(
     notice: String = "",
     /** #2195: a quote, which the household stops seeing while archived. */
     quote: Boolean = false,
+    /** #2195: a quote saved unsent, which stays hidden from the household after a restore. */
+    quoteDraft: Boolean = false,
 ): String {
     if (restoring) {
-        val restored = if (quote) "Quote restored. The household can see it again." else "Invoice restored to the working list."
+        val restored = if (quote) {
+            com.tribetails.auntieos.domain.quoteRestoredMessage(quoteDraft)
+        } else {
+            "Invoice restored to the working list."
+        }
         return if (notice.isBlank()) restored else "$restored $notice"
     }
     val base = when {
