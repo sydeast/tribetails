@@ -45,8 +45,14 @@ interface StatsWidgetProps {
   onOpenKinTales: () => void;
   /** Kin in care: the Directory's Kin tab, filtered to the same pets. */
   onOpenKinInCare: () => void;
-  /** This week: Invoices, where the paid invoices behind the figure are. */
-  onOpenInvoices: () => void;
+  /**
+   * This week: Invoices, where the paid invoices behind the figure are.
+   *
+   * Null when the signed-in account has no Invoices to open (#2200 / #2201:
+   * an Auntie, who never sees money). The revenue tile is then not drawn at
+   * all, and its invoices read is never opened.
+   */
+  onOpenInvoices: (() => void) | null;
 }
 export function StatsWidget({
   onOpenSessions,
@@ -57,7 +63,6 @@ export function StatsWidget({
   const sessions = useSessionsStream();
   const drafts = useDraftsStream();
   const kin = useKinStream();
-  const invoices = useInvoicesStream();
   const todayIso = useTodayIso();
 
   const pack = useMemo(
@@ -66,21 +71,14 @@ export function StatsWidget({
     [sessions, todayIso],
   );
 
-  // The week window the revenue tile sums over: Monday to today, inclusive,
-  // the same bound android's `localWeekStartIso()` computes.
-  const weekStart = useMemo(() => mondayOfWeekIso(todayIso), [todayIso]);
-
   const todayValue: ResolvedScalar<number> = asyncScalar(sessions, (rows) =>
     todayPack(rows, todayIso).visits.length,
   );
   const reviewValue: ResolvedScalar<number> = asyncScalar(drafts, pendingDraftCount);
   const kinValue: ResolvedScalar<number> = asyncScalar(kin, activeKinCount);
-  const revenueValue: ResolvedScalar<number> = asyncScalar(invoices, (rows) =>
-    weekStart === null ? 0 : weeklyRevenue(rows, weekStart, todayIso),
-  );
 
   return (
-    <div className="stat-row">
+    <div className={onOpenInvoices === null ? 'stat-row stat-row--three' : 'stat-row'}>
       <StatCard
         label="Today's pack"
         value={todayValue}
@@ -108,15 +106,41 @@ export function StatsWidget({
         tone="purple"
         onClick={onOpenKinInCare}
       />
-      <StatCard
-        label="This week"
-        value={revenueValue}
-        trend="paid invoices this week"
-        tone="success"
-        formatValue={formatRevenue}
-        onClick={onOpenInvoices}
-      />
+      {onOpenInvoices !== null && (
+        <RevenueStatCard todayIso={todayIso} onOpenInvoices={onOpenInvoices} />
+      )}
     </div>
+  );
+}
+
+/**
+ * The week's takings. Its own component so the invoices read lives and dies
+ * with the tile: where there is no Invoices to open (#2200 / #2201), neither
+ * the tile nor the read exists.
+ */
+function RevenueStatCard({
+  todayIso,
+  onOpenInvoices,
+}: {
+  todayIso: string;
+  onOpenInvoices: () => void;
+}) {
+  const invoices = useInvoicesStream();
+  // The week window the revenue tile sums over: Monday to today, inclusive,
+  // the same bound android's `localWeekStartIso()` computes.
+  const weekStart = useMemo(() => mondayOfWeekIso(todayIso), [todayIso]);
+  const revenueValue: ResolvedScalar<number> = asyncScalar(invoices, (rows) =>
+    weekStart === null ? 0 : weeklyRevenue(rows, weekStart, todayIso),
+  );
+  return (
+    <StatCard
+      label="This week"
+      value={revenueValue}
+      trend="paid invoices this week"
+      tone="success"
+      formatValue={formatRevenue}
+      onClick={onOpenInvoices}
+    />
   );
 }
 

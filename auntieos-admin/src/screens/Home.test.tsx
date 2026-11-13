@@ -3,11 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import type { DashWidget } from '../lib/dashboardLayout';
 
-const { useNavigate, navigate } = vi.hoisted(() => {
+const { useNavigate, navigate, useRouteContext } = vi.hoisted(() => {
   const navigate = vi.fn();
-  return { useNavigate: () => navigate, navigate };
+  return { useNavigate: () => navigate, navigate, useRouteContext: vi.fn() };
 });
-vi.mock('@tanstack/react-router', () => ({ useNavigate }));
+// `useRouteContext` hands Home the access the admin layout resolved (#2200).
+vi.mock('@tanstack/react-router', () => ({ useNavigate, useRouteContext }));
 
 const { useAuth } = vi.hoisted(() => ({ useAuth: vi.fn() }));
 vi.mock('../lib/auth', () => ({ useAuth }));
@@ -29,13 +30,15 @@ vi.mock('./widgets/StatsWidget', () => ({
   }: {
     onOpenKinTales: () => void;
     onOpenKinInCare: () => void;
-    onOpenInvoices: () => void;
+    onOpenInvoices: (() => void) | null;
   }) => (
     <>
       <p>stats body</p>
       <button type="button" aria-label="card kintales" onClick={onOpenKinTales} />
       <button type="button" aria-label="card kin" onClick={onOpenKinInCare} />
-      <button type="button" aria-label="card invoices" onClick={onOpenInvoices} />
+      {onOpenInvoices !== null && (
+        <button type="button" aria-label="card invoices" onClick={onOpenInvoices} />
+      )}
     </>
   ),
 }));
@@ -160,6 +163,7 @@ function notStored(widgets: DashWidget[]): { widgets: DashWidget[]; isStored: bo
 
 beforeEach(() => {
   navigate.mockReset();
+  useRouteContext.mockReturnValue({ access: { status: 'admin' } });
   getDashboardLayout.mockReset();
   saveDashboardLayout.mockReset();
   useAuth.mockReturnValue({ status: 'signedIn', user: { uid: 'op-1' } });
@@ -627,4 +631,25 @@ describe('Home wiring that predates edit mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'card invoices' }));
     expect(navigate).toHaveBeenLastCalledWith({ to: '/invoices' });
   });
+
+  // #2200 / #2201: Invoices sends an Auntie Home, so Home hands the stat row
+  // no way into it and the revenue tile is not drawn for her. The test admin
+  // and the #812 offline session (access null) keep it, like the owner.
+  it('gives an Auntie no way into Invoices from the stat row', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'caretaker' } });
+    getDashboardLayout.mockResolvedValue(stored([w('stats', 'wide')]));
+    render(<Home />);
+    expect(await screen.findByRole('button', { name: 'card kintales' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'card invoices' })).toBeNull();
+  });
+
+  for (const access of [{ status: 'testAdmin', testTribeId: 'tribe-sandbox' }, null]) {
+    it(`keeps the Invoices card for ${access === null ? 'the offline session' : 'the test admin'}`, async () => {
+      useRouteContext.mockReturnValue({ access });
+      getDashboardLayout.mockResolvedValue(stored([w('stats', 'wide')]));
+      render(<Home />);
+      fireEvent.click(await screen.findByRole('button', { name: 'card invoices' }));
+      expect(navigate).toHaveBeenLastCalledWith({ to: '/invoices' });
+    });
+  }
 });

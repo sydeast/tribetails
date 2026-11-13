@@ -196,9 +196,10 @@ async function requireAdmin(ctx: { location: Parameters<typeof signInSearchFor>[
 
 /**
  * Guard for the owner's screens (#2163, operator ruling 2026-11-13: "auntie
- * user level cannot see templates or business settings"). An Auntie who
- * reaches Settings or Templates by any address, the retired ones included, is
- * sent Home; the rail already shows her neither (`lib/nav.ts#ownerOnly`).
+ * user level cannot see templates or business settings"; #2200 / #2201 added
+ * Packages, Invoices, Marketing blasts and Activity Log). An Auntie who
+ * reaches one by any address, the retired ones included, is sent Home; the
+ * rail already shows her none of them (`lib/nav.ts#ownerOnly`).
  *
  * Reads the access the admin layout's `requireAdmin` already resolved, so it
  * costs no second token read. `null` (the #812 offline entry) is let through,
@@ -238,6 +239,8 @@ const activityRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'activity',
   staticData: { title: navTitle('activity') },
+  // #2201: reading the log is audit oversight, the owner's.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./screens/ActivityLog'), 'ActivityLog'),
 });
 
@@ -260,6 +263,9 @@ const invoicesRoute = createRoute({
   path: 'invoices',
   staticData: { title: navTitle('invoices') },
   validateSearch: optionalIdSearch(['invoiceId', 'composeQuoteForKinfolkId'] as const),
+  // #2200: money. Her deep links (`?invoiceId=`, `?composeQuoteForKinfolkId=`)
+  // land Home with the bare address.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./routes/InvoicesView'), 'InvoicesView'),
 });
 
@@ -448,6 +454,8 @@ const coveragePackagesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'packages',
   staticData: { title: navTitle('coveragePackages') },
+  // #2200: Packages prices visits, which is money.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(
     () => import('./screens/CoveragePackageBuilder'),
     'CoveragePackageBuilder',
@@ -496,6 +504,8 @@ const marketingBlastsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'marketing-blasts',
   staticData: { title: navTitle('marketingBlasts') },
+  // #2201: marketing is the owner's.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./screens/MarketingBlasts'), 'MarketingBlasts'),
 });
 
