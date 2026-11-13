@@ -46,7 +46,7 @@ function makeEvent(before: Record<string, unknown> | undefined, after: Record<st
 
 /** A flat doc already linked so the mirror step is a no-op update/skip. */
 function dbMock() {
-  const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+  const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK } }, queryDocs: { kin: [] } });
   return ctx;
 }
 

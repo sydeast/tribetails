@@ -244,6 +244,20 @@ export default async function seed(): Promise<void> {
     createdAt: new Date('2026-07-01T10:00:00Z'),
   });
 
+  // Eight Kin for the booking wizard spec (#1918, #1933): the wizard reads
+  // `families/{id}/kin` directly and never asks the `getMyKin` callable when that
+  // read succeeds, so the roster has to be here. Eight is what makes step 1 a
+  // page that scrolls.
+  for (let i = 1; i <= 8; i += 1) {
+    await put(`families/${KINFOLK.kinfolkId}/kin`, `e2e-kin-${i}`, {
+      name: `Buddy ${i}`,
+      species: 'dog',
+      breed: 'Mixed',
+      ageYears: 3,
+      status: 'active',
+    });
+  }
+
   // One inbound message so the Messages screen has a thread to render. Its
   // listener is `lib/messagesListener.ts`, one of the four modules that read
   // Firestore directly, so this row is exercised rather than decorative.

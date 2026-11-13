@@ -13,6 +13,7 @@ import {
   projectChanged,
 } from './kinMirror';
 import { isInactiveKinStatus } from '../lib/kinStatus';
+import { adoptUnlinkedFlatKinByName, healKinLink, resolveKinLink } from '../lib/kinLink';
 
 type KinDoc = {
   status?: string;
@@ -133,19 +134,61 @@ export async function mirrorFamilyKinToFlat(
   const familyKinPath = `families/${kinfolkId}/kin/${kinId}`;
   const flatPayload = { ...buildFlatMirrorPayload(after), ...buildAdminPortraitStamp(before, after) };
 
-  // Resolve (or create) the flat mirror. Prefer the stamped link; fall back to
-  // a kinfolkId + name lookup so a pet AuntieOS already created flat is reused
-  // instead of duplicated.
-  let flatDocId = typeof after.legacyKinId === 'string' ? after.legacyKinId : null;
-  if (!flatDocId) {
-    const found = await findFlatMirror(kinfolkId, familyKinPath, after.name ?? null);
-    flatDocId = found;
-  }
-
   const afterInactive = isInactiveKinStatus(after.status);
+  const beforeInactive = isInactiveKinStatus(before?.status);
+  const restored = beforeInactive && !afterInactive;
+
+  // Resolve (or create) the flat mirror (#1912, lib/kinLink.ts). A stamped
+  // link counts only when the record it names is this Kin's own. A record
+  // another Kin holds, or one outside the household, is never written here:
+  // this Kin gets its own. Only a Kin with no record at all may take one by
+  // name, and only a live record nobody else is tied to.
+  let flatDocId: string | null = null;
+  const link = await resolveKinLink(kinfolkId, kinId, after as Record<string, unknown>, { restoring: restored });
+  if (link.state === 'linked') {
+    flatDocId = link.flatId;
+    if (link.contested) await healKinLink(kinfolkId, link.flatId);
+  } else if (link.state === 'crossed') {
+    const healed = await healKinLink(kinfolkId, link.flatId);
+    const own = healed.moved.find((m) => m.kinId === kinId);
+    if (own) {
+      logEvent({
+        severity: 'info',
+        function: 'onFamilyKinWrite',
+        event: 'mirror.flat.created',
+        extra: { kinfolkId, kinId, flatDocId: own.flatId, relinkedFrom: link.flatId },
+      });
+      return { action: 'created', flatDocId: own.flatId };
+    }
+    if (healed.ownerKinId === kinId) flatDocId = link.flatId;
+  } else {
+    if (link.state === 'foreign') {
+      logEvent({
+        severity: 'warn',
+        function: 'onFamilyKinWrite',
+        event: 'mirror.flat.link-refused',
+        extra: { kinfolkId, kinId },
+      });
+    }
+    flatDocId = await adoptUnlinkedFlatKinByName(kinfolkId, kinId, after.name ?? null);
+  }
 
   // CREATE path: no flat mirror exists yet -> create one and stamp both sides.
   if (!flatDocId) {
+    // This event may be late. A Kin deleted since it fired, or one given a
+    // record since (its stamp is no longer the one this event saw), must not
+    // be handed a second record or written back into existence.
+    const stored = await firestore.doc(familyKinPath).get();
+    const storedStamp = (stored.data() as KinDoc | undefined)?.legacyKinId ?? null;
+    if (!stored.exists || storedStamp !== (after.legacyKinId ?? null)) {
+      logEvent({
+        severity: 'info',
+        function: 'onFamilyKinWrite',
+        event: 'mirror.flat.skipped.stale-event',
+        extra: { kinfolkId, kinId },
+      });
+      return { action: 'skipped', flatDocId: null };
+    }
     const flatRef = firestore.collection('kin').doc();
     flatDocId = flatRef.id;
     await flatRef.set(
@@ -180,7 +223,6 @@ export async function mirrorFamilyKinToFlat(
 
   // ARCHIVE path: status crossed into an inactive value -> mark the mirror
   // inactive (soft), do not clobber parent-owned descriptive fields.
-  const beforeInactive = isInactiveKinStatus(before?.status);
   if (afterInactive && !beforeInactive) {
     await flatRef.set(
       {
@@ -207,7 +249,6 @@ export async function mirrorFamilyKinToFlat(
   }
 
   // UPDATE path: skip when no parent-owned field actually changed (loop guard).
-  const restored = beforeInactive && !afterInactive;
   if (!restored && !projectChanged(before as Record<string, unknown> | undefined, after as Record<string, unknown>, FLAT_MIRROR_FIELDS)) {
     return { action: 'skipped', flatDocId };
   }
@@ -245,37 +286,6 @@ async function ensureFamilyLink(
     { legacyKinId: flatDocId, familyKinPath },
     { merge: true },
   );
-}
-
-/**
- * Finds an existing flat mirror for this family pet without a stamped link.
- * Matches on familyKinPath first (idempotent re-runs), then falls back to a
- * kinfolkId + name match so an AuntieOS-created flat doc is adopted rather than
- * duplicated. Returns null if no candidate is found.
- */
-async function findFlatMirror(
-  kinfolkId: string,
-  familyKinPath: string,
-  name: string | null,
-): Promise<string | null> {
-  const firestore = db();
-  const byPath = await firestore
-    .collection('kin')
-    .where('familyKinPath', '==', familyKinPath)
-    .limit(1)
-    .get();
-  if (byPath.docs.length > 0) return byPath.docs[0].id;
-
-  if (name && name.length > 0) {
-    const byName = await firestore
-      .collection('kin')
-      .where('kinfolkId', '==', kinfolkId)
-      .where('name', '==', name)
-      .limit(1)
-      .get();
-    if (byName.docs.length > 0) return byName.docs[0].id;
-  }
-  return null;
 }
 
 /**
