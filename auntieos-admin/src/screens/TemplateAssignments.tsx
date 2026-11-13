@@ -473,9 +473,9 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           </div>
         </div>
         <p className="tassign__hint">
-          An override changes the EMAIL template only. SMS and push read the template ids frozen
-          in the catalog and never look at a binding. Audience is written to the binding and no
-          sender reads it, so it records intent and changes nothing.
+          An override changes the EMAIL template only. The text message and push notification keep
+          their own wording, which you change in the template editor. Audience is written to the
+          binding and no sender reads it, so it records intent and changes nothing.
         </p>
       </DenPanel>
 

@@ -525,6 +525,10 @@ export const AUDIT_EVENTS = {
   // refusal message with any phone-shaped digits masked; never a name or phone.
   EMERGENCY_CONTACT_SAVE_REFUSED: 'EMERGENCY_CONTACT_SAVE_REFUSED',
 
+  // #1935: an admin changed what a notification says by text message or by
+  // push (`saveTemplateChannels`). The payload names the template and which
+  // channels changed, never the wording itself.
+  ADMIN_TEMPLATE_WORDING_UPDATED: 'ADMIN_TEMPLATE_WORDING_UPDATED',
   // ── Declared ahead of their writers (#1820) ──────────────────────────────
   // The Activity Log lane lands as a chain of PRs that each add lines for
   // actions that leave none today. Their keys are declared here in one go, with

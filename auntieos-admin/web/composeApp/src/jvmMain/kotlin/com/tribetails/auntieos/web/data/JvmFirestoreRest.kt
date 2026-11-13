@@ -704,7 +704,7 @@ internal object JvmFirestoreRest {
     suspend fun callable(name: String, payloadJson: String): WriteResult<String> =
         when (val reply = callableReply(name, payloadJson)) {
             is CallableReply.Ok -> WriteResult.Ok(reply.resultJson)
-            is CallableReply.Refused -> WriteResult.Err(reply.message, reply.code)
+            is CallableReply.Refused -> WriteResult.Err(reply.message, reply.code, reply.details)
             is CallableReply.NotSent -> WriteResult.Err(reply.message)
         }
 
@@ -732,7 +732,9 @@ internal object JvmFirestoreRest {
                 val status = runCatchingCancellable { error?.get("status")?.jsonPrimitive?.content }.getOrNull()
                 // #1145: the callable's machine code (`details.code`), kept so a caller can branch on it.
                 val code = runCatchingCancellable { error?.get("details")?.jsonObject?.get("code")?.jsonPrimitive?.content }.getOrNull()
-                refusedReply(name, status, raw, code, resp.status.value)
+                // #1935: the whole `details` object, for a refusal that names the fields it refused.
+                val details = runCatchingCancellable { error?.get("details")?.jsonObject?.toString() }.getOrNull()
+                refusedReply(name, status, raw, code, resp.status.value).copy(details = details)
             } else {
                 val result = codec.parseToJsonElement(text).jsonObject["result"]
                 CallableReply.Ok(result?.toString() ?: "{}")
@@ -769,7 +771,7 @@ internal sealed class CallableReply {
     /** 2xx: the `result` object as JSON text. */
     data class Ok(val resultJson: String) : CallableReply()
     /** The server answered with an error. [status] is the callable code, e.g. `RESOURCE_EXHAUSTED`. */
-    data class Refused(val status: String?, val message: String, val code: String? = null) : CallableReply()
+    data class Refused(val status: String?, val message: String, val code: String? = null, val details: String? = null) : CallableReply()
     /** No answer: not signed in, a timeout or a network failure. */
     data class NotSent(val message: String) : CallableReply()
 }

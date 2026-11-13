@@ -484,6 +484,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   saveEmailFrame: () => require('./admin/emailFrameSettings'),
   previewEmailFrame: () => require('./admin/emailFrameSettings'),
   convertTemplateToVisual: () => require('./admin/convertTemplateToVisual'),
+  // #1935: a template's text-message and push wording, read and saved.
+  getTemplateChannels: () => require('./admin/templateChannels'),
+  saveTemplateChannels: () => require('./admin/templateChannels'),
   importSeedTemplates: () => require('./admin/importSeedTemplates'),
   deleteTemplate: () => require('./admin/deleteTemplate'),
   assignTemplate: () => require('./admin/assignTemplate'),

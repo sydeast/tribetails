@@ -230,14 +230,20 @@ const ALLOWED_EAGER_PACKAGES = [
  * spends account credit, by an amount the admin enters). Everything it imports
  * was already here.
  *
- * 448 since #2123 (on top of #1872's 447): `triggers/onKinCareSessionDeparted.ts`,
+ * 448 since #1935 (on top of #1872's 447): `admin/templateChannels.ts` is a new
+ * FUNCTIONS entry (the read and the save of a template's text-message and push
+ * wording, which no client may touch directly). Its rules,
+ * `lib/templateChannelWording.ts`, load with `await import()` inside the
+ * handler, so the entry is the only module it adds.
+ *
+ * 449 since #2123 (on top of #1935's 448): `triggers/onKinCareSessionDeparted.ts`,
  * the trigger that completes a visit at departure. A new entry in the FUNCTIONS
  * table, so it is in the union by construction. Its words and the "KinTale
  * required" reader are loaded inside the handler; its file-scope imports
  * (`arrivalVerification`, `geo`, `writeAuditEntry`, `wrapTrigger`) are already
  * resident through `transitionBookingStatus` and the other triggers.
  */
-const MAX_OWN_EAGER_MODULES = 448;
+const MAX_OWN_EAGER_MODULES = 449;
 
 interface Edge {
   spec: string;

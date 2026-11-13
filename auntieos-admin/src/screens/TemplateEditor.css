@@ -257,13 +257,85 @@
   background: var(--color-surface-2);
   border: var(--border-hairline) solid var(--color-hairline);
   border-radius: var(--radius-card-lg);
-  padding: var(--space-3) 15px;
+  padding: var(--space-2);
+  gap: var(--space-2);
 }
-.template-editor__channel {
+
+/* The mock's `.chanswitch`: one capsule per channel, teal on the open one.
+   44px tall so each is a full touch target at phone width (#1935). */
+.template-editor__tab {
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  font: inherit;
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text-dim);
+  background: transparent;
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-card);
+  cursor: pointer;
+  transition:
+    color var(--dur-base) var(--ease-standard),
+    background var(--dur-base) var(--ease-standard);
+}
+.template-editor__tab:hover {
+  color: var(--color-text-primary);
+}
+.template-editor__tab[aria-selected='true'] {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+.template-editor__tab:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* The email banners and columns keep the `.screen` gap they had before the
+   tabs wrapped them; closed, the whole email side leaves the page. */
+.template-editor__email {
+  display: contents;
+}
+.template-editor__email[hidden] {
+  display: none;
+}
+
+/* A channel with no wording: the pill, the reason, and the add button if the
+   notification can send it. */
+.template-editor__notset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.template-editor__loading {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--color-accent);
+}
+.template-editor__spinner {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  border-top-color: var(--color-accent);
+  border-radius: var(--radius-pill);
+  animation: template-editor-spin 800ms linear infinite;
+}
+@keyframes template-editor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Slowed, not stopped: a frozen spinner reads as a hang. */
+  .template-editor__spinner {
+    animation-duration: 2400ms;
+  }
+}
+.template-editor__channel-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* ── merge-field chips ─────────────────────────────────────────────────────── */
