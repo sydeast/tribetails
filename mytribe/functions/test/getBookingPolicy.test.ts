@@ -150,7 +150,8 @@ describe('getBookingPolicy', () => {
         docs: {
           'business_settings/business_settings': {
             allowTimeBlockBooking: true,
-            allowSpecificTimeBooking: true,
+            allowSpecificTimeBooking: false,
+            defaultBookingMode: 'TIME_BLOCK',
             timeBlocks: [{ id: 'midday' }, { id: 'evening', startTime: '17:00', endTime: '21:00' }],
           },
         },

@@ -441,7 +441,8 @@ data class CreateMultiDateBookingRequestArgsBilling(
 /** Nested in the `createMultiDateBookingRequest` contract. */
 data class CreateMultiDateBookingRequestArgsCommunication(
     val emailConfirmation: Boolean,
-    val timeVisibility: Boolean,
+    /** Optional: omitted from the payload when null. */
+    val timeVisibility: Boolean? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -449,7 +450,7 @@ data class CreateMultiDateBookingRequestArgsCommunication(
      */
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
         put("emailConfirmation", emailConfirmation)
-        put("timeVisibility", timeVisibility)
+        if (timeVisibility != null) put("timeVisibility", timeVisibility)
     }
 }
 
@@ -561,6 +562,9 @@ data class GetMyBookingsResultLiveVisit(
     val rescheduleRequestStatus: String?,
     val rescheduleRequestedStartTimeMs: Long?,
     val rescheduleRequestedEndTimeMs: Long?,
+    val rescheduleRequestedTimeBlockLabel: String?,
+    val rescheduleRequestedTimeBlockStartTime: String?,
+    val rescheduleRequestedTimeBlockEndTime: String?,
     val rescheduleRequestReason: String?,
     val rescheduleResponseNote: String?,
     val address: String?,
@@ -608,6 +612,9 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         rescheduleRequestStatus = raw?.get("rescheduleRequestStatus") as? String,
         rescheduleRequestedStartTimeMs = (raw?.get("rescheduleRequestedStartTimeMs") as? Number)?.toLong(),
         rescheduleRequestedEndTimeMs = (raw?.get("rescheduleRequestedEndTimeMs") as? Number)?.toLong(),
+        rescheduleRequestedTimeBlockLabel = raw?.get("rescheduleRequestedTimeBlockLabel") as? String,
+        rescheduleRequestedTimeBlockStartTime = raw?.get("rescheduleRequestedTimeBlockStartTime") as? String,
+        rescheduleRequestedTimeBlockEndTime = raw?.get("rescheduleRequestedTimeBlockEndTime") as? String,
         rescheduleRequestReason = raw?.get("rescheduleRequestReason") as? String,
         rescheduleResponseNote = raw?.get("rescheduleResponseNote") as? String,
         address = raw?.get("address") as? String,
@@ -785,7 +792,8 @@ data class RequestBookingArgsBilling(
 /** Nested in the `requestBooking` contract. */
 data class RequestBookingArgsCommunication(
     val emailConfirmation: Boolean,
-    val timeVisibility: Boolean,
+    /** Optional: omitted from the payload when null. */
+    val timeVisibility: Boolean? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -793,7 +801,7 @@ data class RequestBookingArgsCommunication(
      */
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
         put("emailConfirmation", emailConfirmation)
-        put("timeVisibility", timeVisibility)
+        if (timeVisibility != null) put("timeVisibility", timeVisibility)
     }
 }
 

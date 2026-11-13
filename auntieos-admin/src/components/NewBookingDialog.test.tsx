@@ -928,12 +928,13 @@ describe('NewBookingDialog steps 4 and 5: invoice options and review', () => {
     await pickDay(/Mon, Aug 23/);
     await toReview();
     expect(screen.getByRole('checkbox', { name: /Email confirmation/ })).not.toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Exact times/ })).not.toBeChecked();
+    // #1863: no per-booking "Exact times" box; the business's one mode decides.
+    expect(screen.queryByRole('checkbox', { name: /Exact times/ })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
 
     await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
     const arg = createMultiDateBookingRequest.mock.calls[0]![0];
-    expect(arg.communication).toEqual({ emailConfirmation: false, timeVisibility: false });
+    expect(arg.communication).toEqual({ emailConfirmation: false });
     expect(arg.billing).toEqual({ mode: 'new-invoice' });
   });
 
@@ -949,7 +950,7 @@ describe('NewBookingDialog steps 4 and 5: invoice options and review', () => {
 
     await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
     const arg = createMultiDateBookingRequest.mock.calls[0]![0];
-    expect(arg.communication).toEqual({ emailConfirmation: true, timeVisibility: false });
+    expect(arg.communication).toEqual({ emailConfirmation: true });
     // #1626: private, so it travels as staffNotes and never as the household-visible notes.
     expect(arg.staffNotes).toBe('Gate code 1234');
     expect(arg.notes).toBeUndefined();

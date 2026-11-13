@@ -199,7 +199,7 @@ describe('createMultiDateBookingRequest wizard fields (billing, communication)',
     // guess at: no billing stated, and both communication toggles off.
     const env = envelope(ctx);
     expect(env?.data.billing).toBeNull();
-    expect(env?.data.communication).toEqual({ emailConfirmation: false, timeVisibility: false });
+    expect(env?.data.communication).toEqual({ emailConfirmation: false });
     expect(visitWrites(ctx)[0]?.data).not.toHaveProperty('location');
   });
   /**
@@ -252,7 +252,19 @@ describe('createMultiDateBookingRequest wizard fields (billing, communication)',
       ),
     ).rejects.toBeTruthy();
   });
-  it('persists both communication toggles exactly as sent', async () => {
+  it('persists the email choice as sent', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        communication: { emailConfirmation: true },
+        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk' }],
+      }),
+    );
+    expect(envelope(ctx)?.data.communication).toEqual({ emailConfirmation: true });
+  });
+  it('#1863: accepts the retired "Exact times" box from an older app and never stores it', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     await createMultiDateBookingRequestHandler(
@@ -262,10 +274,7 @@ describe('createMultiDateBookingRequest wizard fields (billing, communication)',
         visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Walk' }],
       }),
     );
-    expect(envelope(ctx)?.data.communication).toEqual({
-      emailConfirmation: true,
-      timeVisibility: true,
-    });
+    expect(envelope(ctx)?.data.communication).toEqual({ emailConfirmation: true });
   });
   it('rejects a half-stated communication object rather than defaulting the missing half', async () => {
     // Silently defaulting `emailConfirmation` is how a household gets an email

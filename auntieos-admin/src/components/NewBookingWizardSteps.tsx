@@ -844,26 +844,6 @@ export function ReviewStep({
             </span>
           </span>
         </label>
-        <label className="nbw__toggle">
-          <input
-            type="checkbox"
-            checked={state.communication.timeVisibility}
-            onChange={(e) =>
-              onChange({
-                ...state,
-                communication: { ...state.communication, timeVisibility: e.target.checked },
-              })
-            }
-          />
-          <span>
-            Exact times
-            <span className="nbw__toggle-blurb">
-              {state.communication.timeVisibility
-                ? 'The household sees the exact start time of each visit.'
-                : 'The household sees a time window rather than an exact start time.'}
-            </span>
-          </span>
-        </label>
       </section>
 
       <label className="new-booking__field">

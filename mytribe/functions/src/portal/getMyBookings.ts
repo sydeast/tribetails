@@ -9,7 +9,7 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
-import { serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
+import { matchServiceKey, serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
 import { hasBillingAccess } from '../lib/memberGate';
 import { loadVisitExtras, NO_EXTRAS, type VisitExtras } from '../lib/portalVisitLinks';
 import {
@@ -17,13 +17,15 @@ import {
   EnvelopeDtoSchema,
   envelopeToDto,
   kinCareToDto,
-  loadBlocksById,
+  householdTimeContextFrom,
+  CLOCK_ONLY_TIME_CONTEXT,
   stringOrNull,
   visitSortMs,
   resolveBatchId,
   type BookingDto,
   type EnvelopeDto,
 } from '../lib/portalBookingDto';
+import { householdBlockFor } from '../lib/bookingTimeBlocks';
 import {
   LATE_VISIT_WINDOW_MS,
   bucketOf,
@@ -130,7 +132,8 @@ export async function getMyBookingsHandler(
   } catch {
     extras = NO_EXTRAS;
   }
-  const blocksById = await loadBlocksById(firestore);
+  // #1863: the same settings read decides what time each visit is shown at.
+  const time = settingsSnap ? householdTimeContextFrom(settingsSnap.data() ?? {}) : CLOCK_ONLY_TIME_CONTEXT;
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
   const byBatch = new Map<string, BookingDto[]>();
@@ -140,7 +143,7 @@ export async function getMyBookingsHandler(
   // unjoined copy there would put CONFIRMED back on a visit that is under way.
   const all: BookingDto[] = visitRows.map(({ doc: d, data }) => {
     const batchId = resolveBatchId(d, data);
-    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, blocksById, serviceCatalog);
+    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, time, serviceCatalog);
     if (batchId) {
       const bucket = byBatch.get(batchId) ?? [];
       bucket.push(dto);
@@ -174,6 +177,10 @@ export async function getMyBookingsHandler(
   // a visit that is under way (ON_MY_WAY / ARRIVED) shows regardless
   // of clock so the kinfolk can follow a visit that started late.
   const staleFloorMs = nowMs - LATE_VISIT_WINDOW_MS;
+  const sessionServiceKey = (raw: unknown): string | null => {
+    const match = matchServiceKey(raw, serviceCatalog);
+    return match.kind === 'key' ? match.key : null;
+  };
   for (const d of sessionSnap.docs) {
     if (linkedSessionIds.has(d.id)) continue;
     const s = d.data() as Record<string, unknown>;
@@ -182,6 +189,18 @@ export async function getMyBookingsHandler(
     const { status, visitProgress } = progress;
     const startTimeMs = isoMillis(s['startTime']);
     if (status === 'confirmed' && (startTimeMs === null || startTimeMs < staleFloorMs)) continue;
+    const sessionBlock = householdBlockFor(
+      {
+        startTimeMs,
+        timeBlockId: s['timeBlockId'],
+        // A session names its KinCare by `serviceType`; matched to the catalog
+        // KEY, which is what `startTimeServiceIds` holds, so an office-booked
+        // start-time KinCare keeps its clock here too.
+        serviceId: typeof s['serviceId'] === 'string' ? s['serviceId'] : sessionServiceKey(s['serviceType']),
+      },
+      time.policy,
+      time.timeZone,
+    );
     const dto: BookingDto = {
       id: d.id,
       batchId: null,
@@ -197,9 +216,11 @@ export async function getMyBookingsHandler(
       // A session always has its time; only a kinCares visit can await one.
       startTimePending: false,
       requestedDate: null,
-      timeBlockLabel: null,
-      timeBlockStartTime: null,
-      timeBlockEndTime: null,
+      // #1863: an office-booked visit is shown by the same rule as any other:
+      // its nearest block in Time Blocks mode, its clock in Exact times mode.
+      timeBlockLabel: sessionBlock?.label ?? null,
+      timeBlockStartTime: sessionBlock?.startTime ?? null,
+      timeBlockEndTime: sessionBlock?.endTime ?? null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
       // #1832: the session carries the names it was scheduled with, and the
       // live card says who the Auntie is with. This used to be always empty.
@@ -228,6 +249,9 @@ export async function getMyBookingsHandler(
       rescheduleRequestStatus: null,
       rescheduleRequestedStartTimeMs: null,
       rescheduleRequestedEndTimeMs: null,
+      rescheduleRequestedTimeBlockLabel: null,
+      rescheduleRequestedTimeBlockStartTime: null,
+      rescheduleRequestedTimeBlockEndTime: null,
       rescheduleRequestReason: null,
       rescheduleResponseNote: null,
       address: extras.address,

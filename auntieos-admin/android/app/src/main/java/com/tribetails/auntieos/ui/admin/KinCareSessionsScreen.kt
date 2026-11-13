@@ -191,8 +191,12 @@ fun KinCareSessionsScreen(
     val timeBlocks by viewModel.timeBlocks.collectAsState()
     // #1608: the operator's arrival rule, so Complete can answer before it is sent.
     val arrivalRule by viewModel.arrivalRule.collectAsState()
+    // #1863 / #2034: the block the HOUSEHOLD sees for the visit, by the shared
+    // rule on the business clock: the nearest block in Time Blocks mode, none
+    // in Exact times mode.
+    val householdTime by viewModel.householdTime.collectAsState()
     val timeBlockLabelFor: (com.tribetails.auntieos.data.model.KinCareSession) -> String? = { s ->
-        com.tribetails.auntieos.domain.resolveTimeBlock(s.startTime, timeBlocks)?.label
+        com.tribetails.auntieos.domain.householdBlockLabel(s.startTime, null, s.serviceType, householdTime)
     }
 
     var kinfolkById by remember { mutableStateOf<Map<String, Kinfolk>>(emptyMap()) }

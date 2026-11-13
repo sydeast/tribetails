@@ -1,0 +1,34 @@
+{
+  "about": "#1863 / #2034: the shared case table for what a household is shown for a visit. The server rule is householdBlockFor + resolveBookingPolicy in mytribe/functions/src/lib/bookingTimeBlocks.ts. The admin clients mirror it (auntieos-admin/src/lib/householdVisitTime.ts, Android domain/HouseholdVisitTime.kt, desktop data/HouseholdVisitTime.kt) and each runs every case below. Times are wall clock in timeZone on date. expect.mode is the business's one mode; expect.blockId is the block the household sees, null meaning the clock.",
+  "timeZone": "America/Chicago",
+  "date": "2026-11-17",
+  "blocks": [
+    { "id": "morning", "label": "Morning", "startTime": "08:00", "endTime": "11:00", "active": true },
+    { "id": "midday", "label": "Midday", "startTime": "11:00", "endTime": "15:00", "active": true },
+    { "id": "evening", "label": "Evening", "startTime": "16:00", "endTime": "19:00", "active": true }
+  ],
+  "timeBlocksMode": { "allowTimeBlockBooking": true, "allowSpecificTimeBooking": false, "defaultBookingMode": "TIME_BLOCK" },
+  "exactTimesMode": { "allowTimeBlockBooking": false, "allowSpecificTimeBooking": true, "defaultBookingMode": "SPECIFIC_TIME" },
+  "cases": [
+    { "name": "a block booking, at its window's first minute", "settings": "timeBlocksMode", "visit": { "localTime": "11:00", "timeBlockId": "midday" }, "expect": { "mode": "TIME_BLOCK", "blockId": "midday" } },
+    { "name": "#2034: the office moved a Midday booking to 12:30, still inside Midday", "settings": "timeBlocksMode", "visit": { "localTime": "12:30", "timeBlockId": "midday" }, "expect": { "mode": "TIME_BLOCK", "blockId": "midday" } },
+    { "name": "the office moved a Midday booking to 16:30: shown where it now is, not by its old label", "settings": "timeBlocksMode", "visit": { "localTime": "16:30", "timeBlockId": "midday" }, "expect": { "mode": "TIME_BLOCK", "blockId": "evening" } },
+    { "name": "an office clock booking inside a block", "settings": "timeBlocksMode", "visit": { "localTime": "09:00" }, "expect": { "mode": "TIME_BLOCK", "blockId": "morning" } },
+    { "name": "TIE: 15:30 is 30 minutes after Midday ends and 30 before Evening starts -> the earlier block", "settings": "timeBlocksMode", "visit": { "localTime": "15:30" }, "expect": { "mode": "TIME_BLOCK", "blockId": "midday" } },
+    { "name": "off-block, closer to the later block", "settings": "timeBlocksMode", "visit": { "localTime": "15:45" }, "expect": { "mode": "TIME_BLOCK", "blockId": "evening" } },
+    { "name": "off-block, closer to the earlier block", "settings": "timeBlocksMode", "visit": { "localTime": "15:10" }, "expect": { "mode": "TIME_BLOCK", "blockId": "midday" } },
+    { "name": "exactly on an end boundary no block contains", "settings": "timeBlocksMode", "visit": { "localTime": "15:00" }, "expect": { "mode": "TIME_BLOCK", "blockId": "midday" } },
+    { "name": "before every block", "settings": "timeBlocksMode", "visit": { "localTime": "06:00" }, "expect": { "mode": "TIME_BLOCK", "blockId": "morning" } },
+    { "name": "after every block, no wrap to the next morning", "settings": "timeBlocksMode", "visit": { "localTime": "23:30" }, "expect": { "mode": "TIME_BLOCK", "blockId": "evening" } },
+    { "name": "Exact times mode: the clock, even for a visit booked into a block", "settings": "exactTimesMode", "visit": { "localTime": "11:00", "timeBlockId": "midday" }, "expect": { "mode": "SPECIFIC_TIME", "blockId": null } },
+    { "name": "Exact times mode: the moved 12:30 visit reads 12:30", "settings": "exactTimesMode", "visit": { "localTime": "12:30", "timeBlockId": "midday" }, "expect": { "mode": "SPECIFIC_TIME", "blockId": null } },
+    { "name": "legacy both-on, defaultBookingMode TIME_BLOCK: Time Blocks", "settings": { "allowTimeBlockBooking": true, "allowSpecificTimeBooking": true, "defaultBookingMode": "TIME_BLOCK" }, "visit": { "localTime": "12:30" }, "expect": { "mode": "TIME_BLOCK", "blockId": "midday" } },
+    { "name": "legacy both-on, no defaultBookingMode (the stored default): Exact times", "settings": { "allowTimeBlockBooking": true, "allowSpecificTimeBooking": true }, "visit": { "localTime": "12:30" }, "expect": { "mode": "SPECIFIC_TIME", "blockId": null } },
+    { "name": "a document with none of the three fields: Exact times", "settings": {}, "visit": { "localTime": "12:30" }, "expect": { "mode": "SPECIFIC_TIME", "blockId": null } },
+    { "name": "Time Blocks with every block off is served as Exact times", "settings": "timeBlocksMode", "blocks": [{ "id": "midday", "label": "Midday", "startTime": "11:00", "endTime": "15:00", "active": false }], "visit": { "localTime": "12:30" }, "expect": { "mode": "SPECIFIC_TIME", "blockId": null } },
+    { "name": "an inactive block is never shown, even to a visit booked into it", "settings": "timeBlocksMode", "blocks": [{ "id": "morning", "label": "Morning", "startTime": "08:00", "endTime": "11:00", "active": true }, { "id": "midday", "label": "Midday", "startTime": "11:00", "endTime": "15:00", "active": false }], "visit": { "localTime": "12:30", "timeBlockId": "midday" }, "expect": { "mode": "TIME_BLOCK", "blockId": "morning" } },
+    { "name": "a start-time KinCare keeps its clock in Time Blocks mode", "settings": "timeBlocksMode", "serviceStartTimeBooking": { "Overnight": true }, "visit": { "localTime": "19:00", "serviceId": "Overnight" }, "expect": { "mode": "TIME_BLOCK", "blockId": null } },
+    { "name": "overlapping legacy blocks: the block the visit was booked into wins", "settings": "timeBlocksMode", "blocks": [{ "id": "morning", "label": "Morning", "startTime": "08:00", "endTime": "12:00", "active": true }, { "id": "midday", "label": "Midday", "startTime": "11:00", "endTime": "15:00", "active": true }], "visit": { "localTime": "11:00", "timeBlockId": "midday" }, "expect": { "mode": "TIME_BLOCK", "blockId": "midday" } },
+    { "name": "overlapping legacy blocks, no booked block: the first in start order", "settings": "timeBlocksMode", "blocks": [{ "id": "morning", "label": "Morning", "startTime": "08:00", "endTime": "12:00", "active": true }, { "id": "midday", "label": "Midday", "startTime": "11:00", "endTime": "15:00", "active": true }], "visit": { "localTime": "11:00" }, "expect": { "mode": "TIME_BLOCK", "blockId": "morning" } }
+  ]
+}

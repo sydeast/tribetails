@@ -16,7 +16,13 @@ import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { NO_EXTRAS, readHouseholdAddress, type VisitExtras } from './portalVisitLinks';
-import { resolveBookingPolicy } from './bookingTimeBlocks';
+import {
+  CLOCK_ONLY_TIME_CONTEXT,
+  householdBlockFor,
+  householdTimeContextFrom,
+  type HouseholdTimeContext,
+} from './bookingTimeBlocks';
+export { CLOCK_ONLY_TIME_CONTEXT, householdTimeContextFrom, type HouseholdTimeContext };
 import {
   serviceDisplayName,
   serviceNameCatalogFrom,
@@ -60,12 +66,15 @@ export const BookingDtoSchema = z
     /** #1098: the night asked for (business-local `YYYY-MM-DD`) while `startTimePending`; null otherwise. */
     requestedDate: z.string().nullable(),
     /**
-     * #1301: the named window the household booked this visit into ("Midday"),
-     * or null for a by-the-clock visit. A block visit has a start time that is
-     * only the window's anchor, so clients show the window, never the clock.
+     * #1301 / #1863: the named window the household is SHOWN for this visit
+     * ("Midday"), or null when it is shown by the clock. Decided on the server
+     * by `householdBlockFor` (lib/bookingTimeBlocks.ts): set on every timed
+     * visit in Time Blocks mode (the nearest block when the office booked a
+     * clock time), null in Exact times mode. Clients print the window, never
+     * the clock, whenever this is set.
      */
     timeBlockLabel: z.string().nullable(),
-    /** #1301: that window's `HH:MM` bounds in the business's zone, null when the block has since been removed. */
+    /** That window's `HH:MM` bounds in the business's zone; null exactly when `timeBlockLabel` is. */
     timeBlockStartTime: z.string().nullable(),
     timeBlockEndTime: z.string().nullable(),
     kinIds: z.array(z.string()),
@@ -117,6 +126,14 @@ export const BookingDtoSchema = z
     rescheduleRequestStatus: z.enum(['pending', 'accepted', 'declined']).nullable(),
     rescheduleRequestedStartTimeMs: z.number().int().nullable(),
     rescheduleRequestedEndTimeMs: z.number().int().nullable(),
+    /**
+     * #1863: the window the household is shown for the time it ASKED for, by
+     * the same rule as `timeBlockLabel`. Null in Exact times mode and when no
+     * ask is on file; the bounds are null exactly when the label is.
+     */
+    rescheduleRequestedTimeBlockLabel: z.string().nullable(),
+    rescheduleRequestedTimeBlockStartTime: z.string().nullable(),
+    rescheduleRequestedTimeBlockEndTime: z.string().nullable(),
     rescheduleRequestReason: z.string().nullable(),
     /** What the office said when it accepted or declined. */
     rescheduleResponseNote: z.string().nullable(),
@@ -166,20 +183,16 @@ export const EnvelopeDtoSchema = z
   .strict();
 
 export type EnvelopeDto = z.infer<typeof EnvelopeDtoSchema>;
-export type BlockBounds = { startTime: string; endTime: string };
 /**
- * #1301: the business's current windows by id, so a block visit can be shown as
- * its window. Read through the same resolver `getBookingPolicy` and
- * `requestBooking` use. A failed read degrades to an empty map: the visit still
- * carries its stored label, it just has no hours to print.
+ * The context, read once per reply. A failed read degrades to the clock: the
+ * visit still shows its real time rather than no time.
  */
-export async function loadBlocksById(firestore: Firestore): Promise<Map<string, BlockBounds>> {
+export async function loadHouseholdTimeContext(firestore: Firestore): Promise<HouseholdTimeContext> {
   try {
     const snap = await firestore.collection('business_settings').doc('business_settings').get();
-    const { policy } = resolveBookingPolicy(snap.data() ?? {});
-    return new Map(policy.timeBlocks.map((b) => [b.id, { startTime: b.startTime, endTime: b.endTime }]));
+    return householdTimeContextFrom(snap.data() ?? {});
   } catch {
-    return new Map();
+    return CLOCK_ONLY_TIME_CONTEXT;
   }
 }
 /**
@@ -195,20 +208,33 @@ export async function loadServiceCatalog(firestore: Firestore): Promise<ServiceN
     return EMPTY_SERVICE_NAME_CATALOG;
   }
 }
-function blockFieldsOf(data: Record<string, unknown>, blocksById: Map<string, BlockBounds>) {
-  const label = stringOrNull(data['timeBlockLabel']);
-  const id = stringOrNull(data['timeBlockId']);
-  const bounds = id === null ? undefined : blocksById.get(id);
+function blockFieldsOf(data: Record<string, unknown>, time: HouseholdTimeContext) {
+  const block = householdBlockFor(
+    { startTimeMs: tsMillis(data['startTime']), timeBlockId: data['timeBlockId'], serviceId: data['serviceId'] },
+    time.policy,
+    time.timeZone,
+  );
+  const asked = householdBlockFor(
+    {
+      startTimeMs: tsMillis(data['rescheduleRequestedStartTime']),
+      timeBlockId: data['rescheduleRequestedTimeBlockId'],
+      serviceId: data['serviceId'],
+    },
+    time.policy,
+    time.timeZone,
+  );
   return {
-    timeBlockLabel: label,
-    timeBlockStartTime: label === null ? null : (bounds?.startTime ?? null),
-    timeBlockEndTime: label === null ? null : (bounds?.endTime ?? null),
+    timeBlockLabel: block?.label ?? null,
+    timeBlockStartTime: block?.startTime ?? null,
+    timeBlockEndTime: block?.endTime ?? null,
+    rescheduleRequestedTimeBlockLabel: asked?.label ?? null,
+    rescheduleRequestedTimeBlockStartTime: asked?.startTime ?? null,
+    rescheduleRequestedTimeBlockEndTime: asked?.endTime ?? null,
   };
 }
 /**
- * One `kinCares/{id}` document as the portal reads it. `blocksById` (#1301)
- * supplies a block visit's window hours; without it the stored label still
- * shows, with no hours.
+ * One `kinCares/{id}` document as the portal reads it. `time` (#1863) is the
+ * business's mode and blocks; without it every visit is shown by the clock.
  */
 export function kinCareToDto(
   id: string,
@@ -216,13 +242,14 @@ export function kinCareToDto(
   batchId: string | null,
   kinfolkId: string,
   extras: VisitExtras = NO_EXTRAS,
-  blocksById: Map<string, BlockBounds> = new Map(),
+  time: HouseholdTimeContext = CLOCK_ONLY_TIME_CONTEXT,
   serviceCatalog: ServiceNameCatalog = EMPTY_SERVICE_NAME_CATALOG,
 ): BookingDto {
   const cancelStatus = cancelRequestStatusOf(data);
   const status = (data['status'] as BookingDto['status']) ?? 'requested';
   const sessionId = stringOrNull(data['sessionId']);
   const completedSession = status === 'completed' && sessionId !== null ? sessionId : null;
+  const blocks = blockFieldsOf(data, time);
   return {
     id,
     batchId,
@@ -236,7 +263,9 @@ export function kinCareToDto(
     endTimeMs: tsMillis(data['endTime']),
     startTimePending: data['startTimePending'] === true,
     requestedDate: data['startTimePending'] === true ? stringOrNull(data['requestedDate']) : null,
-    ...blockFieldsOf(data, blocksById),
+    timeBlockLabel: blocks.timeBlockLabel,
+    timeBlockStartTime: blocks.timeBlockStartTime,
+    timeBlockEndTime: blocks.timeBlockEndTime,
     kinIds: Array.isArray(data['kinIds']) ? (data['kinIds'] as string[]) : [],
     kinNames: Array.isArray(data['kinNames']) ? (data['kinNames'] as string[]) : [],
     auntieDisplayName: stringOrNull(data['auntieDisplayName']),
@@ -255,6 +284,9 @@ export function kinCareToDto(
     rescheduleRequestStatus: rescheduleStatusOf(data['rescheduleRequestStatus']),
     rescheduleRequestedStartTimeMs: tsMillis(data['rescheduleRequestedStartTime']),
     rescheduleRequestedEndTimeMs: tsMillis(data['rescheduleRequestedEndTime']),
+    rescheduleRequestedTimeBlockLabel: blocks.rescheduleRequestedTimeBlockLabel,
+    rescheduleRequestedTimeBlockStartTime: blocks.rescheduleRequestedTimeBlockStartTime,
+    rescheduleRequestedTimeBlockEndTime: blocks.rescheduleRequestedTimeBlockEndTime,
     rescheduleRequestReason: stringOrNull(data['rescheduleRequestReason']),
     rescheduleResponseNote: stringOrNull(data['rescheduleResponseNote']),
     address: extras.address,
@@ -299,10 +331,10 @@ export async function readEnvelopeDto(
 ): Promise<EnvelopeDto | null> {
   try {
     const parentRef = firestore.doc(`families/${kinfolkId}/bookings/${batchId}`);
-    const [parentSnap, visitsSnap, blocksById, serviceCatalog] = await Promise.all([
+    const [parentSnap, visitsSnap, time, serviceCatalog] = await Promise.all([
       parentRef.get(),
       parentRef.collection('kinCares').get(),
-      loadBlocksById(firestore),
+      loadHouseholdTimeContext(firestore),
       loadServiceCatalog(firestore),
     ]);
     if (!parentSnap.exists) return null;
@@ -312,7 +344,7 @@ export async function readEnvelopeDto(
     // visits to link.
     const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
     const visits = visitsSnap.docs.map((d) =>
-      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, extras, blocksById, serviceCatalog),
+      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, extras, time, serviceCatalog),
     );
     return EnvelopeDtoSchema.parse(envelopeToDto(batchId, env, visits));
   } catch {
@@ -327,15 +359,15 @@ export async function readVisitDto(
   visitId: string,
 ): Promise<BookingDto | null> {
   try {
-    const [snap, blocksById, serviceCatalog] = await Promise.all([
+    const [snap, time, serviceCatalog] = await Promise.all([
       firestore.doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`).get(),
-      loadBlocksById(firestore),
+      loadHouseholdTimeContext(firestore),
       loadServiceCatalog(firestore),
     ]);
     if (!snap.exists) return null;
     const data = (snap.data() ?? {}) as Record<string, unknown>;
     const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
-    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, extras, blocksById, serviceCatalog));
+    return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, extras, time, serviceCatalog));
   } catch {
     return null;
   }

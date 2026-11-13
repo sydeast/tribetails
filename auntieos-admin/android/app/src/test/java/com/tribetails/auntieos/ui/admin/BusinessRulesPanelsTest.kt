@@ -4,6 +4,8 @@ import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.data.model.TimeBlockDefinition
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarViewMode
+import com.tribetails.auntieos.domain.storedHouseholdTimeMode
+import com.tribetails.auntieos.domain.withHouseholdTimeMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -210,41 +212,33 @@ class BusinessRulesPanelsTest {
 
     private fun bookingError(
         mode: String = "SPECIFIC_TIME",
-        specific: Boolean = true,
-        block: Boolean = true,
         hours: String = "4",
         buffer: String = "30",
         blocks: List<TimeBlockRow> = listOf(row()),
         zone: String = "America/Chicago",
-    ) = bookingRulesError(mode, specific, block, hours, buffer, blocks, zone)
-
+    ) = bookingRulesError(mode, hours, buffer, blocks, zone)
     @Test
     fun `a sound booking-rules draft has nothing wrong with it`() {
         assertNull(bookingError())
+        assertNull(bookingError(mode = "TIME_BLOCK"))
     }
-
     @Test
-    fun `turning both booking modes off is refused`() {
+    fun `#1863 Time Blocks with no active block is refused in the server's words`() {
         assertEquals(
-            "Leave at least one booking mode on, or nothing can be booked at all.",
-            bookingError(specific = false, block = false),
+            "Time Blocks needs at least one block turned on. Turn one on, or pick Exact times.",
+            bookingError(mode = "TIME_BLOCK", blocks = listOf(row(active = false))),
         )
     }
-
     @Test
-    fun `defaulting to a mode that is turned off is refused`() {
-        assertNotNull(bookingError(mode = "TIME_BLOCK", block = false))
-        assertNotNull(bookingError(mode = "SPECIFIC_TIME", specific = false))
+    fun `#1863 Exact times may keep every block off`() {
+        assertNull(bookingError(mode = "SPECIFIC_TIME", blocks = listOf(row(active = false))))
     }
-
     @Test
-    fun `time-block booking with no active block behind it is refused`() {
-        assertEquals(
-            "Time-block booking is on but no block is active, so there is nothing to book into.",
-            bookingError(blocks = listOf(row(active = false))),
-        )
+    fun `#1863 the two modes are the operator's two words`() {
+        assertEquals(listOf("Time Blocks", "Exact times"), HOUSEHOLD_TIME_MODE_OPTIONS.map { it.second })
+        assertEquals(listOf("TIME_BLOCK", "SPECIFIC_TIME"), HOUSEHOLD_TIME_MODE_OPTIONS.map { it.first })
+        assertTrue(HOUSEHOLD_TIME_MODE_OPTIONS.none { it.third.contains('\u2014') })
     }
-
     @Test
     fun `a zone this phone cannot resolve is refused, naming it`() {
         assertTrue(bookingError(zone = "Mars/Olympus")!!.contains("Mars/Olympus"))
@@ -320,70 +314,24 @@ class BusinessRulesPanelsTest {
         assertEquals(BOOKING_MODE_WIRE, optionsIncluding(BOOKING_MODE_WIRE, "TIME_BLOCK"))
     }
 
-    // ── ISSUE #710: turning off the default mode should not need a second edit ─
-
+    // ── #1863: the mode is saved as all three of its fields ─────────────────
     @Test
-    fun `turning off the currently-default mode hands the default to the mode left on`() {
-        assertEquals(
-            "TIME_BLOCK",
-            nextDefaultBookingMode("SPECIFIC_TIME", allowSpecificTimeBooking = false, allowTimeBlockBooking = true),
+    fun `#1863 picking a mode writes exactly the three fields that changed, consistently`() {
+        val legacy = loaded.copy(allowTimeBlockBooking = true, allowSpecificTimeBooking = true, defaultBookingMode = "SPECIFIC_TIME")
+        val changes = com.tribetails.auntieos.data.model.businessSettingsFieldChanges(
+            legacy,
+            legacy.withHouseholdTimeMode("TIME_BLOCK"),
         )
-        assertEquals(
-            "SPECIFIC_TIME",
-            nextDefaultBookingMode("TIME_BLOCK", allowSpecificTimeBooking = true, allowTimeBlockBooking = false),
-        )
+        // allowTimeBlockBooking was already true; the merged document is consistent.
+        assertEquals(mapOf<String, Any?>("defaultBookingMode" to "TIME_BLOCK", "allowSpecificTimeBooking" to false), changes)
     }
-
     @Test
-    fun `turning off a mode that is not the default leaves the default alone`() {
-        assertEquals(
-            "TIME_BLOCK",
-            nextDefaultBookingMode("TIME_BLOCK", allowSpecificTimeBooking = false, allowTimeBlockBooking = true),
-        )
+    fun `#1863 a legacy both-on document reads as the mode bookings opened on, and is not rewritten untouched`() {
+        val legacy = loaded.copy(allowTimeBlockBooking = true, allowSpecificTimeBooking = true, defaultBookingMode = "TIME_BLOCK")
+        assertEquals("TIME_BLOCK", storedHouseholdTimeMode(legacy))
+        assertFalse(bookingEdits(legacy).modes)
+        assertTrue(bookingEdits(legacy, mode = "SPECIFIC_TIME").modes)
     }
-
-    @Test
-    fun `turning both modes off leaves the default as-is, since the one-mode-on guard already refuses that save`() {
-        assertEquals(
-            "SPECIFIC_TIME",
-            nextDefaultBookingMode("SPECIFIC_TIME", allowSpecificTimeBooking = false, allowTimeBlockBooking = false),
-        )
-    }
-
-    @Test
-    fun `the default-mode picker only offers modes that are on`() {
-        assertEquals(
-            listOf("SPECIFIC_TIME" to "A specific time (11:15 AM)"),
-            bookingModeOptions("SPECIFIC_TIME", allowSpecificTimeBooking = true, allowTimeBlockBooking = false),
-        )
-        assertEquals(
-            listOf("TIME_BLOCK" to "A time block (Midday)"),
-            bookingModeOptions("TIME_BLOCK", allowSpecificTimeBooking = false, allowTimeBlockBooking = true),
-        )
-        assertEquals(
-            BOOKING_MODE_WIRE,
-            bookingModeOptions("SPECIFIC_TIME", allowSpecificTimeBooking = true, allowTimeBlockBooking = true),
-        )
-    }
-
-    @Test
-    fun `the current default keeps its real label even when both modes are off`() {
-        val out = bookingModeOptions("TIME_BLOCK", allowSpecificTimeBooking = false, allowTimeBlockBooking = false)
-        assertEquals(listOf("TIME_BLOCK" to "A time block (Midday)"), out)
-    }
-
-    @Test
-    fun `a loaded default whose mode is already off keeps its real label, not 'not a known value'`() {
-        // SPECIFIC_TIME is the loaded (but now disabled) default, and TIME_BLOCK is
-        // the one allowed mode. Both stay in the list: SPECIFIC_TIME because the
-        // current default is always shown under its real label, TIME_BLOCK because
-        // it is the enabled mode the operator can switch to.
-        val out = bookingModeOptions("SPECIFIC_TIME", allowSpecificTimeBooking = false, allowTimeBlockBooking = true)
-        assertEquals(BOOKING_MODE_WIRE, out)
-        assertTrue(out.contains("SPECIFIC_TIME" to "A specific time (11:15 AM)"))
-        assertTrue(out.none { (_, label) -> label.contains("not a known value") })
-    }
-
     // ── diff-vs-rebuild: the trap this codebase is known for ────────────────
 
     /**
@@ -497,18 +445,16 @@ class BusinessRulesPanelsTest {
     // ── A stored bad value (#1783) ─────────────────────────────────────────
     private fun bookingEdits(
         settings: BusinessSettings,
-        mode: String = settings.defaultBookingMode,
-        specific: Boolean = settings.allowSpecificTimeBooking,
-        block: Boolean = settings.allowTimeBlockBooking,
+        mode: String = storedHouseholdTimeMode(settings),
         hours: String = settings.defaultTimeBlockDurationHours.toString(),
         buffer: String = settings.travelBufferMinutes.toString(),
         blocks: List<TimeBlockRow> = settings.timeBlocks.map { it.toRow() },
         zone: String = settings.timeZone,
-    ) = bookingRulesEdits(settings, mode, specific, block, hours, buffer, blocks, zone)
-    private fun bookingHeld(settings: BusinessSettings, buffer: String = settings.travelBufferMinutes.toString(), mode: String = settings.defaultBookingMode): String? {
+    ) = bookingRulesEdits(settings, mode, hours, buffer, blocks, zone)
+    private fun bookingHeld(settings: BusinessSettings, buffer: String = settings.travelBufferMinutes.toString(), mode: String = storedHouseholdTimeMode(settings)): String? {
         val edits = bookingEdits(settings, buffer = buffer, mode = mode)
         return bookingRulesError(
-            mode, settings.allowSpecificTimeBooking, settings.allowTimeBlockBooking,
+            mode,
             settings.defaultTimeBlockDurationHours.toString(), buffer,
             settings.timeBlocks.map { it.toRow() }, settings.timeZone, edits,
         )
@@ -519,7 +465,7 @@ class BusinessRulesPanelsTest {
         // Shown: the full check names it.
         assertEquals(
             "Travel buffer: enter 0 to 480 minutes.",
-            bookingRulesError(stored.defaultBookingMode, true, true, "4", "9999", emptyList(), stored.timeZone),
+            bookingRulesError(storedHouseholdTimeMode(stored), "4", "9999", emptyList(), stored.timeZone),
         )
         // Not held: nothing about the buffer is in the save.
         assertNull(bookingHeld(stored))
@@ -531,15 +477,16 @@ class BusinessRulesPanelsTest {
         assertNull(bookingHeld(stored, buffer = "45"))
     }
     @Test
-    fun `stored modes both off do not hold a different edit, and do once a mode is touched`() {
-        val stored = loaded.copy(allowSpecificTimeBooking = false, allowTimeBlockBooking = false)
-        assertNull(
-            bookingRulesError("SPECIFIC_TIME", false, false, "4", "45", emptyList(), stored.timeZone,
-                bookingEdits(stored, buffer = "45")),
+    fun `#1863 a stored Time Blocks with no block on does not hold a different edit, and does once the mode is touched`() {
+        val stored = loaded.copy(
+            allowSpecificTimeBooking = true, allowTimeBlockBooking = true, defaultBookingMode = "SPECIFIC_TIME",
+            timeBlocks = listOf(TimeBlockDefinition(id = "midday", label = "Midday", startTime = "11:00", endTime = "15:00", isActive = false)),
         )
-        assertNotNull(
-            bookingRulesError("SPECIFIC_TIME", false, false, "4", "30", emptyList(), stored.timeZone,
-                bookingEdits(stored, mode = "TIME_BLOCK")),
+        val rows = stored.timeBlocks.map { it.toRow() }
+        assertNull(bookingRulesError("SPECIFIC_TIME", "4", "45", rows, stored.timeZone, bookingEdits(stored, buffer = "45")))
+        assertEquals(
+            "Time Blocks needs at least one block turned on. Turn one on, or pick Exact times.",
+            bookingRulesError("TIME_BLOCK", "4", "30", rows, stored.timeZone, bookingEdits(stored, mode = "TIME_BLOCK")),
         )
     }
     @Test
@@ -547,9 +494,9 @@ class BusinessRulesPanelsTest {
         val stored = loaded.copy(timeZone = "Mars/Olympus")
         val untouched = bookingEdits(stored)
         assertFalse(untouched.zone)
-        assertNull(bookingRulesError(stored.defaultBookingMode, true, true, "4", "30", emptyList(), "Mars/Olympus", untouched))
+        assertNull(bookingRulesError(storedHouseholdTimeMode(stored), "4", "30", emptyList(), "Mars/Olympus", untouched))
         val changed = bookingEdits(stored, zone = "Mars/Phobos")
-        assertNotNull(bookingRulesError(stored.defaultBookingMode, true, true, "4", "30", emptyList(), "Mars/Phobos", changed))
+        assertNotNull(bookingRulesError(storedHouseholdTimeMode(stored), "4", "30", emptyList(), "Mars/Phobos", changed))
     }
     private fun visitEdits(settings: BusinessSettings, radius: String = settings.arrivalRadiusMeters.toString()) =
         visitRecordsEdits(

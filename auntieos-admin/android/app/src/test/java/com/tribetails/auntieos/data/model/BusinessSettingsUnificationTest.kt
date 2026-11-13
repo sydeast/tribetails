@@ -140,6 +140,11 @@ class BusinessSettingsUnificationTest {
         )
         // withBookingMode writes the enum name as the wire string.
         assertEquals("TIME_BLOCK", BusinessSettings().withBookingMode(BookingMode.TIME_BLOCK).defaultBookingMode)
+        // #1863: and both allow switches with it, so the save is never refused as two modes at once.
+        val blocks = BusinessSettings().withBookingMode(BookingMode.TIME_BLOCK)
+        assertEquals(true to false, blocks.allowTimeBlockBooking to blocks.allowSpecificTimeBooking)
+        val exact = blocks.withBookingMode(BookingMode.SPECIFIC_TIME)
+        assertEquals(false to true, exact.allowTimeBlockBooking to exact.allowSpecificTimeBooking)
         // Unknown wire strings fall back to SPECIFIC_TIME, never throw.
         assertEquals(
             BookingMode.SPECIFIC_TIME,

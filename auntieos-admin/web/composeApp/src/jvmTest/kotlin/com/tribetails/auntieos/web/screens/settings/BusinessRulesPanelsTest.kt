@@ -249,41 +249,41 @@ class BusinessRulesPanelsTest {
 
     private fun bookingError(
         mode: String = "SPECIFIC_TIME",
-        specific: Boolean = true,
-        block: Boolean = true,
         hours: String = "4",
         buffer: String = "30",
         blocks: List<TimeBlockRow> = listOf(row()),
         zoneUsable: Boolean = true,
-    ) = bookingRulesError(mode, specific, block, hours, buffer, blocks, "America/New_York", zoneUsable)
-
+    ) = bookingRulesError(mode, hours, buffer, blocks, "America/New_York", zoneUsable)
     @Test
     fun `a sound booking-rules draft has nothing wrong with it`() {
         assertNull(bookingError())
+        assertNull(bookingError(mode = "TIME_BLOCK"))
     }
-
     @Test
-    fun `turning both booking modes off is refused`() {
+    fun `#1863 Time Blocks with no active block behind it is refused in the server's words`() {
         assertEquals(
-            "Leave at least one booking mode on, or nothing can be booked at all.",
-            bookingError(specific = false, block = false),
+            "Time Blocks needs at least one block turned on. Turn one on, or pick Exact times.",
+            bookingError(mode = "TIME_BLOCK", blocks = listOf(row(active = false))),
         )
     }
-
     @Test
-    fun `defaulting to a mode that is turned off is refused`() {
-        assertNotNull(bookingError(mode = "TIME_BLOCK", block = false))
-        assertNotNull(bookingError(mode = "SPECIFIC_TIME", specific = false))
+    fun `#1863 Exact times may keep every block switched off`() {
+        assertNull(bookingError(mode = "SPECIFIC_TIME", blocks = listOf(row(active = false))))
     }
-
     @Test
-    fun `time-block booking with no active block behind it is refused`() {
-        assertEquals(
-            "Time-block booking is on but no block is active, so there is nothing to book into.",
-            bookingError(blocks = listOf(row(active = false))),
-        )
+    fun `#1863 the panel offers the one mode as Time Blocks or Exact times`() {
+        assertEquals("Kinfolk book and see", TIME_MODE_FIELD_LABEL)
+        assertEquals(listOf("TIME_BLOCK" to "Time Blocks", "SPECIFIC_TIME" to "Exact times"), TIME_MODE_WIRE)
     }
-
+    @Test
+    fun `#1863 the stored mode seeds the choice, and only a changed mode is part of the save`() {
+        val legacyBlocks = BusinessSettings(defaultBookingMode = "TIME_BLOCK")
+        val storedRows = legacyBlocks.timeBlocks.map { it.toRow() }
+        assertFalse(bookingRulesEdits(legacyBlocks, "TIME_BLOCK", "MONTH", "4", "30", storedRows).modes)
+        assertTrue(bookingRulesEdits(legacyBlocks, "SPECIFIC_TIME", "MONTH", "4", "30", storedRows).modes)
+        val untouched = BusinessSettings()
+        assertFalse(bookingRulesEdits(untouched, "SPECIFIC_TIME", "MONTH", "4", "30", storedRows).modes)
+    }
     @Test
     fun `a bad number is named by its field`() {
         assertTrue(bookingError(hours = "0")!!.startsWith("Default block length"))

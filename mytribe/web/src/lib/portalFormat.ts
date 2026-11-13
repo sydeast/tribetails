@@ -134,6 +134,30 @@ function weekdayWhen(ms: number, block: VisitBlock): string {
   return `${WEEKDAYS[new Date(ms).getDay()]}, ${text}`;
 }
 /**
+ * #1863: the time a household ASKED to move a visit to, the way it is shown
+ * everywhere else: "Tue, Evening (4 PM to 7 PM)" in Time Blocks mode (the
+ * server names the block), "Tue, 4:00 PM" in Exact times mode. '' with no ask.
+ */
+export function rescheduleAskWhen(
+  b: Partial<
+    Pick<
+      GetMyBookingsResultLiveVisit,
+      | 'rescheduleRequestedStartTimeMs'
+      | 'rescheduleRequestedTimeBlockLabel'
+      | 'rescheduleRequestedTimeBlockStartTime'
+      | 'rescheduleRequestedTimeBlockEndTime'
+    >
+  >,
+): string {
+  const ms = b.rescheduleRequestedStartTimeMs ?? null;
+  if (ms === null) return '';
+  return weekdayWhen(ms, {
+    timeBlockLabel: b.rescheduleRequestedTimeBlockLabel ?? null,
+    timeBlockStartTime: b.rescheduleRequestedTimeBlockStartTime ?? null,
+    timeBlockEndTime: b.rescheduleRequestedTimeBlockEndTime ?? null,
+  });
+}
+/**
  * #1322. An Auntie's name with the role word in front, said once: "Maya" reads
  * "Auntie Maya", but a display name that already carries the word ("TEST
  * SANDBOX Auntie", "Auntie Maya") is left as it is, where every screen used to

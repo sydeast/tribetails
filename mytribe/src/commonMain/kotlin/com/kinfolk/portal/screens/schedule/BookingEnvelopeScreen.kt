@@ -164,7 +164,7 @@ private fun KinCareRow(kc: Booking, onClick: () -> Unit) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(com.kinfolk.portal.util.visitTitle(kc.title, kc.serviceLabel) ?: "Visit", style = type.heritageTitle)
-            Text(bookingWhenLabel(kc), style = type.sansLabel)
+            Text(bookingWhenLabel(kc, withDate = true), style = type.sansLabel)
             val parts = listOfNotNull(
                 kc.auntieDisplayName,
                 kc.kinNames.takeIf { it.isNotEmpty() }?.joinToString(", "),

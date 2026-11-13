@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.householdTimeSettings
 import com.tribetails.auntieos.domain.SEND_BUDGET_SECONDS
 import com.tribetails.auntieos.domain.SendCheckAction
 import com.tribetails.auntieos.domain.SendMarks
@@ -270,6 +271,13 @@ class AdminDataViewModel(
     private val _householdNoticesLive = MutableStateFlow<Boolean?>(null)
     val householdNoticesLive: StateFlow<Boolean?> = _householdNoticesLive.asStateFlow()
     val timeBlocks: StateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>> = _timeBlocks.asStateFlow()
+    /**
+     * #1863 / #2034: the business's Time Blocks | Exact times mode with its
+     * blocks, off the same settings read, so a card names the block the
+     * household sees. Null until it lands; cards then name no block.
+     */
+    private val _householdTime = MutableStateFlow<com.tribetails.auntieos.domain.HouseholdTimeSettings?>(null)
+    val householdTime: StateFlow<com.tribetails.auntieos.domain.HouseholdTimeSettings?> = _householdTime.asStateFlow()
     // #1592: the KinCare catalog, so the KinTales list names a visit's service
     // instead of printing the stored key. Empty until read, and if the read fails.
     private val _serviceRates = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -575,6 +583,7 @@ class AdminDataViewModel(
             runCatchingCancellable {
                 repository.getBusinessSettings().onSuccess {
                     _timeBlocks.value = it.timeBlocks
+                    _householdTime.value = it.householdTimeSettings()
                     _householdNoticesLive.value = it.householdNotificationsLive
                     // #2036: the zone Auntie Time counts its days in.
                     _businessTimeZone.value = it.timeZone
