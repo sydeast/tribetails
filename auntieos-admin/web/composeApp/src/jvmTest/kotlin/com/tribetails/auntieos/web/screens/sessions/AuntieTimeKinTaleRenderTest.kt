@@ -16,6 +16,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -29,6 +30,14 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalTestApi::class)
 class AuntieTimeKinTaleRenderTest {
+
+    // The fixtures are one JVM-wide object, and many classes that run before
+    // this one never clear `callablePayloads` (CreateInvoiceClientTest resets
+    // only its responses). Without this, a refused Complete that sends nothing
+    // still finds an earlier class's payload, and the test fails or passes on
+    // the order Gradle runs the classes in.
+    @BeforeTest
+    fun setUp() = JvmFirestoreFixtures.clear()
 
     @AfterTest
     fun tearDown() = JvmFirestoreFixtures.clear()
