@@ -7,8 +7,9 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import {
   BusinessAdminRosterError,
   addBusinessAdminUids,
+  assertOwnerAccounts,
+  businessNoticeRecipients,
   defaultAssigneeUidFrom,
-  operatorAllowlistUids,
   readBusinessAdmins,
   removeBusinessAdminUids,
   resolveBusinessAdminUids,
@@ -142,6 +143,9 @@ export async function provisionBusinessAdminsHandler(
 
   const args = parseArgs(AddArgs, req.data, 'provisionBusinessAdmins');
   const uids = [...new Set([callerUid, ...(args.uids ?? [])])];
+  // #2223 first: an Auntie or household account gets the plain owner-only
+  // answer rather than the staff-record one.
+  await guardRefusals(() => assertOwnerAccounts(uids, 'provisionBusinessAdmins'));
   await assertAdditionsAreStaff(uids, callerUid);
 
   const written = await guardRefusals(() =>
@@ -176,6 +180,7 @@ export async function setBusinessAdminsHandler(
   initSentry();
   const callerUid = requireCaller(req);
   const args = parseArgs(UidListArgs, req.data, 'setBusinessAdmins');
+  await guardRefusals(() => assertOwnerAccounts(args.uids, 'setBusinessAdmins'));
   await assertAdditionsAreStaff(args.uids, callerUid);
 
   const change = await guardRefusals(() =>
@@ -309,9 +314,9 @@ async function readBusinessEmail(): Promise<string> {
  * `AUNTIE_OPERATOR_UIDS`. That is right for a dispatch and wrong here, for the
  * same reason `admin/notificationOverrides.ts` gives for not calling it either:
  * opening a settings screen must not quietly edit who receives business mail.
- * So this walks the same recipient order by hand, using
- * `operatorAllowlistUids()` for arm (2), and reports which arm answered in
- * `source` instead of writing anything.
+ * So this walks the same recipient order through `businessNoticeRecipients`,
+ * the read-only half of that resolver (owner-only filter included, #2223), and
+ * reports which arm answered in `source` instead of writing anything.
  *
  * `hasStaffRecord: false` is how an allowlist-seeded operator with no
  * `staff/{uid}` document appears. They are on the list, because they do receive
@@ -322,10 +327,12 @@ export async function listBusinessAdminsHandler(
 ): Promise<ListBusinessAdminsResult> {
   initSentry();
   const [settings, businessEmail] = await Promise.all([readBusinessAdmins(), readBusinessEmail()]);
-  const fromRoster = settings.uids.length > 0;
-  const uids = fromRoster ? settings.uids : operatorAllowlistUids();
+  // #2223: the same owner-only projection the dispatch path applies, read
+  // only, so an Auntie or household account left on the list is not named as
+  // somebody who receives business mail.
+  const { uids, source } = await businessNoticeRecipients(settings, 'listBusinessAdmins');
 
-  if (uids.length === 0) {
+  if (source === 'none') {
     return {
       members: [],
       source: 'none',
@@ -334,8 +341,11 @@ export async function listBusinessAdminsHandler(
       // gate (web and Android), so it names no database path and no function.
       // Computed per call and never stored: no saved row carries the old text.
       reason:
-        'Nobody is on the business admin roster, so business notifications reach nobody '
-        + 'and fail to send until someone is added to it.',
+        settings.uids.length > 0
+          ? 'Nobody on the business admin roster is an owner account, so business notifications '
+            + 'reach nobody and fail to send until the owner is added to it.'
+          : 'Nobody is on the business admin roster, so business notifications reach nobody '
+            + 'and fail to send until someone is added to it.',
       businessEmail,
     };
   }
@@ -354,7 +364,7 @@ export async function listBusinessAdminsHandler(
 
   return {
     members,
-    source: fromRoster ? 'roster' : 'operatorAllowlist',
+    source,
     rosterPath: ROSTER_PATH,
     reason: null,
     businessEmail,
