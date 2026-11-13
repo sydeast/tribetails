@@ -11,12 +11,13 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
-import { sanitizeRichText, toPlainTextPreview } from '../lib/richText';
+import { sanitizeMessageBody, messagePlainText, messagePreview } from '../lib/richText';
 import {
   appendMessage,
   readThread,
   markMessagesRead,
   MAX_MESSAGE_BODY,
+  MAX_MESSAGE_HTML,
   MESSAGES_SUBCOLLECTION,
   CONVERSATIONS_COLLECTION,
   type ThreadMessage,
@@ -83,7 +84,7 @@ async function exceedsRateLimit(kinfolkId: string, uid: string, cap: number): Pr
 
 const SendArgs = z.object({
   kinfolkId: z.string().min(1).max(200).optional(),
-  body: z.string().min(1).max(MAX_MESSAGE_BODY),
+  body: z.string().min(1).max(MAX_MESSAGE_HTML),
 });
 
 /** Composes a household display name from a kinfolk doc, falling back to the id. */
@@ -116,9 +117,15 @@ export async function sendKinfolkMessageHandler(
   const { kinfolkId, isOperator } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'sendKinfolkMessage'), 'sendKinfolkMessage');
   const member = await requireKinfolkPerm(uid, kinfolkId, 'messaging_direct', householdStaffFlag(req.auth, 'sendKinfolkMessage'), 'sendKinfolkMessage');
 
-  const body = sanitizeRichText(args.body);
-  if (body.length === 0) {
+  const body = sanitizeMessageBody(args.body);
+  // Lengths count the characters as typed, not the entities and tags around them.
+  const typedLength = messagePlainText(body).length;
+  // A body of empty formatting only (`<p><br></p>`) has no words to send.
+  if (typedLength === 0) {
     throw new HttpsError('invalid-argument', 'message_body_empty');
+  }
+  if (typedLength > MAX_MESSAGE_BODY) {
+    throw new HttpsError('invalid-argument', 'message_too_long');
   }
 
   // --- Server-side chat policy (§8, defense-in-depth; client checks are UX only) ---
@@ -127,9 +134,9 @@ export async function sendKinfolkMessageHandler(
   if (policy.enabled === false) {
     throw new HttpsError('failed-precondition', 'chat_disabled');
   }
-  // Hard length cap (0 = unlimited). Independent of the Zod MAX_MESSAGE_BODY ceiling,
-  // which is the absolute storage bound; this is the operator-configurable limit.
-  if (policy.maxMessageLength > 0 && body.length > policy.maxMessageLength) {
+  // Hard length cap (0 = unlimited). Independent of the MAX_MESSAGE_BODY ceiling,
+  // which is the absolute bound; this is the operator-configurable limit.
+  if (policy.maxMessageLength > 0 && typedLength > policy.maxMessageLength) {
     throw new HttpsError('invalid-argument', 'message_too_long');
   }
   // Per-uid hourly cap (0 = unlimited). Best-effort: never let a rate-check failure
@@ -189,7 +196,7 @@ export async function sendKinfolkMessageHandler(
         kinfolkId,
         kinfolkName,
         messageId,
-        preview: toPlainTextPreview(body, 200),
+        preview: messagePreview(body, 200),
       },
       actorUid: uid,
     });
