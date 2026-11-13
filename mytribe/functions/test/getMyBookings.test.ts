@@ -441,7 +441,13 @@ describe('getMyBookingsHandler: what time each visit is shown at (#1301, #1863, 
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'business_settings/business_settings': { ...mode, timeZone: 'America/Chicago', timeBlocks: BLOCKS },
+        'business_settings/business_settings': {
+          ...mode,
+          timeZone: 'America/Chicago',
+          timeBlocks: BLOCKS,
+          serviceRates: { Overnight: '120' },
+          serviceStartTimeBooking: { Overnight: true },
+        },
         'families/3/bookings/env-1': { envelopeStatus: 'confirmed', pattern: 'individual' },
       },
       collectionGroupDocs: {
@@ -468,6 +474,11 @@ describe('getMyBookingsHandler: what time each visit is shown at (#1301, #1863, 
       queryDocs: {
         kin_care_sessions: [
           { id: 'sess-office', data: { kinfolkId: '3', status: 'SCHEDULED', startTime: new Date(at(9, 15)).toISOString() } },
+          // An office-booked Overnight, a start-time KinCare: keeps its clock.
+          {
+            id: 'sess-overnight',
+            data: { kinfolkId: '3', status: 'SCHEDULED', serviceType: 'Overnight', startTime: new Date(at(19)).toISOString() },
+          },
         ],
       },
     });
@@ -485,6 +496,7 @@ describe('getMyBookingsHandler: what time each visit is shown at (#1301, #1863, 
     expect(by('clock')).toMatchObject({ timeBlockLabel: 'Midday' });
     expect(by('gone')).toMatchObject({ timeBlockLabel: 'Morning', timeBlockStartTime: '08:00', timeBlockEndTime: '11:00' });
     expect(by('sess-office')).toMatchObject({ timeBlockLabel: 'Morning' });
+    expect(by('sess-overnight')).toMatchObject({ timeBlockLabel: null });
     expect(by('asked')).toMatchObject({
       rescheduleRequestedTimeBlockLabel: 'Evening',
       rescheduleRequestedTimeBlockStartTime: '16:00',

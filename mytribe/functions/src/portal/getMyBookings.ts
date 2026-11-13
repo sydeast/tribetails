@@ -9,7 +9,7 @@ import { householdStaffFlag } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
-import { serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
+import { matchServiceKey, serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
 import { hasBillingAccess } from '../lib/memberGate';
 import { loadVisitExtras, NO_EXTRAS, type VisitExtras } from '../lib/portalVisitLinks';
 import {
@@ -177,6 +177,10 @@ export async function getMyBookingsHandler(
   // a visit that is under way (ON_MY_WAY / ARRIVED) shows regardless
   // of clock so the kinfolk can follow a visit that started late.
   const staleFloorMs = nowMs - LATE_VISIT_WINDOW_MS;
+  const sessionServiceKey = (raw: unknown): string | null => {
+    const match = matchServiceKey(raw, serviceCatalog);
+    return match.kind === 'key' ? match.key : null;
+  };
   for (const d of sessionSnap.docs) {
     if (linkedSessionIds.has(d.id)) continue;
     const s = d.data() as Record<string, unknown>;
@@ -186,7 +190,14 @@ export async function getMyBookingsHandler(
     const startTimeMs = isoMillis(s['startTime']);
     if (status === 'confirmed' && (startTimeMs === null || startTimeMs < staleFloorMs)) continue;
     const sessionBlock = householdBlockFor(
-      { startTimeMs, timeBlockId: s['timeBlockId'], serviceId: s['serviceId'] },
+      {
+        startTimeMs,
+        timeBlockId: s['timeBlockId'],
+        // A session names its KinCare by `serviceType`; matched to the catalog
+        // KEY, which is what `startTimeServiceIds` holds, so an office-booked
+        // start-time KinCare keeps its clock here too.
+        serviceId: typeof s['serviceId'] === 'string' ? s['serviceId'] : sessionServiceKey(s['serviceType']),
+      },
       time.policy,
       time.timeZone,
     );
