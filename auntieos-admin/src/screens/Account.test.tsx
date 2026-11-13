@@ -552,6 +552,68 @@ describe('Account security and meta block', () => {
 });
 
 /**
+ * #2163, operator ruling 2026-11-13: an Auntie never sees business settings.
+ * Her own Account page stays, without the Business profile panel (whose read
+ * the rules refuse her, which left an error box on her page) and without a
+ * crumb into Settings, a screen she cannot open.
+ */
+describe('Account for an Auntie (#2163)', () => {
+  beforeEach(() => {
+    useRouteContext.mockReturnValue({ access: { status: 'caretaker' } });
+  });
+
+  it('renders her page with no business profile panel and no business settings read', async () => {
+    const { container } = render(<Account />);
+    expect(await heroName()).toBeInTheDocument();
+    await screen.findByRole('switch', { name: 'Email notifications' });
+    expect(screen.getByText('Auntie (caretaker)')).toBeInTheDocument();
+    const cols = container.querySelectorAll('.account__col');
+    const titles = (col: Element) =>
+      [...col.querySelectorAll('.den-panel-title')].map((el) => el.textContent);
+    expect(titles(cols[0] as Element)).toEqual(['Profile']);
+    expect(titles(cols[1] as Element)).toEqual(['Notifications', 'Security']);
+    expect(screen.queryByText('Business profile')).toBeNull();
+    expect(getBusinessSettings).not.toHaveBeenCalled();
+    expect(saveBusinessSettings).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('gives her no Settings crumb, and makes no business-admin roster read', async () => {
+    render(<Account />);
+    const band = (await heroName()).closest('header') as HTMLElement;
+    const crumbs = within(band).getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(crumbs).queryByRole('link')).toBeNull();
+    expect(within(crumbs).queryByText('Settings')).toBeNull();
+    expect(within(crumbs).getByText('User profile')).toBeInTheDocument();
+    expect(listBusinessAdmins).not.toHaveBeenCalled();
+    expect(screen.queryByText('Sole admin')).toBeNull();
+  });
+
+  // The #812 offline entry (`access` null) is not the Auntie: claims unread,
+  // so the owner on a bad network keeps the panel and the Settings crumb.
+  it('keeps the business profile panel and the Settings crumb when access is null', async () => {
+    useRouteContext.mockReturnValue({ access: null });
+    render(<Account />);
+    const band = (await heroName()).closest('header') as HTMLElement;
+    const crumbs = within(band).getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(crumbs).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(await screen.findByText('Business profile')).toBeInTheDocument();
+    expect(listBusinessAdmins).toHaveBeenCalled();
+  });
+
+  it('still saves her own profile', async () => {
+    const user = userEvent.setup();
+    render(<Account />);
+    await heroName();
+    const p = profilePanel();
+    await user.clear(p.getByLabelText('Title / Role'));
+    await user.type(p.getByLabelText('Title / Role'), 'Auntie');
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(saveUserProfile).toHaveBeenCalledWith('op-1-abcdefghij', expect.objectContaining({ title: 'Auntie' }));
+  });
+});
+
+/**
  * The routed wrapper. It exists so the notification control's navigation is a
  * plain unit test instead of a full router mount: router.tsx registers THIS as
  * the /account component, so a regression that unwires the prop fails here.

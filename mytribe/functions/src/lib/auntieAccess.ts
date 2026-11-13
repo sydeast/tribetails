@@ -66,9 +66,11 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // #1563: send a generated KinTale draft to its household. Deleting one
   // (deleteGeneratedDraft) is destructive (rule 6) and stays with the owner.
   'publishGeneratedDraft',
-  'listTemplates',
-  'listTemplateBindings',
-  'listCategories',
+  // #2163, operator ruling 2026-11-13: an Auntie never sees Templates (email,
+  // SMS, push). listTemplates, listTemplateBindings and listCategories were
+  // here, but only the Templates screens call them on any client, so they
+  // came out. The KinTale checklist bank below is a different collection,
+  // read by the KinTale composer, and stays.
   'listChecklistBank',
   'saveMediaTags', // which kin are in this photo
   'setMediaProfilePhoto',

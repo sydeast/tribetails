@@ -9,7 +9,7 @@ import {
 } from '@tanstack/react-router';
 import { waitForAuthReady } from './lib/auth';
 import { signInSearch, signInSearchFor } from './lib/signInRedirect';
-import { resolveAccess, type AdminAccess } from './lib/access';
+import { isAuntieAccess, resolveAccess, type AdminAccess } from './lib/access';
 import {
   getSessionHealth,
   noteRefreshFailure,
@@ -192,6 +192,24 @@ async function requireAdmin(ctx: { location: Parameters<typeof signInSearchFor>[
   leaveReadOnlySession();
   noteRefreshSucceeded();
   return { access };
+}
+
+/**
+ * Guard for the owner's screens (#2163, operator ruling 2026-11-13: "auntie
+ * user level cannot see templates or business settings"). An Auntie who
+ * reaches Settings or Templates by any address, the retired ones included, is
+ * sent Home; the rail already shows her neither (`lib/nav.ts#ownerOnly`).
+ *
+ * Reads the access the admin layout's `requireAdmin` already resolved, so it
+ * costs no second token read. `null` (the #812 offline entry) is let through,
+ * as everywhere else: the claims were not read, and the server refuses her
+ * Settings writes and Templates reads regardless.
+ *
+ * The parameter is annotated, not inferred, for the TS7022 reason the
+ * `sessionsRoute` comment below gives.
+ */
+function refuseAuntie({ context }: { context: { access?: AdminAccess | null } }) {
+  if (isAuntieAccess(context.access)) throw redirect({ to: '/home' });
 }
 
 /** Path-less layout route: renders AppShell (nav rail + <Outlet/>) around its children. */
@@ -379,7 +397,31 @@ const templatesRoute = createRoute({
   staticData: { title: navTitle('templates') },
   // `template` is the open editor (#1594): a template id, or `new`. Absent is the bank.
   validateSearch: optionalIdSearch(['template'] as const),
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./routes/TemplatesView'), 'TemplatesView'),
+});
+
+// The retired standalone Template Bank and Template assignment addresses. Both
+// were folded into the two-tab Templates screen, and `lib/nav.ts` has always
+// mapped their slugs there, but the router never registered them, so they
+// fell to the not-found card. Redirect-only, like `/notification-gate`: the
+// owner lands on Templates, and an Auntie Home (#2163).
+const templateBankRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'template-bank',
+  beforeLoad: (ctx: { context: { access?: AdminAccess | null } }) => {
+    refuseAuntie(ctx);
+    throw redirect({ to: '/templates' });
+  },
+});
+
+const templateAssignmentRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'template-assignment',
+  beforeLoad: (ctx: { context: { access?: AdminAccess | null } }) => {
+    refuseAuntie(ctx);
+    throw redirect({ to: '/templates' });
+  },
 });
 
 /**
@@ -434,6 +476,7 @@ const settingsRoute = createRoute({
   // only caller today is the `/notification-gate` redirect below (#718); a
   // plain visit to `/settings` carries none and opens Settings' own default.
   validateSearch: optionalIdSearch(['section'] as const),
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./routes/SettingsView'), 'SettingsView'),
 });
 
@@ -484,7 +527,8 @@ const myNotificationsRoute = createRoute({
 const notificationGateRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'notification-gate',
-  beforeLoad: () => {
+  beforeLoad: (ctx: { context: { access?: AdminAccess | null } }) => {
+    refuseAuntie(ctx);
     throw redirect(NOTIFICATION_GATE_REDIRECT);
   },
 });
@@ -528,7 +572,7 @@ const adminNotFoundRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute, adminNotFoundRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, templateBankRoute, templateAssignmentRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute, adminNotFoundRoute]),
 ]);
 
 export const router = createRouter({

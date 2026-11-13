@@ -68,6 +68,19 @@ export function accessFromClaims(claims: Record<string, unknown>): AdminAccess {
 }
 
 /**
+ * Is this session the Auntie (#2163)? The one predicate the rail, the route
+ * guard and the Account screen share for hiding the owner's screens.
+ *
+ * EXACTLY `caretaker`, not "anything but admin". The Stage 0I test admin keeps
+ * the owner's screens, and so does `null`, the #812 offline entry whose claims
+ * were not read: hiding them there would take Settings away from an owner on
+ * a bad network. The server refuses an Auntie either way.
+ */
+export function isAuntieAccess(access: AdminAccess | null | undefined): boolean {
+  return access?.status === 'caretaker';
+}
+
+/**
  * Resolve access for a signed-in user by reading its ID-token claims.
  * `forceRefresh` re-mints the token when a stale one might predate a claim
  * write (the portal's O-37 lesson: a token minted before the claim trigger ran
