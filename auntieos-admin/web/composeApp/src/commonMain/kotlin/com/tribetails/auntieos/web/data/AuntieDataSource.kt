@@ -104,7 +104,8 @@ interface AuntieDataSource {
     // FirestoreClient-backed sources override both.
     fun incomingKinCaresStream(): Flow<FirestoreResult<List<KinCareVisit>>> =
         kotlinx.coroutines.flow.flowOf(FirestoreResult.Data(emptyList()))
-    suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): WriteResult<ManageSeriesResult> =
+    /** #2030: [note] is the operator's note for the household on the answer; null or blank sends none. */
+    suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String, note: String? = null): WriteResult<ManageSeriesResult> =
         WriteResult.Err("manageBookingSeries not supported by this data source")
 
     fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>>

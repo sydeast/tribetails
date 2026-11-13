@@ -58,12 +58,13 @@ class BookingViewModel(
 
     /** Approve/cancel a whole incoming series. The backend creates the linked
      *  sessions on APPROVE, so the client just calls + the stream refreshes. */
-    suspend fun approveSeries(kinfolkId: String, batchId: String, kinfolkName: String = "") =
-        runSeries(BookingSeriesAction.APPROVE, kinfolkId, batchId, kinfolkName)
-    suspend fun cancelSeries(kinfolkId: String, batchId: String, kinfolkName: String = "") =
-        runSeries(BookingSeriesAction.CANCEL, kinfolkId, batchId, kinfolkName)
+    suspend fun approveSeries(kinfolkId: String, batchId: String, kinfolkName: String = "", note: String = "") =
+        runSeries(BookingSeriesAction.APPROVE, kinfolkId, batchId, kinfolkName, note)
+    suspend fun cancelSeries(kinfolkId: String, batchId: String, kinfolkName: String = "", note: String = "") =
+        runSeries(BookingSeriesAction.CANCEL, kinfolkId, batchId, kinfolkName, note)
 
-    private suspend fun runSeries(action: String, kinfolkId: String, batchId: String, kinfolkName: String = "") {
+    /** #2030: [note] is the operator's note for the household; blank sends none. */
+    private suspend fun runSeries(action: String, kinfolkId: String, batchId: String, kinfolkName: String = "", note: String = "") {
         if (seriesActionBatchId != null) return
         seriesActionBatchId = batchId
         // Cleared on every call, not just on a landed success: a stale
@@ -72,7 +73,7 @@ class BookingViewModel(
         seriesActionMessage = null
         val verb = if (action == BookingSeriesAction.APPROVE) "Approve" else "Cancel"
         val who = kinfolkName.ifBlank { kinfolkId }
-        when (val r = dataSource.manageBookingSeries(action, kinfolkId, batchId)) {
+        when (val r = dataSource.manageBookingSeries(action, kinfolkId, batchId, note.trim().takeIf { it.isNotEmpty() })) {
             is WriteResult.Ok -> {
                 val res = r.value
                 // FAIL LOUD on a partial failure: the backend returns ok with

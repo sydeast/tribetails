@@ -94,11 +94,23 @@ export interface GetBookingNotesResultNote {
 }
 
 /**
+ * Nested in the `getBookingNotes` contract.
+ */
+export interface GetBookingNotesResultFromBusiness {
+  id: string;
+  kind: 'requestAccepted' | 'requestDeclined' | 'visitNote';
+  body: string;
+  createdAtMs: number | null;
+  authorName: string | null;
+}
+
+/**
  * Response from the `getBookingNotes` callable.
  */
 export interface GetBookingNotesResult {
   bookingNote: string | null;
   notes: GetBookingNotesResultNote[];
+  fromBusiness: GetBookingNotesResultFromBusiness[];
 }
 
 // ---------- addInternalBookingNote ----------

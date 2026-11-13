@@ -3,6 +3,7 @@
  * Kept separate from the screens themselves so the mapping logic (not
  * just the markup) has direct vitest coverage.
  */
+import { businessLabel } from './businessLabel';
 import type { PortalHomeSection } from '../api/types';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
 import { formatClockRange12, parseDateKey } from './bookingWizardLogic';
@@ -516,4 +517,18 @@ export function homeLayoutMode(sections: PortalHomeSection[]): 'columns' | 'stac
   if (!standardOrder) return 'stacked';
   const has = (id: string) => shown.includes(DRAWN_HOME_ORDER.indexOf(id));
   return has('quickStart') && (has('upNext') || has('tales')) ? 'columns' : 'stacked';
+}
+
+/**
+ * #2030: the line above one note from the office: what it was about, who wrote
+ * it and when. "Booked · Syd · Nov 1, 3:05 PM". The writer is the staff name the
+ * server resolved, else the business, never an email (the server drops those).
+ */
+export function businessNoteHeading(
+  n: { kind: string; createdAtMs: number | null; authorName: string | null },
+  businessName: string,
+): string {
+  const what = n.kind === 'requestAccepted' ? 'Booked' : n.kind === 'requestDeclined' ? 'Not booked' : 'Note';
+  const who = n.authorName && n.authorName.trim() !== '' ? n.authorName.trim() : businessLabel(businessName);
+  return [what, who, n.createdAtMs !== null ? noteWrittenAt(n.createdAtMs) : null].filter(Boolean).join(' · ');
 }

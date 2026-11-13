@@ -145,7 +145,7 @@ const NO_CLOSURES: GetBusinessClosuresResult = { closures: [], weeklyHours: [], 
 beforeEach(() => {
   mocks.getMyHome.mockResolvedValue({ businessName: '' });
   mocks.getBookingNotes.mockReset();
-  mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [] });
+  mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [], fromBusiness: [] });
   mocks.getBookingPolicy.mockReset();
   mocks.getBookingPolicy.mockResolvedValue(CLOCK_ONLY);
   mocks.getBusinessClosures.mockReset();
@@ -288,6 +288,53 @@ describe('BookingDetail: add a note', () => {
   });
 });
 
+describe('BookingDetail: what the office told the household (#2030)', () => {
+  const at = (h: number) => new Date(2026, 10, 1, h, 5).getTime();
+  const fromBusiness = [
+    { id: 'request-declined', kind: 'requestDeclined' as const, body: 'We are full that week.', createdAtMs: at(9), authorName: 'Syd' },
+    { id: 'n9', kind: 'visitNote' as const, body: 'Treats are on the shelf.', createdAtMs: at(11), authorName: null },
+    { id: 'request-accepted', kind: 'requestAccepted' as const, body: 'Booked. Bring the spare key.', createdAtMs: at(15), authorName: 'Syd' },
+  ];
+  it('shows the accept note, the decline note and the visit note, each with what it is, who wrote it and when', async () => {
+    mocks.getMyHome.mockResolvedValue({ businessName: 'Test Business' });
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [], fromBusiness });
+    renderScreen();
+    const card = await screen.findByTestId('business-notes');
+    expect(within(card).getByText('From Test Business')).toBeInTheDocument();
+    const rows = within(card).getAllByTestId('business-note').map((r) => r.textContent);
+    expect(rows).toEqual([
+      'Not booked · Syd · Nov 1, 9:05 AMWe are full that week.',
+      // No staff name the household may see: the business is named instead.
+      'Note · Test Business · Nov 1, 11:05 AMTreats are on the shelf.',
+      'Booked · Syd · Nov 1, 3:05 PMBooked. Bring the spare key.',
+    ]);
+  });
+  it("keeps the office's notes out of the household's own notes card", async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [], fromBusiness });
+    renderScreen();
+    await screen.findByTestId('business-notes');
+    const own = screen.getByTestId('saved-notes');
+    expect(within(own).queryByText('Booked. Bring the spare key.')).toBeNull();
+    expect(within(own).getByText('Nothing yet.')).toBeInTheDocument();
+  });
+  it('shows the decline note on a request that was turned down', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [booking({ status: 'cancelled' })] }));
+    mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [], fromBusiness: [fromBusiness[0]!] });
+    renderScreen();
+    const card = await screen.findByTestId('business-notes');
+    expect(within(card).getByText('We are full that week.')).toBeInTheDocument();
+  });
+  it('draws no card when the office wrote nothing, or when an older server sends no list', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [] } as never);
+    renderScreen();
+    await screen.findByTestId('saved-notes');
+    await waitFor(() => expect(mocks.getBookingNotes).toHaveBeenCalled());
+    expect(screen.queryByTestId('business-notes')).toBeNull();
+  });
+});
 describe('BookingDetail: the notes you already wrote (#1283)', () => {
   it('shows the booking note and each saved note with the time it was written', async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
@@ -297,6 +344,7 @@ describe('BookingDetail: the notes you already wrote (#1283)', () => {
         { id: 'n1', body: 'Back door is easier.', createdAtMs: new Date(2026, 10, 1, 15, 5).getTime() },
         { id: 'n2', body: 'Second note', createdAtMs: null },
       ],
+      fromBusiness: [],
     });
     renderScreen();
     const card = await screen.findByTestId('saved-notes');
@@ -315,8 +363,8 @@ describe('BookingDetail: the notes you already wrote (#1283)', () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
     mocks.addBookingNote.mockResolvedValue({ noteId: 'n9' });
     mocks.getBookingNotes
-      .mockResolvedValueOnce({ bookingNote: null, notes: [] })
-      .mockResolvedValue({ bookingNote: null, notes: [{ id: 'n9', body: 'Please use the back door.', createdAtMs: Date.now() }] });
+      .mockResolvedValueOnce({ bookingNote: null, notes: [], fromBusiness: [] })
+      .mockResolvedValue({ bookingNote: null, notes: [{ id: 'n9', body: 'Please use the back door.', createdAtMs: Date.now() }], fromBusiness: [] });
     const user = userEvent.setup();
     renderScreen();
     await user.type(await screen.findByPlaceholderText(/vet check/i), 'Please use the back door.');

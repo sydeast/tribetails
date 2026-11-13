@@ -354,3 +354,52 @@ describe('the card names the KinCare, not its stored key (#1749)', () => {
     expect(detail?.serviceType).toBeUndefined();
   });
 });
+describe('the office note to the household rides on the card (#2030)', () => {
+  it('puts the accept note on the household copy of the confirmation', async () => {
+    mocks.dbFn.mockReturnValue(assignmentDb().db);
+    const detail = await buildNotificationDetail(
+      'kincare.booking.confirm',
+      'cli1',
+      { kinfolkId: 'fam1', batchId: 'batch1', note: '  Booked. Bring the spare key.  ' },
+      'Syd',
+      'kinfolk',
+    );
+    expect(detail?.householdNote).toBe('Booked. Bring the spare key.');
+    // The booking's own notes field stays off the household copy (#380).
+    expect(detail?.notes).toBeUndefined();
+  });
+  it('puts the decline note on the household copy of the decline', async () => {
+    mocks.dbFn.mockReturnValue(assignmentDb().db);
+    const detail = await buildNotificationDetail(
+      'kincare.request.declined',
+      'cli1',
+      { kinfolkId: 'fam1', batchId: 'batch1', note: 'We are full that week.' },
+      'Syd',
+      'kinfolk',
+    );
+    expect(detail?.householdNote).toBe('We are full that week.');
+  });
+  it('carries no householdNote when the office left none', async () => {
+    mocks.dbFn.mockReturnValue(assignmentDb().db);
+    const detail = await buildNotificationDetail(
+      'kincare.booking.confirm',
+      'cli1',
+      { kinfolkId: 'fam1', batchId: 'batch1', note: null },
+      'Syd',
+      'kinfolk',
+    );
+    expect(detail).not.toHaveProperty('householdNote');
+  });
+  it('never lifts a note onto a key that is not an answer to the household', async () => {
+    mocks.dbFn.mockReturnValue(assignmentDb().db);
+    const detail = await buildNotificationDetail(
+      'kincare.changed',
+      'cli1',
+      { kinfolkId: 'fam1', batchId: 'batch1', visitId: 'v1', note: 'Staff remark' },
+      'Syd',
+      'kinfolk',
+    );
+    expect(detail).not.toHaveProperty('householdNote');
+    expect(JSON.stringify(detail ?? {})).not.toContain('Staff remark');
+  });
+});

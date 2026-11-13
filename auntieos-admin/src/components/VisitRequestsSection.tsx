@@ -848,12 +848,15 @@ async function submitNewRequest(
       ? 'Declined. Nothing was booked and the household has your answer.'
       : 'Declined. Nothing was booked, but the message to the household did not go out, so tell them another way.';
   }
-  // `options` only when a night needed its start time (#1098), so every other
-  // request is approved with exactly the call it always made.
+  // `options` only when a night needed its start time (#1098) or the operator
+  // wrote the household a note (#2030), so every other request is approved
+  // with exactly the call it always made.
+  const withNote: ApproveOptions | undefined =
+    note.trim() !== '' ? { ...(options ?? {}), note: note.trim() } : options;
   const res =
-    options === undefined
+    withNote === undefined
       ? await approveBookingRequest(kinfolkId, batchId)
-      : await approveBookingRequest(kinfolkId, batchId, options);
+      : await approveBookingRequest(kinfolkId, batchId, withNote);
   if (res.failedVisits > 0) {
     return `Approved ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through and the household has not been told, so try again.`;
   }

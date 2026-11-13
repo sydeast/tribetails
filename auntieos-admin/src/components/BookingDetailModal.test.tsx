@@ -14,8 +14,8 @@ function render(ui: ReactElement) {
   return rtlRender(<ToastProvider>{ui}</ToastProvider>);
 }
 
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+const { useCollection, useDocById } = vi.hoisted(() => ({ useCollection: vi.fn(), useDocById: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 
 const { rescheduleBooking, assignAuntie, addBookingNote, addInternalBookingNote, listVisitInternalNotes, getVisitAssignment } =
   vi.hoisted(() => ({
@@ -117,6 +117,9 @@ const user = userEvent.setup();
 beforeEach(() => {
   useCollection.mockReset();
   mockNotes();
+  // #2030: the visit doc, read for the answer notes; none by default.
+  useDocById.mockReset();
+  useDocById.mockReturnValue({ status: 'ready', data: null });
   rescheduleBooking.mockReset();
   assignAuntie.mockReset();
   addBookingNote.mockReset();
@@ -297,6 +300,31 @@ describe('BookingDetailModal notes', () => {
     ]);
   });
 
+  it('#2030: lists the note written on Accept with the thread, named by its writer, oldest first', () => {
+    staffNames.current = new Map([['owner1', 'Syd']]);
+    useDocById.mockImplementation((path: string, id: string) => {
+      expect(path).toMatch(/\/kinCares$/);
+      expect(id).not.toBe('');
+      return {
+        status: 'ready',
+        data: {
+          requestAcceptNote: 'Booked. Bring the spare key.',
+          requestAcceptedAt: '2026-07-15T08:00:00.000Z',
+          requestAcceptedBy: 'owner1',
+        },
+      };
+    });
+    mockNotes({
+      kinfolk: { status: 'ready', data: [{ _id: 'n1', body: 'Later note', createdAt: '2026-07-15T09:00:00.000Z' }] },
+    });
+    open();
+    const thread = screen.getByRole('list', { name: 'Kinfolk-facing notes' });
+    const rows = within(thread).getAllByRole('listitem').map((li) => li.textContent);
+    expect(rows).toEqual([expect.stringContaining('Booked. Bring the spare key.'), expect.stringContaining('Later note')]);
+    expect(rows[0]).toContain('Syd');
+    expect(screen.queryByText(/No kinfolk-facing notes yet/)).toBeNull();
+    staffNames.current = new Map();
+  });
   it('locks the kinfolk-facing composer inside the three hour cutoff and says why; internal notes stay open (#1580)', async () => {
     open({}, { nowMs: () => INSIDE_CUTOFF });
     expect(screen.getByLabelText('Add a kinfolk-facing note')).toBeDisabled();

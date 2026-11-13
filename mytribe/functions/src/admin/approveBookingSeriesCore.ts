@@ -371,8 +371,16 @@ export async function approveBookingSeriesCore(opts: {
   overrideBusyConflict?: boolean;
   /** #1098: same meaning as on `rescheduleBooking`, applied to the visits whose start is set here. */
   overrideVisitConflict?: boolean;
+  /**
+   * #2030: the office's note to the household with this approval. Stamped on
+   * every visit this call newly confirms, which is what the household's booking
+   * page reads (`getBookingNotes`), and carried on the confirmation as `note`.
+   * Absent on the portal's auto-confirm, which has no office to say anything.
+   */
+  householdNote?: string;
 }): Promise<ApproveBookingSeriesResult> {
   const { kinfolkId, batchId, actorUid, actorRole } = opts;
+  const householdNote = opts.householdNote?.trim() ?? '';
   const parentRef = db().doc(`families/${kinfolkId}/bookings/${batchId}`);
   const parentSnap = await parentRef.get();
   if (!parentSnap.exists) {
@@ -574,6 +582,16 @@ export async function approveBookingSeriesCore(opts: {
           // Same trap #533 found on the decline side, where `requested ->
           // cancelled` had two opposite meanings.
           seriesApprovedAt: FieldValue.serverTimestamp(),
+          // #2030: the office's note, on the visits this approval books. Not on
+          // a visit that was already confirmed: a re-approve is not a new answer,
+          // and a retry after a partial failure finds its first pass's stamp.
+          ...(householdNote !== '' && data['status'] !== 'confirmed'
+            ? {
+                requestAcceptNote: householdNote,
+                requestAcceptedAt: FieldValue.serverTimestamp(),
+                requestAcceptedBy: actorUid,
+              }
+            : {}),
         },
         { merge: true },
       );
@@ -633,7 +651,7 @@ export async function approveBookingSeriesCore(opts: {
 
   const householdNotified =
     failedVisits === 0 && !wasAlreadyConfirmed && succeeded > 0
-      ? await dispatchSeriesConfirmation({ kinfolkId, batchId, parentRef, envelope, actorUid })
+      ? await dispatchSeriesConfirmation({ kinfolkId, batchId, parentRef, envelope, actorUid, householdNote })
       : false;
 
   return {
@@ -729,8 +747,10 @@ async function dispatchSeriesConfirmation(args: {
   parentRef: FirebaseFirestore.DocumentReference;
   envelope: Record<string, unknown> | undefined;
   actorUid: string;
+  /** #2030: the office's note to the household, '' when it left none. */
+  householdNote: string;
 }): Promise<boolean> {
-  const { kinfolkId, batchId, parentRef, envelope, actorUid } = args;
+  const { kinfolkId, batchId, parentRef, envelope, actorUid, householdNote } = args;
   try {
     // #832: the claim's time is also the approval's notification identity. The
     // claim already stops a second send for one approval; a cancel deletes the
@@ -792,6 +812,9 @@ async function dispatchSeriesConfirmation(args: {
           bookingTime: firstMs == null ? null : formatBookingTime(firstMs, tz),
           // #1863: what the household's own copy says; see `visitTimesForStream`.
           householdBookingTime: first == null ? null : householdVisitTime(first, household, tz),
+          // #2030: the office's words with the answer, for the notice body
+          // (`detail.householdNote`). Null, like the decline's, when there are none.
+          note: householdNote !== '' ? householdNote : null,
         },
         targetType: 'booking',
         targetId: batchId,

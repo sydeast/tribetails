@@ -743,7 +743,29 @@ internal actual suspend fun platformAddBreadcrumb(sessionId: String, crumb: Brea
 internal actual suspend fun platformGetBreadcrumbs(sessionId: String): WriteResult<List<Breadcrumb>> = WriteResult.Ok(emptyList())
 internal actual suspend fun platformSaveSessionGpsSummary(sessionId: String, summary: GpsSummary): WriteResult<Unit> = stubWriteResult("GPS is mobile-only")
 internal actual fun platformBookingNotesStream(kinfolkId: String, bookingId: String, internal: Boolean, visitId: String): Flow<FirestoreResult<List<BookingNote>>> = stubFlow("Booking notes live in a kinfolk subcollection (mobile/web)")
-internal actual suspend fun platformAddBookingNote(kinfolkId: String, bookingId: String, body: String, internal: Boolean, visitId: String): WriteResult<String> = stubWriteResult("Booking notes are not wired on desktop")
+/**
+ * #2030: a note the operator writes on the desktop console goes through the same
+ * callables web and Android use, so it lands where the household reads it
+ * (`addBookingNote` writes `.../kinCares/{visitId}/notes`, which the portal's
+ * `getBookingNotes` returns). It used to be refused here, so a kinfolk-facing
+ * note typed on desktop never reached anyone. [bookingId] is the visit's legacy
+ * id, which the server resolves to the visit within [kinfolkId].
+ */
+internal actual suspend fun platformAddBookingNote(kinfolkId: String, bookingId: String, body: String, internal: Boolean, visitId: String): WriteResult<String> {
+    val payload = buildJsonObject {
+        put("kinfolkId", JsonPrimitive(kinfolkId))
+        put("bookingId", JsonPrimitive(visitId.ifBlank { bookingId }))
+        put("body", JsonPrimitive(body.trim()))
+    }
+    val name = if (internal) "addInternalBookingNote" else "addBookingNote"
+    return when (val r = platformInvokeCallable(name, Json.encodeToString(JsonObject.serializer(), payload))) {
+        is WriteResult.Err -> WriteResult.Err(r.message)
+        is WriteResult.Ok -> runCatchingCancellable {
+            val id = Json.parseToJsonElement(r.value).jsonObject["noteId"]?.jsonPrimitive?.contentOrNull
+            if (id.isNullOrBlank()) WriteResult.Err("$name: server response missing noteId") else WriteResult.Ok(id)
+        }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+    }
+}
 // 16.5: desktop incoming-requests queue. Honours a test fixture, else a real
 // collectionGroup(kinCares) where status=='requested' poll via REST (with _path
 // surfaced so KinCareVisit.pathParts can recover families/{fid}/bookings/{batchId}).
