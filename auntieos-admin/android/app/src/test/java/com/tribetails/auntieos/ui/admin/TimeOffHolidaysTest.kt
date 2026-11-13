@@ -112,4 +112,22 @@ class TimeOffHolidaysTest {
     fun `no entries gives no rows`() {
         assertEquals(emptyList<CompanyHolidayRow>(), companyHolidayRows(emptyList(), today))
     }
+
+    @Test
+    fun `the order flips at New Year, by the day passed in`() {
+        val stored = listOf("yearly:01-01|New Year's Day", "yearly:12-31|Year end")
+        val dec31 = companyHolidayRows(stored, "2026-12-31")
+        assertEquals(listOf("Year end", "New Year's Day"), dec31.map { it.closure.name })
+        assertEquals(listOf("2026-12-31", "2027-01-01"), dec31.map { it.next })
+        val jan1 = companyHolidayRows(stored, "2027-01-01")
+        assertEquals(listOf("New Year's Day", "Year end"), jan1.map { it.closure.name })
+        assertEquals(listOf("2027-01-01", "2027-12-31"), jan1.map { it.next })
+    }
+
+    @Test
+    fun `a Feb 29 closure lists at its next date, Feb 28 in a non-leap year`() {
+        val rows = companyHolidayRows(listOf("yearly:03-01|March first", "yearly:02-29|Leap day"), "2026-11-12")
+        assertEquals(listOf("Leap day", "March first"), rows.map { it.closure.name })
+        assertEquals(listOf("2027-02-28", "2027-03-01"), rows.map { it.next })
+    }
 }

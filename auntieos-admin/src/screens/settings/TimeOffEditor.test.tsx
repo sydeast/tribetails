@@ -399,6 +399,25 @@ describe('TimeOffEditor: company holidays in date order (#1979)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Thanksgiving' }));
     expect(listedNames()).toEqual(['Thanksgiving', 'Staff day', 'Spring A', 'Spring B', 'Summer break']);
   });
+
+  it('orders by "today" in the business time zone across New Year, not this computer’s day', () => {
+    // 03:30 UTC on Jan 1 2027: still Dec 31 in Chicago, already Jan 1 in UTC.
+    // Whatever zone this computer is in, only one of the two renders could
+    // match it, so both orders below hold only when the business zone is read.
+    vi.setSystemTime(new Date('2027-01-01T03:30:00Z'));
+    try {
+      const yearEnd = ['yearly:01-01|New Year closure', 'yearly:12-31|Year end'];
+      const { unmount } = render(
+        <TimeOffEditor data={{ ...EMPTY, companyHolidays: yearEnd, timeZone: 'America/Chicago' }} onSave={vi.fn()} />,
+      );
+      expect(listedNames()).toEqual(['Year end', 'New Year closure']);
+      unmount();
+      render(<TimeOffEditor data={{ ...EMPTY, companyHolidays: yearEnd, timeZone: 'UTC' }} onSave={vi.fn()} />);
+      expect(listedNames()).toEqual(['New Year closure', 'Year end']);
+    } finally {
+      vi.setSystemTime(PINNED_NOW);
+    }
+  });
 });
 
 /**
