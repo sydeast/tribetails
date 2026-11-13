@@ -2033,6 +2033,11 @@ closure so the operator can act on them manually.
 - Write: `set(..., { mergeFields })`. Nested maps merge key by key; the rate card
   (`serviceRates`, `serviceDurations`, `serviceStartTimeBooking`) replaces whole
   so a removed type goes; arrays replace; `null` is stored as `null`.
+- #1987: a `mytribePortal.home.sections` equal to the default (exactly
+  `liveVisit`, `upNext`, `tales`, `quickStart` in that order, each on, each
+  limit 0) is stored as `[]`, which is how the default is stored
+  (`lib/homeLayout.ts`). Any other list is stored as sent. `getMyHome` answers
+  `portal.home: []` for a document that still holds the four default rows.
 - Audited `BUSINESS_SETTINGS_UPDATED` with `{ fields: string[] }` (names only).
 - Mirrors: `auntieos-admin/src/api/settingsWrite.ts`, Android
   `AuntieRepository.updateBusinessSettingsFields`, desktop

@@ -114,6 +114,8 @@ import com.tribetails.auntieos.data.model.withPaymentDraft
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.tribetails.auntieos.data.model.PortalHomeSection
+import com.tribetails.auntieos.data.model.isDefaultHomeLayout
+import com.tribetails.auntieos.data.model.normalizeHomeSections
 import com.tribetails.auntieos.ui.NavigationSettingsPanel
 import com.tribetails.auntieos.ui.branding.brandingDirty
 import com.tribetails.auntieos.ui.branding.withBranding
@@ -1995,19 +1997,24 @@ private fun BookingBehaviorPanel(
  * (see `withHomeSections` in LocationModels.kt). This panel never constructs
  * a `BusinessSettings` from scratch.
  *
- * ONE-WAY-DOOR GUARD (issue #397 M10 follow-up). [rows] holds the RAW draft
- * (starts as `settings.homeSections()`, the STORED value, never the
- * materialized one) — `effectiveHomeSections(rows)` is computed fresh on
- * every recomposition purely to decide what [displayRows] to draw, and is
- * never itself assigned into [rows]. That split is what makes opening this
- * panel and pressing Save with nothing touched a genuine no-op: [dirty]
- * compares [rows] against [baseline], both the untouched stored value, so
- * `AuntieSaveBar` never enables Save until a row handler below actually
+ * [rows] holds the RAW draft (starts as `settings.homeSections()`, the STORED
+ * value, never the materialized one). `effectiveHomeSections(rows)` is
+ * computed fresh on every recomposition purely to decide what [displayRows] to
+ * draw, and is never itself assigned into [rows]. That split is what makes
+ * opening this panel and pressing Save with nothing touched a genuine no-op:
+ * [dirty] compares [rows] against [baseline], both the untouched stored value,
+ * so `AuntieSaveBar` never enables Save until a row handler below actually
  * reassigns [rows]. A real edit reassigns [rows] to the fully materialized,
- * patched [displayRows] (order is holistic — there is no smaller diff of a
- * reordered array), and "Reset to default layout" reassigns it to
- * [RESET_HOME_SECTIONS] (`[]`) — the same empty list the portal reads as its
- * own implicit default, not a canonical list that merely looks the same.
+ * patched [displayRows] (order is holistic: there is no smaller diff of a
+ * reordered array).
+ *
+ * #1987: THE WAY BACK IS THE VALUES THEMSELVES. Every edit goes through
+ * [normalizeHomeSections], and `homeSections()` reads the stored value through
+ * it too, so a row list equal to the default (every section on, default order,
+ * no limits) is held as the empty list. Typing a Limit and then putting 0 back
+ * is the same state as never having typed: the pill reads Default and there is
+ * nothing to save. "Reset to default layout" is the one-press way to the same
+ * place: it assigns [RESET_HOME_SECTIONS] (`[]`).
  */
 @Composable
 private fun HomeLayoutPanel(
@@ -2031,7 +2038,7 @@ private fun HomeLayoutPanel(
     val dirty = rows != baseline || typedLimitProblems.isNotEmpty()
     val blockedByLimit = typedLimitProblems.isNotEmpty() || (rows != baseline && storedLimitProblems.isNotEmpty())
     val displayRows = effectiveHomeSections(rows)
-    val isDefault = rows.isEmpty()
+    val isDefault = isDefaultHomeLayout(rows)
 
     DenPanel(
         title = "Home layout",
@@ -2068,14 +2075,14 @@ private fun HomeLayoutPanel(
                     AuntieIconButton(
                         icon = Lucide.ArrowUp,
                         contentDescription = "Move $label up",
-                        onClick = { rows = moveHomeSectionUp(displayRows, index) },
+                        onClick = { rows = normalizeHomeSections(moveHomeSectionUp(displayRows, index)) },
                         enabled = index > 0,
                         size = 32.dp,
                     )
                     AuntieIconButton(
                         icon = Lucide.ArrowDown,
                         contentDescription = "Move $label down",
-                        onClick = { rows = moveHomeSectionDown(displayRows, index) },
+                        onClick = { rows = normalizeHomeSections(moveHomeSectionDown(displayRows, index)) },
                         enabled = index < displayRows.lastIndex,
                         size = 32.dp,
                     )
@@ -2086,7 +2093,7 @@ private fun HomeLayoutPanel(
                         onValueChange = { text ->
                             limitTexts = limitTexts + (row.id to text)
                             if (homeLimitProblem(text) == null) {
-                                rows = displayRows.replacedAt(index, row.copy(limit = text.trim().toInt()))
+                                rows = normalizeHomeSections(displayRows.replacedAt(index, row.copy(limit = text.trim().toInt())))
                             }
                         },
                         label = "Limit",
@@ -2096,7 +2103,7 @@ private fun HomeLayoutPanel(
                     )
                     AuntieToggle(
                         checked = row.enabled,
-                        onCheckedChange = { next -> rows = displayRows.replacedAt(index, row.copy(enabled = next)) },
+                        onCheckedChange = { next -> rows = normalizeHomeSections(displayRows.replacedAt(index, row.copy(enabled = next))) },
                     )
                 }
                 SettingsFieldProblem(limitProblems[row.id])

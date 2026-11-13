@@ -191,11 +191,19 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) reads a visit's On the way / Arrived /
  * Departed and its list by. Its one import is a type, erased at build.
  *
- * 440 since #1872: `admin/applyAccountCredit.ts` is a new FUNCTIONS entry, in
- * this graph by construction (the one callable that spends account credit, by
- * an amount the admin enters). Everything it imports was already here.
+ * 440 since #1987 (on top of #1830's 439): `lib/homeLayout.ts`, the one test for "this portal Home
+ * layout is the default", which `admin/saveBusinessSettings.ts` (stores such a
+ * layout as the empty list) and `portal/getMyHome.ts` (answers with the empty
+ * list for a document stored earlier) share. Both are entries already in this
+ * graph. It has no import of its own, and it cannot sit behind the lazy
+ * `businessSettingsChecks.ts` because `getMyHome` needs it on every call.
+ *
+ * 441 since #1872 (on top of #1987's 440): `admin/applyAccountCredit.ts` is a
+ * new FUNCTIONS entry, in this graph by construction (the one callable that
+ * spends account credit, by an amount the admin enters). Everything it imports
+ * was already here.
  */
-const MAX_OWN_EAGER_MODULES = 440;
+const MAX_OWN_EAGER_MODULES = 441;
 
 interface Edge {
   spec: string;
