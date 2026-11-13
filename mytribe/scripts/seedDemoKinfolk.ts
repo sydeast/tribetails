@@ -26,11 +26,17 @@
  * `--allow-prod` in either flag order. FIRESTORE_EMULATOR_HOST relieves only
  * the credentials check below; it does not turn a dry run into a writing one.
  *
+ * `--link-uid=<uid>` (#2096) also writes the ACTIVE PRIMARY member record a
+ * real invite acceptance writes, after reading the login's account (so on the
+ * emulators it needs FIREBASE_AUTH_EMULATOR_HOST as well). It refuses, linking
+ * nothing, for a staff login. Re-running it repairs a login linked before.
+ *
  * Service account auth: requires GOOGLE_APPLICATION_CREDENTIALS env var OR
  * Application Default Credentials. Fails loud if creds missing.
  */
 
-import { initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
+import { initializeApp, getFirestore, getAuth, FieldValue, type Firestore, type Auth } from './lib/firebaseAdmin';
+import { assertPrimaryLinkAllowed, planPrimaryLink, writePrimaryMember } from './lib/householdPrimary';
 import { canonicalCreditMoney, canonicalInvoiceMoney, type SeedInvoiceMoney } from './lib/seedInvoiceMoney';
 
 // ---------------------------------------------------------------------------
@@ -1022,16 +1028,22 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const writes = planAllWrites();
 
-  // Optional tester-link write rides the same plan + safety guards.
+  // Optional tester link. Printed with the plan and checked for copy like
+  // every other write, but written last, by linkTesterLogin, after the demo
+  // household exists and only if the login may be linked (#2096).
+  const linkWrite = args.linkUid ? planLinkUidWrite(args.linkUid) : null;
   if (args.linkUid) {
-    writes.push(planLinkUidWrite(args.linkUid));
     console.log(`[plan] --link-uid: clients/${args.linkUid} -> kinfolkIds:[${DEMO_FAMILY_IDS[0]}]`);
+    console.log(
+      `[plan] --link-uid: families/${DEMO_FAMILY_IDS[0]}/members/${args.linkUid} -> ACTIVE PRIMARY, unless one is already there`,
+    );
+    console.log('[plan] --link-uid: refused, linking nothing, for a staff login, a removed member, or a household with another PRIMARY');
   }
 
   // Belt-and-suspenders: refuse to ship if any string slipped through as
   // free-form copy. This must NEVER fail in CI — it would mean a developer
   // typed real text into the seed.
-  assertNoUserFacingCopy(writes);
+  assertNoUserFacingCopy(linkWrite ? [...writes, linkWrite] : writes);
 
   console.log(`[plan] ${writes.length} writes across ${DEMO_FAMILY_IDS.length} demo families`);
   for (const w of writes) {
@@ -1076,6 +1088,35 @@ async function main(): Promise<void> {
 
   const written = await writeAll(db, writes);
   console.log(`\nfinal: written=${written} (idempotent: merge:true on deterministic ids)`);
+
+  if (args.linkUid && linkWrite) {
+    const member = await linkTesterLogin({ db, auth: getAuth() }, args.linkUid, linkWrite, FieldValue.serverTimestamp());
+    console.log(`[linked] ${linkWrite.path}`);
+    console.log(member ? '[linked] member record written (PRIMARY, ACTIVE)' : '[linked] member record already ACTIVE, left as it is');
+  }
+}
+
+/**
+ * #2096: link a tester login to the first demo household the way accepting an
+ * invite does. The client listing alone (what this used to write) leaves no
+ * member record, so since #1840 the login got no household notices and the
+ * Members panel showed nobody. Decides first and writes nothing on a refusal:
+ * a staff login (the #1840 case was the Admin's own login, linked here), a
+ * removed member, or a demo household that already has another PRIMARY.
+ * Re-running on a login linked before this repairs it. Returns whether a
+ * member record was written.
+ */
+export async function linkTesterLogin(
+  deps: { db: Firestore; auth: Auth },
+  uid: string,
+  linkWrite: PlannedWrite,
+  stamp: unknown,
+): Promise<boolean> {
+  const familyId = DEMO_FAMILY_IDS[0];
+  const plan = await planPrimaryLink(deps, familyId, uid);
+  assertPrimaryLinkAllowed(plan);
+  await deps.db.doc(linkWrite.path).set(linkWrite.data, { merge: true });
+  return writePrimaryMember(deps.db, familyId, uid, plan, stamp, { _demo: true });
 }
 
 // Run main only when invoked directly. Importing for tests does not trigger writes.

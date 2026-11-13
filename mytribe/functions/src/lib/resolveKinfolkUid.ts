@@ -1,4 +1,4 @@
-import { db } from './firestoreAdmin';
+import { auth, db } from './firestoreAdmin';
 import { logEvent } from './logger';
 
 /**
@@ -8,7 +8,9 @@ import { logEvent } from './logger';
  *   `kinfolk/{id}.uid` is blank                       -> null
  *   that login is an ACTIVE member of the household   -> that login
  *   that login is NOT an active member                -> the household's ACTIVE
- *     PRIMARY when it has one, otherwise null
+ *     PRIMARY when it has one, otherwise null, except a legacy primary
+ *     (no member record at all, not staff, listed on the household by its
+ *     own client record: see `isLegacyPrimary`, #2096)
  *
  * WHY THE STORED UID IS NOT ENOUGH. `kinfolk.uid` is a backwrite, not a
  * membership record. `syncKinfolkClaim` stamps it for whichever `clients/{uid}`
@@ -57,6 +59,17 @@ export async function resolveKinfolkUid(kinfolkId: string): Promise<string | nul
   if (status === 'ACTIVE') return uid;
 
   const primary = await activePrimaryUid(kinfolkId);
+  if (primary === null && !memberSnap.exists && (await isLegacyPrimary(kinfolkId, uid))) {
+    logEvent({
+      severity: 'warn',
+      function: 'resolveKinfolkUid',
+      event: 'notification.household.recipient.legacy_primary',
+      uid,
+      familyId: kinfolkId,
+      extra: { note: 'login linked before the member model; run backfillHouseholdMembers (#2096)' },
+    });
+    return uid;
+  }
   logEvent({
     severity: 'warn',
     function: 'resolveKinfolkUid',
@@ -69,6 +82,49 @@ export async function resolveKinfolkUid(kinfolkId: string): Promise<string | nul
     },
   });
   return primary;
+}
+
+/**
+ * THE LEGACY PRIMARY, UNTIL THE BACKFILL HAS RUN (#2096). A login linked by
+ * the old admin "link login" (`setKinfolkClaim`) before the member model has
+ * `kinfolk.uid` and `clients/{uid}.kinfolkIds` but no member record, and
+ * `memberGate` (`hasKinfolkPerm`, `requireKinfolkPrimary`) and the rules'
+ * `kinfolkBillingAccess` already treat exactly that login as the household's
+ * primary. Without this, such a household would stop hearing anything the
+ * day #1840 ships and stay silent until `backfillHouseholdMembers` runs.
+ *
+ * Only reached when the stored login has NO member record (a removed member
+ * keeps a non-ACTIVE one and stays nobody) and the household has no ACTIVE
+ * PRIMARY (a claimed household always goes to its PRIMARY). On top of that the
+ * login must pass every check below, and the first one that fails means nobody:
+ *
+ * - not staff. The #1840 login was the Admin's, listed on a demo household by
+ *   a test script. A working Admin carries the `admin` claim (the rules'
+ *   `isOwner()` reads nothing else) and an Auntie carries `staffRole`, so a
+ *   token with either, or a `staff/{uid}` record, is never a legacy primary.
+ * - the login's own client record lists this household, as `memberGate`'s
+ *   legacy branch requires (`removeMember` takes it off that list).
+ * - the login still exists. A deleted login is nobody; other auth errors throw.
+ *
+ * Firestore reads come first, so the auth lookup runs only for a login that is
+ * otherwise a legacy primary.
+ */
+async function isLegacyPrimary(kinfolkId: string, uid: string): Promise<boolean> {
+  const [staffSnap, clientSnap] = await Promise.all([
+    db().doc(`staff/${uid}`).get(),
+    db().doc(`clients/${uid}`).get(),
+  ]);
+  if (staffSnap.exists) return false;
+  const listed = (clientSnap.data() as { kinfolkIds?: unknown } | undefined)?.kinfolkIds;
+  if (!Array.isArray(listed) || !listed.includes(kinfolkId)) return false;
+  let claims: Record<string, unknown>;
+  try {
+    claims = ((await auth().getUser(uid)).customClaims ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    if ((err as { code?: unknown })?.code === 'auth/user-not-found') return false;
+    throw err;
+  }
+  return claims['admin'] !== true && !('staffRole' in claims);
 }
 
 /**

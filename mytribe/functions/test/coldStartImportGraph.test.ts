@@ -190,8 +190,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * 439 since #1830: `lib/portalVisitProgress.ts`, the pure rules `getMyBookings`
  * (an entry already in this graph) reads a visit's On the way / Arrived /
  * Departed and its list by. Its one import is a type, erased at build.
+ *
+ * 440 since #2096: `lib/householdMember.ts`, the one household member-record
+ * shape and link decision, which `membership/acceptInvite.ts` and
+ * `admin/setKinfolkClaim.ts` (entries already in this graph) write through.
+ * Its runtime import is `lib/schema.ts`, already here; the rest are types.
  */
-const MAX_OWN_EAGER_MODULES = 439;
+const MAX_OWN_EAGER_MODULES = 440;
 
 interface Edge {
   spec: string;
