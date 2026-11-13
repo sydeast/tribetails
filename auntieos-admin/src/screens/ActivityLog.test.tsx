@@ -591,6 +591,95 @@ describe('ActivityLog actor role (#1820)', () => {
 });
 
 /**
+ * #1839. A look at a household read as "Operator crosstenant access", its key
+ * in capitals, a red flag and a line of ids. Since operator ruling 2026-11-12
+ * only an Auntie's looks write it, in words; the rows stored before then still
+ * show, in plain words and without the warning.
+ */
+describe('ActivityLog household looks (#1839)', () => {
+  const AUNTIE_LOOK = entry({
+    _id: 'look-new',
+    actionType: 'OPERATOR_CROSSTENANT_ACCESS',
+    description: 'Jane Rivers looked at the members of Kinfolk Dre East',
+    actorId: 'aunt-uid',
+    actorRole: 'AUNTIE',
+    targetId: 'Xk29fLq0aBcD3eFgH1jK',
+    familyId: 'Xk29fLq0aBcD3eFgH1jK',
+    payload: { function: 'listMembers', kinfolkId: 'Xk29fLq0aBcD3eFgH1jK', admin: false, staffRole: 'auntie' },
+  });
+  const STORED_LOOK = entry({
+    _id: 'look-old',
+    seq: 11,
+    actionType: 'OPERATOR_CROSSTENANT_ACCESS',
+    description: 'OPERATOR_CROSSTENANT_ACCESS uid=owner-uid target=Xk29fLq0aBcD3eFgH1jK',
+    actorId: 'owner-uid',
+    actorRole: 'AUNTIE',
+    targetId: 'Xk29fLq0aBcD3eFgH1jK',
+    payload: { function: 'listInvites', kinfolkId: 'Xk29fLq0aBcD3eFgH1jK' },
+  });
+  const rowOf = (title: RegExp) =>
+    screen.getAllByRole('button').find((b) => title.test(b.textContent ?? '')) as HTMLElement;
+
+  it("an Auntie's look reads in plain words with her name, no key, no id, no red", () => {
+    staffNames.current = new Map([['aunt-uid', 'Jane Rivers']]);
+    useCollection.mockReturnValue({ status: 'ready', data: [AUNTIE_LOOK] });
+    render(<ActivityLog />);
+    const row = rowOf(/Household opened/);
+    expect(within(row).getByText('Household opened')).toHaveClass('activity__title');
+    expect(row.querySelector('.activity__code')).toBeNull();
+    expect(within(row).getByText('Jane Rivers looked at the members of Kinfolk Dre East')).toHaveClass('activity__ctx');
+    expect(row.textContent).not.toMatch(/OPERATOR|CROSSTENANT|crosstenant|Xk29fLq0aBcD3eFgH1jK|uid=|target=/);
+    const tile = row.querySelector('.icon-tile');
+    expect(tile).toHaveAttribute('data-tone', 'neutral');
+    expect(tile).not.toHaveTextContent('⚑');
+  });
+
+  it("a look stored before the ruling reads as words with the person's name, no ids", () => {
+    staffNames.current = new Map([['owner-uid', 'Syd East']]);
+    useCollection.mockReturnValue({ status: 'ready', data: [STORED_LOOK] });
+    render(<ActivityLog />);
+    const row = rowOf(/Household opened/);
+    expect(within(row).getByText('Opened a household · Syd East')).toHaveClass('activity__ctx');
+    expect(row.querySelector('.activity__code')).toBeNull();
+    expect(row.textContent).not.toMatch(/OPERATOR|CROSSTENANT|Xk29fLq0aBcD3eFgH1jK|uid=|target=/);
+    expect(row.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'neutral');
+  });
+
+  it('a stored look is shown, not hidden, and the stored entry is not rewritten', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [AUNTIE_LOOK, STORED_LOOK] });
+    render(<ActivityLog />);
+    expect(screen.getAllByText('Household opened')).toHaveLength(2);
+    expect(STORED_LOOK.description).toBe('OPERATOR_CROSSTENANT_ACCESS uid=owner-uid target=Xk29fLq0aBcD3eFgH1jK');
+  });
+
+  it('opened, the record still carries the key and the household, and names her Auntie', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [AUNTIE_LOOK] });
+    render(<ActivityLog />);
+    await userEvent.click(rowOf(/Household opened/));
+    const actorRole = screen.getByText('Actor role').parentElement?.textContent?.replace('Actor role', '').trim();
+    expect(actorRole).toBe('Auntie');
+    expect(screen.getByText('OPERATOR_CROSSTENANT_ACCESS')).toBeInTheDocument();
+  });
+
+  it('a failed look still wears the warning, as every failure does', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ ...AUNTIE_LOOK, status: 'FAILURE' })] });
+    render(<ActivityLog />);
+    expect(rowOf(/Household opened/).querySelector('.icon-tile')).toHaveAttribute('data-tone', 'error');
+  });
+
+  it('is found by its plain title', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [AUNTIE_LOOK, entry({ _id: 'other', actionType: 'LOGIN', description: 'signed in' })],
+    });
+    render(<ActivityLog />);
+    await userEvent.type(screen.getByPlaceholderText(/Search actor/), 'household opened');
+    expect(screen.getAllByText('Household opened')).toHaveLength(1);
+    expect(screen.queryByText(/signed in/)).toBeNull();
+  });
+});
+
+/**
  * #2192. The log read the business clock straight from `business_settings`,
  * which an Auntie's sign-in may not read, so for her it failed without a word
  * and counted days on Central time. It now goes through the work-settings read.

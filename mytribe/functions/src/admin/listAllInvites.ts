@@ -3,8 +3,6 @@ import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
-import { writeAuditEntry } from '../lib/writeAuditEntry';
-import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { mapInviteDoc, sortInvitesNewestFirst, type InviteDTO } from './listInvites';
@@ -42,12 +40,11 @@ import { mapInviteDoc, sortInvitesNewestFirst, type InviteDTO } from './listInvi
  *
  * SECURITY. `inviteId` is the claim-link bearer token — see `listInvites.ts`
  * for the full note. It is returned because the clients match rows against the
- * activity log by a truncated handle, and it reaches neither `logEvent` nor the
- * audit payload here (counts only).
+ * activity log by a truncated handle, and it never reaches `logEvent` (counts
+ * only).
  *
- * Read-only apart from one best-effort cross-tenant audit entry. Unlike
- * `listInvites` that entry carries no `familyId`: the read is over every
- * household, and naming one of them would be a lie about its scope.
+ * Read-only, and it writes no Activity Log line: only the owner reaches it, and
+ * operator ruling 2026-11-12 (#1839) stopped logging the owner's own looks.
  */
 const Args = z.object({
   limit: z.number().int().min(1).max(500).optional(),
@@ -153,25 +150,8 @@ export async function listAllInvitesHandler(
     householdName: names.get(r.tribeId) ?? householdNameFor(r.tribeId, undefined),
   }));
 
-  // Staff reading every household's invite roster is cross-tenant by definition.
-  // Best-effort, mirroring listInvites: a failed audit must not make a
-  // successful read look like a failed one.
-  await writeAuditEntry({
-    status: 'SUCCESS',
-    event: AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
-    severity: 'info',
-    actorRole: 'AUNTIE',
-    actorUid: uid,
-    payload: { function: 'listAllInvites', count: invites.length, households: tribeIds.length },
-  }).catch((err) => {
-    logEvent({
-      severity: 'warn',
-      function: 'listAllInvites',
-      event: 'audit.write.failed',
-      uid,
-      errorMessage: (err as Error)?.message,
-    });
-  });
+  // #1839: no Activity Log line. Only the owner reaches this callable, and
+  // operator ruling 2026-11-12 stopped logging her own looks.
 
   // Counts only. The invite ids are bearer tokens (see the file header).
   logEvent({

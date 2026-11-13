@@ -323,7 +323,7 @@ describe('saveEmergencyContactsHandler and secondary kinfolk (2026-09-27 Q3)', (
 // the refusal, on every client (portals included), so the operator can see a
 // household that keeps failing to save its required Emergency Contact.
 describe('saveEmergencyContactsHandler refusal audit (#1049)', () => {
-  // Only this event: the access resolver writes its own OPERATOR_CROSSTENANT_ACCESS entry for staff.
+  // Only this event: the access resolver writes its own OPERATOR_CROSSTENANT_ACCESS entry for an Auntie.
   const refusals = () =>
     mocks.writeAuditEntry.mock.calls.map((c) => c[0] as Record<string, unknown>).filter((e) => e['event'] === 'EMERGENCY_CONTACT_SAVE_REFUSED');
 

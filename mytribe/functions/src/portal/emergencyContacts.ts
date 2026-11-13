@@ -285,6 +285,7 @@ export async function saveEmergencyContactsHandler(
       args?.kinfolkId ?? requestedKinfolkId(req.data),
       isAdmin,
       'saveEmergencyContacts',
+      req.auth,
     ));
     await requireKinfolkPerm(uid, kinfolkId, 'home_access', isAdmin, 'saveEmergencyContacts');
   } catch (e) {
@@ -389,7 +390,7 @@ export async function listEmergencyContactsHandler(
   const args = parseArgs(ListArgs, req.data);
   // #944: allowlisted, same reason as saveEmergencyContacts above.
   const isAdmin = staffBypass(req.auth, 'listEmergencyContacts');
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, isAdmin, 'listEmergencyContacts');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, isAdmin, 'listEmergencyContacts', req.auth);
 
   const firestore = db();
   if (!(await canReadEmergencyContacts(firestore, uid, kinfolkId, isAdmin, 'listEmergencyContacts'))) {

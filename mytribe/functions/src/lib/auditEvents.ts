@@ -466,11 +466,15 @@ export const AUDIT_EVENTS = {
 
   // RULING O-6 (docs/RULING_O-6_OPERATOR_TRUST_2026-07-13.md) hardening 2:
   // staff cross-tenant power is total (any kinfolkId, any household), so the
-  // audit trail is the compensating control. Emitted by resolveKinfolkAccess
-  // whenever a staff caller resolves a kinfolkId NOT in their own
-  // clients/{uid}.kinfolkIds — i.e. every genuine cross-household access,
-  // not every staff call (a staff member acting on their own linked
-  // household, if any, is not "cross-tenant").
+  // audit trail is the compensating control.
+  //
+  // #1839, operator ruling 2026-11-12 (reverses O-6 for the owner only): an
+  // AUNTIE's look at a household. resolveKinfolkAccess is the one writer; it
+  // writes the line, with her name and the household's in the description,
+  // whenever she resolves a household, her assigned tribes included. The
+  // owner's own looks write nothing on any path. Rows stored before the ruling
+  // carry the owner's looks too, under the same key; the admin clients show
+  // every row of this kind as "Household opened" in plain words.
   OPERATOR_CROSSTENANT_ACCESS: 'OPERATOR_CROSSTENANT_ACCESS',
 
   // Dashboard-widget ops (AO-39/40/41): admin-only quick-log + tracker writes.

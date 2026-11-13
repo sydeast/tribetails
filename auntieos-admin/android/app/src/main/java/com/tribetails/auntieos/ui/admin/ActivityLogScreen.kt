@@ -36,6 +36,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.Activity
 import com.composables.icons.lucide.Bell
 import com.composables.icons.lucide.CalendarPlus
+import com.composables.icons.lucide.Eye
 import com.composables.icons.lucide.Flag
 import com.composables.icons.lucide.History
 import com.composables.icons.lucide.Lucide
@@ -481,7 +482,7 @@ private fun ActivityDetailModal(
     val chain = activityChainRows(entry)
     AuntieModal(
         onDismissRequest = onDismiss,
-        title = humanizeAction(entry.actionType),
+        title = activityTitle(entry.actionType),
         confirmButton = { GhostButton(label = "Close", onClick = onDismiss) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -685,12 +686,10 @@ internal fun ActivityRow(
     names: Map<String, String> = emptyMap(),
 ) {
     val c = AuntieTheme.colors
-    val isFailure = entry.status.equals("FAILURE", ignoreCase = true) ||
-        entry.status.equals("ERROR", ignoreCase = true)
-    val tone = if (isFailure) AuntieStatusTone.Error else categoryTone(entry.actionType)
+    val tone = rowTone(entry.actionType, entry.status)
 
     AuntieEntityRow(
-        title    = humanizeAction(entry.actionType),
+        title    = activityTitle(entry.actionType),
         subtitle = rowContext(entry, names).ifBlank { null },
         onClick  = onClick,
         modifier = Modifier.padding(horizontal = 8.dp),
@@ -714,8 +713,9 @@ internal fun ActivityRow(
         },
         supporting = {
             // The mock sets the raw code beside the title; on a phone it goes
-            // under it, still in the mono the mock gives it.
-            if (entry.actionType.isNotBlank()) {
+            // under it, still in the mono the mock gives it. A kind with a plain
+            // title (#1839) shows no code.
+            if (activityShowsCode(entry.actionType)) {
                 Text(
                     text  = entry.actionType,
                     style = AuntieTheme.typography.mono.copy(fontSize = 10.sp, letterSpacing = 0.4.sp),
@@ -802,7 +802,7 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
     if (q.isBlank()) return true
     val hay = listOf(
         entry.actionType,
-        humanizeAction(entry.actionType),
+        activityTitle(entry.actionType),
         entry.description,
         activityDescriptionWords(entry.description),
         entry.actorId,
@@ -816,11 +816,18 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
 
 /** Actor + target context line built only from real fields. */
 internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = emptyMap()): String {
+    val look = isHouseholdLook(entry.actionType)
     val parts = buildList {
         // #1747: a stored path reads as words; the entry itself is never rewritten.
-        if (entry.description.isNotBlank()) add(activityDescriptionWords(entry.description))
+        val words = activityDescriptionWords(entry.description)
+        if (words.isNotBlank()) add(words)
+        // #1839: a look the server wrote in words already names the Auntie and
+        // the household, so the row adds neither her name again nor the
+        // household's id. A look stored as the bare key keeps the actor's name.
+        val namedInWords = look && words.isNotBlank() && words == entry.description.trim()
         // #1592: the actor's name, not their uid, once `listStaff` has answered.
-        if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
+        if (entry.actorId.isNotBlank() && !namedInWords) add(names[entry.actorId.trim()] ?: entry.actorId)
+        if (look) return@buildList
         val target = when {
             entry.targetCollection.isNotBlank() && entry.targetId.isNotBlank() ->
                 "${entry.targetCollection}/${entry.targetId}"
@@ -831,6 +838,17 @@ internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = em
         if (target.isNotBlank()) add(target)
     }
     return parts.joinToString(" · ")
+}
+
+/**
+ * The row tile's tone. A failure is the error tone whatever its kind; a look at
+ * a household (#1839) is routine, so it files under Admin for the filter but
+ * never wears that chip's red; everything else takes its category's tone.
+ */
+internal fun rowTone(actionType: String, status: String): AuntieStatusTone = when {
+    status.equals("FAILURE", ignoreCase = true) || status.equals("ERROR", ignoreCase = true) -> AuntieStatusTone.Error
+    isHouseholdLook(actionType) -> AuntieStatusTone.Neutral
+    else -> categoryTone(actionType)
 }
 
 private fun categoryTone(actionType: String): AuntieStatusTone = when (activityCategoryOf(actionType)) {
@@ -856,6 +874,7 @@ private fun actionIcon(actionType: String, status: String): ImageVector {
     ) {
         return Lucide.TriangleAlert
     }
+    if (isHouseholdLook(actionType)) return Lucide.Eye
     val a = actionType.uppercase()
     return when (activityCategoryOf(actionType)) {
         ActivityCategory.Auth          -> Lucide.UserCheck
@@ -872,6 +891,26 @@ internal fun humanizeAction(actionType: String): String {
     val lower = actionType.lowercase().replace('_', ' ').trim()
     return if (lower.isEmpty()) "Event" else lower.replaceFirstChar { it.uppercaseChar() }
 }
+
+
+/**
+ * #1839: the stored key of a look at a household. Since operator ruling
+ * 2026-11-12 only an Auntie's looks write it; rows stored before then carry the
+ * owner's looks too. A routine look, never a warning. Same rule as the web
+ * (`activityTitle` in `lib/activityDetail.ts`) and the other Kotlin client.
+ */
+internal const val HOUSEHOLD_LOOK_ACTION = "OPERATOR_CROSSTENANT_ACCESS"
+internal const val HOUSEHOLD_LOOK_TITLE = "Household opened"
+
+internal fun isHouseholdLook(actionType: String): Boolean = actionType.trim().uppercase() == HOUSEHOLD_LOOK_ACTION
+
+/** The row's bold line: a plain title where one exists (#1839), else the humanized key. */
+internal fun activityTitle(actionType: String): String =
+    if (isHouseholdLook(actionType)) HOUSEHOLD_LOOK_TITLE else humanizeAction(actionType)
+
+/** Whether the row prints the stored key with its title. False for a kind with a plain title. */
+internal fun activityShowsCode(actionType: String): Boolean =
+    actionType.isNotBlank() && activityTitle(actionType) == humanizeAction(actionType)
 
 /** True when [iso] looks like a parseable ISO-8601 date-time (at least yyyy-MM-dd). */
 private fun isParseableTimestamp(iso: String): Boolean = runCatching {
