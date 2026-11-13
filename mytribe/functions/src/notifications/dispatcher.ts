@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { captureFunctionError } from '../lib/sentry';
 import { resolveActor, type ResolvedActor } from '../lib/resolveActor';
 import { buildNotificationDetail } from './buildNotificationDetail';
+import { visitTimesForStream } from './visitDates';
 import { getNotificationDef } from './catalog';
 import {
   loadHouseholdSendGate,
@@ -728,6 +729,10 @@ async function routeByDeliveryMode(
   const { targetType, targetId } = resolveTargetRef(args);
   const identity = dedupeIdentityOf(args, { targetType, targetId });
   const windowMs = dedupeWindowOf(args);
+  // #1863: this copy's own visit times. The household's copy reads what the
+  // household is shown (a window in Time Blocks mode), every other copy the
+  // clock. After the dedupe identity, which stays the dispatch's own.
+  args = { ...args, data: visitTimesForStream(args.data ?? {}, stream) };
   // R5: the entity detail the CARD renders, resolved server-side once, here.
   // Every value in it (household, pets, service, date, time, notes, amount) was
   // already being computed downstream for outbound templates and thrown away;

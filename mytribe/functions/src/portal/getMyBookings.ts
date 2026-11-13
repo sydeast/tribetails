@@ -17,13 +17,15 @@ import {
   EnvelopeDtoSchema,
   envelopeToDto,
   kinCareToDto,
-  loadBlocksById,
+  householdTimeContextFrom,
+  CLOCK_ONLY_TIME_CONTEXT,
   stringOrNull,
   visitSortMs,
   resolveBatchId,
   type BookingDto,
   type EnvelopeDto,
 } from '../lib/portalBookingDto';
+import { householdBlockFor } from '../lib/bookingTimeBlocks';
 import {
   LATE_VISIT_WINDOW_MS,
   bucketOf,
@@ -130,7 +132,8 @@ export async function getMyBookingsHandler(
   } catch {
     extras = NO_EXTRAS;
   }
-  const blocksById = await loadBlocksById(firestore);
+  // #1863: the same settings read decides what time each visit is shown at.
+  const time = settingsSnap ? householdTimeContextFrom(settingsSnap.data() ?? {}) : CLOCK_ONLY_TIME_CONTEXT;
   const nowMs = Date.now();
   // batchId -> kinCare dtos, preserving the parent envelope id per visit.
   const byBatch = new Map<string, BookingDto[]>();
@@ -140,7 +143,7 @@ export async function getMyBookingsHandler(
   // unjoined copy there would put CONFIRMED back on a visit that is under way.
   const all: BookingDto[] = visitRows.map(({ doc: d, data }) => {
     const batchId = resolveBatchId(d, data);
-    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, blocksById, serviceCatalog);
+    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, time, serviceCatalog);
     if (batchId) {
       const bucket = byBatch.get(batchId) ?? [];
       bucket.push(dto);
@@ -182,6 +185,11 @@ export async function getMyBookingsHandler(
     const { status, visitProgress } = progress;
     const startTimeMs = isoMillis(s['startTime']);
     if (status === 'confirmed' && (startTimeMs === null || startTimeMs < staleFloorMs)) continue;
+    const sessionBlock = householdBlockFor(
+      { startTimeMs, timeBlockId: s['timeBlockId'], serviceId: s['serviceId'] },
+      time.policy,
+      time.timeZone,
+    );
     const dto: BookingDto = {
       id: d.id,
       batchId: null,
@@ -197,9 +205,11 @@ export async function getMyBookingsHandler(
       // A session always has its time; only a kinCares visit can await one.
       startTimePending: false,
       requestedDate: null,
-      timeBlockLabel: null,
-      timeBlockStartTime: null,
-      timeBlockEndTime: null,
+      // #1863: an office-booked visit is shown by the same rule as any other:
+      // its nearest block in Time Blocks mode, its clock in Exact times mode.
+      timeBlockLabel: sessionBlock?.label ?? null,
+      timeBlockStartTime: sessionBlock?.startTime ?? null,
+      timeBlockEndTime: sessionBlock?.endTime ?? null,
       kinIds: Array.isArray(s['kinIds']) ? (s['kinIds'] as string[]) : [],
       // #1832: the session carries the names it was scheduled with, and the
       // live card says who the Auntie is with. This used to be always empty.
@@ -228,6 +238,9 @@ export async function getMyBookingsHandler(
       rescheduleRequestStatus: null,
       rescheduleRequestedStartTimeMs: null,
       rescheduleRequestedEndTimeMs: null,
+      rescheduleRequestedTimeBlockLabel: null,
+      rescheduleRequestedTimeBlockStartTime: null,
+      rescheduleRequestedTimeBlockEndTime: null,
       rescheduleRequestReason: null,
       rescheduleResponseNote: null,
       address: extras.address,

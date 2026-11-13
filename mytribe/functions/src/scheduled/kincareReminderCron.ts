@@ -87,6 +87,10 @@ export async function processUpcomingBooking(
         bookingId: docSnap.id,
         serviceName: data.serviceName ?? data.serviceType ?? data.title ?? null,
         startTimeMs: startMs,
+        // #1863: so the reminder names the window the household sees in Time
+        // Blocks mode (`enrichTemplateData` fills {{bookingTime}} from these).
+        timeBlockId: typeof data['timeBlockId'] === 'string' ? data['timeBlockId'] : null,
+        serviceId: typeof data['serviceId'] === 'string' ? data['serviceId'] : null,
       },
       fireAtMs: now,
     });

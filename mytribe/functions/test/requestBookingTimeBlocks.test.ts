@@ -68,7 +68,15 @@ const BLOCK_ONLY = {
   defaultBookingMode: 'TIME_BLOCK',
   timeBlocks: [MIDDAY, EVENING],
 };
-const BOTH_MODES = {
+/** #1863: one mode per business. Exact times keeps its blocks on file but serves none. */
+const EXACT_TIMES = {
+  allowTimeBlockBooking: false,
+  allowSpecificTimeBooking: true,
+  defaultBookingMode: 'SPECIFIC_TIME',
+  timeBlocks: [MIDDAY, EVENING],
+};
+/** The pre-#1863 stored shape: both switches on. The one mode is the one `defaultBookingMode` names. */
+const LEGACY_BOTH_ON_BLOCKS = {
   allowTimeBlockBooking: true,
   allowSpecificTimeBooking: true,
   defaultBookingMode: 'TIME_BLOCK',
@@ -264,7 +272,7 @@ describe('requestBookingHandler — time-block booking', () => {
   });
 
   it('still refuses the same KinCare at the same instant when booking by clock', async () => {
-    mocks.dbFn.mockReturnValue(ctxWith(BOTH_MODES).db);
+    mocks.dbFn.mockReturnValue(ctxWith(EXACT_TIMES).db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
     const clockVisit = visit({ timeBlockId: undefined, startTimeMs: atUtc(9, 30) });
     await expect(requestBookingHandler(multi([clockVisit, { ...clockVisit }]))).rejects.toMatchObject({
@@ -273,8 +281,23 @@ describe('requestBookingHandler — time-block booking', () => {
     });
   });
 
-  it('lets a clock-booked visit through when both modes are allowed, with a null block', async () => {
-    const ctx = ctxWith(BOTH_MODES);
+  it('#1863: a legacy both-on business whose bookings opened on blocks is Time Blocks, and refuses a clock time', async () => {
+    mocks.dbFn.mockReturnValue(ctxWith(LEGACY_BOTH_ON_BLOCKS).db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await expect(
+      requestBookingHandler(multi([visit({ timeBlockId: undefined, startTimeMs: atUtc(9, 30) })])),
+    ).rejects.toMatchObject({ code: 'invalid-argument', message: expect.stringContaining('time blocks') });
+  });
+  it('#1863: Exact times refuses a block a stale app still offers', async () => {
+    mocks.dbFn.mockReturnValue(ctxWith(EXACT_TIMES).db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await expect(requestBookingHandler(multi([visit()]))).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: expect.stringContaining('specific time'),
+    });
+  });
+  it('lets a clock-booked visit through in Exact times mode, with a null block', async () => {
+    const ctx = ctxWith(EXACT_TIMES);
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
     const res: any = await requestBookingHandler(multi([visit({ timeBlockId: undefined, startTimeMs: atUtc(9, 30) })]));

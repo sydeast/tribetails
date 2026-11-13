@@ -421,6 +421,57 @@ describe('saveBusinessSettings', () => {
     expect(settingsWrites()).toHaveLength(0);
   });
 
+  describe('#1863 the one Time Blocks | Exact times mode', () => {
+    const MIDDAY = { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true };
+    const TIME_BLOCKS = { defaultBookingMode: 'TIME_BLOCK', allowTimeBlockBooking: true, allowSpecificTimeBooking: false };
+    const EXACT_TIMES = { defaultBookingMode: 'SPECIFIC_TIME', allowTimeBlockBooking: false, allowSpecificTimeBooking: true };
+    const legacy = { businessName: 'Tribe Tails', allowTimeBlockBooking: true, allowSpecificTimeBooking: true, timeBlocks: [MIDDAY] };
+
+    it('saves Time Blocks and Exact times, each as all three fields', async () => {
+      setup(legacy);
+      await saveBusinessSettingsHandler(owner({ changes: TIME_BLOCKS }));
+      expect(settingsWrites()[0]!.data).toMatchObject(TIME_BLOCKS);
+      setup(legacy);
+      await saveBusinessSettingsHandler(owner({ changes: EXACT_TIMES }));
+      expect(settingsWrites()[0]!.data).toMatchObject(EXACT_TIMES);
+    });
+
+    it('refuses two modes at once, and a mode name that disagrees with its switches', async () => {
+      for (const changes of [
+        { ...TIME_BLOCKS, allowSpecificTimeBooking: true },
+        { ...EXACT_TIMES, defaultBookingMode: 'TIME_BLOCK' },
+        { allowTimeBlockBooking: false, allowSpecificTimeBooking: false, defaultBookingMode: 'SPECIFIC_TIME' },
+        // An editor that sends one switch alone onto the both-on legacy shape.
+        { allowSpecificTimeBooking: true },
+      ]) {
+        setup(legacy);
+        const refused = await refusalOf(changes);
+        expect(refused.message).toBe('Pick Time Blocks or Exact times.');
+        expect(refused.details).toMatchObject({ field: 'defaultBookingMode' });
+        expect(settingsWrites()).toHaveLength(0);
+      }
+    });
+
+    it('refuses Time Blocks with no block turned on, whether this save picks the mode or turns the last block off', async () => {
+      setup({ ...legacy, timeBlocks: [{ ...MIDDAY, active: false }] });
+      expect((await refusalOf(TIME_BLOCKS)).message).toBe(
+        'Time Blocks needs at least one block turned on. Turn one on, or pick Exact times.',
+      );
+      setup({ ...legacy, ...TIME_BLOCKS });
+      expect((await refusalOf({ timeBlocks: [{ ...MIDDAY, active: false }] })).details).toMatchObject({ field: 'timeBlocks' });
+      expect(settingsWrites()).toHaveLength(0);
+    });
+
+    it('a legacy both-on document never blocks a save that does not touch the mode', async () => {
+      setup(legacy);
+      await saveBusinessSettingsHandler(owner({ changes: { enableConflictDetection: false } }));
+      expect(settingsWrites()).toHaveLength(1);
+      setup({ ...legacy, ...EXACT_TIMES });
+      await saveBusinessSettingsHandler(owner({ changes: { timeBlocks: [] } }));
+      expect(settingsWrites()).toHaveLength(1);
+    });
+  });
+
   it('stamps the uid when the token has no email, the same as when it has one', async () => {
     const res = await saveBusinessSettingsHandler({
       data: { changes: { enableConflictDetection: false } },

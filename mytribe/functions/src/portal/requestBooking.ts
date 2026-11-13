@@ -188,10 +188,11 @@ const BillingArgs = z
  *   emailConfirmation  send the household a confirmation email for this
  *                      booking. Off means the operator is telling them another
  *                      way.
- *   timeVisibility     show the household the EXACT start time of each visit.
- *                      Off means they see the time window instead, which is the
- *                      honest thing to show when an Auntie's arrival depends on
- *                      the visit before it.
+ *   timeVisibility     RETIRED (#1863). Accepted so an older app's payload is
+ *                      not refused, and never stored: what a household sees is
+ *                      the business's one Time Blocks | Exact times mode, the
+ *                      operator ruling of 2026-11-12. It was stored and never
+ *                      read before that.
  *
  * Optional as a whole: an absent object means both false, so a legacy payload
  * and an explicit `{ emailConfirmation: false, timeVisibility: false }` persist
@@ -202,7 +203,7 @@ const BillingArgs = z
 const CommunicationArgs = z
   .object({
     emailConfirmation: z.boolean(),
-    timeVisibility: z.boolean(),
+    timeVisibility: z.boolean().optional(),
   })
   .optional();
 
@@ -306,13 +307,11 @@ export type BookingBilling = { mode: 'new-invoice' } | null;
 /** The communication preference as persisted. Always concrete, never null. */
 export interface BookingCommunication {
   emailConfirmation: boolean;
-  timeVisibility: boolean;
 }
 
 /** Both preferences default to the mock's OFF, so an absent object is not an absent decision. */
 export const COMMUNICATION_DEFAULT: BookingCommunication = {
   emailConfirmation: false,
-  timeVisibility: false,
 };
 
 /**
@@ -1257,7 +1256,7 @@ export async function requestBookingHandler(
       visits: normalized,
       assignee: await resolveDefaultAssignee(),
       billing: args.billing ?? null,
-      ...(args.communication ? { communication: args.communication } : {}),
+      ...(args.communication ? { communication: { emailConfirmation: args.communication.emailConfirmation } } : {}),
     });
 
     if (written.deduped) {

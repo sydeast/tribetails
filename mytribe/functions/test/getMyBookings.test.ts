@@ -427,32 +427,86 @@ describe('getMyBookingsHandler: what a completed visit points at (#1303)', () =>
   });
 });
 
-describe('getMyBookingsHandler: block-booked visits (#1301)', () => {
-  it('carries the window label and its current hours, null for a clock visit and for a removed window', async () => {
-    const at = Timestamp.fromMillis(Date.now() + 2 * 86_400_000);
+describe('getMyBookingsHandler: what time each visit is shown at (#1301, #1863, #2034)', () => {
+  /** 2030-11-19 is CST (UTC-6) in America/Chicago, the business zone below. */
+  const at = (hh: number, mm = 0) => Date.UTC(2030, 10, 19, hh + 6, mm);
+  const BLOCKS = [
+    { id: 'morning', label: 'Morning', startTime: '08:00', endTime: '11:00', active: true },
+    { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true },
+    { id: 'evening', label: 'Evening', startTime: '16:00', endTime: '19:00', active: true },
+  ];
+  const TIME_BLOCKS = { allowTimeBlockBooking: true, allowSpecificTimeBooking: false, defaultBookingMode: 'TIME_BLOCK' };
+  const EXACT_TIMES = { allowTimeBlockBooking: false, allowSpecificTimeBooking: true, defaultBookingMode: 'SPECIFIC_TIME' };
+  async function read(mode: Record<string, unknown>) {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'business_settings/business_settings': {
-          allowTimeBlockBooking: true,
-          timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }],
-        },
+        'business_settings/business_settings': { ...mode, timeZone: 'America/Chicago', timeBlocks: BLOCKS },
         'families/3/bookings/env-1': { envelopeStatus: 'confirmed', pattern: 'individual' },
       },
       collectionGroupDocs: {
         kinCares: [
-          visit('env-1', 'blk', { status: 'confirmed', startTime: at, timeBlockId: 'midday', timeBlockLabel: 'Midday' }),
-          visit('env-1', 'gone', { status: 'confirmed', startTime: at, timeBlockId: 'brunch', timeBlockLabel: 'Brunch' }),
-          visit('env-1', 'clock', { status: 'confirmed', startTime: at, timeBlockId: null, timeBlockLabel: null }),
+          visit('env-1', 'blk', { status: 'confirmed', startTime: Timestamp.fromMillis(at(11)), timeBlockId: 'midday', timeBlockLabel: 'Midday' }),
+          // #2034: the office moved a Midday booking to 12:30, then another to 16:30.
+          visit('env-1', 'moved', { status: 'confirmed', startTime: Timestamp.fromMillis(at(12, 30)), timeBlockId: 'midday', timeBlockLabel: 'Midday' }),
+          visit('env-1', 'movedOut', { status: 'confirmed', startTime: Timestamp.fromMillis(at(16, 30)), timeBlockId: 'midday', timeBlockLabel: 'Midday' }),
+          // An office clock booking in no block, exactly between two (the tie).
+          visit('env-1', 'clock', { status: 'confirmed', startTime: Timestamp.fromMillis(at(15, 30)), timeBlockId: null, timeBlockLabel: null }),
+          // A block that has since been removed.
+          visit('env-1', 'gone', { status: 'confirmed', startTime: Timestamp.fromMillis(at(9)), timeBlockId: 'brunch', timeBlockLabel: 'Brunch' }),
+          // A household asked to move a visit to 16:30.
+          visit('env-1', 'asked', {
+            status: 'confirmed',
+            startTime: Timestamp.fromMillis(at(11)),
+            timeBlockId: 'midday',
+            rescheduleRequestStatus: 'pending',
+            rescheduleRequestedStartTime: Timestamp.fromMillis(at(16)),
+            rescheduleRequestedTimeBlockId: 'evening',
+          }),
+        ],
+      },
+      queryDocs: {
+        kin_care_sessions: [
+          { id: 'sess-office', data: { kinfolkId: '3', status: 'SCHEDULED', startTime: new Date(at(9, 15)).toISOString() } },
         ],
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
     const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
-    const by = (id: string) => res.upcoming.find((b) => b.id === id)!;
+    return (id: string) => res.upcoming.find((b) => b.id === id)!;
+  }
+  it('Time Blocks: every visit is shown as the nearest block, by its CURRENT start', async () => {
+    const by = await read(TIME_BLOCKS);
     expect(by('blk')).toMatchObject({ timeBlockLabel: 'Midday', timeBlockStartTime: '11:00', timeBlockEndTime: '15:00' });
-    expect(by('gone')).toMatchObject({ timeBlockLabel: 'Brunch', timeBlockStartTime: null, timeBlockEndTime: null });
-    expect(by('clock')).toMatchObject({ timeBlockLabel: null, timeBlockStartTime: null, timeBlockEndTime: null });
+    expect(by('moved')).toMatchObject({ timeBlockLabel: 'Midday' });
+    expect(by('movedOut')).toMatchObject({ timeBlockLabel: 'Evening', timeBlockStartTime: '16:00', timeBlockEndTime: '19:00' });
+    // The tie: 30 minutes from both edges -> the earlier block.
+    expect(by('clock')).toMatchObject({ timeBlockLabel: 'Midday' });
+    expect(by('gone')).toMatchObject({ timeBlockLabel: 'Morning', timeBlockStartTime: '08:00', timeBlockEndTime: '11:00' });
+    expect(by('sess-office')).toMatchObject({ timeBlockLabel: 'Morning' });
+    expect(by('asked')).toMatchObject({
+      rescheduleRequestedTimeBlockLabel: 'Evening',
+      rescheduleRequestedTimeBlockStartTime: '16:00',
+      rescheduleRequestedTimeBlockEndTime: '19:00',
+    });
+    // The clock is never dropped: the date and order still come from it.
+    expect(by('moved').startTimeMs).toBe(at(12, 30));
+  });
+  it('Exact times: no visit carries a block, so every client prints the clock', async () => {
+    const by = await read(EXACT_TIMES);
+    for (const id of ['blk', 'moved', 'movedOut', 'clock', 'gone', 'sess-office', 'asked']) {
+      expect(by(id)).toMatchObject({ timeBlockLabel: null, timeBlockStartTime: null, timeBlockEndTime: null });
+    }
+    expect(by('asked').rescheduleRequestedTimeBlockLabel).toBeNull();
+    expect(by('moved').startTimeMs).toBe(at(12, 30));
+  });
+  it('switching the mode re-reads the same stored visits: no data is rewritten', async () => {
+    const blocks = await read(TIME_BLOCKS);
+    const exact = await read(EXACT_TIMES);
+    expect(blocks('moved').timeBlockLabel).toBe('Midday');
+    expect(exact('moved').timeBlockLabel).toBeNull();
+    expect(blocks('moved').startTimeMs).toBe(exact('moved').startTimeMs);
   });
 });
+

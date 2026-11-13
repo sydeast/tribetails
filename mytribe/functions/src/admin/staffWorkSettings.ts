@@ -26,7 +26,10 @@ import { BUSINESS_SETTINGS_SOURCE_DOC } from '../lib/businessPublicCard';
  *                                   start, end, active
  *   allowTimeBlockBooking           the Time Blocks / exact time mode, as
  *   allowSpecificTimeBooking        `resolveBookingPolicy` serves it to the
- *   defaultBookingMode              booking path
+ *   defaultBookingMode              booking path (#1863: exactly one mode
+ *                                   is on; it decides what households see)
+ *   startTimeServiceIds             the KinCares booked and shown by the clock
+ *                                   in Time Blocks mode (#1092, names only)
  *   requireArrivalDepartureVerification   the arrival rule
  *   kinTaleRequired                 the "KinTale required" switch
  *
@@ -70,6 +73,8 @@ export interface StaffWorkSettings {
   allowTimeBlockBooking: boolean;
   allowSpecificTimeBooking: boolean;
   defaultBookingMode: BookingMode;
+  /** #1863: the KinCare names (catalog keys) a household sees by the clock even in Time Blocks mode. */
+  startTimeServiceIds: string[];
   requireArrivalDepartureVerification: boolean;
   kinTaleRequired: boolean;
 }
@@ -118,6 +123,7 @@ export function buildStaffWorkSettings(settings: Record<string, unknown> | undef
     allowTimeBlockBooking: policy.allowTimeBlockBooking,
     allowSpecificTimeBooking: policy.allowSpecificTimeBooking,
     defaultBookingMode: policy.defaultBookingMode,
+    startTimeServiceIds: policy.startTimeServiceIds,
     // Only an explicit true is on, as the server enforces both
     // (`lib/arrivalVerification.ts`, `kinTaleRequiredFrom` in
     // `lib/kinTaleRequirement.ts`). Spelled here rather than imported so this

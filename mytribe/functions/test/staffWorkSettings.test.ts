@@ -50,6 +50,7 @@ const EXPECTED_KEYS = [
   'kinTaleRequired',
   'requireArrivalDepartureVerification',
   'services',
+  'startTimeServiceIds',
   'timeBlocks',
   'timeZone',
 ];
@@ -103,6 +104,18 @@ describe('#2164 buildStaffWorkSettings', () => {
       expect(out.allowSpecificTimeBooking).toBe(true);
       expect(out.defaultBookingMode).toBe('SPECIFIC_TIME');
     }
+  });
+
+  it('#1863: carries the start-time KinCares an Auntie needs to say what a household sees', () => {
+    expect(buildStaffWorkSettings(SETTINGS).startTimeServiceIds).toEqual(['Overnight']);
+  });
+
+  it('#1863: a legacy both-on document reaches an Auntie as ONE mode, the one defaultBookingMode names', () => {
+    const blocks = [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }];
+    const asBlocks = buildStaffWorkSettings({ timeBlocks: blocks, allowTimeBlockBooking: true, allowSpecificTimeBooking: true, defaultBookingMode: 'TIME_BLOCK' });
+    expect([asBlocks.allowTimeBlockBooking, asBlocks.allowSpecificTimeBooking, asBlocks.defaultBookingMode]).toEqual([true, false, 'TIME_BLOCK']);
+    const asExact = buildStaffWorkSettings({ timeBlocks: blocks, allowTimeBlockBooking: true, allowSpecificTimeBooking: true, defaultBookingMode: 'SPECIFIC_TIME' });
+    expect([asExact.allowTimeBlockBooking, asExact.allowSpecificTimeBooking, asExact.defaultBookingMode]).toEqual([false, true, 'SPECIFIC_TIME']);
   });
 
   it('reads a stray non-true switch as off, and an unusable zone as the default', () => {

@@ -134,6 +134,9 @@ export async function saveBusinessSettingsHandler(
     todayIso,
     cloudName: process.env.CLOUDINARY_CLOUD_NAME ?? '',
   });
+  // #1863: the one Time Blocks | Exact times mode, checked against what is
+  // stored, after each field has passed on its own.
+  if (refusals.length === 0) refusals.push(...checks.bookingModeRefusals(changes, stored));
   if (!refusals.some((r) => r.field === 'businessName')) {
     const nameRefusal = mergedNameRefusal(changes, stored, checks.BUSINESS_NAME_REQUIRED);
     if (nameRefusal) refusals.push(nameRefusal);
