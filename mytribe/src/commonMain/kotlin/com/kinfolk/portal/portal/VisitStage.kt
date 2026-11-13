@@ -2,23 +2,24 @@ package com.kinfolk.portal.portal
 
 /**
  * #1830 / #1832 / #1823: a visit's place in its life as the household reads it.
+ * Every pill, the detail screen's Status row and the live card read the stage
+ * through [stage], never [Booking.status] alone. The web portal's
+ * `visitStageOf` is the same rule.
  *
- * One more value than [BookingStatus], because Departed has no status of its
- * own on the wire: the server sends it as `status: active` with
- * `visitProgress: ended` (`functions/src/lib/portalVisitProgress.ts`), so an
- * installed app that predates this still decodes it. Every pill, the detail
- * screen's Status row and the live card read the stage through [stage], never
- * [Booking.status] alone, so a departed visit cannot read IN PROGRESS on one
- * screen and DEPARTED on another. The web portal's `visitStageOf` is the same
- * rule.
+ * #2123 (operator ruling 2026-11-12): a visit is Completed at departure,
+ * whether or not its KinTale has been sent. The server sends a departed visit
+ * as `status: completed` (`functions/src/lib/portalVisitProgress.ts`). An
+ * answer from before that change sent `status: active` with
+ * `visitProgress: ended`, and that pair reads [VisitStage.Completed] here, so
+ * no screen shows a Departed stage.
  */
-enum class VisitStage { Requested, Confirmed, EnRoute, Active, Departed, Completed, Cancelled }
+enum class VisitStage { Requested, Confirmed, EnRoute, Active, Completed, Cancelled }
 
 fun Booking.stage(): VisitStage = when (status) {
     BookingStatus.Requested -> VisitStage.Requested
     BookingStatus.Confirmed -> VisitStage.Confirmed
     BookingStatus.EnRoute -> VisitStage.EnRoute
-    BookingStatus.Active -> if (visitProgress == VisitProgress.Ended) VisitStage.Departed else VisitStage.Active
+    BookingStatus.Active -> if (visitProgress == VisitProgress.Ended) VisitStage.Completed else VisitStage.Active
     BookingStatus.Completed -> VisitStage.Completed
     BookingStatus.Cancelled -> VisitStage.Cancelled
 }
@@ -26,21 +27,20 @@ fun Booking.stage(): VisitStage = when (status) {
 /**
  * The one wording of a visit's stage, for the list pill, the Home pill and the
  * detail screen alike. The web portal's `bookingStatusChip` says the same
- * seven words.
+ * six words.
  */
 fun VisitStage.label(): String = when (this) {
     VisitStage.Requested -> "REQUESTED"
     VisitStage.Confirmed -> "CONFIRMED"
     VisitStage.EnRoute -> "EN ROUTE"
     VisitStage.Active -> "IN PROGRESS"
-    VisitStage.Departed -> "DEPARTED"
     VisitStage.Completed -> "COMPLETED"
     VisitStage.Cancelled -> "CANCELLED"
 }
 
-/** On the way, arrived or departed: the Auntie has started and the visit is not finished. */
+/** On the way or arrived: the Auntie has started and the visit is not finished. A departed visit is finished (#2123). */
 fun Booking.isUnderWay(): Boolean = when (stage()) {
-    VisitStage.EnRoute, VisitStage.Active, VisitStage.Departed -> true
+    VisitStage.EnRoute, VisitStage.Active -> true
     else -> false
 }
 

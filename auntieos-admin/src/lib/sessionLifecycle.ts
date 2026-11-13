@@ -1,4 +1,4 @@
-import { sessionState, type SessionState } from './sessionFormat';
+import { type SessionState } from './sessionFormat';
 import { type VisitLifecycleAction } from '../api/sessionsWrite';
 
 /**
@@ -90,12 +90,10 @@ const DEPARTED: LifecycleActionDef = {
   label: 'Clock out',
   cardLabel: 'Departed',
   tone: 'primary',
-  // #1793 made web complete a DEPARTED visit when its KinTale is sent
-  // (`api/kinTalesWrite.ts#completeVisitAfterKinTale`), so "not Completed until
-  // you mark it so" stopped being true. A tale sent BEFORE departure is not
-  // re-sent, so that visit still needs the card's Complete button.
-  confirmBody: () =>
-    'The departure time is stamped now. Sending the KinTale marks the visit Completed. If it was already sent, mark it Completed from the card.',
+  // #2123 (operator ruling 2026-11-12): departure is completion. The server
+  // completes the visit on this write (`functions/src/triggers/
+  // onKinCareSessionDeparted.ts`); a KinTale never decides it.
+  confirmBody: () => 'The departure time is stamped now and the visit is marked Completed.',
   confirmLabel: 'Yes, clock out',
 };
 
@@ -152,13 +150,14 @@ export function lifecycleActionsFor(state: SessionState): readonly LifecycleActi
  * `lifecycleActionsFor` in every state but one.
  *
  * DEPARTED shows no clock action on the board. The mock's departed card carries
- * "Complete KinTale" alone, and that is the right reading of what the board is
- * for: a visit that is already clocked out is finished from the operator's
- * point of view, and the run sheet's next move on it is the write-up. Undoing
+ * the write-up alone, and that is the right reading of what the board is for: a
+ * visit that is already clocked out is finished (since #2123 the server marks
+ * it Completed on that write), and the run sheet's next move on it is the
+ * KinTale. Undoing
  * an arrival at that point is a correction, not a step, and corrections belong
  * on the detail sheet, which still offers it (a card is one click from there).
  *
- * `Complete`, `Complete KinTale` and `View KinTale` are NOT in this list and
+ * `Complete`, `Send the KinTale` and `View KinTale` are NOT in this list and
  * never will be: they are not in-visit clock actions at all. Complete goes
  * through `transitionBookingStatus` (terminal and billable, the server owns
  * it) and the two KinTale buttons are navigation. `Sessions.tsx` owns those
@@ -167,40 +166,6 @@ export function lifecycleActionsFor(state: SessionState): readonly LifecycleActi
 export function cardLifecycleActionsFor(state: SessionState): readonly LifecycleActionDef[] {
   if (state === 'departed') return [];
   return lifecycleActionsFor(state);
-}
-
-/** The two session fields {@link completesAfterKinTale} reads, as they come off the document. */
-export interface KinTaleCompletionFields {
-  status?: string | undefined;
-  autoCompleteEligible?: boolean | undefined;
-}
-
-/**
- * #1793: a DEPARTED visit whose KinTale has been sent is ready to be marked
- * Completed, and nothing else is.
- *
- * TRANSCRIBED FROM ANDROID, where both sites read the same two facts:
- *
- *   `HomeViewModel.kt` load sweep    status == DEPARTED && autoCompleteEligible
- *   `HomeScreen.kt` Complete button  status == DEPARTED && autoCompleteEligible
- *
- * `autoCompleteEligible` is set by every client's send batch
- * (`api/kinTalesWrite.ts#sendKinTale`, `KinCareRepository.kt`, the desktop
- * console's `markKinTaleReportSent`) in the same commit as `sentReportCount`,
- * so it is the one flag all three agree on. Reading `sentReportCount` as well
- * would let web complete a visit Android leaves open.
- *
- * DEPARTED ONLY, although the server accepts COMPLETE from all four
- * pre-terminal states. A tale sent while the Auntie is still in the house sets
- * the flag too, and completing then would close a visit she has not clocked
- * out of. It becomes ready when she departs.
- *
- * This decides what the web OFFERS and when it completes after a send. The
- * completion itself is still `transitionBookingStatus`, which re-reads the
- * document and runs the operator's arrival rule.
- */
-export function completesAfterKinTale(session: KinTaleCompletionFields): boolean {
-  return sessionState(session.status ?? '') === 'departed' && session.autoCompleteEligible === true;
 }
 
 /**

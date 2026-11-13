@@ -284,6 +284,12 @@ describe('field checks: the 2026-11-05 QA walk', () => {
     expect(one('defaultBookingMode', 'TIME_BLOCK')).toBeNull();
     expect(one('enableAutoReminder24h', 'true')).toBe('The 24-hour reminder has to be on or off.');
   });
+  it('#2123: KinTale required is on or off, and nothing else', () => {
+    expect(one('kinTaleRequired', true)).toBeNull();
+    expect(one('kinTaleRequired', false)).toBeNull();
+    expect(one('kinTaleRequired', 'true')).toBe('KinTale required has to be on or off.');
+    expect(one('kinTaleRequired', null)).toBe('KinTale required has to be on or off.');
+  });
   it('time blocks: names, times, order and overlaps', () => {
     const block = (over: Record<string, unknown>) => ({
       id: 'm',
@@ -403,6 +409,16 @@ describe('saveBusinessSettings', () => {
         payload: { fields: ['travelBufferMinutes', 'businessEmail'] },
       }),
     );
+  });
+
+  it('#2123: saves KinTale required off, and refuses a word in its place', async () => {
+    await saveBusinessSettingsHandler(owner({ changes: { kinTaleRequired: false } }));
+    expect(settingsWrites()[0]!.data).toMatchObject({ kinTaleRequired: false });
+
+    setup();
+    const refused = await refusalOf({ kinTaleRequired: 'no' });
+    expect(refused.message).toBe('KinTale required has to be on or off.');
+    expect(settingsWrites()).toHaveLength(0);
   });
 
   it('stamps the uid when the token has no email, the same as when it has one', async () => {

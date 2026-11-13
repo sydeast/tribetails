@@ -249,6 +249,8 @@ export async function transitionBookingStatusHandler(
         kinIds?: unknown;
         kinfolkNotes?: unknown;
         sourceBookingId?: unknown;
+        // #2123: whether a KinTale has gone out, for "KinTale required".
+        sentReportCount?: unknown;
       }
     | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });
@@ -443,8 +445,23 @@ export async function transitionBookingStatusHandler(
     updatedAt: FieldValue.serverTimestamp(),
     updatedBy: uid,
   };
+  // #2123: completing never waits on a KinTale. With "KinTale required" on
+  // (absent reads off), a visit completed with nothing sent is left owing one,
+  // which is what puts it on the Auntie's "KinTales to send" list until a send
+  // writes `kinTaleDue: false`. Departure normally gets here first, through
+  // `triggers/onKinCareSessionDeparted.ts`; this is the hand-marked path.
+  //
+  // Only a visit somebody departed from is owed one. The ruling gives the task
+  // to "the auntie" who did the visit; a visit the office marks Completed from
+  // Overdue, with nobody clocked out, has no such Auntie, and owing a KinTale
+  // for every one of those would bury the real tasks.
+  let kinTaleDue = false;
   if (args.action === 'COMPLETE') {
     patch.completedAt = args.completedAt ?? new Date().toISOString();
+    const departed = typeof prev?.departedAt === 'string' && prev.departedAt.trim() !== '';
+    const { isKinTaleRequired, kinTaleDueAtCompletion } = await import('../lib/kinTaleRequirement.js');
+    kinTaleDue = departed && kinTaleDueAtCompletion(prev ?? {}, await isKinTaleRequired(db()));
+    if (kinTaleDue) patch.kinTaleDue = true;
   }
   const reason = args.reason?.trim() ?? '';
   const notesAppended = reason !== '' && (args.action === 'CANCEL' || args.action === 'REJECT');
@@ -481,6 +498,31 @@ export async function transitionBookingStatusHandler(
     }
     await batch.commit();
   }
+  // #2123: the switch above was read before this write, outside any
+  // transaction. If the owner switched "KinTale required" off in between, the
+  // settings trigger's clear (`triggers/onBusinessSettingsWrite.ts`) may have
+  // run before this stamp landed and missed it. So read it again now the stamp
+  // is committed: off means clear it here; still on means any later switch-off
+  // clears after this commit and finds it. A failed read leaves the stamp to
+  // the next clear rather than guess.
+  if (kinTaleDue) {
+    const { kinTaleRequiredFrom } = await import('../lib/kinTaleRequirement.js');
+    try {
+      const settings = await db().doc('business_settings/business_settings').get();
+      if (!kinTaleRequiredFrom(settings.data() as Record<string, unknown> | undefined)) {
+        await ref.set({ kinTaleDue: false }, { merge: true });
+        kinTaleDue = false;
+      }
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'transitionBookingStatus',
+        event: 'kinTale.recheck.failed',
+        uid,
+        errorMessage: (err as Error)?.message,
+      });
+    }
+  }
 
   await writeAuditEntry({
     event: AUDIT_EVENTS.BOOKING_STATUS_TRANSITION,
@@ -513,6 +555,8 @@ export async function transitionBookingStatusHandler(
       // "which completions were actually verified" is answerable after the
       // fact. `not_checked` means the operator has the rule switched off.
       arrivalLocationVerdict,
+      // #2123: whether this completion left a KinTale owed.
+      ...(args.action === 'COMPLETE' ? { kinTaleDue } : {}),
     },
   }).catch((err) => {
     logEvent({

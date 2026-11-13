@@ -501,8 +501,6 @@ private fun StatusChip(stage: VisitStage) {
         VisitStage.Confirmed -> KinfolkBrand.KinfolkOrange
         VisitStage.EnRoute -> KinfolkBrand.PackPink
         VisitStage.Active -> KinfolkBrand.SnuggleCoral
-        // Over for the Auntie, so it takes the finished colour.
-        VisitStage.Departed -> KinfolkBrand.FamilyPurple
         VisitStage.Completed -> KinfolkBrand.FamilyPurple
         VisitStage.Cancelled -> KinfolkBrand.NavyMuted
     }

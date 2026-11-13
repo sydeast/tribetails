@@ -2350,15 +2350,16 @@ the handler.
   linked to (`lib/portalVisitProgress.ts`), because On my way, Arrived and
   Departed are written to `kin_care_sessions.status` only. ON_MY_WAY reads
   `status: 'enRoute'`, ARRIVED `status: 'active'` + `visitProgress: 'active'`,
-  DEPARTED `status: 'active'` + `visitProgress: 'ended'` (no new status value,
-  so older clients still decode it), COMPLETED `status: 'completed'`. A visit
-  already `completed` or `cancelled` is left alone. The envelope copy of each
-  visit carries the same answer.
-- Lists: a visit that is under way (on the way, arrived or departed) is on
+  DEPARTED and COMPLETED `status: 'completed'` + `visitProgress: 'ended'`
+  (#2123: a visit is Completed for the household at departure, whether or not
+  its KinTale has been sent). A visit already `completed` or `cancelled` is
+  left alone. The envelope copy of each visit carries the same answer. Clients
+  read an `active` + `ended` pair from an older answer as Completed.
+- Lists: a visit that is under way (on the way or arrived) is on
   `upcoming` whatever the clock says, ahead of the rest; a `confirmed` visit
   stays on `upcoming` for 24 hours past its start; `recent` is the latest ten
   completed or cancelled. `liveVisit` is the visit the Auntie is at, else the
-  one she is on the way to, never a departed one, and it is also on
+  one she is on the way to, never a departed (completed) one, and it is also on
   `upcoming`. A visit on neither list is still in `envelopes`, which is what
   the clients' by-id lookup falls back to.
 - kinfolk portal only; not called by the React admin or android (android

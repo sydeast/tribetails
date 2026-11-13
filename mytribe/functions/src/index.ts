@@ -698,6 +698,10 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // own derived counts; this one writes to a third party's calendar and its
   // failure mode is an operator's day being wrong. Issue #397.
   onKinCareSessionCalendarSync: () => require('./triggers/onKinCareSessionCalendarSync'),
+  // #2123: a THIRD trigger on `kin_care_sessions`. A visit is Completed the
+  // moment it is Departed, whichever client (or offline queue) wrote the
+  // departure; sending a KinTale never decides it.
+  onKinCareSessionDeparted: () => require('./triggers/onKinCareSessionDeparted'),
   onBookingEnvelopeCreate: () => require('./triggers/onBookingEnvelopeCreate'),
   // #1647: stamps a request's `kincare.requested` rows once the request is
   // booked or declined, so no client offers Approve/Deny on an answered request.

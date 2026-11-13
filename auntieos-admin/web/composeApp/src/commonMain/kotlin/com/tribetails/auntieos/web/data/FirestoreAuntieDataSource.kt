@@ -61,7 +61,6 @@ class FirestoreAuntieDataSource(
     override fun reportsForSessionStream(sessionId: String): Flow<FirestoreResult<List<KinCareReport>>> = client.reportsForSessionStream(sessionId)
     override suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport): WriteResult<String> = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit> = client.sendReport(report, session)
-    override suspend fun completeVisitAfterKinTale(sessionId: String) = client.completeVisitAfterKinTale(sessionId)
     override suspend fun deleteReportDraft(reportId: String): WriteResult<Unit> = client.deleteKinTaleReportDraft(reportId)
     override fun trainingDocsStream(): Flow<FirestoreResult<List<TrainingDocument>>> = client.trainingDocsStream()
     override fun bookingNotesStream(kinfolkId: String, bookingId: String): Flow<FirestoreResult<List<BookingNote>>> =

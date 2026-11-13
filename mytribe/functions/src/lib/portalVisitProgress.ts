@@ -19,32 +19,38 @@
  * No second writer, no trigger, no backfill, and a tap from any admin client
  * (online or replayed from an offline queue) shows on the next read.
  *
- * THE WIRE DOES NOT CHANGE. Departed has no value of its own in
- * `BookingDto.status`; it is `status: 'active'` with `visitProgress: 'ended'`,
- * both already in the contract, so an installed client that predates this
- * decodes it without a new case. {@link visitStageOf} is the one place that
- * pair is read back into a stage.
+ * #2123 (operator ruling 2026-11-12): A VISIT IS COMPLETED AT DEPARTURE.
+ * Kinfolk see Completed whether or not the KinTale has been sent, so a
+ * DEPARTED session reads `status: 'completed'` here, the same answer a
+ * COMPLETED one gives. #2110 sent `status: 'active'` with
+ * `visitProgress: 'ended'` (a "Departed, waiting for the KinTale" stage); that
+ * stage is gone. The server also completes the session itself at departure,
+ * and this read does not wait for that write to land (or for a refusal under
+ * the operator's arrival rule), so the household never sees the gap.
+ *
+ * {@link visitStageOf} still reads an `active` + `ended` pair, which an answer
+ * cached before this change can carry, as Completed.
  */
 import type { BookingDto } from './portalBookingDto';
 
-/** A visit's place in its life as a household reads it. `departed` is the one value `BookingDto.status` has no word for. */
-export type VisitStage = BookingDto['status'] | 'departed';
+/** A visit's place in its life as a household reads it. */
+export type VisitStage = BookingDto['status'];
 
 type StatusPair = Pick<BookingDto, 'status' | 'visitProgress'>;
 
-/** The stage a status pair stands for. See the header for why Departed is a pair. */
+/** The stage a status pair stands for. An `active` visit whose progress has ended is a departed visit, and that is Completed (#2123). */
 export function visitStageOf(b: StatusPair): VisitStage {
-  if (b.status === 'active' && b.visitProgress === 'ended') return 'departed';
+  if (b.status === 'active' && b.visitProgress === 'ended') return 'completed';
   return b.status;
 }
 
-/** On the way, arrived or departed: the Auntie has started and the visit is not finished. */
+/** On the way or arrived: the Auntie has started and the visit is not finished. A departed visit is finished (#2123). */
 export function isUnderWay(b: StatusPair): boolean {
   const stage = visitStageOf(b);
-  return stage === 'enRoute' || stage === 'active' || stage === 'departed';
+  return stage === 'enRoute' || stage === 'active';
 }
 
-/** The Auntie is on the way or at the door right now. A departed visit is under way but no longer live. */
+/** The Auntie is on the way or at the door right now. */
 export function isLive(b: StatusPair): boolean {
   const stage = visitStageOf(b);
   return stage === 'enRoute' || stage === 'active';
@@ -67,8 +73,8 @@ export function sessionProgressOf(rawStatus: unknown): StatusPair | null {
       return { status: 'enRoute', visitProgress: 'enRoute' };
     case 'ARRIVED':
       return { status: 'active', visitProgress: 'active' };
+    // #2123: departed is completed for the household, KinTale or not.
     case 'DEPARTED':
-      return { status: 'active', visitProgress: 'ended' };
     case 'COMPLETED':
       return { status: 'completed', visitProgress: 'ended' };
     default:
@@ -136,15 +142,16 @@ export function isUpcoming(b: BookingDto, nowMs: number): boolean {
  *   envelope.
  */
 export function bucketOf(b: BookingDto, nowMs: number): 'upcoming' | 'recent' | null {
-  if (b.status === 'completed' || b.status === 'cancelled') return 'recent';
+  const stage = visitStageOf(b);
+  if (stage === 'completed' || stage === 'cancelled') return 'recent';
   if (isUnderWay(b)) return 'upcoming';
   return isUpcoming(b, nowMs) ? 'upcoming' : null;
 }
 
 /**
  * The visit the live card is about: the one the Auntie is at, else the one
- * she is on the way to. Never a departed visit, so the card clears when she
- * leaves.
+ * she is on the way to. Never a departed visit (that is completed, #2123),
+ * so the card clears when she leaves.
  */
 export function pickLiveVisit(all: readonly BookingDto[]): BookingDto | null {
   return (
