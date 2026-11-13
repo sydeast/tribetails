@@ -3357,6 +3357,42 @@ describe('Link visits (#1245)', () => {
     expect(screen.queryByRole('region', { name: 'Link visits' })).toBeNull();
     await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
   });
+  it('#2091: the saved notice says the linked visit\u2019s price was not added', async () => {
+    const user = userEvent.setup();
+    useCollection.mockReturnValue({ status: 'ready', data: visits });
+    linkInvoiceSessions.mockResolvedValue({
+      ok: true, invoiceId: 'inv1', sessionIds: ['s1', 's2'], added: ['s2'], removed: [], linkedWithoutLine: ['s2'], status: 'open', editScope: 'all',
+    });
+    render(<InvoiceDetail invoice={entry({ sessionIds: ['s1'] })} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Link visits' }));
+    const editor = screen.getByRole('region', { name: 'Link visits' });
+    await user.click(within(editor).getByRole('checkbox', { name: /Walk two/ }));
+    expect(within(editor).getByText('Linking does not change the total')).toBeInTheDocument();
+    await user.click(within(editor).getByRole('button', { name: 'Save' }));
+    expect(
+      await screen.findByText(
+        'Visits saved: 1 linked. The linked visit no longer shows as un-invoiced, and its price was not added to this invoice.',
+      ),
+    ).toBeInTheDocument();
+  });
+  it('#2091: a visit a line of this invoice bills cannot be unticked in Link visits', async () => {
+    const user = userEvent.setup();
+    useCollection.mockReturnValue({ status: 'ready', data: visits });
+    render(
+      <InvoiceDetail
+        invoice={entry({
+          sessionIds: ['s1'],
+          lineItems: [{ description: 'Walk one', qty: 1, unitCents: 4500, sessionId: 's1' }],
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Link visits' }));
+    const editor = screen.getByRole('region', { name: 'Link visits' });
+    const one = within(editor).getByRole('checkbox', { name: /Walk one/ }) as HTMLInputElement;
+    expect(one.checked).toBe(true);
+    expect(one.disabled).toBe(true);
+  });
   it('keeps the editor open with the refusal inside it', async () => {
     const user = userEvent.setup();
     useCollection.mockReturnValue({ status: 'ready', data: visits });

@@ -229,8 +229,16 @@ const ALLOWED_EAGER_PACKAGES = [
  * new FUNCTIONS entry, in this graph by construction (the one callable that
  * spends account credit, by an amount the admin enters). Everything it imports
  * was already here.
+ *
+ * 448 since #1901 (on top of #1872's 447): `lib/invoiceSessionLinks.ts`, the
+ * one place that sets and clears a visit's billed link, which
+ * `admin/createInvoice.ts`, `admin/updateInvoice.ts` and
+ * `admin/linkInvoiceSessions.ts` (entries already in this graph) share inside
+ * their transactions so the three cannot disagree. Its runtime imports are
+ * firebase-admin, firebase-functions and `lib/sessionInvoicing.ts`, all
+ * already resident.
  */
-const MAX_OWN_EAGER_MODULES = 447;
+const MAX_OWN_EAGER_MODULES = 448;
 
 interface Edge {
   spec: string;
