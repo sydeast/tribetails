@@ -47,6 +47,7 @@ import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinStaggerReveal
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.nav.isWideShell
+import com.kinfolk.portal.portal.BOOKINGS_POLL_MS
 import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.KinTale
@@ -109,6 +110,8 @@ fun HomeScreen(
     onHandoffTaken: () -> Unit = {},
     /** #1788: the device's notifications card (Enable / Blocked / Finish); null draws none. */
     pushCoordinator: PushRegistrationCoordinator? = null,
+    /** #2122: how often [KeepBookingsCurrent] re-reads; see there. */
+    pollMs: Long = BOOKINGS_POLL_MS,
 ) {
     val type = LocalKinfolkTypography.current
     // #1345: seeded from the wizard's handoff, so Home shows the new booking
@@ -153,7 +156,7 @@ fun HomeScreen(
     // #1832: while a visit is under way or about due, Home keeps itself
     // current, so the live card appears, changes and clears without leaving
     // the screen. Quiet on purpose: a dropped re-read leaves Home as it is.
-    KeepBookingsCurrent(data) {
+    KeepBookingsCurrent(data, pollMs = pollMs) {
         try {
             data = portalApi.getMyBookings(kinfolkId)
             error = null

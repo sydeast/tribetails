@@ -38,6 +38,7 @@ import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.LocalBusinessName
 import com.kinfolk.portal.components.businessLabel
 import com.kinfolk.portal.components.KinGhostButton
+import com.kinfolk.portal.portal.BOOKINGS_POLL_MS
 import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingMode
 import com.kinfolk.portal.portal.BookingNotes
@@ -109,6 +110,8 @@ fun KinCareDetailScreen(
      * "Message {auntieLabel}" link. Opens the Messages tab.
      */
     onOpenMessages: () -> Unit = {},
+    /** #2122: how often [KeepBookingsCurrent] re-reads; see there. */
+    pollMs: Long = BOOKINGS_POLL_MS,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -174,7 +177,7 @@ fun KinCareDetailScreen(
     // Auntie's taps (On the way, Arrived, Departed, Completed) without being
     // left and reopened. Quiet on purpose: a dropped re-read, or one that no
     // longer lists the visit, leaves what is on screen alone.
-    KeepBookingsCurrent(bookings, nowMs) {
+    KeepBookingsCurrent(bookings, nowMs, pollMs) {
         try {
             val all = portalApi.getMyBookings(kinfolkId)
             bookings = all
