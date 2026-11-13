@@ -1,8 +1,11 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
+import { unauditedRefusal } from '../lib/wrapCallable';
+import { isAuntieClaim } from '../lib/staffGate';
+import { logEvent } from '../lib/logger';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
-import type { AuditEvent } from '../lib/auditEvents';
+import { isServerOnlyAuditEvent, SERVER_ONLY_EVENT_REFUSAL, type AuditEvent } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { auditActorPayload, resolveAuditActor } from '../lib/auditActor';
 import { ActivityPayload, compactActivityPayload } from '../lib/activityPayload';
@@ -33,7 +36,13 @@ import { ActivityPayload, compactActivityPayload } from '../lib/activityPayload'
  * object in `lib/activityPayload.ts`. The server then stamps `admin` and
  * `staffRole` over it, the same two keys the sign-in rows carry.
  *
- * Auth: wrapAdminCallable. The owner always may; an Auntie may because
+ * SOME LINES ONLY THE SERVER WRITES (#2162). A kind in
+ * `SERVER_ONLY_AUDIT_EVENTS` (`lib/auditEvents.ts`) is refused from every
+ * sign-in, the owner's included: the server writes those lines itself, so a
+ * client copy could only claim something the server never did. Every other
+ * kind stays open to the owner.
+ *
+ * Auth: wrapAdminCallable. The owner may write any other kind; an Auntie may because
  * `lib/auntieAccess.ts` lists this callable (her taps were refused, and so
  * left no line, until #1820), and only for the lines `AUNTIE_LOGGABLE_EVENTS`
  * lists. The `actorId` field is informational only; the
@@ -75,15 +84,14 @@ export const AUNTIE_LOGGABLE_EVENTS: ReadonlySet<string> = new Set<string>([
   'SESSION_OFFICE_NOTE_ADDED',
   'ROUTE_SHARE_INITIATED',
   // Bookings she makes or moves (createKinCareSession / updateKinCareSession).
+  // A moved visit is recorded by `rescheduleBooking` itself (#2162).
   'CREATE_BOOKING',
   'UPDATE_BOOKING',
-  'RESCHEDULE_BOOKING',
   // Her own availability.
   'BLOCK_TIME_SLOT',
   'UNBLOCK_TIME_SLOT',
   // KinTales, and a generated draft she sends (publishGeneratedDraft).
   'CONTENT_KINTALE_SENT',
-  'CONTENT_KINTALE_NOTE_ADDED',
   'DRAFT_APPROVED',
   // The households she serves: record edits, never archive or delete.
   'UPDATE_KINFOLK',
@@ -144,6 +152,25 @@ export async function logActivityHandler(
     (suppliedActorId && suppliedActorId !== authUid
       ? `${args.actionType} (client-actor=${suppliedActorId})`
       : args.actionType);
+  // #2162: a kind the server writes itself is refused from every sign-in, the
+  // owner's included, before anything else is looked up.
+  if (isServerOnlyAuditEvent(args.actionType)) {
+    const caretaker = isAuntieClaim(req.auth?.token);
+    logEvent({
+      severity: 'warn',
+      function: 'logActivity',
+      event: 'logActivity.serverOnlyRefused',
+      uid: authUid,
+      extra: { actionType: args.actionType, caretaker },
+    });
+    const refusal = new HttpsError('permission-denied', SERVER_ONLY_EVENT_REFUSAL);
+    // From the owner this is a copy of a line the server already wrote: an
+    // older installed build still sends one after a form schema save, a visit
+    // move or a series answer. Nothing failed, so it writes no failure line for
+    // the daily error digest. An Auntie's apps never sent one, so hers keeps
+    // the failure line.
+    throw caretaker ? refusal : unauditedRefusal(refusal);
+  }
   const actor = await resolveAuditActor(req.auth, 'logActivity', args.familyId || undefined);
   if (actor.staffRole !== null && !auntieMayLog(args.actionType)) {
     throw new HttpsError('permission-denied', 'This is not available to caretaker accounts.');

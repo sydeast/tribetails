@@ -85,6 +85,23 @@ export function isWarmRequest(data: unknown): boolean {
   const keys = Object.keys(data);
   return keys.length === 1 && keys[0] === WARM_MARKER_KEY && (data as Record<string, unknown>)[WARM_MARKER_KEY] === true;
 }
+/**
+ * #2162, A REFUSAL THAT IS NOT A FAILURE. Every refused call below writes one
+ * `ERROR_FUNCTION_FAILURE` line (status FAILURE), and the daily error digest
+ * lists every FAILURE line. A refusal marked here is still refused, logged at
+ * warn and thrown to the client unchanged; it only writes no such line.
+ *
+ * Only for a refusal that says nothing went wrong: `logActivity` turning down a
+ * line the server already wrote itself, which an older installed build of the
+ * owner's apps still sends after the act has landed. A refusal that guards
+ * anything (a role, a sign-in, input) is never marked.
+ */
+const unauditedRefusals = new WeakSet<HttpsError>();
+/** Marks [err] as a refusal that writes no failure line. Returns it, to throw. */
+export function unauditedRefusal(err: HttpsError): HttpsError {
+  unauditedRefusals.add(err);
+  return err;
+}
 /** What a warm call answers. Clients drop it; it exists so the reply is not empty. */
 export interface WarmReply {
   ok: true;
@@ -230,17 +247,20 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
         extra: { sentryId, clientErrorId },
         ...appCheckFields(req),
       });
-      try {
-        await writeAuditEntry({
-          status: 'FAILURE',
-          event: AUDIT_EVENTS.ERROR_FUNCTION_FAILURE,
-          severity: 'warn',
-          actorRole: req.auth?.uid ? 'PRIMARY' : 'SYSTEM',
-          actorUid: req.auth?.uid,
-          payload: { function: name, code, sentryId, clientErrorId, requestId },
-        });
-      } catch {
-        // audit best-effort; don't mask original
+      // #2162: a marked refusal is not a failure, so it stays out of the digest.
+      if (!(isHttpsError && unauditedRefusals.has(err))) {
+        try {
+          await writeAuditEntry({
+            status: 'FAILURE',
+            event: AUDIT_EVENTS.ERROR_FUNCTION_FAILURE,
+            severity: 'warn',
+            actorRole: req.auth?.uid ? 'PRIMARY' : 'SYSTEM',
+            actorUid: req.auth?.uid,
+            payload: { function: name, code, sentryId, clientErrorId, requestId },
+          });
+        } catch {
+          // audit best-effort; don't mask original
+        }
       }
       if (isHttpsError) throw err;
       throw new HttpsError('internal', message, { clientErrorId });
