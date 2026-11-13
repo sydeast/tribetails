@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   DASH_KEYS,
   DEFAULT_DASHBOARD,
+  OWNER_ONLY_DASH_KEYS,
+  dashboardForViewer,
+  dashKeyVisibleTo,
   hiddenKeys,
   hideWidget,
   moveWidgetDown,
@@ -318,5 +321,39 @@ describe('dashboardLayout: key set', () => {
     // The cast is the point: a token off the wire is a plain string, and the
     // model has to survive one the type system never saw.
     expect(hiddenKeys([w('someFutureWidget', 'compact')])).toEqual([...DASH_KEYS]);
+  });
+});
+
+// #2208: the owner's cards are a view filter for an Auntie, never a storage change.
+describe('dashboardForViewer (#2208)', () => {
+  const board: DashWidget[] = [
+    { key: 'stats', size: 'wide' },
+    { key: 'cashFlow', size: 'compact' },
+    { key: 'safebox', size: 'compact' },
+    { key: 'expenseLog', size: 'wide' },
+    { key: 'supplies', size: 'compact' },
+    { key: 'expirations', size: 'compact' },
+  ];
+  it('names exactly Cash Flow, Expense quick-log, Supplies and Expirations', () => {
+    expect([...OWNER_ONLY_DASH_KEYS].sort()).toEqual(['cashFlow', 'expenseLog', 'expirations', 'supplies']);
+    expect(DASH_KEYS.filter((k) => !dashKeyVisibleTo(k, true)).sort()).toEqual([...OWNER_ONLY_DASH_KEYS].sort());
+    expect(DASH_KEYS.every((k) => dashKeyVisibleTo(k, false))).toBe(true);
+  });
+  it('drops them for an Auntie, keeping her cards in order and size', () => {
+    expect(dashboardForViewer(board, true)).toEqual([
+      { key: 'stats', size: 'wide' },
+      { key: 'safebox', size: 'compact' },
+    ]);
+  });
+  it('leaves the list whole for everyone else, as a copy', () => {
+    const out = dashboardForViewer(board, false);
+    expect(out).toEqual(board);
+    expect(out).not.toBe(board);
+  });
+  it('falls back to the default board when the filter would empty it', () => {
+    expect(dashboardForViewer([{ key: 'cashFlow', size: 'compact' }], true)).toEqual(
+      DEFAULT_DASHBOARD.map((x) => ({ ...x })),
+    );
+    expect(dashboardForViewer([], true)).toEqual([]);
   });
 });

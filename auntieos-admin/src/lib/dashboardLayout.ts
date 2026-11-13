@@ -139,6 +139,46 @@ export function hiddenKeys(shown: readonly DashWidget[]): DashKey[] {
 }
 
 /**
+ * #2208: the cards an Auntie is never shown, on the board or under Hidden
+ * cards. Web only: Android and the desktop console do not let an Auntie sign
+ * in (`isOwnerClaims`, `ownerFromClaims`), so neither carries this list.
+ *
+ * - `cashFlow` and `expenseLog` are money, and an Auntie never sees money.
+ * - `supplies` and `expirations` hold no money, but the server refuses her
+ *   both (`firestore.rules` and the callable allowlist keep them owner-only,
+ *   unruled: spec section 12), so for her each card could only show a load
+ *   error. They come back for her if that ruling opens them.
+ *
+ * The stat row stays: its revenue tile is dropped inside `StatsWidget`
+ * (#2200 / #2201). This is a view filter, not a storage change: the keys stay
+ * in `DASH_KEYS`, and an owner's layout is never touched by it.
+ */
+export const OWNER_ONLY_DASH_KEYS: ReadonlySet<DashKey> = new Set<DashKey>([
+  'cashFlow',
+  'expenseLog',
+  'supplies',
+  'expirations',
+]);
+
+/** May this viewer be shown this card? Only an Auntie is refused any (#2208). */
+export function dashKeyVisibleTo(key: DashKey, isAuntie: boolean): boolean {
+  return !isAuntie || !OWNER_ONLY_DASH_KEYS.has(key);
+}
+
+/**
+ * The board as this viewer sees it (#2208): an Auntie's list without the
+ * owner's cards. A list the filter empties falls back to the default board,
+ * filtered the same way, for the reason `resolvedDashboard` gives: a blank
+ * Home is never what was meant.
+ */
+export function dashboardForViewer(list: readonly DashWidget[], isAuntie: boolean): DashWidget[] {
+  if (!isAuntie) return list.map((x) => ({ ...x }));
+  const kept = list.filter((x) => dashKeyVisibleTo(x.key, true)).map((x) => ({ ...x }));
+  if (kept.length > 0 || list.length === 0) return kept;
+  return DEFAULT_DASHBOARD.filter((x) => dashKeyVisibleTo(x.key, true)).map((x) => ({ ...x }));
+}
+
+/**
  * Group the shown widgets into render rows: a wide widget is a solo full-width
  * row, consecutive compacts pair two to a row, and a lone trailing compact sits
  * alone. Order is preserved and every widget appears exactly once.
