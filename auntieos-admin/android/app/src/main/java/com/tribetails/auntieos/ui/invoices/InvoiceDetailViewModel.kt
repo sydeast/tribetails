@@ -122,6 +122,12 @@ data class InvoiceDetailUiState(
      * grey out all three because one of them was working.
      */
     val resendingQuote: Boolean = false,
+    /**
+     * #2088: the confirm for turning a quote into an invoice ("convert") or
+     * withdrawing it ("withdraw"), open when non-null, and the call in flight.
+     */
+    val quotePrompt: String? = null,
+    val changingQuote: Boolean = false,
     // Stage 3 / 16.2: invoice PDF download. pdfUrlToOpen is a one-shot the screen
     // consumes (opens via Intent) then clears via consumePdfUrl().
     val generatingPdf: Boolean = false,
@@ -873,6 +879,12 @@ class InvoiceDetailViewModel(
         val invoice = _uiState.value.invoice ?: return
         if (_uiState.value.archiving) return
         val restoring = com.tribetails.auntieos.domain.invoiceIsArchived(invoice)
+        // #2195: a quote is archived like a draft, and named as one.
+        val quote = if (restoring) {
+            com.tribetails.auntieos.domain.quoteIsChangeableOnRestore(invoice)
+        } else {
+            com.tribetails.auntieos.domain.quoteIsChangeable(invoice)
+        }
         _uiState.value = _uiState.value.copy(archiving = true)
         viewModelScope.launch {
             // #2168: (visits an archived draft let go, the restore's sentence
@@ -894,7 +906,7 @@ class InvoiceDetailViewModel(
                         targetId         = invoice.id,
                         targetCollection = "invoices",
                     )
-                    val message = archiveSuccessMessage(restoring, force, released, notice)
+                    val message = archiveSuccessMessage(restoring, force, released, notice, quote)
                     // #2168: visits a restore could not take back stay on screen
                     // until dismissed; every other outcome is a toast.
                     val lasting = restoring && notice.isNotBlank()
@@ -989,6 +1001,8 @@ class InvoiceDetailViewModel(
             return
         }
         _uiState.value = _uiState.value.copy(sendingDraft = true)
+        // #2087: a quote saved unsent goes out through this same send, as a quote.
+        val quote = com.tribetails.auntieos.domain.isQuoteDraft(invoice)
         // #1567: the status as it stood at the press.
         val before = sendMarksOf(invoice)
         viewModelScope.launch {
@@ -998,7 +1012,8 @@ class InvoiceDetailViewModel(
                         scope            = viewModelScope,
                         repository       = repository,
                         actionType       = "SEND_DRAFT_INVOICE",
-                        description      = "Reviewed and sent draft invoice ${invoice.invoiceNumber.ifBlank { "with no number" }}",
+                        description      = (if (quote) "Sent quote " else "Reviewed and sent draft invoice ") +
+                            invoice.invoiceNumber.ifBlank { "with no number" },
                         targetId         = invoice.id,
                         targetCollection = "invoices",
                     )
@@ -1007,7 +1022,11 @@ class InvoiceDetailViewModel(
                     val appOnly = sent.appOnly == true
                     _uiState.value = _uiState.value.copy(
                         sendingDraft = false,
-                        toastMessage = com.tribetails.auntieos.domain.draftSentMessage(appOnly),
+                        toastMessage = if (quote) {
+                            com.tribetails.auntieos.domain.quoteSentMessage(appOnly)
+                        } else {
+                            com.tribetails.auntieos.domain.draftSentMessage(appOnly)
+                        },
                         toastVisible = true,
                         toastIsError = appOnly,
                     )
@@ -1026,7 +1045,7 @@ class InvoiceDetailViewModel(
                     }
                     _uiState.value = _uiState.value.copy(
                         sendingDraft = false,
-                        toastMessage = "Couldn't send draft: ${err.message}",
+                        toastMessage = (if (quote) "Couldn't send the quote: " else "Couldn't send draft: ") + err.message,
                         toastVisible = true,
                         toastIsError = true,
                     )
@@ -1093,6 +1112,59 @@ class InvoiceDetailViewModel(
                     _uiState.value = _uiState.value.copy(
                         resendingQuote = false,
                         toastMessage = err.message ?: "Couldn't send the quote again.",
+                        toastVisible = true,
+                        toastIsError = true,
+                    )
+                }
+        }
+    }
+
+    /** #2088: opens the confirm for turning the quote into an invoice ("convert") or withdrawing it ("withdraw"). */
+    fun promptQuoteAction(action: String) {
+        if (action != "convert" && action != "withdraw") return
+        _uiState.value = _uiState.value.copy(quotePrompt = action)
+    }
+
+    fun dismissQuotePrompt() {
+        if (_uiState.value.changingQuote) return
+        _uiState.value = _uiState.value.copy(quotePrompt = null)
+    }
+
+    /**
+     * #2088: turns the quote into a draft invoice, or withdraws it. One call,
+     * one transaction server-side; the refusal (accepted, archived, a line's
+     * visit billed elsewhere) is the server's sentence, shown as written.
+     */
+    fun confirmQuoteAction() {
+        val invoice = _uiState.value.invoice ?: return
+        val action = _uiState.value.quotePrompt ?: return
+        if (_uiState.value.changingQuote) return
+        _uiState.value = _uiState.value.copy(changingQuote = true)
+        viewModelScope.launch {
+            val outcome: Result<String> = if (action == "convert") {
+                invoiceRepository.convertQuoteToInvoice(invoice.id)
+                    .map { com.tribetails.auntieos.domain.QUOTE_CONVERTED_MESSAGE }
+            } else {
+                invoiceRepository.withdrawQuote(invoice.id)
+                    .map { com.tribetails.auntieos.domain.quoteWithdrawnMessage(it.releasedSessionIds.size) }
+            }
+            outcome
+                .onSuccess { message ->
+                    _uiState.value = _uiState.value.copy(
+                        changingQuote = false,
+                        quotePrompt = null,
+                        toastMessage = message,
+                        toastVisible = true,
+                        toastIsError = false,
+                    )
+                    reloadInvoiceQuietly(invoice.id)
+                }
+                .onFailure { err ->
+                    _uiState.value = _uiState.value.copy(
+                        changingQuote = false,
+                        quotePrompt = null,
+                        toastMessage = (if (action == "convert") "Couldn't turn it into an invoice: " else "Couldn't withdraw it: ") +
+                            (err.message ?: "the server did not say why."),
                         toastVisible = true,
                         toastIsError = true,
                     )
@@ -1395,11 +1467,18 @@ internal fun archiveSuccessMessage(
     released: Int = 0,
     /** #2168: the server's sentence about visits a restored draft could not take back. */
     notice: String = "",
+    /** #2195: a quote, which the household stops seeing while archived. */
+    quote: Boolean = false,
 ): String {
     if (restoring) {
-        return if (notice.isBlank()) "Invoice restored to the working list." else "Invoice restored to the working list. $notice"
+        val restored = if (quote) "Quote restored. The household can see it again." else "Invoice restored to the working list."
+        return if (notice.isBlank()) restored else "$restored $notice"
     }
-    val base = if (force) "Invoice archived, and the balance written off the outstanding total." else "Invoice archived."
+    val base = when {
+        quote -> "Quote archived. The household no longer sees it."
+        force -> "Invoice archived, and the balance written off the outstanding total."
+        else -> "Invoice archived."
+    }
     return when {
         released <= 0 -> base
         released == 1 -> "$base Its visit is back on the un-invoiced list."

@@ -57,7 +57,8 @@ fun receiptGeneratedMessage(appOnly: Boolean): String =
  * copy it sent reached the household in the app only, read only with [sent].
  */
 fun quoteCreatedMessage(sent: Boolean, appOnly: Boolean): String = when {
-    !sent -> "Quote created."
+    // #2087: a quote saved unsent is a draft only the office sees.
+    !sent -> "Quote saved as a draft. The household cannot see it until you send it."
     appOnly -> "Quote created and sent in the app only. $APP_ONLY_NOTE"
     else -> "Quote created and sent."
 }

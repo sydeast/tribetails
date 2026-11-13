@@ -5,6 +5,7 @@ import {
   invoiceMatchesSearch,
   invoicesPageQuery,
   invoiceQuoteDecision,
+  isQuoteDraft,
   invoiceStamp,
   invoiceWithinWindow,
   isArchivedInvoice,
@@ -931,6 +932,9 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
   // different fact), so without this marker a dead quote sits in the Quote
   // filter looking exactly like one still waiting for an answer.
   const declinedQuote = state === 'quote' && invoiceQuoteDecision(entry) === 'denied';
+  // #2087: a quote saved unsent is a draft whose send makes it a Quote. The row
+  // says it is a quote, and its send is named for what it does.
+  const quoteDraft = isQuoteDraft(entry);
   const action = rowActionFor(state, archived);
   // OPEN disputes only. See the chip below for why a won one is not marked.
   const disputed = invoiceDispute(entry)?.open === true;
@@ -1007,6 +1011,9 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
             ARCHIVED and DISPUTED sit beside theirs: the doc really is still a
             quote, and re-labelling the row would be classifying. */}
         {declinedQuote ? <span className="invoices__chip invoices__chip--declined">DECLINED</span> : null}
+        {/* #2087: BESIDE the DRAFT chip, for the same reason: it really is a
+            draft, which the household cannot see, and it goes out as a quote. */}
+        {quoteDraft ? <span className="invoices__chip invoices__chip--quote">QUOTE</span> : null}
       </span>
     </>
   );
@@ -1021,7 +1028,7 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
       {action ? (
         <div className="invoices__row-action">
           <GhostButton
-            label={ROW_ACTION_LABELS[action]}
+            label={quoteDraft && action === 'reviewSend' ? 'Send quote' : ROW_ACTION_LABELS[action]}
             onClick={() => onAction(entry._id, action)}
           />
         </div>

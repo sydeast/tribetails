@@ -515,7 +515,7 @@ class AdminDataViewModelTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), false, any(), any(), any(), any()) }
-        assertEquals("Quote created.", vm.invoiceActionMessage.value)
+        assertEquals("Quote saved as a draft. The household cannot see it until you send it.", vm.invoiceActionMessage.value)
     }
 
     // ── #1511: a sent quote that reached the household in the app only ────────
@@ -544,7 +544,7 @@ class AdminDataViewModelTest {
         vm.createQuote(TestFixtures.invoice1, sendToKinfolk = false)
         advanceUntilIdle()
 
-        assertEquals("Quote created.", vm.invoiceActionMessage.value)
+        assertEquals("Quote saved as a draft. The household cannot see it until you send it.", vm.invoiceActionMessage.value)
     }
 
     @Test

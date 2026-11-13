@@ -61,6 +61,8 @@ const {
   retryInvoiceCheckoutClose,
   linkInvoiceSessions,
   previewInvoiceNotice,
+  convertQuoteToInvoice,
+  withdrawQuote,
   useCollection,
 } = vi.hoisted(() => ({
   sendInvoiceReminder: vi.fn(),
@@ -77,6 +79,8 @@ const {
   retryInvoiceCheckoutClose: vi.fn(),
   linkInvoiceSessions: vi.fn(),
   previewInvoiceNotice: vi.fn(),
+  convertQuoteToInvoice: vi.fn(),
+  withdrawQuote: vi.fn(),
   useCollection: vi.fn(),
 }));
 // The Link visits editor (#1245) streams the household's visits.
@@ -100,6 +104,8 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   retryInvoiceCheckoutClose,
   linkInvoiceSessions,
   previewInvoiceNotice,
+  convertQuoteToInvoice,
+  withdrawQuote,
 }));
 
 // #1872: an open invoice reads the household's account credit for its Apply
@@ -446,10 +452,10 @@ describe('InvoiceDetail', () => {
       render(<InvoiceDetail invoice={entry({ status: 'quote', amountDue: 40, total: 40 })} onClose={vi.fn()} />);
       expect(screen.getByText('QUOTE')).toBeInTheDocument();
       expectExactActions([]);
-      // "No COLLECTION actions", not "no actions": since Task 5.1 a quote can
-      // still be edited and archived, so the old blanket wording had become a
-      // lie sitting directly beside two working buttons.
-      expect(screen.getByText(/no collection actions for a quote invoice/i)).toBeInTheDocument();
+      // #2088: a quote has its own actions (send, turn into an invoice,
+      // withdraw), so the "no collection actions" line is not printed beside them.
+      expect(screen.queryByText(/no collection actions/i)).toBeNull();
+      expect(screen.getByRole('button', { name: 'Turn into invoice' })).toBeInTheDocument();
     });
 
     it('QUOTE past its due date is still a quote: no payment actions', () => {
@@ -3178,12 +3184,12 @@ describe('InvoiceDetail and a quote the household has answered (issue #448)', ()
   it('surfaces a refusal verbatim, because every one of them names what to do next', async () => {
     const user = userEvent.setup();
     resendQuote.mockRejectedValue(
-      new Error('This quote was only good through 2020-01-01, so the household could decline it again but never accept it. Give it a new due date, then send it back out.'),
+      new Error('This invoice is archived. Restore it before sending or changing it.'),
     );
     render(<InvoiceDetail invoice={declinedQuote()} onClose={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Revise and resend' }));
     await user.click(screen.getByRole('button', { name: 'Send quote again' }));
-    expect(await screen.findByText(/Give it a new due date/)).toBeInTheDocument();
+    expect(await screen.findByText(/Restore it before sending or changing it/)).toBeInTheDocument();
   });
   it('#2156: a resend refused because a visit was billed since says which visit and what to do', async () => {
     const user = userEvent.setup();
@@ -3573,5 +3579,121 @@ describe('record-payment amount boxes read a typed thousands comma (#1495)', () 
       creditCents: 0,
       overCents: 0,
     });
+  });
+});
+
+// ── #2087 / #2088 / #2195: what the office can do with a quote ─────────────
+
+describe('#2087 #2088 the quote actions on the detail sheet', () => {
+  const quoteDraft = () => entry({ status: 'draft', editScope: 'all', quoteDraft: true });
+  const sentQuote = () => entry({ status: 'quote', editScope: 'all' });
+
+  beforeEach(() => {
+    getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
+    reviewAndSendDraftInvoice.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv1' });
+    convertQuoteToInvoice.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv1', status: 'draft' });
+    withdrawQuote
+      .mockReset()
+      .mockResolvedValue({ ok: true, invoiceId: 'inv1', status: 'cancelled', releasedSessionIds: ['s1', 's2'] });
+  });
+
+  it('#2087 a quote saved unsent offers Send quote, not Review and send, and sends it through the draft send', async () => {
+    const user = userEvent.setup();
+    render(<InvoiceDetail invoice={quoteDraft()} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Review and send' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Send quote' }));
+    expect(screen.getByText(/It is not a bill until they accept/)).toBeInTheDocument();
+    expect(reviewAndSendDraftInvoice).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Send quote' }));
+    await waitFor(() => expect(reviewAndSendDraftInvoice).toHaveBeenCalledWith('inv1'));
+    expect(await screen.findByText('Quote sent. The household can accept or decline it now.')).toBeInTheDocument();
+  });
+
+  it('#2087 an ordinary draft keeps Review and send, and offers no quote actions', () => {
+    render(<InvoiceDetail invoice={entry({ status: 'draft' })} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Review and send' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send quote' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Turn into invoice' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Withdraw quote' })).toBeNull();
+  });
+
+  it('#2088 a sent quote offers Turn into invoice and Withdraw quote, not the "no collection actions" line', () => {
+    render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Turn into invoice' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Withdraw quote' })).toBeInTheDocument();
+    expect(screen.queryByText(/No collection actions/)).toBeNull();
+  });
+
+  it('#2088 the quote saved unsent can be turned or withdrawn too', () => {
+    render(<InvoiceDetail invoice={quoteDraft()} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Turn into invoice' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Withdraw quote' })).toBeInTheDocument();
+  });
+
+  it('#2088 neither is offered on an accepted quote (an invoice now) or an archived one', () => {
+    const { unmount } = render(
+      <InvoiceDetail invoice={entry({ status: 'open', quoteDecision: 'accepted' })} onClose={vi.fn()} />,
+    );
+    expect(screen.queryByRole('button', { name: 'Turn into invoice' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Withdraw quote' })).toBeNull();
+    unmount();
+    render(<InvoiceDetail invoice={entry({ status: 'quote', archivedAt: fakeTs('2026-11-12T10:00:00Z') })} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Turn into invoice' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Withdraw quote' })).toBeNull();
+  });
+
+  it('#2088 Turn into invoice confirms first, then says the household sees nothing until it is sent', async () => {
+    const user = userEvent.setup();
+    render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Turn into invoice' }));
+    expect(screen.getByText(/keeps its number, its lines and its visits/)).toBeInTheDocument();
+    expect(convertQuoteToInvoice).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Turn into invoice' }));
+    await waitFor(() => expect(convertQuoteToInvoice).toHaveBeenCalledWith('inv1'));
+    expect(
+      await screen.findByText('Quote turned into a draft invoice. Send it with Review and send when it is ready.'),
+    ).toBeInTheDocument();
+  });
+
+  it('#2088 Withdraw quote confirms first, then names how many visits went back on the list', async () => {
+    const user = userEvent.setup();
+    render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Withdraw quote' }));
+    expect(screen.getByText(/go back on the not yet invoiced list/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Withdraw quote' }));
+    await waitFor(() => expect(withdrawQuote).toHaveBeenCalledWith('inv1'));
+    expect(
+      await screen.findByText(
+        'Quote withdrawn. The household no longer sees it, and its 2 visits are back on the not yet invoiced list.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('#2088 a refusal is shown verbatim, naming the visit by its day', async () => {
+    const user = userEvent.setup();
+    convertQuoteToInvoice.mockRejectedValue(
+      new Error('This quote cannot be turned into an invoice: the visit on 2026-06-02 is billed on invoice 1041. Remove its line in Edit, then try again.'),
+    );
+    render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Turn into invoice' }));
+    await user.click(screen.getByRole('button', { name: 'Turn into invoice' }));
+    expect(
+      await screen.findByText(/Could not turn it into an invoice: This quote cannot be turned into an invoice: the visit on 2026-06-02/),
+    ).toBeInTheDocument();
+  });
+
+  it('#2195 the archive confirm on a quote says the household stops seeing it and its visits go back', async () => {
+    const user = userEvent.setup();
+    render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(screen.getByText(/The household no longer sees it and cannot answer it/)).toBeInTheDocument();
+    expect(screen.queryByText(/still see it and still pay it/)).toBeNull();
+  });
+
+  it('#2195 the archive notice names a quote as a quote', () => {
+    expect(archiveNoticeText(false, 1, 'quote')).toBe(
+      'Quote archived. The household no longer sees it. Its visit is back on the un-invoiced list.',
+    );
+    expect(archiveNoticeText(false, 0)).toBe('Invoice archived.');
   });
 });

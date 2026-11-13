@@ -1024,6 +1024,7 @@ class AdminDataViewModel(
             _error.value = "This invoice has no client (kinfolk) on record, so it cannot be sent."
             return
         }
+        val quote = com.tribetails.auntieos.domain.isQuoteDraft(invoice)
         // #1567: the status as it stood at the press.
         val before = sendMarksOf(invoice)
         viewModelScope.launch {
@@ -1032,13 +1033,18 @@ class AdminDataViewModel(
                     scope = viewModelScope,
                     repository = repository,
                     actionType = "SEND_DRAFT_INVOICE",
-                    description = "Reviewed and sent draft invoice ${invoice.invoiceNumber.ifBlank { "with no number" }}",
+                    description = (if (quote) "Sent quote " else "Reviewed and sent draft invoice ") +
+                        invoice.invoiceNumber.ifBlank { "with no number" },
                     targetId = invoice.id,
                     targetCollection = "invoices",
                 )
                 loadInvoices()
-                // #1511: as for the receipt above.
-                _invoiceActionMessage.value = com.tribetails.auntieos.domain.draftSentMessage(sent.appOnly == true)
+                // #1511: as for the receipt above. #2087: a quote saved unsent goes out as a quote.
+                _invoiceActionMessage.value = if (quote) {
+                    com.tribetails.auntieos.domain.quoteSentMessage(sent.appOnly == true)
+                } else {
+                    com.tribetails.auntieos.domain.draftSentMessage(sent.appOnly == true)
+                }
             }.onFailure { throwable ->
                 if (isSilentSendFailure(throwable)) {
                     reportAfterSilence(SendCheckAction.REVIEW_SEND, before, invoice.id)

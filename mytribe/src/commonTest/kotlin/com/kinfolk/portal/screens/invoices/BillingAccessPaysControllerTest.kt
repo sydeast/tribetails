@@ -120,6 +120,28 @@ class BillingAccessPaysControllerTest {
     }
 
     @Test
+    fun `#2195 an accept refused because the office archived the quote shows the server's sentence beside it`() = runTest {
+        val archived = "This quote is not open for an answer right now. Ask your Auntie about it."
+        val fake = FakeFunctionsClient()
+        fake.stubError("acceptQuote", IllegalStateException(archived))
+        val c = InvoicesController("kin-1", PortalApi(fake), this) { }
+        c.startQuoteDecision(invoice(id = "q-1", status = InvoiceStatus.Quote), accept = true)
+        advanceUntilIdle()
+        assertEquals(archived, c.quoteErrorFor("q-1"))
+    }
+
+    @Test
+    fun `#2088 a decline refused because the office withdrew the quote shows the server's sentence beside it`() = runTest {
+        val withdrawn = "Your Auntie withdrew this quote, so there is nothing to answer. Ask your Auntie if you still want the work."
+        val fake = FakeFunctionsClient()
+        fake.stubError("denyQuote", IllegalStateException(withdrawn))
+        val c = InvoicesController("kin-1", PortalApi(fake), this) { }
+        c.startQuoteDecision(invoice(id = "q-1", status = InvoiceStatus.Quote), accept = false)
+        advanceUntilIdle()
+        assertEquals(withdrawn, c.quoteErrorFor("q-1"))
+    }
+
+    @Test
     fun `a member without billing access sees the server's refusal on use credit`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stubError("redeemCredit", IllegalStateException(refusal))

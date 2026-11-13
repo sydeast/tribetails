@@ -517,6 +517,24 @@ describe('InvoiceCreate quotes', () => {
     expect(createInvoice).not.toHaveBeenCalled();
   });
 
+  it('#2087: a quote saved whose send failed says so plainly, never "Could not create"', async () => {
+    createQuote.mockRejectedValue(
+      Object.assign(
+        new Error(
+          'The quote was saved as a draft, but it could not be sent to the household. Open it and press Send quote to try again.',
+        ),
+        { details: { code: 'quote_saved_not_sent', invoiceId: 'q1' } },
+      ),
+    );
+    render(<InvoiceCreate mode="quote" onClose={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await screen.findByRole('checkbox');
+    await userEvent.click(screen.getByRole('switch', { name: /send to kinfolk now/i }));
+    await userEvent.click(screen.getByRole('button', { name: /create quote for 1 visit/i }));
+    expect(await screen.findByText(/^The quote was saved as a draft, but it could not be sent/)).toBeInTheDocument();
+    expect(screen.queryByText(/Could not create the quote/)).toBeNull();
+  });
+
   it('opens on the quote kind when the notifications feed seeded it', () => {
     render(<InvoiceCreate mode="quote" onClose={vi.fn()} seedKinfolkId="kf1" />);
     expect(screen.getByLabelText('What is this')).toHaveValue('quote');

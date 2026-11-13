@@ -503,7 +503,17 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
       onClose();
     } catch (caught) {
       setSubmitting(false);
-      setSubmitError(`Could not create the ${isQuote ? 'quote' : 'invoice'}: ${caught instanceof Error ? caught.message : 'Create failed'}`);
+      // #2087: the quote WAS saved (as a draft only the office sees) and only
+      // the send failed; the server's sentence says so and how to send it, and
+      // "Could not create" in front of it would contradict it. Pressing Create
+      // again retries the same submission, which finishes the send.
+      const savedNotSent =
+        (caught as { details?: { code?: unknown } } | null)?.details?.code === 'quote_saved_not_sent';
+      setSubmitError(
+        savedNotSent && caught instanceof Error
+          ? caught.message
+          : `Could not create the ${isQuote ? 'quote' : 'invoice'}: ${caught instanceof Error ? caught.message : 'Create failed'}`,
+      );
     }
   }
 
