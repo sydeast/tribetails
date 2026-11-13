@@ -295,6 +295,13 @@ fun EditKinfolkScreen(
                             // The form still holds a CSV string, so the field reads
                             // and writes through the bridge helpers below.
                             AuntieFieldLabel(text = "HOUSEHOLD TAGS")
+                            if (vocabLoad == TagVocabLoad.LOADING) {
+                                Text(
+                                    TAG_SUGGESTIONS_LOADING,
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                            }
                             TagAssignField(
                                 value = editTagsFromField(state.tags),
                                 vocab = householdVocab,

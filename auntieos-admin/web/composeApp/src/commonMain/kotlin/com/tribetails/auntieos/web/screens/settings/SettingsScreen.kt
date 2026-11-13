@@ -2195,7 +2195,6 @@ private fun TagVocabularyPanel(
     var pet by remember(settingsData) { mutableStateOf(settingsData?.petTags ?: emptyList()) }
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
-    var saved by remember { mutableStateOf(false) }
     // The tag Remove was pressed on (scope wire, name), held until the operator confirms.
     var pendingRemove by remember { mutableStateOf<Pair<String, String>?>(null) }
     var removing by remember { mutableStateOf(false) }
@@ -2238,7 +2237,7 @@ private fun TagVocabularyPanel(
                 subtitle = "Label a household (a kinfolk), e.g. VIP or Slow pay. Broadcasts and KinTale rules can target them.",
                 scopeNoun = "household",
                 tags = household,
-                onChange = { household = it; saved = false },
+                onChange = { household = it },
                 onRequestRemove = { name -> pendingRemove = "household" to name },
                 enabled = !saving && !removing,
             )
@@ -2247,7 +2246,7 @@ private fun TagVocabularyPanel(
                 subtitle = "Label a Kin, e.g. Reactive or On meds.",
                 scopeNoun = "Kin",
                 tags = pet,
-                onChange = { pet = it; saved = false },
+                onChange = { pet = it },
                 onRequestRemove = { name -> pendingRemove = "pet" to name },
                 enabled = !saving && !removing,
             )
@@ -2291,7 +2290,6 @@ private fun TagVocabularyPanel(
                                     stored = r.value
                                     household = r.value.household
                                     pet = r.value.pet
-                                    saved = true
                                 }
                                 is WriteResult.Err -> saveError = "Couldn't save tags: ${r.message}"
                             }
@@ -2302,9 +2300,6 @@ private fun TagVocabularyPanel(
                 dirtyLabel = if (saving) "Saving…" else "Unsaved tags",
                 savedLabel = "Tags saved",
             )
-            if (saved && !dirty) {
-                Text("Saved", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            }
         }
     }
 

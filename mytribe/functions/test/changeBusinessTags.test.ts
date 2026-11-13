@@ -196,6 +196,7 @@ describe('changeBusinessTags: one Save carrying several changes', () => {
     const entry = (writeAuditEntry as any).mock.calls[0][0];
     expect(entry.event).toBe(AUDIT_EVENTS.BUSINESS_TAGS_CHANGED);
     expect(entry.payload).toEqual({ changes: [{ action: 'add', scope: 'household', name: 'VIP' }] });
+    expect(entry.description).toBe('Added the tag "VIP" to the household tag list');
     expect(SERVER_ONLY_AUDIT_EVENTS.has(AUDIT_EVENTS.BUSINESS_TAGS_CHANGED)).toBe(true);
   });
 });

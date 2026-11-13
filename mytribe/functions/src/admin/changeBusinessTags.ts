@@ -237,7 +237,12 @@ export async function changeBusinessTagsHandler(
     actorRole: 'AUNTIE',
     actorUid: uid,
     targetCollection: 'business_settings',
-    description: `Tag list changed: ${summary.map((s) => `${s.action} '${s.name}' (${s.scope})`).join(', ')}`,
+    description: summary
+      .map(
+        (s) =>
+          `${s.action === 'add' ? 'Added' : 'Recoloured'} the tag "${s.name}" ${s.action === 'add' ? 'to' : 'on'} the ${s.scope === 'household' ? 'household' : 'Kin'} tag list`,
+      )
+      .join('. '),
     payload: { changes: summary },
   }).catch((err) => {
     logEvent({
