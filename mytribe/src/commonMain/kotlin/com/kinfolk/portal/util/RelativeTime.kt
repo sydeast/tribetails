@@ -163,17 +163,24 @@ private val NightWeekdays = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Su
 fun Booking.requestedNight(): LocalDate? =
     if (!startTimePending) null else requestedDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 /**
- * When a booked visit happens, for a list row: [relativeTime] of its start, or
- * for a night still waiting on its start (#1098) "Fri night · Start time set
- * by your Auntie". Mirrors `visitWhenLine` in mytribe/web/src/lib/portalFormat.ts.
+ * When a booked visit happens, for a list row or a detail header: "Mon, 8:00
+ * AM" by the clock (Exact times mode), "Mon, Midday (11 AM to 3 PM)" when the
+ * server names a window (Time Blocks mode, #1863), or for a night still
+ * waiting on its start (#1098) "Fri night · Start time set by your Auntie".
+ * Mirrors `visitWhenLine` in mytribe/web/src/lib/portalFormat.ts.
  */
-fun bookingWhenLabel(b: Booking, nowMillis: Long = Clock.System.now().toEpochMilliseconds()): String {
+fun bookingWhenLabel(b: Booking, timeZone: TimeZone = TimeZone.currentSystemDefault()): String {
     if (!b.startTimePending) {
-        val base = relativeTime(b.startTimeMs, nowMillis)
-        // #1301: a block visit's stored start is only the window's anchor, so
-        // the row names the window rather than implying a booked time.
-        val block = bookingBlockText(b) ?: return base
-        return if (base.isEmpty()) block else "$base · $block"
+        // #1301 / #1863: a block visit is shown as its window and its weekday,
+        // "Tue, Midday (11 AM to 3 PM)", the same as the web row. Never the
+        // relative time: "in 45m" counts down to the start the office set,
+        // which is the clock a household in Time Blocks mode must not see.
+        // Exact times mode: "Mon, 8:00 AM", the clock the household picked, as
+        // the web row and the mocks print it.
+        val block = bookingBlockText(b) ?: return weekdayTime(b.startTimeMs, timeZone)
+        val ms = b.startTimeMs ?: return block
+        val weekday = WEEKDAY_ABBREV[Instant.fromEpochMilliseconds(ms).toLocalDateTime(timeZone).dayOfWeek.ordinal]
+        return "$weekday, $block"
     }
     val night = b.requestedNight() ?: return AUNTIE_SETS_START_TIME
     return "${NightWeekdays[night.dayOfWeek.ordinal]} night · $AUNTIE_SETS_START_TIME"

@@ -44,6 +44,9 @@ function settingsFor(c: Case): Record<string, unknown> {
 }
 
 describe('#1863 household visit time: the shared case table', () => {
+  it('reads the whole shared table, as the three admin mirrors do', () => {
+    expect(table.cases.length).toBeGreaterThanOrEqual(20);
+  });
   it('the table converts its wall clock correctly', () => {
     expect(zonedNow(startMs('15:30'), table.timeZone)?.timeHHmm).toBe('15:30');
     expect(zonedNow(startMs('15:30'), table.timeZone)?.dateIso).toBe(table.date);

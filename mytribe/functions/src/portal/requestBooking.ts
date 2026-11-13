@@ -27,6 +27,7 @@ import {
 } from '../lib/bookingIdempotency';
 import { kinCareLengthMinutes, mapServiceRates } from './getServiceCatalog';
 import {
+  blockWindowText,
   businessCalendarDate,
   businessTimeZone,
   businessTimeZoneIsSet,
@@ -816,7 +817,8 @@ export function assertVisitBookingMode(
   if (match === 'outside') {
     throw new HttpsError(
       'invalid-argument',
-      `That visit time is outside the ${block.label} block (${block.startTime}-${block.endTime}). Pick the block again.`,
+      // #1863: the household reads a block as its window, 12-hour (#1828), never `11:00-15:00`.
+      `That visit time is outside ${blockWindowText(block)}. Pick the block again.`,
     );
   }
   // #596: a block whose OWN times will not parse is a server-side defect, not a

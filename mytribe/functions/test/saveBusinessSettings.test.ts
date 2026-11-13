@@ -462,6 +462,27 @@ describe('saveBusinessSettings', () => {
       expect(settingsWrites()).toHaveLength(0);
     });
 
+    it('a document that never stored the three fields takes the Android diff, which leaves out fields still at their default', async () => {
+      // The Android admin decodes a missing switch as on and a missing mode as
+      // SPECIFIC_TIME, and saves only what changed from that.
+      const bare = { businessName: 'Tribe Tails', timeBlocks: [MIDDAY] };
+      setup(bare);
+      await saveBusinessSettingsHandler(owner({ changes: { defaultBookingMode: 'TIME_BLOCK', allowSpecificTimeBooking: false } }));
+      expect(settingsWrites()).toHaveLength(1);
+      setup(bare);
+      await saveBusinessSettingsHandler(owner({ changes: { allowTimeBlockBooking: false } }));
+      expect(settingsWrites()).toHaveLength(1);
+      // Still two modes at once when the diff leaves both switches on.
+      setup(bare);
+      expect((await refusalOf({ defaultBookingMode: 'TIME_BLOCK' })).message).toBe('Pick Time Blocks or Exact times.');
+    });
+
+    it('a block row with no active key counts as on, as the booking policy reads it', async () => {
+      setup({ ...legacy, timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }] });
+      await saveBusinessSettingsHandler(owner({ changes: TIME_BLOCKS }));
+      expect(settingsWrites()).toHaveLength(1);
+    });
+
     it('a legacy both-on document never blocks a save that does not touch the mode', async () => {
       setup(legacy);
       await saveBusinessSettingsHandler(owner({ changes: { enableConflictDetection: false } }));

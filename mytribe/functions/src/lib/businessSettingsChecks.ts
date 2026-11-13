@@ -761,7 +761,17 @@ export const BOOKING_MODE_NEEDS_BLOCK = 'Time Blocks needs at least one block tu
 export function bookingModeRefusals(changes: Record<string, unknown>, stored: Record<string, unknown>): SettingsRefusal[] {
   const namesMode = BOOKING_MODE_FIELDS.some((f) => f in changes);
   if (!namesMode && !('timeBlocks' in changes)) return [];
-  const merged = (f: string): unknown => (f in changes ? changes[f] : stored[f]);
+  const raw = (f: string): unknown => (f in changes ? changes[f] : stored[f]);
+  // A field the document never stored reads as its default, the same way
+  // `storedBookingMode` and every client decoder read it (both switches on,
+  // SPECIFIC_TIME). The Android admin saves only the fields that changed, so on
+  // a document missing a field it never sends the one already at its default.
+  const merged = (f: string): unknown => {
+    const v = raw(f);
+    if (f === 'defaultBookingMode') return v === 'TIME_BLOCK' ? 'TIME_BLOCK' : v === undefined || v === null ? 'SPECIFIC_TIME' : v;
+    if (f === 'allowTimeBlockBooking' || f === 'allowSpecificTimeBooking') return typeof v === 'boolean' ? v : true;
+    return v;
+  };
   if (namesMode) {
     const block = merged('allowTimeBlockBooking');
     const specific = merged('allowSpecificTimeBooking');
@@ -774,7 +784,8 @@ export function bookingModeRefusals(changes: Record<string, unknown>, stored: Re
   const blocksMode = merged('allowTimeBlockBooking') === true && merged('allowSpecificTimeBooking') === false;
   if (!blocksMode) return [];
   const rows = merged('timeBlocks');
-  const anyActive = Array.isArray(rows) && rows.some((r) => isPlainObject(r) && r['active'] === true);
+  // Only `active: false` turns a row off, as `parseTimeBlockRow` reads it.
+  const anyActive = Array.isArray(rows) && rows.some((r) => isPlainObject(r) && r['active'] !== false);
   return anyActive ? [] : [{ field: 'timeBlocks', message: BOOKING_MODE_NEEDS_BLOCK }];
 }
 /**
