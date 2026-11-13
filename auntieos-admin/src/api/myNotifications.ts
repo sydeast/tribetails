@@ -1,5 +1,6 @@
 import { call } from '../lib/fns';
 import { arr, str } from '../lib/coerce';
+import { currentSessionSeat } from '../lib/sessionSeat';
 
 /**
  * The operator's OWN notification settings ("My Notifications", account
@@ -436,4 +437,20 @@ export async function getMyNotificationPrefs(): Promise<{
 }> {
   const raw = await call<Record<string, never>, RawPrefsDto>('getMyAdminNotificationPrefs', {});
   return { prefs: decodePrefs(raw.prefs), updatedAtMs: raw.updatedAtMs ?? null };
+}
+
+/**
+ * #2182: the matrix THIS person's own notification choices are drawn from.
+ *
+ * The owner reads the full business matrix, exactly as before. An Auntie may
+ * not (it is the Settings > Notifications read), so her session calls
+ * `getMyStaffNotificationOptions`, which returns only the notifications she can
+ * receive, each marked for the staff stream alone, with the business's gate on
+ * them for her. Same decoder, so the same rows and switches draw both.
+ */
+export async function getMyNotificationMatrix(): Promise<NotificationMatrix> {
+  const seat = await currentSessionSeat();
+  if (!seat.caretaker) return getNotificationMatrix();
+  const raw = await call<Record<string, never>, RawGetOverridesResult>('getMyStaffNotificationOptions', {});
+  return decodeMatrix(raw);
 }

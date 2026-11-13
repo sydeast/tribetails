@@ -14,7 +14,18 @@ vi.mock('../lib/firestore', () => ({ useCollection }));
 // mocks the same way. Defaults to no configured durations at all, so a test
 // that doesn't care about ordering doesn't need its own mock.
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
-vi.mock('../api/settings', () => ({ getBusinessSettings }));
+vi.mock('../api/settings', async (orig) => ({
+  ...(await orig<typeof import('../api/settings')>()),
+  getBusinessSettings,
+}));
+// #2164: who is signed in, and the transport the Auntie's narrow read goes
+// through. The owner by default, so every other case reads as it always did.
+const { currentSessionSeat, call } = vi.hoisted(() => ({ currentSessionSeat: vi.fn(), call: vi.fn() }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat,
+}));
+vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
 
 // Schedule navigates on the detail sheet's kinfolk / KinTale links. No suite in
 // this tree mounts a RouterProvider (Home.tsx has the same dependency and no
@@ -83,6 +94,9 @@ vi.mock('../api/scheduleWrite', async () => {
   return { ...actual, createBlockedTimeSlot, createKinCareSession, deleteBlockedTimeSlot };
 });
 import { Schedule } from './Schedule';
+import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
+import { WORK_SETTINGS_FAILED, WORK_SETTINGS_LOADING } from '../components/WorkSettingsNotice';
+import { invalidateSharedLoad } from '../lib/useSharedOneShot';
 import { HOUR_HEIGHT_PX } from '../lib/scheduleGrid';
 import { businessTodayIso, businessWallClockToMs } from '../lib/businessZoneTime';
 
@@ -162,6 +176,8 @@ beforeEach(() => {
   getBusinessSettings
     .mockReset()
     .mockResolvedValue({ serviceDurations: {}, serviceRates: {}, snapRescheduleTo15Min: false });
+  currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
+  call.mockReset().mockImplementation(staffOnlyCall);
   rescheduleBooking.mockReset().mockResolvedValue({ ok: true, sessionId: 'sess-42' });
   createBlockedTimeSlot.mockReset().mockResolvedValue({ ok: true, docId: 'slot-1' });
   createKinCareSession.mockReset().mockResolvedValue({ ok: true, sessionId: 'sess-9' });
@@ -1638,5 +1654,39 @@ describe('Schedule at the UTC and business day split (#1231)', () => {
     expect(within(agenda()).getByText('The Whitfields')).toBeInTheDocument();
     expect(within(agenda()).getByText('12:00 to 13:00')).toBeInTheDocument();
     expect(within(agenda()).queryByText('The Okonkwos')).toBeNull();
+  });
+});
+
+describe('#2164 Schedule under an Auntie sign-in', () => {
+  beforeEach(() => {
+    invalidateSharedLoad();
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+  });
+
+  it('waits visibly, then reads the KinCare list and the clock from her own read', async () => {
+    const user = userEvent.setup();
+    render(<Schedule />);
+    expect(screen.getByText(WORK_SETTINGS_LOADING)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
+    expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
+    expect(getBusinessSettings).not.toHaveBeenCalled();
+    expect(screen.queryByText(WORK_SETTINGS_FAILED)).not.toBeInTheDocument();
+    // New visit offers her KinCare list by name, with no price beside it.
+    await user.click(screen.getByRole('button', { name: 'New visit' }));
+    const service = screen.getByLabelText('Service');
+    const offered = within(service).getAllByRole('option').map((o) => o.textContent);
+    expect(offered).toEqual(expect.arrayContaining(['Long walk', 'Drop-in']));
+    expect(offered.some((t) => (t ?? '').includes('$'))).toBe(false);
+  });
+
+  it('says plainly when her read fails, which clock the times are on, and offers a retry', async () => {
+    call.mockRejectedValueOnce(new Error('unavailable'));
+    const user = userEvent.setup();
+    render(<Schedule />);
+    expect(await screen.findByText(WORK_SETTINGS_FAILED)).toBeInTheDocument();
+    expect(screen.getByText(/times show on Central time/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_FAILED)).not.toBeInTheDocument());
+    expect(call).toHaveBeenCalledTimes(2);
   });
 });

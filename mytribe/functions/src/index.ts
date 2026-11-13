@@ -507,6 +507,10 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   checkBusinessAdmins: () => require('./admin/provisionBusinessAdmins'),
   listBusinessAdmins: () => require('./admin/provisionBusinessAdmins'),
   getMyAdminNotificationPrefs: () => require('./admin/myAdminNotificationPrefs'),
+  // #2182: the notification types an Auntie receives, for her own choices.
+  getMyStaffNotificationOptions: () => require('./admin/myStaffNotificationOptions'),
+  // #2164: the few business settings an Auntie's own work reads.
+  getStaffWorkSettings: () => require('./admin/staffWorkSettings'),
   saveMyAdminNotificationPrefs: () => require('./admin/myAdminNotificationPrefs'),
   getLocalWeather: () => require('./admin/getLocalWeather'),
   createKinCareSession: () => require('./admin/createKinCareSession'),

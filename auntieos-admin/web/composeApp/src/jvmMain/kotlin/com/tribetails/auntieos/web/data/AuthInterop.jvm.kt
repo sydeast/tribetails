@@ -24,7 +24,6 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -303,20 +302,23 @@ internal object FirebaseRestAuth {
         return testTribeIdClaimOf(token)
     }
 
-    /** Decode the `admin` custom claim from a Firebase ID token (JWT) payload. */
+    /**
+     * Decode the owner claim from a Firebase ID token (JWT) payload. The owner
+     * gate matches the web role rule ([ownerFromClaims]).
+     */
     private fun adminClaimOf(jwt: String): Boolean = runCatchingCancellable {
         val payload = jwt.split(".").getOrNull(1) ?: return false
         val decoded = Base64.getUrlDecoder().decode(payload.padEnd((payload.length + 3) / 4 * 4, '='))
         val claims: JsonObject = json.parseToJsonElement(decoded.decodeToString()).jsonObject
-        claims["admin"]?.jsonPrimitive?.booleanOrNull == true
+        ownerFromClaims(claims)
     }.getOrDefault(false)
 
-    /** Decode the `testTribeId` string custom claim from a Firebase ID token (JWT) payload. */
+    /** Decode the `testTribeId` sandbox claim ([sandboxTribeIdFromClaims]) from a Firebase ID token (JWT) payload. */
     private fun testTribeIdClaimOf(jwt: String): String? = runCatchingCancellable {
         val payload = jwt.split(".").getOrNull(1) ?: return null
         val decoded = Base64.getUrlDecoder().decode(payload.padEnd((payload.length + 3) / 4 * 4, '='))
         val claims: JsonObject = json.parseToJsonElement(decoded.decodeToString()).jsonObject
-        claims["testTribeId"]?.jsonPrimitive?.contentOrNull?.ifBlank { null }
+        sandboxTribeIdFromClaims(claims)
     }.getOrNull()
 
     /** Map an Identity Toolkit error body to the `auth/...` code AuthClient.friendly understands. */

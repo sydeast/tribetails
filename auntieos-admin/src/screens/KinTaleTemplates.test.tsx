@@ -44,7 +44,18 @@ const { listChecklistBank, saveChecklistBankItem } = vi.hoisted(() => ({
 vi.mock('../api/checklistBank', () => ({ listChecklistBank, saveChecklistBankItem }));
 
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
-vi.mock('../api/settings', () => ({ getBusinessSettings }));
+vi.mock('../api/settings', async (orig) => ({
+  ...(await orig<typeof import('../api/settings')>()),
+  getBusinessSettings,
+}));
+// #2164: who is signed in, and the transport the Auntie's narrow read goes
+// through. The owner by default, so every case above reads as it always did.
+const { currentSessionSeat, call } = vi.hoisted(() => ({ currentSessionSeat: vi.fn(), call: vi.fn() }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat,
+}));
+vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
 
 // #1591: archive, restore and delete-for-good. The pure halves stay real.
 const { removeKinTaleTemplate, getKinTaleTemplateUsage } = vi.hoisted(() => ({
@@ -58,6 +69,7 @@ vi.mock('../api/kinTaleTemplateRemoval', async (orig) => ({
 }));
 
 import { KinTaleTemplates } from './KinTaleTemplates';
+import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
 
 /** The catalog the Service types checkboxes draw from: the real KinCare types (#373). */
 const KINCARE_TYPES = { 'Dog Walk': '25', 'Drop-in': '15' };
@@ -101,6 +113,8 @@ beforeEach(() => {
   ]);
   saveChecklistBankItem.mockReset().mockResolvedValue({ id: 'meds', text: 'Meds', scope: 'PER_PET' });
   getBusinessSettings.mockReset().mockResolvedValue({ serviceRates: KINCARE_TYPES, serviceDurations: {} });
+  currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
+  call.mockReset().mockImplementation(staffOnlyCall);
   removeKinTaleTemplate.mockReset().mockResolvedValue(undefined);
   getKinTaleTemplateUsage.mockReset();
   mockStream({ status: 'ready', data: [tpl()] });
@@ -1175,5 +1189,18 @@ describe('KinTaleTemplates: remove, archive, delete for good (#1591)', () => {
     expect(await within(dialog).findByText(/Couldn't count the KinTales that used it: permission-denied/)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Delete for good' })).toBeDisabled();
     expect(removeKinTaleTemplate).not.toHaveBeenCalled();
+  });
+});
+
+describe('#2164 KinTaleTemplates under an Auntie sign-in', () => {
+  beforeEach(() => {
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+    access.current = { status: 'caretaker' };
+  });
+  it('reads the KinCare list through her own read, never the settings document', async () => {
+    render(<KinTaleTemplates />);
+    expect(await screen.findByText('Walk recap')).toBeInTheDocument();
+    await waitFor(() => expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {}));
+    expect(getBusinessSettings).not.toHaveBeenCalled();
   });
 });

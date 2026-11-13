@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  getNotificationMatrix,
+  getMyNotificationMatrix,
   getMyNotificationPrefs,
   STREAM_BUSINESS,
   STREAM_STAFF,
@@ -31,6 +31,7 @@ import {
   type BulkToggleScope,
 } from '../lib/myNotificationsEdit';
 import { type Async } from '../lib/async';
+import { currentSessionSeat } from '../lib/sessionSeat';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { LoadingRow } from '../components/LoadingRow';
 import { Banner } from '../components/Banner';
@@ -78,6 +79,23 @@ export function MyNotificationsEdit() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  // #2182: an Auntie never sees Business Settings (ruling 2026-11-13), so her
+  // copy does not send her there. Her rows are hers alone; the owner's copy is
+  // unchanged.
+  const [caretaker, setCaretaker] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void currentSessionSeat()
+      .then((seat) => {
+        if (live) setCaretaker(seat.caretaker);
+      })
+      .catch(() => {
+        // The owner's copy stands; it is only a sentence.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const load = useCallback(() => {
     let live = true;
@@ -85,7 +103,7 @@ export function MyNotificationsEdit() {
     setDraft(null);
     setSaveError(null);
     setJustSaved(false);
-    Promise.all([getNotificationMatrix(), getMyNotificationPrefs()])
+    Promise.all([getMyNotificationMatrix(), getMyNotificationPrefs()])
       .then(([matrix, prefsResult]) => {
         if (!live) return;
         setState({ status: 'ready', data: { matrix, savedPrefs: prefsResult.prefs } });
@@ -174,9 +192,13 @@ export function MyNotificationsEdit() {
         kicker="The Den · Account"
         title="What reaches"
         accentTail="you."
-        subtitle="Your business decides which channels each notification can use. Choose what you actually
+        subtitle={
+          caretaker
+            ? 'Your business decides which channels each notification can use. Choose what you actually receive within those, and how. Anything your business set for you is read-only here.'
+            : `Your business decides which channels each notification can use. Choose what you actually
         receive within those, and how. Anything your business set for you is read-only here; change those
-        in Business Settings."
+        in Business Settings.`
+        }
         trailing={
           <>
             <GhostButton label="Discard" onClick={discard} disabled={!dirty || saving} />
@@ -207,8 +229,10 @@ export function MyNotificationsEdit() {
         empty={
           <DenPanel title="Your notifications" subtitle="Nothing to set just yet.">
             <p className="mynotif__hint">
-              Your business has not enabled any notifications for you yet. Once a channel is turned on in
-              Settings, it will show up here.
+              {caretaker
+                ? 'Your business has not turned on any notifications for you yet. Once it does, they will show up here.'
+                : `Your business has not enabled any notifications for you yet. Once a channel is turned on in
+              Settings, it will show up here.`}
             </p>
           </DenPanel>
         }

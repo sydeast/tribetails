@@ -174,6 +174,28 @@ describe('rules: #944 an Auntie and money', () => {
     await assertFails(db.doc('business_settings/business_settings')
       .set({ householdNotificationsLive: true }, { merge: true }));
   });
+  /**
+   * #2164 / #2182: her screens now get the few values her work needs through
+   * two narrow callables. The documents themselves stay closed to her, with
+   * every field on them, and stay open to the owner.
+   */
+  it('#2164: still cannot read any business_settings field, nor the Settings > Notifications store', async () => {
+    const env = await getEnv();
+    await seed('business_settings/business_settings', {
+      timeZone: 'America/Denver', serviceRates: { walk: '25.00' }, serviceDurations: { walk: '30' },
+      requireArrivalDepartureVerification: true, kinTaleRequired: true, businessPhone: '555-0142',
+    });
+    await seed('businessSettings/notifications', { byKey: { 'schedule.upcoming.digest': { enabled: false } } });
+    for (const db of [asAuntie(env).firestore(), asDoubleClaimed(env).firestore()]) {
+      await assertFails(db.doc('business_settings/business_settings').get());
+      await assertFails(db.collection('business_settings').get());
+      await assertFails(db.doc('businessSettings/notifications').get());
+      await assertFails(db.doc('businessSettings/notifications').set({ byKey: {} }, { merge: true }));
+    }
+    const owner = asOwner(env).firestore();
+    await assertSucceeds(owner.doc('business_settings/business_settings').get());
+    await assertSucceeds(owner.doc('businessSettings/notifications').get());
+  });
   /** #947's own run-marker collection is closed to everyone; confirm for a caretaker. */
   it('cannot touch scheduled_runs, the cron double-send guard', async () => {
     const env = await getEnv();
