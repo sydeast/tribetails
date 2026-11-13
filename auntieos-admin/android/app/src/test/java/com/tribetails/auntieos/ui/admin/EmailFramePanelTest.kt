@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import com.tribetails.auntieos.data.repository.EmailFrameRepository
+import com.tribetails.auntieos.data.repository.StaffMember
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -34,6 +35,25 @@ class EmailFramePanelTest {
         "headerText" to "", "footerText" to "", "logoUrl" to "",
     )
 
+    private val ownerUid = "nppJNdMNYJfUigibGKUQj3n4obt2"
+    private val roster = listOf(StaffMember(uid = ownerUid, displayName = "Syd East", email = null))
+
+    /** A frame that differs from the default, stamped by [ownerUid]. */
+    private fun saved(stored: Map<String, String>) =
+        EmailFrameRepository.EmailFrameState(stored, defaults, "2026-11-11T19:45:00.000Z", ownerUid)
+
+    /** What the server answers for the default frame: nothing stored, no stamp. */
+    private val defaultFrame = EmailFrameRepository.EmailFrameState(emptyMap(), defaults, null, null)
+
+    private fun repoHolding(loaded: EmailFrameRepository.EmailFrameState): EmailFrameRepository {
+        val r = mockk<EmailFrameRepository>()
+        coEvery { r.getEmailFrame() } returns Result.success(loaded)
+        coEvery { r.saveEmailFrame(any()) } returns Result.success(defaultFrame)
+        coEvery { r.resetEmailFrame() } returns Result.success(defaultFrame)
+        coEvery { r.previewEmailFrame(any()) } returns Result.success(EmailFrameRepository.FramePreview("s", "<p>x</p>", "x"))
+        return r
+    }
+
     private fun repo(stored: Map<String, String>): EmailFrameRepository {
         val r = mockk<EmailFrameRepository>()
         val state = EmailFrameRepository.EmailFrameState(stored, defaults, null, null)
@@ -47,7 +67,7 @@ class EmailFramePanelTest {
     @Test
     fun `an edit enables Save, and Save sends only that field`() {
         val r = repo(mapOf("accentColor" to "#123456"))
-        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r)) } }
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { roster }) } }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Save").assertIsNotEnabled()
         composeRule.onNodeWithTag("emailFrame.footerText").performTextReplacement("Thanks for trusting us")
@@ -59,7 +79,7 @@ class EmailFramePanelTest {
     @Test
     fun `an invalid color keeps Save off and says why`() {
         val r = repo(emptyMap())
-        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r)) } }
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { roster }) } }
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("emailFrame.accentColor").performTextReplacement("orange")
         composeRule.onNodeWithText("Use a color like #df8431.").assertExists()
@@ -70,12 +90,79 @@ class EmailFramePanelTest {
     @Test
     fun `Reset asks first, then resets`() {
         val r = repo(mapOf("accentColor" to "#123456"))
-        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r)) } }
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { roster }) } }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Reset to default").performClick()
         coVerify(exactly = 0) { r.resetEmailFrame() }
         composeRule.onNodeWithText("Reset").performClick()
         composeRule.waitForIdle()
         coVerify(exactly = 1) { r.resetEmailFrame() }
+    }
+
+    // ── #1962 and #1989: the line under the title ───────────────────────────
+
+    @Test
+    fun `a saved frame names who saved it, never their user id`() {
+        val r = repoHolding(saved(mapOf("footerText" to "Thanks")))
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { roster }) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Last saved 2026-11-11 by Syd East").assertExists()
+        composeRule.onNodeWithText("Using the default frame").assertDoesNotExist()
+        composeRule.onNodeWithText(ownerUid, substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a saver the roster does not know reads as an Admin`() {
+        val r = repoHolding(saved(mapOf("footerText" to "Thanks")))
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { emptyList() }) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Last saved 2026-11-11 by an Admin").assertExists()
+        composeRule.onNodeWithText(ownerUid, substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `nothing stored reads as the default frame`() {
+        val r = repoHolding(defaultFrame)
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { roster }) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Using the default frame").assertExists()
+    }
+
+    @Test
+    fun `clearing the last field and saving goes back to the default frame`() {
+        val r = repoHolding(saved(mapOf("footerText" to "Thanks")))
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { roster }) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("emailFrame.footerText").performTextReplacement("")
+        composeRule.onNodeWithText("Save").assertIsEnabled().performClick()
+        composeRule.waitForIdle()
+        coVerify(exactly = 1) { r.saveEmailFrame(mapOf("footerText" to null)) }
+        composeRule.onNodeWithText("Using the default frame").assertExists()
+        composeRule.onNodeWithText("Last saved", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `Reset goes back to the default frame`() {
+        val r = repoHolding(saved(mapOf("accentColor" to "#123456")))
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { roster }) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Reset to default").performClick()
+        composeRule.onNodeWithText("Reset").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Using the default frame").assertExists()
+        composeRule.onNodeWithText("Last saved", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `saving content equal to the default still reads as the default frame`() {
+        // The server keeps nothing for a value equal to its default.
+        val r = repoHolding(defaultFrame)
+        composeRule.setContent { AuntieOSTheme { EmailFramePanel(vm = EmailFrameViewModel(r), loadStaff = { roster }) } }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("emailFrame.accentColor").performTextReplacement("#df8431")
+        composeRule.onNodeWithText("Save").assertIsEnabled().performClick()
+        composeRule.waitForIdle()
+        coVerify(exactly = 1) { r.saveEmailFrame(mapOf("accentColor" to "#df8431")) }
+        composeRule.onNodeWithText("Using the default frame").assertExists()
     }
 }
