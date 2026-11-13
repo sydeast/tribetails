@@ -11,10 +11,12 @@ import type { CollectionSpec } from '../lib/firestore';
  * #1897: the New booking panel is a right-edge sheet, and its close X sat at the
  * viewport's top-right corner, exactly where the shell topbar's "Sign out" is.
  * Once the panel unmounted the pointer rested on Sign out (and a double click
- * landed its second click there). The fix insets the panel below the topbar so
- * the X can never share a hit area with it. jsdom does no layout, so the inset is
- * asserted on the stylesheet and on the marker the stylesheet keys on; the
- * close behaviour is asserted for real.
+ * landed its second click there). Every right-edge sheet (and the phone-width
+ * wizard) had the same shape, so the inset lives on Dialog's own variants and
+ * starts them below the topbar row, read from shell.css's topbar tokens. jsdom
+ * does no layout, so the inset is asserted on the stylesheets and on the variant
+ * this panel renders with (the Cypress spec in bookings.cy.ts measures the real
+ * boxes); the close behaviour is asserted for real.
  */
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
@@ -38,9 +40,11 @@ afterAll(() => {
   vi.useRealTimers();
 });
 
-const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'NewBookingDialog.css'), 'utf8');
-
-const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../styles/shell.css'), 'utf8');
+const here = dirname(fileURLToPath(import.meta.url));
+const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '');
+const dialogCss = stripComments(readFileSync(join(here, 'Dialog.css'), 'utf8'));
+const bookingCss = stripComments(readFileSync(join(here, 'NewBookingDialog.css'), 'utf8'));
+const shell = stripComments(readFileSync(join(here, '../styles/shell.css'), 'utf8'));
 
 beforeEach(() => {
   createMultiDateBookingRequest.mockReset();
@@ -59,45 +63,65 @@ beforeEach(() => {
 /** The body of the first rule whose selector is exactly `needle`. */
 function ruleBody(source: string, needle: string): string | null {
   const re = /([^{}]+)\{([^{}]*)\}/g;
-  for (const m of source.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(re)) {
+  for (const m of source.matchAll(re)) {
     if (m[1]!.trim() === needle) return m[2]!;
   }
   return null;
 }
 
+/** The text of the `@media` block whose condition is exactly `condition`. */
+function mediaBlock(source: string, condition: string): string {
+  const at = source.indexOf(`@media ${condition} {`);
+  expect(at, `@media ${condition}`).toBeGreaterThanOrEqual(0);
+  let depth = 0;
+  for (let i = source.indexOf('{', at); i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    if (source[i] === '}' && --depth === 0) return source.slice(at, i + 1);
+  }
+  throw new Error(`unclosed @media ${condition}`);
+}
+
 describe('#1897 New booking panel clears the shell topbar', () => {
-  it('marks the panel content so the stylesheet can inset the sheet', () => {
+  it('renders as the shared right-edge sheet, so the sheet inset applies to it', () => {
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     const dialog = screen.getByRole('dialog', { name: 'New booking request' });
-    expect(dialog.querySelector('.new-booking')).not.toBeNull();
+    expect(dialog).toHaveClass('dialog--sheet');
+    expect(dialog.parentElement).toHaveClass('dialog__backdrop--sheet');
     expect(dialog.querySelector('.dialog__close')).not.toBeNull();
   });
 
-  it('insets the sheet backdrop from the top on desktop', () => {
-    const body = ruleBody(css, '.dialog__backdrop--sheet:has(.new-booking)');
-    expect(body).not.toBeNull();
-    expect(body).toMatch(/padding-top:\s*[^;]*(rem|var\()/);
+  it('every sheet starts below the topbar row, from the shell token, with no fallback inset', () => {
+    const body = ruleBody(dialogCss, '.dialog__backdrop--sheet');
+    expect(body).toMatch(/padding-top:\s*var\(--shell-topbar-clear,\s*0px\)/);
   });
 
-  it('takes the inset from the shell topbar token, not a number of its own', () => {
-    const body = ruleBody(css, '.dialog__backdrop--sheet:has(.new-booking)');
-    expect(body).toMatch(/padding-top:\s*var\(--shell-topbar-clear/);
-    expect(css).not.toMatch(/@media[^{]*\{[^}]*:has\(\.new-booking\)[^}]*padding-top:\s*[\d.]+rem/);
+  it('the phone-width wizard starts below the topbar row too', () => {
+    const phone = mediaBlock(dialogCss, '(max-width: 40rem)');
+    expect(ruleBody(phone, '.dialog__backdrop:has(.dialog--wizard)')).toMatch(
+      /padding:\s*var\(--shell-topbar-clear,\s*0px\)\s+0\s+0/,
+    );
   });
 
-  it('shell.css defines the token from the topbar row it lays out, and shrinks it on a phone', () => {
+  it('the New booking stylesheet no longer carries an inset of its own', () => {
+    expect(bookingCss).not.toMatch(/\.new-booking\b/);
+    expect(bookingCss).not.toMatch(/dialog__backdrop--sheet/);
+  });
+
+  it('shell.css builds the topbar token from the account chip it lays out', () => {
     const main = ruleBody(shell, '.shell__main');
+    expect(main).toMatch(
+      /--shell-topbar-h:\s*calc\(var\(--shell-chip-monogram\)\s*\+\s*2\s*\*\s*var\(--shell-chip-pad-y\)\)/,
+    );
     expect(main).toMatch(/--shell-topbar-clear:\s*calc\(var\(--shell-pad-y\)\s*\+\s*var\(--shell-topbar-h\)/);
     expect(main).toMatch(/padding:\s*var\(--shell-pad-y\)/);
+    // The chip is drawn from the same tokens, so the token cannot drift from the row.
+    expect(ruleBody(shell, '.shell__account')).toMatch(/padding:\s*var\(--shell-chip-pad-y\)\s+\S+\s+var\(--shell-chip-pad-y\)/);
+    const monogram = ruleBody(shell, '.shell__account-monogram');
+    expect(monogram).toMatch(/width:\s*var\(--shell-chip-monogram\)/);
+    expect(monogram).toMatch(/height:\s*var\(--shell-chip-monogram\)/);
     expect(ruleBody(shell, '.shell__topbar')).toMatch(/min-height:\s*var\(--shell-topbar-h\)/);
-    const phone = shell.match(/@media \(max-width: 720px\) \{([\s\S]*)$/);
-    expect(phone![1]).toMatch(/\.shell__main \{\s*--shell-pad-y:\s*var\(--space-4\)/);
-  });
-
-  it('squares the top corners it now floats under the topbar', () => {
-    const body = ruleBody(css, '.dialog--sheet:has(.new-booking)');
-    expect(body).not.toBeNull();
-    expect(body).toMatch(/border-top/);
+    // The phone page padding shrinks, and the clearance shrinks with it.
+    expect(mediaBlock(shell, '(max-width: 720px)')).toMatch(/\.shell__main \{\s*--shell-pad-y:\s*var\(--space-4\)/);
   });
 });
 

@@ -471,8 +471,6 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
         </>
       }
     >
-      {/* #1897: the marker NewBookingDialog.css keys its sheet inset on. */}
-      <div className="new-booking">
       <Stepper current={step} reachable={reachable} onJump={jumpTo} />
 
       {error !== null && (
@@ -610,7 +608,6 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
           />
         )}
       </fieldset>
-      </div>
     </Dialog>
   );
 }
