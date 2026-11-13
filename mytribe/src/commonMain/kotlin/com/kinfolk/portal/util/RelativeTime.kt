@@ -190,6 +190,25 @@ fun bookingBlockText(b: Booking): String? {
     return if (start != null && end != null) "$label (${com.kinfolk.portal.screens.schedule.formatClockRange12(start, end)})" else label
 }
 /**
+ * #1863: the time a household ASKED to move a visit to, the way it is shown
+ * everywhere else: "Tue, Evening (4 PM to 7 PM)" in Time Blocks mode (the
+ * server names the block), "Tue, 4:00 PM" in Exact times mode, "" with no ask.
+ * Mirrors `rescheduleAskWhen` in mytribe/web/src/lib/portalFormat.ts.
+ */
+fun rescheduleAskWhen(b: Booking, timeZone: TimeZone = TimeZone.currentSystemDefault()): String {
+    val ms = b.rescheduleRequestedStartTimeMs ?: return ""
+    val label = b.rescheduleRequestedTimeBlockLabel ?: return weekdayTime(ms, timeZone)
+    val start = b.rescheduleRequestedTimeBlockStartTime
+    val end = b.rescheduleRequestedTimeBlockEndTime
+    val window = if (start != null && end != null) {
+        "$label (${com.kinfolk.portal.screens.schedule.formatClockRange12(start, end)})"
+    } else {
+        label
+    }
+    val weekday = WEEKDAY_ABBREV[Instant.fromEpochMilliseconds(ms).toLocalDateTime(timeZone).dayOfWeek.ordinal]
+    return "$weekday, $window"
+}
+/**
  * The instant a booked visit sorts at: its start, or for a night still waiting
  * on its start (#1098) the last millisecond of that night's day, or null.
  */

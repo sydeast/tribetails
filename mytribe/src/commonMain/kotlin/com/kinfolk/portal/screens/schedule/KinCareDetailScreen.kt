@@ -73,7 +73,7 @@ import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.auntieName
 import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.noteWrittenAt
-import com.kinfolk.portal.util.weekdayTime
+import com.kinfolk.portal.util.rescheduleAskWhen
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
@@ -615,7 +615,8 @@ private fun RescheduleRequestSection(
     val type = LocalKinfolkTypography.current
     val status = kinCare.rescheduleRequestStatus
     val pending = pendingLocal || status == RescheduleRequestStatus.Pending
-    val proposedLabel = weekdayTime(kinCare.rescheduleRequestedStartTimeMs)
+    // #1863: the asked-for time in the business's mode, a window in Time Blocks.
+    val proposedLabel = rescheduleAskWhen(kinCare)
     val responseNote = kinCare.rescheduleResponseNote?.takeIf { it.isNotBlank() }
 
     GlassCard(
