@@ -76,6 +76,10 @@ internal fun UninvoicedVisitsPicker(
     var excludeError by remember { mutableStateOf<String?>(null) }
     var excludeBusy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    // #2089: the visits the admin has seen and left unticked, for this
+    // household. A held state object, so a load that started several
+    // compositions ago still reads the latest value when it lands.
+    val leftUnticked = remember { mutableStateOf<Set<String>>(emptySet()) }
 
     suspend fun runLoad(from: String?, to: String?) {
         if (kinfolkId.isBlank()) return
@@ -84,8 +88,10 @@ internal fun UninvoicedVisitsPicker(
         when (val r = load(kinfolkId, from, to)) {
             is WriteResult.Ok -> {
                 result = r.value
-                // Every billable visit starts selected.
-                onSelectedChange(r.value.sessions.map { it.sessionId }.toSet())
+                // Every billable visit starts selected. A re-read keeps the
+                // admin's own ticks (#2089): a visit left unticked stays
+                // unticked, and only the first read finds nothing remembered.
+                onSelectedChange(carriedSelection(r.value.sessions.map { it.sessionId }, leftUnticked.value))
                 onSessionsLoaded(r.value.sessions)
             }
             is WriteResult.Err -> {
@@ -105,6 +111,7 @@ internal fun UninvoicedVisitsPicker(
         excluding = false
         windowFrom = ""
         windowTo = ""
+        leftUnticked.value = emptySet()
         runLoad(null, null)
     }
 
@@ -115,6 +122,11 @@ internal fun UninvoicedVisitsPicker(
     val unpriceableIds = result?.unpriceable.orEmpty().map { it.sessionId }.toSet()
     val unplaceable = result?.unplaceable.orEmpty()
     val selectedSessions = sessions.filter { it.sessionId in selected }
+    // Every tick change the admin makes goes through here, so a re-read can keep it.
+    fun choose(next: Set<String>) {
+        leftUnticked.value = leftUntickedAfter(leftUnticked.value, sessions.map { it.sessionId }, next)
+        onSelectedChange(next)
+    }
 
     fun applyExclusion(ids: List<String>, doNotInvoice: Boolean, reason: String) {
         if (excludeBusy) return
@@ -286,12 +298,12 @@ internal fun UninvoicedVisitsPicker(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GhostButton(
                         label = "Select all",
-                        onClick = { onSelectedChange(sessions.map { it.sessionId }.toSet()) },
+                        onClick = { choose(sessions.map { it.sessionId }.toSet()) },
                         enabled = !disabled && selectedSessions.size != sessions.size,
                     )
                     GhostButton(
                         label = "Select none",
-                        onClick = { onSelectedChange(emptySet()) },
+                        onClick = { choose(emptySet()) },
                         enabled = !disabled && selectedSessions.isNotEmpty(),
                     )
                 }
@@ -311,7 +323,7 @@ internal fun UninvoicedVisitsPicker(
                             AuntieCheckbox(
                                 checked = isSelected,
                                 onCheckedChange = {
-                                    onSelectedChange(if (isSelected) selected - s.sessionId else selected + s.sessionId)
+                                    choose(if (isSelected) selected - s.sessionId else selected + s.sessionId)
                                 },
                                 enabled = !disabled,
                             )
@@ -388,7 +400,7 @@ internal fun UninvoicedVisitsPicker(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GhostButton(
-                                label = "Keep them billable",
+                                label = keepBillableLabel(selectedSessions.size),
                                 onClick = { excluding = false; excludeReason = "" },
                                 enabled = !excludeBusy,
                             )
