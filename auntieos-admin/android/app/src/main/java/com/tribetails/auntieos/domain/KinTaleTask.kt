@@ -23,13 +23,11 @@ import com.tribetails.auntieos.data.model.KinCareSession
 /**
  * Is "KinTale required" on, for this raw settings value? The model reads the
  * same way ([com.tribetails.auntieos.data.model.BusinessSettings.kinTaleRequired]
- * defaults to true, and `toObject` fills an absent key from it). ABSENT MEANS ON: only an
- * explicit `false` turns it off. Today a departed visit waits on its KinTale on
- * every field path, so the Auntie is already, in effect, required to send one;
- * reading a missing key as off would drop that prompt on the deploy that made
- * the setting real, with no operator having chosen it.
+ * defaults to false, and `toObject` fills an absent key from it). ABSENT MEANS
+ * OFF (operator ruling 2026-11-13, "Start it off"): only an explicit `true`
+ * turns it on, as on the server.
  */
-fun kinTaleRequiredSetting(raw: Any?): Boolean = raw != false
+fun kinTaleRequiredSetting(raw: Any?): Boolean = raw == true
 
 /**
  * Has a KinTale for this visit gone to the household? `sentReportCount` alone:

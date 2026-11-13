@@ -11,14 +11,15 @@ import {
  * #2123: the Auntie's "Send the KinTale" task. The same rule as the server's
  * `functions/src/lib/kinTaleRequirement.ts` and the Android and desktop copies.
  */
-describe('kinTaleRequiredFrom: absent reads on', () => {
-  it('only an explicit false is off', () => {
-    expect(KIN_TALE_REQUIRED_DEFAULT).toBe(true);
-    expect(kinTaleRequiredFrom(undefined)).toBe(true);
-    expect(kinTaleRequiredFrom({})).toBe(true);
+describe('kinTaleRequiredFrom: absent reads off (ruling 2026-11-13, "Start it off")', () => {
+  it('only an explicit true is on', () => {
+    expect(KIN_TALE_REQUIRED_DEFAULT).toBe(false);
+    expect(kinTaleRequiredFrom(undefined)).toBe(false);
+    expect(kinTaleRequiredFrom({})).toBe(false);
+    expect(kinTaleRequiredFrom({ businessName: 'Tribe' })).toBe(false);
     expect(kinTaleRequiredFrom({ kinTaleRequired: true })).toBe(true);
     expect(kinTaleRequiredFrom({ kinTaleRequired: false })).toBe(false);
-    expect(kinTaleRequiredFrom({ kinTaleRequired: 'false' })).toBe(true);
+    expect(kinTaleRequiredFrom({ kinTaleRequired: 'true' })).toBe(false);
   });
 });
 

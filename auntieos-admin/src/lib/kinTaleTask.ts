@@ -19,12 +19,12 @@ import { sharedLoad } from './useSharedOneShot';
  * and the desktop console's copy. Change them together.
  */
 
-/** What a settings document with no `kinTaleRequired` means: on (see the server's header for why). */
-export const KIN_TALE_REQUIRED_DEFAULT = true;
+/** What a settings document with no `kinTaleRequired` means: off (operator ruling 2026-11-13, "Start it off"). */
+export const KIN_TALE_REQUIRED_DEFAULT = false;
 
-/** The switch off the raw settings document. Only an explicit `false` is off. */
+/** The switch off the raw settings document. Only an explicit `true` is on. */
 export function kinTaleRequiredFrom(raw: Record<string, unknown> | undefined): boolean {
-  return raw?.['kinTaleRequired'] === false ? false : KIN_TALE_REQUIRED_DEFAULT;
+  return raw?.['kinTaleRequired'] === true ? true : KIN_TALE_REQUIRED_DEFAULT;
 }
 
 /** The session fields the task reads. */

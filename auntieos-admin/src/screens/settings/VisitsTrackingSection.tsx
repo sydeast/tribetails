@@ -39,7 +39,7 @@ import '../SettingsEdit.css';
  *  LIVE   `defaultEtaMinutes` + `etaMinuteOptions`  the value and the choices on
  *         the "On My Way" sheet.
  *  LIVE   `kinTaleRequired` (#2123): the Auntie's "Send the KinTale" task on
- *         Auntie Time. Absent reads on; it never blocks completion.
+ *         Auntie Time. Absent reads off; it never blocks completion.
  *  LIVE   `enablePhotoLocationTagging`, `requireArrivalDepartureVerification`,
  *         `saveRoutesForDays`, `allowClientLocationSharing`,
  *         `draftRetentionDays` + `draftRetentionOptions`. These five were

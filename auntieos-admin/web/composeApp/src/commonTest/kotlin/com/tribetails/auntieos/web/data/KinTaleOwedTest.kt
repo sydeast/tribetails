@@ -85,23 +85,32 @@ class KinTaleOwedTest {
     // ── The setting and the stamp, as they come off the documents ───────────
 
     @Test
-    fun kinTaleRequiredReadsOnWhenTheDocumentHasNoKey() {
-        assertTrue(BusinessSettings().kinTaleRequired)
-        assertTrue(codec.decodeFromString(BusinessSettings.serializer(), "{}").kinTaleRequired)
+    fun kinTaleRequiredReadsOffWhenTheDocumentHasNoKey() {
+        // Operator ruling 2026-11-13: "Start it off".
+        assertFalse(BusinessSettings().kinTaleRequired)
+        assertFalse(codec.decodeFromString(BusinessSettings.serializer(), "{}").kinTaleRequired)
+        assertFalse(codec.decodeFromString(BusinessSettings.serializer(), """{"businessName":"Tribe Tails"}""").kinTaleRequired)
         assertFalse(codec.decodeFromString(BusinessSettings.serializer(), """{"kinTaleRequired":false}""").kinTaleRequired)
         assertTrue(codec.decodeFromString(BusinessSettings.serializer(), """{"kinTaleRequired":true}""").kinTaleRequired)
     }
 
     @Test
-    fun turningTheSettingOffSavesThatOneField() {
+    fun turningTheSettingOnSavesThatOneField() {
         val loaded = BusinessSettings(businessName = "Tribe Tails")
+        val changes = businessSettingsSaveChanges(loaded, loaded.copy(kinTaleRequired = true), codec)
+        assertEquals(mapOf("kinTaleRequired" to JsonPrimitive(true)), changes)
+    }
+
+    @Test
+    fun turningTheSettingOffSavesThatOneField() {
+        val loaded = BusinessSettings(businessName = "Tribe Tails", kinTaleRequired = true)
         val changes = businessSettingsSaveChanges(loaded, loaded.copy(kinTaleRequired = false), codec)
         assertEquals(mapOf("kinTaleRequired" to JsonPrimitive(false)), changes)
     }
 
     @Test
     fun anUntouchedSettingIsNotSaved() {
-        val loaded = BusinessSettings(businessName = "Tribe Tails", kinTaleRequired = false)
+        val loaded = BusinessSettings(businessName = "Tribe Tails", kinTaleRequired = true)
         val changes = businessSettingsSaveChanges(loaded, loaded.copy(businessPhone = "(512) 555-0199"), codec)
         assertEquals(setOf("businessPhone"), changes.keys)
     }

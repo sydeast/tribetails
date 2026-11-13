@@ -277,7 +277,7 @@ class AdminDataViewModel(
     // #1608: "Verify arrival and departure", read raw (absent is off). Null until read.
     private val _arrivalRule = MutableStateFlow<Boolean?>(null)
     val arrivalRule: StateFlow<Boolean?> = _arrivalRule.asStateFlow()
-    // #2123: "KinTale required" (absent is ON), off the same settings read as
+    // #2123: "KinTale required" (absent is OFF), off the same settings read as
     // [timeBlocks]. Null until read and after a failed read: Auntie Time then
     // shows no "KinTales to send" group rather than guess.
     private val _kinTaleRequired = MutableStateFlow<Boolean?>(null)

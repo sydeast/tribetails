@@ -12,31 +12,38 @@ import {
  * #2123: the "KinTale required" switch and the one question it asks of a visit
  * at completion. It never decides WHETHER a visit completes.
  */
-describe('kinTaleRequiredFrom: absent reads ON', () => {
-  it('only an explicit false turns it off', () => {
-    expect(KIN_TALE_REQUIRED_DEFAULT).toBe(true);
-    expect(kinTaleRequiredFrom(undefined)).toBe(true);
-    expect(kinTaleRequiredFrom({})).toBe(true);
+describe('kinTaleRequiredFrom: absent reads OFF (ruling 2026-11-13, "Start it off")', () => {
+  it('only an explicit true turns it on', () => {
+    expect(KIN_TALE_REQUIRED_DEFAULT).toBe(false);
+    expect(kinTaleRequiredFrom(undefined)).toBe(false);
+    expect(kinTaleRequiredFrom({})).toBe(false);
     expect(kinTaleRequiredFrom({ kinTaleRequired: true })).toBe(true);
     expect(kinTaleRequiredFrom({ kinTaleRequired: false })).toBe(false);
   });
 
-  it('a wrong type is not an operator switching it off', () => {
-    expect(kinTaleRequiredFrom({ kinTaleRequired: 'false' })).toBe(true);
-    expect(kinTaleRequiredFrom({ kinTaleRequired: 0 })).toBe(true);
-    expect(kinTaleRequiredFrom({ kinTaleRequired: null })).toBe(true);
+  it('a wrong type is not an operator switching it on', () => {
+    expect(kinTaleRequiredFrom({ kinTaleRequired: 'true' })).toBe(false);
+    expect(kinTaleRequiredFrom({ kinTaleRequired: 1 })).toBe(false);
+    expect(kinTaleRequiredFrom({ kinTaleRequired: null })).toBe(false);
   });
 });
 
 describe('isKinTaleRequired', () => {
   it('reads the settings document', async () => {
+    const on = buildDbMock({ docs: { 'business_settings/business_settings': { kinTaleRequired: true } } });
+    expect(await isKinTaleRequired(on.db)).toBe(true);
     const off = buildDbMock({ docs: { 'business_settings/business_settings': { kinTaleRequired: false } } });
     expect(await isKinTaleRequired(off.db)).toBe(false);
-    const none = buildDbMock({ docs: {} });
-    expect(await isKinTaleRequired(none.db)).toBe(true);
   });
 
-  it('a failed read falls back to the default', async () => {
+  it('a business that never saved the switch has it off', async () => {
+    const none = buildDbMock({ docs: {} });
+    expect(await isKinTaleRequired(none.db)).toBe(false);
+    const other = buildDbMock({ docs: { 'business_settings/business_settings': { businessName: 'Tribe' } } });
+    expect(await isKinTaleRequired(other.db)).toBe(false);
+  });
+
+  it('a failed read falls back to the default, off', async () => {
     const broken = {
       doc: () => ({
         get: async () => {
@@ -44,7 +51,7 @@ describe('isKinTaleRequired', () => {
         },
       }),
     } as unknown as FirebaseFirestore.Firestore;
-    expect(await isKinTaleRequired(broken)).toBe(true);
+    expect(await isKinTaleRequired(broken)).toBe(false);
   });
 });
 

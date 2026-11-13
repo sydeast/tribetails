@@ -26,6 +26,8 @@ const SESSION = 'kin_care_sessions/s1';
 const SETTINGS = 'business_settings/business_settings';
 const VISIT = 'families/kf1/bookings/b1/kinCares/v1';
 const DEPARTED_AT = '2026-11-12T15:30:00Z';
+/** "KinTale required" switched on. A settings document without it reads off. */
+const ON = { kinTaleRequired: true };
 
 function departedSession(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -91,7 +93,7 @@ describe('departedNow', () => {
 
 describe('a visit is Completed at departure', () => {
   it('completes the session at its departure time and moves the household copy', async () => {
-    const ctx = seed({});
+    const ctx = seed({ settings: ON });
     await onKinCareSessionDepartedHandler(event({ status: 'ARRIVED' }, departedSession()));
 
     expect(sessionWrite(ctx)?.data).toMatchObject({
@@ -128,21 +130,30 @@ describe('a visit is Completed at departure', () => {
     expect(sessionWrite(ctx)?.data).not.toHaveProperty('kinTaleDue');
   });
 
-  it('with KinTale required (absent reads on) an unsent visit is left owing one', async () => {
-    const ctx = seed({});
+  it('with KinTale required on an unsent visit is left owing one', async () => {
+    const ctx = seed({ settings: ON });
     expect(await completeDepartedSession('s1')).toEqual({ kind: 'completed', kinTaleDue: true });
     expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'COMPLETED', kinTaleDue: true });
   });
+  it('a business that never saved KinTale required (absent reads off) owes nothing', async () => {
+    for (const settings of [undefined, { businessName: 'Tribe' }]) {
+      const ctx = seed({ settings });
+      expect(await completeDepartedSession('s1')).toEqual({ kind: 'completed', kinTaleDue: false });
+      expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'COMPLETED' });
+      expect(sessionWrite(ctx)?.data).not.toHaveProperty('kinTaleDue');
+    }
+    expect(audits().map((a) => a.payload.kinTaleDue)).toEqual([false, false]);
+  });
 
   it('a KinTale already sent before departure owes nothing', async () => {
-    const ctx = seed({ session: departedSession({ sentReportCount: 1, reportIds: ['r1'] }) });
+    const ctx = seed({ settings: ON, session: departedSession({ sentReportCount: 1, reportIds: ['r1'] }) });
     expect(await completeDepartedSession('s1')).toEqual({ kind: 'completed', kinTaleDue: false });
     expect(sessionWrite(ctx)?.data).not.toHaveProperty('kinTaleDue');
   });
 
   it('a draft started before departure still leaves the KinTale owed', async () => {
     // Android lists a draft's id on `reportIds` when it is created; only a send bumps the count.
-    const ctx = seed({ session: departedSession({ reportIds: ['draft1'] }) });
+    const ctx = seed({ settings: ON, session: departedSession({ reportIds: ['draft1'] }) });
     expect(await completeDepartedSession('s1')).toEqual({ kind: 'completed', kinTaleDue: true });
     expect(sessionWrite(ctx)?.data).toMatchObject({ kinTaleDue: true });
   });

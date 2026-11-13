@@ -446,7 +446,7 @@ export async function transitionBookingStatusHandler(
     updatedBy: uid,
   };
   // #2123: completing never waits on a KinTale. With "KinTale required" on
-  // (absent reads on), a visit completed with nothing sent is left owing one,
+  // (absent reads off), a visit completed with nothing sent is left owing one,
   // which is what puts it on the Auntie's "KinTales to send" list until a send
   // writes `kinTaleDue: false`. Departure normally gets here first, through
   // `triggers/onKinCareSessionDeparted.ts`; this is the hand-marked path.

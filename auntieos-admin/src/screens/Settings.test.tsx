@@ -154,7 +154,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   enableGPSTrackingForAllVisits: true,
   enablePhotoLocationTagging: true,
   requireArrivalDepartureVerification: true,
-  kinTaleRequired: true,
+  kinTaleRequired: false,
   arrivalRadiusMeters: 150,
   autoStartTrackingOnVisitStart: true,
   trackingAccuracy: 'HIGH',

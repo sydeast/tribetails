@@ -26,7 +26,7 @@ import kotlin.test.assertNull
 
 /**
  * #2123: "KinTale required" in Settings > Visits and tracking on the console.
- * It reads ON when the document has no key, a save carries the operator's
+ * It reads OFF when the document has no key (ruling 2026-11-13), a save carries the operator's
  * choice, and the panel's other values are saved as they were loaded.
  */
 @OptIn(ExperimentalTestApi::class)
@@ -67,8 +67,20 @@ class KinTaleRequiredToggleTest {
     }
 
     @Test
+    fun aDocumentWithNoKeyShowsItOffAndTurningItOnSavesOn() = runDesktopComposeUiTest {
+        // AuntieToggle carries no toggle state for the test to read; one tap saving
+        // true is what shows the switch was off.
+        val loaded = BusinessSettings(businessName = "Tribe Tails")
+        val fake = show(loaded)
+        onAllNodes(switchRole)[kinTaleSwitch].performScrollTo().performClick()
+        save()
+        waitUntil(timeoutMillis = 10_000) { fake.lastSavedBusinessSettings != null }
+        assertEquals(loaded.copy(kinTaleRequired = true), fake.lastSavedBusinessSettings)
+    }
+
+    @Test
     fun turningItOffSavesItOffAndLeavesTheRestAsLoaded() = runDesktopComposeUiTest {
-        val loaded = BusinessSettings(businessName = "Tribe Tails", requireArrivalDepartureVerification = true)
+        val loaded = BusinessSettings(businessName = "Tribe Tails", requireArrivalDepartureVerification = true, kinTaleRequired = true)
         val fake = show(loaded)
         onAllNodes(switchRole)[kinTaleSwitch].performScrollTo().performClick()
         save()

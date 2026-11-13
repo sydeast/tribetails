@@ -443,7 +443,7 @@ export interface BusinessSettings {
   /**
    * #2123: "KinTale required". Never blocks completion; with it on, a visit
    * completed with no KinTale sent stays on the Auntie's "KinTales to send"
-   * list until one is. Absent reads ON (`lib/kinTaleTask.ts`).
+   * list until one is. Absent reads OFF (`lib/kinTaleTask.ts`).
    */
   kinTaleRequired: boolean;
   /**
@@ -623,9 +623,10 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   // functions/src/lib/arrivalVerification.ts). A default of true showed the switch
   // on while Complete went through, and the next Settings save turned it on.
   requireArrivalDepartureVerification: false,
-  // #2123: absent means ON, as the server reads it (`kinTaleRequiredFrom` in
-  // functions/src/lib/kinTaleRequirement.ts): only an explicit false is off.
-  kinTaleRequired: true,
+  // #2123: absent means OFF (ruling 2026-11-13, "Start it off"), as the server
+  // reads it (`kinTaleRequiredFrom` in functions/src/lib/kinTaleRequirement.ts):
+  // only an explicit true is on.
+  kinTaleRequired: false,
   // 150 m. Android's dormant geofence constants are 50 m and 100 m, which are
   // too tight for a fix taken indoors, where an Auntie usually is when she
   // presses the button. See ARRIVAL_RADIUS_DEFAULT_METERS in
@@ -880,9 +881,9 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
       (r.enablePhotoLocationTagging as boolean) ?? d.enablePhotoLocationTagging,
     // #1620: only a stored `true` is on, the server's reading.
     requireArrivalDepartureVerification: r.requireArrivalDepartureVerification === true,
-    // #2123: only a stored `false` is off, the server's reading (and
+    // #2123: only a stored `true` is on, the server's reading (and
     // `lib/kinTaleTask.ts#kinTaleRequiredFrom`, which the board reads raw).
-    kinTaleRequired: r.kinTaleRequired !== false,
+    kinTaleRequired: r.kinTaleRequired === true,
     arrivalRadiusMeters: (r.arrivalRadiusMeters as number) ?? d.arrivalRadiusMeters,
     autoStartTrackingOnVisitStart:
       (r.autoStartTrackingOnVisitStart as boolean) ?? d.autoStartTrackingOnVisitStart,

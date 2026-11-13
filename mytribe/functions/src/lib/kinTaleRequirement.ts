@@ -15,27 +15,28 @@ import type { Firestore } from 'firebase-admin/firestore';
  * has gone out yet, and every admin client lists that visit under "KinTales to
  * send" until a send writes `kinTaleDue: false` beside `sentReportCount`.
  *
- * ABSENT READS ON. Before this switch, a departed visit waited on its KinTale on
- * every field path (the web and desktop cards offered only "Complete KinTale",
- * Android's Home completed a visit only after a send), so in practice the
- * Auntie had to send one. Reading a missing key as on keeps that prompt in
- * front of her after the deploy; reading it as off would drop it without the
- * operator having chosen to. Only an explicit `false` turns it off, and every
- * client reads it the same way.
+ * ABSENT READS OFF (operator ruling 2026-11-13, "Start it off"). A business
+ * that has never saved the switch gives no "Send the KinTale" tasks. Only an
+ * explicit `true` turns it on, the same reading as the arrival rule
+ * (`requireArrivalDepartureVerification` in `lib/arrivalVerification.ts`), and
+ * every client reads it the same way.
  */
 export const KIN_TALE_REQUIRED_FIELD = 'kinTaleRequired';
 
 /** What a settings document with no `kinTaleRequired` means. */
-export const KIN_TALE_REQUIRED_DEFAULT = true;
+export const KIN_TALE_REQUIRED_DEFAULT = false;
 
 const BUSINESS_SETTINGS_DOC = 'business_settings/business_settings';
 
-/** The switch off one settings document. Only an explicit `false` is off. */
+/** The switch off one settings document. Only an explicit `true` is on. */
 export function kinTaleRequiredFrom(settings: Record<string, unknown> | undefined): boolean {
-  return settings?.[KIN_TALE_REQUIRED_FIELD] === false ? false : KIN_TALE_REQUIRED_DEFAULT;
+  return settings?.[KIN_TALE_REQUIRED_FIELD] === true ? true : KIN_TALE_REQUIRED_DEFAULT;
 }
 
-/** The switch as stored. A failed read is the default, never an operator switching it off. */
+/**
+ * The switch as stored. A failed read is the default (off), as a failed read of
+ * the arrival rule is: a read that failed is not an operator asking for a task.
+ */
 export async function isKinTaleRequired(firestore: Firestore): Promise<boolean> {
   try {
     const snap = await firestore.doc(BUSINESS_SETTINGS_DOC).get();

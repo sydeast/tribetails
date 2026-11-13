@@ -820,8 +820,8 @@ internal fun VisitsTrackingPanel(
     var accuracy by remember(s) { mutableStateOf(s?.trackingAccuracy ?: "HIGH") }
     var photoTagging by remember(s) { mutableStateOf(s?.enablePhotoLocationTagging != false) }
     var arrivalCheck by remember(s) { mutableStateOf(s?.requireArrivalDepartureVerification == true) }
-    // #2123: absent reads ON, as on the server and every client.
-    var kinTaleRequired by remember(s) { mutableStateOf(s?.kinTaleRequired != false) }
+    // #2123: absent reads OFF (ruling 2026-11-13), as on the server and every client.
+    var kinTaleRequired by remember(s) { mutableStateOf(s?.kinTaleRequired == true) }
     var arrivalRadius by remember(s) { mutableStateOf((s?.arrivalRadiusMeters ?: 150).toString()) }
     var clientSharing by remember(s) { mutableStateOf(s?.allowClientLocationSharing != false) }
     var routeDays by remember(s) { mutableStateOf((s?.saveRoutesForDays ?: 90).toString()) }

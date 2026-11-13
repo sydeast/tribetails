@@ -860,7 +860,7 @@ internal fun VisitRecordsPanel(
     var photoTagging by remember(settings) { mutableStateOf(settings.enablePhotoLocationTagging) }
     var arrivalCheck by remember(settings) { mutableStateOf(settings.requireArrivalDepartureVerification) }
     var arrivalRadius by remember(settings) { mutableStateOf(settings.arrivalRadiusMeters.toString()) }
-    // #2123: "KinTale required" (absent is on, see BusinessSettings.kinTaleRequired).
+    // #2123: "KinTale required" (absent is off, see BusinessSettings.kinTaleRequired).
     var kinTaleRequired by remember(settings) { mutableStateOf(settings.kinTaleRequired) }
     var clientSharing by remember(settings) { mutableStateOf(settings.allowClientLocationSharing) }
     var routeDays by remember(settings) { mutableStateOf(settings.saveRoutesForDays.toString()) }

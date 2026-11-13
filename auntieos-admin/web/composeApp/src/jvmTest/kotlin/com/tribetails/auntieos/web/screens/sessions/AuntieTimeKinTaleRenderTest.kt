@@ -155,7 +155,10 @@ class AuntieTimeKinTaleRenderTest {
 
     @Test
     fun withKinTaleRequiredAnOwedVisitFromLastMonthIsListedUnderKinTalesToSend() = runDesktopComposeUiTest {
-        show(listOf(visit("COMPLETED", startHoursAgo = 24 * 30).copy(kinTaleDue = true)))
+        show(
+            listOf(visit("COMPLETED", startHoursAgo = 24 * 30).copy(kinTaleDue = true)),
+            settings = BusinessSettings(kinTaleRequired = true),
+        )
         waitForText("KinTales to send")
         waitForText("Send the KinTale")
         assertEquals(0, count("Recent"))
@@ -170,6 +173,15 @@ class AuntieTimeKinTaleRenderTest {
             ),
             settings = BusinessSettings(kinTaleRequired = false),
         )
+        waitForText("Recent")
+        assertEquals(0, count("KinTales to send"))
+        assertEquals(1, count("Send the KinTale"))
+    }
+
+    @Test
+    fun aBusinessThatNeverSavedKinTaleRequiredHasNoGroup() = runDesktopComposeUiTest {
+        // Ruling 2026-11-13, "Start it off": a settings document without the key is off.
+        show(listOf(visit("COMPLETED", id = "s1").copy(kinTaleDue = true)), settings = BusinessSettings(businessName = "Tribe Tails"))
         waitForText("Recent")
         assertEquals(0, count("KinTales to send"))
         assertEquals(1, count("Send the KinTale"))

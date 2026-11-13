@@ -713,7 +713,7 @@ export const BUSINESS_SETTINGS_CHECKS: Readonly<Record<string, Check>> = {
   enablePhotoLocationTagging: bool('Photo location'),
   requireArrivalDepartureVerification: bool('Verify arrival and departure'),
   // #2123: never blocks completion; it puts a "Send the KinTale" task in front
-  // of the Auntie. Absent reads ON (`lib/kinTaleRequirement.ts`).
+  // of the Auntie. Absent reads OFF (`lib/kinTaleRequirement.ts`).
   kinTaleRequired: bool('KinTale required'),
   autoStartTrackingOnVisitStart: bool('Auto-start tracking'),
   allowClientLocationSharing: bool('Location sharing'),

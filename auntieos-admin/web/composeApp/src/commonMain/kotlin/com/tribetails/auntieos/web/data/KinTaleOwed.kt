@@ -5,7 +5,7 @@ package com.tribetails.auntieos.web.data
  * Auntie has departed, and a KinTale never decides that. The server completes a
  * visit the moment its status becomes DEPARTED (`onKinCareSessionDeparted`).
  *
- * "KinTale required" (`business_settings.kinTaleRequired`, absent reads ON) is
+ * "KinTale required" (`business_settings.kinTaleRequired`, absent reads OFF) is
  * a task, never a gate. While it is on, the server stamps `kinTaleDue: true` on
  * a visit it completes with no KinTale sent yet, and every client's send batch
  * writes it back to false (this console's `JvmFirestoreRest.markReportSentAtomic`).

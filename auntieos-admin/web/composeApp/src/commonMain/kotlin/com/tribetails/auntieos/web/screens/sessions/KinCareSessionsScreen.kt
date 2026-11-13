@@ -178,9 +178,10 @@ internal fun AuntieTimeListScreen(
     // §A.8: Business-Settings time blocks drive the "Evening block" descriptor on cards.
     val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val timeBlocks = remember(settingsState) { (settingsState as? FirestoreResult.Data)?.value?.timeBlocks.orEmpty() }
-    // #2123: "KinTale required", absent ON. Until the settings read lands it is
-    // taken as on too, so an owed visit is not briefly filed under Recent.
-    val kinTaleRequired = (settingsState as? FirestoreResult.Data)?.value?.kinTaleRequired ?: true
+    // #2123: "KinTale required", absent OFF (ruling 2026-11-13). Until the
+    // settings read lands it is taken as off too: no "KinTales to send" group is
+    // shown on a guess.
+    val kinTaleRequired = (settingsState as? FirestoreResult.Data)?.value?.kinTaleRequired == true
     // #2036: "today", and every day a visit is filed under, is the BUSINESS's
     // calendar day (`business_settings.timeZone`), never the UTC date.
     val storedZone = (settingsState as? FirestoreResult.Data)?.value?.timeZone

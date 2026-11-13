@@ -4563,12 +4563,11 @@ data class BusinessSettings(
     // #1620: absent means OFF, the server's reading (`=== true` in
     // functions/src/lib/arrivalVerification.ts).
     val requireArrivalDepartureVerification: Boolean = false,
-    // #2123: "KinTale required". ABSENT READS ON, as on the server
-    // (`lib/kinTaleRequirement.ts`) and every client: before this setting a
-    // departed visit waited on its KinTale on every field path, so the Auntie
-    // was in effect required to send one. On, she keeps a "Send the KinTale"
-    // task until it is sent; it never holds the visit back from Completed.
-    val kinTaleRequired: Boolean = true,
+    // #2123: "KinTale required". ABSENT READS OFF (operator ruling
+    // 2026-11-13, "Start it off"), as on the server (`lib/kinTaleRequirement.ts`)
+    // and every client. On, the Auntie keeps a "Send the KinTale" task until
+    // it is sent; it never holds the visit back from Completed.
+    val kinTaleRequired: Boolean = false,
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value. 150 m matches ARRIVAL_RADIUS_DEFAULT_METERS on the server, which

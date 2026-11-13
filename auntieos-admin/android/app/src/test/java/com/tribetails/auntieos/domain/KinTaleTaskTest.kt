@@ -25,16 +25,24 @@ class KinTaleTaskTest {
     // ── the setting ────────────────────────────────────────────────────────
 
     @Test
-    fun `an absent setting reads as on, on the model and on the raw value`() {
-        assertTrue(BusinessSettings().kinTaleRequired)
-        assertTrue(kinTaleRequiredSetting(null))
+    fun `an absent setting reads as off, on the model and on the raw value`() {
+        // Operator ruling 2026-11-13: "Start it off".
+        assertFalse(BusinessSettings().kinTaleRequired)
+        assertFalse(kinTaleRequiredSetting(null))
     }
 
     @Test
-    fun `an explicit off stays off, and only a real false turns it off`() {
-        assertFalse(kinTaleRequiredSetting(false))
+    fun `an absent setting gives no KinTales to send group, whatever the visits say`() {
+        val split = splitKinTalesToSend(listOf(owedVisit()), BusinessSettings().kinTaleRequired)
+        assertTrue(split.toSend.isEmpty())
+        assertEquals(listOf("s1"), split.rest.map { it.id })
+    }
+
+    @Test
+    fun `an explicit on stays on, and only a real true turns it on`() {
         assertTrue(kinTaleRequiredSetting(true))
-        assertTrue(kinTaleRequiredSetting("false"))
+        assertFalse(kinTaleRequiredSetting(false))
+        assertFalse(kinTaleRequiredSetting("true"))
     }
 
     @Test
@@ -46,12 +54,12 @@ class KinTaleTaskTest {
 
     @Test
     fun `turning it off is a real write of false, and back on a write of true`() {
-        val on = BusinessSettings()
+        val on = BusinessSettings(kinTaleRequired = true)
         assertEquals(
             mapOf<String, Any?>("kinTaleRequired" to false),
             businessSettingsFieldChanges(on, on.copy(kinTaleRequired = false)),
         )
-        val off = BusinessSettings(kinTaleRequired = false)
+        val off = BusinessSettings()
         assertEquals(
             mapOf<String, Any?>("kinTaleRequired" to true),
             businessSettingsFieldChanges(off, off.copy(kinTaleRequired = true)),
