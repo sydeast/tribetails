@@ -31,8 +31,9 @@ vi.mock('../components/PortalNav', () => ({
 // territory and no part of what this suite pins down; a spy in its place
 // proves the button IS wired to sign-out without exercising that network path.
 const signOutSpy = vi.fn();
+const signOutState: { signingOut: boolean; error: string | null } = { signingOut: false, error: null };
 vi.mock('../lib/auth', () => ({
-  useSignOut: () => ({ signOut: signOutSpy, signingOut: false }),
+  useSignOut: () => ({ signOut: signOutSpy, signingOut: signOutState.signingOut, error: signOutState.error }),
 }));
 
 // `to` is carried into href, because a test that cannot see a link's
@@ -178,6 +179,8 @@ beforeEach(() => {
   FakeXHR.instances = [];
   signKinfolkAvatar.mockReset();
   signOutSpy.mockReset();
+  signOutState.signingOut = false;
+  signOutState.error = null;
   vi.stubGlobal('XMLHttpRequest', FakeXHR as unknown as typeof XMLHttpRequest);
 });
 
@@ -382,9 +385,9 @@ describe('Account: kin list and Messages link are gone (#1465)', () => {
     expect(getByText('Profile')).toBeTruthy();
     expect(getByText('Secondary Kinfolk')).toBeTruthy();
     expect(getByText('Billing Details')).toBeTruthy();
-    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
     await findByText('Sign out of MyTribe?');
-    expect(getByRole('button', { name: 'Yes, Sign Out' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Yes, sign out' })).toBeTruthy();
     expect(signOutSpy).not.toHaveBeenCalled();
   });
 });
@@ -527,11 +530,11 @@ describe('Account billing management', () => {
  * trade rather than a regression: Sign Out has to still be reachable, and
  * still work, from the screen the avatar now points at.
  */
-describe('Account: Sign Out (#1307, #1308)', () => {
+describe('Account: Sign out (#1307, #1308, #1931, #1932)', () => {
   it('keeps Cancel and the confirm button together, and not in the Save Changes row', async () => {
     const { getByRole, container } = await renderAccount();
-    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
-    const confirm = getByRole('button', { name: 'Yes, Sign Out' });
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
+    const confirm = getByRole('button', { name: 'Yes, sign out' });
     const cancel = getByRole('button', { name: 'Cancel' });
     const save = getByRole('button', { name: /Save Changes/ });
     expect(confirm.parentElement).toBe(cancel.parentElement);
@@ -550,34 +553,80 @@ describe('Account: Sign Out (#1307, #1308)', () => {
     expect(rule).not.toMatch(/position:\s*(sticky|fixed)/);
   });
 
-  it('offers Sign Out on the save bar', async () => {
+  it('offers Sign out on the save bar', async () => {
     const { getByRole } = await renderAccount();
-    expect(getByRole('button', { name: 'Sign Out' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Sign out' })).toBeTruthy();
   });
 
   it('asks for confirmation before signing out', async () => {
     const { getByRole, findByText } = await renderAccount();
-    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
     await findByText('Sign out of MyTribe?');
     expect(signOutSpy).not.toHaveBeenCalled();
   });
 
   it('signs out on confirmation', async () => {
     const { getByRole } = await renderAccount();
-    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
-    await userEvent.click(getByRole('button', { name: 'Yes, Sign Out' }));
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
+    await userEvent.click(getByRole('button', { name: 'Yes, sign out' }));
     expect(signOutSpy).toHaveBeenCalledTimes(1);
   });
 
   it('backs out of the confirmation on Cancel, without signing out', async () => {
     const { getByRole, queryByText } = await renderAccount();
-    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
     await userEvent.click(getByRole('button', { name: 'Cancel' }));
     expect(queryByText('Sign out of MyTribe?')).toBeNull();
-    expect(getByRole('button', { name: 'Sign Out' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Sign out' })).toBeTruthy();
     expect(signOutSpy).not.toHaveBeenCalled();
   });
+
+  it('uses one wording: Sign out, Yes, sign out (#1931)', async () => {
+    const { getByRole, queryByRole } = await renderAccount();
+    expect(queryByRole('button', { name: 'Sign Out' })).toBeNull();
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
+    expect(queryByRole('button', { name: 'Yes, Sign Out' })).toBeNull();
+    expect(getByRole('button', { name: 'Yes, sign out' })).toBeTruthy();
+  });
+
+  it('keeps the question, Cancel and the confirm button in ONE group (#1932)', async () => {
+    const { getByRole, getByText } = await renderAccount();
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
+    const question = getByText('Sign out of MyTribe?');
+    const confirm = getByRole('button', { name: 'Yes, sign out' });
+    expect(question.parentElement).toBe(confirm.closest('.signout__group'));
+    expect(getByRole('button', { name: 'Cancel' }).closest('.signout__group')).toBe(question.parentElement);
+  });
+
+  it('left-aligns the sign-out row so it never lines up under Save Changes (#1932)', async () => {
+    await renderAccount();
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/account.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = css.split('}').find((r) => r.includes('.acct .signout {'))!;
+    expect(rule).not.toMatch(/space-between|flex-end/);
+    const group = css.split('}').find((r) => r.includes('.acct .signout__group {'))!;
+    expect(group).toMatch(/display:\s*flex/);
+    expect(group).not.toMatch(/space-between|flex-end/);
+  });
+
+  it('shows a wait indicator while signing out, and the confirm cannot be pressed twice', async () => {
+    signOutState.signingOut = true;
+    const { getByRole } = await renderAccount();
+    // Reach the confirm step first (the flag only matters once it is shown).
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
+    const busy = getByRole('button', { name: /Signing out/ });
+    expect(busy).toBeDisabled();
+  });
+
+  it('tells the person when sign-out failed and that they are still signed in', async () => {
+    signOutState.error = "We couldn't sign you out. You are still signed in. Check your connection and try again.";
+    const { getByRole, findByRole } = await renderAccount();
+    await userEvent.click(getByRole('button', { name: 'Sign out' }));
+    const alert = await findByRole('alert');
+    expect(alert.textContent).toContain('still signed in');
+    expect(getByRole('button', { name: 'Yes, sign out' })).not.toBeDisabled();
+  });
 });
+
 /**
  * #1005: a member without billing access (a SECONDARY the PRIMARY did not
  * grant billing) sees no Billing Details card at all, and the card callable

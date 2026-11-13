@@ -150,6 +150,11 @@ export function accountCreditGivenWords(amountCents: number): string {
   return `Gave ${dollars(amountCents)} account credit`;
 }
 
+/** `Applied $25.00 account credit to invoice 1026`. The household is the entry's `familyId`. */
+export function accountCreditAppliedWords(amountCents: number, invoiceNumber: string | null): string {
+  const n = (invoiceNumber ?? '').trim();
+  return `Applied ${dollars(amountCents)} account credit to ${n === '' ? 'an invoice' : `invoice ${n}`}`;
+}
 const PATTERN_WORDS: Record<string, string> = { individual: 'individual dates', weekly: 'weekly' };
 
 /** `Created 4 visits (weekly)`. The household is the entry's `familyId`. */

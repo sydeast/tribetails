@@ -1432,6 +1432,31 @@ class FirestoreClient {
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
+
+    /**
+     * #1872: applies an amount of the household's account credit to one open
+     * invoice through the `applyAccountCredit` callable, the only path that
+     * spends credit (operator ruling 2026-11-11: never automatically). The
+     * server writes the payment, both balances, the credit history entry and
+     * the Activity Log line in one transaction; [idempotencyKey] makes a retry
+     * of the same submission land on the first. A refusal comes back as
+     * [WriteResult.Err] with the server's message verbatim.
+     *
+     * The request names the invoice only. A sandbox test admin is held to their
+     * own test tribe by the server, which reads the household off the invoice.
+     */
+    suspend fun applyAccountCredit(
+        entry: ApplyCreditEntry,
+        idempotencyKey: String,
+    ): WriteResult<ApplyCreditOutcome> {
+        val payload = applyAccountCreditPayload(entry, idempotencyKey)
+        return when (val r = platformInvokeCallable("applyAccountCredit", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeApplyCreditOutcome(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     /** Q6: the household's credit history, through `getAccountCreditHistory`. */
     suspend fun getAccountCreditHistory(kinfolkId: String): WriteResult<AccountCreditHistory> {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
@@ -4088,6 +4113,10 @@ data class Invoice(
      * Absent on every legacy invoice.
      */
     val totalCents: JsonElement? = null,
+    // #1872: read only, to keep Apply credit off an archived invoice. Kept as
+    // stored (a timestamp in whatever shape the bridge delivers); present and
+    // not null means archived, the server's own rule. Nothing here writes it.
+    val archivedAt: JsonElement? = null,
 )
 
 /**

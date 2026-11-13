@@ -10,8 +10,7 @@ import java.time.YearMonth
  * than shared, because there is no cross-platform module in this repo --
  * android is a separate Gradle module with no dependency on either npm
  * project, and this codebase's own convention for cross-platform logic is
- * documented duplication (see `US_HOLIDAYS` a few lines below in
- * `AdminSettingsScreen.kt`, "Ported verbatim", and this file's own weekday
+ * documented duplication (and this file's own weekday
  * convention, which matches `ui/home/DashboardInsights.kt#usPetCareHolidays`
  * -- an UNRELATED feature that happens to need the same nth/last-weekday
  * math, confirming ISO weekday numbering is already this codebase's
@@ -335,10 +334,15 @@ data class ClosurePreset(
  * never a fixed date standing in for a floating one -- Memorial Day is
  * `YEARLY_LAST_WEEKDAY`, not a hardcoded "May 25".
  *
- * Ids are independent of `US_HOLIDAYS` in `AdminSettingsScreen.kt` (the older
- * observed/not-observed checklist, a boolean per holiday with no date
+ * Ids are independent of [US_OBSERVED_HOLIDAYS] in `TimeOffHolidays.kt` (the
+ * older observed/not-observed checklist, a boolean per holiday with no date
  * anywhere in its storage). That list and this one serve different fields --
- * `observedUsHolidays` vs. a dated `companyHolidays` entry.
+ * `observedUsHolidays` vs. a dated `companyHolidays` entry -- so the ids
+ * differ (`columbus` there, `indigenous_columbus` here). The NAMES do not:
+ * that checklist reads each label from this catalog (#1947). A name here is
+ * also written into every `companyHolidays` entry its chip adds, and the
+ * chip's "already added" check matches that exact string, so renaming one
+ * here orphans stored rows.
  */
 val US_HOLIDAY_PRESETS: List<ClosurePreset> = listOf(
     ClosurePreset(id = "new_years", name = "New Year's Day", recurrence = ClosureRecurrenceKind.YEARLY_FIXED, month = 1, day = 1),

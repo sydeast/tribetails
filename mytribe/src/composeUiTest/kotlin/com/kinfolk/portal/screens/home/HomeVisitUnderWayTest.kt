@@ -11,7 +11,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
-import com.kinfolk.portal.portal.BOOKINGS_POLL_MS
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
 import kotlinx.serialization.json.JsonNull
@@ -34,6 +33,10 @@ import kotlin.test.assertEquals
  * COMPLETED. Nothing on Home says DEPARTED.
  */
 class HomeVisitUnderWayTest {
+    // #2122: a short turn, as in VisitUnderWayTest (see there); the real
+    // 30 seconds is held by FollowBookingsTest.
+    private companion object { const val TEST_POLL_MS = 2_000L }
+
     private val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
     private fun visit(status: String, progress: String?): JsonObject = buildJsonObject {
@@ -72,6 +75,7 @@ class HomeVisitUnderWayTest {
             HomeScreen(
                 "The Foster", "3", PortalApi(fake),
                 onOpenBooking = { visitId, _ -> opened += visitId },
+                pollMs = TEST_POLL_MS,
             )
         }
         waitForIdle()
@@ -145,15 +149,15 @@ class HomeVisitUnderWayTest {
         onNodeWithText("CONFIRMED").assertIsDisplayed()
         onNodeWithTag(HOME_LIVE_VISIT_TAG).assertDoesNotExist()
 
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS + 100)
+        mainClock.advanceTimeBy(TEST_POLL_MS + 100)
         waitForIdle()
         onNode(onCard("On the way to Biscuit")).assertIsDisplayed()
 
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS)
+        mainClock.advanceTimeBy(TEST_POLL_MS)
         waitForIdle()
         onNode(onCard("With Biscuit")).assertIsDisplayed()
 
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS)
+        mainClock.advanceTimeBy(TEST_POLL_MS)
         waitForIdle()
         onNodeWithTag(HOME_LIVE_VISIT_TAG).assertDoesNotExist()
         onNodeWithText("DEPARTED").assertDoesNotExist()
@@ -161,7 +165,7 @@ class HomeVisitUnderWayTest {
         assertEquals(4, fake.calls.count { it.first == "getMyBookings" })
 
         // Finished: nothing is due, so Home stops reading.
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS * 2)
+        mainClock.advanceTimeBy(TEST_POLL_MS * 3)
         waitForIdle()
         assertEquals(4, fake.calls.count { it.first == "getMyBookings" })
     }

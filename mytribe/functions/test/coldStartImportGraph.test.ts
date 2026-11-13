@@ -225,14 +225,19 @@ const ALLOWED_EAGER_PACKAGES = [
  * in this graph) write through. Its runtime import is `lib/schema.ts`, already
  * here; the rest are types.
  *
- * 447 since #2123 (on top of #2096's 446): `triggers/onKinCareSessionDeparted.ts`,
+ * 447 since #1872 (on top of #2096's 446): `admin/applyAccountCredit.ts` is a
+ * new FUNCTIONS entry, in this graph by construction (the one callable that
+ * spends account credit, by an amount the admin enters). Everything it imports
+ * was already here.
+ *
+ * 448 since #2123 (on top of #1872's 447): `triggers/onKinCareSessionDeparted.ts`,
  * the trigger that completes a visit at departure. A new entry in the FUNCTIONS
  * table, so it is in the union by construction. Its words and the "KinTale
  * required" reader are loaded inside the handler; its file-scope imports
  * (`arrivalVerification`, `geo`, `writeAuditEntry`, `wrapTrigger`) are already
  * resident through `transitionBookingStatus` and the other triggers.
  */
-const MAX_OWN_EAGER_MODULES = 447;
+const MAX_OWN_EAGER_MODULES = 448;
 
 interface Edge {
   spec: string;

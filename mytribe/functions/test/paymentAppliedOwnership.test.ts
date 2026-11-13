@@ -154,6 +154,14 @@ const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 const KEY = 'pay_1757860000000_abcdef';
 
+/**
+ * #1872: a credit draw is an amount the admin entered, under her key. Every
+ * draw in this suite is the same submission (one key), so a second call is a
+ * replay of the first, which is what a redelivery used to be here.
+ */
+function creditDraw(amountCents = 4000) {
+  return { invoiceId: 'inv1', actorUid: 'system', amountCents, paymentId: 'acr_1790000000000_notice' };
+}
 function seedInvoice(over: Record<string, unknown> = {}) {
   docs[INVOICE] = {
     kinfolkId: 'fam1',
@@ -923,7 +931,7 @@ describe('#866 account credit', () => {
   it('credit that pays the invoice off sends exactly one', async () => {
     seedInvoice();
     docs['families/fam1'] = { accountBalanceCents: 5000 };
-    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);
@@ -934,7 +942,7 @@ describe('#866 account credit', () => {
     // It says nothing about this write, so the trigger must not read it as an owner.
     seedInvoice({ paymentAppliedNoticeOwner: 'stripe:evt_old' });
     docs['families/fam1'] = { accountBalanceCents: 5000 };
-    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
   });
@@ -1046,7 +1054,7 @@ describe('#884 review: updateInvoice decides and writes in one transaction', () 
 
 describe('#884 second review: the credit notice survives a crash', () => {
   const draw = () =>
-    withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
   const pending = () => docs[INVOICE]!['paymentAppliedNoticePending'];
   const sweep = () => sweepPendingCreditNotices(mocks.db.current as any, Date.now());
 
@@ -1064,7 +1072,7 @@ describe('#884 second review: the credit notice survives a crash', () => {
     expect(docs[INVOICE]!['paymentAppliedNoticeSentAt']).toBeTruthy();
     const calls = mocks.enqueue.mock.calls.length;
 
-    expect((await draw()).skipped).toBe('invoice_not_collectable');
+    expect((await draw()).replayed).toBe(true);
     later(HOUR);
     expect(await sweep()).toBe(0);
     expect(mocks.enqueue.mock.calls.length).toBe(calls);
@@ -1079,7 +1087,7 @@ describe('#884 second review: the credit notice survives a crash', () => {
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(pending()).toMatch(/^accountCredit:.+/);
 
-    expect((await draw()).skipped).toBe('invoice_not_collectable');
+    expect((await draw()).replayed).toBe(true);
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);
     expect(pending()).toBe('');
@@ -1131,7 +1139,7 @@ describe('#884 second review: the credit notice survives a crash', () => {
     mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
     await draw();
     later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
-    await Promise.all([sweep(), drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' })]);
+    await Promise.all([sweep(), drawAccountCredit(mocks.db.current as any, creditDraw())]);
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);
   });
@@ -1161,7 +1169,7 @@ describe('#884 second review: the credit notice survives a crash', () => {
   it('a partial credit draw, then recordPayment (ticked) of the rest, sends exactly one', async () => {
     seedInvoice();
     docs['families/fam1'] = { accountBalanceCents: 1000 };
-    await draw();
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw(1000)));
     await adminApply(30, true);
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
@@ -1171,7 +1179,7 @@ describe('#884 second review: the credit notice survives a crash', () => {
 
 describe('#884 third review: the credit notice sweep cannot get stuck', () => {
   const draw = () =>
-    withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
   const sweep = (options?: Parameters<typeof sweepPendingCreditNotices>[2]) =>
     sweepPendingCreditNotices(mocks.db.current as any, Date.now(), options);
   const creditRowId = () =>
@@ -1344,7 +1352,7 @@ describe('#884 review: the credit draw owns its notice', () => {
     // paid to paid. The draw is a real payment and sends the notice itself.
     docs[INVOICE] = { kinfolkId: 'fam1', status: 'open', invoiceNumber: '1029', total: 40 };
     docs['families/fam1'] = { accountBalanceCents: 5000 };
-    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(docs[INVOICE]!['paymentAppliedNoticeOwner']).toMatch(/^accountCredit:.+/);
     expect(appliedCount()).toBe(1);
@@ -1354,7 +1362,7 @@ describe('#884 review: the credit draw owns its notice', () => {
   it('credit that covers only part of the bill tells nobody, as before', async () => {
     seedInvoice();
     docs['families/fam1'] = { accountBalanceCents: 1000 };
-    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw(1000)));
     expect(docs[INVOICE]!['status']).toBe('open');
     expect(docs[INVOICE]!['paymentAppliedNoticeOwner']).toBeUndefined();
     expect(mocks.enqueue).not.toHaveBeenCalled();
@@ -1363,8 +1371,8 @@ describe('#884 review: the credit draw owns its notice', () => {
   it('a second pass over the same paid invoice draws nothing and sends nothing more', async () => {
     seedInvoice();
     docs['families/fam1'] = { accountBalanceCents: 5000 };
-    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
-    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);
   });
@@ -1373,7 +1381,7 @@ describe('#884 review: the credit draw owns its notice', () => {
     it(`a ${label} bill with a balance, paid off by account credit, sends exactly one`, async () => {
       seedInvoice({ status: label });
       docs['families/fam1'] = { accountBalanceCents: 5000 };
-      await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+      await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
       expect(docs[INVOICE]!['status']).toBe('paid');
       expect(appliedCount()).toBe(1);
       expect(staffCount()).toBe(1);
@@ -1447,7 +1455,7 @@ describe('#884 settling a balance by editing the invoice, not by paying it', () 
     // nothing, so the trigger owns that notice and must still send it.
     seedInvoice({ paymentAppliedNoticeOwner: 'updateInvoice:earlier' });
     docs['families/fam1'] = { accountBalanceCents: 5000 };
-    await withTrigger(() => drawAccountCredit(mocks.db.current as any, { invoiceId: 'inv1', actorUid: 'system' }));
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);

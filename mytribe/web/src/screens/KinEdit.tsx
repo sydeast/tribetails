@@ -182,10 +182,10 @@ export function KinEdit() {
     },
   }, { policy: 'abandon', what: 'this delete' });
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (kin.isError) {
-    return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   // Paused, this fell through to the `!found` card: an edit screen telling a

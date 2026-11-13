@@ -27,6 +27,10 @@ import { businessLabel } from '../lib/businessLabel';
  * "Switch tribe" icon, so the menu is the one place an operator leaves a tribe,
  * the same as Android's accountMenu.
  *
+ * #1849: the panel is a solid surface (it used to be the frosted glass card,
+ * which showed the page through its rows), and a failed sign-out is said in
+ * the menu, which stays open.
+ *
  * #1490: About reads "About {business name}" (the #1295 map), "About your
  * Auntie" when no name is cached, the About screen's own title. Android's
  * accountMenu takes the name the same way.
@@ -35,6 +39,8 @@ export function AvatarMenu(props: {
   initial: string;
   onSignOut: () => void;
   signingOut: boolean;
+  /** Plain sentence from `useSignOut().error`; shown in the menu when sign-out failed. */
+  signOutError?: string | null | undefined;
   /** `billingAccessOf(home)`: false leaves Invoices out of the menu. */
   billingAccess: boolean;
   /** Operators only: true draws Back to Directory above Sign out. */
@@ -76,7 +82,7 @@ export function AvatarMenu(props: {
         {props.initial}
       </button>
       {open && (
-        <div className="avatar-menu__panel glass" role="menu" aria-label="Account menu">
+        <div className="avatar-menu__panel" role="menu" aria-label="Account menu">
           <Link role="menuitem" to="/account" onClick={() => setOpen(false)}>
             Account
           </Link>
@@ -109,6 +115,11 @@ export function AvatarMenu(props: {
           >
             {props.signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign out'}
           </button>
+          {props.signOutError && (
+            <p className="avatar-menu__error" role="alert">
+              {props.signOutError}
+            </p>
+          )}
         </div>
       )}
     </div>

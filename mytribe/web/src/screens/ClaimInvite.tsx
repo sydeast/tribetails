@@ -45,7 +45,7 @@ export function ClaimInvite() {
   const [needsVerification, setNeedsVerification] = useState(false);
   const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const acceptedForUid = useRef<string | null>(null);
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   const preview = useQuery({
     queryKey: ['invitePreview', inviteId],
@@ -249,6 +249,11 @@ export function ClaimInvite() {
             <button className="btn grad block" onClick={signOut} disabled={signingOut}>
               {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign out and continue'}
             </button>
+            {signOutError && (
+              <p className="errsignout" role="alert">
+                {signOutError}
+              </p>
+            )}
           </div>
         </section>
       ) : step?.kind === 'createAccount' ? (

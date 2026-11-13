@@ -35,7 +35,7 @@ const TILE_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
  */
 export function Gallery() {
   const kinfolkId = getActiveKinfolkId();
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   const photos = useInfiniteQuery({
     queryKey: ['myKinPhotos', kinfolkId],
@@ -52,6 +52,7 @@ export function Gallery() {
         retrying={photos.isRefetching}
         onSignOut={signOut}
         signingOut={signingOut}
+        signOutError={signOutError}
       />
     );
   }

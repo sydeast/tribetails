@@ -268,7 +268,7 @@ class RecordPaymentCallableClientTest {
     fun aPendingOfficeCopyAndACreditAreBothReported() {
         val m = recordPaymentOutcomeMessage(outcome(officePending = true, credited = 1200), false)
         assertTrue(m.contains("office copy"), m)
-        assertTrue(m.contains("$12.00 has been added to the household's account balance"), m)
+        assertTrue(m.contains("$12.00 has been added to the household's account credit. It stays there until you apply an amount to an invoice."), m)
     }
 
     // ── The form ────────────────────────────────────────────────────────────

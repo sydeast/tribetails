@@ -7,11 +7,18 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor, testOwnsDoc } from '../lib/testMode';
-import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, OkSchema } from '../lib/invoiceResponseSchema';
-import { drawAccountCredit } from '../lib/accountCredit';
 
 /**
+ * DISABLED (#1872, operator ruling 2026-11-11). This callable took no amount
+ * and spent everything the household held, up to what the invoice owed. Credit
+ * is now applied only as an amount the admin enters, through
+ * `admin/applyAccountCredit.ts`, so every call here is refused with
+ * `failed-precondition` and moves no money. It still deploys, on purpose: a
+ * release does not delete a function that left the source, so removing it would
+ * leave the old spend-everything copy callable in prod. The request and
+ * response shapes are unchanged. The description below is the design as it was.
+ *
  * Puts a household's unapplied credit onto ONE named invoice, on demand.
  *
  * The same pass `triggers/onInvoiceAutoApply.ts` runs by itself, reachable by
@@ -87,6 +94,9 @@ export const Result = z
   })
   .strict();
 
+/** `details.reason` on the refusal every call now gets (#1872). */
+export const AUTO_APPLY_DISABLED_REASON = 'auto_apply_disabled';
+
 export type RunAutoApplyArgs = z.infer<typeof Args>;
 export type RunAutoApplyResult = z.infer<typeof Result>;
 
@@ -120,35 +130,19 @@ export async function runAutoApplyHandler(
     throw new HttpsError('permission-denied', 'This invoice is outside your test sandbox.');
   }
 
-  const result = await drawAccountCredit(db(), {
-    invoiceId: args.invoiceId,
-    actorUid: actor.uid,
-  });
-
   logEvent({
     severity: 'info',
     function: 'runAutoApply',
-    event: 'admin.payment.autoapply.run',
+    event: 'admin.payment.autoapply.refused',
     uid: actor.uid,
-    extra: {
-      invoiceId: args.invoiceId,
-      skipped: result.skipped,
-      appliedCents: result.appliedCents,
-      accountBalanceCents: result.accountBalanceCents,
-      testMode: actor.testMode.active,
-    },
+    extra: { invoiceId: args.invoiceId, testMode: actor.testMode.active },
   });
-
-  return validateResponse('runAutoApply', Result, {
-    ok: true,
-    invoiceId: result.invoiceId,
-    skipped: result.skipped ?? '',
-    appliedCents: result.appliedCents,
-    amountDueCents: result.amountDueCents,
-    accountBalanceCents: result.accountBalanceCents,
-  });
+  throw new HttpsError(
+    'failed-precondition',
+    'Account credit is applied only as an amount you enter on the invoice.',
+    { reason: AUTO_APPLY_DISABLED_REASON },
+  );
 }
-
 export const runAutoApply = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   // wrapCallable, NOT wrapAdminCallable: the gate must also admit a scoped test

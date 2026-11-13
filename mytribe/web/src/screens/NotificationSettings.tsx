@@ -332,7 +332,7 @@ export function NotificationSettings() {
     },
   }, { policy: 'abandon', what: 'this change' });
   const busy = save.isPending;
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (catalog.isError || prefs.isError) {
     return (
@@ -343,6 +343,7 @@ export function NotificationSettings() {
         }}
         retrying={catalog.isRefetching || prefs.isRefetching}
         onSignOut={signOut} signingOut={signingOut}
+        signOutError={signOutError}
       />
     );
   }

@@ -9,6 +9,7 @@ addSecondaryContact
 adjustSupply
 aiBackfillTaleTitles
 aiBatchPollCron
+applyAccountCredit
 approveTribePinChange
 archiveInvoice
 archiveKin
